@@ -1,4 +1,6 @@
-![MIND Logo](assets/logo.svg)
+<p align="center">
+  ![MIND Logo](assets/logo.svg)
+</p>
 
 # MIND
 
