@@ -52,13 +52,13 @@ jobs:
     - name: Run clippy
       run: cargo clippy -- -D warnings
 
-  coverage:
-    name: Coverage
+  coverage_core:
+    name: Coverage (core – no optional features)
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install Rust
+    - name: Install Rust (stable)
       uses: actions-rs/toolchain@v1
       with:
         profile: minimal
@@ -68,26 +68,32 @@ jobs:
     - name: Install tarpaulin
       run: cargo install cargo-tarpaulin
 
-    - name: Generate coverage
+    - name: Generate coverage (no-default-features)
       run: cargo tarpaulin --verbose --no-default-features --workspace --timeout 120 --out Xml
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         files: ./cobertura.xml
         fail_ci_if_error: false
 
-  coverage-optional-features:
-    name: Coverage (optional features)
-    runs-on: ubuntu-latest
+  coverage_optional:
+    name: Coverage (optional features matrix)
     if: ${{ vars.ENABLE_OPTIONAL_FEATURE_COVERAGE == 'true' }}
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        feature: [llvm, mlir]
+        feature_set:
+          - "autodiff"
+          - "mlir"
+          - "llvm"
+          - "mlir,llvm"
+          - "autodiff,mlir,llvm"
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install Rust
+    - name: Install Rust (stable)
       uses: actions-rs/toolchain@v1
       with:
         profile: minimal
@@ -97,13 +103,13 @@ jobs:
     - name: Install tarpaulin
       run: cargo install cargo-tarpaulin
 
-    - name: Generate coverage (${{ matrix.feature }})
-      run: |
-        cargo tarpaulin --verbose --no-default-features --features ${{ matrix.feature }} --workspace --timeout 120 --out Xml
-        mv cobertura.xml cobertura-${{ matrix.feature }}.xml
+    # NOTE: This job assumes the runner/environment already provides any needed toolchains
+    # (e.g., LLVM/MLIR). It is OFF by default via repo var gating.
+    - name: Generate coverage (features = ${{ matrix.feature_set }})
+      run: cargo tarpaulin --verbose --features "${{ matrix.feature_set }}" --workspace --timeout 120 --out Xml
 
-    - name: Upload coverage to Codecov (${{ matrix.feature }})
-      uses: codecov/codecov-action@v3
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
       with:
-        files: ./cobertura-${{ matrix.feature }}.xml
+        files: ./cobertura.xml
         fail_ci_if_error: false
