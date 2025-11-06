@@ -233,6 +233,19 @@ cargo run --quiet -- eval "let x = 2; x = x + 5; x * 3"
 # → 21
 ```
 
+### Diagnostics
+
+Pretty parse errors now include line/col and carets:
+
+```
+$ mind eval "let = 2"
+error: expected identifier
+--> line 1, col 5
+let = 2
+^
+
+```
+
 ### Hello, Tensor
 ```mind
 import std.tensor;
