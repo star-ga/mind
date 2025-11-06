@@ -248,12 +248,14 @@ mind run examples/hello_tensor.mind
 
 - [x] Language design document v0.3 ([docs/design/v0.3.md](docs/design/v0.3.md))
 - [x] Core syntax specification
-- [ ] Lexer and parser
+- [x] Lexer and parser
 - [ ] Type checker with shape inference
 - [ ] Basic autodiff prototype
 - [ ] MLIR IR generation
 - [ ] Basic tensor operations stdlib
 </details>
+
+_Phase 1 scaffold complete (parses identifiers/integers; type checker stubbed)._ 
 
 <details>
 <summary><b>Phase 2: Compilation (Q1 2026)</b></summary>

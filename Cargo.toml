@@ -42,3 +42,4 @@ debug = true
 default = []
 mlir = ["melior"]
 llvm = ["inkwell"]
+autodiff = []
