@@ -69,10 +69,41 @@ jobs:
       run: cargo install cargo-tarpaulin
 
     - name: Generate coverage
-      run: cargo tarpaulin --verbose --all-features --workspace --timeout 120 --out Xml
+      run: cargo tarpaulin --verbose --no-default-features --workspace --timeout 120 --out Xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
         files: ./cobertura.xml
+        fail_ci_if_error: false
+
+  coverage-optional-features:
+    name: Coverage (optional features)
+    runs-on: ubuntu-latest
+    if: ${{ vars.ENABLE_OPTIONAL_FEATURE_COVERAGE == 'true' }}
+    strategy:
+      matrix:
+        feature: [llvm, mlir]
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        profile: minimal
+        toolchain: stable
+        override: true
+
+    - name: Install tarpaulin
+      run: cargo install cargo-tarpaulin
+
+    - name: Generate coverage (${{ matrix.feature }})
+      run: |
+        cargo tarpaulin --verbose --no-default-features --features ${{ matrix.feature }} --workspace --timeout 120 --out Xml
+        mv cobertura.xml cobertura-${{ matrix.feature }}.xml
+
+    - name: Upload coverage to Codecov (${{ matrix.feature }})
+      uses: codecov/codecov-action@v3
+      with:
+        files: ./cobertura-${{ matrix.feature }}.xml
         fail_ci_if_error: false
