@@ -17,6 +17,8 @@ pub enum Node {
     Lit(Literal),
     Binary { op: BinOp, left: Box<Node>, right: Box<Node> },
     Paren(Box<Node>),
+    Let { name: String, value: Box<Node> },
+    Assign { name: String, value: Box<Node> },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

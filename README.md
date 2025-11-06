@@ -227,6 +227,12 @@ cargo run --quiet -- eval "1 + 2 * 3"
 # → 7
 ```
 
+### Variables & assignment
+```bash
+cargo run --quiet -- eval "let x = 2; x = x + 5; x * 3"
+# → 21
+```
+
 ### Hello, Tensor
 ```mind
 import std.tensor;
