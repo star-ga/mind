@@ -251,9 +251,11 @@ mind run examples/hello_tensor.mind
 - [x] Lexer and parser
 - [ ] Type checker with shape inference
 - [x] Basic autodiff prototype
-- [ ] MLIR IR generation
+- [x] MLIR IR generation ✅ *(stub)*
 - [ ] Basic tensor operations stdlib
 </details>
+
+*Note:* `mlir` feature provides a stubbed lowering (no deps). Real MLIR integration will use `mlir_backend` (melior) in a later phase.
 
 _Phase 1 scaffold complete (parses identifiers/integers; type checker stubbed)._ 
 
