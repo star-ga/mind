@@ -1,1 +1,24 @@
+// Hello World example for MIND
+// This demonstrates basic tensor operations and device placement
 
+import std.tensor;
+
+fn main() {
+    // Create a tensor filled with zeros
+    let x = tensor.zeros[f32, (2, 3)];
+
+    // Add 1.0 to all elements
+    let y = x + 1.0;
+
+    // Execute on GPU (if available)
+    on(gpu0) {
+        print(y.sum());  // 6.0 (2*3 elements, all = 1.0)
+    }
+
+    // Reshape and multiply
+    let z = y.reshape((3, 2));
+    let result = z * 2.0;
+
+    print("Shape: ", result.shape());  // (3, 2)
+    print("Mean: ", result.mean());    // 2.0
+}
