@@ -139,3 +139,55 @@ jobs:
           override: true
       - name: Run tests (mlir stub)
         run: cargo test --workspace --all-targets --features mlir --verbose
+
+  fmt_check:
+    name: Format (rustfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt
+      - name: rustfmt check
+        run: cargo fmt --all -- --check
+
+  clippy_core:
+    name: Clippy (no-default-features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --no-default-features
+
+  supply_chain_check:
+    name: Supply chain (cargo-deny & audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Install tools
+        run: |
+          cargo install cargo-deny --version ^0.14
+          cargo install cargo-audit --version ^0.20
+
+      - name: cargo-deny check (licenses, bans, advisories)
+        run: cargo deny check
+
+      - name: cargo-audit (vulns)
+        run: cargo audit --quiet
