@@ -1,0 +1,44 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# LLVM
+*.bc
+*.ll
+
+# Build artifacts
+/build/
+/dist/
+*.o
+*.so
+*.dylib
+*.dll
+
+# Testing
+/coverage/
+*.profraw
+*.profdata
+
+# Documentation
+/book/
+/target/doc/
+
+# Environment
+.env
+.env.local
+
+# Benchmarks
+/bench_results/
+
+# Examples output
+/examples/output/

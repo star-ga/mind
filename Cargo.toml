@@ -1,0 +1,39 @@
+[package]
+name = "mind"
+version = "0.1.0"
+edition = "2021"
+authors = ["MIND Language Contributors"]
+description = "The native language for intelligent systems"
+repository = "https://github.com/cputer/mind"
+license = "MIT"
+keywords = ["ai", "machine-learning", "compiler", "tensor", "autodiff"]
+categories = ["compilers", "science"]
+
+[dependencies]
+logos = "0.13"
+chumsky = "0.9"
+melior = "0.15"
+inkwell = "0.2"
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.0"
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.4"
+
+[[bin]]
+name = "mind"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
