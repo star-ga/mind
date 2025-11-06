@@ -1,1 +1,18 @@
-
+<svg width="220" height="80" viewBox="0 0 220 80" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5"></stop>
+      <stop offset="100%" stop-color="#7C3AED"></stop>
+    </linearGradient>
+  </defs>
+  <rect width="220" height="80" fill="transparent"></rect>
+  <circle cx="40" cy="40" r="24" stroke="url(#grad)" stroke-width="3" fill="none"></circle>
+  <path d="M30 30 L50 30 L50 50 L30 50 Z" stroke="url(#grad)" stroke-width="2" fill="none" opacity="0.8"></path>
+  <line x1="40" y1="16" x2="40" y2="64" stroke="url(#grad)" stroke-width="2" opacity="0.6"></line>
+  <text x="80" y="48" font-family="JetBrains Mono, monospace" font-size="28" font-weight="700" fill="url(#grad)">
+    MIND
+  </text>
+  <text x="80" y="66" font-family="Inter, sans-serif" font-size="10" fill="#7C3AED">
+    Machine Intelligence Native Design
+  </text>
+</svg>
