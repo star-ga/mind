@@ -1,3 +1,5 @@
+pub mod infer;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DType { I32, F32, BF16, F16 }
 

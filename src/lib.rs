@@ -4,6 +4,7 @@ pub mod lexer;
 pub mod parser;
 pub mod types;
 pub mod type_checker;
+pub mod stdlib;
 #[cfg(feature = "autodiff")]
 pub mod autodiff;
 
