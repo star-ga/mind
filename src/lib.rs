@@ -3,6 +3,7 @@ pub mod ast;
 #[cfg(feature = "autodiff")]
 pub mod autodiff;
 pub mod eval;
+pub mod opt;
 pub mod lexer;
 pub mod parser;
 pub mod stdlib;
