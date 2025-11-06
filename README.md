@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="MIND Logo" width="200"/>
+  <img src="assets/logo.svg" alt="MIND Logo" width="400"/>
 </p>
 
 
