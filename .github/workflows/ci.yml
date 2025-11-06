@@ -29,16 +29,6 @@ jobs:
         override: true
         components: rustfmt, clippy
 
-    - name: Install LLVM (Ubuntu)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y llvm-15 llvm-15-dev
-
-    - name: Install LLVM (macOS)
-      if: runner.os == 'macOS'
-      run: brew install llvm@15
-
     - name: Cache cargo
       uses: actions/cache@v3
       with:
@@ -51,10 +41,10 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --verbose --no-default-features
 
     - name: Run tests
-      run: cargo test --verbose
+      run: cargo test --verbose --no-default-features
 
     - name: Check formatting
       run: cargo fmt -- --check

@@ -12,8 +12,8 @@ categories = ["compilers", "science"]
 [dependencies]
 logos = "0.13"
 chumsky = "0.9"
-melior = "0.15"
-inkwell = "0.2"
+melior = { version = "0.15", optional = true }
+inkwell = { version = "0.2", optional = true }
 clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
 anyhow = "1.0"
@@ -37,3 +37,8 @@ codegen-units = 1
 [profile.dev]
 opt-level = 0
 debug = true
+
+[features]
+default = []
+mlir = ["melior"]
+llvm = ["inkwell"]

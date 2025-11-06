@@ -190,6 +190,9 @@ More details: [/benchmarks/resnet.md](benchmarks/resnet.md)
 - LLVM 15+
 - CUDA Toolkit 11.8+ (for GPU support)
 
+> **Note:** MLIR/LLVM backends are currently feature-gated. By default, the crate builds without them (no system LLVM required).
+> Enable with `--features mlir` and/or `--features llvm` once you have a matching toolchain installed.
+
 ### Troubleshooting
 - **CUDA not found?** Check `CUDA_HOME` and `LD_LIBRARY_PATH` environment variables
 - **Build fails?** Ensure LLVM 15+ is in `PATH`
