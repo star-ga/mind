@@ -40,22 +40,29 @@ fn eval_expr(node: &Node, env: &HashMap<String, i64>) -> Result<i64, EvalError> 
     }
 }
 
-pub fn eval_module(m: &Module) -> Result<i64, EvalError> {
-    let mut env: HashMap<String, i64> = HashMap::new();
+pub fn eval_module_with_env(
+    m: &Module,
+    env: &mut HashMap<String, i64>,
+) -> Result<i64, EvalError> {
     let mut last = 0_i64;
     for item in &m.items {
         match item {
             Node::Let { name, value } | Node::Assign { name, value } => {
-                let v = eval_expr(value, &env)?;
+                let v = eval_expr(value, env)?;
                 env.insert(name.clone(), v);
                 last = v;
             }
             _ => {
-                last = eval_expr(item, &env)?;
+                last = eval_expr(item, env)?;
             }
         }
     }
     Ok(last)
+}
+
+pub fn eval_module(m: &Module) -> Result<i64, EvalError> {
+    let mut env: HashMap<String, i64> = HashMap::new();
+    eval_module_with_env(m, &mut env)
 }
 
 pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {
