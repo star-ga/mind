@@ -8,6 +8,7 @@
 use chumsky::prelude::*;
 
 use crate::ast::{BinOp, Literal, Module, Node};
+use crate::diagnostics::Diagnostic as PrettyDiagnostic;
 
 fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> {
     text::keyword(s).to(s)
@@ -95,4 +96,18 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
 
 pub fn parse(input: &str) -> Result<Module, Vec<Simple<char>>> {
     parser().parse(input)
+}
+
+/// Parse with pretty diagnostics instead of raw chumsky errors.
+pub fn parse_with_diagnostics(input: &str) -> Result<Module, Vec<PrettyDiagnostic>> {
+    let (maybe_module, errs) = parser().parse_recovery(input);
+    if errs.is_empty() {
+        Ok(maybe_module.expect("parser returned no module without errors"))
+    } else {
+        let ds = errs
+            .into_iter()
+            .map(|e| crate::diagnostics::Diagnostic::from_chumsky(input, e))
+            .collect();
+        Err(ds)
+    }
 }
