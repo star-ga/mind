@@ -249,11 +249,13 @@ mind run examples/hello_tensor.mind
 - [x] Language design document v0.3 ([docs/design/v0.3.md](docs/design/v0.3.md))
 - [x] Core syntax specification
 - [x] Lexer and parser
-- [ ] Type checker with shape inference
+- [x] Type checker with shape inference ✅ *(basic unify)*
 - [x] Basic autodiff prototype
 - [x] MLIR IR generation ✅ *(stub)*
-- [ ] Basic tensor operations stdlib
+- [x] Basic tensor operations stdlib ✅ *(stubs)*
 </details>
+
+*Note:* Tensor stdlib and shape inference are minimal placeholders to keep the pipeline compiling; real semantics come in Phase 2–3.
 
 *Note:* `mlir` feature provides a stubbed lowering (no deps). Real MLIR integration will use `mlir_backend` (melior) in a later phase.
 
