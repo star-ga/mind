@@ -1,5 +1,6 @@
 //! MIND core library (Phase 1 scaffold)
 pub mod ast;
+pub mod diagnostics;
 #[cfg(feature = "autodiff")]
 pub mod autodiff;
 pub mod eval;
