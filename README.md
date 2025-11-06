@@ -233,6 +233,18 @@ cargo run --quiet -- eval "let x = 2; x = x + 5; x * 3"
 # → 21
 ```
 
+### REPL (interactive)
+
+```bash
+cargo run --quiet -- repl
+# MIND REPL — type :quit to exit
+# MIND> let x = 2;
+# 2
+# MIND> x * 3
+# 6
+# MIND> :quit
+```
+
 ### Diagnostics
 
 Pretty parse errors now include line/col and carets:
