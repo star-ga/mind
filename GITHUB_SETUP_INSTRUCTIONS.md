@@ -13,3 +13,7 @@ To enable an opt-in coverage matrix for optional features, set a repository vari
 - Add: `ENABLE_OPTIONAL_FEATURE_COVERAGE = true`
 
 This will run an additional Tarpaulin job over a small feature matrix (e.g., `mlir`, `llvm`, `autodiff`). Ensure any required toolchains (such as LLVM) are available on runners before enabling.
+
+### Quality & Security guardrails
+- CI enforces rustfmt, clippy (core build), and supply-chain checks (cargo-deny & cargo-audit).
+- Release notes are auto-drafted by Release Drafter on pushes/PRs to `main`.
