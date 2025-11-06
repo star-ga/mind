@@ -151,6 +151,8 @@ jobs:
           toolchain: stable
           override: true
           components: rustfmt
+      - name: rustfmt version
+        run: rustfmt --version
       - name: rustfmt check
         run: cargo fmt --all -- --check
 
