@@ -218,6 +218,15 @@ export PATH=$PATH:$(pwd)/target/release
 # For permanent: add above line to ~/.bashrc or ~/.zshrc
 ```
 
+### Try the CLI
+
+You can now evaluate simple expressions directly:
+
+```bash
+cargo run --quiet -- eval "1 + 2 * 3"
+# → 7
+```
+
 ### Hello, Tensor
 ```mind
 import std.tensor;
