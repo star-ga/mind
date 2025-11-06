@@ -1,3 +1,5 @@
+![MIND Logo](assets/logo.svg)
+
 # MIND
 
 **The native language for intelligent systems**
