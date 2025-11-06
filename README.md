@@ -225,12 +225,16 @@ import std.tensor;
 fn main() {
     let x = tensor.zeros[f32, (2, 3)];
     let y = x + 1.0;
-    
+
     on(gpu0) {
         print(y.sum());  // 6.0 (2*3 elements, all = 1.0)
     }
 }
 ```
+
+**Example (expressions):**
+The Phase 2 parser prototype can now understand and evaluate simple integer expressions for development tests: `1 + 2 * 3`
+evaluates to `7`, while `(1 + 2) * 3` evaluates to `9`.
 
 **Run it:**
 ```bash

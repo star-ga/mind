@@ -5,9 +5,18 @@ pub enum Literal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Lit(Literal),
-    // TODO: add expressions/statements in Phase 2
+    Binary { op: BinOp, left: Box<Node>, right: Box<Node> },
+    Paren(Box<Node>),
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
