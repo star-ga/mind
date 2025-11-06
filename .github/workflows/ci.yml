@@ -113,3 +113,16 @@ jobs:
       with:
         files: ./cobertura.xml
         fail_ci_if_error: false
+  autodiff_tests:
+    name: Tests (feature: autodiff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Run tests (autodiff feature)
+        run: cargo test --workspace --all-targets --features autodiff --verbose

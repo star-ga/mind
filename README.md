@@ -250,12 +250,14 @@ mind run examples/hello_tensor.mind
 - [x] Core syntax specification
 - [x] Lexer and parser
 - [ ] Type checker with shape inference
-- [ ] Basic autodiff prototype
+- [x] Basic autodiff prototype
 - [ ] MLIR IR generation
 - [ ] Basic tensor operations stdlib
 </details>
 
 _Phase 1 scaffold complete (parses identifiers/integers; type checker stubbed)._ 
+
+Autodiff API is a placeholder (feature-gated). Real gradients arrive in Phase 2–3.
 
 <details>
 <summary><b>Phase 2: Compilation (Q1 2026)</b></summary>
