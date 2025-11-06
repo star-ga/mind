@@ -1,6 +1,7 @@
 <p align="center">
-  ![MIND Logo](assets/logo.svg)
+  <img src="assets/logo.svg" alt="MIND Logo" width="400"/>
 </p>
+
 
 # MIND
 
