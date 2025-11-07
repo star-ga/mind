@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{BinOp, Literal, Module, Node};
+use crate::diagnostics::Diagnostic;
+use crate::types::ValueType;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
@@ -10,15 +12,16 @@ pub enum EvalError {
     DivZero,
     #[error("unknown variable: {0}")]
     UnknownVar(String),
+    #[error("type error")]
+    TypeError(Vec<Diagnostic>),
 }
 
 fn eval_expr(node: &Node, env: &HashMap<String, i64>) -> Result<i64, EvalError> {
     match node {
         Node::Lit(Literal::Int(n)) => Ok(*n),
-        Node::Lit(Literal::Ident(name)) => env
-            .get(name)
-            .copied()
-            .ok_or_else(|| EvalError::UnknownVar(name.clone())),
+        Node::Lit(Literal::Ident(name)) => {
+            env.get(name).copied().ok_or_else(|| EvalError::UnknownVar(name.clone()))
+        }
         Node::Paren(inner) => eval_expr(inner, env),
         Node::Binary { op, left, right } => {
             let l = eval_expr(left, env)?;
@@ -43,7 +46,19 @@ fn eval_expr(node: &Node, env: &HashMap<String, i64>) -> Result<i64, EvalError> 
 pub fn eval_module_with_env(
     m: &Module,
     env: &mut HashMap<String, i64>,
+    src_for_types: Option<&str>,
 ) -> Result<i64, EvalError> {
+    if let Some(src) = src_for_types {
+        let mut tenv: HashMap<String, ValueType> = HashMap::new();
+        for (name, _value) in env.iter() {
+            tenv.insert(name.clone(), ValueType::ScalarI32);
+        }
+        let diags = crate::type_checker::check_module_types(m, src, &tenv);
+        if !diags.is_empty() {
+            return Err(EvalError::TypeError(diags));
+        }
+    }
+
     let mut last = 0_i64;
     for item in &m.items {
         match item {
@@ -62,7 +77,7 @@ pub fn eval_module_with_env(
 
 pub fn eval_module(m: &Module) -> Result<i64, EvalError> {
     let mut env: HashMap<String, i64> = HashMap::new();
-    eval_module_with_env(m, &mut env)
+    eval_module_with_env(m, &mut env, None)
 }
 
 pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {

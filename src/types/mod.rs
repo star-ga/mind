@@ -8,12 +8,23 @@
 //! ```
 
 pub mod infer;
+pub mod value;
+
+pub use value::ValueType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DType { I32, F32, BF16, F16 }
+pub enum DType {
+    I32,
+    F32,
+    BF16,
+    F16,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ShapeDim { Known(usize), Sym(&'static str) }
+pub enum ShapeDim {
+    Known(usize),
+    Sym(&'static str),
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorType {
@@ -22,7 +33,9 @@ pub struct TensorType {
 }
 
 impl TensorType {
-    pub fn new(dtype: DType, shape: Vec<ShapeDim>) -> Self { Self { dtype, shape } }
+    pub fn new(dtype: DType, shape: Vec<ShapeDim>) -> Self {
+        Self { dtype, shape }
+    }
 }
 
 #[cfg(test)]
