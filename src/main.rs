@@ -4,7 +4,7 @@
 //!   mind eval "1 + 2 * 3"
 //!   mind repl
 
-use mind::{parser, eval, diagnostics};
+use mind::{diagnostics, eval, parser};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
@@ -34,10 +34,13 @@ fn main() {
 
 fn run_eval_once(src: &str) {
     match parser::parse_with_diagnostics(src) {
-        Ok(module) => match eval::eval_first_expr(&module) {
-            Ok(result) => println!("{result}"),
-            Err(e) => eprintln!("Evaluation error: {e}"),
-        },
+        Ok(module) => {
+            let mut env = HashMap::new();
+            match eval::eval_module_with_env(&module, &mut env, Some(src)) {
+                Ok(result) => println!("{result}"),
+                Err(e) => report_eval_error(e, src),
+            }
+        }
         Err(diags) => {
             for d in diags {
                 let msg = diagnostics::render(src, &d);
@@ -64,13 +67,17 @@ fn run_repl() {
             break;
         }
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        if matches!(trimmed, ":quit" | ":q" | ":exit") { break; }
+        if trimmed.is_empty() {
+            continue;
+        }
+        if matches!(trimmed, ":quit" | ":q" | ":exit") {
+            break;
+        }
 
         match parser::parse_with_diagnostics(trimmed) {
-            Ok(module) => match eval::eval_module_with_env(&module, &mut env) {
+            Ok(module) => match eval::eval_module_with_env(&module, &mut env, Some(trimmed)) {
                 Ok(result) => println!("{result}"),
-                Err(e) => eprintln!("Evaluation error: {e}"),
+                Err(e) => report_eval_error(e, trimmed),
             },
             Err(diags) => {
                 for d in diags {
@@ -78,6 +85,21 @@ fn run_repl() {
                     eprintln!("{msg}");
                 }
             }
+        }
+    }
+}
+
+fn report_eval_error(err: eval::EvalError, src: &str) {
+    match err {
+        eval::EvalError::TypeError(diags) => {
+            eprintln!("Evaluation error: type error");
+            for diag in diags {
+                let msg = diagnostics::render(src, &diag);
+                eprintln!("{msg}");
+            }
+        }
+        other => {
+            eprintln!("Evaluation error: {other}");
         }
     }
 }
