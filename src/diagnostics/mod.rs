@@ -7,8 +7,8 @@ pub type Span = Range<usize>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Location {
-    pub line: usize,  // 1-based
-    pub col: usize,   // 1-based (Unicode-agnostic; counts bytes)
+    pub line: usize, // 1-based
+    pub col: usize,  // 1-based (Unicode-agnostic; counts bytes)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +25,9 @@ fn offset_to_loc(src: &str, offset: usize) -> Location {
     let mut col = 1usize;
     let mut count = 0usize;
     for ch in src.chars() {
-        if count >= offset { break; }
+        if count >= offset {
+            break;
+        }
         if ch == '\n' {
             line += 1;
             col = 1;
@@ -41,9 +43,13 @@ fn offset_to_loc(src: &str, offset: usize) -> Location {
 fn line_at(src: &str, span: Span) -> (String, usize /*line_start_offset*/) {
     let bytes = src.as_bytes();
     let mut b = span.start;
-    while b > 0 && bytes[b - 1] != b'\n' { b -= 1; }
+    while b > 0 && bytes[b - 1] != b'\n' {
+        b -= 1;
+    }
     let mut e = span.start;
-    while e < bytes.len() && bytes[e] != b'\n' { e += 1; }
+    while e < bytes.len() && bytes[e] != b'\n' {
+        e += 1;
+    }
     (src[b..e].to_string(), b)
 }
 
@@ -55,8 +61,12 @@ pub fn render(src: &str, diag: &Diagnostic) -> String {
     let caret_len = span.end.saturating_sub(span.start).max(1);
 
     let mut carets = String::new();
-    for _ in 0..caret_start { carets.push(' '); }
-    for _ in 0..caret_len { carets.push('^'); }
+    for _ in 0..caret_start {
+        carets.push(' ');
+    }
+    for _ in 0..caret_len {
+        carets.push('^');
+    }
 
     format!(
         "error: {}\n--> line {}, col {}\n{}\n{}",

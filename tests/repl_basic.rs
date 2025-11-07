@@ -1,10 +1,15 @@
-use std::process::{Command, Stdio};
 use std::io::Write;
+use std::process::{Command, Stdio};
+
+#[cfg(not(debug_assertions))]
+#[ignore]
+#[test]
+fn _ignore_in_release_mode() {}
 
 #[test]
 fn repl_accepts_statements_and_expressions() {
     let mut child = Command::new("cargo")
-        .args(&["run", "--quiet", "--"])
+        .args(["run", "--quiet", "--no-default-features", "--"])
         .arg("repl")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

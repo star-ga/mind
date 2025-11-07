@@ -1,9 +1,14 @@
 use std::process::Command;
 
+#[cfg(not(debug_assertions))]
+#[ignore]
+#[test]
+fn _ignore_in_release_mode() {}
+
 #[test]
 fn mind_eval_basic_expr() {
     let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "eval", "2 + 3 * 4"])
+        .args(["run", "--quiet", "--no-default-features", "--", "eval", "2 + 3 * 4"])
         .output()
         .expect("run");
 

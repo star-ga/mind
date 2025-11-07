@@ -20,8 +20,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
 
     let expr = recursive(|expr| {
         let atom = choice((
-            int.clone(),
-            ident.clone(),
+            int,
+            ident,
             just('(')
                 .ignore_then(expr.clone())
                 .then_ignore(just(')'))
@@ -37,11 +37,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     .then(atom.clone()))
                 .repeated(),
             )
-            .foldl(|l, (op, r)| Node::Binary {
-                op,
-                left: Box::new(l),
-                right: Box::new(r),
-            });
+            .foldl(|l, (op, r)| Node::Binary { op, left: Box::new(l), right: Box::new(r) });
 
         product
             .clone()
@@ -51,45 +47,28 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     .then(product))
                 .repeated(),
             )
-            .foldl(|l, (op, r)| Node::Binary {
-                op,
-                left: Box::new(l),
-                right: Box::new(r),
-            })
+            .foldl(|l, (op, r)| Node::Binary { op, left: Box::new(l), right: Box::new(r) })
     });
 
-    let ident_str = ident.clone().map(|n| {
-        if let Node::Lit(Literal::Ident(s)) = n {
-            s
-        } else {
-            unreachable!()
-        }
-    });
+    let ident_str =
+        ident.map(|n| if let Node::Lit(Literal::Ident(s)) = n { s } else { unreachable!() });
 
     let let_stmt = kw("let")
         .padded()
-        .ignore_then(ident_str.clone())
+        .ignore_then(ident_str)
         .then_ignore(just('=').padded())
         .then(expr.clone())
-        .map(|(name, value)| Node::Let {
-            name,
-            value: Box::new(value),
-        });
+        .map(|(name, value)| Node::Let { name, value: Box::new(value) });
 
     let assign_stmt = ident_str
         .then_ignore(just('=').padded())
         .then(expr.clone())
-        .map(|(name, value)| Node::Assign {
-            name,
-            value: Box::new(value),
-        });
+        .map(|(name, value)| Node::Assign { name, value: Box::new(value) });
 
     let stmt = choice((let_stmt, assign_stmt, expr.clone())).padded();
 
-    let stmts = stmt
-        .separated_by(one_of(";\n").repeated().at_least(1))
-        .allow_trailing()
-        .at_least(1);
+    let stmts =
+        stmt.separated_by(one_of(";\n").repeated().at_least(1)).allow_trailing().at_least(1);
 
     stmts.map(|items| Module { items })
 }

@@ -9,12 +9,12 @@ pub enum Token {
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().unwrap())]
     Int(i64),
 
-    #[token("(")] LParen,
-    #[token(")")] RParen,
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
 }
 
 pub fn lex(input: &str) -> Vec<Token> {
-    Token::lexer(input)
-        .filter_map(Result::ok)
-        .collect()
+    Token::lexer(input).filter_map(Result::ok).collect()
 }
