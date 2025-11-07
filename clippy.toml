@@ -1,6 +1,1 @@
-warn = ["clippy::all", "clippy::pedantic"]
-allow = [
-  "clippy::missing_errors_doc",
-  "clippy::missing_panics_doc",
-  "clippy::module_name_repetitions"
-]
+# Clippy configuration intentionally left blank to ensure compatibility with the tooling version.

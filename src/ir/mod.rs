@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_variables, unused_imports)]
 //! MLIR lowering stub (Phase 1).
 //!
 //! Feature `mlir` enables this pure-Rust placeholder with no external deps.

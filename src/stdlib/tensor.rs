@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_variables, unused_imports)]
 use std::marker::PhantomData;
 
 /// Minimal placeholder tensor for Phase 1 (no data buffer).
@@ -17,7 +18,13 @@ impl<T> Tensor<T> {
     pub fn reshape(&self, new_shape: &[usize]) -> Self {
         Self { shape: new_shape.to_vec(), _t: PhantomData }
     }
-    pub fn shape(&self) -> &[usize] { &self.shape }
-    pub fn sum(&self) -> f64 { 0.0 }   // placeholder
-    pub fn mean(&self) -> f64 { 0.0 }  // placeholder
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
+    }
+    pub fn sum(&self) -> f64 {
+        0.0
+    } // placeholder
+    pub fn mean(&self) -> f64 {
+        0.0
+    } // placeholder
 }

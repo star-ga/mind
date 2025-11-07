@@ -25,11 +25,7 @@ pub fn fold(node: &Node) -> Node {
                 };
                 Node::Lit(Literal::Int(v))
             } else {
-                Node::Binary {
-                    op: op.clone(),
-                    left: Box::new(l),
-                    right: Box::new(r),
-                }
+                Node::Binary { op: op.clone(), left: Box::new(l), right: Box::new(r) }
             }
         }
         Node::Paren(inner) => {

@@ -1,3 +1,4 @@
+#![allow(dead_code, unused_variables, unused_imports)]
 //! Minimal autodiff prototype (Phase 1).
 //!
 //! `grad(f)` returns a closure that runs `f()` and also returns a placeholder

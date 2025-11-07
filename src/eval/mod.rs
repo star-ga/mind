@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{BinOp, Literal, Module, Node};
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics;
 use crate::types::ValueType;
 
 #[derive(Debug, thiserror::Error)]
@@ -12,8 +12,8 @@ pub enum EvalError {
     DivZero,
     #[error("unknown variable: {0}")]
     UnknownVar(String),
-    #[error("type error")]
-    TypeError(Vec<Diagnostic>),
+    #[error("type error: {0}")]
+    TypeError(String),
 }
 
 fn eval_expr(node: &Node, env: &HashMap<String, i64>) -> Result<i64, EvalError> {
@@ -55,7 +55,12 @@ pub fn eval_module_with_env(
         }
         let diags = crate::type_checker::check_module_types(m, src, &tenv);
         if !diags.is_empty() {
-            return Err(EvalError::TypeError(diags));
+            let rendered = diags
+                .iter()
+                .map(|diag| diagnostics::render(src, diag))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            return Err(EvalError::TypeError(rendered));
         }
     }
 

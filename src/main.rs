@@ -89,14 +89,11 @@ fn run_repl() {
     }
 }
 
-fn report_eval_error(err: eval::EvalError, src: &str) {
+fn report_eval_error(err: eval::EvalError, _src: &str) {
     match err {
-        eval::EvalError::TypeError(diags) => {
+        eval::EvalError::TypeError(rendered) => {
             eprintln!("Evaluation error: type error");
-            for diag in diags {
-                let msg = diagnostics::render(src, &diag);
-                eprintln!("{msg}");
-            }
+            eprintln!("{rendered}");
         }
         other => {
             eprintln!("Evaluation error: {other}");
