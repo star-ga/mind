@@ -7,7 +7,7 @@
 
 use chumsky::prelude::*;
 
-use crate::ast::{BinOp, Literal, Module, Node};
+use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
 use crate::diagnostics::Diagnostic as PrettyDiagnostic;
 
 fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> {
@@ -53,12 +53,36 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
     let ident_str =
         ident.map(|n| if let Node::Lit(Literal::Ident(s)) = n { s } else { unreachable!() });
 
+    let dtype =
+        choice((just("i32").to("i32".to_string()), just("f32").to("f32".to_string()))).padded();
+
+    let dim = choice((text::int(10).map(|s: String| s), text::ident().map(|s: String| s))).padded();
+
+    let dims = just('(')
+        .ignore_then(dim.clone().separated_by(just(',').padded()).allow_trailing())
+        .then_ignore(just(')'))
+        .padded();
+
+    let type_ann = choice((
+        dtype.clone().map(|_| TypeAnn::ScalarI32),
+        kw("Tensor")
+            .ignore_then(just('['))
+            .ignore_then(dtype.clone())
+            .then_ignore(just(',').padded())
+            .then(dims.clone())
+            .then_ignore(just(']'))
+            .map(|(dt, shape)| TypeAnn::Tensor { dtype: dt, dims: shape }),
+    ))
+    .padded()
+    .boxed();
+
     let let_stmt = kw("let")
         .padded()
-        .ignore_then(ident_str)
+        .ignore_then(ident_str.clone())
+        .then(just(':').ignore_then(type_ann.clone()).or_not().padded())
         .then_ignore(just('=').padded())
         .then(expr.clone())
-        .map(|(name, value)| Node::Let { name, value: Box::new(value) });
+        .map(|((name, ann), value)| Node::Let { name, ann, value: Box::new(value) });
 
     let assign_stmt = ident_str
         .then_ignore(just('=').padded())

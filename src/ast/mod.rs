@@ -13,11 +13,17 @@ pub enum BinOp {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeAnn {
+    ScalarI32,
+    Tensor { dtype: String, dims: Vec<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Lit(Literal),
     Binary { op: BinOp, left: Box<Node>, right: Box<Node> },
     Paren(Box<Node>),
-    Let { name: String, value: Box<Node> },
+    Let { name: String, ann: Option<TypeAnn>, value: Box<Node> },
     Assign { name: String, value: Box<Node> },
 }
 
