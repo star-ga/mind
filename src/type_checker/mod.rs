@@ -140,6 +140,8 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let (ty, _) = infer_expr(inner, env)?;
             Ok((ty, *span))
         }
+        Node::Tuple { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        Node::Call { callee, args, span } => infer_call(callee, args, *span, env),
         Node::Binary { op, left, right, span } => {
             let (lt, _) = infer_expr(left, env)?;
             let (rt, _) = infer_expr(right, env)?;
@@ -202,6 +204,120 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => infer_expr(value, env),
     }
+}
+
+fn infer_call(
+    callee: &str,
+    args: &[Node],
+    span: AstSpan,
+    env: &TypeEnv,
+) -> Result<(ValueType, AstSpan), TypeErrSpan> {
+    match callee {
+        "tensor.zeros" | "tensor.ones" => {
+            if args.len() != 2 {
+                return Err(TypeErrSpan {
+                    msg: format!("`{callee}` expects (dtype, shape) arguments"),
+                    span,
+                });
+            }
+            let dtype = infer_dtype_arg(&args[0])?;
+            let shape = infer_shape_arg(&args[1])?;
+            Ok((ValueType::Tensor(TensorType::new(dtype, shape)), span))
+        }
+        "tensor.shape" => {
+            if args.len() != 1 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.shape` expects a single tensor argument".to_string(),
+                    span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(&args[0], env)?;
+            match arg_ty {
+                ValueType::Tensor(_) => Ok((ValueType::ScalarI32, span)),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.shape` requires a tensor argument".to_string(),
+                    span,
+                }),
+            }
+        }
+        "tensor.dtype" => {
+            if args.len() != 1 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.dtype` expects a single tensor argument".to_string(),
+                    span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(&args[0], env)?;
+            match arg_ty {
+                ValueType::Tensor(_) => Ok((ValueType::ScalarI32, span)),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.dtype` requires a tensor argument".to_string(),
+                    span,
+                }),
+            }
+        }
+        "tensor.print" => {
+            if args.len() != 1 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.print` expects a single argument".to_string(),
+                    span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(&args[0], env)?;
+            match arg_ty {
+                ValueType::Tensor(_) | ValueType::ScalarI32 => Ok((arg_ty, span)),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.print` requires a tensor or scalar argument".to_string(),
+                    span,
+                }),
+            }
+        }
+        _ => Err(TypeErrSpan { msg: format!("unsupported call to `{callee}`"), span }),
+    }
+}
+
+fn infer_dtype_arg(node: &Node) -> Result<DType, TypeErrSpan> {
+    match node {
+        Node::Lit(Literal::Ident(name), span) => DType::from_str(name)
+            .ok_or(TypeErrSpan { msg: format!("unknown dtype `{name}`"), span: *span }),
+        _ => Err(TypeErrSpan { msg: "expected dtype identifier".to_string(), span: node.span() }),
+    }
+}
+
+fn infer_shape_arg(node: &Node) -> Result<Vec<ShapeDim>, TypeErrSpan> {
+    match node {
+        Node::Tuple { .. } | Node::Paren(..) | Node::Lit(..) => infer_shape_node(node),
+        _ => infer_shape_node(node),
+    }
+}
+
+fn infer_shape_node(node: &Node) -> Result<Vec<ShapeDim>, TypeErrSpan> {
+    match node {
+        Node::Tuple { elements, .. } => {
+            let mut dims = Vec::new();
+            for el in elements {
+                dims.extend(infer_shape_node(el)?);
+            }
+            Ok(dims)
+        }
+        Node::Paren(inner, _) => infer_shape_node(inner),
+        Node::Lit(Literal::Int(n), span) => {
+            if *n < 0 {
+                Err(TypeErrSpan {
+                    msg: "shape dimensions must be non-negative".to_string(),
+                    span: *span,
+                })
+            } else {
+                Ok(vec![ShapeDim::Known(*n as usize)])
+            }
+        }
+        Node::Lit(Literal::Ident(name), span) => Ok(vec![ShapeDim::Sym(leak_symbol(name))]),
+        _ => Err(TypeErrSpan { msg: "unsupported shape literal".to_string(), span: node.span() }),
+    }
+}
+
+fn leak_symbol(name: &str) -> &'static str {
+    Box::leak(name.to_string().into_boxed_str())
 }
 
 fn dtype_from_str(s: &str) -> Option<DType> {

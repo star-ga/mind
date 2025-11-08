@@ -214,6 +214,20 @@ cargo run --quiet -- eval 'let a: Tensor[f32,(2,1,3)] = 0; let b: Tensor[f32,(1,
 # → Tensor[F32,(2,4,3)] fill=0
 ```
 
+### Tensor intrinsics (Phase 4B)
+
+```mind
+let z = tensor.zeros(f32, (2,3));
+let o = tensor.ones(f32, (2,3));
+tensor.print(o);
+# → Tensor[F32,(2,3)] fill=1
+```
+
+Additional helpers:
+
+- `tensor.shape(t)` → returns a preview tuple such as `(2,3)`
+- `tensor.dtype(t)` → returns the dtype string such as `f32`
+
 **Quick install via Docker:**
 ```bash
 docker pull mindlang/mind:latest
