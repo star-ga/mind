@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::ast::{BinOp, Literal, Module, Node};
-use crate::diagnostics;
 use crate::types::ValueType;
 
 #[derive(Debug, thiserror::Error)]
@@ -55,12 +54,8 @@ pub fn eval_module_with_env(
         }
         let diags = crate::type_checker::check_module_types(m, src, &tenv);
         if !diags.is_empty() {
-            let rendered = diags
-                .iter()
-                .map(|diag| diagnostics::render(src, diag))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            return Err(EvalError::TypeError(rendered));
+            let msg = diags.into_iter().map(|diag| diag.message).collect::<Vec<_>>().join("; ");
+            return Err(EvalError::TypeError(msg));
         }
     }
 
