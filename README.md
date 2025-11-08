@@ -198,6 +198,22 @@ More details: [/benchmarks/resnet.md](benchmarks/resnet.md)
 - **Build fails?** Ensure LLVM 15+ is in `PATH`
 - **Rust version mismatch?** Run `rustup update stable`
 
+### Tensor previews (Phase 4A)
+
+MIND now evaluates tensor expressions as lightweight previews (dtype + shape + optional fill), without materializing data buffers.
+
+```bash
+cargo run --quiet -- eval 'let x: Tensor[f32,(2,3)] = 0; x + 1'
+# → Tensor[F32,(2,3)] fill=1
+```
+
+Broadcasting support previews combined shapes:
+
+```bash
+cargo run --quiet -- eval 'let a: Tensor[f32,(2,1,3)] = 0; let b: Tensor[f32,(1,4,3)] = 0; a + b'
+# → Tensor[F32,(2,4,3)] fill=0
+```
+
 **Quick install via Docker:**
 ```bash
 docker pull mindlang/mind:latest
