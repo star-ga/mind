@@ -278,6 +278,8 @@ let = 2
 
 ```
 
+**Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
+
 ### Hello, Tensor
 ```mind
 import std.tensor;

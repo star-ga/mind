@@ -17,12 +17,12 @@ pub enum EvalError {
 
 fn eval_expr(node: &Node, env: &HashMap<String, i64>) -> Result<i64, EvalError> {
     match node {
-        Node::Lit(Literal::Int(n)) => Ok(*n),
-        Node::Lit(Literal::Ident(name)) => {
+        Node::Lit(Literal::Int(n), _) => Ok(*n),
+        Node::Lit(Literal::Ident(name), _) => {
             env.get(name).copied().ok_or_else(|| EvalError::UnknownVar(name.clone()))
         }
-        Node::Paren(inner) => eval_expr(inner, env),
-        Node::Binary { op, left, right } => {
+        Node::Paren(inner, _) => eval_expr(inner, env),
+        Node::Binary { op, left, right, .. } => {
             let l = eval_expr(left, env)?;
             let r = eval_expr(right, env)?;
             Ok(match op {
@@ -62,7 +62,7 @@ pub fn eval_module_with_env(
     let mut last = 0_i64;
     for item in &m.items {
         match item {
-            Node::Let { name, value, .. } | Node::Assign { name, value } => {
+            Node::Let { name, value, .. } | Node::Assign { name, value, .. } => {
                 let v = eval_expr(value, env)?;
                 env.insert(name.clone(), v);
                 last = v;
