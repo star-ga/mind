@@ -247,7 +247,11 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
                     Some(vt_ann) => {
                         match infer_expr(value, &tenv) {
                             Ok((vt, _)) => {
-                                if vt_ann != vt {
+                                let allow_scalar_fill = matches!(
+                                    (&vt_ann, &vt),
+                                    (ValueType::Tensor(_), ValueType::ScalarI32)
+                                );
+                                if vt_ann != vt && !allow_scalar_fill {
                                     errs.push(diag_from_span(
                                         src,
                                         format!(

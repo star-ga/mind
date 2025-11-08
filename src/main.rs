@@ -36,8 +36,8 @@ fn run_eval_once(src: &str) {
     match parser::parse_with_diagnostics(src) {
         Ok(module) => {
             let mut env = HashMap::new();
-            match eval::eval_module_with_env(&module, &mut env, Some(src)) {
-                Ok(result) => println!("{result}"),
+            match eval::eval_module_value_with_env(&module, &mut env, Some(src)) {
+                Ok(result) => println!("{}", eval::format_value_human(&result)),
                 Err(e) => report_eval_error(e, src, &module),
             }
         }
@@ -75,10 +75,12 @@ fn run_repl() {
         }
 
         match parser::parse_with_diagnostics(trimmed) {
-            Ok(module) => match eval::eval_module_with_env(&module, &mut env, Some(trimmed)) {
-                Ok(result) => println!("{result}"),
-                Err(e) => report_eval_error(e, trimmed, &module),
-            },
+            Ok(module) => {
+                match eval::eval_module_value_with_env(&module, &mut env, Some(trimmed)) {
+                    Ok(result) => println!("{}", eval::format_value_human(&result)),
+                    Err(e) => report_eval_error(e, trimmed, &module),
+                }
+            }
             Err(diags) => {
                 for d in diags {
                     let msg = diagnostics::render(trimmed, &d);

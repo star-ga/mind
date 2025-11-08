@@ -15,6 +15,5 @@ fn tensor_ann_blocks_scalar_ops() {
     let m = parser::parse(src).unwrap();
     let mut env = std::collections::HashMap::new();
     let err = eval::eval_module_with_env(&m, &mut env, Some(src)).unwrap_err();
-    let s = format!("{err}");
-    assert!(s.to_lowercase().contains("type"), "got: {s}");
+    assert!(matches!(err, eval::EvalError::Unsupported), "got: {err}");
 }
