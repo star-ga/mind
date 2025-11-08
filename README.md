@@ -239,6 +239,15 @@ cargo run --quiet -- eval "let x = 2; x = x + 5; x * 3"
 - Binary ops require both sides to be scalar
 - Type errors are reported before execution
 
+### Typed let (Phase 3B)
+```bash
+cargo run --quiet -- eval 'let n: i32 = 3; n + 1'
+# → 4
+
+cargo run --quiet -- eval 'let x: Tensor[f32,(B,3,224,224)] = 0; x + 1'
+# → type error (tensor vs scalar)
+```
+
 ### REPL (interactive)
 
 ```bash

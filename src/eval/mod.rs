@@ -62,7 +62,7 @@ pub fn eval_module_with_env(
     let mut last = 0_i64;
     for item in &m.items {
         match item {
-            Node::Let { name, value } | Node::Assign { name, value } => {
+            Node::Let { name, value, .. } | Node::Assign { name, value } => {
                 let v = eval_expr(value, env)?;
                 env.insert(name.clone(), v);
                 last = v;
