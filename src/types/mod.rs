@@ -10,6 +10,7 @@
 pub mod infer;
 pub mod value;
 
+pub use infer::*;
 pub use value::ValueType;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
