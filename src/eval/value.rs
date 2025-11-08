@@ -21,6 +21,8 @@ impl TensorVal {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
+    Str(String),
+    Tuple(Vec<Value>),
     Tensor(TensorVal),
 }
 
@@ -41,6 +43,18 @@ impl Value {
 pub fn format_value_human(v: &Value) -> String {
     match v {
         Value::Int(n) => format!("{n}"),
+        Value::Str(s) => s.clone(),
+        Value::Tuple(items) => {
+            let mut out = String::from("(");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&format_value_human(item));
+            }
+            out.push(')');
+            out
+        }
         Value::Tensor(t) => {
             let mut shape = String::from("(");
             for (i, d) in t.shape.iter().enumerate() {

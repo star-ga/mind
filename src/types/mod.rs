@@ -21,6 +21,27 @@ pub enum DType {
     F16,
 }
 
+impl DType {
+    pub fn from_str(name: &str) -> Option<Self> {
+        match name.to_ascii_lowercase().as_str() {
+            "i32" => Some(DType::I32),
+            "f32" => Some(DType::F32),
+            "bf16" => Some(DType::BF16),
+            "f16" => Some(DType::F16),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DType::I32 => "i32",
+            DType::F32 => "f32",
+            DType::BF16 => "bf16",
+            DType::F16 => "f16",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShapeDim {
     Known(usize),
