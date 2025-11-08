@@ -235,9 +235,9 @@ cargo run --quiet -- eval "let x = 2; x = x + 5; x * 3"
 
 **Type checking (Phase 3A, scalars):**
 - Int literals → `Scalar(i32)`
-- Variables inherit scalar type from assigned value or surrounding environment
-- Binary ops require scalar operands
-- Type errors are reported before execution with caret diagnostics
+- Variables inherit scalar type from assigned values
+- Binary ops require both sides to be scalar
+- Type errors are reported before execution
 
 ### REPL (interactive)
 
