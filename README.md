@@ -248,6 +248,11 @@ cargo run --quiet -- eval 'let x: Tensor[f32,(B,3,224,224)] = 0; x + 1'
 # → type error (tensor vs scalar)
 ```
 
+**Tensor typing & broadcasting (Phase 3C, type-check only)**
+- Elementwise `Tensor ⊕ Tensor` and `Tensor ⊕ Scalar` follow NumPy-style broadcasting.
+- Dtypes must match (`f32 + f32`); `i32` scalar can be promoted when adding to `Tensor[f32,...]`.
+- Mismatched shapes or dtypes produce pretty compile-time diagnostics.
+
 ### REPL (interactive)
 
 ```bash
