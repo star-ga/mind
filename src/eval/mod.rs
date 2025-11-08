@@ -7,6 +7,8 @@ pub mod value;
 
 pub use value::{format_value_human, TensorVal, Value};
 
+mod stdlib;
+
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
     #[error("unsupported operation")]
@@ -50,6 +52,7 @@ pub fn eval_module_value_with_env(
                         let fill = match rhs {
                             Value::Int(n) => Some(n as f64),
                             Value::Tensor(ref t) => t.fill,
+                            _ => None,
                         };
                         Value::Tensor(TensorVal::new(dtype, shape, fill))
                     }
@@ -90,7 +93,7 @@ pub fn eval_module_with_env(
 ) -> Result<i64, EvalError> {
     match eval_module_value_with_env(m, env, src_for_types)? {
         Value::Int(n) => Ok(n),
-        Value::Tensor(_) => Err(EvalError::Unsupported),
+        _ => Err(EvalError::Unsupported),
     }
 }
 
@@ -103,13 +106,24 @@ pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {
     eval_module(m)
 }
 
-fn eval_value_expr(node: &Node, env: &HashMap<String, Value>) -> Result<Value, EvalError> {
+pub(crate) fn eval_value_expr(
+    node: &Node,
+    env: &HashMap<String, Value>,
+) -> Result<Value, EvalError> {
     match node {
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
         Node::Lit(Literal::Ident(name), _) => {
             env.get(name).cloned().ok_or_else(|| EvalError::UnknownVar(name.clone()))
         }
         Node::Paren(inner, _) => eval_value_expr(inner, env),
+        Node::Tuple { elements, .. } => {
+            let mut items = Vec::with_capacity(elements.len());
+            for item in elements {
+                items.push(eval_value_expr(item, env)?);
+            }
+            Ok(Value::Tuple(items))
+        }
+        Node::Call { callee, args, .. } => stdlib::tensor::dispatch(callee, args, env),
         Node::Binary { op, left, right, .. } => {
             let lv = eval_value_expr(left, env)?;
             let rv = eval_value_expr(right, env)?;
@@ -125,6 +139,7 @@ fn apply_binary(op: BinOp, left: Value, right: Value) -> Result<Value, EvalError
         (Value::Tensor(t), Value::Int(s)) => apply_tensor_scalar(op, t, s as f64, true),
         (Value::Int(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s as f64, false),
         (Value::Tensor(a), Value::Tensor(b)) => apply_tensor_tensor(op, a, b),
+        _ => Err(EvalError::Unsupported),
     }
 }
 
@@ -238,7 +253,7 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
 }
 
 fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Result<(DType, Vec<ShapeDim>), EvalError> {
-    let dtype = str_to_dtype(dtype).ok_or(EvalError::Unsupported)?;
+    let dtype = DType::from_str(dtype).ok_or(EvalError::Unsupported)?;
     let mut shape = Vec::with_capacity(dims.len());
     for dim in dims {
         if let Ok(n) = dim.parse::<usize>() {
@@ -249,16 +264,6 @@ fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Result<(DType, Vec<ShapeDim
         }
     }
     Ok((dtype, shape))
-}
-
-fn str_to_dtype(s: &str) -> Option<DType> {
-    match s.to_ascii_lowercase().as_str() {
-        "i32" => Some(DType::I32),
-        "f32" => Some(DType::F32),
-        "bf16" => Some(DType::BF16),
-        "f16" => Some(DType::F16),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

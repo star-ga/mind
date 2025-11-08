@@ -55,6 +55,8 @@ pub enum Node {
     Lit(Literal, Span),
     Binary { op: BinOp, left: Box<Node>, right: Box<Node>, span: Span },
     Paren(Box<Node>, Span),
+    Tuple { elements: Vec<Node>, span: Span },
+    Call { callee: String, args: Vec<Node>, span: Span },
     Let { name: String, ann: Option<TypeAnn>, value: Box<Node>, span: Span },
     Assign { name: String, value: Box<Node>, span: Span },
 }
@@ -65,6 +67,8 @@ impl Node {
             Node::Lit(_, span)
             | Node::Binary { span, .. }
             | Node::Paren(_, span)
+            | Node::Tuple { span, .. }
+            | Node::Call { span, .. }
             | Node::Let { span, .. }
             | Node::Assign { span, .. } => *span,
         }
