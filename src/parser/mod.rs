@@ -7,7 +7,7 @@
 
 use chumsky::prelude::*;
 
-use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
+use crate::ast::{BinOp, Literal, Module, Node, Span, TypeAnn};
 use crate::diagnostics::Diagnostic as PrettyDiagnostic;
 
 fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> {
@@ -15,17 +15,25 @@ fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> 
 }
 
 pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
-    let int = text::int(10).map(|s: String| Node::Lit(Literal::Int(s.parse().unwrap())));
-    let ident = text::ident().map(|s: String| Node::Lit(Literal::Ident(s.clone())));
+    let int = text::int(10).map_with_span(|s: String, sp: std::ops::Range<usize>| {
+        let span = Span::new(sp.start, sp.end);
+        Node::Lit(Literal::Int(s.parse().unwrap()), span)
+    });
+    let ident_expr = text::ident().map_with_span(|s: String, sp: std::ops::Range<usize>| {
+        let span = Span::new(sp.start, sp.end);
+        Node::Lit(Literal::Ident(s), span)
+    });
 
     let expr = recursive(|expr| {
         let atom = choice((
-            int,
-            ident,
-            just('(')
-                .ignore_then(expr.clone())
-                .then_ignore(just(')'))
-                .map(|e| Node::Paren(Box::new(e))),
+            int.clone(),
+            ident_expr.clone(),
+            just('(').ignore_then(expr.clone()).then_ignore(just(')')).map_with_span(
+                |e, sp: std::ops::Range<usize>| {
+                    let span = Span::new(sp.start, sp.end);
+                    Node::Paren(Box::new(e), span)
+                },
+            ),
         ))
         .padded();
 
@@ -37,7 +45,10 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     .then(atom.clone()))
                 .repeated(),
             )
-            .foldl(|l, (op, r)| Node::Binary { op, left: Box::new(l), right: Box::new(r) });
+            .foldl(|l, (op, r)| {
+                let span = Span::new(l.span_start(), r.span_end());
+                Node::Binary { op, left: Box::new(l), right: Box::new(r), span }
+            });
 
         product
             .clone()
@@ -47,11 +58,13 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     .then(product))
                 .repeated(),
             )
-            .foldl(|l, (op, r)| Node::Binary { op, left: Box::new(l), right: Box::new(r) })
+            .foldl(|l, (op, r)| {
+                let span = Span::new(l.span_start(), r.span_end());
+                Node::Binary { op, left: Box::new(l), right: Box::new(r), span }
+            })
     });
 
-    let ident_str =
-        ident.map(|n| if let Node::Lit(Literal::Ident(s)) = n { s } else { unreachable!() });
+    let ident_str = text::ident::<char, Simple<char>>().map(|s: String| s);
 
     let dtype =
         choice((just("i32").to("i32".to_string()), just("f32").to("f32".to_string()))).padded();
@@ -78,16 +91,26 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
 
     let let_stmt = kw("let")
         .padded()
-        .ignore_then(ident_str.clone())
+        .ignore_then(text::ident().map_with_span(|s: String, sp: std::ops::Range<usize>| {
+            let span = Span::new(sp.start, sp.end);
+            (s, span)
+        }))
         .then(just(':').ignore_then(type_ann.clone()).or_not().padded())
         .then_ignore(just('=').padded())
         .then(expr.clone())
-        .map(|((name, ann), value)| Node::Let { name, ann, value: Box::new(value) });
+        .map_with_span(|(((name, _name_span), ann), value), sp: std::ops::Range<usize>| {
+            let span = Span::new(sp.start, sp.end);
+            Node::Let { name, ann, value: Box::new(value), span }
+        });
 
-    let assign_stmt = ident_str
+    let assign_stmt = text::ident()
+        .map_with_span(|s: String, _| s)
         .then_ignore(just('=').padded())
         .then(expr.clone())
-        .map(|(name, value)| Node::Assign { name, value: Box::new(value) });
+        .map_with_span(|(name, value), sp: std::ops::Range<usize>| {
+            let span = Span::new(sp.start, sp.end);
+            Node::Assign { name, value: Box::new(value), span }
+        });
 
     let stmt = choice((let_stmt, assign_stmt, expr.clone())).padded();
 

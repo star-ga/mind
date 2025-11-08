@@ -38,7 +38,7 @@ fn run_eval_once(src: &str) {
             let mut env = HashMap::new();
             match eval::eval_module_with_env(&module, &mut env, Some(src)) {
                 Ok(result) => println!("{result}"),
-                Err(e) => report_eval_error(e, src),
+                Err(e) => report_eval_error(e, src, &module),
             }
         }
         Err(diags) => {
@@ -77,7 +77,7 @@ fn run_repl() {
         match parser::parse_with_diagnostics(trimmed) {
             Ok(module) => match eval::eval_module_with_env(&module, &mut env, Some(trimmed)) {
                 Ok(result) => println!("{result}"),
-                Err(e) => report_eval_error(e, trimmed),
+                Err(e) => report_eval_error(e, trimmed, &module),
             },
             Err(diags) => {
                 for d in diags {
@@ -89,11 +89,15 @@ fn run_repl() {
     }
 }
 
-fn report_eval_error(err: eval::EvalError, _src: &str) {
+fn report_eval_error(err: eval::EvalError, src: &str, module: &mind::ast::Module) {
     match err {
         eval::EvalError::TypeError(rendered) => {
             eprintln!("Evaluation error: type error");
             eprintln!("{rendered}");
+            let diags = mind::type_checker::check_module_types(module, src, &HashMap::new());
+            for d in diags {
+                eprintln!("{}", mind::diagnostics::render(src, &d));
+            }
         }
         other => {
             eprintln!("Evaluation error: {other}");

@@ -1,17 +1,13 @@
 use std::collections::HashMap;
 
-use crate::ast::{BinOp, Literal, Module, Node};
-use crate::diagnostics::{Diagnostic as Pretty, Location, Span};
+use crate::ast::{BinOp, Literal, Module, Node, Span as AstSpan};
+use crate::diagnostics::{Diagnostic as Pretty, Location};
 use crate::types::{DType, ShapeDim, TensorType, ValueType};
 
-#[derive(Debug, thiserror::Error)]
-pub enum TypeError {
-    #[error("unknown identifier `{0}`")]
-    UnknownIdent(String),
-    #[error("incompatible types in binary operation")]
-    BadBinop,
-    #[error("{0}")]
-    Msg(String),
+#[derive(Debug)]
+pub struct TypeErrSpan {
+    pub msg: String,
+    pub span: AstSpan,
 }
 
 pub type TypeEnv = HashMap<String, ValueType>;
@@ -131,46 +127,58 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
     Some(out)
 }
 
-fn infer_expr(node: &Node, env: &TypeEnv) -> Result<ValueType, TypeError> {
+fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
     match node {
-        Node::Lit(Literal::Int(_)) => Ok(ValueType::ScalarI32),
-        Node::Lit(Literal::Ident(name)) => {
-            env.get(name).cloned().ok_or_else(|| TypeError::UnknownIdent(name.clone()))
+        Node::Lit(Literal::Int(_), span) => Ok((ValueType::ScalarI32, *span)),
+        Node::Lit(Literal::Ident(name), span) => {
+            env.get(name).cloned().map(|t| (t, *span)).ok_or_else(|| TypeErrSpan {
+                msg: format!("unknown identifier `{name}`"),
+                span: *span,
+            })
         }
-        Node::Paren(inner) => infer_expr(inner, env),
-        Node::Binary { op, left, right } => {
-            let lt = infer_expr(left, env)?;
-            let rt = infer_expr(right, env)?;
+        Node::Paren(inner, span) => {
+            let (ty, _) = infer_expr(inner, env)?;
+            Ok((ty, *span))
+        }
+        Node::Binary { op, left, right, span } => {
+            let (lt, _) = infer_expr(left, env)?;
+            let (rt, _) = infer_expr(right, env)?;
             if matches!((&lt, &rt), (ValueType::ScalarI32, ValueType::ScalarI32)) {
-                return Ok(ValueType::ScalarI32);
+                return Ok((ValueType::ScalarI32, *span));
             }
 
             match (&lt, &rt) {
                 (ValueType::Tensor(tl), ValueType::Tensor(tr)) => {
                     if let Some(dtype) = combine_dtypes(&lt, &rt) {
                         if let Some(shape) = broadcast_shapes(&tl.shape, &tr.shape) {
-                            Ok(ValueType::Tensor(TensorType::new(dtype, shape)))
+                            Ok((ValueType::Tensor(TensorType::new(dtype, shape)), *span))
                         } else {
-                            Err(TypeError::Msg(format!(
-                                "cannot broadcast shapes {} and {} for `{}`",
-                                format_shape(&tl.shape),
-                                format_shape(&tr.shape),
-                                binop_display(op)
-                            )))
+                            Err(TypeErrSpan {
+                                msg: format!(
+                                    "cannot broadcast shapes {} and {} for `{}`",
+                                    format_shape(&tl.shape),
+                                    format_shape(&tr.shape),
+                                    binop_display(op)
+                                ),
+                                span: *span,
+                            })
                         }
                     } else {
-                        Err(TypeError::Msg(format!(
-                            "dtype mismatch for `{}`: left {} vs right {}",
-                            binop_display(op),
-                            describe_tensor(tl),
-                            describe_tensor(tr)
-                        )))
+                        Err(TypeErrSpan {
+                            msg: format!(
+                                "dtype mismatch for `{}`: left {} vs right {}",
+                                binop_display(op),
+                                describe_tensor(tl),
+                                describe_tensor(tr)
+                            ),
+                            span: *span,
+                        })
                     }
                 }
                 (ValueType::Tensor(t), ValueType::ScalarI32)
                 | (ValueType::ScalarI32, ValueType::Tensor(t)) => {
                     if let Some(dtype) = combine_dtypes(&lt, &rt) {
-                        Ok(ValueType::Tensor(TensorType::new(dtype, t.shape.clone())))
+                        Ok((ValueType::Tensor(TensorType::new(dtype, t.shape.clone())), *span))
                     } else {
                         let dtype_str = dtype_name(&t.dtype);
                         let message = match promote_scalar_to(t.dtype.clone()) {
@@ -183,10 +191,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<ValueType, TypeError> {
                                 binop_display(op), dtype_str
                             ),
                         };
-                        Err(TypeError::Msg(message))
+                        Err(TypeErrSpan { msg: message, span: *span })
                     }
                 }
-                _ => Err(TypeError::BadBinop),
+                _ => Err(TypeErrSpan {
+                    msg: "incompatible types in binary operation".to_string(),
+                    span: *span,
+                }),
             }
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => infer_expr(value, env),
@@ -231,64 +242,67 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
 
     for item in &module.items {
         match item {
-            Node::Let { name, ann, value } => match ann {
+            Node::Let { name, ann, value, span } => match ann {
                 Some(annotation) => match valuetype_from_ann(annotation) {
                     Some(vt_ann) => {
                         match infer_expr(value, &tenv) {
-                            Ok(vt) => {
+                            Ok((vt, _)) => {
                                 if vt_ann != vt {
-                                    errs.push(pretty_whole_input(
+                                    errs.push(diag_from_span(
                                         src,
-                                        TypeError::Msg(format!(
+                                        format!(
                                             "type mismatch for `{}`: annotation {} vs inferred {}",
                                             name,
                                             describe_value_type(&vt_ann),
                                             describe_value_type(&vt)
-                                        )),
+                                        ),
+                                        value.span(),
                                     ));
                                 }
                             }
-                            Err(e) => errs.push(pretty_whole_input(src, e)),
+                            Err(e) => errs.push(diag_from_type_err(src, e)),
                         }
                         tenv.insert(name.clone(), vt_ann);
                     }
-                    None => errs.push(pretty_whole_input(
+                    None => errs.push(diag_from_span(
                         src,
-                        TypeError::Msg(format!("unsupported annotation for `{}`", name)),
+                        format!("unsupported annotation for `{}`", name),
+                        *span,
                     )),
                 },
                 None => match infer_expr(value, &tenv) {
-                    Ok(vt) => {
+                    Ok((vt, _)) => {
                         tenv.insert(name.clone(), vt);
                     }
-                    Err(e) => errs.push(pretty_whole_input(src, e)),
+                    Err(e) => errs.push(diag_from_type_err(src, e)),
                 },
             },
-            Node::Assign { name, value } => {
+            Node::Assign { name, value, .. } => {
                 let rhs = infer_expr(value, &tenv);
                 match (tenv.get(name).cloned(), rhs) {
-                    (Some(vt_lhs), Ok(vt_rhs)) => {
+                    (Some(vt_lhs), Ok((vt_rhs, _))) => {
                         if vt_lhs != vt_rhs {
-                            errs.push(pretty_whole_input(
+                            errs.push(diag_from_span(
                                 src,
-                                TypeError::Msg(format!(
+                                format!(
                                     "cannot assign `{}`: expected {} but found {}",
                                     name,
                                     describe_value_type(&vt_lhs),
                                     describe_value_type(&vt_rhs)
-                                )),
+                                ),
+                                value.span(),
                             ));
                         }
                     }
-                    (None, Ok(vt_rhs)) => {
+                    (None, Ok((vt_rhs, _))) => {
                         tenv.insert(name.clone(), vt_rhs);
                     }
-                    (_, Err(e)) => errs.push(pretty_whole_input(src, e)),
+                    (_, Err(e)) => errs.push(diag_from_type_err(src, e)),
                 }
             }
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
-                    errs.push(pretty_whole_input(src, e));
+                    errs.push(diag_from_type_err(src, e));
                 }
             }
         }
@@ -297,8 +311,32 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
     errs
 }
 
-fn pretty_whole_input(src: &str, err: TypeError) -> Pretty {
-    let span: Span = 0..src.len();
-    let start = Location { line: 1, col: 1 };
-    Pretty { message: err.to_string(), span, start: start.clone(), end: start }
+fn location_at(src: &str, offset: usize) -> Location {
+    let mut line = 1usize;
+    let mut col = 1usize;
+    let mut count = 0usize;
+    for ch in src.chars() {
+        if count >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+        count += ch.len_utf8();
+    }
+    Location { line, col }
+}
+
+fn diag_from_span(src: &str, msg: String, span: AstSpan) -> Pretty {
+    let range = span.start()..span.end();
+    let start = location_at(src, span.start());
+    let end = location_at(src, span.end());
+    Pretty { message: msg, span: range, start, end }
+}
+
+fn diag_from_type_err(src: &str, err: TypeErrSpan) -> Pretty {
+    diag_from_span(src, err.msg, err.span)
 }
