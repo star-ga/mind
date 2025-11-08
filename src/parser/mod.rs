@@ -23,19 +23,45 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         let span = Span::new(sp.start, sp.end);
         Node::Lit(Literal::Ident(s), span)
     });
+    let dotted_ident = text::ident::<char, Simple<char>>()
+        .then(just('.').ignore_then(text::ident()).repeated())
+        .map(|(first, rest)| {
+            let mut name = first;
+            for part in rest {
+                name.push('.');
+                name.push_str(&part);
+            }
+            name
+        });
 
     let expr = recursive(|expr| {
-        let atom = choice((
-            int.clone(),
-            ident_expr.clone(),
-            just('(').ignore_then(expr.clone()).then_ignore(just(')')).map_with_span(
-                |e, sp: std::ops::Range<usize>| {
-                    let span = Span::new(sp.start, sp.end);
-                    Node::Paren(Box::new(e), span)
-                },
-            ),
-        ))
-        .padded();
+        let tuple_or_paren = just('(')
+            .ignore_then(expr.clone().separated_by(just(',').padded()).allow_trailing())
+            .then_ignore(just(')').padded())
+            .map_with_span(|items, sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                if items.len() == 1 {
+                    Node::Paren(Box::new(items.into_iter().next().unwrap()), span)
+                } else {
+                    Node::Tuple { elements: items, span }
+                }
+            });
+
+        let call = dotted_ident
+            .clone()
+            .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
+            .then(
+                just('(')
+                    .padded()
+                    .ignore_then(expr.clone().separated_by(just(',').padded()).allow_trailing())
+                    .then_ignore(just(')').padded()),
+            )
+            .map_with_span(|((callee, _callee_span), args), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::Call { callee, args, span }
+            });
+
+        let atom = choice((call, int.clone(), ident_expr.clone(), tuple_or_paren)).padded();
 
         let product = atom
             .clone()
@@ -63,8 +89,6 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::Binary { op, left: Box::new(l), right: Box::new(r), span }
             })
     });
-
-    let ident_str = text::ident::<char, Simple<char>>().map(|s: String| s);
 
     let dtype =
         choice((just("i32").to("i32".to_string()), just("f32").to("f32".to_string()))).padded();
