@@ -69,6 +69,8 @@ pub enum EvalError {
     UnknownVar(String),
     #[error("type error: {0}")]
     TypeError(String),
+    #[error("out of bounds")]
+    OutOfBounds,
 }
 
 pub fn eval_module_value_with_env(
@@ -256,6 +258,26 @@ pub(crate) fn eval_value_expr(
                 Value::Tensor(t) => {
                     let axes_ref = axes.as_ref().map(|v| v.as_slice());
                     let (result, _) = stdlib::tensor::transpose_tensor_preview(&t, axes_ref)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallIndex { x, axis, i, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::index_tensor_preview(&t, *axis, *i)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallSlice { x, axis, start, end, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::slice_tensor_preview(&t, *axis, *start, *end)?;
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(EvalError::Unsupported),

@@ -198,6 +198,34 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallTranspose { x: Box::new(x), axes: maybe_axes, span }
             });
 
+        let tensor_index_call = just("tensor.index")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(kw("i").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(')').padded())
+            .map_with_span(|((x, axis), i), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallIndex { x: Box::new(x), axis, i, span }
+            });
+
+        let tensor_slice_call = just("tensor.slice")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(')').padded())
+            .map_with_span(|(((x, axis), start), end), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallSlice { x: Box::new(x), axis, start, end, span }
+            });
+
         let tensor_dot_call = just("tensor.dot")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
@@ -242,6 +270,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             tensor_expand_dims_call,
             tensor_squeeze_call,
             tensor_transpose_call,
+            tensor_index_call,
+            tensor_slice_call,
             tensor_dot_call,
             tensor_matmul_call,
             call,
