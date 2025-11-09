@@ -396,6 +396,23 @@ cargo run --quiet -- eval "
 # → grad{ X: Tensor[F32,(5,10)] … }
 ```
 
+### Phase 5A — IR Lowering (MIND → IR)
+MIND now lowers typed AST to a minimal IR with Const, BinOp, Sum, Reshape, and Output.
+You can inspect the IR with:
+
+```bash
+cargo run -- eval '1 + 2 * 3'
+# --- Lowered IR ---
+# ConstI64(ValueId(0), 1)
+# ConstI64(ValueId(1), 2)
+# ConstI64(ValueId(2), 3)
+# BinOp { dst: ValueId(3), op: Mul, lhs: ValueId(1), rhs: ValueId(2) }
+# BinOp { dst: ValueId(4), op: Add, lhs: ValueId(0), rhs: ValueId(3) }
+# Output(ValueId(4))
+# --- Result ---
+# 7
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

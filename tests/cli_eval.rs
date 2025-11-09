@@ -14,5 +14,8 @@ fn mind_eval_basic_expr() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(stdout.trim(), "14");
+    let trimmed = stdout.trim();
+    assert!(trimmed.contains("--- Lowered IR ---"), "{trimmed}");
+    assert!(trimmed.contains("--- Result ---"), "{trimmed}");
+    assert!(trimmed.ends_with("14"), "{trimmed}");
 }

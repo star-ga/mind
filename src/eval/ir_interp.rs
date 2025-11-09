@@ -1,0 +1,141 @@
+use std::collections::HashMap;
+
+use crate::eval::value::{TensorVal, Value};
+use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::types::ShapeDim;
+
+pub fn eval_ir(ir: &IRModule) -> Value {
+    let mut vals: HashMap<ValueId, Value> = HashMap::new();
+    let mut last = Value::Int(0);
+
+    for instr in &ir.instrs {
+        match instr {
+            Instr::ConstI64(id, n) => {
+                vals.insert(*id, Value::Int(*n));
+            }
+            Instr::ConstTensor(id, dtype, shape, fill) => {
+                vals.insert(
+                    *id,
+                    Value::Tensor(TensorVal::new(dtype.clone(), shape.clone(), *fill)),
+                );
+            }
+            Instr::BinOp { dst, op, lhs, rhs } => {
+                let l = vals.get(lhs).cloned().unwrap_or(Value::Int(0));
+                let r = vals.get(rhs).cloned().unwrap_or(Value::Int(0));
+                let v = eval_binop(*op, l, r);
+                vals.insert(*dst, v.clone());
+                last = v;
+            }
+            Instr::Sum { dst, src } => {
+                let input = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let out = match input {
+                    Value::Tensor(t) => Value::Tensor(TensorVal::new(t.dtype, vec![], t.fill)),
+                    other => other,
+                };
+                vals.insert(*dst, out.clone());
+                last = out;
+            }
+            Instr::Reshape { dst, src, new_shape } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let reshaped = match value {
+                    Value::Tensor(t) => {
+                        Value::Tensor(TensorVal::new(t.dtype, new_shape.clone(), t.fill))
+                    }
+                    other => other,
+                };
+                vals.insert(*dst, reshaped.clone());
+                last = reshaped;
+            }
+            Instr::MatMul { dst, a, b } => {
+                let lhs = vals.get(a).cloned().unwrap_or(Value::Int(0));
+                let rhs = vals.get(b).cloned().unwrap_or(Value::Int(0));
+                let v = match (lhs, rhs) {
+                    (Value::Tensor(at), Value::Tensor(bt)) => {
+                        let shape = broadcast_matmul_shape(&at.shape, &bt.shape);
+                        let fill = match (at.fill, bt.fill) {
+                            (Some(x), Some(y)) => Some(x * y),
+                            _ => None,
+                        };
+                        Value::Tensor(TensorVal::new(at.dtype, shape, fill))
+                    }
+                    _ => Value::Int(0),
+                };
+                vals.insert(*dst, v.clone());
+                last = v;
+            }
+            Instr::Slice { dst, src, .. } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                vals.insert(*dst, value.clone());
+                last = value;
+            }
+            Instr::Output(id) => {
+                if let Some(v) = vals.get(id).cloned() {
+                    last = v;
+                }
+            }
+        }
+    }
+
+    last
+}
+
+fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => Value::Int(match op {
+            BinOp::Add => a + b,
+            BinOp::Sub => a - b,
+            BinOp::Mul => a * b,
+            BinOp::Div => a / b,
+        }),
+        (Value::Tensor(t), Value::Int(s)) => tensor_scalar(op, t, s as f64, true),
+        (Value::Int(s), Value::Tensor(t)) => tensor_scalar(op, t, s as f64, false),
+        (Value::Tensor(a), Value::Tensor(b)) => tensor_tensor(op, a, b),
+        (other, _) => other,
+    }
+}
+
+fn tensor_scalar(op: BinOp, tensor: TensorVal, scalar: f64, tensor_left: bool) -> Value {
+    let dtype = tensor.dtype;
+    let shape = tensor.shape;
+    let fill = tensor.fill.map(|f| match op {
+        BinOp::Add => f + scalar,
+        BinOp::Sub => {
+            if tensor_left {
+                f - scalar
+            } else {
+                scalar - f
+            }
+        }
+        BinOp::Mul => f * scalar,
+        BinOp::Div => {
+            if tensor_left {
+                f / scalar
+            } else {
+                scalar / f
+            }
+        }
+    });
+    Value::Tensor(TensorVal::new(dtype, shape, fill))
+}
+
+fn tensor_tensor(op: BinOp, a: TensorVal, b: TensorVal) -> Value {
+    let dtype = a.dtype;
+    let shape = a.shape;
+    let fill = match (a.fill, b.fill) {
+        (Some(x), Some(y)) => Some(match op {
+            BinOp::Add => x + y,
+            BinOp::Sub => x - y,
+            BinOp::Mul => x * y,
+            BinOp::Div => x / y,
+        }),
+        _ => None,
+    };
+    Value::Tensor(TensorVal::new(dtype, shape, fill))
+}
+
+fn broadcast_matmul_shape(a: &[ShapeDim], b: &[ShapeDim]) -> Vec<ShapeDim> {
+    let mut out = Vec::new();
+    out.extend_from_slice(a);
+    out.extend_from_slice(b);
+    out
+}
