@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::ast::{BinOp, Literal, Module, Node, Span as AstSpan};
 use crate::diagnostics::{Diagnostic as Pretty, Location};
@@ -89,6 +89,129 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
     }
 }
 
+fn normalize_axis(axis: i32, rank: usize, span: AstSpan, op: &str) -> Result<usize, TypeErrSpan> {
+    let rank_i32 = rank as i32;
+    let idx = if axis < 0 { rank_i32 + axis } else { axis };
+    if idx < 0 || idx >= rank_i32 {
+        Err(TypeErrSpan { msg: format!("axis {axis} out of range for `{op}` (rank {rank})"), span })
+    } else {
+        Ok(idx as usize)
+    }
+}
+
+fn normalize_axes_list(
+    axes: &[i32],
+    rank: usize,
+    span: AstSpan,
+    op: &str,
+) -> Result<Vec<usize>, TypeErrSpan> {
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    let mut normalized = Vec::new();
+    for &axis in axes {
+        let idx = normalize_axis(axis, rank, span, op)?;
+        if !seen.insert(idx) {
+            return Err(TypeErrSpan { msg: format!("duplicate axis {axis} in `{op}`"), span });
+        }
+        normalized.push(idx);
+    }
+    normalized.sort_unstable();
+    Ok(normalized)
+}
+
+fn normalize_reduce_axes(
+    axes: &[i32],
+    rank: usize,
+    span: AstSpan,
+    op: &str,
+) -> Result<Vec<usize>, TypeErrSpan> {
+    if axes.is_empty() {
+        return Ok((0..rank).collect());
+    }
+    normalize_axes_list(axes, rank, span, op)
+}
+
+fn reduce_shape(shape: &[ShapeDim], axes: &[usize], keepdims: bool) -> Vec<ShapeDim> {
+    if keepdims {
+        let mut out = shape.to_vec();
+        for &axis in axes {
+            if axis < out.len() {
+                out[axis] = ShapeDim::Known(1);
+            }
+        }
+        out
+    } else {
+        let axis_set: BTreeSet<usize> = axes.iter().cloned().collect();
+        let mut out = Vec::new();
+        for (idx, dim) in shape.iter().enumerate() {
+            if !axis_set.contains(&idx) {
+                out.push(dim.clone());
+            }
+        }
+        out
+    }
+}
+
+fn known_product(shape: &[ShapeDim]) -> Option<usize> {
+    let mut total = 1usize;
+    for dim in shape {
+        match dim {
+            ShapeDim::Known(n) => {
+                total = total.checked_mul(*n)?;
+            }
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(total)
+}
+
+fn normalize_expand_axis(axis: i32, rank: usize, span: AstSpan) -> Result<usize, TypeErrSpan> {
+    let extended = rank + 1;
+    let idx = if axis < 0 { (extended as i32) + axis } else { axis };
+    if idx < 0 || idx > extended as i32 - 1 {
+        Err(TypeErrSpan {
+            msg: format!("axis {axis} out of range for `tensor.expand_dims` (rank {rank})"),
+            span,
+        })
+    } else {
+        Ok(idx as usize)
+    }
+}
+
+fn compute_squeeze_axes(
+    shape: &[ShapeDim],
+    axes: &[i32],
+    span: AstSpan,
+) -> Result<Vec<usize>, TypeErrSpan> {
+    if axes.is_empty() {
+        let mut remove = Vec::new();
+        for (idx, dim) in shape.iter().enumerate() {
+            if matches!(dim, ShapeDim::Known(1)) {
+                remove.push(idx);
+            }
+        }
+        return Ok(remove);
+    }
+    let normalized = normalize_axes_list(axes, shape.len(), span, "tensor.squeeze")?;
+    for &axis in &normalized {
+        match shape.get(axis) {
+            Some(ShapeDim::Known(1)) => {}
+            Some(_) => {
+                return Err(TypeErrSpan {
+                    msg: format!("cannot squeeze axis {axis}: dimension is not 1"),
+                    span,
+                });
+            }
+            None => {
+                return Err(TypeErrSpan {
+                    msg: format!("axis {axis} out of range for `tensor.squeeze`"),
+                    span,
+                });
+            }
+        }
+    }
+    Ok(normalized)
+}
+
 fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
     let mut out = Vec::new();
     let mut i = a.len() as isize - 1;
@@ -151,6 +274,107 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         Node::Tuple { span, .. } => Ok((ValueType::ScalarI32, *span)),
         Node::Call { callee, args, span } => infer_call(callee, args, *span, env),
         Node::CallGrad { loss, wrt, span } => infer_grad(loss, wrt, *span, env),
+        Node::CallTensorSum { x, axes, keepdims, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let axes_norm =
+                        normalize_reduce_axes(axes, tensor.shape.len(), *span, "tensor.sum")?;
+                    let shape = reduce_shape(&tensor.shape, &axes_norm, *keepdims);
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.sum` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallTensorMean { x, axes, keepdims, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let axes_norm =
+                        normalize_reduce_axes(axes, tensor.shape.len(), *span, "tensor.mean")?;
+                    let shape = reduce_shape(&tensor.shape, &axes_norm, *keepdims);
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.mean` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallReshape { x, dims, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let new_shape = shape_from_dims(dims);
+                    if new_shape.len() != tensor.shape.len() {
+                        return Err(TypeErrSpan {
+                            msg: format!(
+                                "`tensor.reshape` expects {} dimensions but got {}",
+                                tensor.shape.len(),
+                                new_shape.len()
+                            ),
+                            span: *span,
+                        });
+                    }
+                    if let (Some(old), Some(new)) =
+                        (known_product(&tensor.shape), known_product(&new_shape))
+                    {
+                        if old != new {
+                            return Err(TypeErrSpan {
+                                msg: format!(
+                                    "`tensor.reshape` element count mismatch: {old} vs {new}"
+                                ),
+                                span: *span,
+                            });
+                        }
+                    }
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, new_shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.reshape` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallExpandDims { x, axis, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let rank = tensor.shape.len();
+                    let axis = normalize_expand_axis(*axis, rank, *span)?;
+                    let mut shape = tensor.shape;
+                    shape.insert(axis, ShapeDim::Known(1));
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.expand_dims` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallSqueeze { x, axes, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let axes_to_remove = compute_squeeze_axes(&tensor.shape, axes, *span)?;
+                    let axis_set: BTreeSet<usize> = axes_to_remove.iter().cloned().collect();
+                    let mut shape = Vec::new();
+                    for (idx, dim) in tensor.shape.iter().enumerate() {
+                        if !axis_set.contains(&idx) {
+                            shape.push(dim.clone());
+                        }
+                    }
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.squeeze` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
         Node::Binary { op, left, right, span } => {
             let (lt, _) = infer_expr(left, env)?;
             let (rt, _) = infer_expr(right, env)?;

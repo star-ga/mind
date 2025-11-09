@@ -1,6 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
+use crate::eval::autodiff::TensorEnvEntry;
 use crate::types::{DType, ShapeDim, ValueType};
 
 #[cfg(feature = "cpu-buffers")]
@@ -89,12 +90,13 @@ pub fn eval_module_value_with_env(
 
     let mut venv: HashMap<String, Value> =
         env.iter().map(|(name, value)| (name.clone(), Value::Int(*value))).collect();
+    let mut tensor_env: HashMap<String, TensorEnvEntry> = HashMap::new();
 
     let mut last = Value::Int(0_i64);
     for item in &m.items {
         match item {
             Node::Let { name, ann, value, .. } => {
-                let rhs = eval_value_expr(value, &venv)?;
+                let rhs = eval_value_expr(value, &venv, &tensor_env)?;
                 let stored = match ann {
                     Some(TypeAnn::Tensor { dtype, dims }) => {
                         let (dtype, shape) = parse_tensor_ann(dtype, dims)?;
@@ -115,9 +117,22 @@ pub fn eval_module_value_with_env(
                     venv.insert(name.clone(), stored.clone());
                     last = stored;
                 }
+                match venv.get(name) {
+                    Some(Value::Tensor(tensor)) => {
+                        let expr = match ann {
+                            Some(TypeAnn::Tensor { .. }) => None,
+                            _ => Some((**value).clone()),
+                        };
+                        tensor_env
+                            .insert(name.clone(), TensorEnvEntry { value: tensor.clone(), expr });
+                    }
+                    _ => {
+                        tensor_env.remove(name);
+                    }
+                }
             }
             Node::Assign { name, value, .. } => {
-                let rhs = eval_value_expr(value, &venv)?;
+                let rhs = eval_value_expr(value, &venv, &tensor_env)?;
                 if let Value::Int(n) = rhs {
                     env.insert(name.clone(), n);
                     venv.insert(name.clone(), Value::Int(n));
@@ -126,9 +141,20 @@ pub fn eval_module_value_with_env(
                     venv.insert(name.clone(), rhs.clone());
                     last = rhs;
                 }
+                match venv.get(name) {
+                    Some(Value::Tensor(tensor)) => {
+                        tensor_env.insert(
+                            name.clone(),
+                            TensorEnvEntry { value: tensor.clone(), expr: Some((**value).clone()) },
+                        );
+                    }
+                    _ => {
+                        tensor_env.remove(name);
+                    }
+                }
             }
             _ => {
-                last = eval_value_expr(item, &venv)?;
+                last = eval_value_expr(item, &venv, &tensor_env)?;
             }
         }
     }
@@ -158,45 +184,99 @@ pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {
 pub(crate) fn eval_value_expr(
     node: &Node,
     env: &HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
 ) -> Result<Value, EvalError> {
     match node {
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
         Node::Lit(Literal::Ident(name), _) => {
             env.get(name).cloned().ok_or_else(|| EvalError::UnknownVar(name.clone()))
         }
-        Node::Paren(inner, _) => eval_value_expr(inner, env),
+        Node::Paren(inner, _) => eval_value_expr(inner, env, tensor_env),
         Node::Tuple { elements, .. } => {
             let mut items = Vec::with_capacity(elements.len());
             for item in elements {
-                items.push(eval_value_expr(item, env)?);
+                items.push(eval_value_expr(item, env, tensor_env)?);
             }
             Ok(Value::Tuple(items))
         }
-        Node::Call { callee, args, .. } => stdlib::tensor::dispatch(callee, args, env),
-        Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, wrt),
+        Node::Call { callee, args, .. } => stdlib::tensor::dispatch(callee, args, env, tensor_env),
+        Node::CallTensorSum { x, axes, keepdims, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::sum_tensor_preview(&t, axes, *keepdims)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallTensorMean { x, axes, keepdims, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::mean_tensor_preview(&t, axes, *keepdims)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallReshape { x, dims, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::reshape_tensor_preview(&t, dims)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallExpandDims { x, axis, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::expand_dims_tensor_preview(&t, *axis)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallSqueeze { x, axes, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::squeeze_tensor_preview(&t, axes)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, tensor_env, wrt),
         Node::Binary { op, left, right, .. } => {
-            let lv = eval_value_expr(left, env)?;
-            let rv = eval_value_expr(right, env)?;
+            let lv = eval_value_expr(left, env, tensor_env)?;
+            let rv = eval_value_expr(right, env, tensor_env)?;
             apply_binary(*op, lv, rv)
         }
-        Node::Let { value, .. } | Node::Assign { value, .. } => eval_value_expr(value, env),
+        Node::Let { value, .. } | Node::Assign { value, .. } => {
+            eval_value_expr(value, env, tensor_env)
+        }
     }
 }
 
 pub fn eval_grad_map(
     loss_expr: &Node,
-    env: &HashMap<String, Value>,
+    _env: &HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
     wrt: &[String],
 ) -> Result<Value, EvalError> {
-    let mut tenv: HashMap<String, TensorVal> = HashMap::new();
-    for (name, value) in env {
-        if let Value::Tensor(tensor) = value {
-            tenv.insert(name.clone(), tensor.clone());
-        }
+    let mut tenv: HashMap<String, TensorEnvEntry> = HashMap::new();
+    for (name, entry) in tensor_env {
+        tenv.insert(name.clone(), entry.clone());
     }
 
-    let (loss_id, tape, vars_all) = crate::eval::autodiff::build_graph_loss(loss_expr, &tenv)
-        .map_err(EvalError::UnsupportedMsg)?;
+    let mut expanding = BTreeSet::new();
+    let (loss_id, tape, vars_all) =
+        crate::eval::autodiff::build_graph_loss(loss_expr, &tenv, &mut expanding)
+            .map_err(EvalError::UnsupportedMsg)?;
 
     if !tape.node_shape(loss_id).is_empty() {
         return Err(EvalError::UnsupportedMsg(
@@ -210,10 +290,10 @@ pub fn eval_grad_map(
     let mut grads = crate::eval::autodiff::backprop_to_vars(loss_id, &tape, &requested);
     for name in wrt {
         if !grads.contains_key(name) {
-            if let Some(tensor) = tenv.get(name) {
+            if let Some(entry) = tenv.get(name) {
                 grads.insert(
                     name.clone(),
-                    TensorVal::new(tensor.dtype.clone(), tensor.shape.clone(), Some(0.0)),
+                    TensorVal::new(entry.value.dtype.clone(), entry.value.shape.clone(), Some(0.0)),
                 );
             }
         }
