@@ -15,6 +15,11 @@ fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> 
 }
 
 pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
+    enum ReduceArg {
+        Axes(Vec<i32>),
+        Keepdims(bool),
+    }
+
     let int = text::int(10).map_with_span(|s: String, sp: std::ops::Range<usize>| {
         let span = Span::new(sp.start, sp.end);
         Node::Lit(Literal::Int(s.parse().unwrap()), span)
@@ -35,6 +40,23 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         });
 
     let expr = recursive(|expr| {
+        let bool_lit = choice((kw("true").to(true), kw("false").to(false))).padded().boxed();
+        let signed_int = just('-')
+            .or_not()
+            .then(text::int(10))
+            .map(|(sign, digits): (Option<char>, String)| {
+                let mut value = digits.parse::<i32>().unwrap();
+                if sign.is_some() {
+                    value = -value;
+                }
+                value
+            })
+            .padded();
+        let axes_list = just('[')
+            .padded()
+            .ignore_then(signed_int.clone().separated_by(just(',').padded()).allow_trailing())
+            .then_ignore(just(']').padded());
+
         let tuple_or_paren = just('(')
             .ignore_then(expr.clone().separated_by(just(',').padded()).allow_trailing())
             .then_ignore(just(')').padded())
@@ -65,6 +87,104 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             })
             .boxed();
 
+        let reduce_arg = choice((
+            kw("axes")
+                .ignore_then(just('=').padded())
+                .ignore_then(axes_list.clone())
+                .map(ReduceArg::Axes),
+            kw("keepdims")
+                .ignore_then(just('=').padded())
+                .ignore_then(bool_lit.clone())
+                .map(ReduceArg::Keepdims),
+        ))
+        .boxed();
+
+        let tensor_sum_call = just("tensor.sum")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then(just(',').padded().ignore_then(reduce_arg.clone()).repeated())
+            .then_ignore(just(')').padded())
+            .map_with_span(|(x, extras), sp: std::ops::Range<usize>| {
+                let mut axes = Vec::new();
+                let mut keepdims = false;
+                for arg in extras {
+                    match arg {
+                        ReduceArg::Axes(v) => axes = v,
+                        ReduceArg::Keepdims(v) => keepdims = v,
+                    }
+                }
+                let span = Span::new(sp.start, sp.end);
+                Node::CallTensorSum { x: Box::new(x), axes, keepdims, span }
+            });
+
+        let tensor_mean_call = just("tensor.mean")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then(just(',').padded().ignore_then(reduce_arg.clone()).repeated())
+            .then_ignore(just(')').padded())
+            .map_with_span(|(x, extras), sp: std::ops::Range<usize>| {
+                let mut axes = Vec::new();
+                let mut keepdims = false;
+                for arg in extras {
+                    match arg {
+                        ReduceArg::Axes(v) => axes = v,
+                        ReduceArg::Keepdims(v) => keepdims = v,
+                    }
+                }
+                let span = Span::new(sp.start, sp.end);
+                Node::CallTensorMean { x: Box::new(x), axes, keepdims, span }
+            });
+
+        let reshape_dims = just('(')
+            .padded()
+            .ignore_then(
+                choice((text::int(10), text::ident()))
+                    .map(|s: String| s)
+                    .padded()
+                    .separated_by(just(',').padded())
+                    .allow_trailing(),
+            )
+            .then_ignore(just(')').padded());
+
+        let tensor_reshape_call = just("tensor.reshape")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(reshape_dims)
+            .then_ignore(just(')').padded())
+            .map_with_span(|(x, dims), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallReshape { x: Box::new(x), dims, span }
+            });
+
+        let expand_axis =
+            kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone());
+
+        let tensor_expand_dims_call = just("tensor.expand_dims")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(expand_axis)
+            .then_ignore(just(')').padded())
+            .map_with_span(|(x, axis), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallExpandDims { x: Box::new(x), axis, span }
+            });
+
+        let squeeze_axes =
+            kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list.clone());
+
+        let tensor_squeeze_call = just("tensor.squeeze")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then(just(',').padded().ignore_then(squeeze_axes).or_not())
+            .then_ignore(just(')').padded())
+            .map_with_span(|(x, maybe_axes), sp: std::ops::Range<usize>| {
+                let axes = maybe_axes.unwrap_or_default();
+                let span = Span::new(sp.start, sp.end);
+                Node::CallSqueeze { x: Box::new(x), axes, span }
+            });
+
         let call = dotted_ident
             .clone()
             .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
@@ -79,8 +199,20 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::Call { callee, args, span }
             });
 
-        let atom =
-            choice((grad_call, call, int.clone(), ident_expr.clone(), tuple_or_paren)).padded();
+        let atom = choice((
+            grad_call,
+            tensor_sum_call,
+            tensor_mean_call,
+            tensor_reshape_call,
+            tensor_expand_dims_call,
+            tensor_squeeze_call,
+            call,
+            int.clone(),
+            ident_expr.clone(),
+            tuple_or_paren,
+        ))
+        .padded()
+        .boxed();
 
         let product = atom
             .clone()

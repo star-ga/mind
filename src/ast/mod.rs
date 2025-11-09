@@ -58,6 +58,11 @@ pub enum Node {
     Tuple { elements: Vec<Node>, span: Span },
     Call { callee: String, args: Vec<Node>, span: Span },
     CallGrad { loss: Box<Node>, wrt: Vec<String>, span: Span },
+    CallTensorSum { x: Box<Node>, axes: Vec<i32>, keepdims: bool, span: Span },
+    CallTensorMean { x: Box<Node>, axes: Vec<i32>, keepdims: bool, span: Span },
+    CallReshape { x: Box<Node>, dims: Vec<String>, span: Span },
+    CallExpandDims { x: Box<Node>, axis: i32, span: Span },
+    CallSqueeze { x: Box<Node>, axes: Vec<i32>, span: Span },
     Let { name: String, ann: Option<TypeAnn>, value: Box<Node>, span: Span },
     Assign { name: String, value: Box<Node>, span: Span },
 }
@@ -71,6 +76,11 @@ impl Node {
             | Node::Tuple { span, .. }
             | Node::Call { span, .. }
             | Node::CallGrad { span, .. }
+            | Node::CallTensorSum { span, .. }
+            | Node::CallTensorMean { span, .. }
+            | Node::CallReshape { span, .. }
+            | Node::CallExpandDims { span, .. }
+            | Node::CallSqueeze { span, .. }
             | Node::Let { span, .. }
             | Node::Assign { span, .. } => *span,
         }

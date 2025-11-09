@@ -1,7 +1,13 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast;
 use crate::eval::TensorVal;
+
+#[derive(Clone)]
+pub struct TensorEnvEntry {
+    pub value: TensorVal,
+    pub expr: Option<ast::Node>,
+}
 use crate::types::{DType, ShapeDim};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -15,7 +21,11 @@ enum Op {
     Sub(NodeId, NodeId),
     Mul(NodeId, NodeId),
     Div(NodeId, NodeId),
-    Sum(NodeId),
+    ReduceSum { x: NodeId, axes: Vec<usize>, keepdims: bool, reduced_elems: Option<usize> },
+    ReduceMean { x: NodeId, axes: Vec<usize>, keepdims: bool, reduced_elems: Option<usize> },
+    Reshape { x: NodeId },
+    ExpandDims { x: NodeId, axis: usize },
+    Squeeze { x: NodeId, axes: Vec<usize> },
 }
 
 #[derive(Debug, Clone)]
@@ -50,9 +60,176 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
     crate::eval::broadcast_shapes(a, b)
 }
 
+fn normalize_axis(axis: i32, rank: usize) -> Result<usize, String> {
+    let rank_i32 = rank as i32;
+    let idx = if axis < 0 { rank_i32 + axis } else { axis };
+    if idx < 0 || idx >= rank_i32 {
+        Err(format!("axis {axis} out of range (rank {rank})"))
+    } else {
+        Ok(idx as usize)
+    }
+}
+
+fn normalize_axes_list(axes: &[i32], rank: usize) -> Result<Vec<usize>, String> {
+    let mut seen: BTreeSet<usize> = BTreeSet::new();
+    let mut normalized = Vec::new();
+    for &axis in axes {
+        let idx = normalize_axis(axis, rank)?;
+        if !seen.insert(idx) {
+            return Err(format!("duplicate axis {axis}"));
+        }
+        normalized.push(idx);
+    }
+    normalized.sort_unstable();
+    Ok(normalized)
+}
+
+fn normalize_reduce_axes(axes: &[i32], rank: usize) -> Result<Vec<usize>, String> {
+    if axes.is_empty() {
+        return Ok((0..rank).collect());
+    }
+    normalize_axes_list(axes, rank)
+}
+
+fn reduce_shape(shape: &[ShapeDim], axes: &[usize], keepdims: bool) -> Vec<ShapeDim> {
+    if keepdims {
+        let mut out = shape.to_vec();
+        for &axis in axes {
+            if axis < out.len() {
+                out[axis] = ShapeDim::Known(1);
+            }
+        }
+        out
+    } else {
+        let axis_set: BTreeSet<usize> = axes.iter().cloned().collect();
+        let mut out = Vec::new();
+        for (idx, dim) in shape.iter().enumerate() {
+            if !axis_set.contains(&idx) {
+                out.push(dim.clone());
+            }
+        }
+        out
+    }
+}
+
+fn product_of_axes(shape: &[ShapeDim], axes: &[usize]) -> Option<usize> {
+    if axes.is_empty() {
+        return Some(1);
+    }
+    let mut total = 1usize;
+    for &axis in axes {
+        match shape.get(axis)? {
+            ShapeDim::Known(n) => {
+                total = total.checked_mul(*n)?;
+            }
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(total)
+}
+
+fn known_product(shape: &[ShapeDim]) -> Option<usize> {
+    let mut total = 1usize;
+    for dim in shape {
+        match dim {
+            ShapeDim::Known(n) => {
+                total = total.checked_mul(*n)?;
+            }
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(total)
+}
+
+fn normalize_expand_axis(axis: i32, rank: usize) -> Result<usize, String> {
+    let extended = rank + 1;
+    let idx = if axis < 0 { (extended as i32) + axis } else { axis };
+    if idx < 0 || idx > extended as i32 - 1 {
+        Err(format!("axis {axis} out of range for expand_dims (rank {rank})"))
+    } else {
+        Ok(idx as usize)
+    }
+}
+
+fn compute_squeeze_axes(shape: &[ShapeDim], axes: &[i32]) -> Result<Vec<usize>, String> {
+    if axes.is_empty() {
+        let mut remove = Vec::new();
+        for (idx, dim) in shape.iter().enumerate() {
+            if matches!(dim, ShapeDim::Known(1)) {
+                remove.push(idx);
+            }
+        }
+        return Ok(remove);
+    }
+    let normalized = normalize_axes_list(axes, shape.len())?;
+    for &axis in &normalized {
+        match shape.get(axis) {
+            Some(ShapeDim::Known(1)) => {}
+            Some(_) => {
+                return Err(format!("cannot squeeze axis {axis}: dimension is not 1"));
+            }
+            None => return Err(format!("axis {axis} out of range for squeeze")),
+        }
+    }
+    Ok(normalized)
+}
+
+fn dims_from_strings(dims: &[String]) -> Vec<ShapeDim> {
+    dims.iter()
+        .map(|d| {
+            if let Ok(n) = d.parse::<usize>() {
+                ShapeDim::Known(n)
+            } else {
+                ShapeDim::Sym(Box::leak(d.clone().into_boxed_str()))
+            }
+        })
+        .collect()
+}
+
+fn expand_reduced_axes(mut grad: TensorVal, axes: &[usize], target_rank: usize) -> TensorVal {
+    if axes.is_empty() {
+        return grad;
+    }
+    let axis_set: BTreeSet<usize> = axes.iter().cloned().collect();
+    let mut shape = Vec::with_capacity(target_rank);
+    let mut src_idx = 0usize;
+    for axis in 0..target_rank {
+        if axis_set.contains(&axis) {
+            shape.push(ShapeDim::Known(1));
+        } else {
+            if src_idx < grad.shape.len() {
+                shape.push(grad.shape[src_idx].clone());
+                src_idx += 1;
+            } else {
+                shape.push(ShapeDim::Known(1));
+            }
+        }
+    }
+    grad.shape = shape;
+    grad
+}
+
+fn can_broadcast_to(from: &[ShapeDim], to: &[ShapeDim]) -> bool {
+    if let Some(result) = broadcast_shapes(from, to) {
+        result == to
+    } else {
+        false
+    }
+}
+
+fn broadcast_to_shape(mut grad: TensorVal, target_shape: &[ShapeDim]) -> TensorVal {
+    let can = can_broadcast_to(&grad.shape, target_shape);
+    grad.shape = target_shape.to_vec();
+    if !can {
+        grad.fill = None;
+    }
+    grad
+}
+
 pub fn build_graph_loss(
     expr: &ast::Node,
-    tenv: &HashMap<String, TensorVal>,
+    tenv: &HashMap<String, TensorEnvEntry>,
+    expanding: &mut BTreeSet<String>,
 ) -> Result<(NodeId, Tape, BTreeMap<String, NodeId>), String> {
     let mut tape = Tape::new();
     let mut vars: BTreeMap<String, NodeId> = BTreeMap::new();
@@ -60,10 +237,11 @@ pub fn build_graph_loss(
 
     fn rec(
         node: &ast::Node,
-        tenv: &HashMap<String, TensorVal>,
+        tenv: &HashMap<String, TensorEnvEntry>,
         tape: &mut Tape,
         vars: &mut BTreeMap<String, NodeId>,
         var_nodes: &mut HashMap<String, NodeId>,
+        expanding: &mut BTreeSet<String>,
     ) -> Result<NodeId, String> {
         use ast::Literal;
         match node {
@@ -75,26 +253,38 @@ pub fn build_graph_loss(
             })),
             ast::Node::Lit(Literal::Ident(name), _) => {
                 if let Some(existing) = var_nodes.get(name) {
+                    vars.entry(name.clone()).or_insert(*existing);
                     return Ok(*existing);
                 }
-                if let Some(t) = tenv.get(name) {
-                    let id = tape.push(NodeInfo {
-                        op: Op::LeafVar,
-                        dtype: t.dtype.clone(),
-                        shape: t.shape.clone(),
-                        fill: t.fill,
-                    });
+                let entry =
+                    tenv.get(name).ok_or_else(|| format!("unknown tensor variable `{name}`"))?;
+                if let Some(expr) = &entry.expr {
+                    if !expanding.insert(name.clone()) {
+                        return Err(format!("cyclic tensor alias `{name}`"));
+                    }
+                    let result = rec(expr, tenv, tape, vars, var_nodes, expanding);
+                    expanding.remove(name);
+                    let id = result?;
                     vars.insert(name.clone(), id);
                     var_nodes.insert(name.clone(), id);
                     Ok(id)
                 } else {
-                    Err(format!("unknown tensor variable `{name}`"))
+                    let tensor = &entry.value;
+                    let id = tape.push(NodeInfo {
+                        op: Op::LeafVar,
+                        dtype: tensor.dtype.clone(),
+                        shape: tensor.shape.clone(),
+                        fill: tensor.fill,
+                    });
+                    vars.insert(name.clone(), id);
+                    var_nodes.insert(name.clone(), id);
+                    Ok(id)
                 }
             }
-            ast::Node::Paren(inner, _) => rec(inner, tenv, tape, vars, var_nodes),
+            ast::Node::Paren(inner, _) => rec(inner, tenv, tape, vars, var_nodes, expanding),
             ast::Node::Binary { op, left, right, .. } => {
-                let l = rec(left, tenv, tape, vars, var_nodes)?;
-                let r = rec(right, tenv, tape, vars, var_nodes)?;
+                let l = rec(left, tenv, tape, vars, var_nodes, expanding)?;
+                let r = rec(right, tenv, tape, vars, var_nodes, expanding)?;
                 let lhs = &tape.nodes[l.0];
                 let rhs = &tape.nodes[r.0];
                 if lhs.dtype != rhs.dtype {
@@ -133,16 +323,24 @@ pub fn build_graph_loss(
             }
             ast::Node::Call { callee, args, .. } => {
                 if callee == "tensor.sum" && args.len() == 1 {
-                    let child = rec(&args[0], tenv, tape, vars, var_nodes)?;
+                    let child = rec(&args[0], tenv, tape, vars, var_nodes, expanding)?;
                     let child_info = &tape.nodes[child.0];
-                    let fill = match child_info.fill {
-                        Some(f) => known_num_elems(&child_info.shape).map(|n| f * n as f64),
-                        None => None,
+                    let axes = normalize_reduce_axes(&[], child_info.shape.len())?;
+                    let reduced = product_of_axes(&child_info.shape, &axes);
+                    let shape = reduce_shape(&child_info.shape, &axes, false);
+                    let fill = match (child_info.fill, reduced) {
+                        (Some(f), Some(n)) => Some(f * n as f64),
+                        _ => None,
                     };
                     let info = NodeInfo {
-                        op: Op::Sum(child),
+                        op: Op::ReduceSum {
+                            x: child,
+                            axes,
+                            keepdims: false,
+                            reduced_elems: reduced,
+                        },
                         dtype: child_info.dtype.clone(),
-                        shape: Vec::new(),
+                        shape,
                         fill,
                     };
                     Ok(tape.push(info))
@@ -150,11 +348,111 @@ pub fn build_graph_loss(
                     Err("unsupported call in autodiff".to_string())
                 }
             }
+            ast::Node::CallTensorSum { x, axes, keepdims, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let axes_norm = normalize_reduce_axes(axes, child_info.shape.len())?;
+                let reduced = product_of_axes(&child_info.shape, &axes_norm);
+                let shape = reduce_shape(&child_info.shape, &axes_norm, *keepdims);
+                let fill = match (child_info.fill, reduced) {
+                    (Some(f), Some(n)) => Some(f * n as f64),
+                    (Some(f), None) if axes_norm.is_empty() => Some(f),
+                    (Some(f), None) if child_info.shape.is_empty() => Some(f),
+                    _ => None,
+                };
+                let info = NodeInfo {
+                    op: Op::ReduceSum {
+                        x: child,
+                        axes: axes_norm.clone(),
+                        keepdims: *keepdims,
+                        reduced_elems: reduced,
+                    },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallTensorMean { x, axes, keepdims, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let axes_norm = normalize_reduce_axes(axes, child_info.shape.len())?;
+                let reduced = product_of_axes(&child_info.shape, &axes_norm);
+                let shape = reduce_shape(&child_info.shape, &axes_norm, *keepdims);
+                let fill = child_info.fill;
+                let info = NodeInfo {
+                    op: Op::ReduceMean {
+                        x: child,
+                        axes: axes_norm.clone(),
+                        keepdims: *keepdims,
+                        reduced_elems: reduced,
+                    },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallReshape { x, dims, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let new_shape = dims_from_strings(dims);
+                if new_shape.len() != child_info.shape.len() {
+                    return Err("reshape rank mismatch".to_string());
+                }
+                if let (Some(old), Some(new)) =
+                    (known_product(&child_info.shape), known_product(&new_shape))
+                {
+                    if old != new {
+                        return Err("reshape element count mismatch".to_string());
+                    }
+                }
+                let info = NodeInfo {
+                    op: Op::Reshape { x: child },
+                    dtype: child_info.dtype.clone(),
+                    shape: new_shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallExpandDims { x, axis, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let axis_norm = normalize_expand_axis(*axis, child_info.shape.len())?;
+                let mut shape = child_info.shape.clone();
+                shape.insert(axis_norm, ShapeDim::Known(1));
+                let info = NodeInfo {
+                    op: Op::ExpandDims { x: child, axis: axis_norm },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallSqueeze { x, axes, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let axes_to_remove = compute_squeeze_axes(&child_info.shape, axes)?;
+                let axis_set: BTreeSet<usize> = axes_to_remove.iter().cloned().collect();
+                let mut shape = Vec::new();
+                for (idx, dim) in child_info.shape.iter().enumerate() {
+                    if !axis_set.contains(&idx) {
+                        shape.push(dim.clone());
+                    }
+                }
+                let info = NodeInfo {
+                    op: Op::Squeeze { x: child, axes: axes_to_remove.clone() },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
             _ => Err("unsupported node in autodiff".to_string()),
         }
     }
 
-    let loss = rec(expr, tenv, &mut tape, &mut vars, &mut var_nodes)?;
+    let loss = rec(expr, tenv, &mut tape, &mut vars, &mut var_nodes, expanding)?;
     Ok((loss, tape, vars))
 }
 
@@ -202,8 +500,39 @@ pub fn backprop_to_vars(
                 push_grad_scaled(&mut adj, tape, l, &grad, scale_left);
                 push_grad_scaled(&mut adj, tape, r, &grad, scale_right);
             }
-            Op::Sum(child) => {
-                push_grad_sum(&mut adj, tape, child, &grad);
+            Op::ReduceSum { x, ref axes, keepdims, .. } => {
+                let mut expanded = grad.clone();
+                if !keepdims {
+                    expanded = expand_reduced_axes(expanded, axes, tape.nodes[x.0].shape.len());
+                }
+                let broadcasted = broadcast_to_shape(expanded, &tape.nodes[x.0].shape);
+                accumulate_grad(&mut adj, x, broadcasted);
+            }
+            Op::ReduceMean { x, ref axes, keepdims, reduced_elems } => {
+                let mut adjusted = grad.clone();
+                match reduced_elems {
+                    Some(n) if n > 0 => {
+                        if let Some(fill) = adjusted.fill {
+                            adjusted.fill = Some(fill / n as f64);
+                        }
+                    }
+                    Some(_) => {}
+                    None => {
+                        if adjusted.fill.is_some() {
+                            adjusted.fill = None;
+                        }
+                    }
+                }
+                if !keepdims {
+                    adjusted = expand_reduced_axes(adjusted, axes, tape.nodes[x.0].shape.len());
+                }
+                let broadcasted = broadcast_to_shape(adjusted, &tape.nodes[x.0].shape);
+                accumulate_grad(&mut adj, x, broadcasted);
+            }
+            Op::Reshape { x } | Op::ExpandDims { x, .. } | Op::Squeeze { x, .. } => {
+                let mut reshaped = grad.clone();
+                reshaped.shape = tape.nodes[x.0].shape.clone();
+                accumulate_grad(&mut adj, x, reshaped);
             }
             Op::LeafVar | Op::ConstInt => {}
         }
@@ -212,12 +541,8 @@ pub fn backprop_to_vars(
     let mut out = BTreeMap::new();
     for (name, id) in vars {
         if let Some(g) = adj.get(id) {
+            eprintln!("grad {:?} fill {:?}", name, g.fill);
             out.insert(name.clone(), g.clone());
-        } else if let Some(node) = tape.nodes.get(id.0) {
-            out.insert(
-                name.clone(),
-                TensorVal::new(node.dtype.clone(), node.shape.clone(), Some(0.0)),
-            );
         }
     }
     out
@@ -263,17 +588,6 @@ fn push_grad_scaled(
         }
     }
     push_grad(adj, tape, target, &scaled);
-}
-
-fn push_grad_sum(
-    adj: &mut HashMap<NodeId, TensorVal>,
-    tape: &Tape,
-    target: NodeId,
-    upstream: &TensorVal,
-) {
-    let target_node = &tape.nodes[target.0];
-    let grad = TensorVal::new(target_node.dtype.clone(), target_node.shape.clone(), upstream.fill);
-    accumulate_grad(adj, target, grad);
 }
 
 fn adjust_for_broadcast(upstream: &TensorVal, target: &NodeInfo) -> TensorVal {
