@@ -321,6 +321,15 @@ let = 2
 
 ```
 
+### Autodiff (Phase 4D, preview)
+
+Use `grad(loss, wrt=[...])` to obtain gradient previews (shape/dtype and optional constant fill):
+
+```bash
+cargo run --quiet -- eval "let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x + 1), wrt=[x])"
+# → grad{ x: Tensor[F32,(2,3)] fill=1 }
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

@@ -57,6 +57,7 @@ pub enum Node {
     Paren(Box<Node>, Span),
     Tuple { elements: Vec<Node>, span: Span },
     Call { callee: String, args: Vec<Node>, span: Span },
+    CallGrad { loss: Box<Node>, wrt: Vec<String>, span: Span },
     Let { name: String, ann: Option<TypeAnn>, value: Box<Node>, span: Span },
     Assign { name: String, value: Box<Node>, span: Span },
 }
@@ -69,6 +70,7 @@ impl Node {
             | Node::Paren(_, span)
             | Node::Tuple { span, .. }
             | Node::Call { span, .. }
+            | Node::CallGrad { span, .. }
             | Node::Let { span, .. }
             | Node::Assign { span, .. } => *span,
         }
