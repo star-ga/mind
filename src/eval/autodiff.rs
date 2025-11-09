@@ -28,6 +28,8 @@ enum Op {
     ExpandDims { x: NodeId, axis: usize },
     Squeeze { x: NodeId, axes: Vec<usize> },
     Transpose { x: NodeId, axes: Vec<usize> },
+    Index { x: NodeId, axis: usize, i: i32 },
+    Slice { x: NodeId, axis: usize, start: i32, end: i32 },
     Dot { a: NodeId, b: NodeId, info: MatMulShapeInfo },
     MatMul { a: NodeId, b: NodeId, info: MatMulShapeInfo },
 }
@@ -471,6 +473,54 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(info))
             }
+            ast::Node::CallIndex { x, axis, i, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                if child_info.shape.is_empty() {
+                    return Err("tensor.index: rank must be >= 1".to_string());
+                }
+                let axis_norm = normalize_axis(*axis, child_info.shape.len())?;
+                if let ShapeDim::Known(n) = child_info.shape[axis_norm] {
+                    if *i < 0 || (*i as usize) >= n {
+                        return Err("tensor.index: index out of bounds".to_string());
+                    }
+                }
+                let mut shape = child_info.shape.clone();
+                shape.remove(axis_norm);
+                let info = NodeInfo {
+                    op: Op::Index { x: child, axis: axis_norm, i: *i },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallSlice { x, axis, start, end, .. } => {
+                if *start < 0 || *end < *start {
+                    return Err("tensor.slice: expected 0 <= start <= end".to_string());
+                }
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let axis_norm = normalize_axis(*axis, child_info.shape.len())?;
+                let new_dim = match child_info.shape[axis_norm].clone() {
+                    ShapeDim::Known(n) => {
+                        if *end as usize > n {
+                            return Err("tensor.slice: end out of bounds".to_string());
+                        }
+                        ShapeDim::Known((*end - *start) as usize)
+                    }
+                    ShapeDim::Sym(sym) => ShapeDim::Sym(sym),
+                };
+                let mut shape = child_info.shape.clone();
+                shape[axis_norm] = new_dim;
+                let info = NodeInfo {
+                    op: Op::Slice { x: child, axis: axis_norm, start: *start, end: *end },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
             ast::Node::CallDot { a, b, .. } => {
                 let left = rec(a, tenv, tape, vars, var_nodes, expanding)?;
                 let right = rec(b, tenv, tape, vars, var_nodes, expanding)?;
@@ -605,6 +655,26 @@ pub fn backprop_to_vars(
                 let inv = linalg::invert_permutation(axes);
                 let transposed = transpose_tensorval(&grad, &inv);
                 accumulate_grad(&mut adj, x, transposed);
+            }
+            Op::Index { x, axis, i } => {
+                let child_info = &tape.nodes[x.0];
+                let _ = (axis, i);
+                let scattered =
+                    TensorVal::new(child_info.dtype.clone(), child_info.shape.clone(), None);
+                accumulate_grad(&mut adj, x, scattered);
+            }
+            Op::Slice { x, axis, start, end } => {
+                let child_info = &tape.nodes[x.0];
+                let mut fill = None;
+                if let (Some(gfill), Some(_orig_fill)) = (grad.fill, child_info.fill) {
+                    if let ShapeDim::Known(len) = child_info.shape[axis] {
+                        if start == 0 && end == len as i32 {
+                            fill = Some(gfill);
+                        }
+                    }
+                }
+                let back = TensorVal::new(child_info.dtype.clone(), child_info.shape.clone(), fill);
+                accumulate_grad(&mut adj, x, back);
             }
             Op::Dot { a, b, ref info } | Op::MatMul { a, b, ref info } => {
                 backprop_matmul_op(&mut adj, tape, &grad, a, b, info);

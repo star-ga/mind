@@ -558,6 +558,51 @@ pub(crate) fn transpose_tensor_preview(
     Ok((TensorVal::new(tensor.dtype.clone(), shape, tensor.fill), perm))
 }
 
+pub(crate) fn index_tensor_preview(
+    tensor: &TensorVal,
+    axis: i32,
+    i: i32,
+) -> Result<TensorVal, EvalError> {
+    let rank = tensor.shape.len();
+    if rank == 0 {
+        return Err(EvalError::Unsupported);
+    }
+    let axis = normalize_axis(axis, rank)?;
+    if let ShapeDim::Known(n) = tensor.shape[axis] {
+        if i < 0 || (i as usize) >= n {
+            return Err(EvalError::OutOfBounds);
+        }
+    }
+    let mut shape = tensor.shape.clone();
+    shape.remove(axis);
+    Ok(TensorVal::new(tensor.dtype.clone(), shape, tensor.fill))
+}
+
+pub(crate) fn slice_tensor_preview(
+    tensor: &TensorVal,
+    axis: i32,
+    start: i32,
+    end: i32,
+) -> Result<TensorVal, EvalError> {
+    if start < 0 || end < start {
+        return Err(EvalError::Unsupported);
+    }
+    let rank = tensor.shape.len();
+    let axis = normalize_axis(axis, rank)?;
+    let mut shape = tensor.shape.clone();
+    let new_dim = match tensor.shape[axis].clone() {
+        ShapeDim::Known(n) => {
+            if end as usize > n {
+                return Err(EvalError::OutOfBounds);
+            }
+            ShapeDim::Known((end - start) as usize)
+        }
+        ShapeDim::Sym(sym) => ShapeDim::Sym(sym),
+    };
+    shape[axis] = new_dim;
+    Ok(TensorVal::new(tensor.dtype.clone(), shape, tensor.fill))
+}
+
 fn matmul_fill(a: &TensorVal, b: &TensorVal, info: &MatMulShapeInfo) -> Option<f64> {
     match (a.fill, b.fill, linalg::known_dim_value(&info.k_dim)) {
         (Some(fa), Some(fb), Some(k)) => Some(fa * fb * k as f64),

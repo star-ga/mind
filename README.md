@@ -357,6 +357,22 @@ cargo run --quiet -- eval "let A: Tensor[f32,(2,3)] = 0; let B: Tensor[f32,(3,4)
 # → grad{ A: Tensor[F32,(2,3)] fill=1, B: Tensor[F32,(3,4)] fill=1 }
 ```
 
+### Indexing & Slicing (Phase 4G)
+
+```bash
+cargo run --quiet -- eval "let x: Tensor[f32,(2,5)] = 1; tensor.index(x, axis=1, i=0)"
+# → Tensor[F32,(2)] fill=1
+
+cargo run --quiet -- eval "let x: Tensor[f32,(3,6)] = 2; tensor.slice(x, axis=1, start=1, end=4)"
+# → Tensor[F32,(3,3)] fill=2
+```
+
+Gradients (preview):
+```bash
+cargo run --quiet -- eval "let X: Tensor[f32,(3,6)] = 0; grad(tensor.sum(tensor.slice(X, axis=1, start=1, end=4)), wrt=[X])"
+# → grad{ X: Tensor[F32,(3,6)] … }
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor
