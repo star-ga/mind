@@ -283,6 +283,29 @@ pub(crate) fn eval_value_expr(
                 _ => Err(EvalError::Unsupported),
             }
         }
+        Node::CallSliceStride { x, axis, start, end, step, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::slice_stride_tensor_preview(
+                        &t, *axis, *start, *end, *step,
+                    )?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallGather { x, axis, idx, .. } => {
+            let base = eval_value_expr(x, env, tensor_env)?;
+            let indices = eval_value_expr(idx, env, tensor_env)?;
+            match (base, indices) {
+                (Value::Tensor(t), Value::Tensor(i)) => {
+                    let result = stdlib::tensor::gather_tensor_preview(&t, *axis, &i)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
         Node::CallDot { a, b, .. } => {
             let left = eval_value_expr(a, env, tensor_env)?;
             let right = eval_value_expr(b, env, tensor_env)?;
