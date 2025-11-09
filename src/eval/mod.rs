@@ -3,9 +3,55 @@ use std::collections::HashMap;
 use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
 use crate::types::{DType, ShapeDim, ValueType};
 
+#[cfg(feature = "cpu-buffers")]
+use value::Buffer;
+
 pub mod value;
 
 pub use value::{format_value_human, TensorVal, Value};
+
+#[cfg(feature = "cpu-buffers")]
+pub(crate) fn num_elems(shape: &[ShapeDim]) -> Option<usize> {
+    let mut n: usize = 1;
+    for d in shape {
+        match d {
+            ShapeDim::Known(k) => {
+                n = n.saturating_mul(*k);
+            }
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(n)
+}
+
+#[cfg(feature = "cpu-buffers")]
+pub(crate) const MATERIALIZE_MAX: usize = 1_024;
+
+#[cfg(feature = "cpu-buffers")]
+pub(crate) fn materialize_filled(t: &mut TensorVal) {
+    if t.buf.is_some() {
+        return;
+    }
+    let fill = match t.fill {
+        Some(f) => f,
+        None => return,
+    };
+    if let Some(ne) = num_elems(&t.shape) {
+        if ne <= MATERIALIZE_MAX {
+            match t.dtype {
+                DType::I32 => {
+                    let v = fill as i32;
+                    t.buf = Some(Buffer::I32(vec![v; ne]));
+                }
+                DType::F32 => {
+                    let v = fill as f32;
+                    t.buf = Some(Buffer::F32(vec![v; ne]));
+                }
+                _ => {}
+            }
+        }
+    }
+}
 
 mod stdlib;
 
@@ -167,7 +213,12 @@ fn apply_tensor_scalar(
         return Err(EvalError::DivZero);
     }
 
-    let TensorVal { dtype, shape, fill } = tensor;
+    #[cfg(feature = "cpu-buffers")]
+    let tensor_buf = tensor.buf.clone();
+
+    let dtype = tensor.dtype;
+    let shape = tensor.shape;
+    let fill = tensor.fill;
 
     let result_fill = match fill {
         Some(f) => {
@@ -196,7 +247,83 @@ fn apply_tensor_scalar(
         None => None,
     };
 
-    Ok(Value::Tensor(TensorVal::new(dtype, shape, result_fill)))
+    #[cfg_attr(not(feature = "cpu-buffers"), allow(unused_mut))]
+    let mut result = TensorVal::new(dtype.clone(), shape, result_fill);
+
+    #[cfg(feature = "cpu-buffers")]
+    {
+        if let Some(buf) = tensor_buf.as_ref() {
+            match (buf, &dtype) {
+                (Buffer::I32(values), DType::I32) => {
+                    if matches!(op, BinOp::Div) && !tensor_on_left {
+                        if values.iter().any(|&v| v == 0) {
+                            return Err(EvalError::DivZero);
+                        }
+                    }
+                    let scalar_i32 = scalar as i32;
+                    let mut out = Vec::with_capacity(values.len());
+                    for &v in values {
+                        let computed = match op {
+                            BinOp::Add => v + scalar_i32,
+                            BinOp::Sub => {
+                                if tensor_on_left {
+                                    v - scalar_i32
+                                } else {
+                                    scalar_i32 - v
+                                }
+                            }
+                            BinOp::Mul => v * scalar_i32,
+                            BinOp::Div => {
+                                if tensor_on_left {
+                                    v / scalar_i32
+                                } else {
+                                    scalar_i32 / v
+                                }
+                            }
+                        };
+                        out.push(computed);
+                    }
+                    result.buf = Some(Buffer::I32(out));
+                }
+                (Buffer::F32(values), DType::F32) => {
+                    if matches!(op, BinOp::Div) && !tensor_on_left {
+                        if values.iter().any(|&v| v == 0.0) {
+                            return Err(EvalError::DivZero);
+                        }
+                    }
+                    let scalar_f32 = scalar as f32;
+                    let mut out = Vec::with_capacity(values.len());
+                    for &v in values {
+                        let computed = match op {
+                            BinOp::Add => v + scalar_f32,
+                            BinOp::Sub => {
+                                if tensor_on_left {
+                                    v - scalar_f32
+                                } else {
+                                    scalar_f32 - v
+                                }
+                            }
+                            BinOp::Mul => v * scalar_f32,
+                            BinOp::Div => {
+                                if tensor_on_left {
+                                    v / scalar_f32
+                                } else {
+                                    scalar_f32 / v
+                                }
+                            }
+                        };
+                        out.push(computed);
+                    }
+                    result.buf = Some(Buffer::F32(out));
+                }
+                _ => {}
+            }
+        } else if result.fill.is_some() {
+            materialize_filled(&mut result);
+        }
+    }
+
+    Ok(Value::Tensor(result))
 }
 
 fn apply_tensor_tensor(op: BinOp, left: TensorVal, right: TensorVal) -> Result<Value, EvalError> {
@@ -206,15 +333,39 @@ fn apply_tensor_tensor(op: BinOp, left: TensorVal, right: TensorVal) -> Result<V
 
     let shape = broadcast_shapes(&left.shape, &right.shape).ok_or(EvalError::Unsupported)?;
 
+    #[cfg(feature = "cpu-buffers")]
+    let left_buf = left.buf.clone();
+    #[cfg(feature = "cpu-buffers")]
+    let right_buf = right.buf.clone();
+
+    let left_fill = left.fill;
+    let right_fill = right.fill;
+    let dtype = left.dtype.clone();
+
     if matches!(op, BinOp::Div) {
-        if let Some(fill) = right.fill {
+        if let Some(fill) = right_fill {
             if fill == 0.0 {
                 return Err(EvalError::DivZero);
             }
         }
+        #[cfg(feature = "cpu-buffers")]
+        if let Some(buf) = right_buf.as_ref() {
+            match buf {
+                Buffer::I32(values) => {
+                    if values.iter().any(|&v| v == 0) {
+                        return Err(EvalError::DivZero);
+                    }
+                }
+                Buffer::F32(values) => {
+                    if values.iter().any(|&v| v == 0.0) {
+                        return Err(EvalError::DivZero);
+                    }
+                }
+            }
+        }
     }
 
-    let fill = match (left.fill, right.fill) {
+    let fill = match (left_fill, right_fill) {
         (Some(a), Some(b)) => Some(match op {
             BinOp::Add => a + b,
             BinOp::Sub => a - b,
@@ -224,7 +375,55 @@ fn apply_tensor_tensor(op: BinOp, left: TensorVal, right: TensorVal) -> Result<V
         _ => None,
     };
 
-    Ok(Value::Tensor(TensorVal::new(left.dtype, shape, fill)))
+    #[cfg_attr(not(feature = "cpu-buffers"), allow(unused_mut))]
+    let mut result = TensorVal::new(dtype, shape, fill);
+
+    #[cfg(feature = "cpu-buffers")]
+    {
+        if let (Some(lb), Some(rb)) = (left_buf.as_ref(), right_buf.as_ref()) {
+            if let Some(ne) = num_elems(&result.shape) {
+                match (lb, rb) {
+                    (Buffer::I32(lv), Buffer::I32(rv)) if lv.len() == ne && rv.len() == ne => {
+                        let mut out = Vec::with_capacity(ne);
+                        for i in 0..ne {
+                            let computed = match op {
+                                BinOp::Add => lv[i] + rv[i],
+                                BinOp::Sub => lv[i] - rv[i],
+                                BinOp::Mul => lv[i] * rv[i],
+                                BinOp::Div => lv[i] / rv[i],
+                            };
+                            out.push(computed);
+                        }
+                        result.buf = Some(Buffer::I32(out));
+                    }
+                    (Buffer::F32(lv), Buffer::F32(rv)) if lv.len() == ne && rv.len() == ne => {
+                        let mut out = Vec::with_capacity(ne);
+                        for i in 0..ne {
+                            let computed = match op {
+                                BinOp::Add => lv[i] + rv[i],
+                                BinOp::Sub => lv[i] - rv[i],
+                                BinOp::Mul => lv[i] * rv[i],
+                                BinOp::Div => lv[i] / rv[i],
+                            };
+                            out.push(computed);
+                        }
+                        result.buf = Some(Buffer::F32(out));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if result.buf.is_none()
+            && result.fill.is_some()
+            && left_fill.is_some()
+            && right_fill.is_some()
+        {
+            materialize_filled(&mut result);
+        }
+    }
+
+    Ok(Value::Tensor(result))
 }
 
 fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
