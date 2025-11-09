@@ -228,6 +228,19 @@ Additional helpers:
 - `tensor.shape(t)` → returns a preview tuple such as `(2,3)`
 - `tensor.dtype(t)` → returns the dtype string such as `f32`
 
+### Buffers (feature-gated)
+
+Opt in to concrete CPU buffers with `--features cpu-buffers`. Small tensors (≤1,024 elements) automatically materialize, and you
+can request buffers explicitly:
+
+```bash
+cargo run --features cpu-buffers -- eval 'let x: Tensor[f32,(2,3)] = 1; tensor.materialize(x)'
+# → Tensor[F32,(2,3)] materialized (sample=[1,1,1,1,1,1])
+```
+
+Use `tensor.materialize(t)` to force allocation, `tensor.sample(t, k)` to grab up to `k` linear elements, and
+`tensor.is_materialized(t)` to check if a buffer exists. Without the feature flag, tensors remain lightweight previews.
+
 **Quick install via Docker:**
 ```bash
 docker pull mindlang/mind:latest
