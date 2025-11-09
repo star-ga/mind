@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::ast::{BinOp, Literal, Module, Node, Span as AstSpan};
 use crate::diagnostics::{Diagnostic as Pretty, Location};
+use crate::linalg;
 use crate::types::{DType, ShapeDim, TensorType, ValueType};
 
 #[derive(Debug)]
@@ -87,6 +88,10 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
         (ValueType::ScalarI32, ValueType::ScalarI32) => None,
         (ValueType::GradMap(_), _) | (_, ValueType::GradMap(_)) => None,
     }
+}
+
+fn linalg_type_err(op: &str, span: AstSpan, msg: String) -> TypeErrSpan {
+    TypeErrSpan { msg: format!("`{op}`: {msg}"), span }
 }
 
 fn normalize_axis(axis: i32, rank: usize, span: AstSpan, op: &str) -> Result<usize, TypeErrSpan> {
@@ -372,6 +377,89 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.squeeze` requires a tensor argument".to_string(),
                     span: x.span(),
+                }),
+            }
+        }
+        Node::CallTranspose { x, axes, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let rank = tensor.shape.len();
+                    let perm = if let Some(list) = axes {
+                        linalg::normalize_permutation(list, rank)
+                            .map_err(|msg| linalg_type_err("tensor.transpose", *span, msg))?
+                    } else {
+                        linalg::default_transpose(rank)
+                    };
+                    if perm.len() != rank {
+                        return Err(linalg_type_err(
+                            "tensor.transpose",
+                            *span,
+                            format!("expected {} axes but got {}", rank, perm.len()),
+                        ));
+                    }
+                    let shape = linalg::permute_shape(&tensor.shape, &perm);
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.transpose` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallDot { a, b, span } => {
+            let (lt, _) = infer_expr(a, env)?;
+            let (rt, _) = infer_expr(b, env)?;
+            match (&lt, &rt) {
+                (ValueType::Tensor(tl), ValueType::Tensor(tr)) => {
+                    if tl.dtype != tr.dtype {
+                        return Err(TypeErrSpan {
+                            msg: format!(
+                                "`tensor.dot` dtype mismatch: left {} vs right {}",
+                                describe_tensor(tl),
+                                describe_tensor(tr)
+                            ),
+                            span: *span,
+                        });
+                    }
+                    let info = linalg::compute_matmul_shape_info(&tl.shape, &tr.shape)
+                        .map_err(|msg| linalg_type_err("tensor.dot", *span, msg))?;
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tl.dtype.clone(), info.result_shape)),
+                        *span,
+                    ))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.dot` requires tensor arguments".to_string(),
+                    span: *span,
+                }),
+            }
+        }
+        Node::CallMatMul { a, b, span } => {
+            let (lt, _) = infer_expr(a, env)?;
+            let (rt, _) = infer_expr(b, env)?;
+            match (&lt, &rt) {
+                (ValueType::Tensor(tl), ValueType::Tensor(tr)) => {
+                    if tl.dtype != tr.dtype {
+                        return Err(TypeErrSpan {
+                            msg: format!(
+                                "`tensor.matmul` dtype mismatch: left {} vs right {}",
+                                describe_tensor(tl),
+                                describe_tensor(tr)
+                            ),
+                            span: *span,
+                        });
+                    }
+                    let info = linalg::compute_matmul_shape_info(&tl.shape, &tr.shape)
+                        .map_err(|msg| linalg_type_err("tensor.matmul", *span, msg))?;
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tl.dtype.clone(), info.result_shape)),
+                        *span,
+                    ))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.matmul` requires tensor arguments".to_string(),
+                    span: *span,
                 }),
             }
         }

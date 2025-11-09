@@ -63,6 +63,9 @@ pub enum Node {
     CallReshape { x: Box<Node>, dims: Vec<String>, span: Span },
     CallExpandDims { x: Box<Node>, axis: i32, span: Span },
     CallSqueeze { x: Box<Node>, axes: Vec<i32>, span: Span },
+    CallTranspose { x: Box<Node>, axes: Option<Vec<i32>>, span: Span },
+    CallDot { a: Box<Node>, b: Box<Node>, span: Span },
+    CallMatMul { a: Box<Node>, b: Box<Node>, span: Span },
     Let { name: String, ann: Option<TypeAnn>, value: Box<Node>, span: Span },
     Assign { name: String, value: Box<Node>, span: Span },
 }
@@ -81,6 +84,9 @@ impl Node {
             | Node::CallReshape { span, .. }
             | Node::CallExpandDims { span, .. }
             | Node::CallSqueeze { span, .. }
+            | Node::CallTranspose { span, .. }
+            | Node::CallDot { span, .. }
+            | Node::CallMatMul { span, .. }
             | Node::Let { span, .. }
             | Node::Assign { span, .. } => *span,
         }

@@ -185,6 +185,41 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallSqueeze { x: Box::new(x), axes, span }
             });
 
+        let transpose_axes =
+            kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list.clone());
+
+        let tensor_transpose_call = just("tensor.transpose")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then(just(',').padded().ignore_then(transpose_axes).or_not())
+            .then_ignore(just(')').padded())
+            .map_with_span(|(x, maybe_axes), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallTranspose { x: Box::new(x), axes: maybe_axes, span }
+            });
+
+        let tensor_dot_call = just("tensor.dot")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(expr.clone())
+            .then_ignore(just(')').padded())
+            .map_with_span(|(a, b), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallDot { a: Box::new(a), b: Box::new(b), span }
+            });
+
+        let tensor_matmul_call = just("tensor.matmul")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(expr.clone())
+            .then_ignore(just(')').padded())
+            .map_with_span(|(a, b), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallMatMul { a: Box::new(a), b: Box::new(b), span }
+            });
+
         let call = dotted_ident
             .clone()
             .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
@@ -206,6 +241,9 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             tensor_reshape_call,
             tensor_expand_dims_call,
             tensor_squeeze_call,
+            tensor_transpose_call,
+            tensor_dot_call,
+            tensor_matmul_call,
             call,
             int.clone(),
             ident_expr.clone(),
