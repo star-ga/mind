@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ast::{BinOp, Literal, Module, Node, Span as AstSpan};
 use crate::diagnostics::{Diagnostic as Pretty, Location};
@@ -101,6 +102,21 @@ fn normalize_axis(axis: i32, rank: usize, span: AstSpan, op: &str) -> Result<usi
         Err(TypeErrSpan { msg: format!("axis {axis} out of range for `{op}` (rank {rank})"), span })
     } else {
         Ok(idx as usize)
+    }
+}
+
+fn dim_len(dim: &ShapeDim) -> Option<usize> {
+    match dim {
+        ShapeDim::Known(n) => Some(*n),
+        ShapeDim::Sym(_) => None,
+    }
+}
+
+fn slice_len(start: i32, end: i32) -> Option<usize> {
+    if start < 0 || end < start {
+        None
+    } else {
+        Some((end - start) as usize)
     }
 }
 
@@ -403,6 +419,77 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.transpose` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallIndex { x, axis, i, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    if tensor.shape.is_empty() {
+                        return Err(TypeErrSpan {
+                            msg: "`tensor.index` requires a tensor with rank >= 1".to_string(),
+                            span: *span,
+                        });
+                    }
+                    let axis_norm =
+                        normalize_axis(*axis, tensor.shape.len(), *span, "tensor.index")?;
+                    if let Some(len) = dim_len(&tensor.shape[axis_norm]) {
+                        if *i < 0 || (*i as usize) >= len {
+                            return Err(TypeErrSpan {
+                                msg: format!(
+                                    "`tensor.index`: index {i} out of bounds for axis {axis_norm} (len {len})"
+                                ),
+                                span: *span,
+                            });
+                        }
+                    }
+                    let mut shape = tensor.shape.clone();
+                    shape.remove(axis_norm);
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.index` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallSlice { x, axis, start, end, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    if *start < 0 || *end < *start {
+                        return Err(TypeErrSpan {
+                            msg: format!(
+                                "`tensor.slice` requires 0 <= start <= end (got start={start}, end={end})"
+                            ),
+                            span: *span,
+                        });
+                    }
+                    let axis_norm =
+                        normalize_axis(*axis, tensor.shape.len(), *span, "tensor.slice")?;
+                    if let Some(len) = dim_len(&tensor.shape[axis_norm]) {
+                        if *end as usize > len {
+                            return Err(TypeErrSpan {
+                                msg: format!(
+                                    "`tensor.slice`: end {end} out of bounds for axis {axis_norm} (len {len})"
+                                ),
+                                span: *span,
+                            });
+                        }
+                    }
+                    let new_dim = match (dim_len(&tensor.shape[axis_norm]), slice_len(*start, *end))
+                    {
+                        (Some(_), Some(len)) => ShapeDim::Known(len),
+                        _ => ShapeDim::Sym(fresh_symbol("_slice")),
+                    };
+                    let mut shape = tensor.shape.clone();
+                    shape[axis_norm] = new_dim;
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.slice` requires a tensor argument".to_string(),
                     span: x.span(),
                 }),
             }
@@ -767,6 +854,12 @@ fn infer_shape_node(node: &Node) -> Result<Vec<ShapeDim>, TypeErrSpan> {
 
 fn leak_symbol(name: &str) -> &'static str {
     Box::leak(name.to_string().into_boxed_str())
+}
+
+fn fresh_symbol(prefix: &str) -> &'static str {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    Box::leak(format!("{prefix}{id}").into_boxed_str())
 }
 
 fn dtype_from_str(s: &str) -> Option<DType> {
