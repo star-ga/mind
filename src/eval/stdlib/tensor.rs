@@ -2,7 +2,12 @@ use std::collections::HashMap;
 
 use crate::ast::{Literal, Node};
 use crate::eval::{eval_value_expr, format_value_human, EvalError, TensorVal, Value};
+#[cfg(feature = "cpu-buffers")]
+use crate::eval::{materialize_filled, num_elems, MATERIALIZE_MAX};
 use crate::types::{DType, ShapeDim};
+
+#[cfg(feature = "cpu-buffers")]
+use crate::eval::value::Buffer;
 
 pub fn dispatch(
     callee: &str,
@@ -15,6 +20,12 @@ pub fn dispatch(
         "tensor.shape" => tensor_shape(args, env),
         "tensor.dtype" => tensor_dtype(args, env),
         "tensor.print" => tensor_print(args, env),
+        #[cfg(feature = "cpu-buffers")]
+        "tensor.materialize" => tensor_materialize(args, env),
+        #[cfg(feature = "cpu-buffers")]
+        "tensor.sample" => tensor_sample(args, env),
+        #[cfg(feature = "cpu-buffers")]
+        "tensor.is_materialized" => tensor_is_materialized(args, env),
         _ => Err(EvalError::Unsupported),
     }
 }
@@ -66,6 +77,92 @@ fn tensor_print(args: &[Node], env: &HashMap<String, Value>) -> Result<Value, Ev
     let value = eval_value_expr(&args[0], env)?;
     println!("{}", format_value_human(&value));
     Ok(value)
+}
+
+#[cfg(feature = "cpu-buffers")]
+fn tensor_materialize(args: &[Node], env: &HashMap<String, Value>) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::Unsupported);
+    }
+    let value = eval_value_expr(&args[0], env)?;
+    if let Value::Tensor(mut t) = value {
+        materialize_filled(&mut t);
+        Ok(Value::Tensor(t))
+    } else {
+        Err(EvalError::Unsupported)
+    }
+}
+
+#[cfg(feature = "cpu-buffers")]
+fn tensor_is_materialized(args: &[Node], env: &HashMap<String, Value>) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::Unsupported);
+    }
+    let value = eval_value_expr(&args[0], env)?;
+    if let Value::Tensor(t) = value {
+        Ok(Value::Int(if t.buf.is_some() { 1 } else { 0 }))
+    } else {
+        Err(EvalError::Unsupported)
+    }
+}
+
+#[cfg(feature = "cpu-buffers")]
+fn tensor_sample(args: &[Node], env: &HashMap<String, Value>) -> Result<Value, EvalError> {
+    if args.len() != 2 {
+        return Err(EvalError::Unsupported);
+    }
+    let value = eval_value_expr(&args[0], env)?;
+    let count = eval_value_expr(&args[1], env)?;
+    let requested = match count {
+        Value::Int(n) => {
+            if n < 0 {
+                0
+            } else {
+                n as usize
+            }
+        }
+        _ => return Err(EvalError::Unsupported),
+    };
+
+    if let Value::Tensor(mut t) = value {
+        if t.buf.is_none() {
+            materialize_filled(&mut t);
+        }
+        if t.buf.is_none() {
+            return Err(EvalError::Unsupported);
+        }
+
+        let total = match num_elems(&t.shape) {
+            Some(n) => n,
+            None => match &t.buf {
+                Some(Buffer::I32(values)) => values.len(),
+                Some(Buffer::F32(values)) => values.len(),
+                None => 0,
+            },
+        };
+        let limit = requested.min(total).min(MATERIALIZE_MAX);
+        let mut sample_tensor = TensorVal::new(t.dtype.clone(), vec![ShapeDim::Known(limit)], None);
+        match &t.buf {
+            Some(Buffer::I32(values)) => {
+                let mut out = Vec::with_capacity(limit);
+                for &v in values.iter().take(limit) {
+                    out.push(v);
+                }
+                sample_tensor.buf = Some(Buffer::I32(out));
+            }
+            Some(Buffer::F32(values)) => {
+                let mut out = Vec::with_capacity(limit);
+                for &v in values.iter().take(limit) {
+                    out.push(v);
+                }
+                sample_tensor.buf = Some(Buffer::F32(out));
+            }
+            _ => return Err(EvalError::Unsupported),
+        }
+        Ok(Value::Tensor(sample_tensor))
+    } else {
+        Err(EvalError::Unsupported)
+    }
 }
 
 fn parse_dtype(node: &Node) -> Result<DType, EvalError> {

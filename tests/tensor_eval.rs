@@ -11,7 +11,11 @@ fn annotated_tensor_plus_scalar_yields_tensor_preview() {
     assert!(preview.contains("Tensor["));
     assert!(preview.contains("(2,3)"));
     assert!(preview.contains("F32") || preview.contains("f32"));
-    assert!(preview.contains("fill=1"), "got: {preview}");
+    if cfg!(feature = "cpu-buffers") {
+        assert!(preview.contains("materialized"), "got: {preview}");
+    } else {
+        assert!(preview.contains("fill=1"), "got: {preview}");
+    }
 }
 
 #[test]

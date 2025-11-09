@@ -1,20 +1,41 @@
 use crate::types::{DType, ShapeDim, TensorType};
 
+#[cfg(feature = "cpu-buffers")]
+#[derive(Debug, Clone, PartialEq)]
+pub enum Buffer {
+    I32(Vec<i32>),
+    F32(Vec<f32>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TensorVal {
     pub dtype: DType,
     pub shape: Vec<ShapeDim>,
     /// Optional constant fill value for all elements (preview only).
     pub fill: Option<f64>,
+    #[cfg(feature = "cpu-buffers")]
+    pub buf: Option<Buffer>,
 }
 
 impl TensorVal {
     pub fn from_type(t: &TensorType, fill: Option<f64>) -> Self {
-        Self { dtype: t.dtype.clone(), shape: t.shape.clone(), fill }
+        Self {
+            dtype: t.dtype.clone(),
+            shape: t.shape.clone(),
+            fill,
+            #[cfg(feature = "cpu-buffers")]
+            buf: None,
+        }
     }
 
     pub fn new(dtype: DType, shape: Vec<ShapeDim>, fill: Option<f64>) -> Self {
-        Self { dtype, shape, fill }
+        Self {
+            dtype,
+            shape,
+            fill,
+            #[cfg(feature = "cpu-buffers")]
+            buf: None,
+        }
     }
 }
 
@@ -67,6 +88,16 @@ pub fn format_value_human(v: &Value) -> String {
                 }
             }
             shape.push(')');
+            #[cfg(feature = "cpu-buffers")]
+            if let Some(buf) = &t.buf {
+                let sample = format_buffer_sample(buf, 8);
+                return format!(
+                    "Tensor[{dtype:?},{shape}] materialized (sample=[{sample}])",
+                    dtype = t.dtype,
+                    shape = shape,
+                    sample = sample
+                );
+            }
             match t.fill {
                 Some(f) => format!(
                     "Tensor[{dtype:?},{shape}] fill={fill}",
@@ -83,6 +114,32 @@ pub fn format_value_human(v: &Value) -> String {
 fn trim_float(x: f64) -> String {
     let s = format!("{:.6}", x);
     s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+#[cfg(feature = "cpu-buffers")]
+fn format_buffer_sample(buf: &Buffer, limit: usize) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    match buf {
+        Buffer::I32(values) => {
+            let max = values.len().min(limit);
+            for v in &values[..max] {
+                parts.push(v.to_string());
+            }
+            if values.len() > limit {
+                parts.push("...".to_string());
+            }
+        }
+        Buffer::F32(values) => {
+            let max = values.len().min(limit);
+            for v in &values[..max] {
+                parts.push(trim_float(*v as f64));
+            }
+            if values.len() > limit {
+                parts.push("...".to_string());
+            }
+        }
+    }
+    parts.join(",")
 }
 
 #[cfg(test)]

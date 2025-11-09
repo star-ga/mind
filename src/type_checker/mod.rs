@@ -264,10 +264,74 @@ fn infer_call(
                 });
             }
             let (arg_ty, _) = infer_expr(&args[0], env)?;
-            match arg_ty {
-                ValueType::Tensor(_) | ValueType::ScalarI32 => Ok((arg_ty, span)),
-                _ => Err(TypeErrSpan {
+            if matches!(arg_ty, ValueType::Tensor(_) | ValueType::ScalarI32) {
+                Ok((arg_ty, span))
+            } else {
+                Err(TypeErrSpan {
                     msg: "`tensor.print` requires a tensor or scalar argument".to_string(),
+                    span,
+                })
+            }
+        }
+        #[cfg(feature = "cpu-buffers")]
+        "tensor.materialize" => {
+            if args.len() != 1 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.materialize` expects a tensor argument".to_string(),
+                    span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(&args[0], env)?;
+            match arg_ty.clone() {
+                ValueType::Tensor(_) => Ok((arg_ty, span)),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.materialize` requires a tensor argument".to_string(),
+                    span,
+                }),
+            }
+        }
+        #[cfg(feature = "cpu-buffers")]
+        "tensor.is_materialized" => {
+            if args.len() != 1 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.is_materialized` expects a tensor argument".to_string(),
+                    span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(&args[0], env)?;
+            match arg_ty {
+                ValueType::Tensor(_) => Ok((ValueType::ScalarI32, span)),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.is_materialized` requires a tensor argument".to_string(),
+                    span,
+                }),
+            }
+        }
+        #[cfg(feature = "cpu-buffers")]
+        "tensor.sample" => {
+            if args.len() != 2 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.sample` expects (tensor, count) arguments".to_string(),
+                    span,
+                });
+            }
+            let (tensor_ty, _) = infer_expr(&args[0], env)?;
+            let (count_ty, _) = infer_expr(&args[1], env)?;
+            match (tensor_ty, count_ty) {
+                (ValueType::Tensor(tensor), ValueType::ScalarI32) => Ok((
+                    ValueType::Tensor(TensorType::new(
+                        tensor.dtype,
+                        vec![ShapeDim::Sym("_sample")],
+                    )),
+                    span,
+                )),
+                (ValueType::Tensor(_), _) => Err(TypeErrSpan {
+                    msg: "`tensor.sample` requires the second argument to be an integer"
+                        .to_string(),
+                    span,
+                }),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.sample` requires a tensor and an integer argument".to_string(),
                     span,
                 }),
             }
@@ -311,7 +375,7 @@ fn infer_shape_node(node: &Node) -> Result<Vec<ShapeDim>, TypeErrSpan> {
                 Ok(vec![ShapeDim::Known(*n as usize)])
             }
         }
-        Node::Lit(Literal::Ident(name), span) => Ok(vec![ShapeDim::Sym(leak_symbol(name))]),
+        Node::Lit(Literal::Ident(name), _span) => Ok(vec![ShapeDim::Sym(leak_symbol(name))]),
         _ => Err(TypeErrSpan { msg: "unsupported shape literal".to_string(), span: node.span() }),
     }
 }
