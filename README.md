@@ -330,6 +330,18 @@ cargo run --quiet -- eval "let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x + 1),
 # → grad{ x: Tensor[F32,(2,3)] fill=1 }
 ```
 
+### Reductions & Shape ops (Phase 4E)
+
+```bash
+cargo run --quiet -- eval "let x: Tensor[f32,(2,3)] = 1; tensor.sum(x)"
+# → Tensor[F32,()] fill=6
+
+cargo run --quiet -- eval "let x: Tensor[f32,(2,3)] = 0; grad(tensor.mean(x), wrt=[x])"
+# → grad{ x: Tensor[F32,(2,3)] fill=0.166666 }
+```
+
+Operators: `tensor.sum/mean(x, axes=[...], keepdims=bool)`, `tensor.reshape`, `tensor.expand_dims`, `tensor.squeeze`.
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor
