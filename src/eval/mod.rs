@@ -250,6 +250,39 @@ pub(crate) fn eval_value_expr(
                 _ => Err(EvalError::Unsupported),
             }
         }
+        Node::CallTranspose { x, axes, .. } => {
+            let value = eval_value_expr(x, env, tensor_env)?;
+            match value {
+                Value::Tensor(t) => {
+                    let axes_ref = axes.as_ref().map(|v| v.as_slice());
+                    let (result, _) = stdlib::tensor::transpose_tensor_preview(&t, axes_ref)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallDot { a, b, .. } => {
+            let left = eval_value_expr(a, env, tensor_env)?;
+            let right = eval_value_expr(b, env, tensor_env)?;
+            match (left, right) {
+                (Value::Tensor(tl), Value::Tensor(tr)) => {
+                    let result = stdlib::tensor::dot_tensor_preview(&tl, &tr)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallMatMul { a, b, .. } => {
+            let left = eval_value_expr(a, env, tensor_env)?;
+            let right = eval_value_expr(b, env, tensor_env)?;
+            match (left, right) {
+                (Value::Tensor(tl), Value::Tensor(tr)) => {
+                    let result = stdlib::tensor::matmul_tensor_preview(&tl, &tr)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
         Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, tensor_env, wrt),
         Node::Binary { op, left, right, .. } => {
             let lv = eval_value_expr(left, env, tensor_env)?;

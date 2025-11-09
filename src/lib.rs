@@ -3,6 +3,7 @@ pub mod ast;
 pub mod diagnostics;
 pub mod eval;
 pub mod lexer;
+pub(crate) mod linalg;
 pub mod opt;
 pub mod parser;
 pub mod stdlib;

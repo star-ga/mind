@@ -5,6 +5,7 @@ use crate::eval::autodiff::TensorEnvEntry;
 use crate::eval::{eval_value_expr, format_value_human, EvalError, TensorVal, Value};
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::{materialize_filled, num_elems, MATERIALIZE_MAX};
+use crate::linalg::{self, MatMulShapeInfo};
 use crate::types::{DType, ShapeDim};
 
 #[cfg(feature = "cpu-buffers")]
@@ -529,4 +530,65 @@ pub(crate) fn squeeze_tensor_preview(
         }
     }
     Ok(TensorVal::new(tensor.dtype.clone(), shape, tensor.fill))
+}
+
+fn matmul_shape_info(a: &TensorVal, b: &TensorVal, op: &str) -> Result<MatMulShapeInfo, EvalError> {
+    if a.dtype != b.dtype {
+        return Err(EvalError::UnsupportedMsg(format!(
+            "`{}` dtype mismatch: left {:?} vs right {:?}",
+            op, a.dtype, b.dtype
+        )));
+    }
+    linalg::compute_matmul_shape_info(&a.shape, &b.shape)
+        .map_err(|msg| EvalError::UnsupportedMsg(format!("`{op}`: {msg}")))
+}
+
+pub(crate) fn transpose_tensor_preview(
+    tensor: &TensorVal,
+    axes: Option<&[i32]>,
+) -> Result<(TensorVal, Vec<usize>), EvalError> {
+    let rank = tensor.shape.len();
+    let perm = if let Some(spec) = axes {
+        linalg::normalize_permutation(spec, rank)
+            .map_err(|msg| EvalError::UnsupportedMsg(format!("`tensor.transpose`: {msg}")))?
+    } else {
+        linalg::default_transpose(rank)
+    };
+    let shape = linalg::permute_shape(&tensor.shape, &perm);
+    Ok((TensorVal::new(tensor.dtype.clone(), shape, tensor.fill), perm))
+}
+
+fn matmul_fill(a: &TensorVal, b: &TensorVal, info: &MatMulShapeInfo) -> Option<f64> {
+    match (a.fill, b.fill, linalg::known_dim_value(&info.k_dim)) {
+        (Some(fa), Some(fb), Some(k)) => Some(fa * fb * k as f64),
+        _ => None,
+    }
+}
+
+pub(crate) fn matmul_tensor_preview_with_info(
+    a: &TensorVal,
+    b: &TensorVal,
+) -> Result<(TensorVal, MatMulShapeInfo), EvalError> {
+    let info = matmul_shape_info(a, b, "tensor.matmul")?;
+    let fill = matmul_fill(a, b, &info);
+    let result = TensorVal::new(a.dtype.clone(), info.result_shape.clone(), fill);
+    Ok((result, info))
+}
+
+pub(crate) fn matmul_tensor_preview(a: &TensorVal, b: &TensorVal) -> Result<TensorVal, EvalError> {
+    matmul_tensor_preview_with_info(a, b).map(|(t, _)| t)
+}
+
+pub(crate) fn dot_tensor_preview_with_info(
+    a: &TensorVal,
+    b: &TensorVal,
+) -> Result<(TensorVal, MatMulShapeInfo), EvalError> {
+    let info = matmul_shape_info(a, b, "tensor.dot")?;
+    let fill = matmul_fill(a, b, &info);
+    let result = TensorVal::new(a.dtype.clone(), info.result_shape.clone(), fill);
+    Ok((result, info))
+}
+
+pub(crate) fn dot_tensor_preview(a: &TensorVal, b: &TensorVal) -> Result<TensorVal, EvalError> {
+    dot_tensor_preview_with_info(a, b).map(|(t, _)| t)
 }

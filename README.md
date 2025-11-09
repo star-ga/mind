@@ -342,6 +342,21 @@ cargo run --quiet -- eval "let x: Tensor[f32,(2,3)] = 0; grad(tensor.mean(x), wr
 
 Operators: `tensor.sum/mean(x, axes=[...], keepdims=bool)`, `tensor.reshape`, `tensor.expand_dims`, `tensor.squeeze`.
 
+### Linear algebra (Phase 4F)
+```bash
+cargo run --quiet -- eval "let a: Tensor[f32,(2,3)] = 1; let b: Tensor[f32,(3,4)] = 2; tensor.matmul(a,b)"
+# → Tensor[F32,(2,4)] fill=6
+
+cargo run --quiet -- eval "let v: Tensor[f32,(3)] = 1; let w: Tensor[f32,(3)] = 2; tensor.dot(v,w)"
+# → Tensor[F32,()] fill=6
+```
+
+Gradients (preview):
+```bash
+cargo run --quiet -- eval "let A: Tensor[f32,(2,3)] = 0; let B: Tensor[f32,(3,4)] = 0; grad(tensor.sum(tensor.matmul(A,B)), wrt=[A,B])"
+# → grad{ A: Tensor[F32,(2,3)] fill=1, B: Tensor[F32,(3,4)] fill=1 }
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

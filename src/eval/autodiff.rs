@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::ast;
 use crate::eval::TensorVal;
+use crate::linalg::{self, MatMulShapeInfo};
 
 #[derive(Clone)]
 pub struct TensorEnvEntry {
@@ -26,6 +27,9 @@ enum Op {
     Reshape { x: NodeId },
     ExpandDims { x: NodeId, axis: usize },
     Squeeze { x: NodeId, axes: Vec<usize> },
+    Transpose { x: NodeId, axes: Vec<usize> },
+    Dot { a: NodeId, b: NodeId, info: MatMulShapeInfo },
+    MatMul { a: NodeId, b: NodeId, info: MatMulShapeInfo },
 }
 
 #[derive(Debug, Clone)]
@@ -448,6 +452,69 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(info))
             }
+            ast::Node::CallTranspose { x, axes, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let rank = child_info.shape.len();
+                let perm = if let Some(spec) = axes {
+                    linalg::normalize_permutation(spec, rank)
+                        .map_err(|msg| format!("tensor.transpose: {msg}"))?
+                } else {
+                    linalg::default_transpose(rank)
+                };
+                let shape = linalg::permute_shape(&child_info.shape, &perm);
+                let info = NodeInfo {
+                    op: Op::Transpose { x: child, axes: perm.clone() },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallDot { a, b, .. } => {
+                let left = rec(a, tenv, tape, vars, var_nodes, expanding)?;
+                let right = rec(b, tenv, tape, vars, var_nodes, expanding)?;
+                let lhs = &tape.nodes[left.0];
+                let rhs = &tape.nodes[right.0];
+                if lhs.dtype != rhs.dtype {
+                    return Err("tensor.dot dtype mismatch".to_string());
+                }
+                let info = linalg::compute_matmul_shape_info(&lhs.shape, &rhs.shape)
+                    .map_err(|msg| format!("tensor.dot: {msg}"))?;
+                let fill = match (lhs.fill, rhs.fill, linalg::known_dim_value(&info.k_dim)) {
+                    (Some(a), Some(b), Some(k)) => Some(a * b * k as f64),
+                    _ => None,
+                };
+                let node_info = NodeInfo {
+                    op: Op::Dot { a: left, b: right, info: info.clone() },
+                    dtype: lhs.dtype.clone(),
+                    shape: info.result_shape.clone(),
+                    fill,
+                };
+                Ok(tape.push(node_info))
+            }
+            ast::Node::CallMatMul { a, b, .. } => {
+                let left = rec(a, tenv, tape, vars, var_nodes, expanding)?;
+                let right = rec(b, tenv, tape, vars, var_nodes, expanding)?;
+                let lhs = &tape.nodes[left.0];
+                let rhs = &tape.nodes[right.0];
+                if lhs.dtype != rhs.dtype {
+                    return Err("tensor.matmul dtype mismatch".to_string());
+                }
+                let info = linalg::compute_matmul_shape_info(&lhs.shape, &rhs.shape)
+                    .map_err(|msg| format!("tensor.matmul: {msg}"))?;
+                let fill = match (lhs.fill, rhs.fill, linalg::known_dim_value(&info.k_dim)) {
+                    (Some(a), Some(b), Some(k)) => Some(a * b * k as f64),
+                    _ => None,
+                };
+                let node_info = NodeInfo {
+                    op: Op::MatMul { a: left, b: right, info: info.clone() },
+                    dtype: lhs.dtype.clone(),
+                    shape: info.result_shape.clone(),
+                    fill,
+                };
+                Ok(tape.push(node_info))
+            }
             _ => Err("unsupported node in autodiff".to_string()),
         }
     }
@@ -533,6 +600,14 @@ pub fn backprop_to_vars(
                 let mut reshaped = grad.clone();
                 reshaped.shape = tape.nodes[x.0].shape.clone();
                 accumulate_grad(&mut adj, x, reshaped);
+            }
+            Op::Transpose { x, ref axes } => {
+                let inv = linalg::invert_permutation(axes);
+                let transposed = transpose_tensorval(&grad, &inv);
+                accumulate_grad(&mut adj, x, transposed);
+            }
+            Op::Dot { a, b, ref info } | Op::MatMul { a, b, ref info } => {
+                backprop_matmul_op(&mut adj, tape, &grad, a, b, info);
             }
             Op::LeafVar | Op::ConstInt => {}
         }
@@ -660,6 +735,125 @@ fn accumulate_grad(adj: &mut HashMap<NodeId, TensorVal>, target: NodeId, incomin
             }
         })
         .or_insert(incoming);
+}
+
+fn transpose_tensorval(tensor: &TensorVal, perm: &[usize]) -> TensorVal {
+    let shape = linalg::permute_shape(&tensor.shape, perm);
+    TensorVal::new(tensor.dtype.clone(), shape, tensor.fill)
+}
+
+fn reshape_to_target(mut tensor: TensorVal, target_shape: &[ShapeDim]) -> TensorVal {
+    if tensor.shape == target_shape {
+        return tensor;
+    }
+    let mut can_keep_fill = true;
+    let mut src_idx = tensor.shape.len() as isize - 1;
+    let mut tgt_idx = target_shape.len() as isize - 1;
+    while tgt_idx >= 0 {
+        if src_idx < 0 {
+            can_keep_fill = false;
+            break;
+        }
+        let src_dim = &tensor.shape[src_idx as usize];
+        let tgt_dim = &target_shape[tgt_idx as usize];
+        if src_dim == tgt_dim {
+            src_idx -= 1;
+            tgt_idx -= 1;
+        } else if matches!(src_dim, ShapeDim::Known(1)) {
+            src_idx -= 1;
+        } else {
+            can_keep_fill = false;
+            break;
+        }
+    }
+    if tgt_idx >= 0 {
+        can_keep_fill = false;
+    }
+    while src_idx >= 0 {
+        if !matches!(tensor.shape[src_idx as usize], ShapeDim::Known(1)) {
+            can_keep_fill = false;
+            break;
+        }
+        src_idx -= 1;
+    }
+    tensor.shape = target_shape.to_vec();
+    if !can_keep_fill {
+        tensor.fill = None;
+    }
+    tensor
+}
+
+fn expand_grad_for_matmul(grad: &TensorVal, info: &MatMulShapeInfo) -> TensorVal {
+    let mut shape = info.broadcast_shape.clone();
+    if info.a_was_vec {
+        shape.push(ShapeDim::Known(1));
+    } else {
+        shape.push(info.m_dim.clone());
+    }
+    if info.b_was_vec {
+        shape.push(ShapeDim::Known(1));
+    } else {
+        shape.push(info.n_dim.clone());
+    }
+    TensorVal::new(grad.dtype.clone(), shape, grad.fill)
+}
+
+fn matmul_preview_simple(lhs: &TensorVal, rhs: &TensorVal) -> Option<(TensorVal, MatMulShapeInfo)> {
+    if lhs.dtype != rhs.dtype {
+        return None;
+    }
+    let info = linalg::compute_matmul_shape_info(&lhs.shape, &rhs.shape).ok()?;
+    let fill = match (lhs.fill, rhs.fill, linalg::known_dim_value(&info.k_dim)) {
+        (Some(a), Some(b), Some(k)) => Some(a * b * k as f64),
+        _ => None,
+    };
+    let result = TensorVal::new(lhs.dtype.clone(), info.result_shape.clone(), fill);
+    Some((result, info))
+}
+
+fn swap_last_two(rank: usize) -> Vec<usize> {
+    let mut axes: Vec<usize> = (0..rank).collect();
+    if rank >= 2 {
+        axes.swap(rank - 1, rank - 2);
+    }
+    axes
+}
+
+fn backprop_matmul_op(
+    adj: &mut HashMap<NodeId, TensorVal>,
+    tape: &Tape,
+    upstream: &TensorVal,
+    a: NodeId,
+    b: NodeId,
+    info: &MatMulShapeInfo,
+) {
+    let grad_expanded = expand_grad_for_matmul(upstream, info);
+
+    let b_info = &tape.nodes[b.0];
+    let b_tensor = TensorVal::new(b_info.dtype.clone(), info.b_shape.clone(), b_info.fill);
+    let b_t = transpose_tensorval(&b_tensor, &swap_last_two(info.b_shape.len()));
+    if let Some((mut grad_a, _)) = matmul_preview_simple(&grad_expanded, &b_t) {
+        grad_a.fill = grad_expanded.fill;
+        let aligned = reshape_to_target(grad_a, &tape.nodes[a.0].shape);
+        accumulate_grad(adj, a, aligned);
+    } else {
+        let zero =
+            TensorVal::new(tape.nodes[a.0].dtype.clone(), tape.nodes[a.0].shape.clone(), None);
+        accumulate_grad(adj, a, zero);
+    }
+
+    let a_info = &tape.nodes[a.0];
+    let a_tensor = TensorVal::new(a_info.dtype.clone(), info.a_shape.clone(), a_info.fill);
+    let a_t = transpose_tensorval(&a_tensor, &swap_last_two(info.a_shape.len()));
+    if let Some((mut grad_b, _)) = matmul_preview_simple(&a_t, &grad_expanded) {
+        grad_b.fill = grad_expanded.fill;
+        let aligned = reshape_to_target(grad_b, &tape.nodes[b.0].shape);
+        accumulate_grad(adj, b, aligned);
+    } else {
+        let zero =
+            TensorVal::new(tape.nodes[b.0].dtype.clone(), tape.nodes[b.0].shape.clone(), None);
+        accumulate_grad(adj, b, zero);
+    }
 }
 
 fn known_num_elems(shape: &[ShapeDim]) -> Option<usize> {
