@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ast::{Literal, Node};
 use crate::eval::autodiff::TensorEnvEntry;
@@ -285,6 +286,7 @@ fn parse_shape_dim(
     }
 }
 
+#[allow(dead_code)]
 fn known_num_elems(shape: &[ShapeDim]) -> Option<usize> {
     let mut total = 1usize;
     for dim in shape {
@@ -337,6 +339,12 @@ fn shape_dim_from_value(value: &Value) -> Result<ShapeDim, EvalError> {
 
 fn leak_symbol(name: &str) -> &'static str {
     Box::leak(name.to_string().into_boxed_str())
+}
+
+fn fresh_symbol(prefix: &str) -> &'static str {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    Box::leak(format!("{prefix}{id}").into_boxed_str())
 }
 
 fn normalize_axis(axis: i32, rank: usize) -> Result<usize, EvalError> {
@@ -418,6 +426,78 @@ fn known_product(shape: &[ShapeDim]) -> Option<usize> {
         }
     }
     Some(total)
+}
+
+fn slice_len_with_step(len: Option<usize>, start: i32, end: i32, step: i32) -> Option<usize> {
+    if step == 0 {
+        return None;
+    }
+    let len = len?;
+    let len_i = len as i64;
+    let step_i = step as i64;
+
+    let mut start_i = start as i64;
+    let mut end_i = end as i64;
+
+    if step_i > 0 {
+        if start_i < 0 {
+            start_i += len_i;
+        }
+        if start_i < 0 {
+            start_i = 0;
+        }
+        if start_i > len_i {
+            start_i = len_i;
+        }
+
+        if end_i < 0 {
+            end_i += len_i;
+        }
+        if end_i < 0 {
+            end_i = 0;
+        }
+        if end_i > len_i {
+            end_i = len_i;
+        }
+
+        if start_i >= end_i {
+            Some(0)
+        } else {
+            let diff = end_i - start_i;
+            Some(((diff + step_i.abs() - 1) / step_i.abs()) as usize)
+        }
+    } else {
+        if len == 0 {
+            return Some(0);
+        }
+
+        if start_i < 0 {
+            start_i += len_i;
+        }
+        if start_i < -1 {
+            start_i = -1;
+        }
+        if start_i >= len_i {
+            start_i = len_i - 1;
+        }
+
+        if end_i < 0 {
+            end_i += len_i;
+        }
+        if end_i < -1 {
+            end_i = -1;
+        }
+        if end_i >= len_i {
+            end_i = len_i - 1;
+        }
+
+        if start_i <= end_i {
+            Some(0)
+        } else {
+            let diff = start_i - end_i;
+            Some(((diff + (-step_i) - 1) / (-step_i)) as usize)
+        }
+    }
 }
 
 fn normalize_expand_axis(axis: i32, rank: usize) -> Result<usize, EvalError> {
@@ -600,6 +680,57 @@ pub(crate) fn slice_tensor_preview(
         ShapeDim::Sym(sym) => ShapeDim::Sym(sym),
     };
     shape[axis] = new_dim;
+    Ok(TensorVal::new(tensor.dtype.clone(), shape, tensor.fill))
+}
+
+pub(crate) fn slice_stride_tensor_preview(
+    tensor: &TensorVal,
+    axis: i32,
+    start: i32,
+    end: i32,
+    step: i32,
+) -> Result<TensorVal, EvalError> {
+    if step == 0 {
+        return Err(EvalError::Unsupported);
+    }
+    let rank = tensor.shape.len();
+    let axis = normalize_axis(axis, rank)?;
+    let mut shape = tensor.shape.clone();
+    let new_dim = match tensor.shape[axis].clone() {
+        ShapeDim::Known(n) => {
+            let Some(len) = slice_len_with_step(Some(n), start, end, step) else {
+                return Err(EvalError::Unsupported);
+            };
+            ShapeDim::Known(len)
+        }
+        ShapeDim::Sym(_) => {
+            if (step > 0 && start >= end) || (step < 0 && start <= end) {
+                ShapeDim::Known(0)
+            } else {
+                ShapeDim::Sym(fresh_symbol("_slice_stride"))
+            }
+        }
+    };
+    shape[axis] = new_dim;
+    let fill = if tensor.fill.is_some() { tensor.fill } else { None };
+    Ok(TensorVal::new(tensor.dtype.clone(), shape, fill))
+}
+
+pub(crate) fn gather_tensor_preview(
+    tensor: &TensorVal,
+    axis: i32,
+    idx: &TensorVal,
+) -> Result<TensorVal, EvalError> {
+    if idx.dtype != DType::I32 {
+        return Err(EvalError::Unsupported);
+    }
+    let axis = normalize_axis(axis, tensor.shape.len())?;
+    let mut shape = Vec::new();
+    shape.extend_from_slice(&tensor.shape[..axis]);
+    shape.extend(idx.shape.iter().cloned());
+    if axis + 1 <= tensor.shape.len() {
+        shape.extend_from_slice(&tensor.shape[axis + 1..]);
+    }
     Ok(TensorVal::new(tensor.dtype.clone(), shape, tensor.fill))
 }
 

@@ -120,6 +120,78 @@ fn slice_len(start: i32, end: i32) -> Option<usize> {
     }
 }
 
+fn slice_len_with_step(len: Option<usize>, start: i32, end: i32, step: i32) -> Option<usize> {
+    if step == 0 {
+        return None;
+    }
+    let len = len?;
+    let len_i = len as i64;
+    let step_i = step as i64;
+
+    let mut start_i = start as i64;
+    let mut end_i = end as i64;
+
+    if step_i > 0 {
+        if start_i < 0 {
+            start_i += len_i;
+        }
+        if start_i < 0 {
+            start_i = 0;
+        }
+        if start_i > len_i {
+            start_i = len_i;
+        }
+
+        if end_i < 0 {
+            end_i += len_i;
+        }
+        if end_i < 0 {
+            end_i = 0;
+        }
+        if end_i > len_i {
+            end_i = len_i;
+        }
+
+        if start_i >= end_i {
+            Some(0)
+        } else {
+            let diff = end_i - start_i;
+            Some(((diff + step_i.abs() - 1) / step_i.abs()) as usize)
+        }
+    } else {
+        if len == 0 {
+            return Some(0);
+        }
+
+        if start_i < 0 {
+            start_i += len_i;
+        }
+        if start_i < -1 {
+            start_i = -1;
+        }
+        if start_i >= len_i {
+            start_i = len_i - 1;
+        }
+
+        if end_i < 0 {
+            end_i += len_i;
+        }
+        if end_i < -1 {
+            end_i = -1;
+        }
+        if end_i >= len_i {
+            end_i = len_i - 1;
+        }
+
+        if start_i <= end_i {
+            Some(0)
+        } else {
+            let diff = start_i - end_i;
+            Some(((diff + (-step_i) - 1) / (-step_i)) as usize)
+        }
+    }
+}
+
 fn normalize_axes_list(
     axes: &[i32],
     rank: usize,
@@ -490,6 +562,75 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.slice` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallSliceStride { x, axis, start, end, step, span } => {
+            if *step == 0 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.slice_stride` requires step != 0".to_string(),
+                    span: *span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    let axis_norm =
+                        normalize_axis(*axis, tensor.shape.len(), *span, "tensor.slice_stride")?;
+                    let dim = tensor.shape[axis_norm].clone();
+                    let new_dim = if let Some(len) = dim_len(&dim) {
+                        let Some(result_len) = slice_len_with_step(Some(len), *start, *end, *step)
+                        else {
+                            return Err(TypeErrSpan {
+                                msg: "`tensor.slice_stride` bounds are invalid for the axis"
+                                    .to_string(),
+                                span: *span,
+                            });
+                        };
+                        ShapeDim::Known(result_len)
+                    } else if (*step > 0 && *start >= *end) || (*step < 0 && *start <= *end) {
+                        ShapeDim::Known(0)
+                    } else {
+                        ShapeDim::Sym(fresh_symbol("_slice_stride"))
+                    };
+                    let mut shape = tensor.shape.clone();
+                    shape[axis_norm] = new_dim;
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.slice_stride` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallGather { x, axis, idx, span } => {
+            let (x_ty, _) = infer_expr(x, env)?;
+            let (idx_ty, idx_span) = infer_expr(idx, env)?;
+            match (x_ty, idx_ty) {
+                (ValueType::Tensor(tensor), ValueType::Tensor(idx_tensor)) => {
+                    if idx_tensor.dtype != DType::I32 {
+                        return Err(TypeErrSpan {
+                            msg: "`tensor.gather` requires `idx` to be an i32 tensor".to_string(),
+                            span: idx.span(),
+                        });
+                    }
+                    let axis_norm =
+                        normalize_axis(*axis, tensor.shape.len(), *span, "tensor.gather")?;
+                    let mut shape = Vec::new();
+                    shape.extend_from_slice(&tensor.shape[..axis_norm]);
+                    shape.extend(idx_tensor.shape.iter().cloned());
+                    if axis_norm + 1 <= tensor.shape.len() {
+                        shape.extend_from_slice(&tensor.shape[axis_norm + 1..]);
+                    }
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                }
+                (ValueType::Tensor(_), _) => Err(TypeErrSpan {
+                    msg: "`tensor.gather` requires `idx` to be a tensor".to_string(),
+                    span: idx_span,
+                }),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.gather` requires a tensor argument".to_string(),
                     span: x.span(),
                 }),
             }

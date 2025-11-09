@@ -373,6 +373,29 @@ cargo run --quiet -- eval "let X: Tensor[f32,(3,6)] = 0; grad(tensor.sum(tensor.
 # → grad{ X: Tensor[F32,(3,6)] … }
 ```
 
+### Strided slicing & gather (Phase 4H)
+
+```bash
+cargo run --quiet -- eval "let x: Tensor[f32,(5,10)] = 3; tensor.slice_stride(x, axis=1, start=0, end=10, step=2)"
+# → Tensor[F32,(5,5)] fill=3
+
+cargo run --quiet -- eval "
+  let X: Tensor[f32,(3,4)] = 1;
+  let idx: Tensor[i32,(2)] = 0;
+  tensor.gather(X, axis=1, idx)
+"
+# → Tensor[F32,(3,2)] fill=1
+```
+
+Gradients (preview):
+```bash
+cargo run --quiet -- eval "
+  let X: Tensor[f32,(5,10)] = 0;
+  grad(tensor.sum(tensor.slice_stride(X, axis=1, start=0, end=10, step=2)), wrt=[X])
+"
+# → grad{ X: Tensor[F32,(5,10)] … }
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor
