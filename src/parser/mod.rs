@@ -226,6 +226,43 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallSlice { x: Box::new(x), axis, start, end, span }
             });
 
+        let tensor_slice_stride_call = just("tensor.slice_stride")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(kw("step").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(')').padded())
+            .map_with_span(|((((x, axis), start), end), step), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallSliceStride { x: Box::new(x), axis, start, end, step, span }
+            });
+
+        let tensor_gather_call = just("tensor.gather")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then_ignore(just(',').padded())
+            .then(
+                kw("idx")
+                    .ignore_then(just('=').padded())
+                    .to(())
+                    .or_not()
+                    .then(expr.clone())
+                    .map(|(_, idx_expr)| idx_expr),
+            )
+            .then_ignore(just(')').padded())
+            .map_with_span(|((x, axis), idx), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallGather { x: Box::new(x), axis, idx: Box::new(idx), span }
+            });
+
         let tensor_dot_call = just("tensor.dot")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
@@ -272,6 +309,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             tensor_transpose_call,
             tensor_index_call,
             tensor_slice_call,
+            tensor_slice_stride_call,
+            tensor_gather_call,
             tensor_dot_call,
             tensor_matmul_call,
             call,

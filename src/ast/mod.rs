@@ -66,6 +66,8 @@ pub enum Node {
     CallTranspose { x: Box<Node>, axes: Option<Vec<i32>>, span: Span },
     CallIndex { x: Box<Node>, axis: i32, i: i32, span: Span },
     CallSlice { x: Box<Node>, axis: i32, start: i32, end: i32, span: Span },
+    CallSliceStride { x: Box<Node>, axis: i32, start: i32, end: i32, step: i32, span: Span },
+    CallGather { x: Box<Node>, axis: i32, idx: Box<Node>, span: Span },
     CallDot { a: Box<Node>, b: Box<Node>, span: Span },
     CallMatMul { a: Box<Node>, b: Box<Node>, span: Span },
     Let { name: String, ann: Option<TypeAnn>, value: Box<Node>, span: Span },
@@ -89,6 +91,8 @@ impl Node {
             | Node::CallTranspose { span, .. }
             | Node::CallIndex { span, .. }
             | Node::CallSlice { span, .. }
+            | Node::CallSliceStride { span, .. }
+            | Node::CallGather { span, .. }
             | Node::CallDot { span, .. }
             | Node::CallMatMul { span, .. }
             | Node::Let { span, .. }

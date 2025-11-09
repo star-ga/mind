@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ast;
 use crate::eval::TensorVal;
@@ -30,6 +31,8 @@ enum Op {
     Transpose { x: NodeId, axes: Vec<usize> },
     Index { x: NodeId, axis: usize, i: i32 },
     Slice { x: NodeId, axis: usize, start: i32, end: i32 },
+    SliceStride { x: NodeId, axis: usize, start: i32, end: i32, step: i32, in_shape: Vec<ShapeDim> },
+    Gather { x: NodeId, idx: NodeId, axis: usize, in_shape: Vec<ShapeDim> },
     Dot { a: NodeId, b: NodeId, info: MatMulShapeInfo },
     MatMul { a: NodeId, b: NodeId, info: MatMulShapeInfo },
 }
@@ -190,6 +193,84 @@ fn dims_from_strings(dims: &[String]) -> Vec<ShapeDim> {
             }
         })
         .collect()
+}
+
+fn fresh_symbol(prefix: &str) -> &'static str {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    Box::leak(format!("{prefix}{id}").into_boxed_str())
+}
+
+fn slice_len_with_step(len: Option<usize>, start: i32, end: i32, step: i32) -> Option<usize> {
+    if step == 0 {
+        return None;
+    }
+    let len = len?;
+    let len_i = len as i64;
+    let step_i = step as i64;
+
+    let mut start_i = start as i64;
+    let mut end_i = end as i64;
+
+    if step_i > 0 {
+        if start_i < 0 {
+            start_i += len_i;
+        }
+        if start_i < 0 {
+            start_i = 0;
+        }
+        if start_i > len_i {
+            start_i = len_i;
+        }
+
+        if end_i < 0 {
+            end_i += len_i;
+        }
+        if end_i < 0 {
+            end_i = 0;
+        }
+        if end_i > len_i {
+            end_i = len_i;
+        }
+
+        if start_i >= end_i {
+            Some(0)
+        } else {
+            let diff = end_i - start_i;
+            Some(((diff + step_i.abs() - 1) / step_i.abs()) as usize)
+        }
+    } else {
+        if len == 0 {
+            return Some(0);
+        }
+
+        if start_i < 0 {
+            start_i += len_i;
+        }
+        if start_i < -1 {
+            start_i = -1;
+        }
+        if start_i >= len_i {
+            start_i = len_i - 1;
+        }
+
+        if end_i < 0 {
+            end_i += len_i;
+        }
+        if end_i < -1 {
+            end_i = -1;
+        }
+        if end_i >= len_i {
+            end_i = len_i - 1;
+        }
+
+        if start_i <= end_i {
+            Some(0)
+        } else {
+            let diff = start_i - end_i;
+            Some(((diff + (-step_i) - 1) / (-step_i)) as usize)
+        }
+    }
 }
 
 fn expand_reduced_axes(mut grad: TensorVal, axes: &[usize], target_rank: usize) -> TensorVal {
@@ -521,6 +602,75 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(info))
             }
+            ast::Node::CallSliceStride { x, axis, start, end, step, .. } => {
+                if *step == 0 {
+                    return Err("tensor.slice_stride: step must be non-zero".to_string());
+                }
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let axis_norm = normalize_axis(*axis, child_info.shape.len())?;
+                let new_dim = if let Some(len) = slice_len_with_step(
+                    match child_info.shape[axis_norm] {
+                        ShapeDim::Known(n) => Some(n),
+                        ShapeDim::Sym(_) => None,
+                    },
+                    *start,
+                    *end,
+                    *step,
+                ) {
+                    ShapeDim::Known(len)
+                } else if matches!(child_info.shape[axis_norm], ShapeDim::Known(_)) {
+                    return Err("tensor.slice_stride: invalid bounds".to_string());
+                } else if (*step > 0 && *start >= *end) || (*step < 0 && *start <= *end) {
+                    ShapeDim::Known(0)
+                } else {
+                    ShapeDim::Sym(fresh_symbol("_slice_stride"))
+                };
+                let mut shape = child_info.shape.clone();
+                shape[axis_norm] = new_dim;
+                let info = NodeInfo {
+                    op: Op::SliceStride {
+                        x: child,
+                        axis: axis_norm,
+                        start: *start,
+                        end: *end,
+                        step: *step,
+                        in_shape: child_info.shape.clone(),
+                    },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallGather { x, axis, idx, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let idx_id = rec(idx, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let idx_info = &tape.nodes[idx_id.0];
+                if idx_info.dtype != DType::I32 {
+                    return Err("tensor.gather: idx must be i32 tensor".to_string());
+                }
+                let axis_norm = normalize_axis(*axis, child_info.shape.len())?;
+                let mut shape = Vec::new();
+                shape.extend_from_slice(&child_info.shape[..axis_norm]);
+                shape.extend(idx_info.shape.iter().cloned());
+                if axis_norm + 1 <= child_info.shape.len() {
+                    shape.extend_from_slice(&child_info.shape[axis_norm + 1..]);
+                }
+                let info = NodeInfo {
+                    op: Op::Gather {
+                        x: child,
+                        idx: idx_id,
+                        axis: axis_norm,
+                        in_shape: child_info.shape.clone(),
+                    },
+                    dtype: child_info.dtype.clone(),
+                    shape,
+                    fill: child_info.fill,
+                };
+                Ok(tape.push(info))
+            }
             ast::Node::CallDot { a, b, .. } => {
                 let left = rec(a, tenv, tape, vars, var_nodes, expanding)?;
                 let right = rec(b, tenv, tape, vars, var_nodes, expanding)?;
@@ -590,20 +740,20 @@ pub fn backprop_to_vars(
         let nid = NodeId(idx);
         let Some(grad) = adj.get(&nid).cloned() else { continue };
         let node = &tape.nodes[idx];
-        match node.op {
+        match &node.op {
             Op::Add(l, r) => {
-                push_grad(&mut adj, tape, l, &grad);
-                push_grad(&mut adj, tape, r, &grad);
+                push_grad(&mut adj, tape, *l, &grad);
+                push_grad(&mut adj, tape, *r, &grad);
             }
             Op::Sub(l, r) => {
-                push_grad(&mut adj, tape, l, &grad);
-                push_grad_neg(&mut adj, tape, r, &grad);
+                push_grad(&mut adj, tape, *l, &grad);
+                push_grad_neg(&mut adj, tape, *r, &grad);
             }
             Op::Mul(l, r) => {
                 let right_fill = tape.nodes[r.0].fill;
                 let left_fill = tape.nodes[l.0].fill;
-                push_grad_scaled(&mut adj, tape, l, &grad, right_fill);
-                push_grad_scaled(&mut adj, tape, r, &grad, left_fill);
+                push_grad_scaled(&mut adj, tape, *l, &grad, right_fill);
+                push_grad_scaled(&mut adj, tape, *r, &grad, left_fill);
             }
             Op::Div(l, r) => {
                 let right_fill = tape.nodes[r.0].fill;
@@ -614,23 +764,24 @@ pub fn backprop_to_vars(
                     (Some(x), Some(rf)) if rf != 0.0 => Some(-x / (rf * rf)),
                     _ => None,
                 };
-                push_grad_scaled(&mut adj, tape, l, &grad, scale_left);
-                push_grad_scaled(&mut adj, tape, r, &grad, scale_right);
+                push_grad_scaled(&mut adj, tape, *l, &grad, scale_left);
+                push_grad_scaled(&mut adj, tape, *r, &grad, scale_right);
             }
-            Op::ReduceSum { x, ref axes, keepdims, .. } => {
+            Op::ReduceSum { x, axes, keepdims, reduced_elems } => {
+                let _ = reduced_elems;
                 let mut expanded = grad.clone();
                 if !keepdims {
                     expanded = expand_reduced_axes(expanded, axes, tape.nodes[x.0].shape.len());
                 }
                 let broadcasted = broadcast_to_shape(expanded, &tape.nodes[x.0].shape);
-                accumulate_grad(&mut adj, x, broadcasted);
+                accumulate_grad(&mut adj, *x, broadcasted);
             }
-            Op::ReduceMean { x, ref axes, keepdims, reduced_elems } => {
+            Op::ReduceMean { x, axes, keepdims, reduced_elems } => {
                 let mut adjusted = grad.clone();
                 match reduced_elems {
-                    Some(n) if n > 0 => {
+                    Some(n) if *n > 0 => {
                         if let Some(fill) = adjusted.fill {
-                            adjusted.fill = Some(fill / n as f64);
+                            adjusted.fill = Some(fill / *n as f64);
                         }
                     }
                     Some(_) => {}
@@ -644,40 +795,64 @@ pub fn backprop_to_vars(
                     adjusted = expand_reduced_axes(adjusted, axes, tape.nodes[x.0].shape.len());
                 }
                 let broadcasted = broadcast_to_shape(adjusted, &tape.nodes[x.0].shape);
-                accumulate_grad(&mut adj, x, broadcasted);
+                accumulate_grad(&mut adj, *x, broadcasted);
             }
-            Op::Reshape { x } | Op::ExpandDims { x, .. } | Op::Squeeze { x, .. } => {
+            Op::Reshape { x } => {
                 let mut reshaped = grad.clone();
                 reshaped.shape = tape.nodes[x.0].shape.clone();
-                accumulate_grad(&mut adj, x, reshaped);
+                accumulate_grad(&mut adj, *x, reshaped);
             }
-            Op::Transpose { x, ref axes } => {
+            Op::ExpandDims { x, axis } => {
+                let _ = axis;
+                let mut reshaped = grad.clone();
+                reshaped.shape = tape.nodes[x.0].shape.clone();
+                accumulate_grad(&mut adj, *x, reshaped);
+            }
+            Op::Squeeze { x, axes } => {
+                let _ = axes;
+                let mut reshaped = grad.clone();
+                reshaped.shape = tape.nodes[x.0].shape.clone();
+                accumulate_grad(&mut adj, *x, reshaped);
+            }
+            Op::Transpose { x, axes } => {
                 let inv = linalg::invert_permutation(axes);
                 let transposed = transpose_tensorval(&grad, &inv);
-                accumulate_grad(&mut adj, x, transposed);
+                accumulate_grad(&mut adj, *x, transposed);
             }
             Op::Index { x, axis, i } => {
                 let child_info = &tape.nodes[x.0];
                 let _ = (axis, i);
                 let scattered =
                     TensorVal::new(child_info.dtype.clone(), child_info.shape.clone(), None);
-                accumulate_grad(&mut adj, x, scattered);
+                accumulate_grad(&mut adj, *x, scattered);
             }
             Op::Slice { x, axis, start, end } => {
                 let child_info = &tape.nodes[x.0];
                 let mut fill = None;
                 if let (Some(gfill), Some(_orig_fill)) = (grad.fill, child_info.fill) {
-                    if let ShapeDim::Known(len) = child_info.shape[axis] {
-                        if start == 0 && end == len as i32 {
+                    if let ShapeDim::Known(len) = child_info.shape[*axis] {
+                        if *start == 0 && *end == len as i32 {
                             fill = Some(gfill);
                         }
                     }
                 }
                 let back = TensorVal::new(child_info.dtype.clone(), child_info.shape.clone(), fill);
-                accumulate_grad(&mut adj, x, back);
+                accumulate_grad(&mut adj, *x, back);
             }
-            Op::Dot { a, b, ref info } | Op::MatMul { a, b, ref info } => {
-                backprop_matmul_op(&mut adj, tape, &grad, a, b, info);
+            Op::SliceStride { x, in_shape, axis, start, end, step } => {
+                let _ = (axis, start, end, step);
+                let child_info = &tape.nodes[x.0];
+                let back = TensorVal::new(child_info.dtype.clone(), in_shape.clone(), None);
+                accumulate_grad(&mut adj, *x, back);
+            }
+            Op::Gather { x, in_shape, idx, axis } => {
+                let _ = (idx, axis);
+                let child_info = &tape.nodes[x.0];
+                let back = TensorVal::new(child_info.dtype.clone(), in_shape.clone(), None);
+                accumulate_grad(&mut adj, *x, back);
+            }
+            Op::Dot { a, b, info } | Op::MatMul { a, b, info } => {
+                backprop_matmul_op(&mut adj, tape, &grad, *a, *b, info);
             }
             Op::LeafVar | Op::ConstInt => {}
         }
@@ -926,6 +1101,7 @@ fn backprop_matmul_op(
     }
 }
 
+#[allow(dead_code)]
 fn known_num_elems(shape: &[ShapeDim]) -> Option<usize> {
     let mut total = 1usize;
     for dim in shape {
