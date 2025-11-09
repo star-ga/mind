@@ -4,6 +4,7 @@ use super::TensorType;
 pub enum ValueType {
     ScalarI32,
     Tensor(TensorType),
+    GradMap(Vec<(String, TensorType)>),
 }
 
 impl ValueType {

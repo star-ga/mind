@@ -19,6 +19,7 @@ pub fn dispatch(
         "tensor.ones" => construct(args, env, 1.0),
         "tensor.shape" => tensor_shape(args, env),
         "tensor.dtype" => tensor_dtype(args, env),
+        "tensor.sum" => tensor_sum(args, env),
         "tensor.print" => tensor_print(args, env),
         #[cfg(feature = "cpu-buffers")]
         "tensor.materialize" => tensor_materialize(args, env),
@@ -65,6 +66,30 @@ fn tensor_dtype(args: &[Node], env: &HashMap<String, Value>) -> Result<Value, Ev
     let value = eval_value_expr(&args[0], env)?;
     if let Value::Tensor(t) = value {
         Ok(Value::Str(t.dtype.as_str().to_string()))
+    } else {
+        Err(EvalError::Unsupported)
+    }
+}
+
+fn tensor_sum(args: &[Node], env: &HashMap<String, Value>) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::Unsupported);
+    }
+    let value = eval_value_expr(&args[0], env)?;
+    if let Value::Tensor(t) = value {
+        let mut result = TensorVal::new(t.dtype.clone(), Vec::new(), None);
+        if let Some(fill) = t.fill {
+            if let Some(count) = known_num_elems(&t.shape) {
+                result.fill = Some(fill * count as f64);
+            }
+        }
+        #[cfg(feature = "cpu-buffers")]
+        {
+            if result.fill.is_some() {
+                crate::eval::materialize_filled(&mut result);
+            }
+        }
+        Ok(Value::Tensor(result))
     } else {
         Err(EvalError::Unsupported)
     }
@@ -219,6 +244,19 @@ fn parse_shape_dim(node: &Node, env: &HashMap<String, Value>) -> Result<ShapeDim
     }
 }
 
+fn known_num_elems(shape: &[ShapeDim]) -> Option<usize> {
+    let mut total = 1usize;
+    for dim in shape {
+        match dim {
+            ShapeDim::Known(n) => {
+                total = total.checked_mul(*n)?;
+            }
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(total)
+}
+
 fn shape_from_value(value: &Value) -> Result<Vec<ShapeDim>, EvalError> {
     match value {
         Value::Tuple(items) => {
@@ -252,6 +290,7 @@ fn shape_dim_from_value(value: &Value) -> Result<ShapeDim, EvalError> {
             }
         }
         Value::Tuple(_) => Err(EvalError::Unsupported),
+        Value::GradMap(_) => Err(EvalError::Unsupported),
     }
 }
 
