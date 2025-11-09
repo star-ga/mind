@@ -40,6 +40,13 @@ fn describe_value_type(v: &ValueType) -> String {
     match v {
         ValueType::ScalarI32 => "Scalar[i32]".to_string(),
         ValueType::Tensor(tensor) => describe_tensor(tensor),
+        ValueType::GradMap(entries) => {
+            let mut parts = Vec::new();
+            for (name, tensor) in entries {
+                parts.push(format!("{}: {}", name, describe_tensor(tensor)));
+            }
+            format!("GradMap{{{}}}", parts.join(", "))
+        }
     }
 }
 
@@ -78,6 +85,7 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
             }
         }
         (ValueType::ScalarI32, ValueType::ScalarI32) => None,
+        (ValueType::GradMap(_), _) | (_, ValueType::GradMap(_)) => None,
     }
 }
 
@@ -142,6 +150,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         Node::Tuple { span, .. } => Ok((ValueType::ScalarI32, *span)),
         Node::Call { callee, args, span } => infer_call(callee, args, *span, env),
+        Node::CallGrad { loss, wrt, span } => infer_grad(loss, wrt, *span, env),
         Node::Binary { op, left, right, span } => {
             let (lt, _) = infer_expr(left, env)?;
             let (rt, _) = infer_expr(right, env)?;
@@ -206,6 +215,52 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
     }
 }
 
+fn infer_grad(
+    loss: &Node,
+    wrt: &[String],
+    span: AstSpan,
+    env: &TypeEnv,
+) -> Result<(ValueType, AstSpan), TypeErrSpan> {
+    let (loss_ty, _) = infer_expr(loss, env)?;
+    match loss_ty {
+        ValueType::Tensor(ref t) => {
+            if !t.shape.is_empty() {
+                return Err(TypeErrSpan {
+                    msg: "`grad` expects a scalar loss with shape ()".to_string(),
+                    span: loss.span(),
+                });
+            }
+        }
+        _ => {
+            return Err(TypeErrSpan {
+                msg: "`grad` requires the loss to be a tensor expression".to_string(),
+                span: loss.span(),
+            });
+        }
+    };
+
+    let mut entries = Vec::new();
+    for name in wrt {
+        match env.get(name) {
+            Some(ValueType::Tensor(t)) => entries.push((name.clone(), t.clone())),
+            Some(_) => {
+                return Err(TypeErrSpan {
+                    msg: format!("`{}` is not a tensor variable", name),
+                    span,
+                });
+            }
+            None => {
+                return Err(TypeErrSpan {
+                    msg: format!("unknown tensor `{}` in `wrt`", name),
+                    span,
+                });
+            }
+        }
+    }
+
+    Ok((ValueType::GradMap(entries), span))
+}
+
 fn infer_call(
     callee: &str,
     args: &[Node],
@@ -236,6 +291,24 @@ fn infer_call(
                 ValueType::Tensor(_) => Ok((ValueType::ScalarI32, span)),
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.shape` requires a tensor argument".to_string(),
+                    span,
+                }),
+            }
+        }
+        "tensor.sum" => {
+            if args.len() != 1 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.sum` expects a single tensor argument".to_string(),
+                    span,
+                });
+            }
+            let (arg_ty, _) = infer_expr(&args[0], env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => {
+                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, Vec::new())), span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.sum` requires a tensor argument".to_string(),
                     span,
                 }),
             }

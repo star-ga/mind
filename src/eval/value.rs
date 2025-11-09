@@ -1,4 +1,9 @@
+use std::collections::BTreeMap;
+
 use crate::types::{DType, ShapeDim, TensorType};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct VarId(pub String);
 
 #[cfg(feature = "cpu-buffers")]
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +50,7 @@ pub enum Value {
     Str(String),
     Tuple(Vec<Value>),
     Tensor(TensorVal),
+    GradMap(BTreeMap<VarId, TensorVal>),
 }
 
 impl Value {
@@ -107,6 +113,14 @@ pub fn format_value_human(v: &Value) -> String {
                 ),
                 None => format!("Tensor[{dtype:?},{shape}]", dtype = t.dtype, shape = shape),
             }
+        }
+        Value::GradMap(m) => {
+            let mut parts = Vec::new();
+            for (var, tensor) in m {
+                let tensor_str = format_value_human(&Value::Tensor(tensor.clone()));
+                parts.push(format!("{}: {}", var.0, tensor_str));
+            }
+            format!("grad{{ {} }}", parts.join(", "))
         }
     }
 }
