@@ -47,6 +47,24 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 }
             });
 
+        let wrt_list = just(',')
+            .padded()
+            .ignore_then(kw("wrt"))
+            .ignore_then(just('=').padded())
+            .ignore_then(just('[').padded())
+            .ignore_then(text::ident().padded().separated_by(just(',').padded()).allow_trailing())
+            .then_ignore(just(']').padded());
+
+        let grad_call = kw("grad")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone().then(wrt_list.or_not()))
+            .then_ignore(just(')').padded())
+            .map_with_span(|(loss, maybe_wrt), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallGrad { loss: Box::new(loss), wrt: maybe_wrt.unwrap_or_default(), span }
+            })
+            .boxed();
+
         let call = dotted_ident
             .clone()
             .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
@@ -61,7 +79,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::Call { callee, args, span }
             });
 
-        let atom = choice((call, int.clone(), ident_expr.clone(), tuple_or_paren)).padded();
+        let atom =
+            choice((grad_call, call, int.clone(), ident_expr.clone(), tuple_or_paren)).padded();
 
         let product = atom
             .clone()

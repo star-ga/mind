@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
 use crate::types::{DType, ShapeDim, ValueType};
@@ -6,9 +6,10 @@ use crate::types::{DType, ShapeDim, ValueType};
 #[cfg(feature = "cpu-buffers")]
 use value::Buffer;
 
+pub mod autodiff;
 pub mod value;
 
-pub use value::{format_value_human, TensorVal, Value};
+pub use value::{format_value_human, TensorVal, Value, VarId};
 
 #[cfg(feature = "cpu-buffers")]
 pub(crate) fn num_elems(shape: &[ShapeDim]) -> Option<usize> {
@@ -59,6 +60,8 @@ mod stdlib;
 pub enum EvalError {
     #[error("unsupported operation")]
     Unsupported,
+    #[error("unsupported: {0}")]
+    UnsupportedMsg(String),
     #[error("division by zero")]
     DivZero,
     #[error("unknown variable: {0}")]
@@ -170,6 +173,7 @@ pub(crate) fn eval_value_expr(
             Ok(Value::Tuple(items))
         }
         Node::Call { callee, args, .. } => stdlib::tensor::dispatch(callee, args, env),
+        Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, wrt),
         Node::Binary { op, left, right, .. } => {
             let lv = eval_value_expr(left, env)?;
             let rv = eval_value_expr(right, env)?;
@@ -177,6 +181,52 @@ pub(crate) fn eval_value_expr(
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => eval_value_expr(value, env),
     }
+}
+
+pub fn eval_grad_map(
+    loss_expr: &Node,
+    env: &HashMap<String, Value>,
+    wrt: &[String],
+) -> Result<Value, EvalError> {
+    let mut tenv: HashMap<String, TensorVal> = HashMap::new();
+    for (name, value) in env {
+        if let Value::Tensor(tensor) = value {
+            tenv.insert(name.clone(), tensor.clone());
+        }
+    }
+
+    let (loss_id, tape, vars_all) = crate::eval::autodiff::build_graph_loss(loss_expr, &tenv)
+        .map_err(EvalError::UnsupportedMsg)?;
+
+    if !tape.node_shape(loss_id).is_empty() {
+        return Err(EvalError::UnsupportedMsg(
+            "grad() expects the loss expression to have shape ()".to_string(),
+        ));
+    }
+
+    let requested: BTreeMap<String, crate::eval::autodiff::NodeId> =
+        vars_all.into_iter().filter(|(name, _)| wrt.contains(name)).collect();
+
+    let mut grads = crate::eval::autodiff::backprop_to_vars(loss_id, &tape, &requested);
+    for name in wrt {
+        if !grads.contains_key(name) {
+            if let Some(tensor) = tenv.get(name) {
+                grads.insert(
+                    name.clone(),
+                    TensorVal::new(tensor.dtype.clone(), tensor.shape.clone(), Some(0.0)),
+                );
+            }
+        }
+    }
+
+    let mut out = BTreeMap::new();
+    for name in wrt {
+        if let Some(tensor) = grads.get(name) {
+            out.insert(VarId(name.clone()), tensor.clone());
+        }
+    }
+
+    Ok(Value::GradMap(out))
 }
 
 fn apply_binary(op: BinOp, left: Value, right: Value) -> Result<Value, EvalError> {
@@ -426,7 +476,7 @@ fn apply_tensor_tensor(op: BinOp, left: TensorVal, right: TensorVal) -> Result<V
     Ok(Value::Tensor(result))
 }
 
-fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
+pub(crate) fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
     let mut result = Vec::new();
     let mut i = a.len() as isize - 1;
     let mut j = b.len() as isize - 1;
