@@ -10,7 +10,6 @@ pub mod stdlib;
 pub mod type_checker;
 pub mod types;
 
-#[cfg(feature = "mlir")]
 pub mod ir;
 
 #[cfg(feature = "autodiff")]

@@ -37,7 +37,12 @@ fn run_eval_once(src: &str) {
         Ok(module) => {
             let mut env = HashMap::new();
             match eval::eval_module_value_with_env(&module, &mut env, Some(src)) {
-                Ok(result) => println!("{}", eval::format_value_human(&result)),
+                Ok(_) => {
+                    let ir = eval::lower_to_ir(&module);
+                    println!("--- Lowered IR ---\n{ir}");
+                    let value = eval::eval_ir(&ir);
+                    println!("--- Result ---\n{}", eval::format_value_human(&value));
+                }
                 Err(e) => report_eval_error(e, src, &module),
             }
         }
