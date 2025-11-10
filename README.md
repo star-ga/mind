@@ -458,6 +458,27 @@ cargo run --quiet --no-default-features -- eval \
 
 > These are **textual** passes (no MLIR libs). Later phases can swap them for real `mlir-opt` pipelines behind a feature.
 
+### Phase 5D — Optional `mlir-opt` round-trip
+
+An opt-in Cargo feature runs the exported MLIR through the real `mlir-opt` tool:
+
+```bash
+cargo run --features mlir-subprocess -- eval \
+  --emit-mlir \
+  --mlir-opt \
+  --mlir-opt-passes canonicalize,cse \
+  'let x = 2; x + 3'
+```
+
+Flags and environment variables:
+
+* `--mlir-opt-bin /path/to/mlir-opt` (defaults to `$MLIR_OPT` or `mlir-opt`)
+* `--mlir-opt-passes canonicalize,cse` (comma-separated)
+* `--mlir-opt-timeout-ms 8000`
+
+The feature is disabled by default so `cargo run --no-default-features` stays dependency-free. When the binary is missing or
+times out, the compiler prints a warning and falls back to the original MLIR text.
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

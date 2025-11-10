@@ -11,6 +11,7 @@ pub mod autodiff;
 pub mod ir_interp;
 pub mod lower;
 pub mod mlir_export;
+pub mod mlir_opt;
 pub mod value;
 
 pub use ir_interp::eval_ir;
