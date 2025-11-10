@@ -18,3 +18,6 @@ pub mod autodiff;
 
 #[cfg(feature = "ffi-c")]
 pub mod ffi;
+
+#[cfg(feature = "pkg")]
+pub mod package;

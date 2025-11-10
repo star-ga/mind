@@ -4,14 +4,22 @@
 //!   mind eval "1 + 2 * 3"
 //!   mind repl
 
+#[cfg(feature = "pkg")]
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
+#[cfg(feature = "pkg")]
+use mind::package::{
+    build_package, default_install_dir, inspect_package, install_package, MindManifest,
+};
 use mind::{diagnostics, eval, parser};
 use std::collections::HashMap;
 use std::io::{self, Write};
-#[cfg(feature = "mlir-build")]
+#[cfg(any(feature = "mlir-build", feature = "pkg"))]
 use std::path::PathBuf;
 #[cfg(feature = "mlir-exec")]
 use std::time::Duration;
+#[cfg(feature = "pkg")]
+use std::{fs, path::Path};
 
 struct EmitOpts {
     emit_mlir_stdout: bool,
@@ -143,6 +151,30 @@ struct Cli {
 enum Command {
     Eval(EvalArgs),
     Repl,
+    #[cfg(feature = "pkg")]
+    Package {
+        #[arg(subcommand)]
+        action: PackageAction,
+    },
+}
+
+#[cfg(feature = "pkg")]
+#[derive(Subcommand)]
+enum PackageAction {
+    Build {
+        #[arg(short, long)]
+        out: Option<String>,
+    },
+    Inspect {
+        #[arg(short, long)]
+        path: String,
+    },
+    Install {
+        #[arg(short, long)]
+        path: String,
+        #[arg(short, long)]
+        target: Option<String>,
+    },
 }
 
 #[derive(Args)]
@@ -204,6 +236,8 @@ fn main() {
     match cli.command {
         Command::Eval(args) => run_eval_command(args),
         Command::Repl => run_repl(),
+        #[cfg(feature = "pkg")]
+        Command::Package { action } => run_package_command(action),
     }
 }
 
@@ -459,6 +493,143 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
             std::process::exit(2);
         }
     }
+}
+
+#[cfg(feature = "pkg")]
+fn run_package_command(action: PackageAction) {
+    if let Err(err) = handle_package_command(action) {
+        eprintln!("Package command failed: {err}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(feature = "pkg")]
+fn handle_package_command(action: PackageAction) -> Result<()> {
+    match action {
+        PackageAction::Build { out } => package_build(out)?,
+        PackageAction::Inspect { path } => package_inspect(&path)?,
+        PackageAction::Install { path, target } => package_install(&path, target.as_deref())?,
+    }
+    Ok(())
+}
+
+#[cfg(feature = "pkg")]
+fn package_build(out: Option<String>) -> Result<()> {
+    let manifest_path = Path::new("package.toml");
+    let mut manifest = if manifest_path.exists() {
+        let manifest_data =
+            fs::read_to_string(manifest_path).context("failed to read existing package.toml")?;
+        toml::from_str::<MindManifest>(&manifest_data).context("failed to parse package.toml")?
+    } else {
+        MindManifest {
+            name: "model".into(),
+            version: "0.1.0".into(),
+            authors: vec![],
+            description: None,
+            license: None,
+            dependencies: None,
+            files: Vec::new(),
+            checksums: None,
+        }
+    };
+
+    let files = if manifest.files.is_empty() {
+        let discovered = discover_default_artifacts()?;
+        manifest.files = discovered.clone();
+        discovered
+    } else {
+        validate_files(&manifest.files)?
+    };
+
+    if manifest.files.is_empty() {
+        return Err(anyhow!(
+            "package manifest declares no files; add entries to the 'files' array"
+        ));
+    }
+
+    let mut output =
+        out.unwrap_or_else(|| format!("{}-{}.mindpkg", manifest.name, manifest.version));
+    if Path::new(&output).extension().and_then(|ext| ext.to_str()) != Some("mindpkg") {
+        output.push_str(".mindpkg");
+    }
+
+    if let Some(parent) = Path::new(&output).parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create directory {}", parent.display()))?;
+        }
+    }
+
+    let file_refs: Vec<&str> = files.iter().map(|s| s.as_str()).collect();
+    build_package(&output, &file_refs, &manifest)?;
+
+    let packaged_manifest = inspect_package(&output)?;
+    let manifest_toml = packaged_manifest.to_toml()?;
+    fs::write(manifest_path, manifest_toml).context("failed to update package.toml")?;
+    println!("Created {}", output);
+    Ok(())
+}
+
+#[cfg(feature = "pkg")]
+fn package_inspect(path: &str) -> Result<()> {
+    let manifest = inspect_package(path)?;
+    println!("{}", manifest.to_toml()?);
+    Ok(())
+}
+
+#[cfg(feature = "pkg")]
+fn package_install(path: &str, target: Option<&str>) -> Result<()> {
+    let manifest = inspect_package(path)?;
+    let target_str = target.unwrap_or("");
+    let target_path = if target_str.is_empty() {
+        default_install_dir(&manifest)?
+    } else {
+        PathBuf::from(target_str)
+    };
+
+    install_package(path, target_str)?;
+    println!("Installed {} {} to {}", manifest.name, manifest.version, target_path.display());
+    Ok(())
+}
+
+#[cfg(feature = "pkg")]
+fn discover_default_artifacts() -> Result<Vec<String>> {
+    let candidates = ["model.mlir", "model.so", "mind.h", "metadata.json", "README.md"];
+    let mut found = Vec::new();
+    for candidate in candidates {
+        if Path::new(candidate).exists() {
+            found.push(candidate.to_string());
+        }
+    }
+    if found.is_empty() {
+        Err(anyhow!(
+            "no artifacts found; specify files in package.toml or place standard outputs in the working directory"
+        ))
+    } else {
+        Ok(found)
+    }
+}
+
+#[cfg(feature = "pkg")]
+fn validate_files(files: &[String]) -> Result<Vec<String>> {
+    let mut validated = Vec::new();
+    for file in files {
+        let path = Path::new(file);
+        if path.is_absolute() {
+            return Err(anyhow!("listed artifact '{}' must be a relative path", file));
+        }
+        if path.components().count() != 1 {
+            return Err(anyhow!(
+                "listed artifact '{}' must not contain directory separators",
+                file
+            ));
+        }
+        if !path.exists() {
+            return Err(anyhow!("listed artifact '{}' does not exist", file));
+        }
+        validated.push(file.clone());
+    }
+    Ok(validated)
 }
 
 fn run_repl() {

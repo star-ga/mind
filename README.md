@@ -638,6 +638,20 @@ cargo run --quiet --features "cpu-exec cpu-conv" -- eval --exec \
   'let x: Tensor[f32,(1,3,3,1)] = 1; let w: Tensor[f32,(2,2,1,1)] = 1; tensor.conv2d(x,w,stride_h=1,stride_w=1,padding="valid")'
 ```
 
+### Packaging & Distribution (Phase 10)
+
+```bash
+# Build a distributable bundle
+cargo run --features "pkg ffi-c mlir-build" -- \
+  package build --out mymodel.mindpkg
+
+# Inspect a package
+cargo run --features pkg -- package inspect --path mymodel.mindpkg
+
+# Install it locally
+cargo run --features pkg -- package install --path mymodel.mindpkg
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor
