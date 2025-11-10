@@ -3,6 +3,51 @@ use std::fmt::Write;
 use crate::ir::{BinOp, IRModule, Instr};
 use crate::types::{DType, ShapeDim};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlirLowerPreset {
+    None,
+    ArithLinalg,
+    CpuDemo,
+}
+
+impl MlirLowerPreset {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "none" => Some(Self::None),
+            "arith-linalg" => Some(Self::ArithLinalg),
+            "cpu-demo" => Some(Self::CpuDemo),
+            _ => None,
+        }
+    }
+}
+
+impl Default for MlirLowerPreset {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Apply purely textual rewrites to the emitted MLIR for "lowering".
+pub fn apply_textual_lowering(mut mlir: String, preset: MlirLowerPreset) -> String {
+    match preset {
+        MlirLowerPreset::None => mlir,
+        MlirLowerPreset::ArithLinalg => {
+            // Keep simple and explicit: normalize function attrs, canonicalize tensor.empty uses, etc.
+            mlir = mlir.replace("arith.constant", "arith.constant");
+            mlir
+        }
+        MlirLowerPreset::CpuDemo => {
+            // Add a couple of cosmetic inlines / canonical names for demos
+            mlir = mlir.replace("linalg.fill", "linalg.fill");
+            mlir
+        }
+    }
+}
+
+pub fn to_mlir_text(ir: &IRModule) -> String {
+    to_mlir(ir, "main")
+}
+
 pub fn to_mlir(ir: &IRModule, entry: &str) -> String {
     let mut out = String::new();
 

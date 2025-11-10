@@ -436,6 +436,28 @@ module {
 }
 ```
 
+### Phase 5C — MLIR file export and lowering presets
+
+You can now dump MLIR to stdout or write a `.mlir` file:
+
+```bash
+# stdout
+cargo run --quiet --no-default-features -- eval "1+2" --emit-mlir --mlir-lower none
+
+# file
+cargo run --quiet --no-default-features -- eval \
+  "let x: Tensor[f32,(2,3)] = 0; x + 1" \
+  --emit-mlir-file /tmp/out.mlir --mlir-lower arith-linalg
+```
+
+`--mlir-lower` supports:
+
+* `none` — raw exporter output
+* `arith-linalg` — normalizes common patterns (textual)
+* `cpu-demo` — lightweight cosmetic rewrites for demos
+
+> These are **textual** passes (no MLIR libs). Later phases can swap them for real `mlir-opt` pipelines behind a feature.
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

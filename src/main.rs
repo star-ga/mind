@@ -8,6 +8,39 @@ use mind::{diagnostics, eval, parser};
 use std::collections::HashMap;
 use std::io::{self, Write};
 
+#[derive(Default)]
+struct EmitOpts {
+    emit_mlir_stdout: bool,
+    emit_mlir_file: Option<String>,
+    mlir_lower: eval::MlirLowerPreset,
+}
+
+fn parse_emit_flags(args: &[String]) -> EmitOpts {
+    let mut out = EmitOpts::default();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--emit-mlir" => out.emit_mlir_stdout = true,
+            "--emit-mlir-file" => {
+                if i + 1 < args.len() {
+                    out.emit_mlir_file = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            }
+            "--mlir-lower" => {
+                if i + 1 < args.len() {
+                    out.mlir_lower = eval::MlirLowerPreset::from_str(&args[i + 1])
+                        .unwrap_or(eval::MlirLowerPreset::None);
+                    i += 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -17,8 +50,8 @@ fn main() {
             std::process::exit(1);
         }
         let src = &args[2];
-        let emit_mlir = args.iter().any(|a| a == "--emit-mlir");
-        run_eval_once(src, emit_mlir);
+        let emit_opts = parse_emit_flags(&args[3..]);
+        run_eval_once(src, emit_opts);
         return;
     }
 
@@ -33,16 +66,27 @@ fn main() {
     std::process::exit(1);
 }
 
-fn run_eval_once(src: &str, emit_mlir: bool) {
+fn run_eval_once(src: &str, emit_opts: EmitOpts) {
     match parser::parse_with_diagnostics(src) {
         Ok(module) => {
             let mut env = HashMap::new();
             match eval::eval_module_value_with_env(&module, &mut env, Some(src)) {
                 Ok(_) => {
                     let ir = eval::lower_to_ir(&module);
-                    if emit_mlir {
-                        let mlir = eval::to_mlir(&ir, "main");
-                        println!("--- MLIR DUMP ---\n{mlir}");
+                    if emit_opts.emit_mlir_stdout || emit_opts.emit_mlir_file.is_some() {
+                        let txt = eval::emit_mlir_string(&ir, emit_opts.mlir_lower);
+                        if emit_opts.emit_mlir_stdout {
+                            println!("{txt}");
+                        }
+                        if let Some(path) = emit_opts.emit_mlir_file.as_ref() {
+                            if let Err(e) = eval::emit_mlir_to_file(
+                                &ir,
+                                emit_opts.mlir_lower,
+                                std::path::Path::new(path),
+                            ) {
+                                eprintln!("Failed to write MLIR to {}: {e}", path);
+                            }
+                        }
                         return;
                     }
                     println!("--- Lowered IR ---\n{ir}");
