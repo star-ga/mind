@@ -4,6 +4,24 @@ use std::fmt::Write;
 use crate::ir::{BinOp, IRModule, IndexSpec, Instr, SliceSpec, ValueId};
 use crate::types::{DType, ShapeDim};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MlirEmitMode {
+    Plain,
+    Executable,
+}
+
+#[derive(Debug, Clone)]
+pub struct MlirEmitOptions {
+    pub lower_preset: Option<String>,
+    pub mode: MlirEmitMode,
+}
+
+impl Default for MlirEmitOptions {
+    fn default() -> Self {
+        Self { lower_preset: None, mode: MlirEmitMode::Plain }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct TensorInfo {
     dtype: DType,
@@ -14,11 +32,21 @@ struct MlirEmitter {
     out: String,
     next_tmp: usize,
     tensors: HashMap<ValueId, TensorInfo>,
+    outputs: Vec<ValueId>,
+    need_print_i64: bool,
+    need_print_newline: bool,
 }
 
 impl MlirEmitter {
     fn new() -> Self {
-        Self { out: String::new(), next_tmp: 0, tensors: HashMap::new() }
+        Self {
+            out: String::new(),
+            next_tmp: 0,
+            tensors: HashMap::new(),
+            outputs: Vec::new(),
+            need_print_i64: false,
+            need_print_newline: false,
+        }
     }
 
     fn finish(self) -> String {
@@ -46,6 +74,35 @@ impl MlirEmitter {
     fn tensor_info(&self, id: &ValueId) -> Option<&TensorInfo> {
         self.tensors.get(id)
     }
+
+    fn record_output(&mut self, id: ValueId) {
+        self.outputs.push(id);
+    }
+
+    fn emit_executable_prints(&mut self) {
+        let mut printed_any = false;
+        for value in self.outputs.clone() {
+            if self.tensors.get(&value).is_some() {
+                continue;
+            }
+            self.write_fmt(format_args!("    func.call @printI64(%{}) : (i64) -> ()\n", value.0));
+            self.need_print_i64 = true;
+            printed_any = true;
+        }
+        if printed_any {
+            self.write_line("    func.call @printNewline() : () -> ()");
+            self.need_print_newline = true;
+        }
+    }
+
+    fn emit_executable_helpers(&mut self) {
+        if self.need_print_i64 {
+            self.write_line("  func.func private @printI64(i64)");
+        }
+        if self.need_print_newline {
+            self.write_line("  func.func private @printNewline()");
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +119,14 @@ impl MlirLowerPreset {
             "arith-linalg" => Some(Self::ArithLinalg),
             "cpu-demo" => Some(Self::CpuDemo),
             _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ArithLinalg => "arith-linalg",
+            Self::CpuDemo => "cpu-demo",
         }
     }
 }
@@ -89,11 +154,25 @@ pub fn apply_textual_lowering(mut mlir: String, preset: MlirLowerPreset) -> Stri
     }
 }
 
+pub fn emit_mlir_with_opts(ir: &IRModule, opts: &MlirEmitOptions) -> String {
+    let mut text = to_mlir_with_mode(ir, "main", opts.mode);
+    if let Some(preset_name) = opts.lower_preset.as_deref() {
+        if let Some(preset) = MlirLowerPreset::from_str(preset_name) {
+            text = apply_textual_lowering(text, preset);
+        }
+    }
+    text
+}
+
 pub fn to_mlir_text(ir: &IRModule) -> String {
-    to_mlir(ir, "main")
+    to_mlir_with_mode(ir, "main", MlirEmitMode::Plain)
 }
 
 pub fn to_mlir(ir: &IRModule, entry: &str) -> String {
+    to_mlir_with_mode(ir, entry, MlirEmitMode::Plain)
+}
+
+pub fn to_mlir_with_mode(ir: &IRModule, entry: &str, mode: MlirEmitMode) -> String {
     let mut emitter = MlirEmitter::new();
 
     emitter.write_line("module {");
@@ -104,8 +183,15 @@ pub fn to_mlir(ir: &IRModule, entry: &str) -> String {
         emit_instr(&mut emitter, instr);
     }
 
+    if matches!(mode, MlirEmitMode::Executable) {
+        emitter.emit_executable_prints();
+    }
+
     emitter.write_line("    return");
     emitter.write_line("  }");
+    if matches!(mode, MlirEmitMode::Executable) {
+        emitter.emit_executable_helpers();
+    }
     emitter.write_line("}");
 
     emitter.finish()
@@ -140,6 +226,7 @@ fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
             emit_gather(emitter, *dst, *src, *indices, *axis)
         }
         Instr::Output(id) => {
+            emitter.record_output(*id);
             emitter.write_fmt(format_args!("    // result: %{}\n", id.0));
         }
     }
