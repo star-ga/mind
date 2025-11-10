@@ -110,6 +110,8 @@ pub enum MlirLowerPreset {
     None,
     ArithLinalg,
     CpuDemo,
+    JitCpu,
+    GpuDefault,
 }
 
 impl MlirLowerPreset {
@@ -118,6 +120,8 @@ impl MlirLowerPreset {
             "none" => Some(Self::None),
             "arith-linalg" => Some(Self::ArithLinalg),
             "cpu-demo" => Some(Self::CpuDemo),
+            "jit-cpu" => Some(Self::JitCpu),
+            "gpu-default" => Some(Self::GpuDefault),
             _ => None,
         }
     }
@@ -127,6 +131,8 @@ impl MlirLowerPreset {
             Self::None => "none",
             Self::ArithLinalg => "arith-linalg",
             Self::CpuDemo => "cpu-demo",
+            Self::JitCpu => "jit-cpu",
+            Self::GpuDefault => "gpu-default",
         }
     }
 }
@@ -151,6 +157,8 @@ pub fn apply_textual_lowering(mut mlir: String, preset: MlirLowerPreset) -> Stri
             mlir = mlir.replace("linalg.fill", "linalg.fill");
             mlir
         }
+        MlirLowerPreset::JitCpu => mlir,
+        MlirLowerPreset::GpuDefault => mlir,
     }
 }
 

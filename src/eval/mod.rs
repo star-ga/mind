@@ -14,6 +14,10 @@ pub mod autodiff;
 pub mod ir_interp;
 pub mod lower;
 pub mod mlir_export;
+#[cfg(feature = "mlir-gpu")]
+pub mod mlir_gpu;
+#[cfg(feature = "mlir-jit")]
+pub mod mlir_jit;
 pub mod mlir_opt;
 #[cfg(feature = "mlir-exec")]
 pub mod mlir_run;
@@ -91,10 +95,25 @@ mod stdlib;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecMode {
-    PreviewOnly,
-    CpuIfEnabled,
+    Preview,
+    CpuExec,
     #[cfg(feature = "mlir-exec")]
     MlirExternal(MlirExecConfig),
+    #[cfg(feature = "mlir-jit")]
+    MlirJitCpu,
+    #[cfg(feature = "mlir-gpu")]
+    MlirGpu {
+        backend: GpuBackend,
+        blocks: (u32, u32, u32),
+        threads: (u32, u32, u32),
+    },
+}
+
+#[cfg(feature = "mlir-gpu")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuBackend {
+    Cuda,
+    Rocm,
 }
 
 #[cfg(feature = "cpu-exec")]
@@ -218,27 +237,86 @@ pub fn eval_module_value_with_env_mode(
         }
     }
 
-    #[cfg(feature = "mlir-exec")]
-    if let ExecMode::MlirExternal(cfg) = &mode {
-        let ir = lower_to_ir(m);
-        let mut opts = mlir_export::MlirEmitOptions::default();
-        opts.mode = mlir_export::MlirEmitMode::Executable;
-        let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
-        match mlir_run::exec_mlir_text(&mlir_text, cfg) {
-            Ok(stdout) => {
-                if stdout.trim().is_empty() {
-                    return Ok(last);
+    #[allow(unused_variables)]
+    match mode {
+        ExecMode::Preview | ExecMode::CpuExec => Ok(last),
+        #[cfg(feature = "mlir-exec")]
+        ExecMode::MlirExternal(cfg) => {
+            let ir = lower_to_ir(m);
+            let mut opts = mlir_export::MlirEmitOptions::default();
+            opts.mode = mlir_export::MlirEmitMode::Executable;
+            let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
+            match mlir_run::exec_mlir_text(&mlir_text, &cfg) {
+                Ok(stdout) => {
+                    if stdout.trim().is_empty() {
+                        return Ok(last);
+                    }
+                    if let Some(parsed) = parse_mlir_stdout(&stdout) {
+                        return Ok(parsed);
+                    }
+                    Ok(Value::Str(stdout))
                 }
-                if let Some(parsed) = parse_mlir_stdout(&stdout) {
-                    return Ok(parsed);
-                }
-                return Ok(Value::Str(stdout));
+                Err(msg) => Err(EvalError::UnsupportedMsg(msg)),
             }
-            Err(msg) => return Err(EvalError::UnsupportedMsg(msg)),
+        }
+        #[cfg(feature = "mlir-jit")]
+        ExecMode::MlirJitCpu => {
+            let ir = lower_to_ir(m);
+            let mut opts = mlir_export::MlirEmitOptions::default();
+            opts.mode = mlir_export::MlirEmitMode::Executable;
+            opts.lower_preset = Some(MlirLowerPreset::JitCpu.as_str().to_string());
+            let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
+            match mlir_jit::MlirJit::new() {
+                Ok(jit) => match jit.run_mlir_text(&mlir_text, "main", &[]) {
+                    Ok(()) => Ok(last),
+                    Err(mlir_jit::JitError::NotFound) | Err(mlir_jit::JitError::Unsupported) => {
+                        eprintln!(
+                            "mlir-jit runtime unavailable; falling back to preview or external execution"
+                        );
+                        #[cfg(feature = "mlir-exec")]
+                        {
+                            let fallback_cfg = MlirExecConfig::default();
+                            if let Ok(stdout) = mlir_run::exec_mlir_text(&mlir_text, &fallback_cfg)
+                            {
+                                if stdout.trim().is_empty() {
+                                    return Ok(last);
+                                }
+                                if let Some(parsed) = parse_mlir_stdout(&stdout) {
+                                    return Ok(parsed);
+                                }
+                                return Ok(Value::Str(stdout));
+                            }
+                        }
+                        Ok(last)
+                    }
+                    Err(mlir_jit::JitError::Invoke(msg)) => Err(EvalError::UnsupportedMsg(msg)),
+                },
+                Err(mlir_jit::JitError::NotFound) => {
+                    eprintln!(
+                        "mlir-jit shared libraries not found; falling back to preview execution"
+                    );
+                    Ok(last)
+                }
+                Err(err) => Err(EvalError::UnsupportedMsg(err.to_string())),
+            }
+        }
+        #[cfg(feature = "mlir-gpu")]
+        ExecMode::MlirGpu { backend, blocks, threads } => {
+            let ir = lower_to_ir(m);
+            let mut opts = mlir_export::MlirEmitOptions::default();
+            opts.mode = mlir_export::MlirEmitMode::Executable;
+            opts.lower_preset = Some(MlirLowerPreset::GpuDefault.as_str().to_string());
+            let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
+            let cfg = mlir_gpu::GpuLaunchCfg { blocks, threads };
+            match mlir_gpu::run_mlir_gpu_text(&mlir_text, backend, cfg) {
+                Ok(()) => Ok(last),
+                Err(err) => {
+                    eprintln!("{}", err);
+                    Ok(last)
+                }
+            }
         }
     }
-
-    Ok(last)
 }
 
 pub fn eval_module_value_with_env(
@@ -246,7 +324,7 @@ pub fn eval_module_value_with_env(
     env: &mut HashMap<String, i64>,
     src_for_types: Option<&str>,
 ) -> Result<Value, EvalError> {
-    eval_module_value_with_env_mode(m, env, src_for_types, ExecMode::PreviewOnly)
+    eval_module_value_with_env_mode(m, env, src_for_types, ExecMode::Preview)
 }
 
 pub fn eval_module_with_env(
@@ -254,7 +332,7 @@ pub fn eval_module_with_env(
     env: &mut HashMap<String, i64>,
     src_for_types: Option<&str>,
 ) -> Result<i64, EvalError> {
-    match eval_module_value_with_env_mode(m, env, src_for_types, ExecMode::PreviewOnly)? {
+    match eval_module_value_with_env_mode(m, env, src_for_types, ExecMode::Preview)? {
         Value::Int(n) => Ok(n),
         _ => Err(EvalError::Unsupported),
     }
@@ -274,7 +352,7 @@ pub(crate) fn eval_value_expr(
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
 ) -> Result<Value, EvalError> {
-    eval_value_expr_mode(node, env, tensor_env, ExecMode::PreviewOnly)
+    eval_value_expr_mode(node, env, tensor_env, ExecMode::Preview)
 }
 
 pub(crate) fn eval_value_expr_mode(
@@ -410,7 +488,7 @@ pub(crate) fn eval_value_expr_mode(
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
                     #[cfg(feature = "cpu-buffers")]
                     {
-                        if mode == ExecMode::CpuIfEnabled {
+                        if matches!(mode, ExecMode::CpuExec) {
                             let mut tl_exec = tl.clone();
                             let mut tr_exec = tr.clone();
                             materialize_filled(&mut tl_exec);
@@ -445,7 +523,7 @@ pub(crate) fn eval_value_expr_mode(
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
                     #[cfg(feature = "cpu-buffers")]
                     {
-                        if mode == ExecMode::CpuIfEnabled {
+                        if matches!(mode, ExecMode::CpuExec) {
                             let mut tl_exec = tl.clone();
                             let mut tr_exec = tr.clone();
                             materialize_filled(&mut tl_exec);
@@ -595,7 +673,7 @@ fn apply_tensor_scalar(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if mode == ExecMode::CpuIfEnabled {
+        if matches!(mode, ExecMode::CpuExec) {
             let mut tensor_exec = tensor.clone();
             materialize_filled(&mut tensor_exec);
             #[cfg(feature = "cpu-exec")]
@@ -765,7 +843,7 @@ fn apply_tensor_tensor(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if mode == ExecMode::CpuIfEnabled {
+        if matches!(mode, ExecMode::CpuExec) {
             let mut left_exec = left.clone();
             let mut right_exec = right.clone();
             materialize_filled(&mut left_exec);

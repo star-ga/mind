@@ -101,6 +101,16 @@ struct EvalArgs {
     #[arg(long, conflicts_with = "exec")]
     mlir_exec: bool,
     #[arg(long)]
+    jit: bool,
+    #[arg(long, default_value = "cpu")]
+    device: String,
+    #[arg(long, default_value = "cuda")]
+    gpu_backend: String,
+    #[arg(long, value_name = "X,Y,Z")]
+    gpu_blocks: Option<String>,
+    #[arg(long, value_name = "X,Y,Z")]
+    gpu_threads: Option<String>,
+    #[arg(long)]
     emit_mlir: bool,
     #[arg(long)]
     emit_mlir_file: Option<String>,
@@ -140,7 +150,61 @@ fn run_eval_command(args: EvalArgs) {
     }
 
     let emit_opts = EmitOpts::from_eval_args(&args);
-    let exec_mode = if args.mlir_exec {
+    let exec_mode = if args.device.eq_ignore_ascii_case("gpu") {
+        #[cfg(feature = "mlir-gpu")]
+        {
+            let backend = match args.gpu_backend.to_lowercase().as_str() {
+                "cuda" => eval::GpuBackend::Cuda,
+                "rocm" => eval::GpuBackend::Rocm,
+                other => {
+                    eprintln!(
+                        "Unknown GPU backend '{other}', defaulting to CUDA; available: cuda, rocm"
+                    );
+                    eval::GpuBackend::Cuda
+                }
+            };
+            let parse_triplet = |value: &Option<String>, label: &str| -> (u32, u32, u32) {
+                if let Some(raw) = value {
+                    let parts: Vec<_> = raw.split(',').collect();
+                    if parts.len() == 3 {
+                        if let (Ok(x), Ok(y), Ok(z)) = (
+                            parts[0].trim().parse::<u32>(),
+                            parts[1].trim().parse::<u32>(),
+                            parts[2].trim().parse::<u32>(),
+                        ) {
+                            return (x, y, z);
+                        }
+                    }
+                    eprintln!(
+                        "Invalid {label} value '{raw}', expected three comma-separated integers"
+                    );
+                }
+                (1, 1, 1)
+            };
+            let blocks = parse_triplet(&args.gpu_blocks, "gpu-blocks");
+            let threads = parse_triplet(&args.gpu_threads, "gpu-threads");
+            eval::ExecMode::MlirGpu { backend, blocks, threads }
+        }
+        #[cfg(not(feature = "mlir-gpu"))]
+        {
+            eprintln!(
+                "--device gpu requested but this binary lacks the mlir-gpu feature; falling back to preview"
+            );
+            eval::ExecMode::Preview
+        }
+    } else if args.jit {
+        #[cfg(feature = "mlir-jit")]
+        {
+            eval::ExecMode::MlirJitCpu
+        }
+        #[cfg(not(feature = "mlir-jit"))]
+        {
+            eprintln!(
+                "--jit requested but this binary was built without the mlir-jit feature; falling back"
+            );
+            eval::ExecMode::Preview
+        }
+    } else if args.mlir_exec {
         #[cfg(feature = "mlir-exec")]
         {
             let mut cfg = eval::MlirExecConfig::default();
@@ -177,15 +241,15 @@ fn run_eval_command(args: EvalArgs) {
     } else if args.exec {
         #[cfg(feature = "cpu-exec")]
         {
-            eval::ExecMode::CpuIfEnabled
+            eval::ExecMode::CpuExec
         }
         #[cfg(not(feature = "cpu-exec"))]
         {
             eprintln!("--exec requested but cpu-exec feature is not enabled; running in preview.");
-            eval::ExecMode::PreviewOnly
+            eval::ExecMode::Preview
         }
     } else {
-        eval::ExecMode::PreviewOnly
+        eval::ExecMode::Preview
     };
 
     run_eval_once(&src, emit_opts, exec_mode);
@@ -201,10 +265,14 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
                 Ok(value) => {
                     println!("{}", eval::format_value_human(&value));
                     match &exec_mode {
-                        eval::ExecMode::CpuIfEnabled => return,
+                        eval::ExecMode::CpuExec => return,
                         #[cfg(feature = "mlir-exec")]
                         eval::ExecMode::MlirExternal(_) => return,
-                        _ => {}
+                        #[cfg(feature = "mlir-jit")]
+                        eval::ExecMode::MlirJitCpu => return,
+                        #[cfg(feature = "mlir-gpu")]
+                        eval::ExecMode::MlirGpu { .. } => return,
+                        eval::ExecMode::Preview => {}
                     }
                     let ir = eval::lower_to_ir(&module);
                     if emit_opts.emit_mlir_stdout || emit_opts.emit_mlir_file.is_some() {
