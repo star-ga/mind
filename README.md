@@ -198,6 +198,37 @@ More details: [/benchmarks/resnet.md](benchmarks/resnet.md)
 - **Build fails?** Ensure LLVM 15+ is in `PATH`
 - **Rust version mismatch?** Run `rustup update stable`
 
+### Phase 7B — In-process JIT & GPU (optional)
+
+The Phase 7B work introduces optional execution backends that load MLIR toolchains dynamically. Builds without the toolchains remain green (`--no-default-features`).
+
+#### JIT (CPU) — optional
+
+```bash
+cargo run --features mlir-jit -- eval --jit 'let x: Tensor[f32,(2,3)] = 0; x + 1'
+```
+
+If the MLIR C API shared libraries cannot be found at runtime (set `MLIR_C_API_LIB` to point at them), the evaluator prints a warning and falls back to the external MLIR runner (if enabled) or preview mode.
+
+#### GPU (CUDA/ROCm) — optional
+
+```bash
+cargo run --features mlir-gpu -- eval --device gpu --gpu-backend cuda \
+  'let w: Tensor[f32,(3,3,3,16)] = 0; tensor.conv2d(x, w, padding="same")'
+```
+
+When GPU runtime support is unavailable, the command logs a fallback warning and continues with preview evaluation.
+
+#### Execution modes & fallbacks
+
+| Mode (CLI) | Feature gate | Primary path | Fallback order |
+|------------|--------------|--------------|----------------|
+| _default_ (`--device cpu`) | none | Preview evaluator | — |
+| `--exec` | `cpu-exec` | Native CPU interpreter | Preview |
+| `--jit` | `mlir-jit` | In-process MLIR JIT | MLIR external runner → Preview |
+| `--mlir-exec` | `mlir-exec` | External `mlir-opt` + `mlir-cpu-runner` | Preview |
+| `--device gpu` | `mlir-gpu` | MLIR GPU export + runtime | Preview |
+
 ### Tensor previews (Phase 4A)
 
 MIND now evaluates tensor expressions as lightweight previews (dtype + shape + optional fill), without materializing data buffers.

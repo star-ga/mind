@@ -12,7 +12,7 @@ mod cpu {
             &module,
             &mut env,
             Some(src),
-            eval::ExecMode::CpuIfEnabled,
+            eval::ExecMode::CpuExec,
         )
         .unwrap();
         let text = eval::format_value_human(&value);
@@ -29,7 +29,7 @@ mod cpu {
             &module,
             &mut env,
             Some(src),
-            eval::ExecMode::CpuIfEnabled,
+            eval::ExecMode::CpuExec,
         )
         .unwrap();
         let text = eval::format_value_human(&value);

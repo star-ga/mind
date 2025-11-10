@@ -593,7 +593,7 @@ pub(crate) fn relu_tensor(mut tensor: TensorVal, mode: ExecMode) -> Result<Tenso
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if mode == ExecMode::CpuIfEnabled {
+        if matches!(mode, ExecMode::CpuExec) {
             materialize_filled(&mut tensor);
             #[cfg(feature = "cpu-exec")]
             {
@@ -744,7 +744,7 @@ pub(crate) fn conv2d_tensor(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if mode == ExecMode::CpuIfEnabled {
+        if matches!(mode, ExecMode::CpuExec) {
             materialize_filled(&mut x);
             materialize_filled(&mut w);
             #[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]

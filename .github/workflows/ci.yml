@@ -199,3 +199,35 @@ jobs:
 
       - name: cargo-audit (vulns)
         run: cargo audit --quiet
+
+  mlir_jit_check:
+    name: Check (feature: mlir-jit)
+    if: github.repository_owner == 'cputer'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: cargo check (mlir-jit)
+        run: cargo check --no-default-features --features mlir-jit --locked
+
+  mlir_gpu_check:
+    name: Check (feature: mlir-gpu)
+    if: github.repository_owner == 'cputer'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: cargo check (mlir-gpu)
+        run: cargo check --no-default-features --features mlir-gpu --locked
