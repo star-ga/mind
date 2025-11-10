@@ -1,5 +1,15 @@
 name: CI
 
+x-proxy-env: &proxy_env
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  http_proxy: ""
+  https_proxy: ""
+  all_proxy: ""
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  ALL_PROXY: ""
+
 on:
   push:
     branches: [ main, develop ]
@@ -8,16 +18,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_HTTP_MULTIPLEXING: "false"
   CARGO_HTTP_TIMEOUT: "600"
-  HTTP_PROXY: ""
-  HTTPS_PROXY: ""
-  ALL_PROXY: ""
-  http_proxy: ""
-  https_proxy: ""
-  all_proxy: ""
 
 jobs:
   test:
@@ -27,7 +29,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
 
     steps:
     - uses: actions/checkout@v4
@@ -53,16 +55,19 @@ jobs:
 
     - name: Prime index & fetch (retry)
       run: |
-        set -e
-        for i in 1 2 3; do
-          if [ -f Cargo.lock ]; then
-            cargo fetch --locked && break
-          else
-            cargo fetch && break
+        i=1
+        until [ $i -gt 3 ]; do
+          echo "cargo fetch attempt $i..."
+          if cargo fetch --locked; then
+            echo "fetch ok"
+            exit 0
           fi
-          echo "retry $i…"
-          sleep 5
+          echo "cargo fetch failed, retrying in $((i*5))s..."
+          sleep $((i*5))
+          i=$((i+1))
         done
+        echo "cargo fetch failed after retries"
+        exit 1
 
     - name: Build
       run: cargo build --verbose --no-default-features --locked
@@ -78,13 +83,13 @@ jobs:
       run: cargo fmt -- --check
 
     - name: Run clippy
-      run: cargo clippy -- -D warnings
+      run: cargo clippy --locked -- -D warnings
 
   coverage_core:
     name: Coverage (core – no optional features)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
     - uses: actions/checkout@v4
 
@@ -101,22 +106,25 @@ jobs:
 
     - name: Prime index & fetch (retry)
       run: |
-        set -e
-        for i in 1 2 3; do
-          if [ -f Cargo.lock ]; then
-            cargo fetch --locked && break
-          else
-            cargo fetch && break
+        i=1
+        until [ $i -gt 3 ]; do
+          echo "cargo fetch attempt $i..."
+          if cargo fetch --locked; then
+            echo "fetch ok"
+            exit 0
           fi
-          echo "retry $i…"
-          sleep 5
+          echo "cargo fetch failed, retrying in $((i*5))s..."
+          sleep $((i*5))
+          i=$((i+1))
         done
+        echo "cargo fetch failed after retries"
+        exit 1
 
     - name: Install tarpaulin
       run: cargo install cargo-tarpaulin
 
     - name: Generate coverage (no-default-features)
-      run: cargo tarpaulin --verbose --no-default-features --workspace --timeout 120 --out Xml
+      run: cargo tarpaulin --locked --verbose --no-default-features --workspace --timeout 120 --out Xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -138,7 +146,7 @@ jobs:
           - "mlir,llvm"
           - "autodiff,mlir,llvm"
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
     - uses: actions/checkout@v4
 
@@ -155,16 +163,19 @@ jobs:
 
     - name: Prime index & fetch (retry)
       run: |
-        set -e
-        for i in 1 2 3; do
-          if [ -f Cargo.lock ]; then
-            cargo fetch --locked && break
-          else
-            cargo fetch && break
+        i=1
+        until [ $i -gt 3 ]; do
+          echo "cargo fetch attempt $i..."
+          if cargo fetch --locked; then
+            echo "fetch ok"
+            exit 0
           fi
-          echo "retry $i…"
-          sleep 5
+          echo "cargo fetch failed, retrying in $((i*5))s..."
+          sleep $((i*5))
+          i=$((i+1))
         done
+        echo "cargo fetch failed after retries"
+        exit 1
 
     - name: Install tarpaulin
       run: cargo install cargo-tarpaulin
@@ -172,7 +183,7 @@ jobs:
     # NOTE: This job assumes the runner/environment already provides any needed toolchains
     # (e.g., LLVM/MLIR). It is OFF by default via repo var gating.
     - name: Generate coverage (features = ${{ matrix.feature_set }})
-      run: cargo tarpaulin --verbose --features "${{ matrix.feature_set }}" --workspace --timeout 120 --out Xml
+      run: cargo tarpaulin --locked --verbose --features "${{ matrix.feature_set }}" --workspace --timeout 120 --out Xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -183,7 +194,7 @@ jobs:
     name: Tests (feature: autodiff)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -199,23 +210,26 @@ jobs:
 
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: Run tests (autodiff feature)
-        run: cargo test --workspace --all-targets --features autodiff --verbose
+        run: cargo test --locked --workspace --all-targets --features autodiff --verbose
   mlir_stub_tests:
     name: Tests (feature: mlir stub)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -231,24 +245,27 @@ jobs:
 
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: Run tests (mlir stub)
-        run: cargo test --workspace --all-targets --features mlir --verbose
+        run: cargo test --locked --workspace --all-targets --features mlir --verbose
 
   mlir_build_check:
     name: Check (feature: mlir-build)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -264,16 +281,19 @@ jobs:
 
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: Cargo check (mlir-build)
         run: cargo check --no-default-features --features mlir-build --locked
 
@@ -281,7 +301,7 @@ jobs:
     name: Format (rustfmt)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.81.0
@@ -295,16 +315,19 @@ jobs:
         run: cargo metadata --format-version=1 --locked
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: rustfmt version
         run: rustfmt --version
       - name: rustfmt check
@@ -314,7 +337,7 @@ jobs:
     name: Clippy (no-default-features)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.81.0
@@ -328,18 +351,21 @@ jobs:
         run: cargo metadata --format-version=1 --locked
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: clippy
-        run: cargo clippy --workspace --all-targets --no-default-features
+        run: cargo clippy --locked --workspace --all-targets --no-default-features
 
   ffi_feature_tests:
     name: Tests (FFI feature matrix)
@@ -355,7 +381,7 @@ jobs:
           - label: ffi-full
             args: "--no-default-features --features \"ffi-c mlir-build cpu-exec ffi-examples\""
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -371,16 +397,19 @@ jobs:
 
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: Cargo test (${{ matrix.label }})
         run: cargo test --verbose --locked ${{ matrix.args }}
 
@@ -388,7 +417,7 @@ jobs:
     name: Supply chain (cargo-deny & audit)
     runs-on: ubuntu-latest
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
 
@@ -405,16 +434,19 @@ jobs:
 
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
 
       - name: Install tools
         run: |
@@ -433,7 +465,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -446,16 +478,19 @@ jobs:
         run: cargo metadata --format-version=1 --locked
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: cargo check (mlir-jit)
         run: cargo check --no-default-features --features mlir-jit --locked
 
@@ -465,7 +500,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      <<: *proxy_env
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -478,15 +513,18 @@ jobs:
         run: cargo metadata --format-version=1 --locked
       - name: Prime index & fetch (retry)
         run: |
-          set -e
-          for i in 1 2 3; do
-            if [ -f Cargo.lock ]; then
-              cargo fetch --locked && break
-            else
-              cargo fetch && break
+          i=1
+          until [ $i -gt 3 ]; do
+            echo "cargo fetch attempt $i..."
+            if cargo fetch --locked; then
+              echo "fetch ok"
+              exit 0
             fi
-            echo "retry $i…"
-            sleep 5
+            echo "cargo fetch failed, retrying in $((i*5))s..."
+            sleep $((i*5))
+            i=$((i+1))
           done
+          echo "cargo fetch failed after retries"
+          exit 1
       - name: cargo check (mlir-gpu)
         run: cargo check --no-default-features --features mlir-gpu --locked
