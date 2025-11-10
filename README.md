@@ -229,6 +229,30 @@ When GPU runtime support is unavailable, the command logs a fallback warning and
 | `--mlir-exec` | `mlir-exec` | External `mlir-opt` + `mlir-cpu-runner` | Preview |
 | `--device gpu` | `mlir-gpu` | MLIR GPU export + runtime | Preview |
 
+### Phase 8 — AOT build (MLIR → LLVM → obj/so)
+
+With the optional `mlir-build` feature, MIND can now lower exported MLIR into LLVM IR, object files, and shared libraries using
+a subprocess toolchain (`mlir-opt`, `mlir-translate`, `clang`).
+
+```bash
+# MLIR + LLVM IR to disk
+cargo run --features mlir-build -- eval 'let x: Tensor[f32,(2,3)] = 1; x + 2' \
+  --emit-mlir-file out.mlir \
+  --emit-llvm-file out.ll \
+  --mlir-lower core
+
+# Build object and shared library
+cargo run --features mlir-build -- eval 'tensor.matmul(a,b)' \
+  --emit-obj out.o \
+  --build libmodel.so \
+  --mlir-lower core \
+  --mlir-passes "cse,canonicalize" \
+  --target-triple x86_64-pc-linux-gnu
+```
+
+Tools are auto-discovered via `PATH` or the `MLIR_OPT`, `MLIR_TRANSLATE`, and `CLANG` environment variables. Build steps include
+timeouts and forward stderr on failures for quick debugging.
+
 ### Tensor previews (Phase 4A)
 
 MIND now evaluates tensor expressions as lightweight previews (dtype + shape + optional fill), without materializing data buffers.

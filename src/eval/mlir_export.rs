@@ -108,6 +108,7 @@ impl MlirEmitter {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlirLowerPreset {
     None,
+    Core,
     ArithLinalg,
     CpuDemo,
     JitCpu,
@@ -118,6 +119,7 @@ impl MlirLowerPreset {
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "none" => Some(Self::None),
+            "core" => Some(Self::Core),
             "arith-linalg" => Some(Self::ArithLinalg),
             "cpu-demo" => Some(Self::CpuDemo),
             "jit-cpu" => Some(Self::JitCpu),
@@ -129,6 +131,7 @@ impl MlirLowerPreset {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::Core => "core",
             Self::ArithLinalg => "arith-linalg",
             Self::CpuDemo => "cpu-demo",
             Self::JitCpu => "jit-cpu",
@@ -146,7 +149,7 @@ impl Default for MlirLowerPreset {
 /// Apply purely textual rewrites to the emitted MLIR for "lowering".
 pub fn apply_textual_lowering(mut mlir: String, preset: MlirLowerPreset) -> String {
     match preset {
-        MlirLowerPreset::None => mlir,
+        MlirLowerPreset::None | MlirLowerPreset::Core => mlir,
         MlirLowerPreset::ArithLinalg => {
             // Keep simple and explicit: normalize function attrs, canonicalize tensor.empty uses, etc.
             mlir = mlir.replace("arith.constant", "arith.constant");
@@ -160,6 +163,18 @@ pub fn apply_textual_lowering(mut mlir: String, preset: MlirLowerPreset) -> Stri
         MlirLowerPreset::JitCpu => mlir,
         MlirLowerPreset::GpuDefault => mlir,
     }
+}
+
+pub fn apply_lowering(mlir: &str, preset: &str) -> Result<String, String> {
+    if preset.is_empty() {
+        return Ok(mlir.to_string());
+    }
+    let lowered = if let Some(preset) = MlirLowerPreset::from_str(preset) {
+        apply_textual_lowering(mlir.to_string(), preset)
+    } else {
+        return Err(format!("unknown MLIR lowering preset '{preset}'"));
+    };
+    Ok(lowered)
 }
 
 pub fn emit_mlir_with_opts(ir: &IRModule, opts: &MlirEmitOptions) -> String {

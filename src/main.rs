@@ -8,17 +8,24 @@ use clap::{Args, Parser, Subcommand};
 use mind::{diagnostics, eval, parser};
 use std::collections::HashMap;
 use std::io::{self, Write};
+#[cfg(feature = "mlir-build")]
+use std::path::PathBuf;
 #[cfg(feature = "mlir-exec")]
 use std::time::Duration;
 
 struct EmitOpts {
     emit_mlir_stdout: bool,
     emit_mlir_file: Option<String>,
+    emit_llvm_file: Option<String>,
+    emit_obj_file: Option<String>,
+    emit_shared_lib: Option<String>,
     mlir_lower: eval::MlirLowerPreset,
     run_mlir_opt: bool,
     mlir_opt_bin: Option<String>,
     mlir_opt_passes: Vec<String>,
     mlir_opt_timeout_ms: u64,
+    mlir_pass_pipeline: Option<String>,
+    target_triple: Option<String>,
 }
 
 impl Default for EmitOpts {
@@ -26,11 +33,16 @@ impl Default for EmitOpts {
         Self {
             emit_mlir_stdout: false,
             emit_mlir_file: None,
+            emit_llvm_file: None,
+            emit_obj_file: None,
+            emit_shared_lib: None,
             mlir_lower: eval::MlirLowerPreset::None,
             run_mlir_opt: false,
             mlir_opt_bin: None,
             mlir_opt_passes: default_mlir_opt_passes(),
             mlir_opt_timeout_ms: 5_000,
+            mlir_pass_pipeline: None,
+            target_triple: None,
         }
     }
 }
@@ -44,9 +56,22 @@ impl EmitOpts {
         let mut out = EmitOpts::default();
         out.emit_mlir_stdout = args.emit_mlir;
         out.emit_mlir_file = args.emit_mlir_file.clone();
+        out.emit_llvm_file = args.emit_llvm_file.clone();
+        out.emit_obj_file = args.emit_obj.clone();
+        out.emit_shared_lib = args.build_shared.clone();
         if let Some(lower) = &args.mlir_lower {
             out.mlir_lower =
                 eval::MlirLowerPreset::from_str(lower).unwrap_or(eval::MlirLowerPreset::None);
+        }
+        if let Some(pipeline) = &args.mlir_passes {
+            if !pipeline.trim().is_empty() {
+                out.mlir_pass_pipeline = Some(pipeline.trim().to_string());
+            }
+        }
+        if let Some(triple) = &args.target_triple {
+            if !triple.trim().is_empty() {
+                out.target_triple = Some(triple.trim().to_string());
+            }
         }
         if matches!(args.mlir_opt.as_deref(), Some("")) {
             out.run_mlir_opt = true;
@@ -78,6 +103,12 @@ impl EmitOpts {
             out.mlir_opt_passes = default_mlir_opt_passes();
         }
         out
+    }
+
+    fn wants_aot_artifacts(&self) -> bool {
+        self.emit_llvm_file.is_some()
+            || self.emit_obj_file.is_some()
+            || self.emit_shared_lib.is_some()
     }
 }
 
@@ -115,6 +146,12 @@ struct EvalArgs {
     #[arg(long)]
     emit_mlir_file: Option<String>,
     #[arg(long)]
+    emit_llvm_file: Option<String>,
+    #[arg(long, value_name = "PATH")]
+    emit_obj: Option<String>,
+    #[arg(long = "build", value_name = "PATH")]
+    build_shared: Option<String>,
+    #[arg(long)]
     mlir_lower: Option<String>,
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
     mlir_opt: Option<String>,
@@ -130,6 +167,8 @@ struct EvalArgs {
     mlir_passes: Option<String>,
     #[arg(long, value_name = "MS")]
     mlir_timeout_ms: Option<u64>,
+    #[arg(long)]
+    target_triple: Option<String>,
     #[arg(value_name = "SRC", num_args = 1..)]
     program: Vec<String>,
 }
@@ -275,9 +314,64 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
                         eval::ExecMode::Preview => {}
                     }
                     let ir = eval::lower_to_ir(&module);
+                    #[allow(unused_mut)]
+                    let mut built_mlir: Option<String> = None;
+                    #[allow(unused_mut)]
+                    let mut builder_invoked = false;
+                    #[allow(unused_mut)]
+                    let mut mlir_written_by_builder = false;
+                    if emit_opts.wants_aot_artifacts() {
+                        #[cfg(feature = "mlir-build")]
+                        {
+                            let base_mlir =
+                                eval::emit_mlir_string(&ir, eval::MlirLowerPreset::None);
+                            let tools = match eval::resolve_mlir_build_tools() {
+                                Ok(tools) => tools,
+                                Err(err) => {
+                                    eprintln!("Failed to resolve MLIR build tools: {err}");
+                                    std::process::exit(2);
+                                }
+                            };
+                            let mlir_path = emit_opts.emit_mlir_file.as_ref().map(PathBuf::from);
+                            let llvm_path = emit_opts.emit_llvm_file.as_ref().map(PathBuf::from);
+                            let obj_path = emit_opts.emit_obj_file.as_ref().map(PathBuf::from);
+                            let shared_path = emit_opts.emit_shared_lib.as_ref().map(PathBuf::from);
+                            let build_opts = eval::MlirBuildOptions {
+                                preset: emit_opts.mlir_lower.as_str(),
+                                emit_mlir_file: mlir_path.as_deref(),
+                                emit_llvm_file: llvm_path.as_deref(),
+                                emit_obj_file: obj_path.as_deref(),
+                                emit_shared: shared_path.as_deref(),
+                                opt_pipeline: emit_opts.mlir_pass_pipeline.as_deref(),
+                                target_triple: emit_opts.target_triple.as_deref(),
+                            };
+                            match eval::build_mlir_artifacts(&base_mlir, &tools, &build_opts) {
+                                Ok(products) => {
+                                    mlir_written_by_builder = mlir_path.is_some();
+                                    built_mlir = Some(products.optimized_mlir.clone());
+                                    builder_invoked = true;
+                                }
+                                Err(err) => {
+                                    eprintln!("Failed to build MLIR artifacts: {err}");
+                                    std::process::exit(2);
+                                }
+                            }
+                        }
+                        #[cfg(not(feature = "mlir-build"))]
+                        {
+                            eprintln!(
+                                "MLIR artifact emission requires the mlir-build feature; rebuild with --features mlir-build",
+                            );
+                            std::process::exit(2);
+                        }
+                    }
                     if emit_opts.emit_mlir_stdout || emit_opts.emit_mlir_file.is_some() {
-                        let mut mlir_text = eval::emit_mlir_string(&ir, emit_opts.mlir_lower);
-                        if emit_opts.run_mlir_opt {
+                        let mut mlir_text = if let Some(text) = built_mlir.as_ref() {
+                            text.clone()
+                        } else {
+                            eval::emit_mlir_string(&ir, emit_opts.mlir_lower)
+                        };
+                        if !builder_invoked && emit_opts.run_mlir_opt {
                             let bin = emit_opts
                                 .mlir_opt_bin
                                 .clone()
@@ -308,15 +402,20 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
                             println!("{mlir_text}");
                         }
                         if let Some(path) = emit_opts.emit_mlir_file.as_ref() {
-                            let path_ref = std::path::Path::new(path);
-                            let parent =
-                                path_ref.parent().unwrap_or_else(|| std::path::Path::new("."));
-                            if let Err(e) = std::fs::create_dir_all(parent) {
-                                eprintln!("Failed to create directories for {}: {e}", path);
-                            } else if let Err(e) = std::fs::write(path_ref, &mlir_text) {
-                                eprintln!("Failed to write MLIR to {}: {e}", path);
+                            if !(emit_opts.wants_aot_artifacts() && mlir_written_by_builder) {
+                                let path_ref = std::path::Path::new(path);
+                                let parent =
+                                    path_ref.parent().unwrap_or_else(|| std::path::Path::new("."));
+                                if let Err(e) = std::fs::create_dir_all(parent) {
+                                    eprintln!("Failed to create directories for {}: {e}", path);
+                                } else if let Err(e) = std::fs::write(path_ref, &mlir_text) {
+                                    eprintln!("Failed to write MLIR to {}: {e}", path);
+                                }
                             }
                         }
+                        return;
+                    }
+                    if builder_invoked {
                         return;
                     }
                     println!("--- Lowered IR ---\n{ir}");
