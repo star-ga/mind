@@ -130,6 +130,47 @@ pub fn known_dim_value(dim: &ShapeDim) -> Option<usize> {
     }
 }
 
+pub fn conv_output_dim_valid(
+    input: Option<usize>,
+    kernel: Option<usize>,
+    stride: usize,
+) -> Result<Option<usize>, String> {
+    if stride == 0 {
+        return Err("stride must be positive".to_string());
+    }
+    if let Some(k) = kernel {
+        if k == 0 {
+            return Err("kernel size must be positive".to_string());
+        }
+    }
+    match (input, kernel) {
+        (Some(h), Some(k)) => {
+            if h < k {
+                return Err(format!("kernel size {k} exceeds input size {h}"));
+            }
+            let out = (h - k) / stride + 1;
+            Ok(Some(out))
+        }
+        _ => Ok(None),
+    }
+}
+
+pub fn conv_output_dim_same(input: Option<usize>, stride: usize) -> Result<Option<usize>, String> {
+    if stride == 0 {
+        return Err("stride must be positive".to_string());
+    }
+    match input {
+        Some(h) => {
+            if h == 0 {
+                return Err("input spatial dimension must be positive".to_string());
+            }
+            let out = (h + stride - 1) / stride;
+            Ok(Some(out))
+        }
+        None => Ok(None),
+    }
+}
+
 pub fn compute_matmul_shape_info(
     a_shape: &[ShapeDim],
     b_shape: &[ShapeDim],

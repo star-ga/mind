@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::ast::{BinOp, Literal, Module, Node, Span as AstSpan};
 use crate::diagnostics::{Diagnostic as Pretty, Location};
 use crate::linalg;
-use crate::types::{DType, ShapeDim, TensorType, ValueType};
+use crate::types::{ConvPadding, DType, ShapeDim, TensorType, ValueType};
 
 #[derive(Debug)]
 pub struct TypeErrSpan {
@@ -49,6 +49,13 @@ fn describe_value_type(v: &ValueType) -> String {
             }
             format!("GradMap{{{}}}", parts.join(", "))
         }
+    }
+}
+
+fn dim_display(dim: &ShapeDim) -> String {
+    match dim {
+        ShapeDim::Known(n) => n.to_string(),
+        ShapeDim::Sym(sym) => sym.to_string(),
     }
 }
 
@@ -189,6 +196,35 @@ fn slice_len_with_step(len: Option<usize>, start: i32, end: i32, step: i32) -> O
             let diff = start_i - end_i;
             Some(((diff + (-step_i) - 1) / (-step_i)) as usize)
         }
+    }
+}
+
+fn conv_channels_compatible(a: &ShapeDim, b: &ShapeDim) -> bool {
+    match (a, b) {
+        (ShapeDim::Known(x), ShapeDim::Known(y)) => x == y,
+        (ShapeDim::Sym(sa), ShapeDim::Sym(sb)) => sa == sb,
+        _ => true,
+    }
+}
+
+fn conv_output_dim(
+    input: &ShapeDim,
+    kernel: Option<&ShapeDim>,
+    stride: usize,
+    padding: ConvPadding,
+    span: AstSpan,
+    axis: &str,
+) -> Result<ShapeDim, TypeErrSpan> {
+    let input_known = dim_len(input);
+    let kernel_known = kernel.and_then(dim_len);
+    let result = match padding {
+        ConvPadding::Valid => linalg::conv_output_dim_valid(input_known, kernel_known, stride),
+        ConvPadding::Same => linalg::conv_output_dim_same(input_known, stride),
+    };
+    match result {
+        Ok(Some(v)) => Ok(ShapeDim::Known(v)),
+        Ok(None) => Ok(ShapeDim::Sym(fresh_symbol(&format!("_conv_{axis}")))),
+        Err(msg) => Err(TypeErrSpan { msg: format!("`tensor.conv2d`: {msg} ({axis})"), span }),
     }
 }
 
@@ -690,6 +726,131 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     span: *span,
                 }),
             }
+        }
+        Node::CallTensorRelu { x, span } => {
+            let (arg_ty, _) = infer_expr(x, env)?;
+            match arg_ty {
+                ValueType::Tensor(tensor) => Ok((ValueType::Tensor(tensor), *span)),
+                _ => Err(TypeErrSpan {
+                    msg: "`tensor.relu` requires a tensor argument".to_string(),
+                    span: x.span(),
+                }),
+            }
+        }
+        Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, span } => {
+            if *stride_h == 0 || *stride_w == 0 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.conv2d`: strides must be positive".to_string(),
+                    span: *span,
+                });
+            }
+
+            let (x_ty, _) = infer_expr(x, env)?;
+            let (w_ty, _) = infer_expr(w, env)?;
+            let (x_tensor, w_tensor) = match (x_ty, w_ty) {
+                (ValueType::Tensor(a), ValueType::Tensor(b)) => (a, b),
+                (ValueType::Tensor(_), other) => {
+                    return Err(TypeErrSpan {
+                        msg: format!(
+                            "`tensor.conv2d`: expected tensor weights but found {}",
+                            describe_value_type(&other)
+                        ),
+                        span: w.span(),
+                    });
+                }
+                (other, _) => {
+                    return Err(TypeErrSpan {
+                        msg: format!(
+                            "`tensor.conv2d`: expected tensor input but found {}",
+                            describe_value_type(&other)
+                        ),
+                        span: x.span(),
+                    });
+                }
+            };
+
+            if x_tensor.shape.len() != 4 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.conv2d` expects input layout NHWC (rank 4)".to_string(),
+                    span: x.span(),
+                });
+            }
+            if w_tensor.shape.len() != 4 {
+                return Err(TypeErrSpan {
+                    msg: "`tensor.conv2d` expects filter layout HWIO (rank 4)".to_string(),
+                    span: w.span(),
+                });
+            }
+
+            let in_channels = &x_tensor.shape[3];
+            let kernel_channels = &w_tensor.shape[2];
+            if !conv_channels_compatible(in_channels, kernel_channels) {
+                return Err(TypeErrSpan {
+                    msg: format!(
+                        "`tensor.conv2d`: channel mismatch {} vs {}",
+                        dim_display(in_channels),
+                        dim_display(kernel_channels)
+                    ),
+                    span: *span,
+                });
+            }
+
+            if let Some(kh) = dim_len(&w_tensor.shape[0]) {
+                if kh == 0 {
+                    return Err(TypeErrSpan {
+                        msg: "`tensor.conv2d`: kernel height must be positive".to_string(),
+                        span: w.span(),
+                    });
+                }
+            }
+            if let Some(kw) = dim_len(&w_tensor.shape[1]) {
+                if kw == 0 {
+                    return Err(TypeErrSpan {
+                        msg: "`tensor.conv2d`: kernel width must be positive".to_string(),
+                        span: w.span(),
+                    });
+                }
+            }
+
+            let dtype = if x_tensor.dtype == w_tensor.dtype {
+                x_tensor.dtype.clone()
+            } else if matches!(x_tensor.dtype, DType::F32) || matches!(w_tensor.dtype, DType::F32) {
+                DType::F32
+            } else {
+                return Err(TypeErrSpan {
+                    msg: format!(
+                        "`tensor.conv2d`: incompatible dtypes {} and {}",
+                        dtype_name(&x_tensor.dtype),
+                        dtype_name(&w_tensor.dtype)
+                    ),
+                    span: *span,
+                });
+            };
+
+            let out_h = conv_output_dim(
+                &x_tensor.shape[1],
+                Some(&w_tensor.shape[0]),
+                *stride_h,
+                *padding,
+                *span,
+                "h",
+            )?;
+            let out_w = conv_output_dim(
+                &x_tensor.shape[2],
+                Some(&w_tensor.shape[1]),
+                *stride_w,
+                *padding,
+                *span,
+                "w",
+            )?;
+
+            let mut out_shape = Vec::with_capacity(4);
+            out_shape.push(x_tensor.shape[0].clone());
+            out_shape.push(out_h);
+            out_shape.push(out_w);
+            out_shape.push(w_tensor.shape[3].clone());
+
+            Ok((ValueType::Tensor(TensorType::new(dtype, out_shape)), *span))
         }
         Node::Binary { op, left, right, span } => {
             let (lt, _) = infer_expr(left, env)?;
