@@ -146,6 +146,20 @@ jobs:
       - name: Run tests (mlir stub)
         run: cargo test --workspace --all-targets --features mlir --verbose
 
+  mlir_build_check:
+    name: Check (feature: mlir-build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Cargo check (mlir-build)
+        run: cargo check --no-default-features --features mlir-build --locked
+
   fmt_check:
     name: Format (rustfmt)
     runs-on: ubuntu-latest
