@@ -253,6 +253,22 @@ cargo run --features mlir-build -- eval 'tensor.matmul(a,b)' \
 Tools are auto-discovered via `PATH` or the `MLIR_OPT`, `MLIR_TRANSLATE`, and `CLANG` environment variables. Build steps include
 timeouts and forward stderr on failures for quick debugging.
 
+### C FFI & AOT integration (Phase 9)
+
+With the `ffi-c` feature enabled, MIND emits a stable C ABI header describing tensor shapes and runtime entrypoints. Pair it with
+`mlir-build` and `cpu-exec` to produce shared libraries and headers consumable from C/C++ or dynamic loaders:
+
+```bash
+cargo run --features "mlir-build ffi-c cpu-exec" -- \
+  eval 'let a: Tensor[f32,(2,3)] = 1; let b: Tensor[f32,(3,2)] = 2; tensor.matmul(a,b)' \
+  --build libmind.so \
+  --emit-ffi-c mind.h
+```
+
+The generated `mind.h` defines the `MindTensor`/`MindIO` structs alongside `mind_model_meta`, `mind_model_io`, and `mind_infer`.
+Caller-owned output buffers are preferred; if you pass `NULL`, the runtime may allocate via `mind_alloc` and expects `mind_free`
+for cleanup. Exported shapes may contain `0` to denote symbolic dimensions that must be filled in at runtime.
+
 ### Tensor previews (Phase 4A)
 
 MIND now evaluates tensor expressions as lightweight previews (dtype + shape + optional fill), without materializing data buffers.

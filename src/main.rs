@@ -19,6 +19,10 @@ struct EmitOpts {
     emit_llvm_file: Option<String>,
     emit_obj_file: Option<String>,
     emit_shared_lib: Option<String>,
+    #[cfg(feature = "ffi-c")]
+    emit_ffi_header: Option<String>,
+    #[cfg(feature = "ffi-c")]
+    emit_ffi_shim: Option<String>,
     mlir_lower: eval::MlirLowerPreset,
     run_mlir_opt: bool,
     mlir_opt_bin: Option<String>,
@@ -36,6 +40,10 @@ impl Default for EmitOpts {
             emit_llvm_file: None,
             emit_obj_file: None,
             emit_shared_lib: None,
+            #[cfg(feature = "ffi-c")]
+            emit_ffi_header: None,
+            #[cfg(feature = "ffi-c")]
+            emit_ffi_shim: None,
             mlir_lower: eval::MlirLowerPreset::None,
             run_mlir_opt: false,
             mlir_opt_bin: None,
@@ -59,6 +67,11 @@ impl EmitOpts {
         out.emit_llvm_file = args.emit_llvm_file.clone();
         out.emit_obj_file = args.emit_obj.clone();
         out.emit_shared_lib = args.build_shared.clone();
+        #[cfg(feature = "ffi-c")]
+        {
+            out.emit_ffi_header = args.emit_ffi_c.clone();
+            out.emit_ffi_shim = args.emit_ffi_shim.clone();
+        }
         if let Some(lower) = &args.mlir_lower {
             out.mlir_lower =
                 eval::MlirLowerPreset::from_str(lower).unwrap_or(eval::MlirLowerPreset::None);
@@ -106,9 +119,16 @@ impl EmitOpts {
     }
 
     fn wants_aot_artifacts(&self) -> bool {
-        self.emit_llvm_file.is_some()
+        let base = self.emit_llvm_file.is_some()
             || self.emit_obj_file.is_some()
-            || self.emit_shared_lib.is_some()
+            || self.emit_shared_lib.is_some();
+        #[cfg(feature = "ffi-c")]
+        {
+            if base || self.emit_ffi_header.is_some() || self.emit_ffi_shim.is_some() {
+                return true;
+            }
+        }
+        base
     }
 }
 
@@ -151,6 +171,12 @@ struct EvalArgs {
     emit_obj: Option<String>,
     #[arg(long = "build", value_name = "PATH")]
     build_shared: Option<String>,
+    #[cfg(feature = "ffi-c")]
+    #[arg(long, value_name = "PATH")]
+    emit_ffi_c: Option<String>,
+    #[cfg(feature = "ffi-c")]
+    #[arg(long, value_name = "PATH")]
+    emit_ffi_shim: Option<String>,
     #[arg(long)]
     mlir_lower: Option<String>,
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
