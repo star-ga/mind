@@ -8,6 +8,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  ALL_PROXY: ""
+  http_proxy: ""
+  https_proxy: ""
+  all_proxy: ""
 
 jobs:
   test:
@@ -30,21 +37,20 @@ jobs:
         components: rustfmt, clippy
 
     - name: Cache cargo
-      uses: actions/cache@v3
+      uses: Swatinem/rust-cache@v2
       with:
-        path: |
-          ~/.cargo/bin/
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        cache-on-failure: true
+
+    - name: Cargo fetch (retry)
+      run: |
+        set -e
+        cargo fetch || (sleep 5 && cargo fetch) || (sleep 10 && cargo fetch)
 
     - name: Build
-      run: cargo build --verbose --no-default-features
+      run: cargo build --verbose --no-default-features --locked
 
     - name: Run tests
-      run: cargo test --verbose --no-default-features
+      run: cargo test --verbose --no-default-features --locked
 
     - name: Check formatting
       run: cargo fmt -- --check
