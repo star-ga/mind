@@ -10,7 +10,7 @@ pub struct TensorEnvEntry {
     pub value: TensorVal,
     pub expr: Option<ast::Node>,
 }
-use crate::types::{DType, ShapeDim};
+use crate::types::{ConvPadding, DType, ShapeDim};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(usize);
@@ -35,6 +35,8 @@ enum Op {
     Gather { x: NodeId, idx: NodeId, axis: usize, in_shape: Vec<ShapeDim> },
     Dot { a: NodeId, b: NodeId, info: MatMulShapeInfo },
     MatMul { a: NodeId, b: NodeId, info: MatMulShapeInfo },
+    Relu { x: NodeId },
+    Conv2d { x: NodeId, w: NodeId, stride_h: usize, stride_w: usize, padding: ConvPadding },
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +275,46 @@ fn slice_len_with_step(len: Option<usize>, start: i32, end: i32, step: i32) -> O
     }
 }
 
+fn conv_channels_compatible(a: &ShapeDim, b: &ShapeDim) -> bool {
+    match (a, b) {
+        (ShapeDim::Known(x), ShapeDim::Known(y)) => x == y,
+        (ShapeDim::Sym(sa), ShapeDim::Sym(sb)) => sa == sb,
+        _ => true,
+    }
+}
+
+fn dim_display(dim: &ShapeDim) -> String {
+    match dim {
+        ShapeDim::Known(n) => n.to_string(),
+        ShapeDim::Sym(sym) => sym.to_string(),
+    }
+}
+
+fn conv_output_dim_autodiff(
+    input: &ShapeDim,
+    kernel: Option<&ShapeDim>,
+    stride: usize,
+    padding: ConvPadding,
+) -> Result<ShapeDim, String> {
+    let input_known = match input {
+        ShapeDim::Known(n) => Some(*n),
+        ShapeDim::Sym(_) => None,
+    };
+    let kernel_known = kernel.and_then(|dim| match dim {
+        ShapeDim::Known(n) => Some(*n),
+        ShapeDim::Sym(_) => None,
+    });
+    let res = match padding {
+        ConvPadding::Valid => linalg::conv_output_dim_valid(input_known, kernel_known, stride),
+        ConvPadding::Same => linalg::conv_output_dim_same(input_known, stride),
+    };
+    match res {
+        Ok(Some(v)) => Ok(ShapeDim::Known(v)),
+        Ok(None) => Ok(ShapeDim::Sym(fresh_symbol("_conv"))),
+        Err(msg) => Err(msg),
+    }
+}
+
 fn expand_reduced_axes(mut grad: TensorVal, axes: &[usize], target_rank: usize) -> TensorVal {
     if axes.is_empty() {
         return grad;
@@ -434,6 +476,82 @@ pub fn build_graph_loss(
                 } else {
                     Err("unsupported call in autodiff".to_string())
                 }
+            }
+            ast::Node::CallTensorRelu { x, .. } => {
+                let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let child_info = &tape.nodes[child.0];
+                let fill = child_info.fill.map(|f| if f < 0.0 { 0.0 } else { f });
+                let info = NodeInfo {
+                    op: Op::Relu { x: child },
+                    dtype: child_info.dtype.clone(),
+                    shape: child_info.shape.clone(),
+                    fill,
+                };
+                Ok(tape.push(info))
+            }
+            ast::Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, .. } => {
+                if *stride_h == 0 || *stride_w == 0 {
+                    return Err("`tensor.conv2d`: strides must be positive".to_string());
+                }
+                let left = rec(x, tenv, tape, vars, var_nodes, expanding)?;
+                let right = rec(w, tenv, tape, vars, var_nodes, expanding)?;
+                let left_info = &tape.nodes[left.0];
+                let right_info = &tape.nodes[right.0];
+                if left_info.shape.len() != 4 {
+                    return Err("`tensor.conv2d` expects input layout NHWC".to_string());
+                }
+                if right_info.shape.len() != 4 {
+                    return Err("`tensor.conv2d` expects filter layout HWIO".to_string());
+                }
+                if !conv_channels_compatible(&left_info.shape[3], &right_info.shape[2]) {
+                    return Err(format!(
+                        "`tensor.conv2d`: channel mismatch {} vs {}",
+                        dim_display(&left_info.shape[3]),
+                        dim_display(&right_info.shape[2])
+                    ));
+                }
+                let dtype = if left_info.dtype == right_info.dtype {
+                    left_info.dtype.clone()
+                } else if matches!(left_info.dtype, DType::F32)
+                    || matches!(right_info.dtype, DType::F32)
+                {
+                    DType::F32
+                } else {
+                    return Err("`tensor.conv2d`: incompatible dtypes".to_string());
+                };
+
+                let out_h = conv_output_dim_autodiff(
+                    &left_info.shape[1],
+                    Some(&right_info.shape[0]),
+                    *stride_h,
+                    *padding,
+                )?;
+                let out_w = conv_output_dim_autodiff(
+                    &left_info.shape[2],
+                    Some(&right_info.shape[1]),
+                    *stride_w,
+                    *padding,
+                )?;
+
+                let mut shape = Vec::with_capacity(4);
+                shape.push(left_info.shape[0].clone());
+                shape.push(out_h);
+                shape.push(out_w);
+                shape.push(right_info.shape[3].clone());
+
+                let info = NodeInfo {
+                    op: Op::Conv2d {
+                        x: left,
+                        w: right,
+                        stride_h: *stride_h,
+                        stride_w: *stride_w,
+                        padding: *padding,
+                    },
+                    dtype,
+                    shape,
+                    fill: None,
+                };
+                Ok(tape.push(info))
             }
             ast::Node::CallTensorSum { x, axes, keepdims, .. } => {
                 let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
@@ -853,6 +971,34 @@ pub fn backprop_to_vars(
             }
             Op::Dot { a, b, info } | Op::MatMul { a, b, info } => {
                 backprop_matmul_op(&mut adj, tape, &grad, *a, *b, info);
+            }
+            Op::Relu { x } => {
+                let child_info = &tape.nodes[x.0];
+                let mut adjusted = grad.clone();
+                match child_info.fill {
+                    Some(f) if f > 0.0 => {}
+                    Some(_) => {
+                        adjusted.fill = Some(0.0);
+                    }
+                    None => {
+                        adjusted.fill = None;
+                    }
+                }
+                accumulate_grad(&mut adj, *x, adjusted);
+            }
+            Op::Conv2d { x, w, .. } => {
+                let x_info = &tape.nodes[x.0];
+                let w_info = &tape.nodes[w.0];
+                accumulate_grad(
+                    &mut adj,
+                    *x,
+                    TensorVal::new(x_info.dtype.clone(), x_info.shape.clone(), None),
+                );
+                accumulate_grad(
+                    &mut adj,
+                    *w,
+                    TensorVal::new(w_info.dtype.clone(), w_info.shape.clone(), None),
+                );
             }
             Op::LeafVar | Op::ConstInt => {}
         }

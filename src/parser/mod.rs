@@ -9,6 +9,7 @@ use chumsky::prelude::*;
 
 use crate::ast::{BinOp, Literal, Module, Node, Span, TypeAnn};
 use crate::diagnostics::Diagnostic as PrettyDiagnostic;
+use crate::types::ConvPadding;
 
 fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> {
     text::keyword(s).to(s)
@@ -285,6 +286,81 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallMatMul { a: Box::new(a), b: Box::new(b), span }
             });
 
+        enum Conv2dArg {
+            StrideH(usize),
+            StrideW(usize),
+            Padding(ConvPadding),
+        }
+
+        let stride_value = signed_int
+            .clone()
+            .map_with_span(|v, sp: std::ops::Range<usize>| (v, sp))
+            .try_map(|(value, sp), _| {
+                if value <= 0 {
+                    Err(Simple::custom(sp, "stride must be positive"))
+                } else {
+                    Ok(value as usize)
+                }
+            });
+
+        let padding_value = just('"')
+            .ignore_then(filter(|c| *c != '"').repeated().collect::<String>())
+            .then_ignore(just('"'))
+            .map_with_span(|s, sp: std::ops::Range<usize>| (s, sp))
+            .try_map(|(value, sp), _| {
+                ConvPadding::from_str(&value)
+                    .map(Conv2dArg::Padding)
+                    .ok_or_else(|| Simple::custom(sp, "padding must be \"valid\" or \"same\""))
+            });
+
+        let conv2d_arg = choice((
+            kw("stride_h")
+                .ignore_then(just('=').padded())
+                .ignore_then(stride_value.clone().map(Conv2dArg::StrideH)),
+            kw("stride_w")
+                .ignore_then(just('=').padded())
+                .ignore_then(stride_value.clone().map(Conv2dArg::StrideW)),
+            kw("padding").ignore_then(just('=').padded()).ignore_then(padding_value),
+        ));
+
+        let tensor_relu_call = just("tensor.relu")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(')').padded())
+            .map_with_span(|x, sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::CallTensorRelu { x: Box::new(x), span }
+            });
+
+        let tensor_conv2d_call = just("tensor.conv2d")
+            .ignore_then(just('(').padded())
+            .ignore_then(expr.clone())
+            .then_ignore(just(',').padded())
+            .then(expr.clone())
+            .then(just(',').padded().ignore_then(conv2d_arg).repeated())
+            .then_ignore(just(')').padded())
+            .map_with_span(|((x, w), extras), sp: std::ops::Range<usize>| {
+                let mut stride_h = 1usize;
+                let mut stride_w = 1usize;
+                let mut padding = ConvPadding::Valid;
+                for arg in extras {
+                    match arg {
+                        Conv2dArg::StrideH(v) => stride_h = v,
+                        Conv2dArg::StrideW(v) => stride_w = v,
+                        Conv2dArg::Padding(p) => padding = p,
+                    }
+                }
+                let span = Span::new(sp.start, sp.end);
+                Node::CallTensorConv2d {
+                    x: Box::new(x),
+                    w: Box::new(w),
+                    stride_h,
+                    stride_w,
+                    padding,
+                    span,
+                }
+            });
+
         let call = dotted_ident
             .clone()
             .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
@@ -313,6 +389,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             tensor_gather_call,
             tensor_dot_call,
             tensor_matmul_call,
+            tensor_relu_call,
+            tensor_conv2d_call,
             call,
             int.clone(),
             ident_expr.clone(),

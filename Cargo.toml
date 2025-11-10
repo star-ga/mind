@@ -44,6 +44,7 @@ debug = true
 default = []
 cpu-buffers = []
 cpu-exec = ["cpu-buffers"]
+cpu-conv = ["cpu-exec"]
 mlir = []
 mlir_backend = ["melior"]
 llvm = ["inkwell"]

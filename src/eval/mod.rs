@@ -89,7 +89,7 @@ pub enum ExecMode {
 }
 
 #[cfg(feature = "cpu-exec")]
-fn exec_error_to_eval(err: exec::cpu::ExecError) -> EvalError {
+pub(crate) fn exec_error_to_eval(err: exec::cpu::ExecError) -> EvalError {
     match err {
         exec::cpu::ExecError::Math(msg) => {
             if msg.contains("division by zero") {
@@ -438,6 +438,29 @@ pub(crate) fn eval_value_expr_mode(
                         }
                     }
                     let result = stdlib::tensor::matmul_tensor_preview(&tl, &tr)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallTensorRelu { x, .. } => {
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            match value {
+                Value::Tensor(t) => {
+                    let result = stdlib::tensor::relu_tensor(t, mode)?;
+                    Ok(Value::Tensor(result))
+                }
+                _ => Err(EvalError::Unsupported),
+            }
+        }
+        Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, .. } => {
+            let x_val = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let w_val = eval_value_expr_mode(w, env, tensor_env, mode)?;
+            match (x_val, w_val) {
+                (Value::Tensor(x_tensor), Value::Tensor(w_tensor)) => {
+                    let result = stdlib::tensor::conv2d_tensor(
+                        x_tensor, w_tensor, *stride_h, *stride_w, *padding, mode,
+                    )?;
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(EvalError::Unsupported),

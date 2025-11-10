@@ -9,7 +9,7 @@ use crate::eval::{
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::{materialize_filled, num_elems, MATERIALIZE_MAX};
 use crate::linalg::{self, MatMulShapeInfo};
-use crate::types::{DType, ShapeDim};
+use crate::types::{ConvPadding, DType, ShapeDim};
 
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::value::Buffer;
@@ -34,6 +34,26 @@ pub fn dispatch(
         "tensor.sample" => tensor_sample(args, env, tensor_env, mode),
         #[cfg(feature = "cpu-buffers")]
         "tensor.is_materialized" => tensor_is_materialized(args, env, tensor_env, mode),
+        "tensor.relu" => tensor_relu(args, env, tensor_env, mode),
+        _ => Err(EvalError::Unsupported),
+    }
+}
+
+fn tensor_relu(
+    args: &[Node],
+    env: &HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
+) -> Result<Value, EvalError> {
+    if args.len() != 1 {
+        return Err(EvalError::Unsupported);
+    }
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    match value {
+        Value::Tensor(t) => {
+            let result = relu_tensor(t, mode)?;
+            Ok(Value::Tensor(result))
+        }
         _ => Err(EvalError::Unsupported),
     }
 }
@@ -553,6 +573,203 @@ fn dims_from_strings(dims: &[String]) -> Vec<ShapeDim> {
             }
         })
         .collect()
+}
+
+fn relu_fill(fill: Option<f64>) -> Option<f64> {
+    fill.map(|f| if f < 0.0 { 0.0 } else { f })
+}
+
+pub(crate) fn relu_tensor_preview(tensor: &TensorVal) -> Result<TensorVal, EvalError> {
+    let mut result = TensorVal::new(tensor.dtype.clone(), tensor.shape.clone(), tensor.fill);
+    result.fill = relu_fill(tensor.fill);
+    Ok(result)
+}
+
+#[allow(unused_mut)]
+pub(crate) fn relu_tensor(mut tensor: TensorVal, mode: ExecMode) -> Result<TensorVal, EvalError> {
+    let preview = relu_tensor_preview(&tensor)?;
+
+    #[cfg(feature = "cpu-buffers")]
+    {
+        if matches!(mode, ExecMode::CpuIfEnabled) {
+            materialize_filled(&mut tensor);
+            #[cfg(feature = "cpu-exec")]
+            {
+                if tensor.dtype == DType::F32 {
+                    if tensor.as_f32().is_some() {
+                        match crate::exec::cpu::exec_relu(&tensor) {
+                            Ok(out) => return Ok(out),
+                            Err(err) => {
+                                let mapped = crate::eval::exec_error_to_eval(err);
+                                if matches!(mapped, EvalError::DivZero) {
+                                    return Err(mapped);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = mode;
+    Ok(preview)
+}
+
+fn conv_dtype(dtype_x: &DType, dtype_w: &DType) -> Option<DType> {
+    if dtype_x == dtype_w {
+        Some(dtype_x.clone())
+    } else if matches!(dtype_x, DType::F32) || matches!(dtype_w, DType::F32) {
+        Some(DType::F32)
+    } else {
+        None
+    }
+}
+
+fn conv_channels_match(a: &ShapeDim, b: &ShapeDim) -> bool {
+    match (a, b) {
+        (ShapeDim::Known(x), ShapeDim::Known(y)) => x == y,
+        (ShapeDim::Sym(sa), ShapeDim::Sym(sb)) => sa == sb,
+        _ => true,
+    }
+}
+
+fn conv_output_dim_eval(
+    input: &ShapeDim,
+    kernel: Option<&ShapeDim>,
+    stride: usize,
+    padding: ConvPadding,
+) -> Result<ShapeDim, EvalError> {
+    let input_known = match input {
+        ShapeDim::Known(n) => Some(*n),
+        ShapeDim::Sym(_) => None,
+    };
+    let kernel_known = kernel.and_then(|dim| match dim {
+        ShapeDim::Known(n) => Some(*n),
+        ShapeDim::Sym(_) => None,
+    });
+    let res = match padding {
+        ConvPadding::Valid => linalg::conv_output_dim_valid(input_known, kernel_known, stride),
+        ConvPadding::Same => linalg::conv_output_dim_same(input_known, stride),
+    };
+    match res {
+        Ok(Some(v)) => Ok(ShapeDim::Known(v)),
+        Ok(None) => Ok(ShapeDim::Sym(fresh_symbol("_conv"))),
+        Err(msg) => Err(EvalError::UnsupportedMsg(format!("`tensor.conv2d`: {msg}"))),
+    }
+}
+
+pub(crate) fn conv2d_tensor_preview(
+    x: &TensorVal,
+    w: &TensorVal,
+    stride_h: usize,
+    stride_w: usize,
+    padding: ConvPadding,
+) -> Result<TensorVal, EvalError> {
+    if stride_h == 0 || stride_w == 0 {
+        return Err(EvalError::UnsupportedMsg(
+            "`tensor.conv2d`: strides must be positive".to_string(),
+        ));
+    }
+
+    if x.shape.len() != 4 {
+        return Err(EvalError::UnsupportedMsg(
+            "`tensor.conv2d` expects input layout NHWC (rank 4)".to_string(),
+        ));
+    }
+    if w.shape.len() != 4 {
+        return Err(EvalError::UnsupportedMsg(
+            "`tensor.conv2d` expects filter layout HWIO (rank 4)".to_string(),
+        ));
+    }
+
+    if !conv_channels_match(&x.shape[3], &w.shape[2]) {
+        return Err(EvalError::UnsupportedMsg(format!(
+            "`tensor.conv2d`: channel mismatch {} vs {}",
+            dim_str(&x.shape[3]),
+            dim_str(&w.shape[2])
+        )));
+    }
+
+    if matches!(w.shape[0], ShapeDim::Known(0)) {
+        return Err(EvalError::UnsupportedMsg(
+            "`tensor.conv2d`: kernel height must be positive".to_string(),
+        ));
+    }
+    if matches!(w.shape[1], ShapeDim::Known(0)) {
+        return Err(EvalError::UnsupportedMsg(
+            "`tensor.conv2d`: kernel width must be positive".to_string(),
+        ));
+    }
+
+    let dtype = conv_dtype(&x.dtype, &w.dtype).ok_or_else(|| {
+        EvalError::UnsupportedMsg(format!(
+            "`tensor.conv2d`: incompatible dtypes {} and {}",
+            x.dtype.as_str(),
+            w.dtype.as_str()
+        ))
+    })?;
+
+    let out_h = conv_output_dim_eval(&x.shape[1], Some(&w.shape[0]), stride_h, padding)?;
+    let out_w = conv_output_dim_eval(&x.shape[2], Some(&w.shape[1]), stride_w, padding)?;
+
+    let mut out_shape = Vec::with_capacity(4);
+    out_shape.push(x.shape[0].clone());
+    out_shape.push(out_h);
+    out_shape.push(out_w);
+    out_shape.push(w.shape[3].clone());
+
+    Ok(TensorVal::new(dtype, out_shape, None))
+}
+
+fn dim_str(dim: &ShapeDim) -> String {
+    match dim {
+        ShapeDim::Known(n) => n.to_string(),
+        ShapeDim::Sym(sym) => sym.to_string(),
+    }
+}
+
+#[allow(unused_mut)]
+pub(crate) fn conv2d_tensor(
+    mut x: TensorVal,
+    mut w: TensorVal,
+    stride_h: usize,
+    stride_w: usize,
+    padding: ConvPadding,
+    mode: ExecMode,
+) -> Result<TensorVal, EvalError> {
+    let preview = conv2d_tensor_preview(&x, &w, stride_h, stride_w, padding)?;
+
+    #[cfg(feature = "cpu-buffers")]
+    {
+        if matches!(mode, ExecMode::CpuIfEnabled) {
+            materialize_filled(&mut x);
+            materialize_filled(&mut w);
+            #[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]
+            {
+                if x.dtype == DType::F32 && w.dtype == DType::F32 {
+                    if x.as_f32().is_some() && w.as_f32().is_some() {
+                        match crate::exec::conv::exec_conv2d(&x, &w, stride_h, stride_w, padding) {
+                            Ok(t) => return Ok(t),
+                            Err(err) => {
+                                return Err(crate::eval::exec_error_to_eval(err));
+                            }
+                        }
+                    }
+                }
+            }
+            #[cfg(all(feature = "cpu-exec", not(feature = "cpu-conv")))]
+            {
+                return Err(EvalError::UnsupportedMsg(
+                    "`tensor.conv2d` execution requires enabling the `cpu-conv` feature"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    let _ = mode;
+    Ok(preview)
 }
 
 pub(crate) fn sum_tensor_preview(

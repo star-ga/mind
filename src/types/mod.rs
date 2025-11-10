@@ -48,6 +48,29 @@ pub enum ShapeDim {
     Sym(&'static str),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvPadding {
+    Valid,
+    Same,
+}
+
+impl ConvPadding {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "valid" => Some(ConvPadding::Valid),
+            "same" => Some(ConvPadding::Same),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConvPadding::Valid => "valid",
+            ConvPadding::Same => "same",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TensorType {
     pub dtype: DType,
