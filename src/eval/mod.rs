@@ -4,6 +4,9 @@ use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
 use crate::eval::autodiff::TensorEnvEntry;
 use crate::types::{DType, ShapeDim, ValueType};
 
+#[cfg(feature = "cpu-exec")]
+use crate::exec;
+
 #[cfg(feature = "cpu-buffers")]
 use value::Buffer;
 
@@ -79,6 +82,28 @@ pub(crate) fn materialize_filled(t: &mut TensorVal) {
 
 mod stdlib;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecMode {
+    PreviewOnly,
+    CpuIfEnabled,
+}
+
+#[cfg(feature = "cpu-exec")]
+fn exec_error_to_eval(err: exec::cpu::ExecError) -> EvalError {
+    match err {
+        exec::cpu::ExecError::Math(msg) => {
+            if msg.contains("division by zero") {
+                EvalError::DivZero
+            } else {
+                EvalError::UnsupportedMsg(msg)
+            }
+        }
+        exec::cpu::ExecError::Unsupported(msg)
+        | exec::cpu::ExecError::Shape(msg)
+        | exec::cpu::ExecError::Type(msg) => EvalError::UnsupportedMsg(msg),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum EvalError {
     #[error("unsupported operation")]
@@ -95,10 +120,11 @@ pub enum EvalError {
     OutOfBounds,
 }
 
-pub fn eval_module_value_with_env(
+pub fn eval_module_value_with_env_mode(
     m: &Module,
     env: &mut HashMap<String, i64>,
     src_for_types: Option<&str>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if let Some(src) = src_for_types {
         let mut tenv: HashMap<String, ValueType> = HashMap::new();
@@ -120,7 +146,7 @@ pub fn eval_module_value_with_env(
     for item in &m.items {
         match item {
             Node::Let { name, ann, value, .. } => {
-                let rhs = eval_value_expr(value, &venv, &tensor_env)?;
+                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode)?;
                 let stored = match ann {
                     Some(TypeAnn::Tensor { dtype, dims }) => {
                         let (dtype, shape) = parse_tensor_ann(dtype, dims)?;
@@ -156,7 +182,7 @@ pub fn eval_module_value_with_env(
                 }
             }
             Node::Assign { name, value, .. } => {
-                let rhs = eval_value_expr(value, &venv, &tensor_env)?;
+                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode)?;
                 if let Value::Int(n) = rhs {
                     env.insert(name.clone(), n);
                     venv.insert(name.clone(), Value::Int(n));
@@ -178,11 +204,19 @@ pub fn eval_module_value_with_env(
                 }
             }
             _ => {
-                last = eval_value_expr(item, &venv, &tensor_env)?;
+                last = eval_value_expr_mode(item, &venv, &tensor_env, mode)?;
             }
         }
     }
     Ok(last)
+}
+
+pub fn eval_module_value_with_env(
+    m: &Module,
+    env: &mut HashMap<String, i64>,
+    src_for_types: Option<&str>,
+) -> Result<Value, EvalError> {
+    eval_module_value_with_env_mode(m, env, src_for_types, ExecMode::PreviewOnly)
 }
 
 pub fn eval_module_with_env(
@@ -190,7 +224,7 @@ pub fn eval_module_with_env(
     env: &mut HashMap<String, i64>,
     src_for_types: Option<&str>,
 ) -> Result<i64, EvalError> {
-    match eval_module_value_with_env(m, env, src_for_types)? {
+    match eval_module_value_with_env_mode(m, env, src_for_types, ExecMode::PreviewOnly)? {
         Value::Int(n) => Ok(n),
         _ => Err(EvalError::Unsupported),
     }
@@ -210,22 +244,33 @@ pub(crate) fn eval_value_expr(
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
 ) -> Result<Value, EvalError> {
+    eval_value_expr_mode(node, env, tensor_env, ExecMode::PreviewOnly)
+}
+
+pub(crate) fn eval_value_expr_mode(
+    node: &Node,
+    env: &HashMap<String, Value>,
+    tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
+) -> Result<Value, EvalError> {
     match node {
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
         Node::Lit(Literal::Ident(name), _) => {
             env.get(name).cloned().ok_or_else(|| EvalError::UnknownVar(name.clone()))
         }
-        Node::Paren(inner, _) => eval_value_expr(inner, env, tensor_env),
+        Node::Paren(inner, _) => eval_value_expr_mode(inner, env, tensor_env, mode),
         Node::Tuple { elements, .. } => {
             let mut items = Vec::with_capacity(elements.len());
             for item in elements {
-                items.push(eval_value_expr(item, env, tensor_env)?);
+                items.push(eval_value_expr_mode(item, env, tensor_env, mode)?);
             }
             Ok(Value::Tuple(items))
         }
-        Node::Call { callee, args, .. } => stdlib::tensor::dispatch(callee, args, env, tensor_env),
+        Node::Call { callee, args, .. } => {
+            stdlib::tensor::dispatch(callee, args, env, tensor_env, mode)
+        }
         Node::CallTensorSum { x, axes, keepdims, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::sum_tensor_preview(&t, axes, *keepdims)?;
@@ -235,7 +280,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallTensorMean { x, axes, keepdims, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::mean_tensor_preview(&t, axes, *keepdims)?;
@@ -245,7 +290,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallReshape { x, dims, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::reshape_tensor_preview(&t, dims)?;
@@ -255,7 +300,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallExpandDims { x, axis, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::expand_dims_tensor_preview(&t, *axis)?;
@@ -265,7 +310,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallSqueeze { x, axes, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::squeeze_tensor_preview(&t, axes)?;
@@ -275,7 +320,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallTranspose { x, axes, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let axes_ref = axes.as_ref().map(|v| v.as_slice());
@@ -286,7 +331,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallIndex { x, axis, i, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::index_tensor_preview(&t, *axis, *i)?;
@@ -296,7 +341,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallSlice { x, axis, start, end, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::slice_tensor_preview(&t, *axis, *start, *end)?;
@@ -306,7 +351,7 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallSliceStride { x, axis, start, end, step, .. } => {
-            let value = eval_value_expr(x, env, tensor_env)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::slice_stride_tensor_preview(
@@ -318,8 +363,8 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallGather { x, axis, idx, .. } => {
-            let base = eval_value_expr(x, env, tensor_env)?;
-            let indices = eval_value_expr(idx, env, tensor_env)?;
+            let base = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let indices = eval_value_expr_mode(idx, env, tensor_env, mode)?;
             match (base, indices) {
                 (Value::Tensor(t), Value::Tensor(i)) => {
                     let result = stdlib::tensor::gather_tensor_preview(&t, *axis, &i)?;
@@ -329,10 +374,34 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallDot { a, b, .. } => {
-            let left = eval_value_expr(a, env, tensor_env)?;
-            let right = eval_value_expr(b, env, tensor_env)?;
+            let left = eval_value_expr_mode(a, env, tensor_env, mode)?;
+            let right = eval_value_expr_mode(b, env, tensor_env, mode)?;
             match (left, right) {
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
+                    #[cfg(feature = "cpu-buffers")]
+                    {
+                        if matches!(mode, ExecMode::CpuIfEnabled) {
+                            let mut tl_exec = tl.clone();
+                            let mut tr_exec = tr.clone();
+                            materialize_filled(&mut tl_exec);
+                            materialize_filled(&mut tr_exec);
+                            #[cfg(feature = "cpu-exec")]
+                            {
+                                if tl_exec.dtype == DType::F32 && tr_exec.dtype == DType::F32 {
+                                    let exec_res = exec::cpu::exec_dot(&tl_exec, &tr_exec);
+                                    match exec_res {
+                                        Ok(t) => return Ok(Value::Tensor(t)),
+                                        Err(err) => {
+                                            let mapped = exec_error_to_eval(err);
+                                            if matches!(mapped, EvalError::DivZero) {
+                                                return Err(mapped);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let result = stdlib::tensor::dot_tensor_preview(&tl, &tr)?;
                     Ok(Value::Tensor(result))
                 }
@@ -340,10 +409,34 @@ pub(crate) fn eval_value_expr(
             }
         }
         Node::CallMatMul { a, b, .. } => {
-            let left = eval_value_expr(a, env, tensor_env)?;
-            let right = eval_value_expr(b, env, tensor_env)?;
+            let left = eval_value_expr_mode(a, env, tensor_env, mode)?;
+            let right = eval_value_expr_mode(b, env, tensor_env, mode)?;
             match (left, right) {
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
+                    #[cfg(feature = "cpu-buffers")]
+                    {
+                        if matches!(mode, ExecMode::CpuIfEnabled) {
+                            let mut tl_exec = tl.clone();
+                            let mut tr_exec = tr.clone();
+                            materialize_filled(&mut tl_exec);
+                            materialize_filled(&mut tr_exec);
+                            #[cfg(feature = "cpu-exec")]
+                            {
+                                if tl_exec.dtype == DType::F32 && tr_exec.dtype == DType::F32 {
+                                    let exec_res = exec::cpu::exec_matmul(&tl_exec, &tr_exec);
+                                    match exec_res {
+                                        Ok(t) => return Ok(Value::Tensor(t)),
+                                        Err(err) => {
+                                            let mapped = exec_error_to_eval(err);
+                                            if matches!(mapped, EvalError::DivZero) {
+                                                return Err(mapped);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     let result = stdlib::tensor::matmul_tensor_preview(&tl, &tr)?;
                     Ok(Value::Tensor(result))
                 }
@@ -352,12 +445,12 @@ pub(crate) fn eval_value_expr(
         }
         Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, tensor_env, wrt),
         Node::Binary { op, left, right, .. } => {
-            let lv = eval_value_expr(left, env, tensor_env)?;
-            let rv = eval_value_expr(right, env, tensor_env)?;
-            apply_binary(*op, lv, rv)
+            let lv = eval_value_expr_mode(left, env, tensor_env, mode)?;
+            let rv = eval_value_expr_mode(right, env, tensor_env, mode)?;
+            apply_binary(*op, lv, rv, mode)
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => {
-            eval_value_expr(value, env, tensor_env)
+            eval_value_expr_mode(value, env, tensor_env, mode)
         }
     }
 }
@@ -409,12 +502,12 @@ pub fn eval_grad_map(
     Ok(Value::GradMap(out))
 }
 
-fn apply_binary(op: BinOp, left: Value, right: Value) -> Result<Value, EvalError> {
+fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<Value, EvalError> {
     match (left, right) {
         (Value::Int(l), Value::Int(r)) => apply_int_op(op, l, r).map(Value::Int),
-        (Value::Tensor(t), Value::Int(s)) => apply_tensor_scalar(op, t, s as f64, true),
-        (Value::Int(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s as f64, false),
-        (Value::Tensor(a), Value::Tensor(b)) => apply_tensor_tensor(op, a, b),
+        (Value::Tensor(t), Value::Int(s)) => apply_tensor_scalar(op, t, s as f64, true, mode),
+        (Value::Int(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s as f64, false, mode),
+        (Value::Tensor(a), Value::Tensor(b)) => apply_tensor_tensor(op, a, b, mode),
         _ => Err(EvalError::Unsupported),
     }
 }
@@ -438,16 +531,56 @@ fn apply_tensor_scalar(
     tensor: TensorVal,
     scalar: f64,
     tensor_on_left: bool,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if matches!(op, BinOp::Div) && tensor_on_left && scalar == 0.0 {
         return Err(EvalError::DivZero);
     }
 
+    #[cfg(not(feature = "cpu-buffers"))]
+    let _ = mode;
+
+    #[cfg(feature = "cpu-buffers")]
+    {
+        if matches!(mode, ExecMode::CpuIfEnabled) {
+            let mut tensor_exec = tensor.clone();
+            materialize_filled(&mut tensor_exec);
+            #[cfg(feature = "cpu-exec")]
+            {
+                if tensor_exec.dtype == DType::F32 {
+                    let exec_res = match op {
+                        BinOp::Add => exec::cpu::exec_add_scalar(&tensor_exec, scalar as f32),
+                        BinOp::Sub => {
+                            if tensor_on_left {
+                                exec::cpu::exec_sub_scalar(&tensor_exec, scalar as f32)
+                            } else {
+                                exec::cpu::exec_scalar_sub(scalar as f32, &tensor_exec)
+                            }
+                        }
+                        BinOp::Mul => exec::cpu::exec_mul_scalar(&tensor_exec, scalar as f32),
+                        BinOp::Div => {
+                            exec::cpu::exec_div_scalar(&tensor_exec, scalar as f32, tensor_on_left)
+                        }
+                    };
+                    match exec_res {
+                        Ok(t) => return Ok(Value::Tensor(t)),
+                        Err(err) => {
+                            let mapped = exec_error_to_eval(err);
+                            if matches!(mapped, EvalError::DivZero) {
+                                return Err(mapped);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     #[cfg(feature = "cpu-buffers")]
     let tensor_buf = tensor.buf.clone();
 
-    let dtype = tensor.dtype;
-    let shape = tensor.shape;
+    let dtype = tensor.dtype.clone();
+    let shape = tensor.shape.clone();
     let fill = tensor.fill;
 
     let result_fill = match fill {
@@ -556,7 +689,45 @@ fn apply_tensor_scalar(
     Ok(Value::Tensor(result))
 }
 
-fn apply_tensor_tensor(op: BinOp, left: TensorVal, right: TensorVal) -> Result<Value, EvalError> {
+fn apply_tensor_tensor(
+    op: BinOp,
+    left: TensorVal,
+    right: TensorVal,
+    mode: ExecMode,
+) -> Result<Value, EvalError> {
+    #[cfg(not(feature = "cpu-buffers"))]
+    let _ = mode;
+
+    #[cfg(feature = "cpu-buffers")]
+    {
+        if matches!(mode, ExecMode::CpuIfEnabled) {
+            let mut left_exec = left.clone();
+            let mut right_exec = right.clone();
+            materialize_filled(&mut left_exec);
+            materialize_filled(&mut right_exec);
+            #[cfg(feature = "cpu-exec")]
+            {
+                if left_exec.dtype == DType::F32 && right_exec.dtype == DType::F32 {
+                    let exec_res = match op {
+                        BinOp::Add => exec::cpu::exec_add(&left_exec, &right_exec),
+                        BinOp::Sub => exec::cpu::exec_sub(&left_exec, &right_exec),
+                        BinOp::Mul => exec::cpu::exec_mul(&left_exec, &right_exec),
+                        BinOp::Div => exec::cpu::exec_div(&left_exec, &right_exec),
+                    };
+                    match exec_res {
+                        Ok(t) => return Ok(Value::Tensor(t)),
+                        Err(err) => {
+                            let mapped = exec_error_to_eval(err);
+                            if matches!(mapped, EvalError::DivZero) {
+                                return Err(mapped);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if left.dtype != right.dtype {
         return Err(EvalError::Unsupported);
     }

@@ -510,6 +510,23 @@ Flags and environment variables:
 The feature is disabled by default so `cargo run --no-default-features` stays dependency-free. When the binary is missing or
 times out, the compiler prints a warning and falls back to the original MLIR text.
 
+### Phase 6A — CPU Execution (optional)
+
+Enable a tiny CPU backend to execute materialized `f32` tensors directly in the interpreter:
+
+```bash
+cargo run --features cpu-exec -- eval --exec "let x: Tensor[f32,(2,2)] = 1; tensor.matmul(x,x)"
+# → Tensor[F32,(2,2)]
+#   [[2,2],
+#    [2,2]]
+```
+
+Notes:
+
+* Only `f32` tensors execute in this initial backend.
+* Symbolic dimensions fall back to preview semantics.
+* Without `--exec` or without the `cpu-exec` feature, CLI evaluation stays in preview mode.
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

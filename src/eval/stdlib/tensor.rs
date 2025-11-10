@@ -3,7 +3,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ast::{Literal, Node};
 use crate::eval::autodiff::TensorEnvEntry;
-use crate::eval::{eval_value_expr, format_value_human, EvalError, TensorVal, Value};
+use crate::eval::{
+    eval_value_expr_mode, format_value_human, EvalError, ExecMode, TensorVal, Value,
+};
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::{materialize_filled, num_elems, MATERIALIZE_MAX};
 use crate::linalg::{self, MatMulShapeInfo};
@@ -17,20 +19,21 @@ pub fn dispatch(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     match callee {
-        "tensor.zeros" => construct(args, env, tensor_env, 0.0),
-        "tensor.ones" => construct(args, env, tensor_env, 1.0),
-        "tensor.shape" => tensor_shape(args, env, tensor_env),
-        "tensor.dtype" => tensor_dtype(args, env, tensor_env),
-        "tensor.sum" => tensor_sum(args, env, tensor_env),
-        "tensor.print" => tensor_print(args, env, tensor_env),
+        "tensor.zeros" => construct(args, env, tensor_env, mode, 0.0),
+        "tensor.ones" => construct(args, env, tensor_env, mode, 1.0),
+        "tensor.shape" => tensor_shape(args, env, tensor_env, mode),
+        "tensor.dtype" => tensor_dtype(args, env, tensor_env, mode),
+        "tensor.sum" => tensor_sum(args, env, tensor_env, mode),
+        "tensor.print" => tensor_print(args, env, tensor_env, mode),
         #[cfg(feature = "cpu-buffers")]
-        "tensor.materialize" => tensor_materialize(args, env, tensor_env),
+        "tensor.materialize" => tensor_materialize(args, env, tensor_env, mode),
         #[cfg(feature = "cpu-buffers")]
-        "tensor.sample" => tensor_sample(args, env, tensor_env),
+        "tensor.sample" => tensor_sample(args, env, tensor_env, mode),
         #[cfg(feature = "cpu-buffers")]
-        "tensor.is_materialized" => tensor_is_materialized(args, env, tensor_env),
+        "tensor.is_materialized" => tensor_is_materialized(args, env, tensor_env, mode),
         _ => Err(EvalError::Unsupported),
     }
 }
@@ -39,13 +42,14 @@ fn construct(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
     fill: f64,
 ) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::Unsupported);
     }
     let dtype = parse_dtype(&args[0])?;
-    let shape = parse_shape(&args[1], env, tensor_env)?;
+    let shape = parse_shape(&args[1], env, tensor_env, mode)?;
     Ok(Value::Tensor(TensorVal::new(dtype, shape, Some(fill))))
 }
 
@@ -53,11 +57,12 @@ fn tensor_shape(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
     if let Value::Tensor(t) = value {
         let mut items = Vec::with_capacity(t.shape.len());
         for dim in &t.shape {
@@ -76,11 +81,12 @@ fn tensor_dtype(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
     if let Value::Tensor(t) = value {
         Ok(Value::Str(t.dtype.as_str().to_string()))
     } else {
@@ -92,11 +98,12 @@ fn tensor_sum(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
     if let Value::Tensor(t) = value {
         let result = sum_tensor_preview(&t, &[], false)?;
         #[cfg(feature = "cpu-buffers")]
@@ -117,11 +124,12 @@ fn tensor_print(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
     println!("{}", format_value_human(&value));
     Ok(value)
 }
@@ -131,11 +139,12 @@ fn tensor_materialize(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
     if let Value::Tensor(mut t) = value {
         materialize_filled(&mut t);
         Ok(Value::Tensor(t))
@@ -149,11 +158,12 @@ fn tensor_is_materialized(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
     if let Value::Tensor(t) = value {
         Ok(Value::Int(if t.buf.is_some() { 1 } else { 0 }))
     } else {
@@ -166,12 +176,13 @@ fn tensor_sample(
     args: &[Node],
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Value, EvalError> {
     if args.len() != 2 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr(&args[0], env, tensor_env)?;
-    let count = eval_value_expr(&args[1], env, tensor_env)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let count = eval_value_expr_mode(&args[1], env, tensor_env, mode)?;
     let requested = match count {
         Value::Int(n) => {
             if n < 0 {
@@ -235,16 +246,17 @@ fn parse_shape(
     node: &Node,
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<Vec<ShapeDim>, EvalError> {
     match node {
         Node::Tuple { elements, .. } => {
             let mut dims = Vec::with_capacity(elements.len());
             for el in elements {
-                dims.push(parse_shape_dim(el, env, tensor_env)?);
+                dims.push(parse_shape_dim(el, env, tensor_env, mode)?);
             }
             Ok(dims)
         }
-        Node::Paren(inner, _) => parse_shape(inner, env, tensor_env),
+        Node::Paren(inner, _) => parse_shape(inner, env, tensor_env, mode),
         Node::Lit(Literal::Ident(name), _) => {
             if let Some(value) = env.get(name) {
                 shape_from_value(value)
@@ -252,9 +264,9 @@ fn parse_shape(
                 Ok(vec![ShapeDim::Sym(leak_symbol(name))])
             }
         }
-        Node::Lit(Literal::Int(_), _) => Ok(vec![parse_shape_dim(node, env, tensor_env)?]),
+        Node::Lit(Literal::Int(_), _) => Ok(vec![parse_shape_dim(node, env, tensor_env, mode)?]),
         _ => {
-            let value = eval_value_expr(node, env, tensor_env)?;
+            let value = eval_value_expr_mode(node, env, tensor_env, mode)?;
             shape_from_value(&value)
         }
     }
@@ -264,6 +276,7 @@ fn parse_shape_dim(
     node: &Node,
     env: &HashMap<String, Value>,
     tensor_env: &HashMap<String, TensorEnvEntry>,
+    mode: ExecMode,
 ) -> Result<ShapeDim, EvalError> {
     match node {
         Node::Lit(Literal::Int(n), _) => {
@@ -280,7 +293,7 @@ fn parse_shape_dim(
             }
         }
         _ => {
-            let value = eval_value_expr(node, env, tensor_env)?;
+            let value = eval_value_expr_mode(node, env, tensor_env, mode)?;
             shape_dim_from_value(&value)
         }
     }
