@@ -4,9 +4,12 @@
 //!   mind eval "1 + 2 * 3"
 //!   mind repl
 
+use clap::{Args, Parser, Subcommand};
 use mind::{diagnostics, eval, parser};
 use std::collections::HashMap;
 use std::io::{self, Write};
+#[cfg(feature = "mlir-exec")]
+use std::time::Duration;
 
 struct EmitOpts {
     emit_mlir_stdout: bool,
@@ -36,160 +39,173 @@ fn default_mlir_opt_passes() -> Vec<String> {
     vec!["canonicalize".to_string(), "cse".to_string()]
 }
 
-fn parse_emit_flags(args: &[String]) -> EmitOpts {
-    let mut out = EmitOpts::default();
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--emit-mlir" => out.emit_mlir_stdout = true,
-            "--emit-mlir-file" => {
-                if i + 1 < args.len() {
-                    out.emit_mlir_file = Some(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--mlir-lower" => {
-                if i + 1 < args.len() {
-                    out.mlir_lower = eval::MlirLowerPreset::from_str(&args[i + 1])
-                        .unwrap_or(eval::MlirLowerPreset::None);
-                    i += 1;
-                }
-            }
-            "--mlir-opt" => {
-                out.run_mlir_opt = true;
-            }
-            "--mlir-opt-bin" => {
-                if i + 1 < args.len() {
-                    out.mlir_opt_bin = Some(args[i + 1].clone());
-                    i += 1;
-                }
-            }
-            "--mlir-opt-passes" => {
-                if i + 1 < args.len() {
-                    out.mlir_opt_passes = args[i + 1]
-                        .split(',')
-                        .filter_map(|p| {
-                            let trimmed = p.trim();
-                            (!trimmed.is_empty()).then(|| trimmed.to_string())
-                        })
-                        .collect();
-                    i += 1;
-                }
-            }
-            "--mlir-opt-timeout-ms" => {
-                if i + 1 < args.len() {
-                    if let Ok(value) = args[i + 1].parse::<u64>() {
-                        out.mlir_opt_timeout_ms = value;
-                    }
-                    i += 1;
-                }
-            }
-            _ => {}
+impl EmitOpts {
+    fn from_eval_args(args: &EvalArgs) -> Self {
+        let mut out = EmitOpts::default();
+        out.emit_mlir_stdout = args.emit_mlir;
+        out.emit_mlir_file = args.emit_mlir_file.clone();
+        if let Some(lower) = &args.mlir_lower {
+            out.mlir_lower =
+                eval::MlirLowerPreset::from_str(lower).unwrap_or(eval::MlirLowerPreset::None);
         }
-        i += 1;
+        if matches!(args.mlir_opt.as_deref(), Some("")) {
+            out.run_mlir_opt = true;
+        }
+        if let Some(path) = &args.mlir_opt {
+            if !path.is_empty() {
+                out.mlir_opt_bin = Some(path.clone());
+            }
+        }
+        if let Some(bin) = &args.mlir_opt_bin {
+            out.mlir_opt_bin = Some(bin.clone());
+        }
+        if let Some(passes) = &args.mlir_opt_passes {
+            let parsed: Vec<String> = passes
+                .split(',')
+                .filter_map(|p| {
+                    let trimmed = p.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                })
+                .collect();
+            if !parsed.is_empty() {
+                out.mlir_opt_passes = parsed;
+            }
+        }
+        if let Some(timeout) = args.mlir_opt_timeout_ms {
+            out.mlir_opt_timeout_ms = timeout;
+        }
+        if out.mlir_opt_passes.is_empty() {
+            out.mlir_opt_passes = default_mlir_opt_passes();
+        }
+        out
     }
-    if out.mlir_opt_passes.is_empty() {
-        out.mlir_opt_passes = default_mlir_opt_passes();
-    }
-    out
+}
+
+#[derive(Parser)]
+#[command(author, version, about = None, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Eval(EvalArgs),
+    Repl,
+}
+
+#[derive(Args)]
+struct EvalArgs {
+    #[arg(long)]
+    exec: bool,
+    #[arg(long, conflicts_with = "exec")]
+    mlir_exec: bool,
+    #[arg(long)]
+    emit_mlir: bool,
+    #[arg(long)]
+    emit_mlir_file: Option<String>,
+    #[arg(long)]
+    mlir_lower: Option<String>,
+    #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
+    mlir_opt: Option<String>,
+    #[arg(long)]
+    mlir_opt_bin: Option<String>,
+    #[arg(long)]
+    mlir_opt_passes: Option<String>,
+    #[arg(long)]
+    mlir_opt_timeout_ms: Option<u64>,
+    #[arg(long, value_name = "PATH")]
+    mlir_cpu_runner: Option<String>,
+    #[arg(long, value_name = "PASSES")]
+    mlir_passes: Option<String>,
+    #[arg(long, value_name = "MS")]
+    mlir_timeout_ms: Option<u64>,
+    #[arg(value_name = "SRC", num_args = 1..)]
+    program: Vec<String>,
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let cli = Cli::parse();
+    match cli.command {
+        Command::Eval(args) => run_eval_command(args),
+        Command::Repl => run_repl(),
+    }
+}
 
-    if args.len() >= 2 && args[1] == "eval" {
-        if args.len() < 3 {
-            eprintln!("Usage: mind eval \"<expression or statements>\"");
-            std::process::exit(1);
-        }
-        let mut exec_requested = false;
-        let mut emit_args: Vec<String> = Vec::new();
-        let mut src: Option<String> = None;
-
-        let mut i = 2;
-        while i < args.len() {
-            let arg = &args[i];
-            match arg.as_str() {
-                "--exec" => {
-                    exec_requested = true;
-                    i += 1;
-                }
-                "--emit-mlir" | "--mlir-opt" => {
-                    emit_args.push(arg.clone());
-                    i += 1;
-                }
-                "--emit-mlir-file"
-                | "--mlir-lower"
-                | "--mlir-opt-bin"
-                | "--mlir-opt-passes"
-                | "--mlir-opt-timeout-ms" => {
-                    emit_args.push(arg.clone());
-                    if i + 1 < args.len() {
-                        emit_args.push(args[i + 1].clone());
-                        i += 2;
-                    } else {
-                        eprintln!("Missing value for {arg}");
-                        std::process::exit(1);
-                    }
-                }
-                value => {
-                    if src.is_none() {
-                        src = Some(value.to_string());
-                    } else {
-                        emit_args.push(value.to_string());
-                    }
-                    i += 1;
-                }
-            }
-        }
-
-        let Some(src) = src else {
-            eprintln!("Usage: mind eval \"<expression or statements>\"");
-            std::process::exit(1);
-        };
-
-        let emit_opts = parse_emit_flags(&emit_args);
-        let exec_mode = if exec_requested {
-            #[cfg(feature = "cpu-exec")]
-            {
-                mind::eval::ExecMode::CpuIfEnabled
-            }
-            #[cfg(not(feature = "cpu-exec"))]
-            {
-                eprintln!(
-                    "--exec requested but cpu-exec feature is not enabled; running in preview."
-                );
-                mind::eval::ExecMode::PreviewOnly
-            }
-        } else {
-            mind::eval::ExecMode::PreviewOnly
-        };
-        run_eval_once(&src, emit_opts, exec_mode);
-        return;
+fn run_eval_command(args: EvalArgs) {
+    let src = args.program.join(" ");
+    if src.trim().is_empty() {
+        eprintln!("Evaluation requires source input.");
+        std::process::exit(1);
     }
 
-    if args.len() >= 2 && args[1] == "repl" {
-        run_repl();
-        return;
-    }
+    let emit_opts = EmitOpts::from_eval_args(&args);
+    let exec_mode = if args.mlir_exec {
+        #[cfg(feature = "mlir-exec")]
+        {
+            let mut cfg = eval::MlirExecConfig::default();
+            if let Some(path) = args.mlir_opt.as_deref() {
+                if !path.is_empty() {
+                    cfg.mlir_opt = Some(path.into());
+                }
+            }
+            if let Some(path) = args.mlir_cpu_runner.as_deref() {
+                cfg.mlir_cpu_runner = Some(path.into());
+            }
+            if let Some(passes) = args.mlir_passes.as_deref() {
+                let parsed: Vec<String> = passes
+                    .split_whitespace()
+                    .filter(|p| !p.is_empty())
+                    .map(|p| p.to_string())
+                    .collect();
+                if !parsed.is_empty() {
+                    cfg.opt_passes = parsed;
+                }
+            }
+            if let Some(timeout_ms) = args.mlir_timeout_ms {
+                cfg.timeout = Duration::from_millis(timeout_ms);
+            }
+            eval::ExecMode::MlirExternal(cfg)
+        }
+        #[cfg(not(feature = "mlir-exec"))]
+        {
+            eprintln!(
+                "--mlir-exec requested but this binary was built without the mlir-exec feature. Rebuild with --features mlir-exec."
+            );
+            std::process::exit(1);
+        }
+    } else if args.exec {
+        #[cfg(feature = "cpu-exec")]
+        {
+            eval::ExecMode::CpuIfEnabled
+        }
+        #[cfg(not(feature = "cpu-exec"))]
+        {
+            eprintln!("--exec requested but cpu-exec feature is not enabled; running in preview.");
+            eval::ExecMode::PreviewOnly
+        }
+    } else {
+        eval::ExecMode::PreviewOnly
+    };
 
-    eprintln!("Usage:");
-    eprintln!("  mind eval \"<expression or statements>\"");
-    eprintln!("  mind repl");
-    std::process::exit(1);
+    run_eval_once(&src, emit_opts, exec_mode);
 }
 
 fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
     match parser::parse_with_diagnostics(src) {
         Ok(module) => {
             let mut env = HashMap::new();
-            match eval::eval_module_value_with_env_mode(&module, &mut env, Some(src), exec_mode) {
+            let mode_for_eval = exec_mode.clone();
+            match eval::eval_module_value_with_env_mode(&module, &mut env, Some(src), mode_for_eval)
+            {
                 Ok(value) => {
-                    if matches!(exec_mode, eval::ExecMode::CpuIfEnabled) {
-                        println!("{}", eval::format_value_human(&value));
-                        return;
-                    }
                     println!("{}", eval::format_value_human(&value));
+                    match &exec_mode {
+                        eval::ExecMode::CpuIfEnabled => return,
+                        #[cfg(feature = "mlir-exec")]
+                        eval::ExecMode::MlirExternal(_) => return,
+                        _ => {}
+                    }
                     let ir = eval::lower_to_ir(&module);
                     if emit_opts.emit_mlir_stdout || emit_opts.emit_mlir_file.is_some() {
                         let mut mlir_text = eval::emit_mlir_string(&ir, emit_opts.mlir_lower);
