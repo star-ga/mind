@@ -15,16 +15,23 @@ pub mod ir_interp;
 pub mod lower;
 pub mod mlir_export;
 pub mod mlir_opt;
+#[cfg(feature = "mlir-exec")]
+pub mod mlir_run;
 pub mod value;
 
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
-pub use mlir_export::{to_mlir, MlirLowerPreset};
+pub use mlir_export::{
+    emit_mlir_with_opts, to_mlir, MlirEmitMode, MlirEmitOptions, MlirLowerPreset,
+};
+#[cfg(feature = "mlir-exec")]
+pub use mlir_run::MlirExecConfig;
 pub use value::{format_value_human, TensorVal, Value, VarId};
 
 pub fn emit_mlir_string(ir: &crate::ir::IRModule, preset: mlir_export::MlirLowerPreset) -> String {
-    let txt = mlir_export::to_mlir_text(ir);
-    mlir_export::apply_textual_lowering(txt, preset)
+    let mut opts = mlir_export::MlirEmitOptions::default();
+    opts.lower_preset = Some(preset.as_str().to_string());
+    mlir_export::emit_mlir_with_opts(ir, &opts)
 }
 
 pub fn emit_mlir_to_file(
@@ -82,10 +89,12 @@ pub(crate) fn materialize_filled(t: &mut TensorVal) {
 
 mod stdlib;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecMode {
     PreviewOnly,
     CpuIfEnabled,
+    #[cfg(feature = "mlir-exec")]
+    MlirExternal(MlirExecConfig),
 }
 
 #[cfg(feature = "cpu-exec")]
@@ -146,7 +155,7 @@ pub fn eval_module_value_with_env_mode(
     for item in &m.items {
         match item {
             Node::Let { name, ann, value, .. } => {
-                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode)?;
+                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                 let stored = match ann {
                     Some(TypeAnn::Tensor { dtype, dims }) => {
                         let (dtype, shape) = parse_tensor_ann(dtype, dims)?;
@@ -182,7 +191,7 @@ pub fn eval_module_value_with_env_mode(
                 }
             }
             Node::Assign { name, value, .. } => {
-                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode)?;
+                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                 if let Value::Int(n) = rhs {
                     env.insert(name.clone(), n);
                     venv.insert(name.clone(), Value::Int(n));
@@ -204,10 +213,31 @@ pub fn eval_module_value_with_env_mode(
                 }
             }
             _ => {
-                last = eval_value_expr_mode(item, &venv, &tensor_env, mode)?;
+                last = eval_value_expr_mode(item, &venv, &tensor_env, mode.clone())?;
             }
         }
     }
+
+    #[cfg(feature = "mlir-exec")]
+    if let ExecMode::MlirExternal(cfg) = &mode {
+        let ir = lower_to_ir(m);
+        let mut opts = mlir_export::MlirEmitOptions::default();
+        opts.mode = mlir_export::MlirEmitMode::Executable;
+        let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
+        match mlir_run::exec_mlir_text(&mlir_text, cfg) {
+            Ok(stdout) => {
+                if stdout.trim().is_empty() {
+                    return Ok(last);
+                }
+                if let Some(parsed) = parse_mlir_stdout(&stdout) {
+                    return Ok(parsed);
+                }
+                return Ok(Value::Str(stdout));
+            }
+            Err(msg) => return Err(EvalError::UnsupportedMsg(msg)),
+        }
+    }
+
     Ok(last)
 }
 
@@ -258,19 +288,19 @@ pub(crate) fn eval_value_expr_mode(
         Node::Lit(Literal::Ident(name), _) => {
             env.get(name).cloned().ok_or_else(|| EvalError::UnknownVar(name.clone()))
         }
-        Node::Paren(inner, _) => eval_value_expr_mode(inner, env, tensor_env, mode),
+        Node::Paren(inner, _) => eval_value_expr_mode(inner, env, tensor_env, mode.clone()),
         Node::Tuple { elements, .. } => {
             let mut items = Vec::with_capacity(elements.len());
             for item in elements {
-                items.push(eval_value_expr_mode(item, env, tensor_env, mode)?);
+                items.push(eval_value_expr_mode(item, env, tensor_env, mode.clone())?);
             }
             Ok(Value::Tuple(items))
         }
         Node::Call { callee, args, .. } => {
-            stdlib::tensor::dispatch(callee, args, env, tensor_env, mode)
+            stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
         }
         Node::CallTensorSum { x, axes, keepdims, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::sum_tensor_preview(&t, axes, *keepdims)?;
@@ -280,7 +310,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallTensorMean { x, axes, keepdims, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::mean_tensor_preview(&t, axes, *keepdims)?;
@@ -290,7 +320,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallReshape { x, dims, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::reshape_tensor_preview(&t, dims)?;
@@ -300,7 +330,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallExpandDims { x, axis, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::expand_dims_tensor_preview(&t, *axis)?;
@@ -310,7 +340,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallSqueeze { x, axes, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::squeeze_tensor_preview(&t, axes)?;
@@ -320,7 +350,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallTranspose { x, axes, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let axes_ref = axes.as_ref().map(|v| v.as_slice());
@@ -331,7 +361,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallIndex { x, axis, i, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::index_tensor_preview(&t, *axis, *i)?;
@@ -341,7 +371,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallSlice { x, axis, start, end, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::slice_tensor_preview(&t, *axis, *start, *end)?;
@@ -351,7 +381,7 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallSliceStride { x, axis, start, end, step, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
                     let result = stdlib::tensor::slice_stride_tensor_preview(
@@ -363,8 +393,8 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallGather { x, axis, idx, .. } => {
-            let base = eval_value_expr_mode(x, env, tensor_env, mode)?;
-            let indices = eval_value_expr_mode(idx, env, tensor_env, mode)?;
+            let base = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
+            let indices = eval_value_expr_mode(idx, env, tensor_env, mode.clone())?;
             match (base, indices) {
                 (Value::Tensor(t), Value::Tensor(i)) => {
                     let result = stdlib::tensor::gather_tensor_preview(&t, *axis, &i)?;
@@ -374,13 +404,13 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallDot { a, b, .. } => {
-            let left = eval_value_expr_mode(a, env, tensor_env, mode)?;
-            let right = eval_value_expr_mode(b, env, tensor_env, mode)?;
+            let left = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
+            let right = eval_value_expr_mode(b, env, tensor_env, mode.clone())?;
             match (left, right) {
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
                     #[cfg(feature = "cpu-buffers")]
                     {
-                        if matches!(mode, ExecMode::CpuIfEnabled) {
+                        if mode == ExecMode::CpuIfEnabled {
                             let mut tl_exec = tl.clone();
                             let mut tr_exec = tr.clone();
                             materialize_filled(&mut tl_exec);
@@ -409,13 +439,13 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallMatMul { a, b, .. } => {
-            let left = eval_value_expr_mode(a, env, tensor_env, mode)?;
-            let right = eval_value_expr_mode(b, env, tensor_env, mode)?;
+            let left = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
+            let right = eval_value_expr_mode(b, env, tensor_env, mode.clone())?;
             match (left, right) {
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
                     #[cfg(feature = "cpu-buffers")]
                     {
-                        if matches!(mode, ExecMode::CpuIfEnabled) {
+                        if mode == ExecMode::CpuIfEnabled {
                             let mut tl_exec = tl.clone();
                             let mut tr_exec = tr.clone();
                             materialize_filled(&mut tl_exec);
@@ -444,18 +474,18 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallTensorRelu { x, .. } => {
-            let value = eval_value_expr_mode(x, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
-                    let result = stdlib::tensor::relu_tensor(t, mode)?;
+                    let result = stdlib::tensor::relu_tensor(t, mode.clone())?;
                     Ok(Value::Tensor(result))
                 }
                 _ => Err(EvalError::Unsupported),
             }
         }
         Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, .. } => {
-            let x_val = eval_value_expr_mode(x, env, tensor_env, mode)?;
-            let w_val = eval_value_expr_mode(w, env, tensor_env, mode)?;
+            let x_val = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
+            let w_val = eval_value_expr_mode(w, env, tensor_env, mode.clone())?;
             match (x_val, w_val) {
                 (Value::Tensor(x_tensor), Value::Tensor(w_tensor)) => {
                     let result = stdlib::tensor::conv2d_tensor(
@@ -468,12 +498,12 @@ pub(crate) fn eval_value_expr_mode(
         }
         Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, tensor_env, wrt),
         Node::Binary { op, left, right, .. } => {
-            let lv = eval_value_expr_mode(left, env, tensor_env, mode)?;
-            let rv = eval_value_expr_mode(right, env, tensor_env, mode)?;
-            apply_binary(*op, lv, rv, mode)
+            let lv = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
+            let rv = eval_value_expr_mode(right, env, tensor_env, mode.clone())?;
+            apply_binary(*op, lv, rv, mode.clone())
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => {
-            eval_value_expr_mode(value, env, tensor_env, mode)
+            eval_value_expr_mode(value, env, tensor_env, mode.clone())
         }
     }
 }
@@ -565,7 +595,7 @@ fn apply_tensor_scalar(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if matches!(mode, ExecMode::CpuIfEnabled) {
+        if mode == ExecMode::CpuIfEnabled {
             let mut tensor_exec = tensor.clone();
             materialize_filled(&mut tensor_exec);
             #[cfg(feature = "cpu-exec")]
@@ -712,6 +742,18 @@ fn apply_tensor_scalar(
     Ok(Value::Tensor(result))
 }
 
+#[cfg(feature = "mlir-exec")]
+fn parse_mlir_stdout(stdout: &str) -> Option<Value> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(int_val) = trimmed.parse::<i64>() {
+        return Some(Value::Int(int_val));
+    }
+    None
+}
+
 fn apply_tensor_tensor(
     op: BinOp,
     left: TensorVal,
@@ -723,7 +765,7 @@ fn apply_tensor_tensor(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if matches!(mode, ExecMode::CpuIfEnabled) {
+        if mode == ExecMode::CpuIfEnabled {
             let mut left_exec = left.clone();
             let mut right_exec = right.clone();
             materialize_filled(&mut left_exec);

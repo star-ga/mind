@@ -22,19 +22,19 @@ pub fn dispatch(
     mode: ExecMode,
 ) -> Result<Value, EvalError> {
     match callee {
-        "tensor.zeros" => construct(args, env, tensor_env, mode, 0.0),
-        "tensor.ones" => construct(args, env, tensor_env, mode, 1.0),
-        "tensor.shape" => tensor_shape(args, env, tensor_env, mode),
-        "tensor.dtype" => tensor_dtype(args, env, tensor_env, mode),
-        "tensor.sum" => tensor_sum(args, env, tensor_env, mode),
-        "tensor.print" => tensor_print(args, env, tensor_env, mode),
+        "tensor.zeros" => construct(args, env, tensor_env, mode.clone(), 0.0),
+        "tensor.ones" => construct(args, env, tensor_env, mode.clone(), 1.0),
+        "tensor.shape" => tensor_shape(args, env, tensor_env, mode.clone()),
+        "tensor.dtype" => tensor_dtype(args, env, tensor_env, mode.clone()),
+        "tensor.sum" => tensor_sum(args, env, tensor_env, mode.clone()),
+        "tensor.print" => tensor_print(args, env, tensor_env, mode.clone()),
         #[cfg(feature = "cpu-buffers")]
-        "tensor.materialize" => tensor_materialize(args, env, tensor_env, mode),
+        "tensor.materialize" => tensor_materialize(args, env, tensor_env, mode.clone()),
         #[cfg(feature = "cpu-buffers")]
-        "tensor.sample" => tensor_sample(args, env, tensor_env, mode),
+        "tensor.sample" => tensor_sample(args, env, tensor_env, mode.clone()),
         #[cfg(feature = "cpu-buffers")]
-        "tensor.is_materialized" => tensor_is_materialized(args, env, tensor_env, mode),
-        "tensor.relu" => tensor_relu(args, env, tensor_env, mode),
+        "tensor.is_materialized" => tensor_is_materialized(args, env, tensor_env, mode.clone()),
+        "tensor.relu" => tensor_relu(args, env, tensor_env, mode.clone()),
         _ => Err(EvalError::Unsupported),
     }
 }
@@ -48,10 +48,10 @@ fn tensor_relu(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     match value {
         Value::Tensor(t) => {
-            let result = relu_tensor(t, mode)?;
+            let result = relu_tensor(t, mode.clone())?;
             Ok(Value::Tensor(result))
         }
         _ => Err(EvalError::Unsupported),
@@ -69,7 +69,7 @@ fn construct(
         return Err(EvalError::Unsupported);
     }
     let dtype = parse_dtype(&args[0])?;
-    let shape = parse_shape(&args[1], env, tensor_env, mode)?;
+    let shape = parse_shape(&args[1], env, tensor_env, mode.clone())?;
     Ok(Value::Tensor(TensorVal::new(dtype, shape, Some(fill))))
 }
 
@@ -82,7 +82,7 @@ fn tensor_shape(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     if let Value::Tensor(t) = value {
         let mut items = Vec::with_capacity(t.shape.len());
         for dim in &t.shape {
@@ -106,7 +106,7 @@ fn tensor_dtype(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     if let Value::Tensor(t) = value {
         Ok(Value::Str(t.dtype.as_str().to_string()))
     } else {
@@ -123,7 +123,7 @@ fn tensor_sum(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     if let Value::Tensor(t) = value {
         let result = sum_tensor_preview(&t, &[], false)?;
         #[cfg(feature = "cpu-buffers")]
@@ -149,7 +149,7 @@ fn tensor_print(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     println!("{}", format_value_human(&value));
     Ok(value)
 }
@@ -164,7 +164,7 @@ fn tensor_materialize(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     if let Value::Tensor(mut t) = value {
         materialize_filled(&mut t);
         Ok(Value::Tensor(t))
@@ -183,7 +183,7 @@ fn tensor_is_materialized(
     if args.len() != 1 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     if let Value::Tensor(t) = value {
         Ok(Value::Int(if t.buf.is_some() { 1 } else { 0 }))
     } else {
@@ -201,8 +201,8 @@ fn tensor_sample(
     if args.len() != 2 {
         return Err(EvalError::Unsupported);
     }
-    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode)?;
-    let count = eval_value_expr_mode(&args[1], env, tensor_env, mode)?;
+    let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
+    let count = eval_value_expr_mode(&args[1], env, tensor_env, mode.clone())?;
     let requested = match count {
         Value::Int(n) => {
             if n < 0 {
@@ -272,11 +272,11 @@ fn parse_shape(
         Node::Tuple { elements, .. } => {
             let mut dims = Vec::with_capacity(elements.len());
             for el in elements {
-                dims.push(parse_shape_dim(el, env, tensor_env, mode)?);
+                dims.push(parse_shape_dim(el, env, tensor_env, mode.clone())?);
             }
             Ok(dims)
         }
-        Node::Paren(inner, _) => parse_shape(inner, env, tensor_env, mode),
+        Node::Paren(inner, _) => parse_shape(inner, env, tensor_env, mode.clone()),
         Node::Lit(Literal::Ident(name), _) => {
             if let Some(value) = env.get(name) {
                 shape_from_value(value)
@@ -284,9 +284,11 @@ fn parse_shape(
                 Ok(vec![ShapeDim::Sym(leak_symbol(name))])
             }
         }
-        Node::Lit(Literal::Int(_), _) => Ok(vec![parse_shape_dim(node, env, tensor_env, mode)?]),
+        Node::Lit(Literal::Int(_), _) => {
+            Ok(vec![parse_shape_dim(node, env, tensor_env, mode.clone())?])
+        }
         _ => {
-            let value = eval_value_expr_mode(node, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(node, env, tensor_env, mode.clone())?;
             shape_from_value(&value)
         }
     }
@@ -313,7 +315,7 @@ fn parse_shape_dim(
             }
         }
         _ => {
-            let value = eval_value_expr_mode(node, env, tensor_env, mode)?;
+            let value = eval_value_expr_mode(node, env, tensor_env, mode.clone())?;
             shape_dim_from_value(&value)
         }
     }
@@ -591,7 +593,7 @@ pub(crate) fn relu_tensor(mut tensor: TensorVal, mode: ExecMode) -> Result<Tenso
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if matches!(mode, ExecMode::CpuIfEnabled) {
+        if mode == ExecMode::CpuIfEnabled {
             materialize_filled(&mut tensor);
             #[cfg(feature = "cpu-exec")]
             {
@@ -742,7 +744,7 @@ pub(crate) fn conv2d_tensor(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if matches!(mode, ExecMode::CpuIfEnabled) {
+        if mode == ExecMode::CpuIfEnabled {
             materialize_filled(&mut x);
             materialize_filled(&mut w);
             #[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]

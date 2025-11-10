@@ -510,6 +510,25 @@ Flags and environment variables:
 The feature is disabled by default so `cargo run --no-default-features` stays dependency-free. When the binary is missing or
 times out, the compiler prints a warning and falls back to the original MLIR text.
 
+### MLIR External Execution (Phase 7A)
+
+Round-trip through the MLIR toolchain and execute programs with `mlir-cpu-runner`:
+
+```bash
+cargo run --features mlir-exec -- eval --mlir-exec "1 + 2"
+# -> 3
+```
+
+You can configure the toolchain via CLI flags or environment variables:
+
+- `--mlir-opt PATH` / env `MLIR_OPT`
+- `--mlir-cpu-runner PATH` / env `MLIR_CPU_RUNNER`
+- `--mlir-passes "--canonicalize --cse"`
+- `--mlir-timeout-ms 15000`
+
+If the optional MLIR tools are missing the evaluator reports a friendly error. Building without
+`--features mlir-exec` keeps the default (`--no-default-features`) target green.
+
 ### Phase 6A — CPU Execution (optional)
 
 Enable a tiny CPU backend to execute materialized `f32` tensors directly in the interpreter:
