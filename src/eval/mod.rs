@@ -13,6 +13,8 @@ use value::Buffer;
 pub mod autodiff;
 pub mod ir_interp;
 pub mod lower;
+#[cfg(feature = "mlir-build")]
+pub mod mlir_build;
 pub mod mlir_export;
 #[cfg(feature = "mlir-gpu")]
 pub mod mlir_gpu;
@@ -25,6 +27,12 @@ pub mod value;
 
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::{
+    build_all as build_mlir_artifacts, resolve_tools as resolve_mlir_build_tools,
+    BuildError as MlirBuildError, BuildOptions as MlirBuildOptions,
+    BuildProducts as MlirBuildProducts, BuildTools as MlirBuildTools,
+};
 pub use mlir_export::{
     emit_mlir_with_opts, to_mlir, MlirEmitMode, MlirEmitOptions, MlirLowerPreset,
 };
