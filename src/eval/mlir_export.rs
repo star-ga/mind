@@ -1,7 +1,52 @@
+use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::ir::{BinOp, IRModule, Instr};
+use crate::ir::{BinOp, IRModule, IndexSpec, Instr, SliceSpec, ValueId};
 use crate::types::{DType, ShapeDim};
+
+#[derive(Clone, Debug)]
+struct TensorInfo {
+    dtype: DType,
+    shape: Vec<ShapeDim>,
+}
+
+struct MlirEmitter {
+    out: String,
+    next_tmp: usize,
+    tensors: HashMap<ValueId, TensorInfo>,
+}
+
+impl MlirEmitter {
+    fn new() -> Self {
+        Self { out: String::new(), next_tmp: 0, tensors: HashMap::new() }
+    }
+
+    fn finish(self) -> String {
+        self.out
+    }
+
+    fn write_line(&mut self, line: &str) {
+        writeln!(&mut self.out, "{line}").unwrap();
+    }
+
+    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) {
+        self.out.write_fmt(args).unwrap();
+    }
+
+    fn tmp(&mut self) -> String {
+        let name = format!("%tmp{}", self.next_tmp);
+        self.next_tmp += 1;
+        name
+    }
+
+    fn record_tensor(&mut self, id: ValueId, dtype: DType, shape: Vec<ShapeDim>) {
+        self.tensors.insert(id, TensorInfo { dtype, shape });
+    }
+
+    fn tensor_info(&self, id: &ValueId) -> Option<&TensorInfo> {
+        self.tensors.get(id)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlirLowerPreset {
@@ -49,61 +94,498 @@ pub fn to_mlir_text(ir: &IRModule) -> String {
 }
 
 pub fn to_mlir(ir: &IRModule, entry: &str) -> String {
-    let mut out = String::new();
+    let mut emitter = MlirEmitter::new();
 
-    writeln!(&mut out, "module {{").unwrap();
-    writeln!(&mut out, "  func.func @{}() -> () {{", entry).unwrap();
+    emitter.write_line("module {");
+    emitter.write_fmt(format_args!("  func.func @{}() -> () {{", entry));
+    emitter.write_line("");
 
     for instr in &ir.instrs {
-        match instr {
-            Instr::ConstI64(id, n) => {
-                writeln!(&mut out, "    %{} = arith.constant {} : i64", id.0, n).unwrap();
-            }
-            Instr::ConstTensor(id, dtype, shape, fill) => {
-                let dtype_str = dtype_to_mlir(dtype);
-                let tensor_ty = tensor_type(shape, dtype_str);
-                let empty_name = format!("empty{}", id.0);
-                let fill_name = format!("fill{}", id.0);
-                let fill_value = format_fill(*fill, dtype);
-
-                writeln!(&mut out, "    %{} = tensor.empty() : {}", empty_name, tensor_ty).unwrap();
-                writeln!(
-                    &mut out,
-                    "    %{} = arith.constant {} : {}",
-                    fill_name, fill_value, dtype_str
-                )
-                .unwrap();
-                writeln!(
-                    &mut out,
-                    "    %{} = linalg.fill ins(%{} : {}) outs(%{} : {}) -> {}",
-                    id.0, fill_name, dtype_str, empty_name, tensor_ty, tensor_ty
-                )
-                .unwrap();
-            }
-            Instr::BinOp { dst, op, lhs, rhs } => {
-                let op_str = match op {
-                    BinOp::Add => "arith.addi",
-                    BinOp::Sub => "arith.subi",
-                    BinOp::Mul => "arith.muli",
-                    BinOp::Div => "arith.divsi",
-                };
-                writeln!(&mut out, "    %{} = {} %{}, %{} : i64", dst.0, op_str, lhs.0, rhs.0)
-                    .unwrap();
-            }
-            Instr::Output(id) => {
-                writeln!(&mut out, "    return").unwrap();
-                writeln!(&mut out, "    // result: %{}", id.0).unwrap();
-            }
-            other => {
-                writeln!(&mut out, "    // TODO: {:?}", other).unwrap();
-            }
-        }
+        emit_instr(&mut emitter, instr);
     }
 
-    writeln!(&mut out, "  }}").unwrap();
-    writeln!(&mut out, "}}").unwrap();
+    emitter.write_line("    return");
+    emitter.write_line("  }");
+    emitter.write_line("}");
 
-    out
+    emitter.finish()
+}
+
+fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
+    match instr {
+        Instr::ConstI64(id, n) => {
+            emitter.write_fmt(format_args!("    %{} = arith.constant {} : i64\n", id.0, n));
+        }
+        Instr::ConstTensor(id, dtype, shape, fill) => {
+            emit_const_tensor(emitter, *id, dtype, shape, *fill)
+        }
+        Instr::BinOp { dst, op, lhs, rhs } => emit_int_binop(emitter, *dst, *op, *lhs, *rhs),
+        Instr::Sum { dst, src, axes, keepdims } => {
+            emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Sum)
+        }
+        Instr::Mean { dst, src, axes, keepdims } => {
+            emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Mean)
+        }
+        Instr::Reshape { dst, src, new_shape } => {
+            emit_tensor_reshape(emitter, *dst, *src, new_shape)
+        }
+        Instr::ExpandDims { dst, src, axis } => emit_expand_dims(emitter, *dst, *src, *axis),
+        Instr::Squeeze { dst, src, axes } => emit_squeeze(emitter, *dst, *src, axes),
+        Instr::Transpose { dst, src, perm } => emit_transpose(emitter, *dst, *src, perm),
+        Instr::Dot { dst, a, b } => emit_dot(emitter, *dst, *a, *b),
+        Instr::MatMul { dst, a, b } => emit_matmul(emitter, *dst, *a, *b),
+        Instr::Index { dst, src, indices } => emit_index(emitter, *dst, *src, indices),
+        Instr::Slice { dst, src, dims } => emit_slice(emitter, *dst, *src, dims),
+        Instr::Gather { dst, src, indices, axis } => {
+            emit_gather(emitter, *dst, *src, *indices, *axis)
+        }
+        Instr::Output(id) => {
+            emitter.write_fmt(format_args!("    // result: %{}\n", id.0));
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReduceKind {
+    Sum,
+    Mean,
+}
+
+fn emit_const_tensor(
+    emitter: &mut MlirEmitter,
+    id: ValueId,
+    dtype: &DType,
+    shape: &[ShapeDim],
+    fill: Option<f64>,
+) {
+    let dtype_str = dtype_to_mlir(dtype);
+    let tensor_ty = tensor_type(shape, dtype_str);
+    let empty_name = emitter.tmp();
+    let fill_name = emitter.tmp();
+    let fill_value = format_fill(fill, dtype);
+
+    emitter.write_fmt(format_args!("    {} = tensor.empty() : {}\n", empty_name, tensor_ty));
+    emitter.write_fmt(format_args!(
+        "    {} = arith.constant {} : {}\n",
+        fill_name, fill_value, dtype_str
+    ));
+    emitter.write_fmt(format_args!(
+        "    %{} = linalg.fill ins({} : {}) outs({} : {}) -> {}\n",
+        id.0, fill_name, dtype_str, empty_name, tensor_ty, tensor_ty
+    ));
+
+    emitter.record_tensor(id, dtype.clone(), shape.to_vec());
+}
+
+fn emit_int_binop(emitter: &mut MlirEmitter, dst: ValueId, op: BinOp, lhs: ValueId, rhs: ValueId) {
+    let op_str = match op {
+        BinOp::Add => "arith.addi",
+        BinOp::Sub => "arith.subi",
+        BinOp::Mul => "arith.muli",
+        BinOp::Div => "arith.divsi",
+    };
+    emitter.write_fmt(format_args!("    %{} = {} %{}, %{} : i64\n", dst.0, op_str, lhs.0, rhs.0));
+}
+
+fn emit_tensor_reduce(
+    emitter: &mut MlirEmitter,
+    dst: ValueId,
+    src: ValueId,
+    axes: &[i64],
+    keepdims: bool,
+    kind: ReduceKind,
+) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let dtype = src_info.dtype.clone();
+    let dtype_str = dtype_to_mlir(&dtype);
+    let src_ty = tensor_type(&src_info.shape, dtype_str);
+    let axes_norm = normalize_axes(axes, src_info.shape.len());
+    let out_shape = reduce_shape(&src_info.shape, &axes_norm, keepdims);
+    let out_ty = tensor_type(&out_shape, dtype_str);
+    let dims_attr = format_dimensions(&axes_norm);
+    let zero = match dtype {
+        DType::F32 | DType::F16 | DType::BF16 => "0.0".to_string(),
+        _ => "0".to_string(),
+    };
+    let add_op = match dtype {
+        DType::F32 | DType::F16 | DType::BF16 => "arith.addf",
+        _ => "arith.addi",
+    };
+    let init_name = emitter.tmp();
+    emitter
+        .write_fmt(format_args!("    {} = arith.constant {} : {}\n", init_name, zero, dtype_str));
+
+    let reduce_result_name =
+        if matches!(kind, ReduceKind::Mean) { emitter.tmp() } else { format!("%{}", dst.0) };
+
+    emitter.write_fmt(format_args!(
+        "    {} = tensor.reduce %{} init {} {{\n",
+        reduce_result_name, src.0, init_name
+    ));
+    emitter.write_fmt(format_args!("      ^bb0(%elem: {0}, %acc: {0}):\n", dtype_str));
+    let sum_name = emitter.tmp();
+    emitter
+        .write_fmt(format_args!("        {} = {} %acc, %elem : {}\n", sum_name, add_op, dtype_str));
+    emitter.write_fmt(format_args!("        tensor.yield {} : {}\n", sum_name, dtype_str));
+    emitter.write_fmt(format_args!(
+        "    }} {{dimensions = [{dims_attr}]}} : {src_ty} -> {out_ty}\n",
+        dims_attr = dims_attr,
+        src_ty = src_ty,
+        out_ty = out_ty
+    ));
+
+    match kind {
+        ReduceKind::Sum => {
+            emitter.record_tensor(dst, dtype, out_shape);
+        }
+        ReduceKind::Mean => {
+            let count = element_count(&src_info.shape, &axes_norm).max(1);
+            let count_literal = match dtype {
+                DType::F32 | DType::F16 | DType::BF16 => format!("{:.1}", count as f64),
+                _ => count.to_string(),
+            };
+            let extract = emitter.tmp();
+            let indices: Vec<String> = out_shape.iter().map(|_| "0".to_string()).collect();
+            emitter.write_fmt(format_args!(
+                "    {extract} = tensor.extract {result}[{indices}] : {out_ty}\n",
+                extract = extract,
+                result = reduce_result_name,
+                indices = indices.join(", "),
+                out_ty = out_ty
+            ));
+
+            let divisor = emitter.tmp();
+            emitter.write_fmt(format_args!(
+                "    {divisor} = arith.constant {count_literal} : {dtype}\n",
+                divisor = divisor,
+                count_literal = count_literal,
+                dtype = dtype_str
+            ));
+            let div_op = match dtype {
+                DType::F32 | DType::F16 | DType::BF16 => "arith.divf",
+                _ => "arith.divsi",
+            };
+            let div_name = emitter.tmp();
+            emitter.write_fmt(format_args!(
+                "    {div_name} = {div_op} {extract}, {divisor} : {dtype}\n",
+                div_name = div_name,
+                div_op = div_op,
+                extract = extract,
+                divisor = divisor,
+                dtype = dtype_str
+            ));
+            emitter.write_fmt(format_args!(
+                "    %{} = tensor.from_elements {div_name} : {}\n",
+                dst.0,
+                out_ty,
+                div_name = div_name
+            ));
+            emitter.record_tensor(dst, dtype, out_shape);
+        }
+    }
+}
+
+fn emit_tensor_reshape(
+    emitter: &mut MlirEmitter,
+    dst: ValueId,
+    src: ValueId,
+    new_shape: &[ShapeDim],
+) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let dtype_str = dtype_to_mlir(&src_info.dtype);
+    let src_ty = tensor_type(&src_info.shape, dtype_str);
+    let dst_ty = tensor_type(new_shape, dtype_str);
+    emitter.write_fmt(format_args!(
+        "    %{} = tensor.reshape %{} : {} -> {}\n",
+        dst.0, src.0, src_ty, dst_ty
+    ));
+    emitter.record_tensor(dst, src_info.dtype, new_shape.to_vec());
+}
+
+fn emit_expand_dims(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, axis: i64) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let mut shape = src_info.shape.clone();
+    let axis_norm = axis.clamp(0, shape.len() as i64) as usize;
+    shape.insert(axis_norm, ShapeDim::Known(1));
+    emit_tensor_reshape(emitter, dst, src, &shape);
+}
+
+fn emit_squeeze(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, axes: &[i64]) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let norm_axes = normalize_axes(axes, src_info.shape.len());
+    let mut shape = Vec::new();
+    for (i, dim) in src_info.shape.iter().enumerate() {
+        if norm_axes.contains(&i) {
+            continue;
+        }
+        shape.push(dim.clone());
+    }
+    emit_tensor_reshape(emitter, dst, src, &shape);
+}
+
+fn emit_transpose(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, perm: &[i64]) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let rank = src_info.shape.len();
+    let perm_norm = if perm.is_empty() {
+        (0..rank).rev().collect::<Vec<_>>()
+    } else {
+        normalize_axes(perm, rank)
+    };
+    let dtype_str = dtype_to_mlir(&src_info.dtype);
+    let src_ty = tensor_type(&src_info.shape, dtype_str);
+    let mut dst_shape = vec![ShapeDim::Known(1); rank];
+    for (i, &axis) in perm_norm.iter().enumerate() {
+        if let Some(dim) = src_info.shape.get(axis) {
+            dst_shape[i] = dim.clone();
+        }
+    }
+    let dst_ty = tensor_type(&dst_shape, dtype_str);
+    let perm_str = perm_norm.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
+    emitter.write_fmt(format_args!(
+        "    %{} = linalg.transpose %{} [ {} ] : {} -> {}\n",
+        dst.0, src.0, perm_str, src_ty, dst_ty
+    ));
+    emitter.record_tensor(dst, src_info.dtype, dst_shape);
+}
+
+fn emit_dot(emitter: &mut MlirEmitter, dst: ValueId, a: ValueId, b: ValueId) {
+    let dtype = emitter
+        .tensor_info(&a)
+        .map(|info| info.dtype.clone())
+        .or_else(|| emitter.tensor_info(&b).map(|info| info.dtype.clone()))
+        .unwrap_or(DType::F32);
+    let dtype_str = dtype_to_mlir(&dtype);
+    let vec_ty = format!("tensor<?x{}>", dtype_str);
+    let out_ty = tensor_type(&[], dtype_str);
+    emitter.write_fmt(format_args!(
+        "    %{} = linalg.dot ins(%{} : {vec_ty}, %{} : {vec_ty}) -> {out_ty}\n",
+        dst.0,
+        a.0,
+        b.0,
+        vec_ty = vec_ty,
+        out_ty = out_ty
+    ));
+    emitter.record_tensor(dst, dtype, vec![]);
+}
+
+fn emit_matmul(emitter: &mut MlirEmitter, dst: ValueId, a: ValueId, b: ValueId) {
+    let a_info = emitter
+        .tensor_info(&a)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let b_info = emitter
+        .tensor_info(&b)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: a_info.dtype.clone(), shape: vec![] });
+    let dtype = a_info.dtype.clone();
+    let dtype_str = dtype_to_mlir(&dtype);
+    let a_ty = if a_info.shape.is_empty() {
+        format!("tensor<?x{}>", dtype_str)
+    } else {
+        tensor_type(&a_info.shape, dtype_str)
+    };
+    let b_ty = if b_info.shape.is_empty() {
+        format!("tensor<?x{}>", dtype_str)
+    } else {
+        tensor_type(&b_info.shape, dtype_str)
+    };
+    let mut out_shape = Vec::new();
+    if a_info.shape.len() >= 2 && b_info.shape.len() >= 2 {
+        for dim in &a_info.shape[..a_info.shape.len() - 1] {
+            out_shape.push(dim.clone());
+        }
+        out_shape
+            .push(b_info.shape.get(b_info.shape.len() - 1).cloned().unwrap_or(ShapeDim::Known(1)));
+    }
+    let out_ty = if out_shape.is_empty() {
+        format!("tensor<?x{}>", dtype_str)
+    } else {
+        tensor_type(&out_shape, dtype_str)
+    };
+    emitter.write_fmt(format_args!(
+        "    %{} = linalg.matmul ins(%{} : {}, %{} : {}) -> {}\n",
+        dst.0, a.0, a_ty, b.0, b_ty, out_ty
+    ));
+    emitter.record_tensor(dst, dtype, out_shape);
+}
+
+fn emit_index(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: &[IndexSpec]) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let dtype_str = dtype_to_mlir(&src_info.dtype);
+    let src_ty = tensor_type(&src_info.shape, dtype_str);
+    let ordered: Vec<String> = if src_info.shape.is_empty() {
+        Vec::new()
+    } else {
+        let mut coords = vec!["0".to_string(); src_info.shape.len()];
+        for spec in indices {
+            let axis = spec.axis.clamp(0, src_info.shape.len() as i64 - 1) as usize;
+            coords[axis] = spec.index.to_string();
+        }
+        coords
+    };
+    let indices_str = ordered.join(", ");
+    emitter.write_fmt(format_args!(
+        "    %{} = tensor.extract %{}[{}] : {}\n",
+        dst.0, src.0, indices_str, src_ty
+    ));
+    emitter.record_tensor(dst, src_info.dtype, vec![]);
+}
+
+fn emit_slice(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, dims: &[SliceSpec]) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let dtype_str = dtype_to_mlir(&src_info.dtype);
+    let src_ty = tensor_type(&src_info.shape, dtype_str);
+    let rank = src_info.shape.len();
+    let mut offsets = if rank == 0 { Vec::new() } else { vec!["0".to_string(); rank] };
+    let mut sizes = Vec::new();
+    let mut strides = if rank == 0 { Vec::new() } else { vec!["1".to_string(); rank] };
+    for spec in dims {
+        if rank == 0 {
+            continue;
+        }
+        let axis = spec.axis.clamp(0, rank as i64 - 1) as usize;
+        offsets[axis] = spec.start.to_string();
+        if let Some(end) = spec.end {
+            let size = if let Some(ShapeDim::Known(_dim)) = src_info.shape.get(axis) {
+                let start = spec.start.max(0) as usize;
+                let end = end.max(spec.start) as usize;
+                (end - start).max(1)
+            } else {
+                1
+            };
+            sizes.push((axis, size.to_string()));
+        }
+        strides[axis] = spec.stride.max(1).to_string();
+    }
+    sizes.sort_by_key(|(axis, _)| *axis);
+    let mut final_sizes = vec![];
+    for i in 0..rank {
+        if let Some((_, size)) = sizes.iter().find(|(axis, _)| *axis == i) {
+            final_sizes.push(size.clone());
+        } else if let Some(dim) = src_info.shape.get(i) {
+            match dim {
+                ShapeDim::Known(n) => final_sizes.push(n.to_string()),
+                ShapeDim::Sym(sym) => final_sizes.push(sym.to_string()),
+            }
+        } else {
+            final_sizes.push("1".to_string());
+        }
+    }
+    let dst_shape = dims.iter().fold(src_info.shape.clone(), |mut acc, spec| {
+        if acc.is_empty() {
+            return acc;
+        }
+        let axis = spec.axis.clamp(0, acc.len() as i64 - 1) as usize;
+        if let Some(end) = spec.end {
+            let start = spec.start.max(0) as usize;
+            let end = end.max(spec.start) as usize;
+            let stride = spec.stride.max(1) as usize;
+            let len = ((end - start) + stride - 1) / stride;
+            acc[axis] = ShapeDim::Known(len);
+        }
+        acc
+    });
+    let dst_ty = tensor_type(&dst_shape, dtype_str);
+    let offsets_str = if offsets.is_empty() { String::new() } else { offsets.join(", ") };
+    let sizes_str = if final_sizes.is_empty() { String::new() } else { final_sizes.join(", ") };
+    let strides_str = if strides.is_empty() { String::new() } else { strides.join(", ") };
+    emitter.write_fmt(format_args!(
+        "    %{} = tensor.extract_slice %{}[{}] [{}] [{}] : {} to {}\n",
+        dst.0, src.0, offsets_str, sizes_str, strides_str, src_ty, dst_ty
+    ));
+    emitter.record_tensor(dst, src_info.dtype, dst_shape);
+}
+
+fn emit_gather(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: ValueId, axis: i64) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+    let idx_info = emitter
+        .tensor_info(&indices)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo { dtype: DType::I32, shape: vec![] });
+    let dtype_str = dtype_to_mlir(&src_info.dtype);
+    let src_ty = tensor_type(&src_info.shape, dtype_str);
+    let idx_ty = tensor_type(&idx_info.shape, "i32");
+    let axis = axis.clamp(0, src_info.shape.len() as i64 - 1) as usize;
+    let mut result_shape = src_info.shape.clone();
+    if let Some(dim) = idx_info.shape.get(0) {
+        result_shape[axis] = dim.clone();
+    }
+    let result_ty = tensor_type(&result_shape, dtype_str);
+    let empty_name = emitter.tmp();
+    emitter.write_fmt(format_args!(
+        "    {empty} = tensor.empty() : {result_ty}\n",
+        empty = empty_name,
+        result_ty = result_ty
+    ));
+    let upper_bound = idx_info
+        .shape
+        .get(0)
+        .and_then(|d| match d {
+            ShapeDim::Known(n) => Some(n.to_string()),
+            ShapeDim::Sym(s) => Some(s.to_string()),
+        })
+        .unwrap_or_else(|| "0".to_string());
+    let loop_result = format!("%{}", dst.0);
+    emitter.write_fmt(format_args!(
+        "    {loop_result} = scf.for %i0 = 0 to {upper} step 1 iter_args(%acc = {empty}) -> {result_ty} {{\n",
+        loop_result = loop_result,
+        upper = upper_bound,
+        empty = empty_name,
+        result_ty = result_ty
+    ));
+    let idx_name = emitter.tmp();
+    emitter.write_fmt(format_args!(
+        "      {idx_name} = tensor.extract %{}[%i0] : {}\n",
+        indices.0,
+        idx_ty,
+        idx_name = idx_name
+    ));
+    let val_name = emitter.tmp();
+    emitter.write_fmt(format_args!(
+        "      {val_name} = tensor.extract %{}[{idx_name}] : {}\n",
+        src.0,
+        src_ty,
+        val_name = val_name,
+        idx_name = idx_name
+    ));
+    let updated_name = emitter.tmp();
+    emitter.write_fmt(format_args!(
+        "      {updated} = tensor.insert {val_name} into %acc[%i0] : {result_ty}\n",
+        updated = updated_name,
+        val_name = val_name,
+        result_ty = result_ty
+    ));
+    emitter.write_fmt(format_args!(
+        "      scf.yield {updated} : {result_ty}\n",
+        updated = updated_name,
+        result_ty = result_ty
+    ));
+    emitter.write_line("    }");
+    emitter.record_tensor(dst, src_info.dtype, result_shape);
 }
 
 fn dtype_to_mlir(dtype: &DType) -> &str {
@@ -151,4 +633,47 @@ fn format_fill(fill: Option<f64>, dtype: &DType) -> String {
         (None, DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
         (None, _) => "0".to_string(),
     }
+}
+
+fn normalize_axes(axes: &[i64], rank: usize) -> Vec<usize> {
+    axes.iter()
+        .map(|axis| {
+            let mut idx = *axis;
+            if idx < 0 {
+                idx += rank as i64;
+            }
+            idx.clamp(0, rank.saturating_sub(1) as i64) as usize
+        })
+        .collect()
+}
+
+fn reduce_shape(shape: &[ShapeDim], axes: &[usize], keepdims: bool) -> Vec<ShapeDim> {
+    if keepdims {
+        let mut out = shape.to_vec();
+        for &axis in axes {
+            if axis < out.len() {
+                out[axis] = ShapeDim::Known(1);
+            }
+        }
+        return out;
+    }
+
+    shape
+        .iter()
+        .enumerate()
+        .filter_map(|(i, dim)| if axes.contains(&i) { None } else { Some(dim.clone()) })
+        .collect()
+}
+
+fn format_dimensions(axes: &[usize]) -> String {
+    axes.iter().map(|axis| axis.to_string()).collect::<Vec<_>>().join(", ")
+}
+
+fn element_count(shape: &[ShapeDim], axes: &[usize]) -> usize {
+    axes.iter()
+        .map(|&axis| match shape.get(axis) {
+            Some(ShapeDim::Known(n)) => *n,
+            _ => 1,
+        })
+        .product()
 }

@@ -436,6 +436,37 @@ module {
 }
 ```
 
+Tensor programs now lower their dataflow ops into core MLIR dialects (`tensor`, `arith`, `linalg`, `shape`, `scf`). A few small samples:
+
+```bash
+# Reductions (tensor.reduce + arithmetic)
+cargo run --quiet --no-default-features -- eval \
+  "let x: Tensor[f32,(2,3)] = 1; \
+   let s = tensor.sum(x, axes=[1], keepdims=false); \
+   tensor.mean(s, axes=[0], keepdims=false)" \
+  --emit-mlir
+
+# Shape transforms (tensor.reshape / linalg.transpose)
+cargo run --quiet --no-default-features -- eval \
+  "let x: Tensor[f32,(2,3)] = 0; \
+   let r = tensor.reshape(x, (3,2)); \
+   tensor.transpose(tensor.squeeze(tensor.expand_dims(r, axis=1), axes=[1]), axes=[1,0])" \
+  --emit-mlir
+
+# Linear algebra + indexing
+cargo run --quiet --no-default-features -- eval \
+  "let a: Tensor[f32,(2)] = 1; \
+   let b: Tensor[f32,(2)] = 1; \
+   let _ = tensor.dot(a, b); \
+   let m: Tensor[f32,(2,3)] = 1; \
+   let idx: Tensor[i32,(2)] = 0; \
+   let slice = tensor.slice(m, axis=0, start=0, end=2); \
+   tensor.gather(slice, axis=0, idx=idx)" \
+  --emit-mlir
+```
+
+The emitted IR includes preview-friendly constructs such as `tensor.reduce`, `tensor.extract_slice`, `linalg.matmul`, and loop-based `scf.for` gathers. Results remain tensor-typed (no buffer materialization) and follow the language's current "preview" semantics.
+
 ### Phase 5C — MLIR file export and lowering presets
 
 You can now dump MLIR to stdout or write a `.mlir` file:

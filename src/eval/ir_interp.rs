@@ -26,7 +26,16 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, v.clone());
                 last = v;
             }
-            Instr::Sum { dst, src } => {
+            Instr::Sum { dst, src, .. } => {
+                let input = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let out = match input {
+                    Value::Tensor(t) => Value::Tensor(TensorVal::new(t.dtype, vec![], t.fill)),
+                    other => other,
+                };
+                vals.insert(*dst, out.clone());
+                last = out;
+            }
+            Instr::Mean { dst, src, .. } => {
                 let input = vals.get(src).cloned().unwrap_or(Value::Int(0));
                 let out = match input {
                     Value::Tensor(t) => Value::Tensor(TensorVal::new(t.dtype, vec![], t.fill)),
@@ -46,6 +55,59 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, reshaped.clone());
                 last = reshaped;
             }
+            Instr::ExpandDims { dst, src, axis } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let expanded = match value {
+                    Value::Tensor(t) => {
+                        let mut shape = t.shape.clone();
+                        let axis = (*axis).clamp(0, shape.len() as i64) as usize;
+                        shape.insert(axis, ShapeDim::Known(1));
+                        Value::Tensor(TensorVal::new(t.dtype, shape, t.fill))
+                    }
+                    other => other,
+                };
+                vals.insert(*dst, expanded.clone());
+                last = expanded;
+            }
+            Instr::Squeeze { dst, src, axes } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let squeezed = match value {
+                    Value::Tensor(t) => {
+                        let mut shape = Vec::new();
+                        for (i, dim) in t.shape.iter().enumerate() {
+                            if axes.iter().any(|axis| *axis as usize == i) {
+                                continue;
+                            }
+                            shape.push(dim.clone());
+                        }
+                        Value::Tensor(TensorVal::new(t.dtype, shape, t.fill))
+                    }
+                    other => other,
+                };
+                vals.insert(*dst, squeezed.clone());
+                last = squeezed;
+            }
+            Instr::Transpose { dst, src, .. } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                vals.insert(*dst, value.clone());
+                last = value;
+            }
+            Instr::Dot { dst, a, b } => {
+                let lhs = vals.get(a).cloned().unwrap_or(Value::Int(0));
+                let rhs = vals.get(b).cloned().unwrap_or(Value::Int(0));
+                let v = match (lhs, rhs) {
+                    (Value::Tensor(at), Value::Tensor(bt)) => {
+                        let fill = match (at.fill, bt.fill) {
+                            (Some(x), Some(y)) => Some(x * y),
+                            _ => None,
+                        };
+                        Value::Tensor(TensorVal::new(at.dtype, vec![], fill))
+                    }
+                    _ => Value::Int(0),
+                };
+                vals.insert(*dst, v.clone());
+                last = v;
+            }
             Instr::MatMul { dst, a, b } => {
                 let lhs = vals.get(a).cloned().unwrap_or(Value::Int(0));
                 let rhs = vals.get(b).cloned().unwrap_or(Value::Int(0));
@@ -63,7 +125,17 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, v.clone());
                 last = v;
             }
+            Instr::Index { dst, src, .. } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                vals.insert(*dst, value.clone());
+                last = value;
+            }
             Instr::Slice { dst, src, .. } => {
+                let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                vals.insert(*dst, value.clone());
+                last = value;
+            }
+            Instr::Gather { dst, src, .. } => {
                 let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
                 vals.insert(*dst, value.clone());
                 last = value;

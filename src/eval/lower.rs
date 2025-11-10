@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast::{self, Literal, TypeAnn};
-use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::ir::{BinOp, IRModule, IndexSpec, Instr, SliceSpec, ValueId};
 use crate::types::{DType, ShapeDim};
 
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
@@ -86,10 +86,18 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
             dst
         }
-        ast::Node::CallTensorSum { x, .. } => {
+        ast::Node::CallTensorSum { x, axes, keepdims, .. } => {
             let src = lower_expr(x, ir, env);
             let dst = ir.fresh();
-            ir.instrs.push(Instr::Sum { dst, src });
+            let axes = axes.iter().map(|a| *a as i64).collect();
+            ir.instrs.push(Instr::Sum { dst, src, axes, keepdims: *keepdims });
+            dst
+        }
+        ast::Node::CallTensorMean { x, axes, keepdims, .. } => {
+            let src = lower_expr(x, ir, env);
+            let dst = ir.fresh();
+            let axes = axes.iter().map(|a| *a as i64).collect();
+            ir.instrs.push(Instr::Mean { dst, src, axes, keepdims: *keepdims });
             dst
         }
         ast::Node::CallReshape { x, dims, .. } => {
@@ -99,6 +107,37 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             ir.instrs.push(Instr::Reshape { dst, src, new_shape });
             dst
         }
+        ast::Node::CallExpandDims { x, axis, .. } => {
+            let src = lower_expr(x, ir, env);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::ExpandDims { dst, src, axis: *axis as i64 });
+            dst
+        }
+        ast::Node::CallSqueeze { x, axes, .. } => {
+            let src = lower_expr(x, ir, env);
+            let dst = ir.fresh();
+            let axes = axes.iter().map(|a| *a as i64).collect();
+            ir.instrs.push(Instr::Squeeze { dst, src, axes });
+            dst
+        }
+        ast::Node::CallTranspose { x, axes, .. } => {
+            let src = lower_expr(x, ir, env);
+            let dst = ir.fresh();
+            let perm = axes
+                .as_ref()
+                .map(|axes| axes.iter().map(|a| *a as i64).collect())
+                .unwrap_or_default();
+            ir.instrs.push(Instr::Transpose { dst, src, perm });
+            dst
+        }
+        ast::Node::CallIndex { x, axis, i, .. } => {
+            let src = lower_expr(x, ir, env);
+            let dst = ir.fresh();
+            let indices =
+                vec![IndexSpec { axis: (*axis).max(0) as i64, index: (*i).max(0) as i64 }];
+            ir.instrs.push(Instr::Index { dst, src, indices });
+            dst
+        }
         ast::Node::CallMatMul { a, b, .. } => {
             let lhs = lower_expr(a, ir, env);
             let rhs = lower_expr(b, ir, env);
@@ -106,30 +145,42 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             ir.instrs.push(Instr::MatMul { dst, a: lhs, b: rhs });
             dst
         }
+        ast::Node::CallDot { a, b, .. } => {
+            let lhs = lower_expr(a, ir, env);
+            let rhs = lower_expr(b, ir, env);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::Dot { dst, a: lhs, b: rhs });
+            dst
+        }
         ast::Node::CallSlice { x, axis, start, end, .. } => {
             let src = lower_expr(x, ir, env);
             let dst = ir.fresh();
-            ir.instrs.push(Instr::Slice {
-                dst,
-                src,
-                axis: (*axis).max(0) as usize,
-                start: (*start).max(0) as usize,
-                end: (*end).max(0) as usize,
+            let dims = vec![SliceSpec {
+                axis: (*axis).max(0) as i64,
+                start: (*start).max(0) as i64,
+                end: Some((*end).max(0) as i64),
                 stride: 1,
-            });
+            }];
+            ir.instrs.push(Instr::Slice { dst, src, dims });
             dst
         }
         ast::Node::CallSliceStride { x, axis, start, end, step, .. } => {
             let src = lower_expr(x, ir, env);
             let dst = ir.fresh();
-            ir.instrs.push(Instr::Slice {
-                dst,
-                src,
-                axis: (*axis).max(0) as usize,
-                start: (*start).max(0) as usize,
-                end: (*end).max(0) as usize,
-                stride: (*step).max(1) as usize,
-            });
+            let dims = vec![SliceSpec {
+                axis: (*axis).max(0) as i64,
+                start: (*start).max(0) as i64,
+                end: Some((*end).max(0) as i64),
+                stride: (*step).max(1) as i64,
+            }];
+            ir.instrs.push(Instr::Slice { dst, src, dims });
+            dst
+        }
+        ast::Node::CallGather { x, axis, idx, .. } => {
+            let src = lower_expr(x, ir, env);
+            let indices = lower_expr(idx, ir, env);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::Gather { dst, src, indices, axis: (*axis).max(0) as i64 });
             dst
         }
         ast::Node::Paren(inner, _) => lower_expr(inner, ir, env),
