@@ -102,9 +102,69 @@ fn main() {
             eprintln!("Usage: mind eval \"<expression or statements>\"");
             std::process::exit(1);
         }
-        let src = &args[2];
-        let emit_opts = parse_emit_flags(&args[3..]);
-        run_eval_once(src, emit_opts);
+        let mut exec_requested = false;
+        let mut emit_args: Vec<String> = Vec::new();
+        let mut src: Option<String> = None;
+
+        let mut i = 2;
+        while i < args.len() {
+            let arg = &args[i];
+            match arg.as_str() {
+                "--exec" => {
+                    exec_requested = true;
+                    i += 1;
+                }
+                "--emit-mlir" | "--mlir-opt" => {
+                    emit_args.push(arg.clone());
+                    i += 1;
+                }
+                "--emit-mlir-file"
+                | "--mlir-lower"
+                | "--mlir-opt-bin"
+                | "--mlir-opt-passes"
+                | "--mlir-opt-timeout-ms" => {
+                    emit_args.push(arg.clone());
+                    if i + 1 < args.len() {
+                        emit_args.push(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        eprintln!("Missing value for {arg}");
+                        std::process::exit(1);
+                    }
+                }
+                value => {
+                    if src.is_none() {
+                        src = Some(value.to_string());
+                    } else {
+                        emit_args.push(value.to_string());
+                    }
+                    i += 1;
+                }
+            }
+        }
+
+        let Some(src) = src else {
+            eprintln!("Usage: mind eval \"<expression or statements>\"");
+            std::process::exit(1);
+        };
+
+        let emit_opts = parse_emit_flags(&emit_args);
+        let exec_mode = if exec_requested {
+            #[cfg(feature = "cpu-exec")]
+            {
+                mind::eval::ExecMode::CpuIfEnabled
+            }
+            #[cfg(not(feature = "cpu-exec"))]
+            {
+                eprintln!(
+                    "--exec requested but cpu-exec feature is not enabled; running in preview."
+                );
+                mind::eval::ExecMode::PreviewOnly
+            }
+        } else {
+            mind::eval::ExecMode::PreviewOnly
+        };
+        run_eval_once(&src, emit_opts, exec_mode);
         return;
     }
 
@@ -119,12 +179,17 @@ fn main() {
     std::process::exit(1);
 }
 
-fn run_eval_once(src: &str, emit_opts: EmitOpts) {
+fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
     match parser::parse_with_diagnostics(src) {
         Ok(module) => {
             let mut env = HashMap::new();
-            match eval::eval_module_value_with_env(&module, &mut env, Some(src)) {
-                Ok(_) => {
+            match eval::eval_module_value_with_env_mode(&module, &mut env, Some(src), exec_mode) {
+                Ok(value) => {
+                    if matches!(exec_mode, eval::ExecMode::CpuIfEnabled) {
+                        println!("{}", eval::format_value_human(&value));
+                        return;
+                    }
+                    println!("{}", eval::format_value_human(&value));
                     let ir = eval::lower_to_ir(&module);
                     if emit_opts.emit_mlir_stdout || emit_opts.emit_mlir_file.is_some() {
                         let mut mlir_text = eval::emit_mlir_string(&ir, emit_opts.mlir_lower);

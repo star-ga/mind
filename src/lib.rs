@@ -2,6 +2,7 @@
 pub mod ast;
 pub mod diagnostics;
 pub mod eval;
+pub mod exec;
 pub mod lexer;
 pub(crate) mod linalg;
 pub mod opt;

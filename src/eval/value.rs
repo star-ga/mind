@@ -42,6 +42,49 @@ impl TensorVal {
             buf: None,
         }
     }
+
+    #[cfg(feature = "cpu-buffers")]
+    pub fn from_materialized_f32(shape: Vec<usize>, data: Vec<f32>) -> Self {
+        Self {
+            dtype: DType::F32,
+            shape: shape.into_iter().map(ShapeDim::Known).collect(),
+            fill: None,
+            buf: Some(Buffer::F32(data)),
+        }
+    }
+
+    #[cfg(feature = "cpu-buffers")]
+    pub fn is_materialized_f32(&self) -> bool {
+        matches!(self.buf, Some(Buffer::F32(_)))
+    }
+
+    #[cfg(feature = "cpu-buffers")]
+    pub fn as_f32(&self) -> Option<&[f32]> {
+        match &self.buf {
+            Some(Buffer::F32(values)) => Some(values.as_slice()),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "cpu-buffers")]
+    pub fn as_f32_mut(&mut self) -> Option<&mut [f32]> {
+        match &mut self.buf {
+            Some(Buffer::F32(values)) => Some(values.as_mut_slice()),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "cpu-buffers")]
+    pub fn shape_as_usize(&self) -> Option<Vec<usize>> {
+        let mut out = Vec::with_capacity(self.shape.len());
+        for dim in &self.shape {
+            match dim {
+                ShapeDim::Known(n) => out.push(*n),
+                ShapeDim::Sym(_) => return None,
+            }
+        }
+        Some(out)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
