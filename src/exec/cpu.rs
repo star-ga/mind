@@ -1,6 +1,7 @@
 //! Minimal CPU executor for TensorVal with materialized buffers (f32 only for v1).
 
 use crate::eval::value::TensorVal;
+use crate::exec::simd_chunks_mut;
 use crate::types::{DType, ShapeDim};
 
 #[derive(Debug)]
@@ -116,7 +117,13 @@ fn elementwise_unary_f32<F>(op: F, data: &[f32]) -> Vec<f32>
 where
     F: Fn(f32) -> f32,
 {
-    data.iter().copied().map(op).collect()
+    let mut out = data.to_vec();
+    for chunk in simd_chunks_mut(&mut out) {
+        for v in chunk {
+            *v = op(*v);
+        }
+    }
+    out
 }
 
 fn reduce_sum(data: &[f32]) -> f32 {
@@ -256,6 +263,26 @@ pub fn exec_mean_all(t: &TensorVal) -> R<TensorVal> {
     let sum = reduce_sum(data);
     let count = numel(&shape) as f32;
     Ok(TensorVal::from_materialized_f32(vec![], vec![sum / count]))
+}
+
+pub fn relu_inplace(buf: &mut [f32]) {
+    for chunk in simd_chunks_mut(buf) {
+        for v in chunk {
+            if *v < 0.0 {
+                *v = 0.0;
+            }
+        }
+    }
+}
+
+pub fn exec_relu(t: &TensorVal) -> R<TensorVal> {
+    ensure_f32(t)?;
+    let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
+    let data =
+        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let mut out = data.to_vec();
+    relu_inplace(&mut out);
+    Ok(TensorVal::from_materialized_f32(shape, out))
 }
 
 pub fn exec_matmul(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {

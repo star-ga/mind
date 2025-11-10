@@ -527,6 +527,27 @@ Notes:
 * Symbolic dimensions fall back to preview semantics.
 * Without `--exec` or without the `cpu-exec` feature, CLI evaluation stays in preview mode.
 
+### Phase 6B — CPU ReLU and Conv2D
+
+- `tensor.relu(x)` keeps shape/dtype; in exec mode it clamps negative values.
+- `tensor.conv2d(x, w, stride_h=?, stride_w=?, padding="valid"|"same")`
+  - Layouts: `x` in NHWC, `w` in HWIO, result NHWC.
+  - Execute with `--features "cpu-exec cpu-conv"` and `--exec`.
+
+Examples:
+
+```bash
+# Preview only:
+cargo run --quiet -- eval 'let x: Tensor[f32,(2,3)] = 0; tensor.relu(x - 1)'
+
+# Execute ReLU on CPU:
+cargo run --quiet --features cpu-exec -- eval --exec 'let x: Tensor[f32,(1,4)] = 0; x = x - 3; tensor.relu(x + 1)'
+
+# Execute Conv2D on CPU:
+cargo run --quiet --features "cpu-exec cpu-conv" -- eval --exec \
+  'let x: Tensor[f32,(1,3,3,1)] = 1; let w: Tensor[f32,(2,2,1,1)] = 1; tensor.conv2d(x,w,stride_h=1,stride_w=1,padding="valid")'
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor
