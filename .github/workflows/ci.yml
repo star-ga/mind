@@ -190,6 +190,30 @@ jobs:
       - name: clippy
         run: cargo clippy --workspace --all-targets --no-default-features
 
+  ffi_feature_tests:
+    name: Tests (FFI feature matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - label: core
+            args: "--no-default-features"
+          - label: ffi-c
+            args: "--no-default-features --features ffi-c"
+          - label: ffi-full
+            args: "--no-default-features --features \"ffi-c mlir-build cpu-exec ffi-examples\""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - name: Cargo test (${{ matrix.label }})
+        run: cargo test --verbose --locked ${{ matrix.args }}
+
   supply_chain_check:
     name: Supply chain (cargo-deny & audit)
     runs-on: ubuntu-latest

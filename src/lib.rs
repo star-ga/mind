@@ -15,3 +15,6 @@ pub mod ir;
 
 #[cfg(feature = "autodiff")]
 pub mod autodiff;
+
+#[cfg(feature = "ffi-c")]
+pub mod ffi;
