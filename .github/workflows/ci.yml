@@ -8,7 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  CARGO_HTTP_MULTIPLEXING: "false"
+  CARGO_HTTP_TIMEOUT: "600"
   HTTP_PROXY: ""
   HTTPS_PROXY: ""
   ALL_PROXY: ""
@@ -26,7 +28,7 @@ jobs:
         rust: [stable, nightly]
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install Rust
       uses: actions-rs/toolchain@v1
@@ -41,20 +43,27 @@ jobs:
       with:
         cache-on-failure: true
 
-    - name: Cargo fetch (retry)
+    - name: Prime index & fetch (retry)
       run: |
         set -e
-        cargo fetch || (sleep 5 && cargo fetch) || (sleep 10 && cargo fetch)
+        for i in 1 2 3; do
+          if [ -f Cargo.lock ]; then
+            cargo fetch --locked && break
+          else
+            cargo fetch && break
+          fi
+          sleep 5
+        done
 
     - name: Build
       run: cargo build --verbose --no-default-features --locked
 
     - name: Run tests
-      run: cargo test --verbose --no-default-features --locked
+      run: cargo test --verbose --no-default-features --locked -- --nocapture
 
     - name: Test packaging
       if: matrix.os == 'ubuntu-latest'
-      run: cargo test --no-default-features --features pkg -- --nocapture
+      run: cargo test --no-default-features --features pkg --locked -- --nocapture
 
     - name: Check formatting
       run: cargo fmt -- --check
