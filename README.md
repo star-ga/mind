@@ -413,6 +413,29 @@ cargo run -- eval '1 + 2 * 3'
 # 7
 ```
 
+### Phase 5B — MLIR Exporter
+You can now emit MIND programs as MLIR text:
+
+```bash
+cargo run -- eval '1 + 2 * 3' --emit-mlir
+```
+
+prints:
+
+```mlir
+module {
+  func.func @main() -> () {
+    %0 = arith.constant 1 : i64
+    %1 = arith.constant 2 : i64
+    %2 = arith.constant 3 : i64
+    %3 = arith.muli %1, %2 : i64
+    %4 = arith.addi %0, %3 : i64
+    return
+    // result: %4
+  }
+}
+```
+
 **Span-accurate type errors (Phase 3D):** carets now point to the exact token (identifier or operator) that triggered a type error.
 
 ### Hello, Tensor

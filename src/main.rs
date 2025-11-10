@@ -17,7 +17,8 @@ fn main() {
             std::process::exit(1);
         }
         let src = &args[2];
-        run_eval_once(src);
+        let emit_mlir = args.iter().any(|a| a == "--emit-mlir");
+        run_eval_once(src, emit_mlir);
         return;
     }
 
@@ -32,13 +33,18 @@ fn main() {
     std::process::exit(1);
 }
 
-fn run_eval_once(src: &str) {
+fn run_eval_once(src: &str, emit_mlir: bool) {
     match parser::parse_with_diagnostics(src) {
         Ok(module) => {
             let mut env = HashMap::new();
             match eval::eval_module_value_with_env(&module, &mut env, Some(src)) {
                 Ok(_) => {
                     let ir = eval::lower_to_ir(&module);
+                    if emit_mlir {
+                        let mlir = eval::to_mlir(&ir, "main");
+                        println!("--- MLIR DUMP ---\n{mlir}");
+                        return;
+                    }
                     println!("--- Lowered IR ---\n{ir}");
                     let value = eval::eval_ir(&ir);
                     println!("--- Result ---\n{}", eval::format_value_human(&value));

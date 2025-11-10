@@ -10,10 +10,12 @@ use value::Buffer;
 pub mod autodiff;
 pub mod ir_interp;
 pub mod lower;
+pub mod mlir_export;
 pub mod value;
 
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
+pub use mlir_export::to_mlir;
 pub use value::{format_value_human, TensorVal, Value, VarId};
 
 #[cfg(feature = "cpu-buffers")]
