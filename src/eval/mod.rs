@@ -15,8 +15,23 @@ pub mod value;
 
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
-pub use mlir_export::to_mlir;
+pub use mlir_export::{to_mlir, MlirLowerPreset};
 pub use value::{format_value_human, TensorVal, Value, VarId};
+
+pub fn emit_mlir_string(ir: &crate::ir::IRModule, preset: mlir_export::MlirLowerPreset) -> String {
+    let txt = mlir_export::to_mlir_text(ir);
+    mlir_export::apply_textual_lowering(txt, preset)
+}
+
+pub fn emit_mlir_to_file(
+    ir: &crate::ir::IRModule,
+    preset: mlir_export::MlirLowerPreset,
+    path: &std::path::Path,
+) -> std::io::Result<()> {
+    let txt = emit_mlir_string(ir, preset);
+    std::fs::create_dir_all(path.parent().unwrap_or_else(|| std::path::Path::new(".")))?;
+    std::fs::write(path, txt)
+}
 
 #[cfg(feature = "cpu-buffers")]
 pub(crate) fn num_elems(shape: &[ShapeDim]) -> Option<usize> {
