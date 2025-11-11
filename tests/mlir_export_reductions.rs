@@ -11,7 +11,10 @@ fn mlir_export_reductions_cover_sum_and_mean() {
     let ir = eval::lower_to_ir(&module);
     let mlir = eval::to_mlir(&ir, "main");
 
-    assert!(mlir.contains("tensor.reduce"), "expected tensor.reduce in {mlir}");
+    assert!(
+        mlir.contains("tensor.reduce"),
+        "expected tensor.reduce in {mlir}"
+    );
     assert!(mlir.contains("arith.addf"), "expected arith.addf in {mlir}");
     assert!(mlir.contains("arith.divf"), "expected arith.divf in {mlir}");
 }

@@ -10,7 +10,11 @@ pub struct MlirOptOutput {
 
 impl MlirOptOutput {
     pub fn from_error<E: fmt::Display>(err: E) -> Self {
-        Self { stdout: String::new(), stderr: err.to_string(), status_ok: false }
+        Self {
+            stdout: String::new(),
+            stderr: err.to_string(),
+            status_ok: false,
+        }
     }
 }
 
@@ -37,8 +41,11 @@ pub fn run_mlir_opt(
         cmd.arg(format!("--pass-pipeline={pipeline}"));
     }
 
-    let mut child =
-        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(mlir_input.as_bytes())?;
@@ -48,7 +55,11 @@ pub fn run_mlir_opt(
     loop {
         if let Some(status) = child.try_wait()? {
             let (stdout, stderr) = collect_child_output(&mut child);
-            return Ok(MlirOptOutput { stdout, stderr, status_ok: status.success() });
+            return Ok(MlirOptOutput {
+                stdout,
+                stderr,
+                status_ok: status.success(),
+            });
         }
 
         if start.elapsed() > Duration::from_millis(timeout_ms) {
@@ -94,5 +105,7 @@ pub fn run_mlir_opt(
     _passes: &[String],
     _timeout_ms: u64,
 ) -> std::io::Result<MlirOptOutput> {
-    Ok(MlirOptOutput::from_error("mlir-subprocess feature is disabled"))
+    Ok(MlirOptOutput::from_error(
+        "mlir-subprocess feature is disabled",
+    ))
 }

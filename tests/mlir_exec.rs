@@ -20,7 +20,11 @@ fn mlir_exec_scalar_add() {
         ])
         .output()
         .expect("run mlir exec");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("3"), "stdout: {}", stdout);
 }
@@ -35,17 +39,43 @@ fn parity_cpu_vs_mlir_exec_simple() {
     let src = "let x: Tensor[f32,(2,2)] = 1; tensor.sum(x + 2)";
 
     let cpu = std::process::Command::new("cargo")
-        .args(["run", "--quiet", "--features", "cpu-exec", "--", "eval", "--exec", src])
+        .args([
+            "run",
+            "--quiet",
+            "--features",
+            "cpu-exec",
+            "--",
+            "eval",
+            "--exec",
+            src,
+        ])
         .output()
         .expect("run cpu exec");
-    assert!(cpu.status.success(), "cpu stderr: {}", String::from_utf8_lossy(&cpu.stderr));
+    assert!(
+        cpu.status.success(),
+        "cpu stderr: {}",
+        String::from_utf8_lossy(&cpu.stderr)
+    );
     let cpu_stdout = String::from_utf8_lossy(&cpu.stdout).trim().to_string();
 
     let mlir = std::process::Command::new("cargo")
-        .args(["run", "--quiet", "--features", "mlir-exec", "--", "eval", "--mlir-exec", src])
+        .args([
+            "run",
+            "--quiet",
+            "--features",
+            "mlir-exec",
+            "--",
+            "eval",
+            "--mlir-exec",
+            src,
+        ])
         .output()
         .expect("run mlir exec");
-    assert!(mlir.status.success(), "mlir stderr: {}", String::from_utf8_lossy(&mlir.stderr));
+    assert!(
+        mlir.status.success(),
+        "mlir stderr: {}",
+        String::from_utf8_lossy(&mlir.stderr)
+    );
     let mlir_stdout = String::from_utf8_lossy(&mlir.stdout).trim().to_string();
 
     assert!(

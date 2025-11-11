@@ -213,7 +213,11 @@ mod tests {
 
     #[test]
     fn format_tensor_shape_symbols() {
-        let t = TensorVal::new(DType::I32, vec![ShapeDim::Sym("B"), ShapeDim::Known(4)], None);
+        let t = TensorVal::new(
+            DType::I32,
+            vec![ShapeDim::Sym("B"), ShapeDim::Known(4)],
+            None,
+        );
         let s = format_value_human(&Value::Tensor(t));
         assert!(s.contains("(B,4)"));
     }

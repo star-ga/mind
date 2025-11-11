@@ -111,7 +111,10 @@ pub fn build_all(
         run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true)?;
     }
 
-    Ok(BuildProducts { optimized_mlir, llvm_ir })
+    Ok(BuildProducts {
+        optimized_mlir,
+        llvm_ir,
+    })
 }
 
 #[cfg(feature = "mlir-build")]
@@ -146,8 +149,13 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
 #[cfg(feature = "mlir-build")]
 fn run_mlir_opt(input: &str, pipeline: &str, tools: &BuildTools) -> Result<String, BuildError> {
     let args = vec![format!("--pass-pipeline={pipeline}")];
-    let output =
-        run_command(&tools.mlir_opt, &args, Some(input.as_bytes()), tools.timeout, "mlir-opt")?;
+    let output = run_command(
+        &tools.mlir_opt,
+        &args,
+        Some(input.as_bytes()),
+        tools.timeout,
+        "mlir-opt",
+    )?;
     if !output.status.success() {
         return Err(BuildError::Subprocess {
             tool: "mlir-opt",
@@ -302,7 +310,11 @@ fn collect_child_output(mut child: Child) -> Result<CommandOutput, BuildError> {
 
     let status = child.wait()?;
 
-    Ok(CommandOutput { stdout, stderr, status })
+    Ok(CommandOutput {
+        stdout,
+        stderr,
+        status,
+    })
 }
 
 #[cfg(feature = "mlir-build")]

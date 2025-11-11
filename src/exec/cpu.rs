@@ -33,7 +33,9 @@ fn shape_usize(shape: &[ShapeDim]) -> Option<Vec<usize>> {
 fn ensure_f32(t: &TensorVal) -> R<()> {
     match t.dtype {
         DType::F32 => Ok(()),
-        _ => Err(ExecError::Type("only f32 tensors supported in cpu-exec".into())),
+        _ => Err(ExecError::Type(
+            "only f32 tensors supported in cpu-exec".into(),
+        )),
     }
 }
 
@@ -49,7 +51,10 @@ fn broadcast_shapes(a: &[usize], b: &[usize]) -> R<Vec<usize>> {
         } else if db == 1 {
             da
         } else {
-            return Err(ExecError::Shape(format!("cannot broadcast shapes {:?} and {:?}", a, b)));
+            return Err(ExecError::Shape(format!(
+                "cannot broadcast shapes {:?} and {:?}",
+                a, b
+            )));
         };
         out.push(dim);
         i -= 1;
@@ -135,10 +140,12 @@ pub fn exec_add(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
     ensure_f32(rhs)?;
     let lshape = shape_usize(&lhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
     let rshape = shape_usize(&rhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let ldata =
-        lhs.as_f32().ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
-    let rdata =
-        rhs.as_f32().ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
+    let ldata = lhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
+    let rdata = rhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
     let (out, shape) = elementwise_binop_f32(|a, b| a + b, (ldata, &lshape), (rdata, &rshape))?;
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -148,10 +155,12 @@ pub fn exec_sub(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
     ensure_f32(rhs)?;
     let lshape = shape_usize(&lhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
     let rshape = shape_usize(&rhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let ldata =
-        lhs.as_f32().ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
-    let rdata =
-        rhs.as_f32().ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
+    let ldata = lhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
+    let rdata = rhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
     let (out, shape) = elementwise_binop_f32(|a, b| a - b, (ldata, &lshape), (rdata, &rshape))?;
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -161,10 +170,12 @@ pub fn exec_mul(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
     ensure_f32(rhs)?;
     let lshape = shape_usize(&lhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
     let rshape = shape_usize(&rhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let ldata =
-        lhs.as_f32().ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
-    let rdata =
-        rhs.as_f32().ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
+    let ldata = lhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
+    let rdata = rhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
     let (out, shape) = elementwise_binop_f32(|a, b| a * b, (ldata, &lshape), (rdata, &rshape))?;
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -174,10 +185,12 @@ pub fn exec_div(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
     ensure_f32(rhs)?;
     let lshape = shape_usize(&lhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
     let rshape = shape_usize(&rhs.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let ldata =
-        lhs.as_f32().ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
-    let rdata =
-        rhs.as_f32().ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
+    let ldata = lhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
+    let rdata = rhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
     if rdata.iter().any(|&v| v == 0.0) {
         return Err(ExecError::Math("division by zero".into()));
     }
@@ -188,8 +201,9 @@ pub fn exec_div(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
 pub fn exec_add_scalar(t: &TensorVal, scalar: f32) -> R<TensorVal> {
     ensure_f32(t)?;
     let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let out = elementwise_unary_f32(|v| v + scalar, data);
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -197,8 +211,9 @@ pub fn exec_add_scalar(t: &TensorVal, scalar: f32) -> R<TensorVal> {
 pub fn exec_sub_scalar(t: &TensorVal, scalar: f32) -> R<TensorVal> {
     ensure_f32(t)?;
     let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let out = elementwise_unary_f32(|v| v - scalar, data);
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -206,8 +221,9 @@ pub fn exec_sub_scalar(t: &TensorVal, scalar: f32) -> R<TensorVal> {
 pub fn exec_scalar_sub(scalar: f32, t: &TensorVal) -> R<TensorVal> {
     ensure_f32(t)?;
     let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let out = elementwise_unary_f32(|v| scalar - v, data);
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -215,8 +231,9 @@ pub fn exec_scalar_sub(scalar: f32, t: &TensorVal) -> R<TensorVal> {
 pub fn exec_mul_scalar(t: &TensorVal, scalar: f32) -> R<TensorVal> {
     ensure_f32(t)?;
     let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let out = elementwise_unary_f32(|v| v * scalar, data);
     Ok(TensorVal::from_materialized_f32(shape, out))
 }
@@ -227,8 +244,9 @@ pub fn exec_div_scalar(t: &TensorVal, scalar: f32, tensor_on_left: bool) -> R<Te
         return Err(ExecError::Math("division by zero".into()));
     }
     let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let out = if tensor_on_left {
         elementwise_unary_f32(|v| v / scalar, data)
     } else {
@@ -239,15 +257,17 @@ pub fn exec_div_scalar(t: &TensorVal, scalar: f32, tensor_on_left: bool) -> R<Te
 
 fn data_has_zero(t: &TensorVal) -> R<bool> {
     ensure_f32(t)?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     Ok(data.iter().any(|&v| v == 0.0))
 }
 
 pub fn exec_sum_all(t: &TensorVal) -> R<TensorVal> {
     ensure_f32(t)?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let sum = reduce_sum(data);
     Ok(TensorVal::from_materialized_f32(vec![], vec![sum]))
 }
@@ -258,8 +278,9 @@ pub fn exec_mean_all(t: &TensorVal) -> R<TensorVal> {
     if shape.iter().any(|&d| d == 0) {
         return Err(ExecError::Math("mean over zero elements".into()));
     }
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let sum = reduce_sum(data);
     let count = numel(&shape) as f32;
     Ok(TensorVal::from_materialized_f32(vec![], vec![sum / count]))
@@ -278,8 +299,9 @@ pub fn relu_inplace(buf: &mut [f32]) {
 pub fn exec_relu(t: &TensorVal) -> R<TensorVal> {
     ensure_f32(t)?;
     let shape = shape_usize(&t.shape).ok_or_else(|| ExecError::Shape("symbolic dims".into()))?;
-    let data =
-        t.as_f32().ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
+    let data = t
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("tensor not materialized".into()))?;
     let mut out = data.to_vec();
     relu_inplace(&mut out);
     Ok(TensorVal::from_materialized_f32(shape, out))
@@ -298,10 +320,12 @@ pub fn exec_matmul(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
     if k1 != k2 {
         return Err(ExecError::Shape("inner dims mismatch".into()));
     }
-    let ldata =
-        lhs.as_f32().ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
-    let rdata =
-        rhs.as_f32().ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
+    let ldata = lhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
+    let rdata = rhs
+        .as_f32()
+        .ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
     let mut out = vec![0f32; m * n];
     for i in 0..m {
         for j in 0..n {

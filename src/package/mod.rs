@@ -106,7 +106,10 @@ pub fn install_package(path: &str, target_dir: &str) -> Result<()> {
     for entry in archive.entries()? {
         let mut entry = entry?;
         let entry_path = entry.path()?.into_owned();
-        if entry_path.components().any(|c| matches!(c, Component::ParentDir)) {
+        if entry_path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+        {
             return Err(anyhow!("package contains invalid path traversal entries"));
         }
         if entry_path.as_ref() == Path::new("package.toml") {
@@ -129,5 +132,8 @@ pub fn install_package(path: &str, target_dir: &str) -> Result<()> {
 
 pub fn default_install_dir(manifest: &MindManifest) -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("unable to determine home directory"))?;
-    Ok(home.join(".mind").join("packages").join(format!("{}-{}", manifest.name, manifest.version)))
+    Ok(home
+        .join(".mind")
+        .join("packages")
+        .join(format!("{}-{}", manifest.name, manifest.version)))
 }

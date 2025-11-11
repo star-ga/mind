@@ -7,10 +7,12 @@ use mind::eval;
 use tempfile::tempdir;
 
 fn ensure_toolchain() -> bool {
-    eval::resolve_mlir_build_tools().map(|_| true).unwrap_or_else(|err| {
-        eprintln!("Skipping CLI build test: {err}");
-        false
-    })
+    eval::resolve_mlir_build_tools()
+        .map(|_| true)
+        .unwrap_or_else(|err| {
+            eprintln!("Skipping CLI build test: {err}");
+            false
+        })
 }
 
 #[test]

@@ -35,7 +35,11 @@ fn format_shape(shape: &[ShapeDim]) -> String {
 }
 
 fn describe_tensor(tensor: &TensorType) -> String {
-    format!("Tensor[{}, {}]", dtype_name(&tensor.dtype), format_shape(&tensor.shape))
+    format!(
+        "Tensor[{}, {}]",
+        dtype_name(&tensor.dtype),
+        format_shape(&tensor.shape)
+    )
 }
 
 fn describe_value_type(v: &ValueType) -> String {
@@ -99,14 +103,20 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
 }
 
 fn linalg_type_err(op: &str, span: AstSpan, msg: String) -> TypeErrSpan {
-    TypeErrSpan { msg: format!("`{op}`: {msg}"), span }
+    TypeErrSpan {
+        msg: format!("`{op}`: {msg}"),
+        span,
+    }
 }
 
 fn normalize_axis(axis: i32, rank: usize, span: AstSpan, op: &str) -> Result<usize, TypeErrSpan> {
     let rank_i32 = rank as i32;
     let idx = if axis < 0 { rank_i32 + axis } else { axis };
     if idx < 0 || idx >= rank_i32 {
-        Err(TypeErrSpan { msg: format!("axis {axis} out of range for `{op}` (rank {rank})"), span })
+        Err(TypeErrSpan {
+            msg: format!("axis {axis} out of range for `{op}` (rank {rank})"),
+            span,
+        })
     } else {
         Ok(idx as usize)
     }
@@ -224,7 +234,10 @@ fn conv_output_dim(
     match result {
         Ok(Some(v)) => Ok(ShapeDim::Known(v)),
         Ok(None) => Ok(ShapeDim::Sym(fresh_symbol(&format!("_conv_{axis}")))),
-        Err(msg) => Err(TypeErrSpan { msg: format!("`tensor.conv2d`: {msg} ({axis})"), span }),
+        Err(msg) => Err(TypeErrSpan {
+            msg: format!("`tensor.conv2d`: {msg} ({axis})"),
+            span,
+        }),
     }
 }
 
@@ -239,7 +252,10 @@ fn normalize_axes_list(
     for &axis in axes {
         let idx = normalize_axis(axis, rank, span, op)?;
         if !seen.insert(idx) {
-            return Err(TypeErrSpan { msg: format!("duplicate axis {axis} in `{op}`"), span });
+            return Err(TypeErrSpan {
+                msg: format!("duplicate axis {axis} in `{op}`"),
+                span,
+            });
         }
         normalized.push(idx);
     }
@@ -295,7 +311,11 @@ fn known_product(shape: &[ShapeDim]) -> Option<usize> {
 
 fn normalize_expand_axis(axis: i32, rank: usize, span: AstSpan) -> Result<usize, TypeErrSpan> {
     let extended = rank + 1;
-    let idx = if axis < 0 { (extended as i32) + axis } else { axis };
+    let idx = if axis < 0 {
+        (extended as i32) + axis
+    } else {
+        axis
+    };
     if idx < 0 || idx > extended as i32 - 1 {
         Err(TypeErrSpan {
             msg: format!("axis {axis} out of range for `tensor.expand_dims` (rank {rank})"),
@@ -347,8 +367,16 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
     let mut j = b.len() as isize - 1;
 
     while i >= 0 || j >= 0 {
-        let da = if i >= 0 { a[i as usize].clone() } else { ShapeDim::Known(1) };
-        let db = if j >= 0 { b[j as usize].clone() } else { ShapeDim::Known(1) };
+        let da = if i >= 0 {
+            a[i as usize].clone()
+        } else {
+            ShapeDim::Known(1)
+        };
+        let db = if j >= 0 {
+            b[j as usize].clone()
+        } else {
+            ShapeDim::Known(1)
+        };
 
         let dim = match (da, db) {
             (ShapeDim::Known(x), ShapeDim::Known(y)) => {
@@ -390,12 +418,14 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
 fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
     match node {
         Node::Lit(Literal::Int(_), span) => Ok((ValueType::ScalarI32, *span)),
-        Node::Lit(Literal::Ident(name), span) => {
-            env.get(name).cloned().map(|t| (t, *span)).ok_or_else(|| TypeErrSpan {
+        Node::Lit(Literal::Ident(name), span) => env
+            .get(name)
+            .cloned()
+            .map(|t| (t, *span))
+            .ok_or_else(|| TypeErrSpan {
                 msg: format!("unknown identifier `{name}`"),
                 span: *span,
-            })
-        }
+            }),
         Node::Paren(inner, span) => {
             let (ty, _) = infer_expr(inner, env)?;
             Ok((ty, *span))
@@ -403,14 +433,22 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         Node::Tuple { span, .. } => Ok((ValueType::ScalarI32, *span)),
         Node::Call { callee, args, span } => infer_call(callee, args, *span, env),
         Node::CallGrad { loss, wrt, span } => infer_grad(loss, wrt, *span, env),
-        Node::CallTensorSum { x, axes, keepdims, span } => {
+        Node::CallTensorSum {
+            x,
+            axes,
+            keepdims,
+            span,
+        } => {
             let (arg_ty, _) = infer_expr(x, env)?;
             match arg_ty {
                 ValueType::Tensor(tensor) => {
                     let axes_norm =
                         normalize_reduce_axes(axes, tensor.shape.len(), *span, "tensor.sum")?;
                     let shape = reduce_shape(&tensor.shape, &axes_norm, *keepdims);
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.sum` requires a tensor argument".to_string(),
@@ -418,14 +456,22 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
-        Node::CallTensorMean { x, axes, keepdims, span } => {
+        Node::CallTensorMean {
+            x,
+            axes,
+            keepdims,
+            span,
+        } => {
             let (arg_ty, _) = infer_expr(x, env)?;
             match arg_ty {
                 ValueType::Tensor(tensor) => {
                     let axes_norm =
                         normalize_reduce_axes(axes, tensor.shape.len(), *span, "tensor.mean")?;
                     let shape = reduce_shape(&tensor.shape, &axes_norm, *keepdims);
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.mean` requires a tensor argument".to_string(),
@@ -460,7 +506,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                             });
                         }
                     }
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, new_shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, new_shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.reshape` requires a tensor argument".to_string(),
@@ -476,7 +525,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     let axis = normalize_expand_axis(*axis, rank, *span)?;
                     let mut shape = tensor.shape;
                     shape.insert(axis, ShapeDim::Known(1));
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.expand_dims` requires a tensor argument".to_string(),
@@ -496,7 +548,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                             shape.push(dim.clone());
                         }
                     }
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.squeeze` requires a tensor argument".to_string(),
@@ -523,7 +578,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                         ));
                     }
                     let shape = linalg::permute_shape(&tensor.shape, &perm);
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.transpose` requires a tensor argument".to_string(),
@@ -555,7 +613,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     }
                     let mut shape = tensor.shape.clone();
                     shape.remove(axis_norm);
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.index` requires a tensor argument".to_string(),
@@ -563,7 +624,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
-        Node::CallSlice { x, axis, start, end, span } => {
+        Node::CallSlice {
+            x,
+            axis,
+            start,
+            end,
+            span,
+        } => {
             let (arg_ty, _) = infer_expr(x, env)?;
             match arg_ty {
                 ValueType::Tensor(tensor) => {
@@ -594,7 +661,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     };
                     let mut shape = tensor.shape.clone();
                     shape[axis_norm] = new_dim;
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.slice` requires a tensor argument".to_string(),
@@ -602,7 +672,14 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
-        Node::CallSliceStride { x, axis, start, end, step, span } => {
+        Node::CallSliceStride {
+            x,
+            axis,
+            start,
+            end,
+            step,
+            span,
+        } => {
             if *step == 0 {
                 return Err(TypeErrSpan {
                     msg: "`tensor.slice_stride` requires step != 0".to_string(),
@@ -632,7 +709,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     };
                     let mut shape = tensor.shape.clone();
                     shape[axis_norm] = new_dim;
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.slice_stride` requires a tensor argument".to_string(),
@@ -659,7 +739,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     if axis_norm < tensor.shape.len() {
                         shape.extend_from_slice(&tensor.shape[axis_norm + 1..]);
                     }
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tensor.dtype, shape)),
+                        *span,
+                    ))
                 }
                 (ValueType::Tensor(_), _) => Err(TypeErrSpan {
                     msg: "`tensor.gather` requires `idx` to be a tensor".to_string(),
@@ -737,7 +820,14 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
-        Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, span } => {
+        Node::CallTensorConv2d {
+            x,
+            w,
+            stride_h,
+            stride_w,
+            padding,
+            span,
+        } => {
             if *stride_h == 0 || *stride_w == 0 {
                 return Err(TypeErrSpan {
                     msg: "`tensor.conv2d`: strides must be positive".to_string(),
@@ -853,7 +943,12 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
 
             Ok((ValueType::Tensor(TensorType::new(dtype, out_shape)), *span))
         }
-        Node::Binary { op, left, right, span } => {
+        Node::Binary {
+            op,
+            left,
+            right,
+            span,
+        } => {
             let (lt, _) = infer_expr(left, env)?;
             let (rt, _) = infer_expr(right, env)?;
             if matches!((&lt, &rt), (ValueType::ScalarI32, ValueType::ScalarI32)) {
@@ -891,7 +986,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 (ValueType::Tensor(t), ValueType::ScalarI32)
                 | (ValueType::ScalarI32, ValueType::Tensor(t)) => {
                     if let Some(dtype) = combine_dtypes(&lt, &rt) {
-                        Ok((ValueType::Tensor(TensorType::new(dtype, t.shape.clone())), *span))
+                        Ok((
+                            ValueType::Tensor(TensorType::new(dtype, t.shape.clone())),
+                            *span,
+                        ))
                     } else {
                         let dtype_str = dtype_name(&t.dtype);
                         let message = match promote_scalar_to(t.dtype.clone()) {
@@ -904,7 +1002,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                                 binop_display(op), dtype_str
                             ),
                         };
-                        Err(TypeErrSpan { msg: message, span: *span })
+                        Err(TypeErrSpan {
+                            msg: message,
+                            span: *span,
+                        })
                     }
                 }
                 _ => Err(TypeErrSpan {
@@ -1006,9 +1107,10 @@ fn infer_call(
             }
             let (arg_ty, _) = infer_expr(&args[0], env)?;
             match arg_ty {
-                ValueType::Tensor(tensor) => {
-                    Ok((ValueType::Tensor(TensorType::new(tensor.dtype, Vec::new())), span))
-                }
+                ValueType::Tensor(tensor) => Ok((
+                    ValueType::Tensor(TensorType::new(tensor.dtype, Vec::new())),
+                    span,
+                )),
                 _ => Err(TypeErrSpan {
                     msg: "`tensor.sum` requires a tensor argument".to_string(),
                     span,
@@ -1111,16 +1213,23 @@ fn infer_call(
                 }),
             }
         }
-        _ => Err(TypeErrSpan { msg: format!("unsupported call to `{callee}`"), span }),
+        _ => Err(TypeErrSpan {
+            msg: format!("unsupported call to `{callee}`"),
+            span,
+        }),
     }
 }
 
 fn infer_dtype_arg(node: &Node) -> Result<DType, TypeErrSpan> {
     match node {
-        Node::Lit(Literal::Ident(name), span) => name
-            .parse()
-            .map_err(|_| TypeErrSpan { msg: format!("unknown dtype `{name}`"), span: *span }),
-        _ => Err(TypeErrSpan { msg: "expected dtype identifier".to_string(), span: node.span() }),
+        Node::Lit(Literal::Ident(name), span) => name.parse().map_err(|_| TypeErrSpan {
+            msg: format!("unknown dtype `{name}`"),
+            span: *span,
+        }),
+        _ => Err(TypeErrSpan {
+            msg: "expected dtype identifier".to_string(),
+            span: node.span(),
+        }),
     }
 }
 
@@ -1152,7 +1261,10 @@ fn infer_shape_node(node: &Node) -> Result<Vec<ShapeDim>, TypeErrSpan> {
             }
         }
         Node::Lit(Literal::Ident(name), _span) => Ok(vec![ShapeDim::Sym(leak_symbol(name))]),
-        _ => Err(TypeErrSpan { msg: "unsupported shape literal".to_string(), span: node.span() }),
+        _ => Err(TypeErrSpan {
+            msg: "unsupported shape literal".to_string(),
+            span: node.span(),
+        }),
     }
 }
 
@@ -1204,7 +1316,12 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
 
     for item in &module.items {
         match item {
-            Node::Let { name, ann, value, span } => match ann {
+            Node::Let {
+                name,
+                ann,
+                value,
+                span,
+            } => match ann {
                 Some(annotation) => match valuetype_from_ann(annotation) {
                     Some(vt_ann) => {
                         match infer_expr(value, &tenv) {
@@ -1300,7 +1417,12 @@ fn diag_from_span(src: &str, msg: String, span: AstSpan) -> Pretty {
     let range = span.start()..span.end();
     let start = location_at(src, span.start());
     let end = location_at(src, span.end());
-    Pretty { message: msg, span: range, start, end }
+    Pretty {
+        message: msg,
+        span: range,
+        start,
+        end,
+    }
 }
 
 fn diag_from_type_err(src: &str, err: TypeErrSpan) -> Pretty {

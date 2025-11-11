@@ -23,21 +23,79 @@ enum Op {
     Sub(NodeId, NodeId),
     Mul(NodeId, NodeId),
     Div(NodeId, NodeId),
-    ReduceSum { x: NodeId, axes: Vec<usize>, keepdims: bool, reduced_elems: Option<usize> },
-    ReduceMean { x: NodeId, axes: Vec<usize>, keepdims: bool, reduced_elems: Option<usize> },
-    Reshape { x: NodeId },
-    ExpandDims { x: NodeId, axis: usize },
-    Squeeze { x: NodeId, axes: Vec<usize> },
-    Transpose { x: NodeId, axes: Vec<usize> },
-    Index { x: NodeId, axis: usize, i: i32 },
-    Slice { x: NodeId, axis: usize, start: i32, end: i32 },
-    SliceStride { x: NodeId, axis: usize, start: i32, end: i32, step: i32, in_shape: Vec<ShapeDim> },
-    Gather { x: NodeId, idx: NodeId, axis: usize, in_shape: Vec<ShapeDim> },
-    Dot { a: NodeId, b: NodeId, info: MatMulShapeInfo },
-    MatMul { a: NodeId, b: NodeId, info: MatMulShapeInfo },
-    Relu { x: NodeId },
+    ReduceSum {
+        x: NodeId,
+        axes: Vec<usize>,
+        keepdims: bool,
+        reduced_elems: Option<usize>,
+    },
+    ReduceMean {
+        x: NodeId,
+        axes: Vec<usize>,
+        keepdims: bool,
+        reduced_elems: Option<usize>,
+    },
+    Reshape {
+        x: NodeId,
+    },
+    ExpandDims {
+        x: NodeId,
+        axis: usize,
+    },
+    Squeeze {
+        x: NodeId,
+        axes: Vec<usize>,
+    },
+    Transpose {
+        x: NodeId,
+        axes: Vec<usize>,
+    },
+    Index {
+        x: NodeId,
+        axis: usize,
+        i: i32,
+    },
+    Slice {
+        x: NodeId,
+        axis: usize,
+        start: i32,
+        end: i32,
+    },
+    SliceStride {
+        x: NodeId,
+        axis: usize,
+        start: i32,
+        end: i32,
+        step: i32,
+        in_shape: Vec<ShapeDim>,
+    },
+    Gather {
+        x: NodeId,
+        idx: NodeId,
+        axis: usize,
+        in_shape: Vec<ShapeDim>,
+    },
+    Dot {
+        a: NodeId,
+        b: NodeId,
+        info: MatMulShapeInfo,
+    },
+    MatMul {
+        a: NodeId,
+        b: NodeId,
+        info: MatMulShapeInfo,
+    },
+    Relu {
+        x: NodeId,
+    },
     #[allow(dead_code)]
-    Conv2d { x: NodeId, w: NodeId, stride_h: usize, stride_w: usize, padding: ConvPadding },
+    Conv2d {
+        x: NodeId,
+        w: NodeId,
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -155,9 +213,15 @@ fn known_product(shape: &[ShapeDim]) -> Option<usize> {
 
 fn normalize_expand_axis(axis: i32, rank: usize) -> Result<usize, String> {
     let extended = rank + 1;
-    let idx = if axis < 0 { (extended as i32) + axis } else { axis };
+    let idx = if axis < 0 {
+        (extended as i32) + axis
+    } else {
+        axis
+    };
     if idx < 0 || idx > extended as i32 - 1 {
-        Err(format!("axis {axis} out of range for expand_dims (rank {rank})"))
+        Err(format!(
+            "axis {axis} out of range for expand_dims (rank {rank})"
+        ))
     } else {
         Ok(idx as usize)
     }
@@ -384,8 +448,9 @@ pub fn build_graph_loss(
                     vars.entry(name.clone()).or_insert(*existing);
                     return Ok(*existing);
                 }
-                let entry =
-                    tenv.get(name).ok_or_else(|| format!("unknown tensor variable `{name}`"))?;
+                let entry = tenv
+                    .get(name)
+                    .ok_or_else(|| format!("unknown tensor variable `{name}`"))?;
                 if let Some(expr) = &entry.expr {
                     if !expanding.insert(name.clone()) {
                         return Err(format!("cyclic tensor alias `{name}`"));
@@ -410,7 +475,9 @@ pub fn build_graph_loss(
                 }
             }
             ast::Node::Paren(inner, _) => rec(inner, tenv, tape, vars, var_nodes, expanding),
-            ast::Node::Binary { op, left, right, .. } => {
+            ast::Node::Binary {
+                op, left, right, ..
+            } => {
                 let l = rec(left, tenv, tape, vars, var_nodes, expanding)?;
                 let r = rec(right, tenv, tape, vars, var_nodes, expanding)?;
                 let lhs = &tape.nodes[l.0];
@@ -434,18 +501,30 @@ pub fn build_graph_loss(
                     _ => None,
                 };
                 let info = match op {
-                    ast::BinOp::Add => {
-                        NodeInfo { op: Op::Add(l, r), dtype: lhs.dtype.clone(), shape, fill }
-                    }
-                    ast::BinOp::Sub => {
-                        NodeInfo { op: Op::Sub(l, r), dtype: lhs.dtype.clone(), shape, fill }
-                    }
-                    ast::BinOp::Mul => {
-                        NodeInfo { op: Op::Mul(l, r), dtype: lhs.dtype.clone(), shape, fill }
-                    }
-                    ast::BinOp::Div => {
-                        NodeInfo { op: Op::Div(l, r), dtype: lhs.dtype.clone(), shape, fill }
-                    }
+                    ast::BinOp::Add => NodeInfo {
+                        op: Op::Add(l, r),
+                        dtype: lhs.dtype.clone(),
+                        shape,
+                        fill,
+                    },
+                    ast::BinOp::Sub => NodeInfo {
+                        op: Op::Sub(l, r),
+                        dtype: lhs.dtype.clone(),
+                        shape,
+                        fill,
+                    },
+                    ast::BinOp::Mul => NodeInfo {
+                        op: Op::Mul(l, r),
+                        dtype: lhs.dtype.clone(),
+                        shape,
+                        fill,
+                    },
+                    ast::BinOp::Div => NodeInfo {
+                        op: Op::Div(l, r),
+                        dtype: lhs.dtype.clone(),
+                        shape,
+                        fill,
+                    },
                 };
                 Ok(tape.push(info))
             }
@@ -488,7 +567,14 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(info))
             }
-            ast::Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, .. } => {
+            ast::Node::CallTensorConv2d {
+                x,
+                w,
+                stride_h,
+                stride_w,
+                padding,
+                ..
+            } => {
                 if *stride_h == 0 || *stride_w == 0 {
                     return Err("`tensor.conv2d`: strides must be positive".to_string());
                 }
@@ -553,7 +639,9 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(info))
             }
-            ast::Node::CallTensorSum { x, axes, keepdims, .. } => {
+            ast::Node::CallTensorSum {
+                x, axes, keepdims, ..
+            } => {
                 let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
                 let child_info = &tape.nodes[child.0];
                 let axes_norm = normalize_reduce_axes(axes, child_info.shape.len())?;
@@ -578,7 +666,9 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(info))
             }
-            ast::Node::CallTensorMean { x, axes, keepdims, .. } => {
+            ast::Node::CallTensorMean {
+                x, axes, keepdims, ..
+            } => {
                 let child = rec(x, tenv, tape, vars, var_nodes, expanding)?;
                 let child_info = &tape.nodes[child.0];
                 let axes_norm = normalize_reduce_axes(axes, child_info.shape.len())?;
@@ -627,7 +717,10 @@ pub fn build_graph_loss(
                 let mut shape = child_info.shape.clone();
                 shape.insert(axis_norm, ShapeDim::Known(1));
                 let info = NodeInfo {
-                    op: Op::ExpandDims { x: child, axis: axis_norm },
+                    op: Op::ExpandDims {
+                        x: child,
+                        axis: axis_norm,
+                    },
                     dtype: child_info.dtype.clone(),
                     shape,
                     fill: child_info.fill,
@@ -646,7 +739,10 @@ pub fn build_graph_loss(
                     }
                 }
                 let info = NodeInfo {
-                    op: Op::Squeeze { x: child, axes: axes_to_remove.clone() },
+                    op: Op::Squeeze {
+                        x: child,
+                        axes: axes_to_remove.clone(),
+                    },
                     dtype: child_info.dtype.clone(),
                     shape,
                     fill: child_info.fill,
@@ -665,7 +761,10 @@ pub fn build_graph_loss(
                 };
                 let shape = linalg::permute_shape(&child_info.shape, &perm);
                 let info = NodeInfo {
-                    op: Op::Transpose { x: child, axes: perm.clone() },
+                    op: Op::Transpose {
+                        x: child,
+                        axes: perm.clone(),
+                    },
                     dtype: child_info.dtype.clone(),
                     shape,
                     fill: child_info.fill,
@@ -687,14 +786,24 @@ pub fn build_graph_loss(
                 let mut shape = child_info.shape.clone();
                 shape.remove(axis_norm);
                 let info = NodeInfo {
-                    op: Op::Index { x: child, axis: axis_norm, i: *i },
+                    op: Op::Index {
+                        x: child,
+                        axis: axis_norm,
+                        i: *i,
+                    },
                     dtype: child_info.dtype.clone(),
                     shape,
                     fill: child_info.fill,
                 };
                 Ok(tape.push(info))
             }
-            ast::Node::CallSlice { x, axis, start, end, .. } => {
+            ast::Node::CallSlice {
+                x,
+                axis,
+                start,
+                end,
+                ..
+            } => {
                 if *start < 0 || *end < *start {
                     return Err("tensor.slice: expected 0 <= start <= end".to_string());
                 }
@@ -713,14 +822,26 @@ pub fn build_graph_loss(
                 let mut shape = child_info.shape.clone();
                 shape[axis_norm] = new_dim;
                 let info = NodeInfo {
-                    op: Op::Slice { x: child, axis: axis_norm, start: *start, end: *end },
+                    op: Op::Slice {
+                        x: child,
+                        axis: axis_norm,
+                        start: *start,
+                        end: *end,
+                    },
                     dtype: child_info.dtype.clone(),
                     shape,
                     fill: child_info.fill,
                 };
                 Ok(tape.push(info))
             }
-            ast::Node::CallSliceStride { x, axis, start, end, step, .. } => {
+            ast::Node::CallSliceStride {
+                x,
+                axis,
+                start,
+                end,
+                step,
+                ..
+            } => {
                 if *step == 0 {
                     return Err("tensor.slice_stride: step must be non-zero".to_string());
                 }
@@ -804,7 +925,11 @@ pub fn build_graph_loss(
                     _ => None,
                 };
                 let node_info = NodeInfo {
-                    op: Op::Dot { a: left, b: right, info: info.clone() },
+                    op: Op::Dot {
+                        a: left,
+                        b: right,
+                        info: info.clone(),
+                    },
                     dtype: lhs.dtype.clone(),
                     shape: info.result_shape.clone(),
                     fill,
@@ -826,7 +951,11 @@ pub fn build_graph_loss(
                     _ => None,
                 };
                 let node_info = NodeInfo {
-                    op: Op::MatMul { a: left, b: right, info: info.clone() },
+                    op: Op::MatMul {
+                        a: left,
+                        b: right,
+                        info: info.clone(),
+                    },
                     dtype: lhs.dtype.clone(),
                     shape: info.result_shape.clone(),
                     fill,
@@ -856,7 +985,9 @@ pub fn backprop_to_vars(
 
     for idx in (0..tape.nodes.len()).rev() {
         let nid = NodeId(idx);
-        let Some(grad) = adj.get(&nid).cloned() else { continue };
+        let Some(grad) = adj.get(&nid).cloned() else {
+            continue;
+        };
         let node = &tape.nodes[idx];
         match &node.op {
             Op::Add(l, r) => {
@@ -885,7 +1016,12 @@ pub fn backprop_to_vars(
                 push_grad_scaled(&mut adj, tape, *l, &grad, scale_left);
                 push_grad_scaled(&mut adj, tape, *r, &grad, scale_right);
             }
-            Op::ReduceSum { x, axes, keepdims, reduced_elems } => {
+            Op::ReduceSum {
+                x,
+                axes,
+                keepdims,
+                reduced_elems,
+            } => {
                 let _ = reduced_elems;
                 let mut expanded = grad.clone();
                 if !keepdims {
@@ -894,7 +1030,12 @@ pub fn backprop_to_vars(
                 let broadcasted = broadcast_to_shape(expanded, &tape.nodes[x.0].shape);
                 accumulate_grad(&mut adj, *x, broadcasted);
             }
-            Op::ReduceMean { x, axes, keepdims, reduced_elems } => {
+            Op::ReduceMean {
+                x,
+                axes,
+                keepdims,
+                reduced_elems,
+            } => {
                 let mut adjusted = grad.clone();
                 match reduced_elems {
                     Some(n) if *n > 0 => {
@@ -944,7 +1085,12 @@ pub fn backprop_to_vars(
                     TensorVal::new(child_info.dtype.clone(), child_info.shape.clone(), None);
                 accumulate_grad(&mut adj, *x, scattered);
             }
-            Op::Slice { x, axis, start, end } => {
+            Op::Slice {
+                x,
+                axis,
+                start,
+                end,
+            } => {
                 let child_info = &tape.nodes[x.0];
                 let mut fill = None;
                 if let (Some(gfill), Some(_orig_fill)) = (grad.fill, child_info.fill) {
@@ -957,13 +1103,25 @@ pub fn backprop_to_vars(
                 let back = TensorVal::new(child_info.dtype.clone(), child_info.shape.clone(), fill);
                 accumulate_grad(&mut adj, *x, back);
             }
-            Op::SliceStride { x, in_shape, axis, start, end, step } => {
+            Op::SliceStride {
+                x,
+                in_shape,
+                axis,
+                start,
+                end,
+                step,
+            } => {
                 let _ = (axis, start, end, step);
                 let child_info = &tape.nodes[x.0];
                 let back = TensorVal::new(child_info.dtype.clone(), in_shape.clone(), None);
                 accumulate_grad(&mut adj, *x, back);
             }
-            Op::Gather { x, in_shape, idx, axis } => {
+            Op::Gather {
+                x,
+                in_shape,
+                idx,
+                axis,
+            } => {
                 let _ = (idx, axis);
                 let child_info = &tape.nodes[x.0];
                 let back = TensorVal::new(child_info.dtype.clone(), in_shape.clone(), None);
@@ -1076,8 +1234,16 @@ fn reduction_factor(output: &[ShapeDim], target: &[ShapeDim]) -> Option<f64> {
     let mut i = output.len() as isize - 1;
     let mut j = target.len() as isize - 1;
     while i >= 0 || j >= 0 {
-        let od = if i >= 0 { &output[i as usize] } else { &ShapeDim::Known(1) };
-        let td = if j >= 0 { &target[j as usize] } else { &ShapeDim::Known(1) };
+        let od = if i >= 0 {
+            &output[i as usize]
+        } else {
+            &ShapeDim::Known(1)
+        };
+        let td = if j >= 0 {
+            &target[j as usize]
+        } else {
+            &ShapeDim::Known(1)
+        };
         match (od, td) {
             (ShapeDim::Known(o), ShapeDim::Known(t)) => {
                 if o == t {
@@ -1217,8 +1383,11 @@ fn backprop_matmul_op(
         let aligned = reshape_to_target(grad_a, &tape.nodes[a.0].shape);
         accumulate_grad(adj, a, aligned);
     } else {
-        let zero =
-            TensorVal::new(tape.nodes[a.0].dtype.clone(), tape.nodes[a.0].shape.clone(), None);
+        let zero = TensorVal::new(
+            tape.nodes[a.0].dtype.clone(),
+            tape.nodes[a.0].shape.clone(),
+            None,
+        );
         accumulate_grad(adj, a, zero);
     }
 
@@ -1230,8 +1399,11 @@ fn backprop_matmul_op(
         let aligned = reshape_to_target(grad_b, &tape.nodes[b.0].shape);
         accumulate_grad(adj, b, aligned);
     } else {
-        let zero =
-            TensorVal::new(tape.nodes[b.0].dtype.clone(), tape.nodes[b.0].shape.clone(), None);
+        let zero = TensorVal::new(
+            tape.nodes[b.0].dtype.clone(),
+            tape.nodes[b.0].shape.clone(),
+            None,
+        );
         accumulate_grad(adj, b, zero);
     }
 }

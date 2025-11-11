@@ -45,7 +45,9 @@ fn merge_dims(a: ShapeDim, b: ShapeDim) -> Result<ShapeDim, String> {
             if sa == sb {
                 Ok(ShapeDim::Sym(sa))
             } else {
-                Err(format!("cannot broadcast symbolic dimensions {sa} and {sb}"))
+                Err(format!(
+                    "cannot broadcast symbolic dimensions {sa} and {sb}"
+                ))
             }
         }
         (ShapeDim::Sym(sym), ShapeDim::Known(1)) | (ShapeDim::Known(1), ShapeDim::Sym(sym)) => {
@@ -56,7 +58,10 @@ fn merge_dims(a: ShapeDim, b: ShapeDim) -> Result<ShapeDim, String> {
             if other == 1 {
                 Ok(ShapeDim::Sym(sym))
             } else {
-                Err(format!("cannot broadcast dimension {} with symbolic {}", other, sym))
+                Err(format!(
+                    "cannot broadcast dimension {} with symbolic {}",
+                    other, sym
+                ))
             }
         }
     }
@@ -67,8 +72,16 @@ pub fn broadcast_leading(lhs: &[ShapeDim], rhs: &[ShapeDim]) -> Result<Vec<Shape
     let mut i = lhs.len() as isize - 1;
     let mut j = rhs.len() as isize - 1;
     while i >= 0 || j >= 0 {
-        let ld = if i >= 0 { lhs[i as usize].clone() } else { ShapeDim::Known(1) };
-        let rd = if j >= 0 { rhs[j as usize].clone() } else { ShapeDim::Known(1) };
+        let ld = if i >= 0 {
+            lhs[i as usize].clone()
+        } else {
+            ShapeDim::Known(1)
+        };
+        let rd = if j >= 0 {
+            rhs[j as usize].clone()
+        } else {
+            ShapeDim::Known(1)
+        };
         let dim = merge_dims(ld, rd)?;
         result.push(dim);
         i -= 1;
@@ -90,7 +103,11 @@ pub fn normalize_axis(axis: i32, rank: usize) -> Result<usize, String> {
 
 pub fn normalize_permutation(axes: &[i32], rank: usize) -> Result<Vec<usize>, String> {
     if axes.len() != rank {
-        return Err(format!("permutation length {} does not match rank {}", axes.len(), rank));
+        return Err(format!(
+            "permutation length {} does not match rank {}",
+            axes.len(),
+            rank
+        ));
     }
     let mut seen = vec![false; rank];
     let mut perm = Vec::with_capacity(rank);

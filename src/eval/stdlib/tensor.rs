@@ -537,7 +537,11 @@ fn slice_len_with_step(len: Option<usize>, start: i32, end: i32, step: i32) -> O
 
 fn normalize_expand_axis(axis: i32, rank: usize) -> Result<usize, EvalError> {
     let extended = rank + 1;
-    let idx = if axis < 0 { (extended as i32) + axis } else { axis };
+    let idx = if axis < 0 {
+        (extended as i32) + axis
+    } else {
+        axis
+    };
     if idx < 0 || idx > extended as i32 - 1 {
         Err(EvalError::Unsupported)
     } else {
@@ -715,12 +719,7 @@ pub(crate) fn conv2d_tensor_preview(
     let out_h = conv_output_dim_eval(&x.shape[1], Some(&w.shape[0]), stride_h, padding)?;
     let out_w = conv_output_dim_eval(&x.shape[2], Some(&w.shape[1]), stride_w, padding)?;
 
-    let out_shape = vec![
-        x.shape[0].clone(),
-        out_h,
-        out_w,
-        w.shape[3].clone(),
-    ];
+    let out_shape = vec![x.shape[0].clone(), out_h, out_w, w.shape[3].clone()];
 
     Ok(TensorVal::new(dtype, out_shape, None))
 }
@@ -868,7 +867,10 @@ pub(crate) fn transpose_tensor_preview(
         linalg::default_transpose(rank)
     };
     let shape = linalg::permute_shape(&tensor.shape, &perm);
-    Ok((TensorVal::new(tensor.dtype.clone(), shape, tensor.fill), perm))
+    Ok((
+        TensorVal::new(tensor.dtype.clone(), shape, tensor.fill),
+        perm,
+    ))
 }
 
 pub(crate) fn index_tensor_preview(
@@ -945,7 +947,11 @@ pub(crate) fn slice_stride_tensor_preview(
         }
     };
     shape[axis] = new_dim;
-    let fill = if tensor.fill.is_some() { tensor.fill } else { None };
+    let fill = if tensor.fill.is_some() {
+        tensor.fill
+    } else {
+        None
+    };
     Ok(TensorVal::new(tensor.dtype.clone(), shape, fill))
 }
 

@@ -89,7 +89,9 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
         }
     }
     opt_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let opt_output = opt_cmd.output().map_err(|e| format!("mlir-opt failed to spawn: {e}"))?;
+    let opt_output = opt_cmd
+        .output()
+        .map_err(|e| format!("mlir-opt failed to spawn: {e}"))?;
     if !opt_output.status.success() {
         return Err(format!(
             "mlir-opt failed: {}\n{}",
@@ -109,15 +111,27 @@ pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child =
-        runner_cmd.spawn().map_err(|e| format!("mlir-cpu-runner failed to spawn: {e}"))?;
+    let mut child = runner_cmd
+        .spawn()
+        .map_err(|e| format!("mlir-cpu-runner failed to spawn: {e}"))?;
     {
-        let stdin = child.stdin.as_mut().ok_or("Failed to open stdin for mlir-cpu-runner")?;
-        stdin.write_all(optimized_mlir.as_bytes()).map_err(|e| e.to_string())?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or("Failed to open stdin for mlir-cpu-runner")?;
+        stdin
+            .write_all(optimized_mlir.as_bytes())
+            .map_err(|e| e.to_string())?;
     }
 
-    let mut child_stdout = child.stdout.take().ok_or("Failed to capture mlir-cpu-runner stdout")?;
-    let mut child_stderr = child.stderr.take().ok_or("Failed to capture mlir-cpu-runner stderr")?;
+    let mut child_stdout = child
+        .stdout
+        .take()
+        .ok_or("Failed to capture mlir-cpu-runner stdout")?;
+    let mut child_stderr = child
+        .stderr
+        .take()
+        .ok_or("Failed to capture mlir-cpu-runner stderr")?;
 
     use std::io::Read;
 

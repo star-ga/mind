@@ -171,19 +171,27 @@ pub fn eval_module_value_with_env_mode(
         }
         let diags = crate::type_checker::check_module_types(m, src, &tenv);
         if !diags.is_empty() {
-            let msg = diags.into_iter().map(|diag| diag.message).collect::<Vec<_>>().join("; ");
+            let msg = diags
+                .into_iter()
+                .map(|diag| diag.message)
+                .collect::<Vec<_>>()
+                .join("; ");
             return Err(EvalError::TypeError(msg));
         }
     }
 
-    let mut venv: HashMap<String, Value> =
-        env.iter().map(|(name, value)| (name.clone(), Value::Int(*value))).collect();
+    let mut venv: HashMap<String, Value> = env
+        .iter()
+        .map(|(name, value)| (name.clone(), Value::Int(*value)))
+        .collect();
     let mut tensor_env: HashMap<String, TensorEnvEntry> = HashMap::new();
 
     let mut last = Value::Int(0_i64);
     for item in &m.items {
         match item {
-            Node::Let { name, ann, value, .. } => {
+            Node::Let {
+                name, ann, value, ..
+            } => {
                 let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                 let stored = match ann {
                     Some(TypeAnn::Tensor { dtype, dims }) => {
@@ -211,8 +219,13 @@ pub fn eval_module_value_with_env_mode(
                             Some(TypeAnn::Tensor { .. }) => None,
                             _ => Some((**value).clone()),
                         };
-                        tensor_env
-                            .insert(name.clone(), TensorEnvEntry { value: tensor.clone(), expr });
+                        tensor_env.insert(
+                            name.clone(),
+                            TensorEnvEntry {
+                                value: tensor.clone(),
+                                expr,
+                            },
+                        );
                     }
                     _ => {
                         tensor_env.remove(name);
@@ -233,7 +246,10 @@ pub fn eval_module_value_with_env_mode(
                     Some(Value::Tensor(tensor)) => {
                         tensor_env.insert(
                             name.clone(),
-                            TensorEnvEntry { value: tensor.clone(), expr: Some((**value).clone()) },
+                            TensorEnvEntry {
+                                value: tensor.clone(),
+                                expr: Some((**value).clone()),
+                            },
                         );
                     }
                     _ => {
@@ -311,7 +327,11 @@ pub fn eval_module_value_with_env_mode(
             }
         }
         #[cfg(feature = "mlir-gpu")]
-        ExecMode::MlirGpu { backend, blocks, threads } => {
+        ExecMode::MlirGpu {
+            backend,
+            blocks,
+            threads,
+        } => {
             let ir = lower_to_ir(m);
             let mut opts = mlir_export::MlirEmitOptions::default();
             opts.mode = mlir_export::MlirEmitMode::Executable;
@@ -365,9 +385,10 @@ pub(crate) fn eval_value_expr_mode(
 ) -> Result<Value, EvalError> {
     match node {
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
-        Node::Lit(Literal::Ident(name), _) => {
-            env.get(name).cloned().ok_or_else(|| EvalError::UnknownVar(name.clone()))
-        }
+        Node::Lit(Literal::Ident(name), _) => env
+            .get(name)
+            .cloned()
+            .ok_or_else(|| EvalError::UnknownVar(name.clone())),
         Node::Paren(inner, _) => eval_value_expr_mode(inner, env, tensor_env, mode.clone()),
         Node::Tuple { elements, .. } => {
             let mut items = Vec::with_capacity(elements.len());
@@ -379,7 +400,9 @@ pub(crate) fn eval_value_expr_mode(
         Node::Call { callee, args, .. } => {
             stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
         }
-        Node::CallTensorSum { x, axes, keepdims, .. } => {
+        Node::CallTensorSum {
+            x, axes, keepdims, ..
+        } => {
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
@@ -389,7 +412,9 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Err(EvalError::Unsupported),
             }
         }
-        Node::CallTensorMean { x, axes, keepdims, .. } => {
+        Node::CallTensorMean {
+            x, axes, keepdims, ..
+        } => {
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
@@ -450,7 +475,13 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Err(EvalError::Unsupported),
             }
         }
-        Node::CallSlice { x, axis, start, end, .. } => {
+        Node::CallSlice {
+            x,
+            axis,
+            start,
+            end,
+            ..
+        } => {
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
@@ -460,7 +491,14 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Err(EvalError::Unsupported),
             }
         }
-        Node::CallSliceStride { x, axis, start, end, step, .. } => {
+        Node::CallSliceStride {
+            x,
+            axis,
+            start,
+            end,
+            step,
+            ..
+        } => {
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
@@ -563,7 +601,14 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Err(EvalError::Unsupported),
             }
         }
-        Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, .. } => {
+        Node::CallTensorConv2d {
+            x,
+            w,
+            stride_h,
+            stride_w,
+            padding,
+            ..
+        } => {
             let x_val = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             let w_val = eval_value_expr_mode(w, env, tensor_env, mode.clone())?;
             match (x_val, w_val) {
@@ -577,7 +622,9 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallGrad { loss, wrt, .. } => eval_grad_map(loss, env, tensor_env, wrt),
-        Node::Binary { op, left, right, .. } => {
+        Node::Binary {
+            op, left, right, ..
+        } => {
             let lv = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
             let rv = eval_value_expr_mode(right, env, tensor_env, mode.clone())?;
             apply_binary(*op, lv, rv, mode.clone())
@@ -610,8 +657,10 @@ pub fn eval_grad_map(
         ));
     }
 
-    let requested: BTreeMap<String, crate::eval::autodiff::NodeId> =
-        vars_all.into_iter().filter(|(name, _)| wrt.contains(name)).collect();
+    let requested: BTreeMap<String, crate::eval::autodiff::NodeId> = vars_all
+        .into_iter()
+        .filter(|(name, _)| wrt.contains(name))
+        .collect();
 
     let mut grads = crate::eval::autodiff::backprop_to_vars(loss_id, &tape, &requested);
     for name in wrt {
@@ -619,7 +668,11 @@ pub fn eval_grad_map(
             if let Some(entry) = tenv.get(name) {
                 grads.insert(
                     name.clone(),
-                    TensorVal::new(entry.value.dtype.clone(), entry.value.shape.clone(), Some(0.0)),
+                    TensorVal::new(
+                        entry.value.dtype.clone(),
+                        entry.value.shape.clone(),
+                        Some(0.0),
+                    ),
                 );
             }
         }
@@ -977,8 +1030,16 @@ pub(crate) fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<Sha
     let mut i = a.len() as isize - 1;
     let mut j = b.len() as isize - 1;
     while i >= 0 || j >= 0 {
-        let da = if i >= 0 { &a[i as usize] } else { &ShapeDim::Known(1) };
-        let db = if j >= 0 { &b[j as usize] } else { &ShapeDim::Known(1) };
+        let da = if i >= 0 {
+            &a[i as usize]
+        } else {
+            &ShapeDim::Known(1)
+        };
+        let db = if j >= 0 {
+            &b[j as usize]
+        } else {
+            &ShapeDim::Known(1)
+        };
         let dim = match (da, db) {
             (ShapeDim::Known(x), ShapeDim::Known(y)) if x == y => ShapeDim::Known(*x),
             (ShapeDim::Known(1), ShapeDim::Known(y)) => ShapeDim::Known(*y),

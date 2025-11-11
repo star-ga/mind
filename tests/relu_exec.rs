@@ -5,7 +5,16 @@ fn relu_exec_non_negative() {
 
     let program = "let x: Tensor[f32,(1,4)] = 0; x = x - 3; tensor.relu(x + 1)";
     let output = Command::new("cargo")
-        .args(["run", "--quiet", "--features", "cpu-exec", "--", "eval", "--exec", program])
+        .args([
+            "run",
+            "--quiet",
+            "--features",
+            "cpu-exec",
+            "--",
+            "eval",
+            "--exec",
+            program,
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());

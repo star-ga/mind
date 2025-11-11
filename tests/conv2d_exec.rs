@@ -10,7 +10,16 @@ fn conv2d_valid_runs() {
     "#;
 
     let output = Command::new("cargo")
-        .args(["run", "--quiet", "--features", "cpu-exec cpu-conv", "--", "eval", "--exec", src])
+        .args([
+            "run",
+            "--quiet",
+            "--features",
+            "cpu-exec cpu-conv",
+            "--",
+            "eval",
+            "--exec",
+            src,
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());

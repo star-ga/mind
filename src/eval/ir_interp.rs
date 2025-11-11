@@ -44,7 +44,11 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, out.clone());
                 last = out;
             }
-            Instr::Reshape { dst, src, new_shape } => {
+            Instr::Reshape {
+                dst,
+                src,
+                new_shape,
+            } => {
                 let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
                 let reshaped = match value {
                     Value::Tensor(t) => {
