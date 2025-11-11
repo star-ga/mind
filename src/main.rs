@@ -69,20 +69,21 @@ fn default_mlir_opt_passes() -> Vec<String> {
 
 impl EmitOpts {
     fn from_eval_args(args: &EvalArgs) -> Self {
-        let mut out = EmitOpts::default();
-        out.emit_mlir_stdout = args.emit_mlir;
-        out.emit_mlir_file = args.emit_mlir_file.clone();
-        out.emit_llvm_file = args.emit_llvm_file.clone();
-        out.emit_obj_file = args.emit_obj.clone();
-        out.emit_shared_lib = args.build_shared.clone();
-        #[cfg(feature = "ffi-c")]
-        {
-            out.emit_ffi_header = args.emit_ffi_c.clone();
-            out.emit_ffi_shim = args.emit_ffi_shim.clone();
-        }
+        let mut out = EmitOpts {
+            emit_mlir_stdout: args.emit_mlir,
+            emit_mlir_file: args.emit_mlir_file.clone(),
+            emit_llvm_file: args.emit_llvm_file.clone(),
+            emit_obj_file: args.emit_obj.clone(),
+            emit_shared_lib: args.build_shared.clone(),
+            #[cfg(feature = "ffi-c")]
+            emit_ffi_header: args.emit_ffi_c.clone(),
+            #[cfg(feature = "ffi-c")]
+            emit_ffi_shim: args.emit_ffi_shim.clone(),
+            ..Default::default()
+        };
         if let Some(lower) = &args.mlir_lower {
             out.mlir_lower =
-                eval::MlirLowerPreset::from_str(lower).unwrap_or(eval::MlirLowerPreset::None);
+                lower.parse().unwrap_or(eval::MlirLowerPreset::None);
         }
         if let Some(pipeline) = &args.mlir_passes {
             if !pipeline.trim().is_empty() {
@@ -148,6 +149,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)]
 enum Command {
     Eval(EvalArgs),
     Repl,

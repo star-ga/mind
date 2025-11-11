@@ -63,6 +63,12 @@ impl IRModule {
     }
 }
 
+impl Default for IRModule {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl fmt::Display for IRModule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for instr in &self.instrs {

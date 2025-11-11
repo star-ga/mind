@@ -14,7 +14,7 @@ pub fn fold(node: &Node) -> Node {
                     BinOp::Div => {
                         if *b == 0 {
                             return Node::Binary {
-                                op: op.clone(),
+                                op: *op,
                                 left: Box::new(l),
                                 right: Box::new(r),
                                 span: *span,
@@ -26,7 +26,7 @@ pub fn fold(node: &Node) -> Node {
                 };
                 Node::Lit(Literal::Int(v), *span)
             } else {
-                Node::Binary { op: op.clone(), left: Box::new(l), right: Box::new(r), span: *span }
+                Node::Binary { op: *op, left: Box::new(l), right: Box::new(r), span: *span }
             }
         }
         Node::Paren(inner, span) => {
