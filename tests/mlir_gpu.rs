@@ -1,11 +1,10 @@
 #![cfg(feature = "mlir-gpu")]
 
+use std::collections::HashMap;
+
 use mind::eval;
 
 use mind::parser;
-
-use std::collections::HashMap;
-
 #[test]
 fn gpu_mode_falls_back_cleanly() {
     let src = "let x: Tensor[f32,(1,1)] = 0; x + 1";

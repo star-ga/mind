@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn relu_preview_keeps_shape() {
     let src = "let x: Tensor[f32,(2,3)] = 0; tensor.relu(x - 1)";

@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn grad_sum_is_ones() {
     let src = r#"

@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn dot_vec_vec_scalar() {
     let src = r#" let v: Tensor[f32,(3)] = 1; let w: Tensor[f32,(3)] = 2; tensor.dot(v,w) "#;
