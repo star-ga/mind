@@ -3,9 +3,15 @@ use std::io::Write;
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
 #[cfg(feature = "mlir-build")]
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
 #[cfg(feature = "mlir-build")]
-use std::time::{Duration, Instant};
+use std::process::Command;
+#[cfg(feature = "mlir-build")]
+use std::process::Stdio;
+#[cfg(feature = "mlir-build")]
+use std::time::Duration;
+#[cfg(feature = "mlir-build")]
+use std::time::Instant;
 
 #[cfg(feature = "mlir-build")]
 use tempfile::NamedTempFile;
