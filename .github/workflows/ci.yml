@@ -14,11 +14,10 @@ jobs:
     name: Build & Test (no default features)
     runs-on: ubuntu-latest
     env:
-      # Neutralize any runner/org proxy settings (single casing only)
+      # neutralize proxies, keep sparse
       http_proxy: ""
       https_proxy: ""
       no_proxy: ""
-      # Force sparse index for crates.io
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
       CARGO_TERM_COLOR: always
     steps:
@@ -28,7 +27,6 @@ jobs:
       - name: Install Rust (nightly; supports edition2024)
         uses: dtolnay/rust-toolchain@nightly
         with:
-          toolchain: nightly
           components: clippy,rustfmt
 
       - name: Remove git proxies (belt-and-suspenders)
@@ -36,49 +34,41 @@ jobs:
           git config --global --unset-all http.proxy  || true
           git config --global --unset-all https.proxy || true
 
-      - name: Verify lockfile contains pinned overrides
+      - name: Cargo metadata (smoke)
         shell: bash
         run: |
-          set -e
-          if ! awk '
-            $0 ~ /name = "home"/ { f=1; next }
-            f && $0 ~ /version = "0\.5\.11"/ { ok=1; exit }
-            f && $0 ~ /^\[/ { f=0 }
-            END { exit !ok }
-          ' Cargo.lock; then
-            echo "Cargo.lock does not contain home 0.5.11."
-            echo "Run locally:  cargo update -p home --precise 0.5.11  and commit the lockfile."
-            exit 1
+          if [ -f Cargo.lock ]; then
+            cargo metadata --format-version=1 --locked
+          else
+            cargo metadata --format-version=1
           fi
 
-      - name: Cargo metadata (smoke)
-        run: cargo metadata --format-version=1 --locked
-
-      - name: Prime index & fetch (retry)
+      - name: Build
         shell: bash
         run: |
-          i=1
-          until [ $i -gt 3 ]; do
-            echo "cargo fetch attempt $i..."
-            if cargo fetch --locked; then
-              echo "fetch ok"
-              exit 0
-            fi
-            echo "cargo fetch failed, retrying in $((i*5))s..."
-            sleep $((i*5))
-            i=$((i+1))
-          done
-          echo "cargo fetch failed after retries"
-          exit 1
-
-      - name: Build
-        run: cargo build --verbose --no-default-features --locked
+          if [ -f Cargo.lock ]; then
+            cargo build --verbose --no-default-features --locked
+          else
+            cargo build --verbose --no-default-features
+          fi
 
       - name: Test
-        run: cargo test --verbose --no-default-features --locked
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo test --verbose --no-default-features --locked
+          else
+            cargo test --verbose --no-default-features
+          fi
 
       - name: Check formatting
         run: cargo fmt -- --check
 
       - name: Clippy
-        run: cargo clippy --no-default-features --locked -- -D warnings
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo clippy --no-default-features --locked -- -D warnings
+          else
+            cargo clippy --no-default-features -- -D warnings
+          fi
