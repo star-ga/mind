@@ -20,7 +20,6 @@ impl MlirOptOutput {
 
 #[cfg(feature = "mlir-subprocess")]
 use std::time::Duration;
-use std::time::Instant;
 
 #[cfg(feature = "mlir-subprocess")]
 use std::io::Write;
@@ -57,7 +56,7 @@ pub fn run_mlir_opt(
         stdin.write_all(mlir_input.as_bytes())?;
     }
 
-    let start = Instant::now();
+    let start = std::time::Instant::now();
     loop {
         if let Some(status) = child.try_wait()? {
             let (stdout, stderr) = collect_child_output(&mut child);
