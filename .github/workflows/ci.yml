@@ -52,6 +52,19 @@ jobs:
             cargo check --no-default-features
           fi
 
+      - name: Feature compile matrix
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo check --no-default-features --locked
+            cargo check --no-default-features --features cpu-exec --locked
+            cargo check --no-default-features --features pkg --locked
+          else
+            cargo check --no-default-features
+            cargo check --no-default-features --features cpu-exec
+            cargo check --no-default-features --features pkg
+          fi
+
       - name: Build
         shell: bash
         run: |
