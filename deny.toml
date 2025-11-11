@@ -1,25 +1,22 @@
-[graph]
-all-features = false
-no-default-features = true
-
 [advisories]
-vulnerability = "warn"
+vulnerability = "deny"
 unmaintained = "warn"
 yanked = "warn"
-notice = "warn"
+unsound = "deny"
 
 [licenses]
 unlicensed = "deny"
+copyleft = "warn"
+default = "allow"
 allow = [
   "MIT",
   "Apache-2.0",
-  "BSD-2-Clause",
   "BSD-3-Clause",
+  "BSD-2-Clause",
   "ISC",
   "Unicode-DFS-2016"
 ]
-confidence-threshold = 0.8
 
 [bans]
-multiple-versions = "allow"
+multiple-versions = "warn"
 wildcards = "deny"

@@ -17,6 +17,9 @@
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da.svg)](https://discord.gg/mindlang)
 
 > **[Read the Manifesto](https://mindlang.dev/manifesto)** • **[View Rendered Docs](https://mind-lang.github.io/mind)**
+> Related repos:
+> - Runtime/backends: **cputer/mind-runtime**
+> - Language spec & docs site: **cputer/mind-spec**
 
 ---
 
