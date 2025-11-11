@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn matmul_preview_fill() {
     let src = r#"

@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn index_drops_axis() {
     let src = r#" let x: Tensor[f32,(2,5)] = 1; tensor.index(x, axis=1, i=0) "#;

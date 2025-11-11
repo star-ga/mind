@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 #[test]
 fn conv2d_channel_mismatch_errors() {
     let src = r#"
@@ -23,3 +21,4 @@ fn conv2d_same_padding_symbolic_shapes() {
     let diags = mind::type_checker::check_module_types(&module, src, &HashMap::new());
     assert!(diags.is_empty());
 }
+use std::collections::HashMap;

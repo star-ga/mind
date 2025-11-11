@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn annotated_tensor_plus_scalar_yields_tensor_preview() {
     let src = "let x: Tensor[f32,(2,3)] = 0; x + 1";
