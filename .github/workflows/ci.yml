@@ -25,10 +25,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (stable, edition-2024 ready)
-        uses: dtolnay/rust-toolchain@1.83.0
+      - name: Install Rust (nightly; supports edition2024)
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rustfmt, clippy
+          toolchain: nightly
+          components: clippy,rustfmt
 
       - name: Remove git proxies (belt-and-suspenders)
         run: |
