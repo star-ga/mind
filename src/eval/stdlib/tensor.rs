@@ -18,7 +18,9 @@ use crate::eval::Value;
 
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::materialize_filled;
+#[cfg(feature = "cpu-buffers")]
 use crate::eval::num_elems;
+#[cfg(feature = "cpu-buffers")]
 use crate::eval::MATERIALIZE_MAX;
 
 use crate::linalg;
