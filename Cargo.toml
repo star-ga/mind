@@ -71,5 +71,3 @@ registry = []
 [build-dependencies]
 cc = "1"
 
-[dependency-overrides]
-home = "=0.5.11"
