@@ -14,13 +14,10 @@ jobs:
     name: Build & Test (no default features)
     runs-on: ubuntu-latest
     env:
-      # Neutralize any runner/org proxy settings (define ONCE here)
+      # Neutralize any runner/org proxy settings (single casing only)
       http_proxy: ""
       https_proxy: ""
       no_proxy: ""
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      NO_PROXY: ""
       # Force sparse index for crates.io
       CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
       CARGO_TERM_COLOR: always
