@@ -2,50 +2,56 @@ name: CI
 
 on:
   push:
-    branches: [ main, 'codex/**' ]
+    branches: [ main ]
   pull_request:
   workflow_dispatch:
 
-# Global environment: sparse index + proxy neutralization
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-  # Clear proxies (both cases, some runners only honor lowercase)
-  HTTP_PROXY: ""
-  HTTPS_PROXY: ""
-  NO_PROXY: "*"
-  http_proxy: ""
-  https_proxy: ""
-  no_proxy: "*"
+permissions:
+  contents: read
 
 jobs:
-  core:
+  build_test:
     name: Build & Test (no default features)
     runs-on: ubuntu-latest
-
+    env:
+      # Neutralize any runner/org proxy settings (define ONCE here)
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: ""
+      # Force sparse index for crates.io
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      CARGO_TERM_COLOR: always
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (1.81.0)
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: 1.81.0
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@1.81.0
 
-      - name: Cargo metadata (smoke, locked)
+      - name: Remove git proxies (belt-and-suspenders)
+        run: |
+          git config --global --unset-all http.proxy  || true
+          git config --global --unset-all https.proxy || true
+
+      - name: Cargo metadata (smoke)
         run: cargo metadata --format-version=1 --locked
 
       - name: Prime index & fetch (retry)
         shell: bash
         run: |
-          for i in 1 2 3; do
+          i=1
+          until [ $i -gt 3 ]; do
             echo "cargo fetch attempt $i..."
             if cargo fetch --locked; then
               echo "fetch ok"
               exit 0
             fi
-            echo "fetch failed, sleeping $((i*5))s..."
+            echo "cargo fetch failed, retrying in $((i*5))s..."
             sleep $((i*5))
+            i=$((i+1))
           done
           echo "cargo fetch failed after retries"
           exit 1
@@ -56,8 +62,8 @@ jobs:
       - name: Test
         run: cargo test --verbose --no-default-features --locked
 
-      - name: Clippy (deny warnings)
-        run: cargo clippy --locked -- -D warnings
-
-      - name: Fmt check
+      - name: Check formatting
         run: cargo fmt -- --check
+
+      - name: Clippy
+        run: cargo clippy --no-default-features --locked -- -D warnings
