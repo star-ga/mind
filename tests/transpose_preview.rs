@@ -1,8 +1,7 @@
-use mind::eval;
-use mind::parser;
-
 use std::collections::HashMap;
 
+use mind::eval;
+use mind::parser;
 #[test]
 fn transpose_reverse() {
     let src = r#" let x: Tensor[f32,(2,3,4)] = 0; tensor.transpose(x) "#;
