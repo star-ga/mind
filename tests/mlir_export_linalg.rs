@@ -16,5 +16,8 @@ fn mlir_export_emits_linalg_dot_and_matmul() {
     let mlir = eval::to_mlir(&ir, "main");
 
     assert!(mlir.contains("linalg.dot"), "expected linalg.dot in {mlir}");
-    assert!(mlir.contains("linalg.matmul"), "expected linalg.matmul in {mlir}");
+    assert!(
+        mlir.contains("linalg.matmul"),
+        "expected linalg.matmul in {mlir}"
+    );
 }

@@ -6,8 +6,11 @@ fn shows_pretty_error_for_unexpected_paren() {
     let Err(diags) = parser::parse_with_diagnostics(src) else {
         panic!("expected error");
     };
-    let joined =
-        diags.iter().map(|d| mind::diagnostics::render(src, d)).collect::<Vec<_>>().join("\n");
+    let joined = diags
+        .iter()
+        .map(|d| mind::diagnostics::render(src, d))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(joined.contains("error"));
     assert!(joined.contains("line 1"));
     assert!(joined.contains("^")); // caret present

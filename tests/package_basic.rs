@@ -24,11 +24,19 @@ fn build_and_inspect_roundtrip() {
 
     let package_path = dir.path().join("demo.mindpkg");
     let artifact = model_path.to_string_lossy().into_owned();
-    build_package(package_path.to_str().expect("package path"), &[artifact.as_str()], &manifest)
-        .expect("package build");
+    build_package(
+        package_path.to_str().expect("package path"),
+        &[artifact.as_str()],
+        &manifest,
+    )
+    .expect("package build");
 
     let parsed =
         inspect_package(package_path.to_str().expect("package path")).expect("inspect package");
     assert_eq!(parsed.name, "demo");
-    assert!(parsed.checksums.as_ref().expect("checksums present").contains_key("model.mlir"));
+    assert!(parsed
+        .checksums
+        .as_ref()
+        .expect("checksums present")
+        .contains_key("model.mlir"));
 }

@@ -136,19 +136,21 @@ pub mod capi {
 
     #[no_mangle]
     pub extern "C" fn mind_last_error() -> *const c_char {
-        LAST_ERROR.with(
-            |slot| {
-                if let Some(s) = slot.borrow().as_ref() {
-                    s.as_ptr()
-                } else {
-                    ptr::null()
-                }
-            },
-        )
+        LAST_ERROR.with(|slot| {
+            if let Some(s) = slot.borrow().as_ref() {
+                s.as_ptr()
+            } else {
+                ptr::null()
+            }
+        })
     }
 
     pub fn last_error_as_str() -> Option<String> {
-        LAST_ERROR.with(|slot| slot.borrow().as_ref().map(|s| s.to_string_lossy().into_owned()))
+        LAST_ERROR.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .map(|s| s.to_string_lossy().into_owned())
+        })
     }
 
     #[allow(dead_code)]

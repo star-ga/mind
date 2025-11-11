@@ -81,6 +81,11 @@ impl Diagnostic {
         let start = offset_to_loc(src, span.start);
         let end = offset_to_loc(src, span.end);
         let message = e.to_string();
-        Diagnostic { message, span, start, end }
+        Diagnostic {
+            message,
+            span,
+            start,
+            end,
+        }
     }
 }

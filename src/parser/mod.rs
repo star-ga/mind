@@ -41,7 +41,9 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         });
 
     let expr = recursive(|expr| {
-        let bool_lit = choice((kw("true").to(true), kw("false").to(false))).padded().boxed();
+        let bool_lit = choice((kw("true").to(true), kw("false").to(false)))
+            .padded()
+            .boxed();
         let signed_int = just('-')
             .or_not()
             .then(text::int(10))
@@ -59,14 +61,21 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(']').padded());
 
         let tuple_or_paren = just('(')
-            .ignore_then(expr.clone().separated_by(just(',').padded()).allow_trailing())
+            .ignore_then(
+                expr.clone()
+                    .separated_by(just(',').padded())
+                    .allow_trailing(),
+            )
             .then_ignore(just(')').padded())
             .map_with_span(|items, sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
                 if items.len() == 1 {
                     Node::Paren(Box::new(items.into_iter().next().unwrap()), span)
                 } else {
-                    Node::Tuple { elements: items, span }
+                    Node::Tuple {
+                        elements: items,
+                        span,
+                    }
                 }
             });
 
@@ -75,7 +84,12 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .ignore_then(kw("wrt"))
             .ignore_then(just('=').padded())
             .ignore_then(just('[').padded())
-            .ignore_then(text::ident().padded().separated_by(just(',').padded()).allow_trailing())
+            .ignore_then(
+                text::ident()
+                    .padded()
+                    .separated_by(just(',').padded())
+                    .allow_trailing(),
+            )
             .then_ignore(just(']').padded());
 
         let grad_call = kw("grad")
@@ -84,7 +98,11 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|(loss, maybe_wrt), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallGrad { loss: Box::new(loss), wrt: maybe_wrt.unwrap_or_default(), span }
+                Node::CallGrad {
+                    loss: Box::new(loss),
+                    wrt: maybe_wrt.unwrap_or_default(),
+                    span,
+                }
             })
             .boxed();
 
@@ -103,7 +121,12 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         let tensor_sum_call = just("tensor.sum")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
-            .then(just(',').padded().ignore_then(reduce_arg.clone()).repeated())
+            .then(
+                just(',')
+                    .padded()
+                    .ignore_then(reduce_arg.clone())
+                    .repeated(),
+            )
             .then_ignore(just(')').padded())
             .map_with_span(|(x, extras), sp: std::ops::Range<usize>| {
                 let mut axes = Vec::new();
@@ -115,13 +138,23 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     }
                 }
                 let span = Span::new(sp.start, sp.end);
-                Node::CallTensorSum { x: Box::new(x), axes, keepdims, span }
+                Node::CallTensorSum {
+                    x: Box::new(x),
+                    axes,
+                    keepdims,
+                    span,
+                }
             });
 
         let tensor_mean_call = just("tensor.mean")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
-            .then(just(',').padded().ignore_then(reduce_arg.clone()).repeated())
+            .then(
+                just(',')
+                    .padded()
+                    .ignore_then(reduce_arg.clone())
+                    .repeated(),
+            )
             .then_ignore(just(')').padded())
             .map_with_span(|(x, extras), sp: std::ops::Range<usize>| {
                 let mut axes = Vec::new();
@@ -133,7 +166,12 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     }
                 }
                 let span = Span::new(sp.start, sp.end);
-                Node::CallTensorMean { x: Box::new(x), axes, keepdims, span }
+                Node::CallTensorMean {
+                    x: Box::new(x),
+                    axes,
+                    keepdims,
+                    span,
+                }
             });
 
         let reshape_dims = just('(')
@@ -155,10 +193,16 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|(x, dims), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallReshape { x: Box::new(x), dims, span }
+                Node::CallReshape {
+                    x: Box::new(x),
+                    dims,
+                    span,
+                }
             });
 
-        let expand_axis = kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int);
+        let expand_axis = kw("axis")
+            .ignore_then(just('=').padded())
+            .ignore_then(signed_int);
 
         let tensor_expand_dims_call = just("tensor.expand_dims")
             .ignore_then(just('(').padded())
@@ -168,10 +212,16 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|(x, axis), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallExpandDims { x: Box::new(x), axis, span }
+                Node::CallExpandDims {
+                    x: Box::new(x),
+                    axis,
+                    span,
+                }
             });
 
-        let squeeze_axes = kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list);
+        let squeeze_axes = kw("axes")
+            .ignore_then(just('=').padded())
+            .ignore_then(axes_list);
 
         let tensor_squeeze_call = just("tensor.squeeze")
             .ignore_then(just('(').padded())
@@ -181,10 +231,16 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .map_with_span(|(x, maybe_axes), sp: std::ops::Range<usize>| {
                 let axes = maybe_axes.unwrap_or_default();
                 let span = Span::new(sp.start, sp.end);
-                Node::CallSqueeze { x: Box::new(x), axes, span }
+                Node::CallSqueeze {
+                    x: Box::new(x),
+                    axes,
+                    span,
+                }
             });
 
-        let transpose_axes = kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list);
+        let transpose_axes = kw("axes")
+            .ignore_then(just('=').padded())
+            .ignore_then(axes_list);
 
         let tensor_transpose_call = just("tensor.transpose")
             .ignore_then(just('(').padded())
@@ -193,59 +249,123 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|(x, maybe_axes), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallTranspose { x: Box::new(x), axes: maybe_axes, span }
+                Node::CallTranspose {
+                    x: Box::new(x),
+                    axes: maybe_axes,
+                    span,
+                }
             });
 
         let tensor_index_call = just("tensor.index")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("axis")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
-            .then(kw("i").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("i")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(')').padded())
             .map_with_span(|((x, axis), i), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallIndex { x: Box::new(x), axis, i, span }
+                Node::CallIndex {
+                    x: Box::new(x),
+                    axis,
+                    i,
+                    span,
+                }
             });
 
         let tensor_slice_call = just("tensor.slice")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("axis")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
-            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("start")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
-            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("end")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(')').padded())
             .map_with_span(|(((x, axis), start), end), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallSlice { x: Box::new(x), axis, start, end, span }
+                Node::CallSlice {
+                    x: Box::new(x),
+                    axis,
+                    start,
+                    end,
+                    span,
+                }
             });
 
         let tensor_slice_stride_call = just("tensor.slice_stride")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("axis")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
-            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("start")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
-            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("end")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
-            .then(kw("step").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("step")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(')').padded())
-            .map_with_span(|((((x, axis), start), end), step), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallSliceStride { x: Box::new(x), axis, start, end, step, span }
-            });
+            .map_with_span(
+                |((((x, axis), start), end), step), sp: std::ops::Range<usize>| {
+                    let span = Span::new(sp.start, sp.end);
+                    Node::CallSliceStride {
+                        x: Box::new(x),
+                        axis,
+                        start,
+                        end,
+                        step,
+                        span,
+                    }
+                },
+            );
 
         let tensor_gather_call = just("tensor.gather")
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
+            .then(
+                kw("axis")
+                    .ignore_then(just('=').padded())
+                    .ignore_then(signed_int),
+            )
             .then_ignore(just(',').padded())
             .then(
                 kw("idx")
@@ -258,7 +378,12 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|((x, axis), idx), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallGather { x: Box::new(x), axis, idx: Box::new(idx), span }
+                Node::CallGather {
+                    x: Box::new(x),
+                    axis,
+                    idx: Box::new(idx),
+                    span,
+                }
             });
 
         let tensor_dot_call = just("tensor.dot")
@@ -269,7 +394,11 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|(a, b), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallDot { a: Box::new(a), b: Box::new(b), span }
+                Node::CallDot {
+                    a: Box::new(a),
+                    b: Box::new(b),
+                    span,
+                }
             });
 
         let tensor_matmul_call = just("tensor.matmul")
@@ -280,7 +409,11 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|(a, b), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallMatMul { a: Box::new(a), b: Box::new(b), span }
+                Node::CallMatMul {
+                    a: Box::new(a),
+                    b: Box::new(b),
+                    span,
+                }
             });
 
         enum Conv2dArg {
@@ -317,7 +450,9 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             kw("stride_w")
                 .ignore_then(just('=').padded())
                 .ignore_then(stride_value.map(Conv2dArg::StrideW)),
-            kw("padding").ignore_then(just('=').padded()).ignore_then(padding_value),
+            kw("padding")
+                .ignore_then(just('=').padded())
+                .ignore_then(padding_value),
         ));
 
         let tensor_relu_call = just("tensor.relu")
@@ -326,7 +461,10 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(')').padded())
             .map_with_span(|x, sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
-                Node::CallTensorRelu { x: Box::new(x), span }
+                Node::CallTensorRelu {
+                    x: Box::new(x),
+                    span,
+                }
             });
 
         let tensor_conv2d_call = just("tensor.conv2d")
@@ -363,13 +501,19 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then(
                 just('(')
                     .padded()
-                    .ignore_then(expr.clone().separated_by(just(',').padded()).allow_trailing())
+                    .ignore_then(
+                        expr.clone()
+                            .separated_by(just(',').padded())
+                            .allow_trailing(),
+                    )
                     .then_ignore(just(')').padded()),
             )
-            .map_with_span(|((callee, _callee_span), args), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::Call { callee, args, span }
-            });
+            .map_with_span(
+                |((callee, _callee_span), args), sp: std::ops::Range<usize>| {
+                    let span = Span::new(sp.start, sp.end);
+                    Node::Call { callee, args, span }
+                },
+            );
 
         let atom = choice((
             grad_call,
@@ -405,7 +549,12 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             )
             .foldl(|l, (op, r)| {
                 let span = Span::new(l.span_start(), r.span_end());
-                Node::Binary { op, left: Box::new(l), right: Box::new(r), span }
+                Node::Binary {
+                    op,
+                    left: Box::new(l),
+                    right: Box::new(r),
+                    span,
+                }
             });
 
         product
@@ -418,14 +567,26 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             )
             .foldl(|l, (op, r)| {
                 let span = Span::new(l.span_start(), r.span_end());
-                Node::Binary { op, left: Box::new(l), right: Box::new(r), span }
+                Node::Binary {
+                    op,
+                    left: Box::new(l),
+                    right: Box::new(r),
+                    span,
+                }
             })
     });
 
-    let dtype =
-        choice((just("i32").to("i32".to_string()), just("f32").to("f32".to_string()))).padded();
+    let dtype = choice((
+        just("i32").to("i32".to_string()),
+        just("f32").to("f32".to_string()),
+    ))
+    .padded();
 
-    let dim = choice((text::int(10).map(|s: String| s), text::ident().map(|s: String| s))).padded();
+    let dim = choice((
+        text::int(10).map(|s: String| s),
+        text::ident().map(|s: String| s),
+    ))
+    .padded();
 
     let dims = just('(')
         .ignore_then(dim.separated_by(just(',').padded()).allow_trailing())
@@ -440,24 +601,36 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just(',').padded())
             .then(dims)
             .then_ignore(just(']'))
-            .map(|(dt, shape)| TypeAnn::Tensor { dtype: dt, dims: shape }),
+            .map(|(dt, shape)| TypeAnn::Tensor {
+                dtype: dt,
+                dims: shape,
+            }),
     ))
     .padded()
     .boxed();
 
     let let_stmt = kw("let")
         .padded()
-        .ignore_then(text::ident().map_with_span(|s: String, sp: std::ops::Range<usize>| {
-            let span = Span::new(sp.start, sp.end);
-            (s, span)
-        }))
+        .ignore_then(
+            text::ident().map_with_span(|s: String, sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                (s, span)
+            }),
+        )
         .then(just(':').ignore_then(type_ann.clone()).or_not().padded())
         .then_ignore(just('=').padded())
         .then(expr.clone())
-        .map_with_span(|(((name, _name_span), ann), value), sp: std::ops::Range<usize>| {
-            let span = Span::new(sp.start, sp.end);
-            Node::Let { name, ann, value: Box::new(value), span }
-        });
+        .map_with_span(
+            |(((name, _name_span), ann), value), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::Let {
+                    name,
+                    ann,
+                    value: Box::new(value),
+                    span,
+                }
+            },
+        );
 
     let assign_stmt = text::ident()
         .map_with_span(|s: String, _| s)
@@ -465,13 +638,19 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         .then(expr.clone())
         .map_with_span(|(name, value), sp: std::ops::Range<usize>| {
             let span = Span::new(sp.start, sp.end);
-            Node::Assign { name, value: Box::new(value), span }
+            Node::Assign {
+                name,
+                value: Box::new(value),
+                span,
+            }
         });
 
     let stmt = choice((let_stmt, assign_stmt, expr.clone())).padded();
 
-    let stmts =
-        stmt.separated_by(one_of(";\n").repeated().at_least(1)).allow_trailing().at_least(1);
+    let stmts = stmt
+        .separated_by(one_of(";\n").repeated().at_least(1))
+        .allow_trailing()
+        .at_least(1);
 
     stmts.map(|items| Module { items })
 }

@@ -25,13 +25,17 @@ pub fn exec_conv2d(
         return Err(ExecError::Shape("strides must be positive".into()));
     }
     if input.dtype != crate::types::DType::F32 || weights.dtype != crate::types::DType::F32 {
-        return Err(ExecError::Type("only f32 tensors supported in cpu-exec".into()));
+        return Err(ExecError::Type(
+            "only f32 tensors supported in cpu-exec".into(),
+        ));
     }
 
     let in_shape = shape_as_usize(&input.shape)?;
     let wt_shape = shape_as_usize(&weights.shape)?;
     if in_shape.len() != 4 || wt_shape.len() != 4 {
-        return Err(ExecError::Shape("`tensor.conv2d` expects NHWC x HWIO tensors".into()));
+        return Err(ExecError::Shape(
+            "`tensor.conv2d` expects NHWC x HWIO tensors".into(),
+        ));
     }
 
     let n = in_shape[0];
@@ -45,7 +49,9 @@ pub fn exec_conv2d(
     let out_c = wt_shape[3];
 
     if kernel_h == 0 || kernel_w == 0 {
-        return Err(ExecError::Shape("kernel dimensions must be positive".into()));
+        return Err(ExecError::Shape(
+            "kernel dimensions must be positive".into(),
+        ));
     }
 
     if in_c != kernel_c {
@@ -130,5 +136,8 @@ pub fn exec_conv2d(
         }
     }
 
-    Ok(TensorVal::from_materialized_f32(vec![n, out_h, out_w, out_c], output))
+    Ok(TensorVal::from_materialized_f32(
+        vec![n, out_h, out_w, out_c],
+        output,
+    ))
 }

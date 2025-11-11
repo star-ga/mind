@@ -21,5 +21,8 @@ pub fn unify(a: &TensorType, b: &TensorType) -> TensorType {
         };
         out.push(r);
     }
-    TensorType { dtype: a.dtype.clone(), shape: out }
+    TensorType {
+        dtype: a.dtype.clone(),
+        shape: out,
+    }
 }

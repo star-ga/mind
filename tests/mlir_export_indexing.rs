@@ -14,8 +14,17 @@ fn mlir_export_handles_index_slice_and_gather() {
     let ir = eval::lower_to_ir(&module);
     let mlir = eval::to_mlir(&ir, "main");
 
-    assert!(mlir.contains("tensor.extract"), "expected tensor.extract in {mlir}");
-    assert!(mlir.contains("tensor.extract_slice"), "expected tensor.extract_slice in {mlir}");
-    assert!(mlir.contains("tensor.insert"), "expected tensor.insert in {mlir}");
+    assert!(
+        mlir.contains("tensor.extract"),
+        "expected tensor.extract in {mlir}"
+    );
+    assert!(
+        mlir.contains("tensor.extract_slice"),
+        "expected tensor.extract_slice in {mlir}"
+    );
+    assert!(
+        mlir.contains("tensor.insert"),
+        "expected tensor.insert in {mlir}"
+    );
     assert!(mlir.contains("scf.for"), "expected scf.for in {mlir}");
 }

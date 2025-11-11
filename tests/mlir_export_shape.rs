@@ -13,6 +13,12 @@ fn mlir_export_covers_shape_ops() {
     let ir = eval::lower_to_ir(&module);
     let mlir = eval::to_mlir(&ir, "main");
 
-    assert!(mlir.contains("tensor.reshape"), "expected tensor.reshape in {mlir}");
-    assert!(mlir.contains("linalg.transpose"), "expected linalg.transpose in {mlir}");
+    assert!(
+        mlir.contains("tensor.reshape"),
+        "expected tensor.reshape in {mlir}"
+    );
+    assert!(
+        mlir.contains("linalg.transpose"),
+        "expected linalg.transpose in {mlir}"
+    );
 }

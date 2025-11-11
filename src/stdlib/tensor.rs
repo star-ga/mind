@@ -10,13 +10,22 @@ pub struct Tensor<T> {
 
 impl<T> Tensor<T> {
     pub fn zeros(shape: &[usize]) -> Self {
-        Self { shape: shape.to_vec(), _t: PhantomData }
+        Self {
+            shape: shape.to_vec(),
+            _t: PhantomData,
+        }
     }
     pub fn ones(shape: &[usize]) -> Self {
-        Self { shape: shape.to_vec(), _t: PhantomData }
+        Self {
+            shape: shape.to_vec(),
+            _t: PhantomData,
+        }
     }
     pub fn reshape(&self, new_shape: &[usize]) -> Self {
-        Self { shape: new_shape.to_vec(), _t: PhantomData }
+        Self {
+            shape: new_shape.to_vec(),
+            _t: PhantomData,
+        }
     }
     pub fn shape(&self) -> &[usize] {
         &self.shape

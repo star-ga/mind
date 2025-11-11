@@ -18,7 +18,10 @@ pub struct MlirEmitOptions {
 
 impl Default for MlirEmitOptions {
     fn default() -> Self {
-        Self { lower_preset: None, mode: MlirEmitMode::Plain }
+        Self {
+            lower_preset: None,
+            mode: MlirEmitMode::Plain,
+        }
     }
 }
 
@@ -85,7 +88,10 @@ impl MlirEmitter {
             if self.tensors.contains_key(&value) {
                 continue;
             }
-            self.write_fmt(format_args!("    func.call @printI64(%{}) : (i64) -> ()\n", value.0));
+            self.write_fmt(format_args!(
+                "    func.call @printI64(%{}) : (i64) -> ()\n",
+                value.0
+            ));
             self.need_print_i64 = true;
             printed_any = true;
         }
@@ -230,15 +236,23 @@ fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
             emit_const_tensor(emitter, *id, dtype, shape, *fill)
         }
         Instr::BinOp { dst, op, lhs, rhs } => emit_int_binop(emitter, *dst, *op, *lhs, *rhs),
-        Instr::Sum { dst, src, axes, keepdims } => {
-            emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Sum)
-        }
-        Instr::Mean { dst, src, axes, keepdims } => {
-            emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Mean)
-        }
-        Instr::Reshape { dst, src, new_shape } => {
-            emit_tensor_reshape(emitter, *dst, *src, new_shape)
-        }
+        Instr::Sum {
+            dst,
+            src,
+            axes,
+            keepdims,
+        } => emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Sum),
+        Instr::Mean {
+            dst,
+            src,
+            axes,
+            keepdims,
+        } => emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Mean),
+        Instr::Reshape {
+            dst,
+            src,
+            new_shape,
+        } => emit_tensor_reshape(emitter, *dst, *src, new_shape),
         Instr::ExpandDims { dst, src, axis } => emit_expand_dims(emitter, *dst, *src, *axis),
         Instr::Squeeze { dst, src, axes } => emit_squeeze(emitter, *dst, *src, axes),
         Instr::Transpose { dst, src, perm } => emit_transpose(emitter, *dst, *src, perm),
@@ -246,9 +260,12 @@ fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
         Instr::MatMul { dst, a, b } => emit_matmul(emitter, *dst, *a, *b),
         Instr::Index { dst, src, indices } => emit_index(emitter, *dst, *src, indices),
         Instr::Slice { dst, src, dims } => emit_slice(emitter, *dst, *src, dims),
-        Instr::Gather { dst, src, indices, axis } => {
-            emit_gather(emitter, *dst, *src, *indices, *axis)
-        }
+        Instr::Gather {
+            dst,
+            src,
+            indices,
+            axis,
+        } => emit_gather(emitter, *dst, *src, *indices, *axis),
         Instr::Output(id) => {
             emitter.record_output(*id);
             emitter.write_fmt(format_args!("    // result: %{}\n", id.0));
@@ -275,7 +292,10 @@ fn emit_const_tensor(
     let fill_name = emitter.tmp();
     let fill_value = format_fill(fill, dtype);
 
-    emitter.write_fmt(format_args!("    {} = tensor.empty() : {}\n", empty_name, tensor_ty));
+    emitter.write_fmt(format_args!(
+        "    {} = tensor.empty() : {}\n",
+        empty_name, tensor_ty
+    ));
     emitter.write_fmt(format_args!(
         "    {} = arith.constant {} : {}\n",
         fill_name, fill_value, dtype_str
@@ -295,7 +315,10 @@ fn emit_int_binop(emitter: &mut MlirEmitter, dst: ValueId, op: BinOp, lhs: Value
         BinOp::Mul => "arith.muli",
         BinOp::Div => "arith.divsi",
     };
-    emitter.write_fmt(format_args!("    %{} = {} %{}, %{} : i64\n", dst.0, op_str, lhs.0, rhs.0));
+    emitter.write_fmt(format_args!(
+        "    %{} = {} %{}, %{} : i64\n",
+        dst.0, op_str, lhs.0, rhs.0
+    ));
 }
 
 fn emit_tensor_reduce(
@@ -309,7 +332,10 @@ fn emit_tensor_reduce(
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let dtype = src_info.dtype.clone();
     let dtype_str = dtype_to_mlir(&dtype);
     let src_ty = tensor_type(&src_info.shape, dtype_str);
@@ -326,21 +352,34 @@ fn emit_tensor_reduce(
         _ => "arith.addi",
     };
     let init_name = emitter.tmp();
-    emitter
-        .write_fmt(format_args!("    {} = arith.constant {} : {}\n", init_name, zero, dtype_str));
+    emitter.write_fmt(format_args!(
+        "    {} = arith.constant {} : {}\n",
+        init_name, zero, dtype_str
+    ));
 
-    let reduce_result_name =
-        if matches!(kind, ReduceKind::Mean) { emitter.tmp() } else { format!("%{}", dst.0) };
+    let reduce_result_name = if matches!(kind, ReduceKind::Mean) {
+        emitter.tmp()
+    } else {
+        format!("%{}", dst.0)
+    };
 
     emitter.write_fmt(format_args!(
         "    {} = tensor.reduce %{} init {} {{\n",
         reduce_result_name, src.0, init_name
     ));
-    emitter.write_fmt(format_args!("      ^bb0(%elem: {0}, %acc: {0}):\n", dtype_str));
+    emitter.write_fmt(format_args!(
+        "      ^bb0(%elem: {0}, %acc: {0}):\n",
+        dtype_str
+    ));
     let sum_name = emitter.tmp();
-    emitter
-        .write_fmt(format_args!("        {} = {} %acc, %elem : {}\n", sum_name, add_op, dtype_str));
-    emitter.write_fmt(format_args!("        tensor.yield {} : {}\n", sum_name, dtype_str));
+    emitter.write_fmt(format_args!(
+        "        {} = {} %acc, %elem : {}\n",
+        sum_name, add_op, dtype_str
+    ));
+    emitter.write_fmt(format_args!(
+        "        tensor.yield {} : {}\n",
+        sum_name, dtype_str
+    ));
     emitter.write_fmt(format_args!(
         "    }} {{dimensions = [{dims_attr}]}} : {src_ty} -> {out_ty}\n",
         dims_attr = dims_attr,
@@ -408,7 +447,10 @@ fn emit_tensor_reshape(
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let dtype_str = dtype_to_mlir(&src_info.dtype);
     let src_ty = tensor_type(&src_info.shape, dtype_str);
     let dst_ty = tensor_type(new_shape, dtype_str);
@@ -423,7 +465,10 @@ fn emit_expand_dims(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, axis:
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let mut shape = src_info.shape.clone();
     let axis_norm = axis.clamp(0, shape.len() as i64) as usize;
     shape.insert(axis_norm, ShapeDim::Known(1));
@@ -434,7 +479,10 @@ fn emit_squeeze(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, axes: &[i
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let norm_axes = normalize_axes(axes, src_info.shape.len());
     let mut shape = Vec::new();
     for (i, dim) in src_info.shape.iter().enumerate() {
@@ -450,7 +498,10 @@ fn emit_transpose(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, perm: &
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let rank = src_info.shape.len();
     let perm_norm = if perm.is_empty() {
         (0..rank).rev().collect::<Vec<_>>()
@@ -466,7 +517,11 @@ fn emit_transpose(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, perm: &
         }
     }
     let dst_ty = tensor_type(&dst_shape, dtype_str);
-    let perm_str = perm_norm.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", ");
+    let perm_str = perm_norm
+        .iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     emitter.write_fmt(format_args!(
         "    %{} = linalg.transpose %{} [ {} ] : {} -> {}\n",
         dst.0, src.0, perm_str, src_ty, dst_ty
@@ -498,11 +553,17 @@ fn emit_matmul(emitter: &mut MlirEmitter, dst: ValueId, a: ValueId, b: ValueId) 
     let a_info = emitter
         .tensor_info(&a)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let b_info = emitter
         .tensor_info(&b)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: a_info.dtype.clone(), shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: a_info.dtype.clone(),
+            shape: vec![],
+        });
     let dtype = a_info.dtype.clone();
     let dtype_str = dtype_to_mlir(&dtype);
     let a_ty = if a_info.shape.is_empty() {
@@ -538,7 +599,10 @@ fn emit_index(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: &[
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let dtype_str = dtype_to_mlir(&src_info.dtype);
     let src_ty = tensor_type(&src_info.shape, dtype_str);
     let ordered: Vec<String> = if src_info.shape.is_empty() {
@@ -563,13 +627,24 @@ fn emit_slice(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, dims: &[Sli
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let dtype_str = dtype_to_mlir(&src_info.dtype);
     let src_ty = tensor_type(&src_info.shape, dtype_str);
     let rank = src_info.shape.len();
-    let mut offsets = if rank == 0 { Vec::new() } else { vec!["0".to_string(); rank] };
+    let mut offsets = if rank == 0 {
+        Vec::new()
+    } else {
+        vec!["0".to_string(); rank]
+    };
     let mut sizes = Vec::new();
-    let mut strides = if rank == 0 { Vec::new() } else { vec!["1".to_string(); rank] };
+    let mut strides = if rank == 0 {
+        Vec::new()
+    } else {
+        vec!["1".to_string(); rank]
+    };
     for spec in dims {
         if rank == 0 {
             continue;
@@ -617,9 +692,21 @@ fn emit_slice(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, dims: &[Sli
         acc
     });
     let dst_ty = tensor_type(&dst_shape, dtype_str);
-    let offsets_str = if offsets.is_empty() { String::new() } else { offsets.join(", ") };
-    let sizes_str = if final_sizes.is_empty() { String::new() } else { final_sizes.join(", ") };
-    let strides_str = if strides.is_empty() { String::new() } else { strides.join(", ") };
+    let offsets_str = if offsets.is_empty() {
+        String::new()
+    } else {
+        offsets.join(", ")
+    };
+    let sizes_str = if final_sizes.is_empty() {
+        String::new()
+    } else {
+        final_sizes.join(", ")
+    };
+    let strides_str = if strides.is_empty() {
+        String::new()
+    } else {
+        strides.join(", ")
+    };
     emitter.write_fmt(format_args!(
         "    %{} = tensor.extract_slice %{}[{}] [{}] [{}] : {} to {}\n",
         dst.0, src.0, offsets_str, sizes_str, strides_str, src_ty, dst_ty
@@ -631,11 +718,17 @@ fn emit_gather(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: V
     let src_info = emitter
         .tensor_info(&src)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::F32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
     let idx_info = emitter
         .tensor_info(&indices)
         .cloned()
-        .unwrap_or_else(|| TensorInfo { dtype: DType::I32, shape: vec![] });
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::I32,
+            shape: vec![],
+        });
     let dtype_str = dtype_to_mlir(&src_info.dtype);
     let src_ty = tensor_type(&src_info.shape, dtype_str);
     let idx_ty = tensor_type(&idx_info.shape, "i32");
@@ -651,10 +744,13 @@ fn emit_gather(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: V
         empty = empty_name,
         result_ty = result_ty
     ));
-    let upper_bound = idx_info.shape.first().map(|d| match d {
-        ShapeDim::Known(n) => n.to_string(),
-        ShapeDim::Sym(s) => s.to_string(),
-    })
+    let upper_bound = idx_info
+        .shape
+        .first()
+        .map(|d| match d {
+            ShapeDim::Known(n) => n.to_string(),
+            ShapeDim::Sym(s) => s.to_string(),
+        })
         .unwrap_or_else(|| "0".to_string());
     let loop_result = format!("%{}", dst.0);
     emitter.write_fmt(format_args!(
@@ -768,12 +864,21 @@ fn reduce_shape(shape: &[ShapeDim], axes: &[usize], keepdims: bool) -> Vec<Shape
     shape
         .iter()
         .enumerate()
-        .filter_map(|(i, dim)| if axes.contains(&i) { None } else { Some(dim.clone()) })
+        .filter_map(|(i, dim)| {
+            if axes.contains(&i) {
+                None
+            } else {
+                Some(dim.clone())
+            }
+        })
         .collect()
 }
 
 fn format_dimensions(axes: &[usize]) -> String {
-    axes.iter().map(|axis| axis.to_string()).collect::<Vec<_>>().join(", ")
+    axes.iter()
+        .map(|axis| axis.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn element_count(shape: &[ShapeDim], axes: &[usize]) -> usize {

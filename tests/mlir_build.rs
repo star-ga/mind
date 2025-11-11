@@ -25,7 +25,9 @@ fn resolve_or_skip() -> Option<eval::MlirBuildTools> {
 
 #[test]
 fn build_emits_mlir_and_llvm() {
-    let Some(tools) = resolve_or_skip() else { return };
+    let Some(tools) = resolve_or_skip() else {
+        return;
+    };
     let (mlir_src, preset) = parse_and_lower("let x = 1; x + 2");
     let dir = tempdir().expect("tempdir");
     let mlir_path = dir.path().join("out.mlir");
@@ -59,7 +61,9 @@ fn build_emits_mlir_and_llvm() {
 
 #[test]
 fn build_emits_object_file() {
-    let Some(tools) = resolve_or_skip() else { return };
+    let Some(tools) = resolve_or_skip() else {
+        return;
+    };
     let (mlir_src, preset) = parse_and_lower("let x = 1; x * 3");
     let dir = tempdir().expect("tempdir");
     let obj_path = dir.path().join("out.o");
@@ -81,7 +85,9 @@ fn build_emits_object_file() {
 
 #[test]
 fn build_emits_shared_library() {
-    let Some(tools) = resolve_or_skip() else { return };
+    let Some(tools) = resolve_or_skip() else {
+        return;
+    };
     let (mlir_src, preset) = parse_and_lower("let x = 1; x");
     let dir = tempdir().expect("tempdir");
     let lib_name = format!("test_artifact{}", std::env::consts::DLL_SUFFIX);

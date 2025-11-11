@@ -82,8 +82,7 @@ impl EmitOpts {
             ..Default::default()
         };
         if let Some(lower) = &args.mlir_lower {
-            out.mlir_lower =
-                lower.parse().unwrap_or(eval::MlirLowerPreset::None);
+            out.mlir_lower = lower.parse().unwrap_or(eval::MlirLowerPreset::None);
         }
         if let Some(pipeline) = &args.mlir_passes {
             if !pipeline.trim().is_empty() {
@@ -284,7 +283,11 @@ fn run_eval_command(args: EvalArgs) {
             };
             let blocks = parse_triplet(&args.gpu_blocks, "gpu-blocks");
             let threads = parse_triplet(&args.gpu_threads, "gpu-threads");
-            eval::ExecMode::MlirGpu { backend, blocks, threads }
+            eval::ExecMode::MlirGpu {
+                backend,
+                blocks,
+                threads,
+            }
         }
         #[cfg(not(feature = "mlir-gpu"))]
         {
@@ -466,8 +469,9 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
                         if let Some(path) = emit_opts.emit_mlir_file.as_ref() {
                             if !(emit_opts.wants_aot_artifacts() && mlir_written_by_builder) {
                                 let path_ref = std::path::Path::new(path);
-                                let parent =
-                                    path_ref.parent().unwrap_or_else(|| std::path::Path::new("."));
+                                let parent = path_ref
+                                    .parent()
+                                    .unwrap_or_else(|| std::path::Path::new("."));
                                 if let Err(e) = std::fs::create_dir_all(parent) {
                                     eprintln!("Failed to create directories for {}: {e}", path);
                                 } else if let Err(e) = std::fs::write(path_ref, &mlir_text) {
@@ -590,13 +594,24 @@ fn package_install(path: &str, target: Option<&str>) -> Result<()> {
     };
 
     install_package(path, target_str)?;
-    println!("Installed {} {} to {}", manifest.name, manifest.version, target_path.display());
+    println!(
+        "Installed {} {} to {}",
+        manifest.name,
+        manifest.version,
+        target_path.display()
+    );
     Ok(())
 }
 
 #[cfg(feature = "pkg")]
 fn discover_default_artifacts() -> Result<Vec<String>> {
-    let candidates = ["model.mlir", "model.so", "mind.h", "metadata.json", "README.md"];
+    let candidates = [
+        "model.mlir",
+        "model.so",
+        "mind.h",
+        "metadata.json",
+        "README.md",
+    ];
     let mut found = Vec::new();
     for candidate in candidates {
         if Path::new(candidate).exists() {
@@ -618,7 +633,10 @@ fn validate_files(files: &[String]) -> Result<Vec<String>> {
     for file in files {
         let path = Path::new(file);
         if path.is_absolute() {
-            return Err(anyhow!("listed artifact '{}' must be a relative path", file));
+            return Err(anyhow!(
+                "listed artifact '{}' must be a relative path",
+                file
+            ));
         }
         if path.components().count() != 1 {
             return Err(anyhow!(
