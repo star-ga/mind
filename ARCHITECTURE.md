@@ -12,3 +12,7 @@
 - `--no-default-features` always builds & tests
 - Feature gates: `cpu-exec`, `cpu-conv`, `mlir-*`, `pkg`, `ffi-c`
 - Tests prefer integration tests in `tests/`
+
+### Stability
+The architecture is frozen for v0.9.  
+Breaking changes will only occur in v1.0 once SDK bindings and developer docs are added.
