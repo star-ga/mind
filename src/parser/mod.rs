@@ -55,7 +55,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .padded();
         let axes_list = just('[')
             .padded()
-            .ignore_then(signed_int.clone().separated_by(just(',').padded()).allow_trailing())
+            .ignore_then(signed_int.separated_by(just(',').padded()).allow_trailing())
             .then_ignore(just(']').padded());
 
         let tuple_or_paren = just('(')
@@ -91,7 +91,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         let reduce_arg = choice((
             kw("axes")
                 .ignore_then(just('=').padded())
-                .ignore_then(axes_list.clone())
+                .ignore_then(axes_list)
                 .map(ReduceArg::Axes),
             kw("keepdims")
                 .ignore_then(just('=').padded())
@@ -158,8 +158,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallReshape { x: Box::new(x), dims, span }
             });
 
-        let expand_axis =
-            kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone());
+        let expand_axis = kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int);
 
         let tensor_expand_dims_call = just("tensor.expand_dims")
             .ignore_then(just('(').padded())
@@ -172,8 +171,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallExpandDims { x: Box::new(x), axis, span }
             });
 
-        let squeeze_axes =
-            kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list.clone());
+        let squeeze_axes = kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list);
 
         let tensor_squeeze_call = just("tensor.squeeze")
             .ignore_then(just('(').padded())
@@ -186,8 +184,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 Node::CallSqueeze { x: Box::new(x), axes, span }
             });
 
-        let transpose_axes =
-            kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list.clone());
+        let transpose_axes = kw("axes").ignore_then(just('=').padded()).ignore_then(axes_list);
 
         let tensor_transpose_call = just("tensor.transpose")
             .ignore_then(just('(').padded())
@@ -203,9 +200,9 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
-            .then(kw("i").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("i").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(')').padded())
             .map_with_span(|((x, axis), i), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
@@ -216,11 +213,11 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
-            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
-            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(')').padded())
             .map_with_span(|(((x, axis), start), end), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
@@ -231,13 +228,13 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
-            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("start").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
-            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("end").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
-            .then(kw("step").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("step").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(')').padded())
             .map_with_span(|((((x, axis), start), end), step), sp: std::ops::Range<usize>| {
                 let span = Span::new(sp.start, sp.end);
@@ -248,7 +245,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .ignore_then(just('(').padded())
             .ignore_then(expr.clone())
             .then_ignore(just(',').padded())
-            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int.clone()))
+            .then(kw("axis").ignore_then(just('=').padded()).ignore_then(signed_int))
             .then_ignore(just(',').padded())
             .then(
                 kw("idx")
@@ -293,7 +290,6 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         }
 
         let stride_value = signed_int
-            .clone()
             .map_with_span(|v, sp: std::ops::Range<usize>| (v, sp))
             .try_map(|(value, sp), _| {
                 if value <= 0 {
@@ -308,18 +304,19 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .then_ignore(just('"'))
             .map_with_span(|s, sp: std::ops::Range<usize>| (s, sp))
             .try_map(|(value, sp), _| {
-                ConvPadding::from_str(&value)
+                value
+                    .parse()
                     .map(Conv2dArg::Padding)
-                    .ok_or_else(|| Simple::custom(sp, "padding must be \"valid\" or \"same\""))
+                    .map_err(|_| Simple::custom(sp, "padding must be \"valid\" or \"same\""))
             });
 
         let conv2d_arg = choice((
             kw("stride_h")
                 .ignore_then(just('=').padded())
-                .ignore_then(stride_value.clone().map(Conv2dArg::StrideH)),
+                .ignore_then(stride_value.map(Conv2dArg::StrideH)),
             kw("stride_w")
                 .ignore_then(just('=').padded())
-                .ignore_then(stride_value.clone().map(Conv2dArg::StrideW)),
+                .ignore_then(stride_value.map(Conv2dArg::StrideW)),
             kw("padding").ignore_then(just('=').padded()).ignore_then(padding_value),
         ));
 
@@ -362,7 +359,6 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             });
 
         let call = dotted_ident
-            .clone()
             .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
             .then(
                 just('(')
@@ -392,8 +388,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             tensor_relu_call,
             tensor_conv2d_call,
             call,
-            int.clone(),
-            ident_expr.clone(),
+            int,
+            ident_expr,
             tuple_or_paren,
         ))
         .padded()
@@ -432,7 +428,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
     let dim = choice((text::int(10).map(|s: String| s), text::ident().map(|s: String| s))).padded();
 
     let dims = just('(')
-        .ignore_then(dim.clone().separated_by(just(',').padded()).allow_trailing())
+        .ignore_then(dim.separated_by(just(',').padded()).allow_trailing())
         .then_ignore(just(')'))
         .padded();
 
@@ -442,7 +438,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             .ignore_then(just('['))
             .ignore_then(dtype.clone())
             .then_ignore(just(',').padded())
-            .then(dims.clone())
+            .then(dims)
             .then_ignore(just(']'))
             .map(|(dt, shape)| TypeAnn::Tensor { dtype: dt, dims: shape }),
     ))

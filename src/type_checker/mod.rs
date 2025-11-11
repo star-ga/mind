@@ -656,7 +656,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     let mut shape = Vec::new();
                     shape.extend_from_slice(&tensor.shape[..axis_norm]);
                     shape.extend(idx_tensor.shape.iter().cloned());
-                    if axis_norm + 1 <= tensor.shape.len() {
+                    if axis_norm < tensor.shape.len() {
                         shape.extend_from_slice(&tensor.shape[axis_norm + 1..]);
                     }
                     Ok((ValueType::Tensor(TensorType::new(tensor.dtype, shape)), *span))
@@ -844,11 +844,12 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 "w",
             )?;
 
-            let mut out_shape = Vec::with_capacity(4);
-            out_shape.push(x_tensor.shape[0].clone());
-            out_shape.push(out_h);
-            out_shape.push(out_w);
-            out_shape.push(w_tensor.shape[3].clone());
+            let out_shape = vec![
+                x_tensor.shape[0].clone(),
+                out_h,
+                out_w,
+                w_tensor.shape[3].clone(),
+            ];
 
             Ok((ValueType::Tensor(TensorType::new(dtype, out_shape)), *span))
         }
@@ -1116,8 +1117,9 @@ fn infer_call(
 
 fn infer_dtype_arg(node: &Node) -> Result<DType, TypeErrSpan> {
     match node {
-        Node::Lit(Literal::Ident(name), span) => DType::from_str(name)
-            .ok_or(TypeErrSpan { msg: format!("unknown dtype `{name}`"), span: *span }),
+        Node::Lit(Literal::Ident(name), span) => name
+            .parse()
+            .map_err(|_| TypeErrSpan { msg: format!("unknown dtype `{name}`"), span: *span }),
         _ => Err(TypeErrSpan { msg: "expected dtype identifier".to_string(), span: node.span() }),
     }
 }

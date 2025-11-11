@@ -36,6 +36,7 @@ enum Op {
     Dot { a: NodeId, b: NodeId, info: MatMulShapeInfo },
     MatMul { a: NodeId, b: NodeId, info: MatMulShapeInfo },
     Relu { x: NodeId },
+    #[allow(dead_code)]
     Conv2d { x: NodeId, w: NodeId, stride_h: usize, stride_w: usize, padding: ConvPadding },
 }
 
@@ -325,13 +326,11 @@ fn expand_reduced_axes(mut grad: TensorVal, axes: &[usize], target_rank: usize) 
     for axis in 0..target_rank {
         if axis_set.contains(&axis) {
             shape.push(ShapeDim::Known(1));
+        } else if src_idx < grad.shape.len() {
+            shape.push(grad.shape[src_idx].clone());
+            src_idx += 1;
         } else {
-            if src_idx < grad.shape.len() {
-                shape.push(grad.shape[src_idx].clone());
-                src_idx += 1;
-            } else {
-                shape.push(ShapeDim::Known(1));
-            }
+            shape.push(ShapeDim::Known(1));
         }
     }
     grad.shape = shape;
@@ -533,11 +532,12 @@ pub fn build_graph_loss(
                     *padding,
                 )?;
 
-                let mut shape = Vec::with_capacity(4);
-                shape.push(left_info.shape[0].clone());
-                shape.push(out_h);
-                shape.push(out_w);
-                shape.push(right_info.shape[3].clone());
+                let shape = vec![
+                    left_info.shape[0].clone(),
+                    out_h,
+                    out_w,
+                    right_info.shape[3].clone(),
+                ];
 
                 let info = NodeInfo {
                     op: Op::Conv2d {
@@ -773,7 +773,7 @@ pub fn build_graph_loss(
                 let mut shape = Vec::new();
                 shape.extend_from_slice(&child_info.shape[..axis_norm]);
                 shape.extend(idx_info.shape.iter().cloned());
-                if axis_norm + 1 <= child_info.shape.len() {
+                if axis_norm < child_info.shape.len() {
                     shape.extend_from_slice(&child_info.shape[axis_norm + 1..]);
                 }
                 let info = NodeInfo {
@@ -1084,8 +1084,6 @@ fn reduction_factor(output: &[ShapeDim], target: &[ShapeDim]) -> Option<f64> {
                     // nothing
                 } else if *t == 1 {
                     factor *= *o as f64;
-                } else if *o == 1 {
-                    return None;
                 } else {
                     return None;
                 }
@@ -1095,13 +1093,7 @@ fn reduction_factor(output: &[ShapeDim], target: &[ShapeDim]) -> Option<f64> {
                     return None;
                 }
             }
-            (ShapeDim::Sym(_), ShapeDim::Known(t)) => {
-                if *t == 1 {
-                    return None;
-                } else {
-                    return None;
-                }
-            }
+            (ShapeDim::Sym(_), ShapeDim::Known(_)) => return None,
             (ShapeDim::Sym(os), ShapeDim::Sym(ts)) => {
                 if os != ts {
                     return None;
@@ -1117,13 +1109,10 @@ fn reduction_factor(output: &[ShapeDim], target: &[ShapeDim]) -> Option<f64> {
 fn accumulate_grad(adj: &mut HashMap<NodeId, TensorVal>, target: NodeId, incoming: TensorVal) {
     adj.entry(target)
         .and_modify(|existing| {
-            if let (Some(a), Some(b)) = (existing.fill, incoming.fill) {
-                existing.fill = Some(a + b);
-            } else if incoming.fill.is_some() {
-                existing.fill = None;
-            } else {
-                existing.fill = None;
-            }
+            existing.fill = match (existing.fill, incoming.fill) {
+                (Some(a), Some(b)) => Some(a + b),
+                _ => None,
+            };
         })
         .or_insert(incoming);
 }
