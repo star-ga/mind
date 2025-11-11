@@ -101,7 +101,8 @@ pub fn inspect_package(path: &str) -> Result<MindManifest> {
         return Err(anyhow!("package.toml not found in package"));
     }
 
-    let manifest: MindManifest = toml::from_slice(&manifest_data)?;
+    let manifest_toml = String::from_utf8(manifest_data)?;
+    let manifest: MindManifest = toml::from_str(&manifest_toml)?;
     Ok(manifest)
 }
 
@@ -127,7 +128,7 @@ pub fn install_package(path: &str, target_dir: &str) -> Result<()> {
         {
             return Err(anyhow!("package contains invalid path traversal entries"));
         }
-        if entry_path.as_ref() == Path::new("package.toml") {
+        if entry_path.as_path() == Path::new("package.toml") {
             // manifest handled separately
             let mut buf = Vec::new();
             entry.read_to_end(&mut buf)?;
