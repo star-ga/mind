@@ -39,11 +39,11 @@ jobs:
         shell: bash
         run: |
           set -e
-          # If the locked metadata fails because the lockfile is stale, refresh it.
-          if ! cargo metadata --format-version=1 --locked >/dev/null 2>&1; then
-            echo "Cargo.lock is stale; refreshing in CI workspace"
-            cargo generate-lockfile
+          echo "Patching transitive 'home' crate to 0.5.11 (avoid edition2024)."
+          if ! grep -q 'name = "home"' Cargo.lock >/dev/null 2>&1 || ! grep -q 'version = "0.5.11"' Cargo.lock; then
+            cargo update -p home --precise 0.5.11
           fi
+          test -f Cargo.lock || cargo generate-lockfile
 
       - name: Cargo metadata (smoke)
         run: cargo metadata --format-version=1 --locked
