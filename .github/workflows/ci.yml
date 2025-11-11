@@ -99,3 +99,8 @@ jobs:
           else
             cargo clippy --no-default-features -- -D warnings
           fi
+
+      - name: Build docs (no default features)
+        run: |
+          export RUSTDOCFLAGS="-D warnings"
+          cargo doc --no-default-features --document-private-items
