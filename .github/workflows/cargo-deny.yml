@@ -1,0 +1,23 @@
+name: Cargo Deny
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_HOME: /home/runner/.cargo
+      CARGO_INCREMENTAL: 0
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check

@@ -1,51 +1,19 @@
 # Contributing to MIND
 
-Thank you for your interest in contributing to MIND!
+## Toolchain
+- Rust stable (pinned by CI), `cargo`, `rustfmt`, `clippy`
+- No default features must compile: `cargo check --no-default-features`
 
-## Code of Conduct
+## CI gates
+- fmt: `cargo fmt --all -- --check`
+- build/tests: `cargo test --no-default-features`
+- clippy: `cargo clippy --no-default-features -- -D warnings`
+- license/advisories: `cargo deny check`
 
-Be respectful. No harassment or discrimination. Assume good intent. Help newcomers.
+## PR rules
+- Small, focused commits
+- Tests for new behavior (`tests/` integration preferred)
+- Update README/docs when user-visible
 
-## Getting Started
-
-### Prereqs
-
-```bash
-# Rust (1.70+)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-# LLVM 15+
-# Ubuntu:
-sudo apt-get install -y llvm-15 llvm-15-dev
-# macOS:
-brew install llvm@15
-```
-
-### Build & Test
-
-```bash
-git clone https://github.com/cputer/mind.git
-cd mind
-cargo build
-cargo test
-```
-
-### Linting
-
-```bash
-cargo fmt -- --check
-cargo clippy -- -D warnings
-```
-
-## Pull Requests
-
-1. Fork & branch (`feat/*` or `fix/*`)
-2. Add tests & docs
-3. Make sure CI passes
-4. Open PR with clear description and link to issues
-
-## RFCs
-
-For major changes, copy `docs/rfcs/0000-template.md` and open a PR to discuss.
-
-## Thanks ❤️
-Your contributions make MIND better.
+## Commit style
+- Conventional-ish: `feat:`, `fix:`, `docs:`, `refactor:`, `ci:`, `chore:`

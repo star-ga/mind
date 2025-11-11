@@ -1,2 +1,5 @@
 # Security Policy
-Report vulnerabilities to security@mindlang.dev with steps to reproduce, environment, and impact.
+
+- Report vulnerabilities privately to the repo owner (@cputer).
+- Please avoid filing public issues for newly discovered vulnerabilities.
+- Supported versions: latest `main` and latest release tags.
