@@ -43,6 +43,15 @@ jobs:
             cargo metadata --format-version=1
           fi
 
+      - name: Check compiles (no features)
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo check --no-default-features --locked
+          else
+            cargo check --no-default-features
+          fi
+
       - name: Build
         shell: bash
         run: |

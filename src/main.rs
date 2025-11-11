@@ -5,20 +5,16 @@
 //!   mind repl
 
 #[cfg(feature = "pkg")]
-use anyhow::anyhow;
-use anyhow::Context;
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 
 use clap::Args;
 use clap::Parser;
 use clap::Subcommand;
 
 #[cfg(feature = "pkg")]
-use mind::package::build_package;
-use mind::package::default_install_dir;
-use mind::package::inspect_package;
-use mind::package::install_package;
-use mind::package::MindManifest;
+use mind::package::{
+    build_package, default_install_dir, inspect_package, install_package, MindManifest,
+};
 
 use mind::diagnostics;
 use mind::eval;
@@ -30,6 +26,7 @@ use std::io::Write;
 
 #[cfg(feature = "pkg")]
 use std::fs;
+#[cfg(feature = "pkg")]
 use std::path::Path;
 #[cfg(any(feature = "mlir-build", feature = "pkg"))]
 use std::path::PathBuf;
@@ -159,24 +156,28 @@ impl EmitOpts {
 #[command(author, version, about = None, long_about = None)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Commands,
 }
 
 #[derive(Subcommand)]
 #[allow(clippy::large_enum_variant)]
-enum Command {
+enum Commands {
     Eval(EvalArgs),
     Repl,
     #[cfg(feature = "pkg")]
-    Package {
-        #[arg(subcommand)]
-        action: PackageAction,
-    },
+    Pkg(PkgCmd),
+}
+
+#[cfg(feature = "pkg")]
+#[derive(Args)]
+struct PkgCmd {
+    #[command(subcommand)]
+    action: PkgAction,
 }
 
 #[cfg(feature = "pkg")]
 #[derive(Subcommand)]
-enum PackageAction {
+enum PkgAction {
     Build {
         #[arg(short, long)]
         out: Option<String>,
@@ -250,10 +251,10 @@ struct EvalArgs {
 fn main() {
     let cli = Cli::parse();
     match cli.command {
-        Command::Eval(args) => run_eval_command(args),
-        Command::Repl => run_repl(),
+        Commands::Eval(args) => run_eval_command(args),
+        Commands::Repl => run_repl(),
         #[cfg(feature = "pkg")]
-        Command::Package { action } => run_package_command(action),
+        Commands::Pkg(cmd) => run_package_command(cmd.action),
     }
 }
 
@@ -517,7 +518,7 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
 }
 
 #[cfg(feature = "pkg")]
-fn run_package_command(action: PackageAction) {
+fn run_package_command(action: PkgAction) {
     if let Err(err) = handle_package_command(action) {
         eprintln!("Package command failed: {err}");
         std::process::exit(1);
@@ -525,11 +526,11 @@ fn run_package_command(action: PackageAction) {
 }
 
 #[cfg(feature = "pkg")]
-fn handle_package_command(action: PackageAction) -> Result<()> {
+fn handle_package_command(action: PkgAction) -> Result<()> {
     match action {
-        PackageAction::Build { out } => package_build(out)?,
-        PackageAction::Inspect { path } => package_inspect(&path)?,
-        PackageAction::Install { path, target } => package_install(&path, target.as_deref())?,
+        PkgAction::Build { out } => package_build(out)?,
+        PkgAction::Inspect { path } => package_inspect(&path)?,
+        PkgAction::Install { path, target } => package_install(&path, target.as_deref())?,
     }
     Ok(())
 }
