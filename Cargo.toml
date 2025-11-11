@@ -71,5 +71,5 @@ registry = []
 [build-dependencies]
 cc = "1"
 
-[patch.crates-io]
+[dependency-overrides]
 home = "=0.5.11"
