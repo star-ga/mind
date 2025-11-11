@@ -1,7 +1,9 @@
-use mind::{
-    parser, type_checker,
-    types::{DType, ShapeDim, TensorType, ValueType},
-};
+use mind::parser;
+use mind::type_checker;
+use mind::types::DType;
+use mind::types::ShapeDim;
+use mind::types::TensorType;
+use mind::types::ValueType;
 use std::collections::HashMap;
 
 #[test]

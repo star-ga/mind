@@ -2,7 +2,8 @@
 use std::path::PathBuf;
 
 #[cfg(feature = "mlir-exec")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 #[cfg(feature = "mlir-exec")]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,7 +30,9 @@ impl Default for MlirExecConfig {
 pub fn exec_mlir_text(mlir: &str, cfg: &MlirExecConfig) -> Result<String, String> {
     use std::env;
     use std::io::Write;
-    use std::process::{Child, Command, Stdio};
+    use std::process::Child;
+    use std::process::Command;
+    use std::process::Stdio;
 
     use tempfile::NamedTempFile;
 

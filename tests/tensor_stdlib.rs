@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use mind::{eval, parser};
+use mind::eval;
+
+use mind::parser;
 
 fn eval_source(src: &str) -> eval::Value {
     let module = parser::parse(src).unwrap();

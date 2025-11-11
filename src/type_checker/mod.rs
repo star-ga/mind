@@ -1,10 +1,28 @@
-use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 
-use crate::ast::{BinOp, Literal, Module, Node, Span as AstSpan};
-use crate::diagnostics::{Diagnostic as Pretty, Location};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+
+use crate::ast::BinOp;
+
+use crate::ast::Literal;
+
+use crate::ast::Module;
+
+use crate::ast::Node;
+
+use crate::ast::Span as AstSpan;
+
+use crate::diagnostics::Diagnostic as Pretty;
+use crate::diagnostics::Location;
+
 use crate::linalg;
-use crate::types::{ConvPadding, DType, ShapeDim, TensorType, ValueType};
+use crate::types::ConvPadding;
+use crate::types::DType;
+use crate::types::ShapeDim;
+use crate::types::TensorType;
+use crate::types::ValueType;
 
 #[derive(Debug)]
 pub struct TypeErrSpan {

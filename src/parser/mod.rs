@@ -7,7 +7,18 @@
 
 use chumsky::prelude::*;
 
-use crate::ast::{BinOp, Literal, Module, Node, Span, TypeAnn};
+use crate::ast::BinOp;
+
+use crate::ast::Literal;
+
+use crate::ast::Module;
+
+use crate::ast::Node;
+
+use crate::ast::Span;
+
+use crate::ast::TypeAnn;
+
 use crate::diagnostics::Diagnostic as PrettyDiagnostic;
 use crate::types::ConvPadding;
 

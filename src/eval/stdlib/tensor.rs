@@ -1,15 +1,32 @@
-use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 
-use crate::ast::{Literal, Node};
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
+
+use crate::ast::Literal;
+
+use crate::ast::Node;
+
 use crate::eval::autodiff::TensorEnvEntry;
-use crate::eval::{
-    eval_value_expr_mode, format_value_human, EvalError, ExecMode, TensorVal, Value,
-};
+use crate::eval::eval_value_expr_mode;
+use crate::eval::format_value_human;
+use crate::eval::EvalError;
+use crate::eval::ExecMode;
+use crate::eval::TensorVal;
+use crate::eval::Value;
+
 #[cfg(feature = "cpu-buffers")]
-use crate::eval::{materialize_filled, num_elems, MATERIALIZE_MAX};
-use crate::linalg::{self, MatMulShapeInfo};
-use crate::types::{ConvPadding, DType, ShapeDim};
+use crate::eval::materialize_filled;
+use crate::eval::num_elems;
+use crate::eval::MATERIALIZE_MAX;
+
+use crate::linalg;
+use crate::linalg::MatMulShapeInfo;
+
+use crate::types::ConvPadding;
+use crate::types::DType;
+use crate::types::ShapeDim;
 
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::value::Buffer;

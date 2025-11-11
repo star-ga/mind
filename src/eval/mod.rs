@@ -1,8 +1,21 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
 
-use crate::ast::{BinOp, Literal, Module, Node, TypeAnn};
+use crate::ast::BinOp;
+
+use crate::ast::Literal;
+
+use crate::ast::Module;
+
+use crate::ast::Node;
+
+use crate::ast::TypeAnn;
+
 use crate::eval::autodiff::TensorEnvEntry;
-use crate::types::{DType, ShapeDim, ValueType};
+use crate::types::DType;
+use crate::types::ShapeDim;
+use crate::types::ValueType;
 
 #[cfg(feature = "cpu-exec")]
 use crate::exec;
@@ -28,17 +41,28 @@ pub mod value;
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
 #[cfg(feature = "mlir-build")]
-pub use mlir_build::{
-    build_all as build_mlir_artifacts, resolve_tools as resolve_mlir_build_tools,
-    BuildError as MlirBuildError, BuildOptions as MlirBuildOptions,
-    BuildProducts as MlirBuildProducts, BuildTools as MlirBuildTools,
-};
-pub use mlir_export::{
-    emit_mlir_with_opts, to_mlir, MlirEmitMode, MlirEmitOptions, MlirLowerPreset,
-};
+pub use mlir_build::build_all as build_mlir_artifacts;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::resolve_tools as resolve_mlir_build_tools;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::BuildError as MlirBuildError;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::BuildOptions as MlirBuildOptions;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::BuildProducts as MlirBuildProducts;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::BuildTools as MlirBuildTools;
+pub use mlir_export::emit_mlir_with_opts;
+pub use mlir_export::to_mlir;
+pub use mlir_export::MlirEmitMode;
+pub use mlir_export::MlirEmitOptions;
+pub use mlir_export::MlirLowerPreset;
 #[cfg(feature = "mlir-exec")]
 pub use mlir_run::MlirExecConfig;
-pub use value::{format_value_human, TensorVal, Value, VarId};
+pub use value::format_value_human;
+pub use value::TensorVal;
+pub use value::Value;
+pub use value::VarId;
 
 pub fn emit_mlir_string(ir: &crate::ir::IRModule, preset: mlir_export::MlirLowerPreset) -> String {
     let opts = mlir_export::MlirEmitOptions {

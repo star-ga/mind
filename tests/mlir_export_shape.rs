@@ -1,4 +1,5 @@
-use mind::{eval, parser};
+use mind::eval;
+use mind::parser;
 
 #[test]
 fn mlir_export_covers_shape_ops() {

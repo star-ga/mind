@@ -1,4 +1,6 @@
-use crate::types::{DType, ShapeDim};
+use crate::types::DType;
+use crate::types::ShapeDim;
+
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

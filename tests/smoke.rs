@@ -1,4 +1,7 @@
-use mind::{lexer, parser, type_checker, types::ValueType};
+use mind::lexer;
+use mind::parser;
+use mind::type_checker;
+use mind::types::ValueType;
 
 #[test]
 fn lex_parse_check_minimal() {

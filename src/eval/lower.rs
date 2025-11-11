@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
+use crate::ast;
 use crate::ast::Literal;
 use crate::ast::TypeAnn;
-use crate::ast::{self};
+
 use crate::ir::BinOp;
 use crate::ir::IRModule;
 use crate::ir::IndexSpec;

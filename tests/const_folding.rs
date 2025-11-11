@@ -1,4 +1,6 @@
-use mind::{ast::Node, opt::fold, parser};
+use mind::ast::Node;
+use mind::opt::fold;
+use mind::parser;
 
 #[test]
 fn folds_simple_arith() {

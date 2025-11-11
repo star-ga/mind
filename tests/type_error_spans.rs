@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use mind::{diagnostics, parser, type_checker};
+use mind::diagnostics;
+
+use mind::parser;
+
+use mind::type_checker;
 
 #[test]
 fn unknown_ident_points_to_name() {

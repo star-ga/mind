@@ -1,8 +1,20 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::ir::{BinOp, IRModule, IndexSpec, Instr, SliceSpec, ValueId};
-use crate::types::{DType, ShapeDim};
+use crate::ir::BinOp;
+
+use crate::ir::IRModule;
+
+use crate::ir::IndexSpec;
+
+use crate::ir::Instr;
+
+use crate::ir::SliceSpec;
+
+use crate::ir::ValueId;
+
+use crate::types::DType;
+use crate::types::ShapeDim;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MlirEmitMode {

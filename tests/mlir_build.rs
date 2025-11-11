@@ -3,7 +3,10 @@
 use std::fs;
 use std::time::Duration;
 
-use mind::{eval, parser};
+use mind::eval;
+
+use mind::parser;
+
 use tempfile::tempdir;
 
 fn parse_and_lower(src: &str) -> (String, eval::MlirLowerPreset) {

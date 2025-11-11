@@ -1,5 +1,7 @@
 use mind::types::infer::unify;
-use mind::types::{DType, ShapeDim, TensorType};
+use mind::types::DType;
+use mind::types::ShapeDim;
+use mind::types::TensorType;
 
 #[test]
 fn unify_known_and_sym() {

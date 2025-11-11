@@ -1,4 +1,6 @@
-use crate::ast::{BinOp, Literal, Node};
+use crate::ast::BinOp;
+use crate::ast::Literal;
+use crate::ast::Node;
 
 /// Fold constant integer subtrees bottom-up. Pure function; no env.
 pub fn fold(node: &Node) -> Node {
