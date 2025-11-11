@@ -1,4 +1,7 @@
-use mind::{parser, type_checker, types::ValueType};
+use mind::parser;
+use mind::type_checker;
+use mind::types::ValueType;
+
 use std::collections::HashMap;
 
 #[test]

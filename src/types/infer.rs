@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_variables, unused_imports)]
-use super::{ShapeDim, TensorType};
+use super::ShapeDim;
+use super::TensorType;
 
 /// Left-biased, minimal unifier for Phase 1.
 /// - Known==Known => Known

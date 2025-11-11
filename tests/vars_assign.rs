@@ -1,4 +1,5 @@
-use mind::{eval, parser};
+use mind::eval;
+use mind::parser;
 
 #[test]
 fn let_and_use_variable() {

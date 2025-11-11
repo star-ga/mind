@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 
-use crate::types::{DType, ShapeDim, TensorType};
+use crate::types::DType;
+
+use crate::types::ShapeDim;
+
+use crate::types::TensorType;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarId(pub String);
@@ -202,7 +206,8 @@ fn format_buffer_sample(buf: &Buffer, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{DType, ShapeDim};
+    use crate::types::DType;
+    use crate::types::ShapeDim;
 
     #[test]
     fn format_tensor_fill_trim() {

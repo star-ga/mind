@@ -19,13 +19,19 @@ impl MlirOptOutput {
 }
 
 #[cfg(feature = "mlir-subprocess")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
+
 #[cfg(feature = "mlir-subprocess")]
-use std::{
-    io::Write,
-    process::{Child, Command, Stdio},
-    thread,
-};
+use std::io::Write;
+#[cfg(feature = "mlir-subprocess")]
+use std::process::Child;
+#[cfg(feature = "mlir-subprocess")]
+use std::process::Command;
+#[cfg(feature = "mlir-subprocess")]
+use std::process::Stdio;
+#[cfg(feature = "mlir-subprocess")]
+use std::thread;
 
 #[cfg(feature = "mlir-subprocess")]
 pub fn run_mlir_opt(

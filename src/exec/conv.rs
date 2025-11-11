@@ -1,5 +1,6 @@
 use crate::eval::value::TensorVal;
-use crate::types::{ConvPadding, ShapeDim};
+use crate::types::ConvPadding;
+use crate::types::ShapeDim;
 
 use super::cpu::ExecError;
 

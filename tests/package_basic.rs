@@ -2,7 +2,12 @@
 
 use std::fs;
 
-use mind::package::{build_package, inspect_package, MindManifest};
+use mind::package::build_package;
+
+use mind::package::inspect_package;
+
+use mind::package::MindManifest;
+
 use tempfile::tempdir;
 
 #[test]

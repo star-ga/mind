@@ -1,4 +1,5 @@
-use std::{fs, process::Command};
+use std::fs;
+use std::process::Command;
 
 use tempfile::tempdir;
 

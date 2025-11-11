@@ -3,16 +3,31 @@ mod manifest;
 pub use manifest::MindManifest;
 
 use std::collections::BTreeMap;
-use std::fs::{self, File};
-use std::io::{Cursor, Read};
-use std::path::{Component, Path, PathBuf};
+use std::fs;
+use std::fs::File;
 
-use anyhow::{anyhow, Context, Result};
+use std::io::Cursor;
+use std::io::Read;
+
+use std::path::Component;
+use std::path::Path;
+use std::path::PathBuf;
+
+use anyhow::anyhow;
+
+use anyhow::Context;
+
+use anyhow::Result;
+
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use sha2::{Digest, Sha256};
-use tar::{Archive, Builder, Header};
+use sha2::Digest;
+use sha2::Sha256;
+
+use tar::Archive;
+use tar::Builder;
+use tar::Header;
 
 pub fn build_package(out_path: &str, files: &[&str], manifest: &MindManifest) -> Result<()> {
     if manifest.files.len() != files.len() {

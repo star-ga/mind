@@ -1,4 +1,5 @@
-use mind::{eval, parser};
+use mind::eval;
+use mind::parser;
 
 #[test]
 fn env_prevents_unknown() {
