@@ -33,6 +33,16 @@ jobs:
           git config --global --unset-all http.proxy  || true
           git config --global --unset-all https.proxy || true
 
+      - name: Ensure usable Cargo.lock (refresh if stale)
+        shell: bash
+        run: |
+          set -e
+          # If the locked metadata fails because the lockfile is stale, refresh it.
+          if ! cargo metadata --format-version=1 --locked >/dev/null 2>&1; then
+            echo "Cargo.lock is stale; refreshing in CI workspace"
+            cargo generate-lockfile
+          fi
+
       - name: Cargo metadata (smoke)
         run: cargo metadata --format-version=1 --locked
 
