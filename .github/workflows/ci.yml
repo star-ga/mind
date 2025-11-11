@@ -35,15 +35,20 @@ jobs:
           git config --global --unset-all http.proxy  || true
           git config --global --unset-all https.proxy || true
 
-      - name: Ensure usable Cargo.lock (refresh if stale)
+      - name: Verify lockfile contains pinned overrides
         shell: bash
         run: |
           set -e
-          echo "Patching transitive 'home' crate to 0.5.11 (avoid edition2024)."
-          if ! grep -q 'name = "home"' Cargo.lock >/dev/null 2>&1 || ! grep -q 'version = "0.5.11"' Cargo.lock; then
-            cargo update -p home --precise 0.5.11
+          if ! awk '
+            $0 ~ /name = "home"/ { f=1; next }
+            f && $0 ~ /version = "0\.5\.11"/ { ok=1; exit }
+            f && $0 ~ /^\[/ { f=0 }
+            END { exit !ok }
+          ' Cargo.lock; then
+            echo "Cargo.lock does not contain home 0.5.11."
+            echo "Run locally:  cargo update -p home --precise 0.5.11  and commit the lockfile."
+            exit 1
           fi
-          test -f Cargo.lock || cargo generate-lockfile
 
       - name: Cargo metadata (smoke)
         run: cargo metadata --format-version=1 --locked
