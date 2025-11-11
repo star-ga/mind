@@ -82,7 +82,7 @@ impl MlirEmitter {
     fn emit_executable_prints(&mut self) {
         let mut printed_any = false;
         for value in self.outputs.clone() {
-            if self.tensors.get(&value).is_some() {
+            if self.tensors.contains_key(&value) {
                 continue;
             }
             self.write_fmt(format_args!("    func.call @printI64(%{}) : (i64) -> ()\n", value.0));
@@ -116,7 +116,7 @@ pub enum MlirLowerPreset {
 }
 
 impl MlirLowerPreset {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "none" => Some(Self::None),
             "core" => Some(Self::Core),
@@ -146,22 +146,23 @@ impl Default for MlirLowerPreset {
     }
 }
 
+impl std::str::FromStr for MlirLowerPreset {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        MlirLowerPreset::parse(s).ok_or(())
+    }
+}
+
 /// Apply purely textual rewrites to the emitted MLIR for "lowering".
-pub fn apply_textual_lowering(mut mlir: String, preset: MlirLowerPreset) -> String {
+pub fn apply_textual_lowering(mlir: String, preset: MlirLowerPreset) -> String {
     match preset {
-        MlirLowerPreset::None | MlirLowerPreset::Core => mlir,
-        MlirLowerPreset::ArithLinalg => {
-            // Keep simple and explicit: normalize function attrs, canonicalize tensor.empty uses, etc.
-            mlir = mlir.replace("arith.constant", "arith.constant");
-            mlir
-        }
-        MlirLowerPreset::CpuDemo => {
-            // Add a couple of cosmetic inlines / canonical names for demos
-            mlir = mlir.replace("linalg.fill", "linalg.fill");
-            mlir
-        }
-        MlirLowerPreset::JitCpu => mlir,
-        MlirLowerPreset::GpuDefault => mlir,
+        MlirLowerPreset::None
+        | MlirLowerPreset::Core
+        | MlirLowerPreset::ArithLinalg
+        | MlirLowerPreset::CpuDemo
+        | MlirLowerPreset::JitCpu
+        | MlirLowerPreset::GpuDefault => mlir,
     }
 }
 
@@ -169,7 +170,7 @@ pub fn apply_lowering(mlir: &str, preset: &str) -> Result<String, String> {
     if preset.is_empty() {
         return Ok(mlir.to_string());
     }
-    let lowered = if let Some(preset) = MlirLowerPreset::from_str(preset) {
+    let lowered = if let Some(preset) = MlirLowerPreset::parse(preset) {
         apply_textual_lowering(mlir.to_string(), preset)
     } else {
         return Err(format!("unknown MLIR lowering preset '{preset}'"));
@@ -180,7 +181,7 @@ pub fn apply_lowering(mlir: &str, preset: &str) -> Result<String, String> {
 pub fn emit_mlir_with_opts(ir: &IRModule, opts: &MlirEmitOptions) -> String {
     let mut text = to_mlir_with_mode(ir, "main", opts.mode);
     if let Some(preset_name) = opts.lower_preset.as_deref() {
-        if let Some(preset) = MlirLowerPreset::from_str(preset_name) {
+        if let Some(preset) = MlirLowerPreset::parse(preset_name) {
             text = apply_textual_lowering(text, preset);
         }
     }
@@ -519,8 +520,7 @@ fn emit_matmul(emitter: &mut MlirEmitter, dst: ValueId, a: ValueId, b: ValueId) 
         for dim in &a_info.shape[..a_info.shape.len() - 1] {
             out_shape.push(dim.clone());
         }
-        out_shape
-            .push(b_info.shape.get(b_info.shape.len() - 1).cloned().unwrap_or(ShapeDim::Known(1)));
+        out_shape.push(b_info.shape.last().cloned().unwrap_or(ShapeDim::Known(1)));
     }
     let out_ty = if out_shape.is_empty() {
         format!("tensor<?x{}>", dtype_str)
@@ -611,7 +611,7 @@ fn emit_slice(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, dims: &[Sli
             let start = spec.start.max(0) as usize;
             let end = end.max(spec.start) as usize;
             let stride = spec.stride.max(1) as usize;
-            let len = ((end - start) + stride - 1) / stride;
+            let len = (end - start).div_ceil(stride);
             acc[axis] = ShapeDim::Known(len);
         }
         acc
@@ -641,7 +641,7 @@ fn emit_gather(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: V
     let idx_ty = tensor_type(&idx_info.shape, "i32");
     let axis = axis.clamp(0, src_info.shape.len() as i64 - 1) as usize;
     let mut result_shape = src_info.shape.clone();
-    if let Some(dim) = idx_info.shape.get(0) {
+    if let Some(dim) = idx_info.shape.first() {
         result_shape[axis] = dim.clone();
     }
     let result_ty = tensor_type(&result_shape, dtype_str);
@@ -651,13 +651,10 @@ fn emit_gather(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: V
         empty = empty_name,
         result_ty = result_ty
     ));
-    let upper_bound = idx_info
-        .shape
-        .get(0)
-        .and_then(|d| match d {
-            ShapeDim::Known(n) => Some(n.to_string()),
-            ShapeDim::Sym(s) => Some(s.to_string()),
-        })
+    let upper_bound = idx_info.shape.first().map(|d| match d {
+        ShapeDim::Known(n) => n.to_string(),
+        ShapeDim::Sym(s) => s.to_string(),
+    })
         .unwrap_or_else(|| "0".to_string());
     let loop_result = format!("%{}", dst.0);
     emitter.write_fmt(format_args!(

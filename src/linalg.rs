@@ -164,7 +164,7 @@ pub fn conv_output_dim_same(input: Option<usize>, stride: usize) -> Result<Optio
             if h == 0 {
                 return Err("input spatial dimension must be positive".to_string());
             }
-            let out = (h + stride - 1) / stride;
+            let out = h.div_ceil(stride);
             Ok(Some(out))
         }
         None => Ok(None),
@@ -185,10 +185,7 @@ pub fn compute_matmul_shape_info(
 
     let a_adj = if a_shape.len() == 1 {
         a_was_vec = true;
-        let mut dims = Vec::with_capacity(2);
-        dims.push(ShapeDim::Known(1));
-        dims.push(a_shape[0].clone());
-        dims
+        vec![ShapeDim::Known(1), a_shape[0].clone()]
     } else {
         a_shape.to_vec()
     };
