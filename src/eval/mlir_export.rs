@@ -123,8 +123,9 @@ impl MlirEmitter {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MlirLowerPreset {
+    #[default]
     None,
     Core,
     ArithLinalg,
@@ -155,12 +156,6 @@ impl MlirLowerPreset {
             Self::JitCpu => "jit-cpu",
             Self::GpuDefault => "gpu-default",
         }
-    }
-}
-
-impl Default for MlirLowerPreset {
-    fn default() -> Self {
-        Self::None
     }
 }
 

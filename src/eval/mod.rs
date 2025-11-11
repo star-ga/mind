@@ -82,14 +82,6 @@ pub fn emit_mlir_to_file(
     std::fs::write(path, txt)
 }
 
-#[cfg(not(feature = "cpu-buffers"))]
-pub(crate) const MATERIALIZE_MAX: usize = 0;
-
-#[cfg(not(feature = "cpu-buffers"))]
-pub(crate) fn num_elems(_shape: &[ShapeDim]) -> Option<usize> {
-    None
-}
-
 #[cfg(feature = "cpu-buffers")]
 pub(crate) fn num_elems(shape: &[ShapeDim]) -> Option<usize> {
     let mut n: usize = 1;
