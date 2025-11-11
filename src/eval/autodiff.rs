@@ -1,16 +1,22 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 
 use crate::ast;
 use crate::eval::TensorVal;
-use crate::linalg::{self, MatMulShapeInfo};
+use crate::linalg::MatMulShapeInfo;
+use crate::linalg::{self};
 
 #[derive(Clone)]
 pub struct TensorEnvEntry {
     pub value: TensorVal,
     pub expr: Option<ast::Node>,
 }
-use crate::types::{ConvPadding, DType, ShapeDim};
+use crate::types::ConvPadding;
+use crate::types::DType;
+use crate::types::ShapeDim;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(usize);
