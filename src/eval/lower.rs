@@ -1,8 +1,16 @@
 use std::collections::HashMap;
 
-use crate::ast::{self, Literal, TypeAnn};
-use crate::ir::{BinOp, IRModule, IndexSpec, Instr, SliceSpec, ValueId};
-use crate::types::{DType, ShapeDim};
+use crate::ast::Literal;
+use crate::ast::TypeAnn;
+use crate::ast::{self};
+use crate::ir::BinOp;
+use crate::ir::IRModule;
+use crate::ir::IndexSpec;
+use crate::ir::Instr;
+use crate::ir::SliceSpec;
+use crate::ir::ValueId;
+use crate::types::DType;
+use crate::types::ShapeDim;
 
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let mut ir = IRModule::new();

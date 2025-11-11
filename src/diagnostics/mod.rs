@@ -40,7 +40,7 @@ fn offset_to_loc(src: &str, offset: usize) -> Location {
 }
 
 /// Extract the single source line containing `span.start`.
-fn line_at(src: &str, span: Span) -> (String, usize /*line_start_offset*/) {
+fn line_at(src: &str, span: Span) -> (String, usize /* line_start_offset */) {
     let bytes = src.as_bytes();
     let mut b = span.start;
     while b > 0 && bytes[b - 1] != b'\n' {
