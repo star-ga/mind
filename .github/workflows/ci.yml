@@ -83,8 +83,13 @@ jobs:
             cargo test --verbose --no-default-features
           fi
 
-      - name: Check formatting
-        run: cargo fmt -- --check
+      - name: Install stable (fmt only)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting (stable)
+        run: cargo +stable fmt --all -- --check
 
       - name: Clippy
         shell: bash
