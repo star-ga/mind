@@ -257,7 +257,7 @@ fn tensor_sample(
 
 fn parse_dtype(node: &Node) -> Result<DType, EvalError> {
     match node {
-        Node::Lit(Literal::Ident(name), _) => DType::from_str(name).ok_or(EvalError::Unsupported),
+        Node::Lit(Literal::Ident(name), _) => name.parse().map_err(|_| EvalError::Unsupported),
         _ => Err(EvalError::Unsupported),
     }
 }
@@ -715,11 +715,12 @@ pub(crate) fn conv2d_tensor_preview(
     let out_h = conv_output_dim_eval(&x.shape[1], Some(&w.shape[0]), stride_h, padding)?;
     let out_w = conv_output_dim_eval(&x.shape[2], Some(&w.shape[1]), stride_w, padding)?;
 
-    let mut out_shape = Vec::with_capacity(4);
-    out_shape.push(x.shape[0].clone());
-    out_shape.push(out_h);
-    out_shape.push(out_w);
-    out_shape.push(w.shape[3].clone());
+    let out_shape = vec![
+        x.shape[0].clone(),
+        out_h,
+        out_w,
+        w.shape[3].clone(),
+    ];
 
     Ok(TensorVal::new(dtype, out_shape, None))
 }
@@ -960,7 +961,7 @@ pub(crate) fn gather_tensor_preview(
     let mut shape = Vec::new();
     shape.extend_from_slice(&tensor.shape[..axis]);
     shape.extend(idx.shape.iter().cloned());
-    if axis + 1 <= tensor.shape.len() {
+    if axis < tensor.shape.len() {
         shape.extend_from_slice(&tensor.shape[axis + 1..]);
     }
     Ok(TensorVal::new(tensor.dtype.clone(), shape, tensor.fill))

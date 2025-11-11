@@ -103,7 +103,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::CallReshape { x, dims, .. } => {
             let src = lower_expr(x, ir, env);
             let dst = ir.fresh();
-            let new_shape = dims.iter().map(parse_dim).collect();
+            let new_shape = dims.iter().map(|dim| parse_dim(dim)).collect();
             ir.instrs.push(Instr::Reshape { dst, src, new_shape });
             dst
         }
@@ -204,7 +204,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
 }
 
 fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Option<(DType, Vec<ShapeDim>)> {
-    let dtype = DType::from_str(dtype)?;
+    let dtype = dtype.parse().ok()?;
     let mut shape = Vec::with_capacity(dims.len());
     for dim in dims {
         shape.push(parse_dim(dim));
@@ -212,11 +212,11 @@ fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Option<(DType, Vec<ShapeDim
     Some((dtype, shape))
 }
 
-fn parse_dim(dim: &String) -> ShapeDim {
+fn parse_dim(dim: &str) -> ShapeDim {
     if let Ok(n) = dim.parse::<usize>() {
         ShapeDim::Known(n)
     } else {
-        let leaked: &'static str = Box::leak(dim.clone().into_boxed_str());
+        let leaked: &'static str = Box::leak(dim.to_owned().into_boxed_str());
         ShapeDim::Sym(leaked)
     }
 }

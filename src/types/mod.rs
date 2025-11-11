@@ -22,7 +22,7 @@ pub enum DType {
 }
 
 impl DType {
-    pub fn from_str(name: &str) -> Option<Self> {
+    fn parse_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "i32" => Some(DType::I32),
             "f32" => Some(DType::F32),
@@ -32,6 +32,10 @@ impl DType {
         }
     }
 
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::parse_name(name)
+    }
+
     pub fn as_str(&self) -> &'static str {
         match self {
             DType::I32 => "i32",
@@ -39,6 +43,14 @@ impl DType {
             DType::BF16 => "bf16",
             DType::F16 => "f16",
         }
+    }
+}
+
+impl std::str::FromStr for DType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        DType::parse_name(s).ok_or(())
     }
 }
 
@@ -55,7 +67,7 @@ pub enum ConvPadding {
 }
 
 impl ConvPadding {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_ascii_lowercase().as_str() {
             "valid" => Some(ConvPadding::Valid),
             "same" => Some(ConvPadding::Same),
@@ -68,6 +80,14 @@ impl ConvPadding {
             ConvPadding::Valid => "valid",
             ConvPadding::Same => "same",
         }
+    }
+}
+
+impl std::str::FromStr for ConvPadding {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        ConvPadding::parse(s).ok_or(())
     }
 }
 

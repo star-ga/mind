@@ -41,8 +41,10 @@ pub use mlir_run::MlirExecConfig;
 pub use value::{format_value_human, TensorVal, Value, VarId};
 
 pub fn emit_mlir_string(ir: &crate::ir::IRModule, preset: mlir_export::MlirLowerPreset) -> String {
-    let mut opts = mlir_export::MlirEmitOptions::default();
-    opts.lower_preset = Some(preset.as_str().to_string());
+    let opts = mlir_export::MlirEmitOptions {
+        lower_preset: Some(preset.as_str().to_string()),
+        ..Default::default()
+    };
     mlir_export::emit_mlir_with_opts(ir, &opts)
 }
 
@@ -353,14 +355,6 @@ pub fn eval_module(m: &Module) -> Result<i64, EvalError> {
 
 pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {
     eval_module(m)
-}
-
-pub(crate) fn eval_value_expr(
-    node: &Node,
-    env: &HashMap<String, Value>,
-    tensor_env: &HashMap<String, TensorEnvEntry>,
-) -> Result<Value, EvalError> {
-    eval_value_expr_mode(node, env, tensor_env, ExecMode::Preview)
 }
 
 pub(crate) fn eval_value_expr_mode(
@@ -1004,7 +998,7 @@ pub(crate) fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<Sha
 }
 
 fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Result<(DType, Vec<ShapeDim>), EvalError> {
-    let dtype = DType::from_str(dtype).ok_or(EvalError::Unsupported)?;
+    let dtype = dtype.parse().map_err(|_| EvalError::Unsupported)?;
     let mut shape = Vec::with_capacity(dims.len());
     for dim in dims {
         if let Ok(n) = dim.parse::<usize>() {
