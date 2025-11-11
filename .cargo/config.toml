@@ -1,10 +1,6 @@
-[source.crates-io]
-replace-with = "crates-io-sparse"
-
-[source.crates-io-sparse]
-registry = "sparse+https://index.crates.io/"
+[registries]
+crates-io = { protocol = "sparse" }
 
 [net]
+retry = 3
 git-fetch-with-cli = true
-retry = true
-retry-requests = 3
