@@ -105,7 +105,9 @@ impl TensorType {
 
 #[cfg(test)]
 mod tests {
-    use super::{DType, ShapeDim, TensorType};
+    use super::DType;
+    use super::ShapeDim;
+    use super::TensorType;
 
     #[test]
     fn tensor_type_new_covers_constructor() {

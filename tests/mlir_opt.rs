@@ -1,6 +1,8 @@
 #![cfg(feature = "mlir-subprocess")]
 
-use mind::{eval, parser};
+use mind::eval;
+
+use mind::parser;
 
 #[test]
 fn mlir_opt_runs_when_available() {

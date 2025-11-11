@@ -5,21 +5,36 @@
 //!   mind repl
 
 #[cfg(feature = "pkg")]
-use anyhow::{anyhow, Context, Result};
-use clap::{Args, Parser, Subcommand};
+use anyhow::anyhow;
+use anyhow::Context;
+use anyhow::Result;
+
+use clap::Args;
+use clap::Parser;
+use clap::Subcommand;
+
 #[cfg(feature = "pkg")]
-use mind::package::{
-    build_package, default_install_dir, inspect_package, install_package, MindManifest,
-};
-use mind::{diagnostics, eval, parser};
+use mind::package::build_package;
+use mind::package::default_install_dir;
+use mind::package::inspect_package;
+use mind::package::install_package;
+use mind::package::MindManifest;
+
+use mind::diagnostics;
+use mind::eval;
+use mind::parser;
+
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::io;
+use std::io::Write;
+
+#[cfg(feature = "pkg")]
+use std::fs;
+use std::path::Path;
 #[cfg(any(feature = "mlir-build", feature = "pkg"))]
 use std::path::PathBuf;
 #[cfg(feature = "mlir-exec")]
 use std::time::Duration;
-#[cfg(feature = "pkg")]
-use std::{fs, path::Path};
 
 struct EmitOpts {
     emit_mlir_stdout: bool,

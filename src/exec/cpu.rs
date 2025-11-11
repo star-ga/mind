@@ -2,7 +2,8 @@
 
 use crate::eval::value::TensorVal;
 use crate::exec::simd_chunks_mut;
-use crate::types::{DType, ShapeDim};
+use crate::types::DType;
+use crate::types::ShapeDim;
 
 #[derive(Debug)]
 pub enum ExecError {

@@ -6,8 +6,8 @@ use std::sync::atomic::Ordering;
 
 use crate::ast;
 use crate::eval::TensorVal;
+use crate::linalg;
 use crate::linalg::MatMulShapeInfo;
-use crate::linalg::{self};
 
 #[derive(Clone)]
 pub struct TensorEnvEntry {

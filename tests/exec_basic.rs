@@ -1,6 +1,8 @@
 #[cfg(feature = "cpu-exec")]
 mod cpu {
-    use mind::{eval, parser};
+    use mind::eval;
+    use mind::parser;
+
     use std::collections::HashMap;
 
     #[test]

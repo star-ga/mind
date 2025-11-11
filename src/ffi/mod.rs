@@ -4,7 +4,10 @@
 pub mod capi {
     use std::cell::RefCell;
     use std::ffi::CString;
-    use std::os::raw::{c_char, c_int, c_void};
+    use std::os::raw::c_char;
+    use std::os::raw::c_int;
+    use std::os::raw::c_void;
+
     use std::ptr;
 
     #[repr(C)]

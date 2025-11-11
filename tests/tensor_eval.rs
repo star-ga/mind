@@ -1,4 +1,6 @@
-use mind::{eval, parser};
+use mind::eval;
+use mind::parser;
+
 use std::collections::HashMap;
 
 #[test]
