@@ -1,7 +1,11 @@
 use std::collections::HashMap;
 
-use crate::eval::value::{TensorVal, Value};
-use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::eval::value::TensorVal;
+use crate::eval::value::Value;
+use crate::ir::BinOp;
+use crate::ir::IRModule;
+use crate::ir::Instr;
+use crate::ir::ValueId;
 use crate::types::ShapeDim;
 
 pub fn eval_ir(ir: &IRModule) -> Value {
