@@ -25,8 +25,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@1.81.0
+      - name: Install Rust (stable, edition-2024 ready)
+        uses: dtolnay/rust-toolchain@1.83.0
         with:
           components: rustfmt, clippy
 
