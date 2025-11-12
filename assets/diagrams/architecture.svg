@@ -1,52 +1,108 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg width="960" height="540" viewBox="0 0 960 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">MIND architecture overview</title>
-  <desc id="desc">Simplified block diagram of the MIND compiler and runtime pipeline</desc>
-  <style>
-    .box { fill: #111831; stroke: #5B8CFF; stroke-width: 3; rx: 16; ry: 16; }
-    .text { fill: #E8F1FF; font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 20px; }
-    .arrow { stroke: #7FFFD4; stroke-width: 4; marker-end: url(#arrowhead); }
-  </style>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720" role="img" aria-labelledby="title desc">
+  <title id="title">MIND — Compiler and Runtime Pipeline</title>
+  <desc id="desc">Bright, high-contrast diagram; single diagonal from Typed IR to Passes; no extraneous arrows.</desc>
   <defs>
-    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L9,3 z" fill="#7FFFD4" />
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0 H0 V32" fill="none" stroke="#0F1425" stroke-width="1"/>
+    </pattern>
+    <marker id="arrowC" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L0,12 L12,6 z" fill="#00F5D4"/>
     </marker>
+    <marker id="arrowE" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L0,12 L12,6 z" fill="#8AFF80"/>
+    </marker>
+    <linearGradient id="bggrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0B0F1F"/>
+      <stop offset="100%" stop-color="#0A0D18"/>
+    </linearGradient>
+    <style><![CDATA[
+      .lane { fill: #0E1530; opacity: 0.6; }
+      .boxC { fill: #0F1833; stroke: #2F7BFF; stroke-width: 3.5; rx: 16; ry: 16; }
+      .boxE { fill: #0F1833; stroke: #8AFF80; stroke-width: 3.5; rx: 16; ry: 16; }
+      .t { fill: #EAF2FF; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-size: 18px; }
+      .ttitle { fill: #9FB8FF; font-size: 20px; font-weight: 700; }
+      .cap { fill: #7DD3FC; font-size: 16px; }
+      .arrowC { stroke: #00F5D4; stroke-width: 4; marker-end: url(#arrowC); }
+      .arrowE { stroke: #8AFF80; stroke-width: 4; marker-end: url(#arrowE); }
+      .capline { stroke: #1E2A50; stroke-width: 2; }
+    ]]></style>
   </defs>
-  <rect width="960" height="540" fill="#060915"/>
-  <g transform="translate(60,120)">
-    <rect class="box" width="180" height="120" />
-    <text class="text" x="90" y="65" text-anchor="middle">Source</text>
+
+  <rect x="0" y="0" width="1280" height="720" fill="url(#bggrad)"/>
+  <rect x="0" y="0" width="1280" height="720" fill="url(#grid)" opacity="0.35"/>
+
+  <!-- Swimlanes -->
+  <g>
+    <rect x="40" y="80" width="1200" height="240" class="lane"/>
+    <text x="60" y="110" class="ttitle">Compile (Source to IR to MLIR/LLVM)</text>
+    <rect x="40" y="360" width="1200" height="240" class="lane"/>
+    <text x="60" y="390" class="ttitle">Execute (Packaging to Passes to Runtimes to Applications)</text>
   </g>
-  <g transform="translate(280,120)">
-    <rect class="box" width="200" height="120" />
-    <text class="text" x="100" y="50" text-anchor="middle">Parser</text>
-    <text class="text" x="100" y="80" text-anchor="middle">+ Type System</text>
+
+  <!-- Compile row boxes -->
+  <g transform="translate(60,140)">
+    <rect width="200" height="120" class="boxC"/>
+    <text x="100" y="55" text-anchor="middle" class="t">Source</text>
+    <text x="100" y="82" text-anchor="middle" class="cap">MIND language</text>
   </g>
-  <g transform="translate(520,120)">
-    <rect class="box" width="200" height="120" />
-    <text class="text" x="100" y="65" text-anchor="middle">MIND IR</text>
+
+  <g transform="translate(300,140)">
+    <rect width="240" height="120" class="boxC"/>
+    <text x="120" y="48" text-anchor="middle" class="t">Parser and Type System</text>
+    <line x1="24" y1="70" x2="216" y2="70" class="capline"/>
+    <text x="120" y="95" text-anchor="middle" class="cap">shape/device checks • diagnostics</text>
   </g>
-  <g transform="translate(760,120)">
-    <rect class="box" width="180" height="120" />
-    <text class="text" x="90" y="65" text-anchor="middle">MLIR / LLVM</text>
+
+  <g transform="translate(580,140)">
+    <rect width="220" height="120" class="boxC"/>
+    <text x="110" y="55" text-anchor="middle" class="t">Typed IR</text>
+    <text x="110" y="85" text-anchor="middle" class="cap">const, ops, control, tensors</text>
   </g>
-  <g transform="translate(280,320)">
-    <rect class="box" width="200" height="120" />
-    <text class="text" x="100" y="50" text-anchor="middle">Passes</text>
-    <text class="text" x="100" y="80" text-anchor="middle">Opt &amp; Autodiff</text>
+
+  <g transform="translate(840,140)">
+    <rect width="360" height="120" class="boxC"/>
+    <text x="180" y="45" text-anchor="middle" class="t">MLIR / LLVM</text>
+    <line x1="24" y1="65" x2="336" y2="65" class="capline"/>
+    <text x="180" y="90" text-anchor="middle" class="cap">export • presets • canonicalize • cse</text>
   </g>
-  <g transform="translate(520,320)">
-    <rect class="box" width="200" height="120" />
-    <text class="text" x="100" y="50" text-anchor="middle">Runtimes</text>
-    <text class="text" x="100" y="80" text-anchor="middle">CPU · GPU · FFI</text>
+
+  <!-- Compile arrows -->
+  <line class="arrowC" x1="260" y1="200" x2="300" y2="200"/>
+  <line class="arrowC" x1="540" y1="200" x2="580" y2="200"/>
+  <line class="arrowC" x1="800" y1="200" x2="840" y2="200"/>
+
+  <!-- Execute row boxes -->
+  <g transform="translate(60,420)">
+    <rect width="200" height="120" class="boxE"/>
+    <text x="100" y="50" text-anchor="middle" class="t">Packaging</text>
+    <text x="100" y="80" text-anchor="middle" class="cap">.mindpkg • inspect • install</text>
   </g>
-  <g transform="translate(760,320)">
-    <rect class="box" width="180" height="120" />
-    <text class="text" x="90" y="65" text-anchor="middle">Applications</text>
+
+  <g transform="translate(300,420)">
+    <rect width="240" height="120" class="boxE"/>
+    <text x="120" y="50" text-anchor="middle" class="t">Passes</text>
+    <text x="120" y="80" text-anchor="middle" class="cap">opt • autodiff</text>
   </g>
-  <line class="arrow" x1="240" y1="180" x2="280" y2="180"/>
-  <line class="arrow" x1="480" y1="180" x2="520" y2="180"/>
-  <line class="arrow" x1="720" y1="180" x2="760" y2="180"/>
-  <line class="arrow" x1="380" y1="240" x2="620" y2="320"/>
-  <line class="arrow" x1="620" y1="380" x2="760" y2="380"/>
+
+  <g transform="translate(580,420)">
+    <rect width="220" height="120" class="boxE"/>
+    <text x="110" y="50" text-anchor="middle" class="t">Runtimes</text>
+    <text x="110" y="80" text-anchor="middle" class="cap">Preview • CPU • JIT • FFI</text>
+  </g>
+
+  <g transform="translate(840,420)">
+    <rect width="360" height="120" class="boxE"/>
+    <text x="180" y="50" text-anchor="middle" class="t">Applications</text>
+    <text x="180" y="80" text-anchor="middle" class="cap">services • agents • tools</text>
+  </g>
+
+  <!-- Execute arrows -->
+  <line class="arrowE" x1="260" y1="480" x2="300" y2="480"/>
+  <line class="arrowE" x1="540" y1="480" x2="580" y2="480"/>
+  <line class="arrowE" x1="800" y1="480" x2="840" y2="480"/>
+
+  <!-- Single diagonal: Typed IR -> Passes -->
+  <path d="M 690 260 L 540 420" class="arrowE" fill="none"/>
+
 </svg>
