@@ -1,90 +1,53 @@
-# MIND — The Native Language for Intelligent Systems
+<p align="center">
+  <img src="assets/logo/mind.svg" alt="MIND logo" width="160" />
+</p>
+
+# MIND — Native Language for Intelligent Systems
 
 [![CI](https://github.com/cputer/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/cputer/mind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-green.svg)](https://cputer.github.io/mind-spec/)
-[![Build](https://img.shields.io/github/actions/workflow/status/cputer/mind/ci.yml?branch=main)](https://github.com/cputer/mind/actions)
 
-> **Status:** ✅ Complete (v0.9 baseline)
->  
-> Companion repos: [**mind-runtime**](https://github.com/cputer/mind-runtime) · [**mind-spec**](https://github.com/cputer/mind-spec)
+## Overview
 
----
+MIND is a Rust-first language and runtime for building intelligent systems with auditable foundations. It blends declarative tensor algebra, static shape inference, automatic differentiation, and MLIR/LLVM lowering in a compact toolchain that scales from research prototypes to production.
 
-### Overview
-
-**MIND** is a Rust-based language and runtime designed for intelligent systems — combining declarative tensor algebra, shape inference, automatic differentiation, and MLIR/LLVM backends in a compact, auditable core.
-
-It now ships with:
-- ✴️ Full parser → type checker → IR → MLIR pipeline  
-- ⚙️ CPU execution, autodiff, and JIT/GPU scaffolding  
-- 🧩 Optional FFI & packaging support (`ffi-c`, `pkg` features)  
-- 🧠 Comprehensive test suite and CI/CD pipelines  
-- 📚 Docsify-based specification site and cargo-deny license checks  
-
----
-
-### Quick Start
+## Quick Start
 
 ```bash
 git clone https://github.com/cputer/mind.git
 cd mind
-cargo build --release
 cargo run -- eval "let x: Tensor[f32,(2,3)] = 0; x + 1"
 ```
 
-Expected output:
+Explore the full language tour and runtime guides in [`/docs`](docs/README.md).
 
-```
-Tensor[F32,(2,3)] fill=1
-```
+## Core Concepts
 
-See [`mind-spec`](https://github.com/cputer/mind-spec) for full language documentation.
+* [Type System](docs/type-system.md) — ranks, shapes, polymorphism, and effect tracking.
+* [Autodiff](docs/autodiff.md) — reverse-mode differentiation on the SSA IR.
+* [IR & MLIR](docs/ir-mlir.md) — compiler pipeline from parser to MLIR dialects.
 
----
+## Architecture
 
-### Development
+* [Runtime & Compiler Architecture](docs/architecture.md)
+* [FFI & Runtime Embedding](docs/ffi-runtime.md)
 
-MIND follows a feature-gated architecture:
+## Benchmarks
 
-| Feature       | Description                 |
-| ------------- | --------------------------- |
-| `cpu-buffers` | Materialized tensor buffers |
-| `cpu-exec`    | CPU backend execution       |
-| `cpu-conv`    | Conv2D kernels              |
-| `mlir-exec`   | MLIR JIT execution          |
-| `mlir-build`  | MLIR AOT compiler           |
-| `ffi-c`       | C ABI bindings              |
-| `pkg`         | Package tooling             |
+The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/runtime performance, regression tracking, and methodology.
 
-To test all:
+## Roadmap
 
-```bash
-cargo test --all-features
-```
+Upcoming milestones and release planning live in [`/docs/roadmap.md`](docs/roadmap.md).
 
----
+## Links
 
-### Architecture & Docs
-
-* [ARCHITECTURE.md](ARCHITECTURE.md) — module layout and runtime flow
-* [STATUS.md](STATUS.md) — feature roadmap (now **100 %** complete)
-* [RELEASING.md](RELEASING.md) — tagging and publishing workflow
-* [SECURITY.md](SECURITY.md) — vulnerability disclosure policy
+* [Architecture diagram](assets/diagrams/architecture.svg)
+* [Brand assets](assets/logo/mind.svg) · [Social cover](assets/social/og-cover.svg)
+* [Contributing guidelines](CONTRIBUTING.md)
+* [Security policy](SECURITY.md)
+* [License](LICENSE)
 
 ---
 
-### License
-
-Licensed under [MIT](LICENSE).
-Copyright © 2025 MIND Language Contributors.
-
----
-
-## ✅ Current Release
-
-| Component                   | Version | Status            |
-| --------------------------- | ------- | ----------------- |
-| Compiler Core (`mind`)      | v0.9.0  | ✅ Stable baseline |
-| Runtime (`mind-runtime`)    | v0.9.0  | ✅ Complete        |
-| Specification (`mind-spec`) | v0.9.0  | ✅ Published       |
+Looking for implementation details? Start in [`/docs`](docs/README.md) and join the conversation in [mind-runtime](https://github.com/cputer/mind-runtime) and [mind-spec](https://github.com/cputer/mind-spec).

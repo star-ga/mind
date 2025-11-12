@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="960" height="540" viewBox="0 0 960 540" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">MIND architecture overview</title>
+  <desc id="desc">Simplified block diagram of the MIND compiler and runtime pipeline</desc>
+  <style>
+    .box { fill: #111831; stroke: #5B8CFF; stroke-width: 3; rx: 16; ry: 16; }
+    .text { fill: #E8F1FF; font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 20px; }
+    .arrow { stroke: #7FFFD4; stroke-width: 4; marker-end: url(#arrowhead); }
+  </style>
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#7FFFD4" />
+    </marker>
+  </defs>
+  <rect width="960" height="540" fill="#060915"/>
+  <g transform="translate(60,120)">
+    <rect class="box" width="180" height="120" />
+    <text class="text" x="90" y="65" text-anchor="middle">Source</text>
+  </g>
+  <g transform="translate(280,120)">
+    <rect class="box" width="200" height="120" />
+    <text class="text" x="100" y="50" text-anchor="middle">Parser</text>
+    <text class="text" x="100" y="80" text-anchor="middle">+ Type System</text>
+  </g>
+  <g transform="translate(520,120)">
+    <rect class="box" width="200" height="120" />
+    <text class="text" x="100" y="65" text-anchor="middle">MIND IR</text>
+  </g>
+  <g transform="translate(760,120)">
+    <rect class="box" width="180" height="120" />
+    <text class="text" x="90" y="65" text-anchor="middle">MLIR / LLVM</text>
+  </g>
+  <g transform="translate(280,320)">
+    <rect class="box" width="200" height="120" />
+    <text class="text" x="100" y="50" text-anchor="middle">Passes</text>
+    <text class="text" x="100" y="80" text-anchor="middle">Opt &amp; Autodiff</text>
+  </g>
+  <g transform="translate(520,320)">
+    <rect class="box" width="200" height="120" />
+    <text class="text" x="100" y="50" text-anchor="middle">Runtimes</text>
+    <text class="text" x="100" y="80" text-anchor="middle">CPU · GPU · FFI</text>
+  </g>
+  <g transform="translate(760,320)">
+    <rect class="box" width="180" height="120" />
+    <text class="text" x="90" y="65" text-anchor="middle">Applications</text>
+  </g>
+  <line class="arrow" x1="240" y1="180" x2="280" y2="180"/>
+  <line class="arrow" x1="480" y1="180" x2="520" y2="180"/>
+  <line class="arrow" x1="720" y1="180" x2="760" y2="180"/>
+  <line class="arrow" x1="380" y1="240" x2="620" y2="320"/>
+  <line class="arrow" x1="620" y1="380" x2="760" y2="380"/>
+</svg>

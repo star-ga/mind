@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">MIND social cover placeholder</title>
+  <desc id="desc">Gradient background with centered MIND logotype placeholder</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#141826" />
+      <stop offset="100%" stop-color="#2A3958" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" rx="48" ry="48" />
+  <g fill="#F3F5FF" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="600" y="292" font-size="84" font-weight="600">MIND</text>
+    <text x="600" y="368" font-size="32" font-weight="300">Native language for intelligent systems</text>
+  </g>
+  <rect x="80" y="480" width="1040" height="4" fill="#40517E" opacity="0.6" />
+</svg>
