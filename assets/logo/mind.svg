@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="320" height="320" viewBox="0 0 320 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">MIND logo</title>
+  <desc id="desc">Stylized brain-inspired mark forming the letters M I N D</desc>
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#5B8CFF" />
+      <stop offset="100%" stop-color="#7FFFD4" />
+    </linearGradient>
+  </defs>
+  <rect width="320" height="320" rx="48" fill="#0B1026"/>
+  <path d="M64 232V96l40 56 56-80 56 80 40-56v136" fill="none" stroke="url(#grad)" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="108" cy="236" r="14" fill="#7FFFD4"/>
+  <circle cx="212" cy="236" r="14" fill="#5B8CFF"/>
+</svg>

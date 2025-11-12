@@ -1,0 +1,32 @@
+name: Link Check
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run lychee
+        uses: lycheeverse/lychee-action@v1
+        with:
+          args: >-
+            --verbose
+            --no-progress
+            --include-fragments
+            --exclude-mail
+            README.md
+            docs/**/*.md
+            CONTRIBUTING.md
+            SECURITY.md
+            LICENSE
+      - name: Upload lychee report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: lychee-report
+          path: lychee/out.md
