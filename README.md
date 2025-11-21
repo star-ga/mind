@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo/mind.svg" alt="MIND logo" width="512" />
+  <img src="assets/logo/mind-logo.svg" alt="MIND logo" width="512" />
 </p>
 
 # MIND — Native Language for Intelligent Systems
