@@ -18,19 +18,29 @@ def should_skip(path: Path) -> bool:
 
 def add_header_to_file(path: Path):
     text = path.read_text(encoding="utf-8")
+
+    # Already has our header — nothing to do
     if "STARGA Inc. and MIND Language Contributors" in text:
         return
 
-    if text.startswith("#!"):
-        lines = text.splitlines(keepends=True)
-        first = lines[0]
-        rest = "".join(lines[1:])
-        new_text = first + HEADER + rest
-    else:
-        new_text = HEADER + text
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return
+
+    idx = 0
+
+    # 1) Optional shebang: "#!/usr/bin/env ..." etc.
+    if lines[idx].startswith("#!") and not lines[idx].startswith("#!["):
+        idx += 1
+
+    # 2) All consecutive crate-level attributes of the form "#![cfg(...)]"
+    while idx < len(lines) and lines[idx].lstrip().startswith("#!["):
+        idx += 1
+
+    # 3) Build new text: shebang + attributes + HEADER + the rest
+    new_text = "".join(lines[:idx]) + HEADER + "".join(lines[idx:])
 
     path.write_text(new_text, encoding="utf-8")
-    print(f"Updated: {path}")
 
 def main():
     for root, dirs, files in os.walk(REPO_ROOT):
