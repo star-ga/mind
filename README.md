@@ -56,7 +56,7 @@ MIND follows an open-core dual licensing model maintained by STARGA Inc.
   See [`LICENSE-MIT`](./LICENSE-MIT) for the full text.
 
 - **Enterprise & SaaS Offerings**  \
-  Enterprise-only features, hosted “MIND Cloud” services, and proprietary extensions are available under a separate commercial license from STARGA Inc. These components are not covered by the MIT License and are not necessarily present in this repository.
+  Enterprise-only features, hosted “MIND Cloud” services, and proprietary extensions are available under a separate commercial license from STARGA Inc. These components are not covered by the MIT License and are not present in this repository.
 
 For commercial licensing, OEM partnerships, or large-scale deployments, please contact:
 `info@star.ga` or `legal@star.ga`.
