@@ -1,21 +1,26 @@
-MIT License
+MIND Licensing Overview – Open Core (Community + Enterprise)
 
-Copyright (c) 2025 MIND Language Contributors
+This repository contains the Community Edition of the MIND language and core compiler.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+MIND uses an open-core dual licensing model:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Community Edition (this repository)
+   - Licensed under the MIT License.
+   - See `LICENSE-MIT` for the full MIT terms.
+   - You may use, modify, distribute, and embed this code under standard MIT conditions.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. Enterprise & SaaS Offerings (not part of this repository)
+   - MIND Enterprise Edition features (advanced optimizations, cluster/GPU management, observability, multi-tenant control plane, etc.).
+   - Hosted “MIND Cloud” or other managed SaaS offerings operated by STARGA Inc.
+   - Proprietary extensions, closed-source plugins, and integrations not included in this repository.
+   - Use of MIND trademarks, logos, and brand in ways that suggest endorsement or official partnership.
+
+These Enterprise and SaaS components are NOT licensed under MIT and require a separate commercial agreement with STARGA Inc.
+
+For commercial licensing, OEM, or large-scale deployment, please contact:
+  STARGA Inc.
+  Email: legal@star.ga or info@star.ga
+
+In summary:
+- This repository (Community Edition) → MIT (`LICENSE-MIT`)
+- Enterprise/SaaS/closed-source components → Commercial License (`LICENSE-COMMERCIAL` and separate agreements)
