@@ -1,3 +1,7 @@
+// Copyright (c) 2025 STARGA Inc. and MIND Language Contributors
+// SPDX-License-Identifier: MIT
+// Part of the MIND project (Machine Intelligence Native Design).
+
 //! Minimal CPU executor for TensorVal with materialized buffers (f32 only for v1).
 
 use crate::eval::value::TensorVal;

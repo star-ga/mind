@@ -1,3 +1,7 @@
+// Copyright (c) 2025 STARGA Inc. and MIND Language Contributors
+// SPDX-License-Identifier: MIT
+// Part of the MIND project (Machine Intelligence Native Design).
+
 #[cfg(feature = "ffi-c")]
 pub fn generate_header() -> String {
     let header = r#"#ifndef MIND_H
