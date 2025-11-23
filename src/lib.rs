@@ -1,3 +1,7 @@
+// Copyright (c) 2025 STARGA Inc. and MIND Language Contributors
+// SPDX-License-Identifier: MIT
+// Part of the MIND project (Machine Intelligence Native Design).
+
 //! MIND core library (Phase 1 scaffold)
 pub mod ast;
 pub mod diagnostics;

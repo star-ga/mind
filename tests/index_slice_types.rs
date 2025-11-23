@@ -1,3 +1,7 @@
+// Copyright (c) 2025 STARGA Inc. and MIND Language Contributors
+// SPDX-License-Identifier: MIT
+// Part of the MIND project (Machine Intelligence Native Design).
+
 #[test]
 fn index_axis_bounds_checked() {
     let src = r#" let x: Tensor[f32,(2,5)] = 0; tensor.index(x, axis=2, i=0) "#;

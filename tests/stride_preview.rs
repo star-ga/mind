@@ -1,3 +1,7 @@
+// Copyright (c) 2025 STARGA Inc. and MIND Language Contributors
+// SPDX-License-Identifier: MIT
+// Part of the MIND project (Machine Intelligence Native Design).
+
 #[test]
 fn stride_pos_step_len() {
     let src = r#" let x: Tensor[f32,(2,10)] = 7; tensor.slice_stride(x, axis=1, start=0, end=10, step=2) "#;

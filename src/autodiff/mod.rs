@@ -1,4 +1,8 @@
 #![allow(dead_code, unused_variables, unused_imports)]
+// Copyright (c) 2025 STARGA Inc. and MIND Language Contributors
+// SPDX-License-Identifier: MIT
+// Part of the MIND project (Machine Intelligence Native Design).
+
 //! Minimal autodiff prototype (Phase 1).
 //!
 //! `grad(f)` returns a closure that runs `f()` and also returns a placeholder
