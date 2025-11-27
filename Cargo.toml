@@ -5,7 +5,7 @@ edition = "2021"
 authors = ["MIND Language Contributors"]
 description = "The native language for intelligent systems"
 repository = "https://github.com/cputer/mind"
-license = "MIT"
+license = "Apache-2.0"
 keywords = ["ai", "machine-learning", "compiler", "tensor", "autodiff"]
 categories = ["compilers", "science"]
 
