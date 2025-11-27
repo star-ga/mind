@@ -56,7 +56,8 @@ MIND follows an open-core dual licensing model maintained by STARGA Inc.
   See [`LICENSE`](./LICENSE) for the full text.
 
 - **Enterprise & SaaS Offerings**  \
-  Enterprise-only features, hosted “MIND Cloud” services, and proprietary extensions are available under a separate commercial license from STARGA Inc. These components are not covered by the Apache License and are not present in this repository.
+  Enterprise-only features, hosted “MIND Cloud” services, and proprietary extensions are available under a separate commercial license from STARGA Inc. These components are not covered by the Apache License and are not present in this repository.  \
+  Commercial and trademark terms are summarized in [`LICENSE-COMMERCIAL`](./LICENSE-COMMERCIAL) and governed by separate agreements with STARGA Inc.
 
 For commercial licensing, OEM partnerships, or large-scale deployments, please contact:
 `info@star.ga` or `legal@star.ga`.
