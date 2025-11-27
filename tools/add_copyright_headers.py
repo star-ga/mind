@@ -18,11 +18,39 @@ HEADER = """// Copyright 2025 STARGA Inc.
 
 """
 
+MIT_MARKERS = (
+    "MIT License",
+    "SPDX-License-Identifier: MIT",
+    "Permission is hereby granted, free of charge",
+)
+
 def should_skip(path: Path) -> bool:
     parts = set(path.parts)
     if "target" in parts or ".git" in parts:
         return True
     return False
+
+def strip_mit_header(lines: list[str], idx: int) -> list[str]:
+    """Remove an existing MIT header block directly after the insertion point."""
+
+    if idx >= len(lines):
+        return lines
+
+    start = idx
+    # Only attempt to strip simple line-comment blocks used by the old MIT header.
+    if not lines[start].lstrip().startswith("//"):
+        return lines
+
+    end = start
+    while end < len(lines) and lines[end].lstrip().startswith("//"):
+        end += 1
+
+    block_text = "".join(lines[start:end])
+    if any(marker in block_text for marker in MIT_MARKERS):
+        return lines[:start] + lines[end:]
+
+    return lines
+
 
 def add_header_to_file(path: Path):
     text = path.read_text(encoding="utf-8")
@@ -44,6 +72,9 @@ def add_header_to_file(path: Path):
     # 2) All consecutive crate-level attributes of the form "#![cfg(...)]"
     while idx < len(lines) and lines[idx].lstrip().startswith("#!["):
         idx += 1
+
+    # 2.5) If an MIT header is present after the insertion point, drop it first.
+    lines = strip_mit_header(lines, idx)
 
     # 3) Build new text: shebang + attributes + HEADER + the rest
     new_text = "".join(lines[:idx]) + HEADER + "".join(lines[idx:])
