@@ -5,7 +5,7 @@
 # MIND — Native Language for Intelligent Systems
 
 [![CI](https://github.com/cputer/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/cputer/mind/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ## Overview
 
@@ -52,11 +52,11 @@ Upcoming milestones and release planning live in [`/docs/roadmap.md`](docs/roadm
 MIND follows an open-core dual licensing model maintained by STARGA Inc.
 
 - **Community Edition (this repository)**  \
-  The language, core compiler, and runtime found here are provided under the MIT License.  \
-  See [`LICENSE-MIT`](./LICENSE-MIT) for the full text.
+  The language, core compiler, and runtime found here are provided under the Apache License, Version 2.0.  \
+  See [`LICENSE`](./LICENSE) for the full text.
 
 - **Enterprise & SaaS Offerings**  \
-  Enterprise-only features, hosted “MIND Cloud” services, and proprietary extensions are available under a separate commercial license from STARGA Inc. These components are not covered by the MIT License and are not present in this repository.
+  Enterprise-only features, hosted “MIND Cloud” services, and proprietary extensions are available under a separate commercial license from STARGA Inc. These components are not covered by the Apache License and are not present in this repository.
 
 For commercial licensing, OEM partnerships, or large-scale deployments, please contact:
 `info@star.ga` or `legal@star.ga`.

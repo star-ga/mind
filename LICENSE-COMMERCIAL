@@ -1,9 +1,9 @@
 COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 
 The source code in this repository is the Community Edition of the MIND language and core compiler
-and is provided under the MIT License (see `LICENSE-MIT`).
+and is provided under the Apache License, Version 2.0 (see `LICENSE`).
 
-The following are NOT licensed under MIT and require a separate commercial agreement
+The following are NOT licensed under the Apache License, Version 2.0 and require a separate commercial agreement
 with STARGA Inc.:
 
 1. MIND Enterprise Edition features
