@@ -9,7 +9,7 @@ MIND is a next-generation programming language and compiler stack designed to bu
 
 **Market Need.** AI software development today is fragmented across languages, frameworks, and deployment environments. Teams often prototype in Python, reimplement in C++/CUDA, and manage distinct runtimes for cloud versus edge. This fragmentation slows delivery, increases operational risk, and contributes to the industry reality that over 85% of AI/ML projects never reach production. Organizations require a cohesive platform that unifies modeling, compilation, and deployment.
 
-**Solution.** MIND provides a unified language and compiler that boosts developer productivity by eliminating glue code, reducing errors, and automating low-level optimization. Enterprises benefit from deterministic performance, reproducible builds, and easier auditability. With an open-core (MIT-licensed) foundation and enterprise extensions, MIND encourages broad adoption while offering commercial-grade support and capabilities.
+**Solution.** MIND provides a unified language and compiler that boosts developer productivity by eliminating glue code, reducing errors, and automating low-level optimization. Enterprises benefit from deterministic performance, reproducible builds, and easier auditability. With an open-core (Apache-licensed) foundation and enterprise extensions, MIND encourages broad adoption while offering commercial-grade support and capabilities.
 
 ## Market Opportunity
 
@@ -68,7 +68,7 @@ Compared to Python-based frameworks, MIND eliminates the dual-language problem a
 ### Competitive Advantages
 
 1. **End-to-end unification.** Single codebase from research to production.
-2. **Open-core community.** MIT-licensed core accelerates adoption and ecosystem growth.
+2. **Open-core community.** Apache-licensed core accelerates adoption and ecosystem growth.
 3. **Performance and safety.** Combines systems-level efficiency with memory-safe execution.
 4. **Hardware partnerships.** MLIR foundation enables rapid support for new accelerators.
 5. **Targeted beachheads.** Focus on edge AI, finance, and regulated sectors where MIND’s guarantees provide outsized value.
@@ -77,7 +77,7 @@ Compared to Python-based frameworks, MIND eliminates the dual-language problem a
 
 MIND follows an open-core strategy:
 
-- **Community Edition.** Free, MIT-licensed language, compiler, and base runtime.
+- **Community Edition.** Free, Apache-licensed language, compiler, and base runtime.
 - **Enterprise extensions.** Optimized runtime modules, advanced compiler passes, management tooling, and integrations.
 - **Support and services.** Tiered SLAs, professional services, and training.
 - **Cloud compiler.** Subscription or usage-based access to always up-to-date compilation and benchmarking services.
