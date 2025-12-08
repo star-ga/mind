@@ -27,4 +27,7 @@
 mod engine;
 mod rules;
 
-pub use engine::{differentiate_function, AutodiffError, GradientResult};
+pub use engine::{
+    differentiate_function, differentiate_with_options, AutodiffError, GradientOptions,
+    GradientResult,
+};

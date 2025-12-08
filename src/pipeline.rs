@@ -102,12 +102,7 @@ pub fn compile_source(
             .func
             .as_deref()
             .ok_or(CompileError::MissingFunctionName)?;
-        let mut grad = autodiff::differentiate_function(&ir, func)?;
-        let mut grad_ir = grad.gradient_module.clone();
-        ir::verify_module(&grad_ir)?;
-        opt::ir_canonical::canonicalize_module(&mut grad_ir);
-        ir::verify_module(&grad_ir)?;
-        grad.gradient_module = grad_ir;
+        let grad = autodiff::differentiate_function(&ir, func)?;
         Some(grad)
     } else {
         None
