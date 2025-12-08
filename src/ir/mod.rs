@@ -12,6 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+use crate::types::ConvPadding;
 use crate::types::DType;
 use crate::types::ShapeDim;
 
@@ -98,6 +99,14 @@ pub enum Instr {
         dst: ValueId,
         a: ValueId,
         b: ValueId,
+    },
+    Conv2d {
+        dst: ValueId,
+        input: ValueId,
+        filter: ValueId,
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
     },
     Index {
         dst: ValueId,

@@ -12,33 +12,13 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! MIND core library (Phase 1 scaffold)
-pub mod ast;
-pub mod diagnostics;
-pub mod eval;
-pub mod exec;
-pub mod ir;
-pub mod lexer;
-pub(crate) mod linalg;
-#[cfg(feature = "mlir-lowering")]
-pub mod mlir;
-pub mod opt;
-pub mod parser;
-pub mod runtime_interface;
-pub mod stdlib;
-pub mod type_checker;
-pub mod types;
+//! MLIR lowering pipeline for the public MIND IR.
+//!
+//! The lowering stage is intentionally textual and deterministic to
+//! support debugging, demos, and future backend integration without
+//! pulling in private runtime crates. The entry points are
+//! [`lower_ir_to_mlir`] and [`compile_ir_to_mlir_text`].
 
-#[cfg(feature = "autodiff")]
-pub mod autodiff;
-#[cfg(feature = "autodiff")]
-pub use autodiff::{differentiate_function, AutodiffError, GradientResult};
+mod lowering;
 
-#[cfg(feature = "mlir-lowering")]
-pub use mlir::{compile_ir_to_mlir_text, MlirLowerError};
-
-#[cfg(feature = "ffi-c")]
-pub mod ffi;
-
-#[cfg(feature = "pkg")]
-pub mod package;
+pub use lowering::{compile_ir_to_mlir_text, lower_ir_to_mlir, MlirLowerError, MlirModule};

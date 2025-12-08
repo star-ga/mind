@@ -139,6 +139,7 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Transpose { dst, .. }
         | Instr::Dot { dst, .. }
         | Instr::MatMul { dst, .. }
+        | Instr::Conv2d { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),
@@ -159,6 +160,7 @@ fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         | Instr::Index { src, .. }
         | Instr::Slice { src, .. } => vec![*src],
         Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => vec![*a, *b],
+        Instr::Conv2d { input, filter, .. } => vec![*input, *filter],
         Instr::Gather { src, indices, .. } => vec![*src, *indices],
         Instr::Output(id) => vec![*id],
     }

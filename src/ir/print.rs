@@ -15,6 +15,7 @@
 use std::fmt::Write;
 
 use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::types::ConvPadding;
 use crate::types::{DType, ShapeDim};
 
 /// Format an [`IRModule`] into a stable, human-readable string.
@@ -151,6 +152,26 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        Instr::Conv2d {
+            dst,
+            input,
+            filter,
+            stride_h,
+            stride_w,
+            padding,
+        } => {
+            writeln!(
+                out,
+                "  {} = conv2d {} {} strides=({}, {}) padding={}",
+                value_name(*dst),
+                value_name(*input),
+                value_name(*filter),
+                stride_h,
+                stride_w,
+                format_padding(*padding)
+            )
+            .unwrap();
+        }
         Instr::Index { dst, src, indices } => {
             writeln!(
                 out,
@@ -218,4 +239,8 @@ fn format_shape(shape: &[ShapeDim]) -> Vec<String> {
             ShapeDim::Sym(sym) => sym.to_string(),
         })
         .collect()
+}
+
+fn format_padding(padding: ConvPadding) -> &'static str {
+    padding.as_str()
 }

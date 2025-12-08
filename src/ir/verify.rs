@@ -115,6 +115,22 @@ fn validate_operands(
             check_defined(*a)?;
             check_defined(*b)?;
         }
+        Instr::Conv2d {
+            input,
+            filter,
+            stride_h,
+            stride_w,
+            ..
+        } => {
+            check_defined(*input)?;
+            check_defined(*filter)?;
+            if *stride_h == 0 || *stride_w == 0 {
+                return Err(IrVerifyError::InvalidOperand {
+                    instr_index,
+                    message: "conv2d strides must be positive".to_string(),
+                });
+            }
+        }
         Instr::Gather {
             src, indices, axis, ..
         } => {
@@ -148,6 +164,7 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Transpose { dst, .. }
         | Instr::Dot { dst, .. }
         | Instr::MatMul { dst, .. }
+        | Instr::Conv2d { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),
