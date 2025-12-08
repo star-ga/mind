@@ -42,6 +42,7 @@ experimental and currently focused on single-output entry points.
 ## Core Concepts
 
 * [Type System](docs/type-system.md) — ranks, shapes, polymorphism, and effect tracking.
+* [Shapes](docs/shapes.md) — broadcasting, reductions, and shape-preserving tensor transforms.
 * [Autodiff](docs/autodiff.md) — reverse-mode differentiation on the SSA IR.
 * [IR core](docs/ir.md) — deterministic IR pipeline with verifier and printer.
 * [IR & MLIR](docs/ir-mlir.md) — compiler pipeline from parser to MLIR dialects.
