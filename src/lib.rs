@@ -24,6 +24,7 @@ pub mod parser;
 pub mod stdlib;
 pub mod type_checker;
 pub mod types;
+pub mod runtime_interface;
 
 pub mod ir;
 

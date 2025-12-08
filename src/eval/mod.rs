@@ -65,6 +65,16 @@ impl Default for Evaluator {
     }
 }
 
+impl Evaluator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_runtime(runtime: Box<dyn MindRuntime>) -> Self {
+        Self { runtime }
+    }
+}
+
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
 #[cfg(feature = "mlir-build")]
@@ -586,6 +596,8 @@ pub(crate) fn eval_value_expr_mode(
                             materialize_filled(&mut tr_exec);
                             #[cfg(feature = "cpu-exec")]
                             {
+                                // TODO(runtime): dispatch through `Evaluator::runtime` once the
+                                // runtime plumbing is threaded into evaluation.
                                 if tl_exec.dtype == DType::F32 && tr_exec.dtype == DType::F32 {
                                     let exec_res = exec::cpu::exec_dot(&tl_exec, &tr_exec);
                                     match exec_res {
@@ -621,6 +633,8 @@ pub(crate) fn eval_value_expr_mode(
                             materialize_filled(&mut tr_exec);
                             #[cfg(feature = "cpu-exec")]
                             {
+                                // TODO(runtime): dispatch through `Evaluator::runtime` once the
+                                // runtime plumbing is threaded into evaluation.
                                 if tl_exec.dtype == DType::F32 && tr_exec.dtype == DType::F32 {
                                     let exec_res = exec::cpu::exec_matmul(&tl_exec, &tr_exec);
                                     match exec_res {
@@ -784,6 +798,8 @@ fn apply_tensor_scalar(
             materialize_filled(&mut tensor_exec);
             #[cfg(feature = "cpu-exec")]
             {
+                // TODO(runtime): dispatch through `Evaluator::runtime` once the runtime plumbing is
+                // threaded into evaluation.
                 if tensor_exec.dtype == DType::F32 {
                     let exec_res = match op {
                         BinOp::Add => exec::cpu::exec_add_scalar(&tensor_exec, scalar as f32),
