@@ -83,7 +83,7 @@ impl Evaluator {
 }
 
 #[cfg(test)]
-mod tests {
+mod tensor_tests {
     use super::*;
     use crate::runtime_interface::{DeviceKind, TensorDesc};
     use crate::types::DType;
