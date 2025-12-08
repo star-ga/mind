@@ -17,8 +17,21 @@ use crate::types::ShapeDim;
 
 use std::fmt;
 
+mod print;
+mod verify;
+
+pub use crate::opt::ir_canonical::canonicalize_module;
+pub use print::format_ir_module;
+pub use verify::{verify_module, IrVerifyError};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValueId(pub usize);
+
+impl fmt::Display for ValueId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "%{}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SliceSpec {
@@ -142,9 +155,14 @@ impl Default for IRModule {
 
 impl fmt::Display for IRModule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for instr in &self.instrs {
-            writeln!(f, "{:?}", instr)?;
-        }
-        Ok(())
+        write!(f, "{}", print::format_ir_module(self))
     }
+}
+
+/// Run verification and canonicalization on the module before handing it to a
+/// backend.
+pub fn prepare_ir_for_backend(module: &mut IRModule) -> Result<(), IrVerifyError> {
+    verify::verify_module(module)?;
+    crate::opt::ir_canonical::canonicalize_module(module);
+    verify::verify_module(module)
 }
