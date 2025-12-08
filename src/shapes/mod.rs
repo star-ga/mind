@@ -250,12 +250,7 @@ pub fn reshape_shape(
     input: &[ShapeDim],
     new_dims: &[ShapeDim],
 ) -> Result<Vec<ShapeDim>, ShapeError> {
-    if input.len() != new_dims.len() {
-        return Err(ShapeError::SizeMismatch {
-            expected: input.len(),
-            found: new_dims.len(),
-        });
-    }
+    // Reshape may change rank; only the total number of elements must be preserved.
     if let (Some(old), Some(new)) = (known_product(input), known_product(new_dims)) {
         if old != new {
             return Err(ShapeError::ElementCountMismatch { lhs: old, rhs: new });
@@ -317,9 +312,15 @@ pub fn squeeze_shape(input: &[ShapeDim], axes: &[i32]) -> Result<Vec<ShapeDim>, 
     let mut axis_set = BTreeSet::new();
     for &axis in &axes_to_remove {
         if !matches!(input.get(axis), Some(ShapeDim::Known(1))) {
+            // Report the actual dimension size instead of the axis index for clearer diagnostics.
+            let dim_size = match input.get(axis) {
+                Some(ShapeDim::Known(n)) => *n,
+                // For symbolic or missing dims, fall back to 0 to indicate "non-unit / unknown".
+                _ => 0,
+            };
             return Err(ShapeError::SizeMismatch {
                 expected: 1,
-                found: axis,
+                found: dim_size,
             });
         }
         axis_set.insert(axis);
