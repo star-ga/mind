@@ -1,38 +1,46 @@
-# Automatic Differentiation
+<!-- Copyright 2025 STARGA Inc. -->
 
-MIND provides reverse-mode automatic differentiation (AD) at the IR level, allowing efficient gradient computation across tensor programs.
+# Static autodiff (public)
 
-## Differentiation Strategy
+MIND performs static automatic differentiation on the public IR. The autodiff
+pipeline is entirely compile-time: it builds a *gradient IR* that mirrors the
+primal computation. Execution remains delegated to the public interpreters or
+to external runtimes that implement `MindRuntime` in private repositories.
 
-- **Source Annotation** – Users mark differentiable functions with the `@diff` attribute.
-- **IR Expansion** – During lowering, the compiler emits paired forward and backward functions in SSA form.
-- **Gradient Propagation** – The backward function walks the IR in reverse topological order, accumulating adjoints per value.
+Key properties:
 
-This design keeps differentiation orthogonal to the surface syntax while giving optimization passes explicit control of gradient code.
+- Deterministic: the gradient IR is built with ordered data structures so the
+  same input IR always produces the same gradient IR.
+- Separation of concerns: only the public IR is touched; no private runtime
+  hooks are referenced.
+- IR-level: derivative rules operate on IR instructions (add, sub, mul,
+  matmul, dot, transpose, reductions, etc.).
 
-## Tape & Checkpointing
+## API surface
 
-The differentiator captures intermediate values using SSA references, eliminating the need for an explicit runtime tape. For expensive subgraphs, checkpointing directives allow the compiler to recompute values instead of storing them.
+Enable the `autodiff` feature and call the entry point:
 
-## Supported Operations
+```rust
+use mind::differentiate_function;
 
-- Elementwise arithmetic and activation functions
-- Linear algebra primitives (matmul, conv2d, reductions)
-- Control flow via structured ops (`if`, `loop`) with differentiable branches
-- Custom primitives registered via the `Differentiable` trait
+let gradients = differentiate_function(&ir, "main")?;
+println!("{}", gradients);
+```
 
-## Higher-Order Gradients
+The result bundles a full gradient IR module plus a deterministic mapping from
+primal value IDs to their gradients.
 
-Gradients are first-class functions. Nesting `@diff` triggers another AD pass, generating second-order derivatives as long as the underlying ops provide Jacobian-vector product rules.
+## Supported ops (Phase 1)
 
-## Interfacing with Runtimes
+- Binary ops: add, sub, mul (div errors explicitly)
+- Matrix ops: dot, matmul (naïve transpose-based rules)
+- Shape-preserving ops: reshape, expand/squeeze dims, slice/index/gather
+- Reduction ops: mean (explicit axes) and sum (passthrough)
 
-The runtime exposes helpers to bind gradient computations to optimizers. Gradients reuse tensor storage via buffer recycling, and results can be exported through the FFI per [`ffi-runtime.md`](ffi-runtime.md).
+Unsupported or ambiguous cases return `AutodiffError` with a deterministic
+message so callers can fall back or report the limitation.
 
-## Diagnostics
+## Testing determinism
 
-Common AD errors include:
-
-- **Non-differentiable ops** – Reported with actionable notes and suggested alternatives.
-- **Stateful ops without `!state`** – The type system flags these before AD runs.
-- **Shape mismatches in gradients** – Emitted after IR validation with references to both primal and gradient nodes.
+Integration tests under `tests/autodiff.rs` build small IR graphs, differentiate
+them twice, and assert the gradient IR and mappings are identical.
