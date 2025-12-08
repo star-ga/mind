@@ -28,7 +28,9 @@ println!("{}", gradients);
 ```
 
 The result bundles a full gradient IR module plus a deterministic mapping from
-primal value IDs to their gradients.
+primal value IDs to their gradients. Gradients are emitted in canonical form
+and, by default, the autodiff engine runs IR verification on both the primal
+and gradient modules.
 
 ## Supported ops (Phase 1)
 
@@ -37,8 +39,8 @@ primal value IDs to their gradients.
 - Shape-preserving ops: reshape, expand/squeeze dims, slice/index/gather
 - Reduction ops: mean (explicit axes) and sum (passthrough)
 
-Unsupported or ambiguous cases return `AutodiffError` with a deterministic
-message so callers can fall back or report the limitation.
+Unsupported or ambiguous cases return `AutodiffError` with structured messages
+so callers can fall back or report the limitation directly to users.
 
 ## Testing determinism
 

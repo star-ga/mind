@@ -12,10 +12,10 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::ir::{self, BinOp, IRModule, Instr, ValueId};
 
 use super::rules;
 
@@ -43,17 +43,51 @@ pub enum AutodiffError {
     #[error("IR module contains multiple outputs; expected a single scalar output")]
     MultipleOutputs,
     /// The autodiff engine does not have a rule for the encountered operation.
-    #[error("unsupported operation for autodiff: {0}")]
-    UnsupportedOp(&'static str),
+    #[error("unsupported operation for autodiff: {op}")]
+    UnsupportedOp { op: &'static str },
     /// A deterministic error when shape or operation requirements are not met.
     #[error("invalid autodiff input: {0}")]
     InvalidInput(String),
+    /// Verification of the generated IR failed.
+    #[error("autodiff verification failed: {0}")]
+    Verification(String),
+    /// The provided axes or permutation were invalid for autodiff.
+    #[error("invalid axes for autodiff: {reason}")]
+    InvalidAxis { reason: String },
+    /// Unsupported shape manipulation pattern.
+    #[error("unsupported shape pattern for autodiff: {reason}")]
+    UnsupportedShape { reason: String },
 }
 
 /// Entry point for generating gradient IR from a public MIND IR module.
 pub fn differentiate_function(
     module: &IRModule,
     fn_name: &str,
+) -> Result<GradientResult, AutodiffError> {
+    differentiate_with_options(module, fn_name, GradientOptions::default())
+}
+
+/// Options controlling gradient emission.
+#[derive(Debug, Clone, Copy)]
+pub struct GradientOptions {
+    /// When true, run IR verification on both the primal and gradient modules.
+    pub verify_gradients: bool,
+}
+
+impl Default for GradientOptions {
+    fn default() -> Self {
+        Self {
+            verify_gradients: true,
+        }
+    }
+}
+
+/// Entry point for generating gradient IR from a public MIND IR module with
+/// configuration.
+pub fn differentiate_with_options(
+    module: &IRModule,
+    fn_name: &str,
+    opts: GradientOptions,
 ) -> Result<GradientResult, AutodiffError> {
     if fn_name != "main" {
         return Err(AutodiffError::FunctionNotFound(fn_name.to_string()));
@@ -74,17 +108,58 @@ pub fn differentiate_function(
         _ => return Err(AutodiffError::MultipleOutputs),
     };
 
+    if opts.verify_gradients {
+        ir::verify_module(module).map_err(|e| AutodiffError::Verification(e.to_string()))?;
+    }
+
     let mut builder = GradientBuilder::new(module);
     builder.seed_output(output);
     builder.propagate_gradients()?;
-    Ok(builder.finish())
+    let mut result = builder.finish();
+
+    canonicalize_gradients(&mut result);
+    if opts.verify_gradients {
+        ir::verify_module(&result.gradient_module)
+            .map_err(|e| AutodiffError::Verification(e.to_string()))?;
+    }
+
+    Ok(result)
+}
+
+fn canonicalize_gradients(result: &mut GradientResult) {
+    let mut gradient_roots: BTreeSet<ValueId> = result.gradients.values().copied().collect();
+
+    for root in &gradient_roots {
+        result.gradient_module.instrs.push(Instr::Output(*root));
+    }
+
+    crate::opt::ir_canonical::canonicalize_module(&mut result.gradient_module);
+
+    result.gradient_module.instrs.retain(|instr| {
+        if let Instr::Output(id) = instr {
+            if gradient_roots.contains(id) {
+                return false;
+            }
+        }
+        true
+    });
+
+    let mut max_seen = 0usize;
+    for instr in &result.gradient_module.instrs {
+        if let Some(dst) = instruction_dst(instr) {
+            max_seen = max_seen.max(dst.0 + 1);
+        }
+    }
+    result.gradient_module.next_id = max_seen;
+
+    // Ensure the set is used for determinism and to silence warnings.
+    gradient_roots.clear();
 }
 
 struct GradientBuilder<'a> {
     primal: &'a IRModule,
     gradient: IRModule,
     grads: BTreeMap<ValueId, ValueId>,
-    primal_defs: BTreeMap<ValueId, &'a Instr>,
     leaves: BTreeMap<ValueId, &'static str>,
 }
 
@@ -94,11 +169,9 @@ impl<'a> GradientBuilder<'a> {
         gradient.instrs.extend(primal.instrs.clone());
         gradient.next_id = primal.next_id;
 
-        let mut primal_defs = BTreeMap::new();
         let mut leaves = BTreeMap::new();
         for instr in &primal.instrs {
             if let Some(dst) = instruction_dst(instr) {
-                primal_defs.insert(dst, instr);
                 if matches!(instr, Instr::ConstI64(..) | Instr::ConstTensor(..)) {
                     leaves.insert(dst, "leaf");
                 }
@@ -109,7 +182,6 @@ impl<'a> GradientBuilder<'a> {
             primal,
             gradient,
             grads: BTreeMap::new(),
-            primal_defs,
             leaves,
         }
     }
@@ -224,7 +296,6 @@ impl fmt::Display for GradientResult {
 
 // Helper API used by derivative rules.
 pub(super) trait GradientOps {
-    fn gradient(&self) -> &IRModule;
     fn add_const_i64(&mut self, value: i64) -> ValueId;
     fn add_binop(&mut self, op: BinOp, lhs: ValueId, rhs: ValueId) -> ValueId;
     fn add_transpose(&mut self, src: ValueId, perm: Vec<i64>) -> ValueId;
@@ -233,10 +304,6 @@ pub(super) trait GradientOps {
 }
 
 impl<'a> GradientOps for GradientBuilder<'a> {
-    fn gradient(&self) -> &IRModule {
-        &self.gradient
-    }
-
     fn add_const_i64(&mut self, value: i64) -> ValueId {
         self.add_const_i64(value)
     }
