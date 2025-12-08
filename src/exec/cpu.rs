@@ -39,76 +39,76 @@ fn _shape_usize(_shape: &[ShapeDim]) -> Option<Vec<usize>> {
 }
 
 pub fn exec_add(_lhs: &TensorVal, _rhs: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_sub(_lhs: &TensorVal, _rhs: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_mul(_lhs: &TensorVal, _rhs: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_div(_lhs: &TensorVal, _rhs: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_add_scalar(_t: &TensorVal, _scalar: f32) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_sub_scalar(_t: &TensorVal, _scalar: f32) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_scalar_sub(_scalar: f32, _t: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_mul_scalar(_t: &TensorVal, _scalar: f32) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_div_scalar(_t: &TensorVal, _scalar: f32, _tensor_on_left: bool) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_sum_all(_t: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_mean_all(_t: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn relu_inplace(_buf: &mut [f32]) {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     unimplemented!("In-place ReLU is provided by the proprietary MIND runtime backend");
 }
 
 pub fn exec_relu(_t: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_matmul(_lhs: &TensorVal, _rhs: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }
 
 pub fn exec_dot(_lhs: &TensorVal, _rhs: &TensorVal) -> R<TensorVal> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     runtime_stub()
 }

@@ -7,7 +7,7 @@ The open-core repository exposes the surface needed to embed compiled MIND modul
 The `runtime_interface` module defines the traits used by evaluators and FFI shims:
 
 - `MindRuntime` – a backend-agnostic trait for allocating tensors, launching operations, and synchronizing devices.
-- `TensorDesc` – a simple descriptor that pairs `Shape` metadata with a `DType`.
+- `TensorDesc` – a simple descriptor that pairs shape dimensions (`Vec<ShapeDim>`) with a `DType`.
 - `DeviceKind` – identifies a broad execution target (CPU, GPU, or other accelerators).
 
 Backends implement `MindRuntime` to provide real allocators and kernel dispatch. The default `NoOpRuntime` included here is a stub suitable for compiler smoke tests.
@@ -19,10 +19,15 @@ Backends implement `MindRuntime` to provide real allocators and kernel dispatch.
 3. Use the runtime to allocate inputs, run operations, and collect outputs through the backend-specific API.
 
 ```rust
-use mind::runtime_interface::{MindRuntime, NoOpRuntime, TensorDesc};
+use mind::runtime_interface::{DeviceKind, MindRuntime, NoOpRuntime, TensorDesc};
+use mind::types::ShapeDim;
 
 fn run_demo(runtime: &dyn MindRuntime) {
-    let buffer = runtime.allocate(&TensorDesc { shape: vec![2, 3].into(), dtype: mind::types::DType::F32 });
+    let buffer = runtime.allocate(&TensorDesc {
+        shape: vec![ShapeDim::Known(2), ShapeDim::Known(3)],
+        dtype: mind::types::DType::F32,
+        device: Some(DeviceKind::Cpu),
+    });
     runtime.run_op("demo_op", &[buffer], &[]);
     runtime.synchronize();
 }

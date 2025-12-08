@@ -90,12 +90,12 @@ mod tests {
 
     #[test]
     fn evaluator_uses_default_runtime() {
-        let mut eval = Evaluator::new();
+        let eval = Evaluator::new();
 
         let desc = TensorDesc {
             shape: Vec::new(),
             dtype: DType::F32,
-            device: DeviceKind::Cpu,
+            device: Some(DeviceKind::Cpu),
         };
 
         let handle = eval.runtime.allocate(&desc);
