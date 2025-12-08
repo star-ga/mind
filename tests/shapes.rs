@@ -52,6 +52,22 @@ fn reshape_checks() {
     assert!(matches!(err, ShapeError::ElementCountMismatch { .. }));
 }
 
+/// Reshape is allowed to change rank as long as the total number of elements matches.
+#[test]
+fn reshape_changes_rank_when_element_count_matches() {
+    // 2 * 6 = 12 elements
+    let old = vec![kd(2), kd(6)];
+    // 2 * 3 * 2 = 12 elements
+    let new = vec![kd(2), kd(3), kd(2)];
+
+    let reshaped = reshape_shape(&old, &new).expect("reshape to higher rank should succeed");
+    assert_eq!(reshaped, new);
+
+    // Flatten back to rank-1: still 12 elements
+    let flattened = reshape_shape(&new, &[kd(12)]).expect("reshape to rank-1 should succeed");
+    assert_eq!(flattened, vec![kd(12)]);
+}
+
 #[test]
 fn transpose_and_axis_ops() {
     let shape = vec![kd(1), kd(2), kd(3)];
@@ -63,6 +79,22 @@ fn transpose_and_axis_ops() {
 
     let squeezed = squeeze_shape(&expanded, &[]).unwrap();
     assert_eq!(squeezed, vec![kd(2), kd(3)]);
+}
+
+/// Squeezing a non-unit dimension must report the actual dimension size in the error.
+#[test]
+fn squeeze_reports_actual_dimension_size_in_error() {
+    // Shape [2, 3, 4]; axis 1 has size 3, so squeezing it is invalid.
+    let shape = vec![kd(2), kd(3), kd(4)];
+    let err = squeeze_shape(&shape, &[1]).expect_err("squeezing non-unit dim must fail");
+
+    match err {
+        ShapeError::SizeMismatch { expected, found } => {
+            assert_eq!(expected, 1);
+            assert_eq!(found, 3);
+        }
+        other => panic!("expected SizeMismatch error, got {:?}", other),
+    }
 }
 
 #[test]
