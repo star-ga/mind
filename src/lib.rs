@@ -34,7 +34,10 @@ pub mod types;
 #[cfg(feature = "autodiff")]
 pub mod autodiff;
 #[cfg(feature = "autodiff")]
-pub use autodiff::{differentiate_function, AutodiffError, GradientResult};
+pub use autodiff::{
+    differentiate_function, differentiate_with_options, AutodiffError, GradientOptions,
+    GradientResult,
+};
 pub use pipeline::{compile_source, CompileError, CompileOptions, CompileProducts};
 #[cfg(feature = "mlir-lowering")]
 pub use pipeline::{lower_to_mlir, MlirProducts};
