@@ -25,6 +25,7 @@ use crate::ast::Module;
 use crate::ast::Node;
 
 use crate::ast::TypeAnn;
+use crate::runtime_interface::{MindRuntime, NoOpRuntime};
 
 use crate::eval::autodiff::TensorEnvEntry;
 use crate::types::DType;
@@ -51,6 +52,18 @@ pub mod mlir_opt;
 #[cfg(feature = "mlir-exec")]
 pub mod mlir_run;
 pub mod value;
+
+pub struct Evaluator {
+    pub runtime: Box<dyn MindRuntime>,
+}
+
+impl Default for Evaluator {
+    fn default() -> Self {
+        Self {
+            runtime: Box::new(NoOpRuntime),
+        }
+    }
+}
 
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
