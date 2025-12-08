@@ -31,9 +31,9 @@ The `mindc` binary provides a deterministic source→IR→MLIR pipeline suitable
 for demos and snapshot tests:
 
 ```bash
-cargo run --bin mindc -- examples/simple.mind --emit-ir
-cargo run --bin mindc -- examples/simple.mind --func main --autodiff --emit-grad-ir
-cargo run --features "mlir-lowering autodiff" --bin mindc -- examples/simple.mind --func main --autodiff --emit-mlir
+cargo run --bin mindc -- examples/hello_tensor.mind --emit-ir
+cargo run --bin mindc -- examples/hello_tensor.mind --func main --autodiff --emit-grad-ir
+cargo run --features "mlir-lowering autodiff" --bin mindc -- examples/hello_tensor.mind --func main --autodiff --emit-mlir
 ```
 
 MLIR emission requires the `mlir-lowering` feature. Autodiff support is
