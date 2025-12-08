@@ -21,10 +21,10 @@ pub mod lexer;
 pub(crate) mod linalg;
 pub mod opt;
 pub mod parser;
+pub mod runtime_interface;
 pub mod stdlib;
 pub mod type_checker;
 pub mod types;
-pub mod runtime_interface;
 
 pub mod ir;
 
