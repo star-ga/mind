@@ -279,6 +279,9 @@ fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
         Instr::Transpose { dst, src, perm } => emit_transpose(emitter, *dst, *src, perm),
         Instr::Dot { dst, a, b } => emit_dot(emitter, *dst, *a, *b),
         Instr::MatMul { dst, a, b } => emit_matmul(emitter, *dst, *a, *b),
+        Instr::Conv2d { .. } => {
+            emitter.write_line("    // conv2d lowering is handled by the public MLIR pipeline");
+        }
         Instr::Index { dst, src, indices } => emit_index(emitter, *dst, *src, indices),
         Instr::Slice { dst, src, dims } => emit_slice(emitter, *dst, *src, dims),
         Instr::Gather {

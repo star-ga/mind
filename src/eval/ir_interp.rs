@@ -147,6 +147,11 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, v.clone());
                 last = v;
             }
+            Instr::Conv2d { dst, input, .. } => {
+                let value = vals.get(input).cloned().unwrap_or(Value::Int(0));
+                vals.insert(*dst, value.clone());
+                last = value;
+            }
             Instr::Index { dst, src, .. } => {
                 let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
                 vals.insert(*dst, value.clone());
