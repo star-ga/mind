@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::ir::{instruction_dst, BinOp, IRModule, Instr, ValueId};
 
 /// Canonicalize the public MIND IR in-place.
 ///
@@ -94,7 +94,7 @@ fn constant_fold(instrs: &mut Vec<Instr>) {
                         BinOp::Sub => l.saturating_sub(r),
                         BinOp::Mul => l.saturating_mul(r),
                         BinOp::Div => {
-                            if r == 0 {
+                            if r == 0 || (l == i64::MIN && r == -1) {
                                 continue;
                             }
                             l / r
@@ -124,27 +124,6 @@ fn next_sequential_id(module: &IRModule) -> usize {
         .map(|id| id.0 + 1)
         .max()
         .unwrap_or(0)
-}
-
-fn instruction_dst(instr: &Instr) -> Option<ValueId> {
-    match instr {
-        Instr::ConstI64(dst, ..)
-        | Instr::ConstTensor(dst, ..)
-        | Instr::BinOp { dst, .. }
-        | Instr::Sum { dst, .. }
-        | Instr::Mean { dst, .. }
-        | Instr::Reshape { dst, .. }
-        | Instr::ExpandDims { dst, .. }
-        | Instr::Squeeze { dst, .. }
-        | Instr::Transpose { dst, .. }
-        | Instr::Dot { dst, .. }
-        | Instr::MatMul { dst, .. }
-        | Instr::Conv2d { dst, .. }
-        | Instr::Index { dst, .. }
-        | Instr::Slice { dst, .. }
-        | Instr::Gather { dst, .. } => Some(*dst),
-        Instr::Output(_) => None,
-    }
 }
 
 fn instruction_operands(instr: &Instr) -> Vec<ValueId> {

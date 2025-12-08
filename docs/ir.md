@@ -34,9 +34,8 @@ The verifier never panics on malformed IR; it returns structured
 ## Stable pretty-printer
 
 `format_ir_module` (`src/ir/print.rs`) renders IR in a stable, human-readable
-form that is suitable for snapshot tests and debugging. Functions, basic
-blocks, and instructions are emitted in deterministic order with consistent SSA
-identifiers.
+form that is suitable for snapshot tests and debugging. Instructions are emitted
+in deterministic order with consistent SSA identifiers.
 
 ## Backend preparation
 
