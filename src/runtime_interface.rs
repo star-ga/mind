@@ -1,4 +1,4 @@
-use crate::types::{DType, Shape};
+use crate::types::{DType, ShapeDim};
 
 #[derive(Clone, Copy, Debug)]
 pub enum DeviceKind {
@@ -9,7 +9,7 @@ pub enum DeviceKind {
 
 #[derive(Clone, Debug)]
 pub struct TensorDesc {
-    pub shape: Shape,
+    pub shape: Vec<ShapeDim>,
     pub dtype: DType,
 }
 

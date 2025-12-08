@@ -1,40 +1,35 @@
 # FFI & Runtime Integration
 
-The MIND runtime exposes safe and ergonomic hooks for embedding compiled programs into host applications.
+The open-core repository exposes the surface needed to embed compiled MIND modules from a host application. The actual execution engines live in proprietary backends (for example, the private `mind-runtime` repository), while this crate focuses on stable interfaces and data types.
 
-## Runtime Layers
+## Runtime Interface
 
-1. **Tensor Buffers** – `mind-runtime` allocates and manages device/host tensors with reference counting and view semantics.
-2. **Executors** – CPU, interpreter, and MLIR-backed JITs implement a shared `Runtime` trait for launching compiled modules.
-3. **ABI Bindings** – The `ffi-c` feature exports C-compatible functions, structs, and error codes.
+The `runtime_interface` module defines the traits used by evaluators and FFI shims:
+
+- `MindRuntime` – a backend-agnostic trait for allocating tensors, launching operations, and synchronizing devices.
+- `TensorDesc` – a simple descriptor that pairs `Shape` metadata with a `DType`.
+- `DeviceKind` – identifies a broad execution target (CPU, GPU, or other accelerators).
+
+Backends implement `MindRuntime` to provide real allocators and kernel dispatch. The default `NoOpRuntime` included here is a stub suitable for compiler smoke tests.
 
 ## Embedding Workflow
 
-1. Compile a module with the desired features (`mind build --features cpu-exec`).
-2. Load the emitted artifact via the runtime API (`mind_runtime::Module::load`).
-3. Prepare inputs using `TensorHandle` builders.
-4. Invoke entry points; results materialize as borrowed tensor views or owned buffers.
+1. Build a module with the desired features (e.g., IR lowering or MLIR emission).
+2. Link against a `MindRuntime` implementation supplied by your runtime backend.
+3. Use the runtime to allocate inputs, run operations, and collect outputs through the backend-specific API.
 
 ```rust
-let module = mind_runtime::Module::load("model.mindpkg")?;
-let mut session = module.session()?;
-let output = session.call("inference", &[input_tensor])?;
+use mind::runtime_interface::{MindRuntime, NoOpRuntime, TensorDesc};
+
+fn run_demo(runtime: &dyn MindRuntime) {
+    let buffer = runtime.allocate(&TensorDesc { shape: vec![2, 3].into(), dtype: mind::types::DType::F32 });
+    runtime.run_op("demo_op", &[buffer], &[]);
+    runtime.synchronize();
+}
 ```
 
-## Memory Management
+## FFI Surface
 
-- Tensor handles use interior mutability and RAII to manage device buffers.
-- Zero-copy views allow slicing without extra allocations.
-- Custom allocators can be registered for embedded targets.
+When the `ffi-c` feature is enabled, the crate exports C-compatible entry points that mirror the open runtime interface. These bindings are intentionally thin: they surface opaque handles and descriptor structs without exposing backend-specific data layouts or device management details.
 
-## Error Handling
-
-FFI calls return `mind_status` codes paired with diagnostic strings. Rust bindings surface these as `Result<T, MindError>` with context captured from the compiler.
-
-## Extending the Runtime
-
-- **New Devices** – Implement `Device` and register it with the dispatcher.
-- **Custom Ops** – Define host-callable kernels and expose them through the op registry.
-- **Telemetry** – Feature-gated tracing integrates with `tracing` subscribers for observability.
-
-For benchmark integration and performance tracking see [`benchmarks.md`](benchmarks.md).
+Backends are responsible for providing the actual implementations and for documenting any additional knobs (such as device selection, stream control, or custom allocators).
