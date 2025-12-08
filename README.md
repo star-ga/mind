@@ -25,6 +25,20 @@ cargo run -- eval "let x: Tensor[f32,(2,3)] = 0; x + 1"
 
 Explore the full language tour and runtime guides in [`/docs`](docs/README.md).
 
+## CLI / Compiler Driver
+
+The `mindc` binary provides a deterministic source→IR→MLIR pipeline suitable
+for demos and snapshot tests:
+
+```bash
+cargo run --bin mindc -- examples/simple.mind --emit-ir
+cargo run --bin mindc -- examples/simple.mind --func main --autodiff --emit-grad-ir
+cargo run --features "mlir-lowering autodiff" --bin mindc -- examples/simple.mind --func main --autodiff --emit-mlir
+```
+
+MLIR emission requires the `mlir-lowering` feature. Autodiff support is
+experimental and currently focused on single-output entry points.
+
 ## Core Concepts
 
 * [Type System](docs/type-system.md) — ranks, shapes, polymorphism, and effect tracking.

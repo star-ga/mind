@@ -57,6 +57,7 @@ pub(super) fn apply_rule(
             ops.add_grad(*b, db);
             Ok(())
         }
+        Instr::Conv2d { .. } => Err(AutodiffError::UnsupportedOp("conv2d")),
         Instr::Dot { a, b, .. } => {
             let da = ops.add_binop(BinOp::Mul, upstream, *b);
             let db = ops.add_binop(BinOp::Mul, upstream, *a);

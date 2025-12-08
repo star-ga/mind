@@ -203,6 +203,7 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Transpose { dst, .. }
         | Instr::Dot { dst, .. }
         | Instr::MatMul { dst, .. }
+        | Instr::Conv2d { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),

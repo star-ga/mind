@@ -6,6 +6,7 @@ authors = ["MIND Language Contributors"]
 description = "The native language for intelligent systems"
 repository = "https://github.com/cputer/mind"
 license = "Apache-2.0"
+default-run = "mind"
 keywords = ["ai", "machine-learning", "compiler", "tensor", "autodiff"]
 categories = ["compilers", "science"]
 
@@ -39,6 +40,10 @@ which = "6"
 [[bin]]
 name = "mind"
 path = "src/main.rs"
+
+[[bin]]
+name = "mindc"
+path = "src/bin/mindc.rs"
 
 [profile.release]
 opt-level = 3

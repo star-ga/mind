@@ -278,7 +278,10 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     if ret_types.is_empty() {
         out.push_str("  func.func @main() -> () {\n");
     } else {
-        out.push_str(&format!("  func.func @main() -> ({}) {{\n", ret_types.join(", ")));
+        out.push_str(&format!(
+            "  func.func @main() -> ({}) {{\n",
+            ret_types.join(", ")
+        ));
     }
     out.push_str(&ctx.body);
     out.push_str("  }\n");

@@ -24,6 +24,7 @@ pub(crate) mod linalg;
 pub mod mlir;
 pub mod opt;
 pub mod parser;
+pub mod pipeline;
 pub mod runtime_interface;
 pub mod stdlib;
 pub mod type_checker;
@@ -33,6 +34,9 @@ pub mod types;
 pub mod autodiff;
 #[cfg(feature = "autodiff")]
 pub use autodiff::{differentiate_function, AutodiffError, GradientResult};
+pub use pipeline::{compile_source, CompileError, CompileOptions, CompileProducts};
+#[cfg(feature = "mlir-lowering")]
+pub use pipeline::{lower_to_mlir, MlirProducts};
 
 #[cfg(feature = "mlir-lowering")]
 pub use mlir::{compile_ir_to_mlir_text, MlirLowerError};
