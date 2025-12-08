@@ -20,7 +20,7 @@ pub struct TensorDesc {
     pub shape: Vec<ShapeDim>,
     pub dtype: DType,
     /// Optional execution device for this tensor.
-    pub device: DeviceKind,
+    pub device: Option<DeviceKind>,
 }
 
 /// Core interface for the MIND runtime.

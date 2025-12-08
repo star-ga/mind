@@ -19,7 +19,7 @@ use crate::types::ShapeDim;
 use super::cpu::ExecError;
 
 fn _shape_as_usize(_shape: &[ShapeDim]) -> Result<Vec<usize>, ExecError> {
-    // TODO(runtime): shape handling is implemented in the proprietary runtime backend.
+    // TODO(runtime): implement shape handling in the proprietary runtime backend.
     Err(ExecError::Unsupported(
         "Convolution shape materialization is provided by the proprietary MIND runtime".into(),
     ))
@@ -32,7 +32,7 @@ pub fn exec_conv2d(
     _stride_w: usize,
     _padding: ConvPadding,
 ) -> Result<TensorVal, ExecError> {
-    // TODO(runtime): implemented in proprietary `mind-runtime` backend.
+    // TODO(runtime): implement in proprietary `mind-runtime` backend.
     Err(ExecError::Unsupported(
         "Conv2d execution is provided by the proprietary MIND runtime backend".into(),
     ))
