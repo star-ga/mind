@@ -53,6 +53,11 @@ pub mod mlir_opt;
 pub mod mlir_run;
 pub mod value;
 
+/// Top-level evaluation context used by the compiler front-end.
+///
+/// Carries a handle to the runtime implementation. In the open-core
+/// build the default runtime is `NoOpRuntime`; production CPU/GPU
+/// backends are provided by the proprietary `mind-runtime` crate.
 pub struct Evaluator {
     pub runtime: Box<dyn MindRuntime>,
 }
@@ -66,12 +71,38 @@ impl Default for Evaluator {
 }
 
 impl Evaluator {
+    /// Construct an evaluator with the default no-op runtime.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Construct an evaluator with an explicit runtime implementation.
     pub fn with_runtime(runtime: Box<dyn MindRuntime>) -> Self {
         Self { runtime }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_interface::{DeviceKind, TensorDesc};
+    use crate::types::DType;
+
+    #[test]
+    fn evaluator_uses_default_runtime() {
+        let mut eval = Evaluator::new();
+
+        let desc = TensorDesc {
+            shape: Vec::new(),
+            dtype: DType::F32,
+            device: DeviceKind::Cpu,
+        };
+
+        let handle = eval.runtime.allocate(&desc);
+        assert_eq!(handle, 0);
+
+        eval.runtime.run_op("noop", &[], &[]);
+        eval.runtime.synchronize();
     }
 }
 
