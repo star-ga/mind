@@ -36,7 +36,8 @@ and gradient modules.
 
 - Binary ops: add, sub, mul (div errors explicitly)
 - Matrix ops: dot, matmul (naïve transpose-based rules)
-- Shape-preserving ops: reshape, expand/squeeze dims, slice/index/gather
+- Shape-preserving ops: reshape, expand/squeeze dims, slice/index/gather (see
+  [`docs/shapes.md`](./shapes.md) for the exact dimension rules)
 - Reduction ops: mean (explicit axes) and sum (passthrough)
 
 Unsupported or ambiguous cases return `AutodiffError` with structured messages

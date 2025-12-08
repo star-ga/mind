@@ -26,6 +26,7 @@ pub mod opt;
 pub mod parser;
 pub mod pipeline;
 pub mod runtime_interface;
+pub mod shapes;
 pub mod stdlib;
 pub mod type_checker;
 pub mod types;
