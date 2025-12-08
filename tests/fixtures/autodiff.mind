@@ -1,1 +1,1 @@
-3 * 3
+tensor.zeros(f32, ()) * tensor.zeros(f32, ()) + tensor.ones(f32, ())
