@@ -127,6 +127,27 @@ pub enum Instr {
     Output(ValueId),
 }
 
+pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
+    match instr {
+        Instr::ConstI64(dst, ..)
+        | Instr::ConstTensor(dst, ..)
+        | Instr::BinOp { dst, .. }
+        | Instr::Sum { dst, .. }
+        | Instr::Mean { dst, .. }
+        | Instr::Reshape { dst, .. }
+        | Instr::ExpandDims { dst, .. }
+        | Instr::Squeeze { dst, .. }
+        | Instr::Transpose { dst, .. }
+        | Instr::Dot { dst, .. }
+        | Instr::MatMul { dst, .. }
+        | Instr::Conv2d { dst, .. }
+        | Instr::Index { dst, .. }
+        | Instr::Slice { dst, .. }
+        | Instr::Gather { dst, .. } => Some(*dst),
+        Instr::Output(_) => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     Add,
