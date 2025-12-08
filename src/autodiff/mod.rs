@@ -12,30 +12,19 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-#![allow(dead_code, unused_variables, unused_imports)]
-
-//! Minimal autodiff prototype (Phase 1).
+//! Static automatic differentiation for the public MIND IR.
 //!
-//! `grad(f)` returns a closure that runs `f()` and also returns a placeholder
-//! gradient marker. This is a stub to unblock examples/tests and API design.
+//! The autodiff pipeline builds gradient IR at compile time without relying on
+//! any runtime tape. The entry point is [`differentiate_function`], which
+//! consumes a deterministic [`IRModule`](crate::ir::IRModule) and produces a
+//! gradient IR module plus metadata describing the gradients that were
+//! computed.
 //!
-//! # Example
-//! ```
-//! #[cfg(feature = "autodiff")]
-//! {
-//!     let g = mind::autodiff::grad(|| 21 + 21);
-//!     let (v, d) = g();
-//!     assert_eq!(v, 42);
-//!     assert!(d.contains("placeholder"));
-//! }
-//! ```
+//! The implementation is intentionally deterministic and only depends on the
+//! public IR and evaluator code. No hooks into the private runtime are
+//! required.
 
-pub fn grad<F, T>(f: F) -> impl Fn() -> (T, &'static str)
-where
-    F: Fn() -> T,
-{
-    move || {
-        let v = f();
-        (v, "∂(placeholder)")
-    }
-}
+mod engine;
+mod rules;
+
+pub use engine::{differentiate_function, AutodiffError, GradientResult};

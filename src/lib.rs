@@ -17,6 +17,7 @@ pub mod ast;
 pub mod diagnostics;
 pub mod eval;
 pub mod exec;
+pub mod ir;
 pub mod lexer;
 pub(crate) mod linalg;
 pub mod opt;
@@ -25,10 +26,11 @@ pub mod runtime_interface;
 pub mod stdlib;
 pub mod type_checker;
 pub mod types;
-pub mod ir;
 
 #[cfg(feature = "autodiff")]
 pub mod autodiff;
+#[cfg(feature = "autodiff")]
+pub use autodiff::{differentiate_function, AutodiffError, GradientResult};
 
 #[cfg(feature = "ffi-c")]
 pub mod ffi;
