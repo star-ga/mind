@@ -13,3 +13,4 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 pub mod fold;
+pub mod ir_canonical;
