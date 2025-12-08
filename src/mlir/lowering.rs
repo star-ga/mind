@@ -165,11 +165,11 @@ impl LoweringContext {
                 let (out_shape, m_ty, n_ty, result_ty) =
                     matmul_shapes(&a_info.shape, &b_info.shape, a_info.dtype.as_str())?;
                 self.emit_line(&format!(
-                    "    %tmp{}_init = tensor.empty() : {}",
+                    "    %tmp{} = tensor.empty() : {}",
                     dst.0, result_ty
                 ));
                 self.emit_line(&format!(
-                    "    %{} = linalg.matmul ins(%{} : {} , %{} : {}) outs(%tmp{}_init : {}) -> {}",
+                    "    %{} = linalg.matmul ins(%{} : {} , %{} : {}) outs(%tmp{} : {}) -> {}",
                     dst.0, a.0, m_ty, b.0, n_ty, dst.0, result_ty, result_ty
                 ));
                 self.values.insert(
@@ -193,11 +193,11 @@ impl LoweringContext {
                 let (out_shape, input_ty, filter_ty, result_ty) =
                     conv2d_shapes(&input_info, &filter_info, *stride_h, *stride_w, *padding)?;
                 self.emit_line(&format!(
-                    "    %tmp{}_init = tensor.empty() : {}",
+                    "    %tmp{} = tensor.empty() : {}",
                     dst.0, result_ty
                 ));
                 self.emit_line(&format!(
-                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{} : {}, %{} : {}) outs(%tmp{}_init : {}) -> {}",
+                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{} : {}, %{} : {}) outs(%tmp{} : {}) -> {}",
                     dst.0, input.0, input_ty, filter.0, filter_ty, dst.0, result_ty, result_ty
                 ));
                 self.values.insert(
