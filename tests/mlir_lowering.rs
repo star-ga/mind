@@ -83,9 +83,10 @@ fn lowers_matmul() {
 
     let text = compile_ir_to_mlir_text(&mut module).expect("matmul lowering");
     assert!(text.contains("func.func @main() -> (tensor<2x4xf32>)"));
-    assert!(text.contains("tensor.empty"));
-    assert!(text.contains("linalg.matmul ins(%"));
-    assert!(text.contains("outs(%tmp"));
+    assert!(text.contains("%tmp2 = tensor.empty() : tensor<2x4xf32>"));
+    assert!(text.contains(
+        "linalg.matmul ins(%0 : tensor<2x3xf32> , %1 : tensor<3x4xf32>) outs(%tmp2 : tensor<2x4xf32>) -> tensor<2x4xf32>"
+    ));
 }
 
 #[test]
@@ -126,9 +127,10 @@ fn lowers_conv2d() {
 
     let text = compile_ir_to_mlir_text(&mut module).expect("conv2d lowering");
     assert!(text.contains("func.func @main() -> (tensor<1x8x8x4xf32>)"));
-    assert!(text.contains("tensor.empty"));
-    assert!(text.contains("linalg.conv_2d_nhwc_hwcf"));
-    assert!(text.contains("outs(%tmp"));
+    assert!(text.contains("%tmp2 = tensor.empty() : tensor<1x8x8x4xf32>"));
+    assert!(text.contains(
+        "linalg.conv_2d_nhwc_hwcf ins(%0 : tensor<1x8x8x3xf32>, %1 : tensor<3x3x3x4xf32>) outs(%tmp2 : tensor<1x8x8x4xf32>) -> tensor<1x8x8x4xf32>"
+    ));
 }
 
 #[test]
