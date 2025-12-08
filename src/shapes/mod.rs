@@ -315,7 +315,8 @@ pub fn squeeze_shape(input: &[ShapeDim], axes: &[i32]) -> Result<Vec<ShapeDim>, 
             // Report the actual dimension size instead of the axis index for clearer diagnostics.
             let dim_size = match input.get(axis) {
                 Some(ShapeDim::Known(n)) => *n,
-                // For symbolic or missing dims, fall back to 0 to indicate "non-unit / unknown".
+                // For symbolic or missing dims, use 0 as a sentinel. Limitation:
+                // the error message will not explicitly say "symbolic dimension".
                 _ => 0,
             };
             return Err(ShapeError::SizeMismatch {
