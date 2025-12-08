@@ -127,7 +127,7 @@ pub fn differentiate_with_options(
 }
 
 fn canonicalize_gradients(result: &mut GradientResult) {
-    let mut gradient_outputs: BTreeSet<ValueId> = result.gradients.values().copied().collect();
+    let gradient_outputs: BTreeSet<ValueId> = result.gradients.values().copied().collect();
 
     for root in &gradient_outputs {
         result.gradient_module.instrs.push(Instr::Output(*root));
@@ -151,9 +151,6 @@ fn canonicalize_gradients(result: &mut GradientResult) {
         }
     }
     result.gradient_module.next_id = max_seen;
-
-    // Consume the set to avoid an "unused variable" warning.
-    gradient_outputs.clear();
 }
 
 struct GradientBuilder<'a> {
