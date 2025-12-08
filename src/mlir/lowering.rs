@@ -55,7 +55,7 @@ enum ValueKind {
 struct LoweringContext {
     values: BTreeMap<ValueId, ValueKind>,
     outputs: Vec<ValueId>,
-    out: String,
+    body: String,
 }
 
 impl LoweringContext {
@@ -63,12 +63,12 @@ impl LoweringContext {
         Self {
             values: BTreeMap::new(),
             outputs: Vec::new(),
-            out: String::new(),
+            body: String::new(),
         }
     }
 
     fn emit_line(&mut self, line: &str) {
-        writeln!(&mut self.out, "{line}").expect("write to string cannot fail");
+        writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
     }
 
     fn emit_instr(&mut self, instr_index: usize, instr: &Instr) -> Result<(), MlirLowerError> {
@@ -82,12 +82,16 @@ impl LoweringContext {
                 let tensor_ty = tensor_type(shape, dtype_str);
                 let fill_value = format_fill(*fill, dtype);
                 self.emit_line(&format!(
+                    "    %fill{} = arith.constant {} : {}",
+                    id.0, fill_value, dtype_str
+                ));
+                self.emit_line(&format!(
                     "    %tmp{} = tensor.empty() : {}",
                     id.0, tensor_ty
                 ));
                 self.emit_line(&format!(
-                    "    %{} = linalg.fill ins(arith.constant {} : {}) outs(%tmp{} : {}) -> {}",
-                    id.0, fill_value, dtype_str, id.0, tensor_ty, tensor_ty
+                    "    %{} = linalg.fill ins(%fill{} : {}) outs(%tmp{} : {}) -> {}",
+                    id.0, id.0, dtype_str, id.0, tensor_ty, tensor_ty
                 ));
                 self.values.insert(
                     *id,
@@ -161,8 +165,12 @@ impl LoweringContext {
                 let (out_shape, m_ty, n_ty, result_ty) =
                     matmul_shapes(&a_info.shape, &b_info.shape, a_info.dtype.as_str())?;
                 self.emit_line(&format!(
-                    "    %{} = linalg.matmul ins(%{} : {} , %{} : {}) -> {}",
-                    dst.0, a.0, m_ty, b.0, n_ty, result_ty
+                    "    %tmp{}_init = tensor.empty() : {}",
+                    dst.0, result_ty
+                ));
+                self.emit_line(&format!(
+                    "    %{} = linalg.matmul ins(%{} : {} , %{} : {}) outs(%tmp{}_init : {}) -> {}",
+                    dst.0, a.0, m_ty, b.0, n_ty, dst.0, result_ty, result_ty
                 ));
                 self.values.insert(
                     *dst,
@@ -185,8 +193,12 @@ impl LoweringContext {
                 let (out_shape, input_ty, filter_ty, result_ty) =
                     conv2d_shapes(&input_info, &filter_info, *stride_h, *stride_w, *padding)?;
                 self.emit_line(&format!(
-                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{} : {}, %{} : {}) -> {}",
-                    dst.0, input.0, input_ty, filter.0, filter_ty, result_ty
+                    "    %tmp{}_init = tensor.empty() : {}",
+                    dst.0, result_ty
+                ));
+                self.emit_line(&format!(
+                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{} : {}, %{} : {}) outs(%tmp{}_init : {}) -> {}",
+                    dst.0, input.0, input_ty, filter.0, filter_ty, dst.0, result_ty, result_ty
                 ));
                 self.values.insert(
                     *dst,
@@ -226,10 +238,6 @@ impl LoweringContext {
             }),
         }
     }
-
-    fn finish(self) -> MlirModule {
-        MlirModule { text: self.out }
-    }
 }
 
 /// Lower a verified and canonicalized [`IRModule`] into MLIR text.
@@ -238,13 +246,12 @@ impl LoweringContext {
 /// the same IR produces identical MLIR text.
 pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError> {
     let mut ctx = LoweringContext::new();
-    ctx.emit_line("module {");
-    ctx.emit_line("  func.func @main() -> () {");
 
     for (idx, instr) in module.instrs.iter().enumerate() {
         ctx.emit_instr(idx, instr)?;
     }
 
+    let mut ret_types = Vec::new();
     if !ctx.outputs.is_empty() {
         let mut value_list = String::new();
         let mut type_list = String::new();
@@ -253,6 +260,7 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
                 value: *id,
                 context: "function return",
             })?;
+            ret_types.push(mlir_type(info)?);
             if i > 0 {
                 value_list.push_str(", ");
                 type_list.push_str(", ");
@@ -265,10 +273,18 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
         ctx.emit_line("    return");
     }
 
-    ctx.emit_line("  }");
-    ctx.emit_line("}");
+    let mut out = String::new();
+    out.push_str("module {\n");
+    if ret_types.is_empty() {
+        out.push_str("  func.func @main() -> () {\n");
+    } else {
+        out.push_str(&format!("  func.func @main() -> ({}) {{\n", ret_types.join(", ")));
+    }
+    out.push_str(&ctx.body);
+    out.push_str("  }\n");
+    out.push_str("}\n");
 
-    Ok(ctx.finish())
+    Ok(MlirModule { text: out })
 }
 
 /// Convenience helper: verify, canonicalize, and lower into MLIR text.
@@ -383,6 +399,14 @@ fn conv2d_shapes(
     let out_channels = filter.shape[3].clone();
     let kernel_h = &filter.shape[0];
     let kernel_w = &filter.shape[1];
+
+    let in_channels = &input.shape[3];
+    let filter_in_channels = &filter.shape[2];
+    if !shapes_compatible(in_channels, filter_in_channels) {
+        return Err(MlirLowerError::ShapeError(
+            "conv2d input channels must match filter input channels".into(),
+        ));
+    }
 
     let out_h = conv_output_dim(in_h, kernel_h, stride_h, padding)?;
     let out_w = conv_output_dim(in_w, kernel_w, stride_w, padding)?;
