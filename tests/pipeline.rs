@@ -14,6 +14,8 @@
 
 use mind::pipeline::{compile_source, CompileOptions};
 use mind::runtime::types::BackendTarget;
+#[cfg(feature = "autodiff")]
+use mind::ir::Instr;
 
 #[test]
 fn compile_source_stabilizes_ir() {
