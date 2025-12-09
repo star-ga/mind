@@ -168,7 +168,7 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
 
     match rule {
         ShapeRuleKind::ElementwiseUnary => {
-            let lhs = inputs.get(0).ok_or_else(|| ShapeError {
+            let lhs = inputs.first().ok_or_else(|| ShapeError {
                 op: op.to_string(),
                 kind: ShapeErrorKind::RankMismatch {
                     expected: "one input tensor".to_string(),
@@ -179,7 +179,7 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
             Ok(lhs.to_vec())
         }
         ShapeRuleKind::ElementwiseBinary => {
-            let lhs = inputs.get(0).copied().unwrap_or(&[]);
+            let lhs = inputs.first().copied().unwrap_or(&[]);
             let rhs = inputs.get(1).copied().unwrap_or(&[]);
             broadcast_shapes(lhs, rhs).map_err(|kind| ShapeError {
                 op: op.to_string(),
@@ -189,7 +189,7 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
         // Full reduction → rank-0 scalar (including reducing a scalar).
         ShapeRuleKind::ReduceAll => Ok(Vec::new()),
         ShapeRuleKind::MatMul2D => {
-            let lhs = inputs.get(0).copied().unwrap_or(&[]);
+            let lhs = inputs.first().copied().unwrap_or(&[]);
             let rhs = inputs.get(1).copied().unwrap_or(&[]);
 
             if lhs.len() != 2 || rhs.len() != 2 {
