@@ -17,6 +17,9 @@ use mind::ir::Instr;
 use mind::pipeline::{compile_source, CompileOptions};
 use mind::runtime::types::BackendTarget;
 
+#[cfg(feature = "autodiff")]
+const AUTODIFF_FIXTURE: &str = include_str!("fixtures/autodiff.mind");
+
 #[test]
 fn compile_source_stabilizes_ir() {
     let src = "3 * 3";
@@ -80,6 +83,30 @@ fn compile_source_runs_autodiff() {
     assert!(grad_text.to_lowercase().contains("output"));
 }
 
+#[cfg(feature = "autodiff")]
+#[test]
+fn mindc_emits_grad_ir() {
+    let opts = CompileOptions {
+        func: Some("main".to_string()),
+        enable_autodiff: true,
+        target: BackendTarget::Cpu,
+    };
+
+    let products = compile_source(AUTODIFF_FIXTURE, &opts)
+        .expect("autodiff pipeline should compile autodiff fixture");
+
+    let grad = products
+        .grad
+        .as_ref()
+        .expect("expected gradient IR to be present for autodiff fixture");
+
+    let rendered_grad = format!("{}", grad.gradient_module);
+    assert!(
+        !rendered_grad.trim().is_empty(),
+        "expected gradient IR to contain text"
+    );
+}
+
 #[cfg(feature = "mlir-lowering")]
 #[test]
 fn lower_to_mlir_produces_stable_text() {
@@ -98,4 +125,27 @@ fn lower_to_mlir_produces_stable_text() {
 
     assert_eq!(mlir.primal_mlir, mlir_again.primal_mlir);
     assert!(mlir.primal_mlir.contains("func.func @main"));
+}
+
+#[cfg(all(feature = "mlir-lowering", feature = "autodiff"))]
+#[test]
+fn mindc_emits_mlir() {
+    use mind::pipeline::lower_to_mlir;
+
+    let opts = CompileOptions {
+        func: None,
+        enable_autodiff: false,
+        target: BackendTarget::Cpu,
+    };
+
+    let products =
+        compile_source(AUTODIFF_FIXTURE, &opts).expect("Core IR pipeline should compile fixture");
+
+    let mlir_products = lower_to_mlir(&products.ir, None)
+        .expect("MLIR lowering should succeed for autodiff fixture");
+
+    assert!(
+        !mlir_products.primal_mlir.trim().is_empty(),
+        "expected non-empty MLIR text from lowering"
+    );
 }
