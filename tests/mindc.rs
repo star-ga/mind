@@ -108,3 +108,28 @@ fn mindc_verify_only_mode() {
 
     assert!(status.success());
 }
+
+#[test]
+fn mindc_reports_prefixed_errors() {
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "tests/fixtures/invalid.mind",
+        ])
+        .output()
+        .expect("run mindc error path");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("error[parse]")
+            || stderr.contains("error[type-check]")
+            || stderr.contains("error[ir-verify]"),
+        "stderr should include standardized prefix: {stderr}"
+    );
+}

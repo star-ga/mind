@@ -47,6 +47,12 @@ experimental and currently focused on single-output entry points.
 * [IR core](docs/ir.md) — deterministic IR pipeline with verifier and printer.
 * [IR & MLIR](docs/ir-mlir.md) — compiler pipeline from parser to MLIR dialects.
 
+## Stability & Versioning
+
+MIND Core v1 follows the public contract in mind-spec Core v1. The stability
+model, SemVer policy, and CLI guarantees are documented in
+[`docs/versioning.md`](docs/versioning.md).
+
 ## Architecture
 
 * [Runtime & Compiler Architecture](docs/architecture.md)
