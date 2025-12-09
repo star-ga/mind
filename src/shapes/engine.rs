@@ -186,14 +186,9 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
             })
         }
         ShapeRuleKind::ReduceAll => {
-            let lhs = inputs.get(0).copied().unwrap_or(&[]);
-            if lhs.is_empty() {
-                // Reducing a scalar stays scalar.
-                Ok(Vec::new())
-            } else {
-                // Full reduction → rank-0 scalar.
-                Ok(Vec::new())
-            }
+            let _lhs = inputs.get(0).copied().unwrap_or(&[]);
+            // Full reduction (including reducing a scalar) → rank-0 scalar.
+            Ok(Vec::new())
         }
         ShapeRuleKind::MatMul2D => {
             let lhs = inputs.get(0).copied().unwrap_or(&[]);
@@ -214,7 +209,11 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
                 return Err(ShapeError {
                     op: op.to_string(),
                     kind: ShapeErrorKind::RankMismatch {
-                        expected: "lhs.shape[1] == rhs.shape[0]".to_string(),
+                        // This variant is also used for general dimension
+                        // compatibility violations, not только for pure rank
+                        // mismatches; make the expectation explicit for matmul.
+                        expected: "matmul requires lhs.shape[1] == rhs.shape[0]"
+                            .to_string(),
                         actual_lhs: lhs.to_vec(),
                         actual_rhs: Some(rhs.to_vec()),
                     },
