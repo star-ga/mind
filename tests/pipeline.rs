@@ -12,10 +12,10 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::pipeline::{compile_source, CompileOptions};
-use mind::runtime::types::BackendTarget;
 #[cfg(feature = "autodiff")]
 use mind::ir::Instr;
+use mind::pipeline::{compile_source, CompileOptions};
+use mind::runtime::types::BackendTarget;
 
 #[test]
 fn compile_source_stabilizes_ir() {
