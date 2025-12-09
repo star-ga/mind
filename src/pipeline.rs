@@ -91,7 +91,9 @@ pub fn compile_source(
     opts: &CompileOptions,
 ) -> Result<CompileProducts, CompileError> {
     if matches!(opts.target, BackendTarget::Gpu) {
-        return Err(CompileError::BackendUnavailable { target: opts.target });
+        return Err(CompileError::BackendUnavailable {
+            target: opts.target,
+        });
     }
 
     let module = parser::parse_with_diagnostics(source).map_err(CompileError::ParseError)?;

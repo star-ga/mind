@@ -63,9 +63,9 @@ pub use autodiff::{
     GradientResult,
 };
 pub use pipeline::{compile_source, CompileError, CompileOptions, CompileProducts};
-pub use runtime::types::{BackendTarget, DeviceKind};
 #[cfg(feature = "mlir-lowering")]
 pub use pipeline::{lower_to_mlir, MlirProducts};
+pub use runtime::types::{BackendTarget, DeviceKind};
 
 #[cfg(feature = "mlir-lowering")]
 pub use mlir::{compile_ir_to_mlir_text, MlirLowerError};

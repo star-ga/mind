@@ -1,5 +1,5 @@
-use crate::runtime::types::TensorHandle;
 pub use crate::runtime::types::DeviceKind;
+use crate::runtime::types::TensorHandle;
 use crate::types::{DType, ShapeDim};
 
 /// Describes a tensor visible to the runtime.

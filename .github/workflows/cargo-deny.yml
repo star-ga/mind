@@ -21,3 +21,4 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v1
         with:
           command: check
+          rust-version: stable
