@@ -58,6 +58,12 @@ Every diagnostic carries a stable code for the Core v1 pipeline phase:
 - Autodiff: `E4xxx`
 - MLIR lowering: `E5xxx`
 
+Shape validation for Core v1 operators is also surfaced during type checking:
+
+- Broadcast compatibility: `E2101`
+- Rank or shape expectation mismatches (including invalid reductions): `E2102`
+- Matmul inner-dimension mismatches: `E2103`
+
 See [`docs/versioning.md`](versioning.md) for how these classes fit the stability
 contract.
 
