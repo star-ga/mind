@@ -152,3 +152,22 @@ fn mindc_reports_unavailable_gpu_backend() {
     assert!(stderr.contains("error[backend]"));
     assert!(stderr.contains("backend not available"));
 }
+
+#[test]
+fn mindc_runs_conformance_suite() {
+    let status = Command::new("cargo")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "conformance",
+            "--profile",
+            "cpu",
+        ])
+        .status()
+        .expect("run mindc conformance");
+
+    assert!(status.success());
+}
