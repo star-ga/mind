@@ -39,12 +39,14 @@ cargo run --features "mlir-lowering autodiff" --bin mindc -- examples/hello_tens
 MLIR emission requires the `mlir-lowering` feature. Autodiff support is
 experimental and currently focused on single-output entry points.
 
-## GPU backend (experimental)
+## GPU backend profile
 
-The crate exposes an experimental GPU backend contract and a `--target=gpu`
-flag in `mindc`. CPU remains the only implemented target; selecting the GPU
-target returns a structured "backend not available" error. See
-[`docs/gpu.md`](docs/gpu.md) for the device/target model and current status.
+The crate exposes the Core v1 GPU profile and a `--target=gpu` flag in `mindc`.
+CPU remains the only implemented target, but the GPU contract (enums, error
+model, and `GPUBackend` trait) is treated as stable for downstream runtimes.
+Selecting the GPU target returns a structured "backend not available" error.
+See [`docs/gpu.md`](docs/gpu.md) for the device/target model and current
+status.
 
 ## Core Concepts
 
