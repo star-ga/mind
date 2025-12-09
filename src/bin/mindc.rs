@@ -18,7 +18,7 @@
 use std::fs;
 use std::process;
 
-use clap::Parser;
+use clap::{ArgAction, Parser};
 
 use mind::diagnostics;
 use mind::pipeline::{compile_source, CompileError, CompileOptions};
@@ -27,10 +27,22 @@ use mind::pipeline::{compile_source, CompileError, CompileOptions};
 use mind::pipeline::{lower_to_mlir, MlirProducts};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = None, long_about = None)]
+#[command(
+    author,
+    about = None,
+    long_about = None,
+    disable_version_flag = true
+)]
 struct Cli {
+    /// Print the compiler version and component stability versions.
+    #[arg(long, action = ArgAction::SetTrue)]
+    version: bool,
+    /// Print a short description of the public stability model.
+    #[arg(long, action = ArgAction::SetTrue)]
+    stability: bool,
     /// Input .mind file to compile.
-    input: String,
+    #[arg(required_unless_present_any = ["version", "stability"], value_name = "FILE")]
+    input: Option<String>,
     /// Emit canonical IR for the module.
     #[arg(long)]
     emit_ir: bool,
@@ -54,15 +66,27 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
+    if cli.version {
+        print_version();
+        return;
+    }
+
+    if cli.stability {
+        print_stability();
+        return;
+    }
+
+    let input = cli.input.as_ref().expect("input validated by clap").clone();
+
     if cli.autodiff && cli.func.is_none() {
-        eprintln!("--autodiff requires --func <name>");
+        eprintln!("error[autodiff]: --autodiff requires --func <name>");
         process::exit(1);
     }
 
-    let source = match fs::read_to_string(&cli.input) {
+    let source = match fs::read_to_string(&input) {
         Ok(src) => src,
         Err(err) => {
-            eprintln!("failed to read {}: {err}", cli.input);
+            eprintln!("failed to read {}: {err}", input);
             process::exit(1);
         }
     };
@@ -109,6 +133,30 @@ fn main() {
     emit_mlir_if_requested(&cli, &products);
 }
 
+fn print_version() {
+    println!("mind {}", env!("CARGO_PKG_VERSION"));
+
+    #[cfg(feature = "mlir-lowering")]
+    let components = {
+        let mut components = vec!["core-ir=1.0", "core-autodiff=1.0"];
+        components.push("mlir-lowering=0.1");
+        components
+    };
+
+    #[cfg(not(feature = "mlir-lowering"))]
+    let components = vec!["core-ir=1.0", "core-autodiff=1.0"];
+
+    println!("{}", components.join("  "));
+}
+
+fn print_stability() {
+    println!(
+        "MIND Core v1 stability: stable IR/autodiff/CLI surfaces; MLIR lowering is\
+         conditionally stable within a minor release; new ops & feature flags are\
+         experimental. See docs/versioning.md for details."
+    );
+}
+
 #[cfg(feature = "mlir-lowering")]
 fn emit_mlir_if_requested(cli: &Cli, products: &mind::pipeline::CompileProducts) {
     if !cli.emit_mlir {
@@ -129,7 +177,7 @@ fn emit_mlir_if_requested(cli: &Cli, products: &mind::pipeline::CompileProducts)
     let mlir: MlirProducts = match lower_to_mlir(&products.ir, grads) {
         Ok(mlir) => mlir,
         Err(err) => {
-            eprintln!("MLIR lowering failed: {err}");
+            eprintln!("error[mlir]: {err}");
             process::exit(1);
         }
     };
@@ -146,7 +194,7 @@ fn emit_mlir_if_requested(cli: &Cli, products: &mind::pipeline::CompileProducts)
 #[cfg(not(feature = "mlir-lowering"))]
 fn emit_mlir_if_requested(cli: &Cli, _products: &mind::pipeline::CompileProducts) {
     if cli.emit_mlir {
-        eprintln!("MLIR emission requires building with the 'mlir-lowering' feature");
+        eprintln!("error[mlir]: MLIR emission requires building with the 'mlir-lowering' feature");
         process::exit(1);
     }
 }
@@ -155,16 +203,24 @@ fn render_error(err: &CompileError, source: &str) {
     match err {
         CompileError::ParseError(diags) | CompileError::TypeError(diags) => {
             for diag in diags {
-                eprintln!("{}", diagnostics::render(source, diag));
+                let prefix = match err {
+                    CompileError::ParseError(_) => "error[parse]",
+                    _ => "error[type-check]",
+                };
+                eprintln!("{prefix}: {}", diagnostics::render(source, diag));
             }
         }
-        CompileError::IrVerify(e) => eprintln!("IR verification failed: {e}"),
-        CompileError::MissingFunctionName => eprintln!("--autodiff requires --func <name>"),
+        CompileError::IrVerify(e) => eprintln!("error[ir-verify]: {e}"),
+        CompileError::MissingFunctionName => {
+            eprintln!("error[autodiff]: --autodiff requires --func <name>")
+        }
         #[cfg(feature = "autodiff")]
-        CompileError::Autodiff(e) => eprintln!("autodiff failed: {e}"),
+        CompileError::Autodiff(e) => eprintln!("error[autodiff]: {e}"),
         #[cfg(not(feature = "autodiff"))]
         CompileError::AutodiffDisabled => {
-            eprintln!("autodiff requested but the 'autodiff' feature is not enabled")
+            eprintln!(
+                "error[autodiff]: autodiff requested but the 'autodiff' feature is not enabled"
+            )
         }
     }
 }
