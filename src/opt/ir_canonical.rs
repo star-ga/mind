@@ -41,7 +41,9 @@ fn prune_dead(instrs: &[Instr]) -> Vec<Instr> {
             }
             other => {
                 let dst = instruction_dst(other);
-                if dst.map_or(true, |id| used.contains(&id)) {
+                // Keep instructions whose destination is either unused (None) or present
+                // in the `used` set. Clippy prefers `is_none_or` over `map_or(true, ...)`.
+                if dst.is_none_or(|id| used.contains(&id)) {
                     for operand in instruction_operands(other) {
                         used.insert(operand);
                     }
@@ -72,7 +74,7 @@ fn reorder_commutative_ops(instrs: &mut [Instr]) {
     }
 }
 
-fn constant_fold(instrs: &mut Vec<Instr>) {
+fn constant_fold(instrs: &mut [Instr]) {
     let mut constants: BTreeMap<ValueId, i64> = BTreeMap::new();
     for instr in instrs.iter_mut() {
         match instr {
