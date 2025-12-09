@@ -22,6 +22,7 @@ use clap::{ArgAction, Parser};
 
 use mind::diagnostics;
 use mind::pipeline::{compile_source, CompileError, CompileOptions};
+use mind::BackendTarget;
 
 #[cfg(feature = "mlir-lowering")]
 use mind::pipeline::{lower_to_mlir, MlirProducts};
@@ -61,6 +62,9 @@ struct Cli {
     /// Only verify the pipeline without emitting artifacts.
     #[arg(long)]
     verify_only: bool,
+    /// Select the execution target backend (cpu|gpu).
+    #[arg(long, value_name = "TARGET", default_value = "cpu")]
+    target: String,
 }
 
 fn main() {
@@ -83,6 +87,14 @@ fn main() {
         process::exit(1);
     }
 
+    let target = match parse_target(&cli.target) {
+        Ok(target) => target,
+        Err(msg) => {
+            eprintln!("error[backend]: {msg}");
+            process::exit(1);
+        }
+    };
+
     let source = match fs::read_to_string(&input) {
         Ok(src) => src,
         Err(err) => {
@@ -94,6 +106,7 @@ fn main() {
     let opts = CompileOptions {
         func: cli.func.clone(),
         enable_autodiff: cli.autodiff,
+        target,
     };
 
     let products = match compile_source(&source, &opts) {
@@ -222,5 +235,18 @@ fn render_error(err: &CompileError, source: &str) {
                 "error[autodiff]: autodiff requested but the 'autodiff' feature is not enabled"
             )
         }
+        CompileError::BackendUnavailable { target } => {
+            eprintln!(
+                "error[backend]: {target} backend not available (experimental interface only)"
+            )
+        }
+    }
+}
+
+fn parse_target(raw: &str) -> Result<BackendTarget, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "cpu" => Ok(BackendTarget::Cpu),
+        "gpu" => Ok(BackendTarget::Gpu),
+        other => Err(format!("unknown target '{other}' (expected cpu|gpu)")),
     }
 }
