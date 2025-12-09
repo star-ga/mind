@@ -151,13 +151,13 @@ fn print_version() {
 
     #[cfg(feature = "mlir-lowering")]
     let components = {
-        let mut components = vec!["core-ir=1.0", "core-autodiff=1.0"];
+        let mut components = ["core-ir=1.0", "core-autodiff=1.0"].to_vec();
         components.push("mlir-lowering=0.1");
         components
     };
 
     #[cfg(not(feature = "mlir-lowering"))]
-    let components = vec!["core-ir=1.0", "core-autodiff=1.0"];
+    let components = ["core-ir=1.0", "core-autodiff=1.0"];
 
     println!("{}", components.join("  "));
 }
