@@ -1587,7 +1587,7 @@ fn classify_error_code(msg: &str) -> &'static str {
         SHAPE_INNER_DIM_CODE
     } else if msg.contains("broadcast") {
         SHAPE_BROADCAST_CODE
-    } else if msg.contains("rank mismatch") || msg.contains("rank ") {
+    } else if msg.contains("rank mismatch") {
         SHAPE_RANK_CODE
     } else {
         TYPE_ERR_CODE
