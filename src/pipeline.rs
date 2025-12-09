@@ -101,7 +101,7 @@ impl CompileError {
             CompileError::BackendUnavailable { target } => vec![Diagnostic::error(
                 "backend",
                 "E5001",
-                format!("no backend available for target {target:?}"),
+                format!("no backend available for target {target}"),
             )],
             #[cfg(feature = "autodiff")]
             CompileError::Autodiff(e) => {
