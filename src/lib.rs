@@ -12,7 +12,30 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! MIND core library (Phase 1 scaffold)
+//! MIND core library for the Phase-2 Core pipeline defined in mind-spec Core v1.
+//!
+//! The pipeline progresses through the following stable stages:
+//!
+//! * **Surface front-end** → parses MIND source into the typed AST.
+//! * **Public IR** → a stable, verified representation of ops, shapes, and
+//!   broadcasting/reduction semantics.
+//! * **Autodiff** → static gradient generation built on the public IR API.
+//! * **Canonicalization** → deterministic, semantic-preserving rewrites prior to
+//!   lowering.
+//! * **MLIR lowering** → text MLIR emission for backends (feature gated).
+//! * **Runtime** → execution of canonical IR or lowered artifacts.
+//!
+//! # Stability & versioning
+//!
+//! MIND Core follows the mind-spec Core v1 stability contract:
+//!
+//! * **Stable**: public IR structure/semantics, autodiff API, canonicalization
+//!   guarantees, CLI base flags, and textual IR form.
+//! * **Conditionally stable**: MLIR lowering is stable within a given minor
+//!   release when the `mlir-lowering` feature is enabled.
+//! * **Experimental**: new ops, experimental flags, and future non-CPU backends.
+//!
+//! See `docs/versioning.md` for the full policy and surface definitions.
 pub mod ast;
 pub mod diagnostics;
 pub mod eval;
