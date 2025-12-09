@@ -32,6 +32,9 @@ MIND Core currently publishes 0.y.z versions with the following rules:
   `AutodiffError`.
 - **Canonicalization guarantees**: deterministic rewrites prior to lowering.
 - **`mindc` base flags and textual IR output**.
+- **Core v1 GPU profile**: `DeviceKind`/`BackendTarget` enum variants for CPU and
+  GPU, the runtime backend-selection error model (e.g., `BackendUnavailable`),
+  and the `GPUBackend` trait surface that executes canonical IR on GPU devices.
 
 ### Conditionally stable surfaces
 
@@ -42,7 +45,8 @@ MIND Core currently publishes 0.y.z versions with the following rules:
 
 - New operations added to the IR.
 - New feature flags exposed by the CLI or libraries.
-- Future non-CPU backends and related lowering pipelines.
+- Concrete GPU or accelerator backend implementations and device-specific
+  lowering pipelines.
 
 ## References
 
