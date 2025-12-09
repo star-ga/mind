@@ -27,3 +27,8 @@ All error variants propagate non-zero exit codes from the CLI.
 
 See [`docs/versioning.md`](versioning.md) for how these classes fit the stability
 contract.
+
+Passing the Core v1 conformance suite indicates that the current build produces
+the expected diagnostics, IR, autodiff, and MLIR text for the relevant profile
+(CPU baseline or the optional GPU profile). Experimental features outside those
+profiles may still emit different errors or remain unsupported.

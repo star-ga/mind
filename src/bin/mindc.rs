@@ -18,11 +18,12 @@
 use std::fs;
 use std::process;
 
-use clap::{ArgAction, Parser};
+use clap::{ArgAction, Parser, Subcommand};
 
 use mind::diagnostics;
 use mind::pipeline::{compile_source, CompileError, CompileOptions};
 use mind::BackendTarget;
+use mind::{conformance, ConformanceOptions, ConformanceProfile};
 
 #[cfg(feature = "mlir-lowering")]
 use mind::pipeline::{lower_to_mlir, MlirProducts};
@@ -35,6 +36,24 @@ use mind::pipeline::{lower_to_mlir, MlirProducts};
     disable_version_flag = true
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+    #[command(flatten)]
+    compile: CompileArgs,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Run the Core v1 conformance suite.
+    Conformance {
+        /// Which profile to execute (cpu|gpu).
+        #[arg(long, default_value = "cpu")]
+        profile: String,
+    },
+}
+
+#[derive(Parser, Debug, Default)]
+struct CompileArgs {
     /// Print the compiler version and component stability versions.
     #[arg(long, action = ArgAction::SetTrue)]
     version: bool,
@@ -42,7 +61,7 @@ struct Cli {
     #[arg(long, action = ArgAction::SetTrue)]
     stability: bool,
     /// Input .mind file to compile.
-    #[arg(required_unless_present_any = ["version", "stability"], value_name = "FILE")]
+    #[arg(value_name = "FILE")]
     input: Option<String>,
     /// Emit canonical IR for the module.
     #[arg(long)]
@@ -70,24 +89,35 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
-    if cli.version {
+    if let Some(Command::Conformance { profile }) = &cli.command {
+        run_conformance(profile);
+        return;
+    }
+
+    if cli.compile.version {
         print_version();
         return;
     }
 
-    if cli.stability {
+    if cli.compile.stability {
         print_stability();
         return;
     }
 
-    let input = cli.input.as_ref().expect("input validated by clap").clone();
+    let input = match &cli.compile.input {
+        Some(path) => path.clone(),
+        None => {
+            eprintln!("error[cli]: expected an input file or subcommand");
+            process::exit(1);
+        }
+    };
 
-    if cli.autodiff && cli.func.is_none() {
+    if cli.compile.autodiff && cli.compile.func.is_none() {
         eprintln!("error[autodiff]: --autodiff requires --func <name>");
         process::exit(1);
     }
 
-    let target = match parse_target(&cli.target) {
+    let target = match parse_target(&cli.compile.target) {
         Ok(target) => target,
         Err(msg) => {
             eprintln!("error[backend]: {msg}");
@@ -104,8 +134,8 @@ fn main() {
     };
 
     let opts = CompileOptions {
-        func: cli.func.clone(),
-        enable_autodiff: cli.autodiff,
+        func: cli.compile.func.clone(),
+        enable_autodiff: cli.compile.autodiff,
         target,
     };
 
@@ -117,17 +147,17 @@ fn main() {
         }
     };
 
-    if cli.verify_only {
+    if cli.compile.verify_only {
         return;
     }
 
-    let emit_ir = cli.emit_ir || (!cli.emit_grad_ir && !cli.emit_mlir);
+    let emit_ir = cli.compile.emit_ir || (!cli.compile.emit_grad_ir && !cli.compile.emit_mlir);
     if emit_ir {
         println!("{}", products.ir);
     }
 
     #[cfg(feature = "autodiff")]
-    if cli.autodiff && cli.emit_grad_ir {
+    if cli.compile.autodiff && cli.compile.emit_grad_ir {
         match products.grad.as_ref() {
             Some(grad) => println!("{}", grad.gradient_module),
             None => {
@@ -138,12 +168,12 @@ fn main() {
     }
 
     #[cfg(not(feature = "autodiff"))]
-    if cli.autodiff && cli.emit_grad_ir {
+    if cli.compile.autodiff && cli.compile.emit_grad_ir {
         eprintln!("gradient IR emission requires building with the 'autodiff' feature");
         process::exit(1);
     }
 
-    emit_mlir_if_requested(&cli, &products);
+    emit_mlir_if_requested(&cli.compile, &products);
 }
 
 fn print_version() {
@@ -170,8 +200,32 @@ fn print_stability() {
     );
 }
 
+fn run_conformance(profile: &str) {
+    let profile = match profile.to_ascii_lowercase().as_str() {
+        "cpu" => ConformanceProfile::CpuBaseline,
+        "gpu" => ConformanceProfile::CpuAndGpu,
+        other => {
+            eprintln!("error[conformance]: unknown profile '{other}' (expected cpu|gpu)");
+            process::exit(1);
+        }
+    };
+
+    match conformance::run_conformance(ConformanceOptions { profile }) {
+        Ok(()) => {
+            println!("Core v1 conformance passed for profile: {:?}", profile);
+        }
+        Err(err) => {
+            eprintln!("conformance failures detected:");
+            for failure in err.0.iter() {
+                eprintln!("- {failure}");
+            }
+            process::exit(1);
+        }
+    }
+}
+
 #[cfg(feature = "mlir-lowering")]
-fn emit_mlir_if_requested(cli: &Cli, products: &mind::pipeline::CompileProducts) {
+fn emit_mlir_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompileProducts) {
     if !cli.emit_mlir {
         return;
     }
@@ -205,7 +259,7 @@ fn emit_mlir_if_requested(cli: &Cli, products: &mind::pipeline::CompileProducts)
 }
 
 #[cfg(not(feature = "mlir-lowering"))]
-fn emit_mlir_if_requested(cli: &Cli, _products: &mind::pipeline::CompileProducts) {
+fn emit_mlir_if_requested(cli: &CompileArgs, _products: &mind::pipeline::CompileProducts) {
     if cli.emit_mlir {
         eprintln!("error[mlir]: MLIR emission requires building with the 'mlir-lowering' feature");
         process::exit(1);
