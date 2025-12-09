@@ -11,6 +11,8 @@
 
 //! Shared tensor shape helpers for the MIND compiler.
 
+pub mod engine;
+
 use std::collections::BTreeSet;
 
 use crate::linalg;
