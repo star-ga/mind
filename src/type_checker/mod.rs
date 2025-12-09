@@ -155,7 +155,7 @@ fn shape_engine_error(op_display: &str, err: engine::ShapeError, span: AstSpan) 
                     actual_lhs.get(1).copied().unwrap_or(0),
                     actual_rhs
                         .as_ref()
-                        .and_then(|rhs| rhs.get(0).copied())
+                        .and_then(|rhs| rhs.first().copied())
                         .unwrap_or(0)
                 )
             } else {
