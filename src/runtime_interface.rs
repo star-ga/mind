@@ -1,15 +1,6 @@
+use crate::runtime::types::TensorHandle;
+pub use crate::runtime::types::DeviceKind;
 use crate::types::{DType, ShapeDim};
-
-/// Logical device on which computations are executed.
-///
-/// This is intentionally minimal and may be extended in the future
-/// with concrete device identifiers or backend-specific metadata.
-#[derive(Clone, Copy, Debug)]
-pub enum DeviceKind {
-    Cpu,
-    Gpu,
-    Other,
-}
 
 /// Describes a tensor visible to the runtime.
 ///
@@ -37,10 +28,10 @@ pub trait MindRuntime {
     /// Allocate storage for a tensor with the given descriptor.
     ///
     /// Returns an opaque handle that can later be passed to `run_op`.
-    fn allocate(&self, desc: &TensorDesc) -> usize;
+    fn allocate(&self, desc: &TensorDesc) -> TensorHandle;
 
     /// Execute an operation identified by `op` over the input and output handles.
-    fn run_op(&self, op: &str, inputs: &[usize], outputs: &[usize]);
+    fn run_op(&self, op: &str, inputs: &[TensorHandle], outputs: &[TensorHandle]);
 
     /// Ensure that all enqueued operations are visible to the host.
     fn synchronize(&self) {}

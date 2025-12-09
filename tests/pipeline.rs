@@ -12,8 +12,8 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::ir::Instr;
 use mind::pipeline::{compile_source, CompileOptions};
+use mind::runtime::types::BackendTarget;
 
 #[test]
 fn compile_source_stabilizes_ir() {
@@ -21,6 +21,7 @@ fn compile_source_stabilizes_ir() {
     let opts = CompileOptions {
         func: None,
         enable_autodiff: false,
+        target: BackendTarget::Cpu,
     };
 
     let first = compile_source(src, &opts).expect("first compile");
@@ -38,6 +39,7 @@ fn compile_source_runs_autodiff() {
     let opts = CompileOptions {
         func: Some("main".to_string()),
         enable_autodiff: true,
+        target: BackendTarget::Cpu,
     };
 
     let ir_only = compile_source(
@@ -45,6 +47,7 @@ fn compile_source_runs_autodiff() {
         &CompileOptions {
             func: Some("main".to_string()),
             enable_autodiff: false,
+            target: BackendTarget::Cpu,
         },
     )
     .expect("compiled without autodiff");
@@ -84,6 +87,7 @@ fn lower_to_mlir_produces_stable_text() {
     let opts = CompileOptions {
         func: None,
         enable_autodiff: false,
+        target: BackendTarget::Cpu,
     };
 
     let compiled = compile_source(src, &opts).expect("compiled IR");
