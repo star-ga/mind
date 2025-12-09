@@ -6,8 +6,8 @@ MIND Core normalizes public-facing errors so tooling can parse them reliably.
 
 - **Parse / type errors**: surfaced as structured diagnostics.
 - **IR verification errors**: failures of the public IR invariants.
-- **Autodiff errors**: `AutodiffError::{UnsupportedOp, InvalidAxis, UnsupportedShape,
-  Verification, MissingOutput, MultipleOutputs}` and related validation errors.
+- **Autodiff errors**: failures and validation errors encountered during automatic
+  differentiation of Core IR modules.
 - **MLIR lowering errors**: failures while translating canonical IR into MLIR
   (behind the `mlir-lowering` feature).
 
