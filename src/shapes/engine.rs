@@ -32,10 +32,7 @@ pub enum ShapeErrorKind {
         actual_rhs: Option<Vec<usize>>,
     },
     /// Broadcasting failed for the given input shapes.
-    BroadcastError {
-        lhs: Vec<usize>,
-        rhs: Vec<usize>,
-    },
+    BroadcastError { lhs: Vec<usize>, rhs: Vec<usize> },
 }
 
 /// Rich shape error containing the operator name and a structured kind.
@@ -126,8 +123,14 @@ pub fn broadcast_shapes(lhs: &[usize], rhs: &[usize]) -> Result<Shape, ShapeErro
 
     let max_rank = lhs.len().max(rhs.len());
     for i in 0..max_rank {
-        let a = lhs.get(lhs.len().wrapping_sub(1).wrapping_sub(i)).copied().unwrap_or(1);
-        let b = rhs.get(rhs.len().wrapping_sub(1).wrapping_sub(i)).copied().unwrap_or(1);
+        let a = lhs
+            .get(lhs.len().wrapping_sub(1).wrapping_sub(i))
+            .copied()
+            .unwrap_or(1);
+        let b = rhs
+            .get(rhs.len().wrapping_sub(1).wrapping_sub(i))
+            .copied()
+            .unwrap_or(1);
 
         let dim = if a == b || a == 1 {
             b
@@ -165,16 +168,14 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
 
     match rule {
         ShapeRuleKind::ElementwiseUnary => {
-            let lhs = inputs
-                .get(0)
-                .ok_or_else(|| ShapeError {
-                    op: op.to_string(),
-                    kind: ShapeErrorKind::RankMismatch {
-                        expected: "one input tensor".to_string(),
-                        actual_lhs: Vec::new(),
-                        actual_rhs: None,
-                    },
-                })?;
+            let lhs = inputs.get(0).ok_or_else(|| ShapeError {
+                op: op.to_string(),
+                kind: ShapeErrorKind::RankMismatch {
+                    expected: "one input tensor".to_string(),
+                    actual_lhs: Vec::new(),
+                    actual_rhs: None,
+                },
+            })?;
             Ok(lhs.to_vec())
         }
         ShapeRuleKind::ElementwiseBinary => {
@@ -207,10 +208,9 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
                     op: op.to_string(),
                     kind: ShapeErrorKind::RankMismatch {
                         // This variant is also used for general dimension
-                        // compatibility violations, not only for pure rank
-                        // mismatches; make the expectation explicit for matmul.
-                        expected: "matmul requires lhs.shape[1] == rhs.shape[0]"
-                            .to_string(),
+                        // compatibility violations, not only for pure rank mismatches; make the
+                        // expectation explicit for matmul.
+                        expected: "matmul requires lhs.shape[1] == rhs.shape[0]".to_string(),
                         actual_lhs: lhs.to_vec(),
                         actual_rhs: Some(rhs.to_vec()),
                     },
