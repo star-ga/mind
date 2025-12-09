@@ -99,9 +99,9 @@ impl CompileError {
                 "--autodiff requires --func <name>",
             )],
             CompileError::BackendUnavailable { target } => vec![Diagnostic::error(
-                "ir-verify",
-                "E3002",
-                format!("{target} backend not available (experimental interface only)"),
+                "backend",
+                "E5001",
+                format!("no backend available for target {target:?}"),
             )],
             #[cfg(feature = "autodiff")]
             CompileError::Autodiff(e) => {
