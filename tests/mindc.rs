@@ -39,6 +39,28 @@ fn mindc_emits_ir() {
     assert!(stdout.to_lowercase().contains("output"), "{stdout}");
 }
 
+#[test]
+fn mindc_accepts_cpu_target_flag() {
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "tests/fixtures/simple.mind",
+            "--emit-ir",
+            "--target",
+            "cpu",
+        ])
+        .output()
+        .expect("run mindc with cpu target");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.to_lowercase().contains("output"), "{stdout}");
+}
+
 #[cfg(feature = "autodiff")]
 #[test]
 fn mindc_emits_grad_ir() {
@@ -132,4 +154,27 @@ fn mindc_reports_prefixed_errors() {
             || stderr.contains("error[ir-verify]"),
         "stderr should include standardized prefix: {stderr}"
     );
+}
+
+#[test]
+fn mindc_reports_unavailable_gpu_backend() {
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "tests/fixtures/simple.mind",
+            "--target",
+            "gpu",
+        ])
+        .output()
+        .expect("run mindc gpu target");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(stderr.contains("error[backend]"));
+    assert!(stderr.contains("backend not available"));
 }

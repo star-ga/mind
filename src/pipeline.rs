@@ -26,6 +26,7 @@ use crate::eval;
 use crate::ir;
 use crate::opt;
 use crate::parser;
+use crate::runtime::types::BackendTarget;
 use crate::type_checker;
 
 #[cfg(feature = "autodiff")]
@@ -40,6 +41,8 @@ pub struct CompileOptions {
     pub func: Option<String>,
     /// Whether to run autodiff for the selected function.
     pub enable_autodiff: bool,
+    /// Requested execution backend (CPU is the only supported target).
+    pub target: BackendTarget,
 }
 
 /// Artifacts produced by [`compile_source`].
@@ -67,6 +70,9 @@ pub enum CompileError {
     /// Autodiff requested without specifying a function.
     #[error("autodiff requested but no function was provided")]
     MissingFunctionName,
+    /// Requested backend target is not available in this build.
+    #[error("backend unavailable: {target}")]
+    BackendUnavailable { target: BackendTarget },
     /// Autodiff failed with a structured error.
     #[cfg(feature = "autodiff")]
     #[error("autodiff failed: {0}")]
@@ -84,6 +90,10 @@ pub fn compile_source(
     source: &str,
     opts: &CompileOptions,
 ) -> Result<CompileProducts, CompileError> {
+    if matches!(opts.target, BackendTarget::Gpu) {
+        return Err(CompileError::BackendUnavailable { target: opts.target });
+    }
+
     let module = parser::parse_with_diagnostics(source).map_err(CompileError::ParseError)?;
 
     let type_diags = type_checker::check_module_types(&module, source, &HashMap::new());

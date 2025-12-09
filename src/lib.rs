@@ -48,6 +48,7 @@ pub mod mlir;
 pub mod opt;
 pub mod parser;
 pub mod pipeline;
+pub mod runtime;
 pub mod runtime_interface;
 pub mod shapes;
 pub mod stdlib;
@@ -62,6 +63,7 @@ pub use autodiff::{
     GradientResult,
 };
 pub use pipeline::{compile_source, CompileError, CompileOptions, CompileProducts};
+pub use runtime::types::{BackendTarget, DeviceKind};
 #[cfg(feature = "mlir-lowering")]
 pub use pipeline::{lower_to_mlir, MlirProducts};
 
