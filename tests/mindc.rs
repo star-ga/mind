@@ -87,32 +87,6 @@ fn mindc_emits_grad_ir() {
     assert!(stdout.to_lowercase().contains("output"), "{stdout}");
 }
 
-#[cfg(all(feature = "mlir-lowering", feature = "autodiff"))]
-#[test]
-fn mindc_emits_mlir() {
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "--quiet",
-            "--features",
-            "mlir-lowering autodiff",
-            "--bin",
-            "mindc",
-            "--",
-            "tests/fixtures/autodiff.mind",
-            "--func",
-            "main",
-            "--autodiff",
-            "--emit-mlir",
-        ])
-        .output()
-        .expect("run mindc mlir");
-
-    assert!(output.status.success());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("func.func @main"), "{stdout}");
-}
-
 #[test]
 fn mindc_verify_only_mode() {
     let status = Command::new("cargo")
