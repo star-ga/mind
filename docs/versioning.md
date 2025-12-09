@@ -10,7 +10,7 @@ MIND Core currently publishes 0.y.z versions with the following rules:
 
 - **Patch (0.y.*)**: bug fixes, documentation updates, and tooling-only changes
   that do not alter IR semantics or CLI contracts.
-- **Minor (0.*.z)**: additive IR extensions are allowed, including new
+- **Minor (0.y.*)**: additive IR extensions are allowed, including new
   instructions and flags. Existing IR semantics must remain compatible.
 
 ## What counts as breaking
