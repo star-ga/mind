@@ -20,8 +20,8 @@ use std::process;
 
 use clap::{ArgAction, Parser, Subcommand};
 
-use mind::diagnostics;
-use mind::pipeline::{compile_source, CompileError, CompileOptions};
+use mind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
+use mind::pipeline::{compile_source_with_name, CompileOptions};
 use mind::BackendTarget;
 use mind::{conformance, ConformanceOptions, ConformanceProfile};
 
@@ -84,6 +84,12 @@ struct CompileArgs {
     /// Select the execution target backend (cpu|gpu).
     #[arg(long, value_name = "TARGET", default_value = "cpu")]
     target: String,
+    /// Diagnostic output format (human|short|json).
+    #[arg(long, value_name = "FORMAT", default_value = "human")]
+    diagnostic_format: String,
+    /// ANSI color handling (auto|always|never).
+    #[arg(long, value_name = "WHEN")]
+    color: Option<String>,
 }
 
 fn main() {
@@ -125,6 +131,11 @@ fn main() {
         }
     };
 
+    let diagnostic_format =
+        DiagnosticFormat::parse(&cli.compile.diagnostic_format).unwrap_or(DiagnosticFormat::Human);
+    let color_choice = resolve_color_choice(&cli.compile.color);
+    let emitter = DiagnosticEmitter::new(diagnostic_format, color_choice);
+
     let source = match fs::read_to_string(&input) {
         Ok(src) => src,
         Err(err) => {
@@ -139,10 +150,11 @@ fn main() {
         target,
     };
 
-    let products = match compile_source(&source, &opts) {
+    let products = match compile_source_with_name(&source, Some(&input), &opts) {
         Ok(products) => products,
         Err(err) => {
-            render_error(&err, &source);
+            let diags = err.into_diagnostics(Some(&input));
+            emitter.emit_all(&diags, Some(&source));
             process::exit(1);
         }
     };
@@ -266,41 +278,20 @@ fn emit_mlir_if_requested(cli: &CompileArgs, _products: &mind::pipeline::Compile
     }
 }
 
-fn render_error(err: &CompileError, source: &str) {
-    match err {
-        CompileError::ParseError(diags) | CompileError::TypeError(diags) => {
-            for diag in diags {
-                let prefix = match err {
-                    CompileError::ParseError(_) => "error[parse]",
-                    _ => "error[type-check]",
-                };
-                eprintln!("{prefix}: {}", diagnostics::render(source, diag));
-            }
-        }
-        CompileError::IrVerify(e) => eprintln!("error[ir-verify]: {e}"),
-        CompileError::MissingFunctionName => {
-            eprintln!("error[autodiff]: --autodiff requires --func <name>")
-        }
-        #[cfg(feature = "autodiff")]
-        CompileError::Autodiff(e) => eprintln!("error[autodiff]: {e}"),
-        #[cfg(not(feature = "autodiff"))]
-        CompileError::AutodiffDisabled => {
-            eprintln!(
-                "error[autodiff]: autodiff requested but the 'autodiff' feature is not enabled"
-            )
-        }
-        CompileError::BackendUnavailable { target } => {
-            eprintln!(
-                "error[backend]: {target} backend not available (experimental interface only)"
-            )
-        }
-    }
-}
-
 fn parse_target(raw: &str) -> Result<BackendTarget, String> {
     match raw.to_ascii_lowercase().as_str() {
         "cpu" => Ok(BackendTarget::Cpu),
         "gpu" => Ok(BackendTarget::Gpu),
         other => Err(format!("unknown target '{other}' (expected cpu|gpu)")),
     }
+}
+
+fn resolve_color_choice(flag: &Option<String>) -> ColorChoice {
+    if let Some(value) = flag.as_deref() {
+        return ColorChoice::parse(value).unwrap_or(ColorChoice::Auto);
+    }
+    if let Ok(env) = std::env::var("MINDC_COLOR") {
+        return ColorChoice::parse(&env).unwrap_or(ColorChoice::Auto);
+    }
+    ColorChoice::Auto
 }

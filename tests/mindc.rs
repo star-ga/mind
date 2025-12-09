@@ -154,6 +154,56 @@ fn mindc_reports_unavailable_gpu_backend() {
 }
 
 #[test]
+fn mindc_prints_json_diagnostics_with_flag() {
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "tests/fixtures/invalid.mind",
+            "--diagnostic-format",
+            "json",
+        ])
+        .output()
+        .expect("run mindc json diagnostics");
+
+    assert!(!output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let first_line = stderr.lines().next().unwrap_or("");
+    let value: serde_json::Value = serde_json::from_str(first_line).expect("json diagnostic");
+    assert!(value["phase"].is_string());
+    assert_eq!(value["severity"], "error");
+}
+
+#[test]
+fn mindc_color_env_overridden_by_flag() {
+    let output = Command::new("cargo")
+        .env("MINDC_COLOR", "always")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "tests/fixtures/invalid.mind",
+            "--color",
+            "never",
+        ])
+        .output()
+        .expect("run mindc color flag");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("\u{1b}["),
+        "stderr should be uncolored when flag forces never"
+    );
+}
+
+#[test]
 fn mindc_runs_conformance_suite() {
     let status = Command::new("cargo")
         .args([
