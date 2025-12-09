@@ -28,8 +28,7 @@ use crate::ast::Node;
 
 use crate::ast::Span as AstSpan;
 
-use crate::diagnostics::Diagnostic as Pretty;
-use crate::diagnostics::Location;
+use crate::diagnostics::{Diagnostic as Pretty, Severity, Span};
 
 use crate::linalg;
 use crate::types::ConvPadding;
@@ -1343,6 +1342,15 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
 
 /// Walk statements; extend env on let/assign; return pretty diags for any errors.
 pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pretty> {
+    check_module_types_in_file(module, src, None, env)
+}
+
+pub fn check_module_types_in_file(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+    env: &TypeEnv,
+) -> Vec<Pretty> {
     let mut errs = Vec::new();
     let mut tenv = env.clone();
 
@@ -1365,6 +1373,7 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
                                 if vt_ann != vt && !allow_scalar_fill {
                                     errs.push(diag_from_span(
                                         src,
+                                        file,
                                         format!(
                                             "type mismatch for `{}`: annotation {} vs inferred {}",
                                             name,
@@ -1375,12 +1384,13 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
                                     ));
                                 }
                             }
-                            Err(e) => errs.push(diag_from_type_err(src, e)),
+                            Err(e) => errs.push(diag_from_type_err(src, file, e)),
                         }
                         tenv.insert(name.clone(), vt_ann);
                     }
                     None => errs.push(diag_from_span(
                         src,
+                        file,
                         format!("unsupported annotation for `{}`", name),
                         *span,
                     )),
@@ -1389,7 +1399,7 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
                     Ok((vt, _)) => {
                         tenv.insert(name.clone(), vt);
                     }
-                    Err(e) => errs.push(diag_from_type_err(src, e)),
+                    Err(e) => errs.push(diag_from_type_err(src, file, e)),
                 },
             },
             Node::Assign { name, value, .. } => {
@@ -1399,6 +1409,7 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
                         if vt_lhs != vt_rhs {
                             errs.push(diag_from_span(
                                 src,
+                                file,
                                 format!(
                                     "cannot assign `{}`: expected {} but found {}",
                                     name,
@@ -1412,12 +1423,12 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
                     (None, Ok((vt_rhs, _))) => {
                         tenv.insert(name.clone(), vt_rhs);
                     }
-                    (_, Err(e)) => errs.push(diag_from_type_err(src, e)),
+                    (_, Err(e)) => errs.push(diag_from_type_err(src, file, e)),
                 }
             }
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
-                    errs.push(diag_from_type_err(src, e));
+                    errs.push(diag_from_type_err(src, file, e));
                 }
             }
         }
@@ -1426,37 +1437,19 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
     errs
 }
 
-fn location_at(src: &str, offset: usize) -> Location {
-    let mut line = 1usize;
-    let mut col = 1usize;
-    let mut count = 0usize;
-    for ch in src.chars() {
-        if count >= offset {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-        count += ch.len_utf8();
-    }
-    Location { line, col }
-}
-
-fn diag_from_span(src: &str, msg: String, span: AstSpan) -> Pretty {
-    let range = span.start()..span.end();
-    let start = location_at(src, span.start());
-    let end = location_at(src, span.end());
+fn diag_from_span(src: &str, file: Option<&str>, msg: String, span: AstSpan) -> Pretty {
+    let span = Span::from_offsets(src, span.start(), span.end(), file);
     Pretty {
+        phase: "type-check",
+        code: "E2001",
+        severity: Severity::Error,
         message: msg,
-        span: range,
-        start,
-        end,
+        span: Some(span),
+        notes: Vec::new(),
+        help: None,
     }
 }
 
-fn diag_from_type_err(src: &str, err: TypeErrSpan) -> Pretty {
-    diag_from_span(src, err.msg, err.span)
+fn diag_from_type_err(src: &str, file: Option<&str>, err: TypeErrSpan) -> Pretty {
+    diag_from_span(src, file, err.msg, err.span)
 }

@@ -21,7 +21,7 @@
 
 use std::collections::HashMap;
 
-use crate::diagnostics;
+use crate::diagnostics::Diagnostic;
 use crate::eval;
 use crate::ir;
 use crate::opt;
@@ -60,10 +60,10 @@ pub struct CompileProducts {
 pub enum CompileError {
     /// Parsing failed with one or more diagnostics.
     #[error("parse error")]
-    ParseError(Vec<diagnostics::Diagnostic>),
+    ParseError(Vec<Diagnostic>),
     /// Type checking failed with one or more diagnostics.
     #[error("type error")]
-    TypeError(Vec<diagnostics::Diagnostic>),
+    TypeError(Vec<Diagnostic>),
     /// The IR module did not pass verification.
     #[error("IR verification failed: {0}")]
     IrVerify(#[from] ir::IrVerifyError),
@@ -83,11 +83,53 @@ pub enum CompileError {
     AutodiffDisabled,
 }
 
+impl CompileError {
+    pub fn into_diagnostics(self, source_name: Option<&str>) -> Vec<Diagnostic> {
+        match self {
+            CompileError::ParseError(diags) | CompileError::TypeError(diags) => diags
+                .into_iter()
+                .map(|d| d.fill_file(source_name))
+                .collect(),
+            CompileError::IrVerify(e) => {
+                vec![Diagnostic::error("ir-verify", "E3001", e.to_string())]
+            }
+            CompileError::MissingFunctionName => vec![Diagnostic::error(
+                "autodiff",
+                "E4002",
+                "--autodiff requires --func <name>",
+            )],
+            CompileError::BackendUnavailable { target } => vec![Diagnostic::error(
+                "ir-verify",
+                "E3002",
+                format!("{target} backend not available (experimental interface only)"),
+            )],
+            #[cfg(feature = "autodiff")]
+            CompileError::Autodiff(e) => {
+                vec![Diagnostic::error("autodiff", "E4001", e.to_string())]
+            }
+            #[cfg(not(feature = "autodiff"))]
+            CompileError::AutodiffDisabled => vec![Diagnostic::error(
+                "autodiff",
+                "E4003",
+                "autodiff requested but the 'autodiff' feature is not enabled",
+            )],
+        }
+    }
+}
+
 /// High-level compiler pipeline entry point: parse, type-check, lower to IR,
 /// verify, and canonicalize. Optionally run autodiff for the requested
 /// function.
 pub fn compile_source(
     source: &str,
+    opts: &CompileOptions,
+) -> Result<CompileProducts, CompileError> {
+    compile_source_with_name(source, None, opts)
+}
+
+pub fn compile_source_with_name(
+    source: &str,
+    source_name: Option<&str>,
     opts: &CompileOptions,
 ) -> Result<CompileProducts, CompileError> {
     if matches!(opts.target, BackendTarget::Gpu) {
@@ -96,9 +138,11 @@ pub fn compile_source(
         });
     }
 
-    let module = parser::parse_with_diagnostics(source).map_err(CompileError::ParseError)?;
+    let module = parser::parse_with_diagnostics_in_file(source, source_name)
+        .map_err(CompileError::ParseError)?;
 
-    let type_diags = type_checker::check_module_types(&module, source, &HashMap::new());
+    let type_diags =
+        type_checker::check_module_types_in_file(&module, source, source_name, &HashMap::new());
     if !type_diags.is_empty() {
         return Err(CompileError::TypeError(type_diags));
     }

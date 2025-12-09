@@ -11,19 +11,52 @@ MIND Core normalizes public-facing errors so tooling can parse them reliably.
 - **MLIR lowering errors**: failures while translating canonical IR into MLIR
   (behind the `mlir-lowering` feature).
 
-## CLI formatting
+## Diagnostic formats
 
-CLI-facing errors are prefixed to identify their source:
+`mindc` supports structured and human diagnostics:
 
 ```
-error[parse]: …
-error[type-check]: …
-error[ir-verify]: …
-error[autodiff]: …
-error[mlir]: …
+mindc --diagnostic-format human   # default; multi-line with spans and notes
+mindc --diagnostic-format short   # single line, grep-friendly
+mindc --diagnostic-format json    # one diagnostic per line of JSON
 ```
+
+JSON diagnostics are line-delimited with a stable shape:
+
+```
+{
+  "phase": "parse",
+  "code": "E1001",
+  "severity": "error",
+  "message": "unexpected token `)`; expected identifier",
+  "span": {
+    "file": "simple.mind",
+    "line": 3,
+    "column": 11,
+    "length": 1
+  },
+  "notes": [
+    "while parsing function `main`"
+  ],
+  "help": "check for an extra trailing comma or remove the unmatched `)`"
+}
+```
+
+Human output uses consistent phase prefixes (`error[parse]`, `error[type-check]`,
+etc.), includes caret highlights when spans are available, and respects
+`--color` / `MINDC_COLOR` for ANSI styling.
 
 All error variants propagate non-zero exit codes from the CLI.
+
+## Error codes
+
+Every diagnostic carries a stable code for the Core v1 pipeline phase:
+
+- Parse: `E1xxx`
+- Type-check: `E2xxx`
+- IR verification: `E3xxx`
+- Autodiff: `E4xxx`
+- MLIR lowering: `E5xxx`
 
 See [`docs/versioning.md`](versioning.md) for how these classes fit the stability
 contract.

@@ -35,6 +35,9 @@
 //!   release when the `mlir-lowering` feature is enabled.
 //! * **Experimental**: new ops, experimental flags, and future non-CPU backends.
 //!
+//! Diagnostics follow the Core v1 error model with structured spans and
+//! machine-readable JSON output (`mindc --diagnostic-format json`).
+//!
 //! See `docs/versioning.md` for the full policy and surface definitions.
 pub mod ast;
 pub mod conformance;
@@ -66,7 +69,9 @@ pub use autodiff::{
 pub use conformance::{
     run_conformance, ConformanceFailure, ConformanceOptions, ConformanceProfile,
 };
-pub use pipeline::{compile_source, CompileError, CompileOptions, CompileProducts};
+pub use pipeline::{
+    compile_source, compile_source_with_name, CompileError, CompileOptions, CompileProducts,
+};
 #[cfg(feature = "mlir-lowering")]
 pub use pipeline::{lower_to_mlir, MlirProducts};
 pub use runtime::types::{BackendTarget, DeviceKind};
