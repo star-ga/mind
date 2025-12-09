@@ -83,9 +83,10 @@ fn compile_source_runs_autodiff() {
     assert!(grad_text.to_lowercase().contains("output"));
 }
 
+// Gradient IR regression using the library pipeline rather than the CLI.
 #[cfg(feature = "autodiff")]
 #[test]
-fn mindc_emits_grad_ir() {
+fn pipeline_emits_grad_ir() {
     let opts = CompileOptions {
         func: Some("main".to_string()),
         enable_autodiff: true,
@@ -93,7 +94,7 @@ fn mindc_emits_grad_ir() {
     };
 
     let products = compile_source(AUTODIFF_FIXTURE, &opts)
-        .expect("autodiff pipeline should compile autodiff fixture");
+        .expect("Core IR pipeline should compile autodiff fixture");
 
     let grad = products
         .grad
@@ -127,25 +128,38 @@ fn lower_to_mlir_produces_stable_text() {
     assert!(mlir.primal_mlir.contains("func.func @main"));
 }
 
+// MLIR + autodiff regression using the library pipeline. This ensures that
+// combined lowering of primal + gradient modules succeeds without relying on
+// spawning the CLI.
 #[cfg(all(feature = "mlir-lowering", feature = "autodiff"))]
 #[test]
-fn mindc_emits_mlir() {
+fn pipeline_emits_mlir() {
     use mind::pipeline::lower_to_mlir;
 
     let opts = CompileOptions {
-        func: None,
-        enable_autodiff: false,
+        // Compile the autodiff fixture with gradients enabled for `main`.
+        func: Some("main".to_string()),
+        enable_autodiff: true,
         target: BackendTarget::Cpu,
     };
 
-    let products =
-        compile_source(AUTODIFF_FIXTURE, &opts).expect("Core IR pipeline should compile fixture");
+    let products = compile_source(AUTODIFF_FIXTURE, &opts)
+        .expect("Core IR pipeline should compile autodiff fixture");
 
-    let mlir_products = lower_to_mlir(&products.ir, None)
+    // Lower both the primal IR and its gradient module to MLIR.
+    let mlir_products = lower_to_mlir(&products.ir, products.grad.as_ref())
         .expect("MLIR lowering should succeed for autodiff fixture");
 
     assert!(
         !mlir_products.primal_mlir.trim().is_empty(),
-        "expected non-empty MLIR text from lowering"
+        "expected non-empty MLIR text from lowering",
     );
+    assert!(mlir_products.primal_mlir.contains("func.func @main"));
+    // Gradient module should also be present when autodiff is enabled.
+    assert!(mlir_products
+        .grad_mlir
+        .as_deref()
+        .unwrap_or("")
+        .to_lowercase()
+        .contains("func.func"));
 }
