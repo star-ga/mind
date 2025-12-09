@@ -32,6 +32,8 @@ MIND Core currently publishes 0.y.z versions with the following rules:
   `AutodiffError`.
 - **Canonicalization guarantees**: deterministic rewrites prior to lowering.
 - **`mindc` base flags and textual IR output**.
+- **Compiler diagnostics**: error codes (`E1xxx`…`E5xxx`) and the JSON diagnostic
+  field names for the `--diagnostic-format json` surface.
 - **Core v1 GPU profile**: `DeviceKind`/`BackendTarget` enum variants for CPU and
   GPU, the runtime backend-selection error model (e.g., `BackendUnavailable`),
   and the `GPUBackend` trait surface that executes canonical IR on GPU devices.

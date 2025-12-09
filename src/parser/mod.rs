@@ -33,7 +33,7 @@ use crate::ast::Span;
 
 use crate::ast::TypeAnn;
 
-use crate::diagnostics::Diagnostic as PrettyDiagnostic;
+use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
 fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> {
@@ -686,14 +686,39 @@ pub fn parse(input: &str) -> Result<Module, Vec<Simple<char>>> {
 
 /// Parse with pretty diagnostics instead of raw chumsky errors.
 pub fn parse_with_diagnostics(input: &str) -> Result<Module, Vec<PrettyDiagnostic>> {
+    parse_with_diagnostics_in_file(input, None)
+}
+
+pub fn parse_with_diagnostics_in_file(
+    input: &str,
+    file: Option<&str>,
+) -> Result<Module, Vec<PrettyDiagnostic>> {
     let (maybe_module, errs) = parser().parse_recovery(input);
     if errs.is_empty() {
         Ok(maybe_module.expect("parser returned no module without errors"))
     } else {
         let ds = errs
             .into_iter()
-            .map(|e| crate::diagnostics::Diagnostic::from_chumsky(input, e))
+            .map(|e| pretty_from_chumsky(input, file, e))
             .collect();
         Err(ds)
+    }
+}
+
+fn pretty_from_chumsky(
+    source: &str,
+    file: Option<&str>,
+    e: chumsky::error::Simple<char>,
+) -> PrettyDiagnostic {
+    let span = e.span();
+    let span = DiagnosticSpan::from_offsets(source, span.start, span.end, file);
+    PrettyDiagnostic {
+        phase: "parse",
+        code: "E1001",
+        severity: crate::diagnostics::Severity::Error,
+        message: e.to_string(),
+        span: Some(span),
+        notes: Vec::new(),
+        help: None,
     }
 }
