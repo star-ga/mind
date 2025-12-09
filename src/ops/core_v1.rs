@@ -12,6 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+use crate::shapes::engine::ShapeRuleKind;
 use crate::types::DType;
 
 /// Fixed-function metadata for a Core v1 operator.
@@ -28,6 +29,8 @@ pub struct OpSignature {
     pub differentiable: bool,
     /// Short description of the op contract.
     pub summary: &'static str,
+    /// Optional Core v1 shape rule category enforced by the shape engine.
+    pub shape_rule: Option<ShapeRuleKind>,
 }
 
 /// Arity description for ops that accept a fixed or variadic input count.
@@ -50,6 +53,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::I32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Elementwise addition with standard broadcasting.",
+            shape_rule: Some(ShapeRuleKind::ElementwiseBinary),
         },
         OpSignature {
             name: "sub",
@@ -57,6 +61,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::I32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Elementwise subtraction with standard broadcasting.",
+            shape_rule: Some(ShapeRuleKind::ElementwiseBinary),
         },
         OpSignature {
             name: "mul",
@@ -64,6 +69,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::I32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Elementwise multiplication with standard broadcasting.",
+            shape_rule: Some(ShapeRuleKind::ElementwiseBinary),
         },
         OpSignature {
             name: "div",
@@ -71,6 +77,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Elementwise division with standard broadcasting.",
+            shape_rule: Some(ShapeRuleKind::ElementwiseBinary),
         },
         OpSignature {
             name: "tensor.sum",
@@ -78,6 +85,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Reduction over axes with optional keepdims.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.mean",
@@ -85,6 +93,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Mean reduction over axes with optional keepdims.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.reshape",
@@ -92,6 +101,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[],
             differentiable: true,
             summary: "Reshape tensor to a new compatible shape.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.expand_dims",
@@ -99,6 +109,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[],
             differentiable: true,
             summary: "Insert a length-1 dimension at the given axis.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.squeeze",
@@ -106,6 +117,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[],
             differentiable: true,
             summary: "Remove length-1 dimensions.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.transpose",
@@ -113,6 +125,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[],
             differentiable: true,
             summary: "Permute tensor axes.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.dot",
@@ -120,6 +133,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "1D dot product.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.matmul",
@@ -127,6 +141,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Matrix multiplication for rank ≥ 2 tensors.",
+            shape_rule: Some(ShapeRuleKind::MatMul2D),
         },
         OpSignature {
             name: "tensor.conv2d",
@@ -134,6 +149,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "2D convolution with stride/padding parameters.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.index",
@@ -141,6 +157,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[],
             differentiable: false,
             summary: "Basic integer indexing.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.slice",
@@ -148,6 +165,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[],
             differentiable: false,
             summary: "Half-open slicing per axis.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.gather",
@@ -155,6 +173,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Gather elements along an axis using integer indices.",
+            shape_rule: None,
         },
         OpSignature {
             name: "tensor.relu",
@@ -162,6 +181,7 @@ pub const fn core_v1_ops() -> &'static [OpSignature] {
             allowed_dtypes: &[DType::F32, DType::BF16, DType::F16],
             differentiable: true,
             summary: "Elementwise ReLU activation.",
+            shape_rule: Some(ShapeRuleKind::ElementwiseUnary),
         },
     ]
 }

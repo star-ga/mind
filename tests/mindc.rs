@@ -179,6 +179,30 @@ fn mindc_prints_json_diagnostics_with_flag() {
 }
 
 #[test]
+fn mindc_reports_shape_errors_with_codes() {
+    let output = Command::new("cargo")
+        .args([
+            "run",
+            "--quiet",
+            "--bin",
+            "mindc",
+            "--",
+            "tests/fixtures/invalid_broadcast.mind",
+            "--diagnostic-format",
+            "json",
+        ])
+        .output()
+        .expect("run mindc shape error");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let first_line = stderr.lines().next().unwrap_or("");
+    let value: serde_json::Value = serde_json::from_str(first_line).expect("json diagnostic");
+    assert_eq!(value["code"], "E2101");
+    assert_eq!(value["phase"], "type-check");
+}
+
+#[test]
 fn mindc_color_env_overridden_by_flag() {
     let output = Command::new("cargo")
         .env("MINDC_COLOR", "always")

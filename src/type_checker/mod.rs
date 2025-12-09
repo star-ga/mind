@@ -31,6 +31,7 @@ use crate::ast::Span as AstSpan;
 use crate::diagnostics::{Diagnostic as Pretty, Severity, Span};
 
 use crate::linalg;
+use crate::shapes::engine;
 use crate::types::ConvPadding;
 use crate::types::DType;
 use crate::types::ShapeDim;
@@ -44,6 +45,11 @@ pub struct TypeErrSpan {
 }
 
 pub type TypeEnv = HashMap<String, ValueType>;
+
+const TYPE_ERR_CODE: &str = "E2001";
+const SHAPE_BROADCAST_CODE: &str = "E2101";
+const SHAPE_RANK_CODE: &str = "E2102";
+const SHAPE_INNER_DIM_CODE: &str = "E2103";
 
 fn dtype_name(dtype: &DType) -> &'static str {
     match dtype {
@@ -62,6 +68,11 @@ fn format_shape(shape: &[ShapeDim]) -> String {
             ShapeDim::Sym(sym) => sym.to_string(),
         })
         .collect();
+    format!("({})", dims.join(","))
+}
+
+fn format_usize_shape(shape: &[usize]) -> String {
+    let dims: Vec<String> = shape.iter().map(|d| d.to_string()).collect();
     format!("({})", dims.join(","))
 }
 
@@ -100,6 +111,77 @@ fn binop_display(op: &BinOp) -> &'static str {
         BinOp::Sub => "-",
         BinOp::Mul => "*",
         BinOp::Div => "/",
+    }
+}
+
+fn shape_op_for_binop(op: &BinOp) -> &'static str {
+    match op {
+        BinOp::Add => "tensor.add",
+        BinOp::Sub => "tensor.sub",
+        BinOp::Mul => "tensor.mul",
+        BinOp::Div => "tensor.div",
+    }
+}
+
+fn concrete_shape(shape: &[ShapeDim]) -> Option<Vec<usize>> {
+    let mut out = Vec::with_capacity(shape.len());
+    for dim in shape {
+        match dim {
+            ShapeDim::Known(n) => out.push(*n),
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+fn shape_from_usize(shape: &[usize]) -> Vec<ShapeDim> {
+    shape.iter().copied().map(ShapeDim::Known).collect()
+}
+
+fn shape_engine_error(op_display: &str, err: engine::ShapeError, span: AstSpan) -> TypeErrSpan {
+    match err.kind {
+        engine::ShapeErrorKind::UnknownOp => TypeErrSpan {
+            msg: format!("shape rule not defined for `{op_display}`"),
+            span,
+        },
+        engine::ShapeErrorKind::RankMismatch {
+            expected,
+            actual_lhs,
+            actual_rhs,
+        } => {
+            let expected_display = if op_display.contains("matmul") && actual_rhs.is_some() {
+                format!(
+                    "matmul inner dimension mismatch (lhs.shape[1]={} vs rhs.shape[0]={})",
+                    actual_lhs.get(1).copied().unwrap_or(0),
+                    actual_rhs
+                        .as_ref()
+                        .and_then(|rhs| rhs.get(0).copied())
+                        .unwrap_or(0)
+                )
+            } else {
+                expected
+            };
+            let rhs_str = actual_rhs
+                .as_ref()
+                .map(|rhs| format!(", rhs={}", format_usize_shape(rhs)))
+                .unwrap_or_default();
+            TypeErrSpan {
+                msg: format!(
+                    "rank mismatch for `{op_display}`: expected {expected_display}, got lhs={}{}",
+                    format_usize_shape(&actual_lhs),
+                    rhs_str
+                ),
+                span,
+            }
+        }
+        engine::ShapeErrorKind::BroadcastError { lhs, rhs } => TypeErrSpan {
+            msg: format!(
+                "cannot broadcast shapes {} and {} for `{op_display}`",
+                format_usize_shape(&lhs),
+                format_usize_shape(&rhs)
+            ),
+            span,
+        },
     }
 }
 
@@ -828,6 +910,22 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                             span: *span,
                         });
                     }
+                    if let (Some(lhs), Some(rhs)) =
+                        (concrete_shape(&tl.shape), concrete_shape(&tr.shape))
+                    {
+                        match engine::infer_output_shape("tensor.matmul", &[&lhs, &rhs]) {
+                            Ok(out) => {
+                                return Ok((
+                                    ValueType::Tensor(TensorType::new(
+                                        tl.dtype.clone(),
+                                        shape_from_usize(&out),
+                                    )),
+                                    *span,
+                                ))
+                            }
+                            Err(e) => return Err(shape_engine_error("tensor.matmul", e, *span)),
+                        }
+                    }
                     let info = linalg::compute_matmul_shape_info(&tl.shape, &tr.shape)
                         .map_err(|msg| linalg_type_err("tensor.matmul", *span, msg))?;
                     Ok((
@@ -989,6 +1087,26 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             match (&lt, &rt) {
                 (ValueType::Tensor(tl), ValueType::Tensor(tr)) => {
                     if let Some(dtype) = combine_dtypes(&lt, &rt) {
+                        if let (Some(lhs), Some(rhs)) =
+                            (concrete_shape(&tl.shape), concrete_shape(&tr.shape))
+                        {
+                            match engine::infer_output_shape(shape_op_for_binop(op), &[&lhs, &rhs])
+                            {
+                                Ok(out) => {
+                                    return Ok((
+                                        ValueType::Tensor(TensorType::new(
+                                            dtype,
+                                            shape_from_usize(&out),
+                                        )),
+                                        *span,
+                                    ))
+                                }
+                                Err(e) => {
+                                    return Err(shape_engine_error(binop_display(op), e, *span))
+                                }
+                            }
+                        }
+
                         if let Some(shape) = broadcast_shapes(&tl.shape, &tr.shape) {
                             Ok((ValueType::Tensor(TensorType::new(dtype, shape)), *span))
                         } else {
@@ -1381,6 +1499,7 @@ pub fn check_module_types_in_file(
                                             describe_value_type(&vt)
                                         ),
                                         value.span(),
+                                        TYPE_ERR_CODE,
                                     ));
                                 }
                             }
@@ -1393,6 +1512,7 @@ pub fn check_module_types_in_file(
                         file,
                         format!("unsupported annotation for `{}`", name),
                         *span,
+                        TYPE_ERR_CODE,
                     )),
                 },
                 None => match infer_expr(value, &tenv) {
@@ -1417,6 +1537,7 @@ pub fn check_module_types_in_file(
                                     describe_value_type(&vt_rhs)
                                 ),
                                 value.span(),
+                                TYPE_ERR_CODE,
                             ));
                         }
                     }
@@ -1437,11 +1558,17 @@ pub fn check_module_types_in_file(
     errs
 }
 
-fn diag_from_span(src: &str, file: Option<&str>, msg: String, span: AstSpan) -> Pretty {
+fn diag_from_span(
+    src: &str,
+    file: Option<&str>,
+    msg: String,
+    span: AstSpan,
+    code: &'static str,
+) -> Pretty {
     let span = Span::from_offsets(src, span.start(), span.end(), file);
     Pretty {
         phase: "type-check",
-        code: "E2001",
+        code,
         severity: Severity::Error,
         message: msg,
         span: Some(span),
@@ -1451,5 +1578,18 @@ fn diag_from_span(src: &str, file: Option<&str>, msg: String, span: AstSpan) -> 
 }
 
 fn diag_from_type_err(src: &str, file: Option<&str>, err: TypeErrSpan) -> Pretty {
-    diag_from_span(src, file, err.msg, err.span)
+    let code = classify_error_code(&err.msg);
+    diag_from_span(src, file, err.msg, err.span, code)
+}
+
+fn classify_error_code(msg: &str) -> &'static str {
+    if msg.contains("inner") && msg.contains("dimension") {
+        SHAPE_INNER_DIM_CODE
+    } else if msg.contains("broadcast") {
+        SHAPE_BROADCAST_CODE
+    } else if msg.contains("rank mismatch") || msg.contains("rank ") {
+        SHAPE_RANK_CODE
+    } else {
+        TYPE_ERR_CODE
+    }
 }

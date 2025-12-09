@@ -4,6 +4,11 @@ The Core v1 surface exposes a small, auditable set of tensor operators. The
 registry lives in `src/ops/core_v1.rs` and is consumable from the CLI via
 `mindc ops --core-v1`.
 
+Elementwise ops (`add`, `sub`, `mul`, `div`, `tensor.relu`) and matrix
+multiplication (`tensor.matmul`) are tagged with Core v1 shape rule categories
+so the shared shape engine can validate broadcasting and inner-dimension
+compatibility during compilation.
+
 | name             | arity    | differentiable | notes                                      |
 | ---------------- | -------- | -------------- | ------------------------------------------ |
 | add              | 2        | yes            | Elementwise add with broadcasting.         |
