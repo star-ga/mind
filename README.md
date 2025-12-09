@@ -44,7 +44,7 @@ experimental and currently focused on single-output entry points.
 The crate exposes the Core v1 GPU profile and a `--target=gpu` flag in `mindc`.
 CPU remains the only implemented target, but the GPU contract (enums, error
 model, and `GPUBackend` trait) is treated as stable for downstream runtimes.
-Selecting the GPU target returns a structured "backend not available" error.
+Selecting the GPU target returns a structured "no backend available for target gpu" error.
 See [`docs/gpu.md`](docs/gpu.md) for the device/target model and current
 status.
 

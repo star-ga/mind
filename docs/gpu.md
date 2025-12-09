@@ -29,7 +29,7 @@ Requesting the GPU target currently returns a structured
 surfaces this as:
 
 ```
-error[backend]: gpu backend not available (experimental interface only)
+error[backend]: no backend available for target gpu
 ```
 
 This behavior ensures an explicit failure instead of a panic or implicit
