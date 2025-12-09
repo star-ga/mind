@@ -35,6 +35,10 @@ MIND Core currently publishes 0.y.z versions with the following rules:
 - **Core v1 GPU profile**: `DeviceKind`/`BackendTarget` enum variants for CPU and
   GPU, the runtime backend-selection error model (e.g., `BackendUnavailable`),
   and the `GPUBackend` trait surface that executes canonical IR on GPU devices.
+- **Conformance suite**: the golden Core v1 conformance corpus shipped with this
+  repository. Passing the suite for a given profile (CPU baseline or the GPU
+  profile) demonstrates API, IR, autodiff, and MLIR stability for that profile
+  in the current release.
 
 ### Conditionally stable surfaces
 

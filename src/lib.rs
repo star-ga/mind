@@ -37,6 +37,7 @@
 //!
 //! See `docs/versioning.md` for the full policy and surface definitions.
 pub mod ast;
+pub mod conformance;
 pub mod diagnostics;
 pub mod eval;
 pub mod exec;
@@ -61,6 +62,9 @@ pub mod autodiff;
 pub use autodiff::{
     differentiate_function, differentiate_with_options, AutodiffError, GradientOptions,
     GradientResult,
+};
+pub use conformance::{
+    run_conformance, ConformanceFailure, ConformanceOptions, ConformanceProfile,
 };
 pub use pipeline::{compile_source, CompileError, CompileOptions, CompileProducts};
 #[cfg(feature = "mlir-lowering")]
