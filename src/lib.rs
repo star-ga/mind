@@ -49,6 +49,7 @@ pub mod lexer;
 pub(crate) mod linalg;
 #[cfg(feature = "mlir-lowering")]
 pub mod mlir;
+pub mod ops;
 pub mod opt;
 pub mod parser;
 pub mod pipeline;

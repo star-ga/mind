@@ -21,6 +21,7 @@ use std::process;
 use clap::{ArgAction, Parser, Subcommand};
 
 use mind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
+use mind::ops::core_v1;
 use mind::pipeline::{compile_source_with_name, CompileOptions};
 use mind::BackendTarget;
 use mind::{conformance, ConformanceOptions, ConformanceProfile};
@@ -49,6 +50,12 @@ enum Command {
         /// Which profile to execute (cpu|gpu).
         #[arg(long, default_value = "cpu")]
         profile: String,
+    },
+    /// Inspect compiler knowledge about Core profiles.
+    Ops {
+        /// Show the Core v1 operator catalog.
+        #[arg(long, default_value_t = true, action = ArgAction::SetTrue)]
+        core_v1: bool,
     },
 }
 
@@ -97,6 +104,11 @@ fn main() {
 
     if let Some(Command::Conformance { profile }) = &cli.command {
         run_conformance(profile);
+        return;
+    }
+
+    if matches!(cli.command, Some(Command::Ops { .. })) {
+        print_ops(&cli.command);
         return;
     }
 
@@ -186,6 +198,34 @@ fn main() {
     }
 
     emit_mlir_if_requested(&cli.compile, &products);
+}
+
+fn print_ops(command: &Option<Command>) {
+    if let Some(Command::Ops { core_v1 }) = command {
+        if *core_v1 {
+            println!("Core v1 operators (name | arity | dtypes | autodiff)");
+            for op in core_v1::core_v1_ops() {
+                let arity = match op.arity {
+                    core_v1::Arity::Fixed(n) => format!("{n}"),
+                    core_v1::Arity::Variadic { min } => format!("{min}+"),
+                };
+                let dtypes = if op.allowed_dtypes.is_empty() {
+                    "shape-dependent".to_string()
+                } else {
+                    op.allowed_dtypes
+                        .iter()
+                        .map(|d| format!("{d:?}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                let autodiff = if op.differentiable { "yes" } else { "no" };
+                println!(
+                    "{:<18} | {:<6} | {:<24} | {}",
+                    op.name, arity, dtypes, autodiff
+                );
+            }
+        }
+    }
 }
 
 fn print_version() {
