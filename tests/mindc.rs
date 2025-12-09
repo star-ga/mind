@@ -150,7 +150,7 @@ fn mindc_reports_unavailable_gpu_backend() {
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
     assert!(stderr.contains("error[backend]"));
-    assert!(stderr.contains("backend not available"));
+    assert!(stderr.contains("no backend available"));
 }
 
 #[test]
