@@ -44,8 +44,9 @@ fn vector_dot_product() {
     print("∂f/∂y:", grad_y);           // Expected: [1.0, 2.0, 3.0]
 }
 
-// Matrix-vector product: f(A,x) = Ax
-// Gradients: ∂f/∂A = x ⊗ 1, ∂f/∂x = A^T
+// Matrix-vector product with scalar loss:
+// y = A x, loss(A, x) = sum(y) = 1ᵀ(Ax)
+// Gradients for this loss: ∂loss/∂A = 1 ⊗ x, ∂loss/∂x = Aᵀ 1
 fn matrix_vector_product() {
     let A: diff tensor<f32[2, 3]> = [[1.0, 2.0, 3.0],
                                       [4.0, 5.0, 6.0]];
@@ -53,8 +54,8 @@ fn matrix_vector_product() {
     let y = matmul(A, reshape(x, [3, 1]));  // [2,3] @ [3,1] = [2,1]
     let loss = sum(y);                       // Scalar reduction for backward
 
-    let grad_A = backward(loss, A);          // Outer product pattern
-    let grad_x = backward(loss, x);          // Column sums of A
+    let grad_A = backward(loss, A);          // ∂loss/∂A = outer product of dloss/dy and x
+    let grad_x = backward(loss, x);          // ∂loss/∂x = Aᵀ @ dloss/dy
 
     print("y = Ax:", y);
     print("∂loss/∂A:", grad_A);
