@@ -17,7 +17,7 @@
 
 // Layer 1: Input(10) → Hidden(16) with ReLU
 // Parameters: 10×16 = 160 f32 weights = 640 bytes
-fn layer1(x: tensor<f32[10]>, w1: tensor<f32[10, 16]>) -> tensor<f32[16]> {
+fn layer1(x: diff tensor<f32[10]>, w1: diff tensor<f32[10, 16]>) -> diff tensor<f32[16]> {
     let z = matmul(reshape(x, [1, 10]), w1);  // [1,10] @ [10,16] = [1,16]
     let h = relu(reshape(z, [16]));            // ReLU activation
     return h;
@@ -25,7 +25,7 @@ fn layer1(x: tensor<f32[10]>, w1: tensor<f32[10, 16]>) -> tensor<f32[16]> {
 
 // Layer 2: Hidden(16) → Hidden(8) with ReLU
 // Parameters: 16×8 = 128 f32 weights = 512 bytes
-fn layer2(h: tensor<f32[16]>, w2: tensor<f32[16, 8]>) -> tensor<f32[8]> {
+fn layer2(h: diff tensor<f32[16]>, w2: diff tensor<f32[16, 8]>) -> diff tensor<f32[8]> {
     let z = matmul(reshape(h, [1, 16]), w2);   // [1,16] @ [16,8] = [1,8]
     let h2 = relu(reshape(z, [8]));             // ReLU activation
     return h2;
@@ -33,17 +33,17 @@ fn layer2(h: tensor<f32[16]>, w2: tensor<f32[16, 8]>) -> tensor<f32[8]> {
 
 // Output layer: Hidden(8) → Output(1) for binary classification
 // Parameters: 8×1 = 8 f32 weights = 32 bytes
-fn output_layer(h: tensor<f32[8]>, w3: tensor<f32[8, 1]>) -> tensor<f32> {
+fn output_layer(h: diff tensor<f32[8]>, w3: diff tensor<f32[8, 1]>) -> diff tensor<f32> {
     let z = matmul(reshape(h, [1, 8]), w3);    // [1,8] @ [8,1] = [1,1]
     let logit = reshape(z, []);                 // Scalar output
     return sigmoid(logit);                      // Probability ∈ [0,1]
 }
 
-// Full forward pass (inference only)
-fn predict(x: tensor<f32[10]>,
-           w1: tensor<f32[10, 16]>,
-           w2: tensor<f32[16, 8]>,
-           w3: tensor<f32[8, 1]>) -> tensor<f32> {
+// Full forward pass (works for both training and inference)
+fn predict(x: diff tensor<f32[10]>,
+           w1: diff tensor<f32[10, 16]>,
+           w2: diff tensor<f32[16, 8]>,
+           w3: diff tensor<f32[8, 1]>) -> diff tensor<f32> {
     let h1 = layer1(x, w1);
     let h2 = layer2(h1, w2);
     let prob = output_layer(h2, w3);
