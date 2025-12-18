@@ -1,0 +1,117 @@
+// CNN Classifier Example
+// Demonstrates: Training a simple CNN for MNIST-style classification
+//
+// Architecture:
+// - Conv2d(1→16, 3x3) + ReLU
+// - MaxPool(2x2)
+// - Conv2d(16→32, 3x3) + ReLU
+// - MaxPool(2x2)
+// - Flatten + Dense(32*5*5→10)
+//
+// Training: Simple SGD with cross-entropy loss
+
+// Layer 1: Convolutional feature extraction
+fn conv_layer1(x: diff tensor<f32[batch, 1, 28, 28]>,
+               w1: diff tensor<f32[16, 1, 3, 3]>,
+               b1: diff tensor<f32[16]>) -> diff tensor<f32[batch, 16, 13, 13]> {
+    let conv = conv2d(x, w1, stride=[1,1], padding="valid");  // -> [batch, 16, 26, 26]
+    let biased = conv + b1;                                     // Broadcast bias
+    let activated = relu(biased);
+    return maxpool2d(activated, kernel=[2,2], stride=[2,2]);  // -> [batch, 16, 13, 13]
+}
+
+// Layer 2: Deeper convolutional features
+fn conv_layer2(x: diff tensor<f32[batch, 16, 13, 13]>,
+               w2: diff tensor<f32[32, 16, 3, 3]>,
+               b2: diff tensor<f32[32]>) -> diff tensor<f32[batch, 32, 5, 5]> {
+    let conv = conv2d(x, w2, stride=[1,1], padding="valid");  // -> [batch, 32, 11, 11]
+    let biased = conv + b2;
+    let activated = relu(biased);
+    return maxpool2d(activated, kernel=[2,2], stride=[2,2]);  // -> [batch, 32, 5, 5]
+}
+
+// Classification head
+fn classifier(x: diff tensor<f32[batch, 32, 5, 5]>,
+              w3: diff tensor<f32[800, 10]>,
+              b3: diff tensor<f32[10]>) -> diff tensor<f32[batch, 10]> {
+    let flattened = reshape(x, [batch, 800]);              // Flatten spatial dimensions
+    let logits = matmul(flattened, w3) + b3;               // Linear classifier
+    return logits;
+}
+
+// Full forward pass
+fn forward(x: diff tensor<f32[batch, 1, 28, 28]>,
+           w1: diff tensor<f32[16, 1, 3, 3]>,
+           b1: diff tensor<f32[16]>,
+           w2: diff tensor<f32[32, 16, 3, 3]>,
+           b2: diff tensor<f32[32]>,
+           w3: diff tensor<f32[800, 10]>,
+           b3: diff tensor<f32[10]>) -> diff tensor<f32[batch, 10]> {
+    let h1 = conv_layer1(x, w1, b1);
+    let h2 = conv_layer2(h1, w2, b2);
+    return classifier(h2, w3, b3);
+}
+
+// Cross-entropy loss
+fn cross_entropy(logits: diff tensor<f32[batch, 10]>,
+                 labels: tensor<i32[batch]>) -> diff tensor<f32> {
+    let log_probs = log_softmax(logits, axis=1);
+    let nll = -gather(log_probs, labels, axis=1);  // Negative log-likelihood
+    return mean(nll);  // Average over batch
+}
+
+// Training step with SGD
+fn train_step(x: diff tensor<f32[batch, 1, 28, 28]>,
+              labels: tensor<i32[batch]>,
+              w1: diff tensor<f32[16, 1, 3, 3]>,
+              b1: diff tensor<f32[16]>,
+              w2: diff tensor<f32[32, 16, 3, 3]>,
+              b2: diff tensor<f32[32]>,
+              w3: diff tensor<f32[800, 10]>,
+              b3: diff tensor<f32[10]>,
+              lr: f32) -> (diff tensor<f32[16, 1, 3, 3]>,
+                           diff tensor<f32[16]>,
+                           diff tensor<f32[32, 16, 3, 3]>,
+                           diff tensor<f32[32]>,
+                           diff tensor<f32[800, 10]>,
+                           diff tensor<f32[10]>) {
+    // Forward pass
+    let logits = forward(x, w1, b1, w2, b2, w3, b3);
+    let loss = cross_entropy(logits, labels);
+
+    // Backward pass (compute gradients)
+    let grad_w1 = backward(loss, w1);
+    let grad_b1 = backward(loss, b1);
+    let grad_w2 = backward(loss, w2);
+    let grad_b2 = backward(loss, b2);
+    let grad_w3 = backward(loss, w3);
+    let grad_b3 = backward(loss, b3);
+
+    // SGD update: w := w - lr * grad
+    let w1_new = w1 - lr * grad_w1;
+    let b1_new = b1 - lr * grad_b1;
+    let w2_new = w2 - lr * grad_w2;
+    let b2_new = b2 - lr * grad_b2;
+    let w3_new = w3 - lr * grad_w3;
+    let b3_new = b3 - lr * grad_b3;
+
+    return (w1_new, b1_new, w2_new, b2_new, w3_new, b3_new);
+}
+
+// Inference (no gradients needed)
+fn predict(x: tensor<f32[batch, 1, 28, 28]>,
+           w1: tensor<f32[16, 1, 3, 3]>,
+           b1: tensor<f32[16]>,
+           w2: tensor<f32[32, 16, 3, 3]>,
+           b2: tensor<f32[32]>,
+           w3: tensor<f32[800, 10]>,
+           b3: tensor<f32[10]>) -> tensor<i32[batch]> {
+    let logits = forward(x, w1, b1, w2, b2, w3, b3);
+    return argmax(logits, axis=1);  // Predicted class per sample
+}
+
+// Example usage:
+// 1. Initialize weights with Xavier/He initialization
+// 2. Load MNIST data in batches
+// 3. Call train_step() for N epochs
+// 4. Call predict() for inference
