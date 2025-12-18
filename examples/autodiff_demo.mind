@@ -1,0 +1,200 @@
+// Autodiff Demonstration
+// Showcases MIND's reverse-mode automatic differentiation capabilities
+// Covers: scalar gradients, tensor gradients, composition, higher-order derivatives
+
+// ============================================================================
+// Part 1: Scalar Gradients
+// ============================================================================
+
+// Simple quadratic: f(x) = x²
+// Derivative: f'(x) = 2x
+fn scalar_quadratic() {
+    let x: diff tensor<f32> = 3.0;
+    let y = x * x;                    // y = x²
+    let grad = backward(y, x);        // dy/dx = 2x = 6.0
+    print("d(x²)/dx at x=3:", grad);  // Expected: 6.0
+}
+
+// Composition: f(x) = (x² + 1)³
+// Derivative: f'(x) = 3(x² + 1)² · 2x
+fn scalar_composition() {
+    let x: diff tensor<f32> = 2.0;
+    let inner = x * x + 1.0;          // x² + 1 = 5.0
+    let outer = inner * inner * inner; // (x² + 1)³ = 125.0
+    let grad = backward(outer, x);     // 3·5²·4 = 300.0
+    print("d((x²+1)³)/dx at x=2:", grad);
+}
+
+// ============================================================================
+// Part 2: Tensor Gradients
+// ============================================================================
+
+// Vector dot product: f(x,y) = x·y
+// Gradients: ∂f/∂x = y, ∂f/∂y = x
+fn vector_dot_product() {
+    let x: diff tensor<f32[3]> = [1.0, 2.0, 3.0];
+    let y: diff tensor<f32[3]> = [4.0, 5.0, 6.0];
+    let dot = sum(x * y);              // 1·4 + 2·5 + 3·6 = 32
+
+    let grad_x = backward(dot, x);     // ∂(x·y)/∂x = y
+    let grad_y = backward(dot, y);     // ∂(x·y)/∂y = x
+
+    print("Dot product:", dot);
+    print("∂f/∂x:", grad_x);           // Expected: [4.0, 5.0, 6.0]
+    print("∂f/∂y:", grad_y);           // Expected: [1.0, 2.0, 3.0]
+}
+
+// Matrix-vector product: f(A,x) = Ax
+// Gradients: ∂f/∂A = x ⊗ 1, ∂f/∂x = A^T
+fn matrix_vector_product() {
+    let A: diff tensor<f32[2, 3]> = [[1.0, 2.0, 3.0],
+                                      [4.0, 5.0, 6.0]];
+    let x: diff tensor<f32[3]> = [1.0, 1.0, 1.0];
+    let y = matmul(A, reshape(x, [3, 1]));  // [2,3] @ [3,1] = [2,1]
+    let loss = sum(y);                       // Scalar reduction for backward
+
+    let grad_A = backward(loss, A);          // Outer product pattern
+    let grad_x = backward(loss, x);          // Column sums of A
+
+    print("y = Ax:", y);
+    print("∂loss/∂A:", grad_A);
+    print("∂loss/∂x:", grad_x);
+}
+
+// ============================================================================
+// Part 3: Broadcasting Gradients
+// ============================================================================
+
+// Bias addition with broadcasting
+// f(X,b) = X + b where X:[batch, dim], b:[dim]
+// Gradient ∂f/∂b sums over batch dimension
+fn broadcast_bias() {
+    let X: diff tensor<f32[4, 3]> = [[1.0, 2.0, 3.0],
+                                      [4.0, 5.0, 6.0],
+                                      [7.0, 8.0, 9.0],
+                                      [10.0, 11.0, 12.0]];
+    let b: diff tensor<f32[3]> = [0.1, 0.2, 0.3];
+
+    let Y = X + b;                           // Broadcasting: [4,3] + [3] → [4,3]
+    let loss = sum(Y);                       // Scalar for backward
+
+    let grad_X = backward(loss, X);          // All ones
+    let grad_b = backward(loss, b);          // Sum over batch: [4.0, 4.0, 4.0]
+
+    print("Broadcasted output:", Y);
+    print("∂loss/∂b (summed over batch):", grad_b);
+}
+
+// ============================================================================
+// Part 4: Reduction Gradients
+// ============================================================================
+
+// Mean reduction expands gradient
+// f(X) = mean(X) over axis
+fn reduction_mean() {
+    let X: diff tensor<f32[2, 3]> = [[1.0, 2.0, 3.0],
+                                      [4.0, 5.0, 6.0]];
+    let m = mean(X);                         // Mean of all elements = 3.5
+    let grad = backward(m, X);               // ∂mean/∂X = 1/n for all elements
+
+    print("Mean:", m);
+    print("∂mean/∂X:", grad);                // All elements = 1/6
+}
+
+// Sum reduction with axis
+fn reduction_sum_axis() {
+    let X: diff tensor<f32[2, 3]> = [[1.0, 2.0, 3.0],
+                                      [4.0, 5.0, 6.0]];
+    let row_sums = sum(X, axis=1);           // [6.0, 15.0]
+    let loss = sum(row_sums);                // 21.0
+    let grad = backward(loss, X);            // All ones (gradient flows back)
+
+    print("Row sums:", row_sums);
+    print("∂loss/∂X:", grad);
+}
+
+// ============================================================================
+// Part 5: Nonlinear Activations
+// ============================================================================
+
+// ReLU: f(x) = max(0, x)
+// Derivative: f'(x) = 1 if x > 0 else 0
+fn relu_gradient() {
+    let x: diff tensor<f32[4]> = [-2.0, -0.5, 0.5, 2.0];
+    let y = relu(x);                         // [0.0, 0.0, 0.5, 2.0]
+    let loss = sum(y);
+    let grad = backward(loss, x);            // [0.0, 0.0, 1.0, 1.0]
+
+    print("ReLU output:", y);
+    print("ReLU gradient:", grad);
+}
+
+// Sigmoid: σ(x) = 1 / (1 + e^(-x))
+// Derivative: σ'(x) = σ(x)(1 - σ(x))
+fn sigmoid_gradient() {
+    let x: diff tensor<f32[3]> = [-1.0, 0.0, 1.0];
+    let y = sigmoid(x);                      // [0.269, 0.5, 0.731]
+    let loss = sum(y);
+    let grad = backward(loss, x);            // σ(x)(1-σ(x))
+
+    print("Sigmoid output:", y);
+    print("Sigmoid gradient:", grad);
+}
+
+// ============================================================================
+// Part 6: Composite Neural Network Layer
+// ============================================================================
+
+// Linear layer with activation: f(x) = σ(Wx + b)
+fn linear_layer_with_activation() {
+    let x: diff tensor<f32[3]> = [1.0, 2.0, 3.0];
+    let W: diff tensor<f32[2, 3]> = [[0.1, 0.2, 0.3],
+                                      [0.4, 0.5, 0.6]];
+    let b: diff tensor<f32[2]> = [0.1, 0.2];
+
+    // Forward pass
+    let linear = matmul(W, reshape(x, [3, 1]));  // [2,1]
+    let biased = reshape(linear, [2]) + b;        // [2]
+    let activated = relu(biased);                 // ReLU nonlinearity
+    let loss = sum(activated);                    // Scalar loss
+
+    // Backward pass
+    let grad_W = backward(loss, W);
+    let grad_b = backward(loss, b);
+    let grad_x = backward(loss, x);
+
+    print("Layer output:", activated);
+    print("∂loss/∂W:", grad_W);
+    print("∂loss/∂b:", grad_b);
+    print("∂loss/∂x:", grad_x);
+}
+
+// ============================================================================
+// Main: Run all demonstrations
+// ============================================================================
+
+fn main() {
+    print("=== MIND Autodiff Demonstration ===\n");
+
+    print("1. Scalar Gradients");
+    scalar_quadratic();
+    scalar_composition();
+
+    print("\n2. Tensor Gradients");
+    vector_dot_product();
+    matrix_vector_product();
+
+    print("\n3. Broadcasting Gradients");
+    broadcast_bias();
+
+    print("\n4. Reduction Gradients");
+    reduction_mean();
+    reduction_sum_axis();
+
+    print("\n5. Nonlinear Activations");
+    relu_gradient();
+    sigmoid_gradient();
+
+    print("\n6. Composite Layer");
+    linear_layer_with_activation();
+}
