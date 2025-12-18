@@ -1,0 +1,5 @@
+// IR verification test: Undefined operand detection
+// Expected: IR verifier emits E4001 (undefined value)
+
+// This test would be generated from invalid IR, not valid surface syntax
+// Placeholder for IR-level test that references undefined %42

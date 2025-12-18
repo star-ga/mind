@@ -1,0 +1,13 @@
+// Autodiff test: Simple scalar gradient
+// Expected: Autodiff computes d(x²)/dx = 2x
+
+fn square(x: diff tensor<f32>) -> diff tensor<f32> {
+    return x * x;
+}
+
+fn test_gradient() {
+    let x: diff tensor<f32> = 3.0;
+    let y = square(x);
+    let grad_x = backward(y);  // Should be 2*3 = 6.0
+    return grad_x;
+}

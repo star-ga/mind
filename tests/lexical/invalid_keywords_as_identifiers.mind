@@ -1,0 +1,6 @@
+// Lexical test: Keywords cannot be used as identifiers
+// Expected: Lexer emits E1001 (invalid identifier)
+
+fn test_keywords() {
+    let fn = 1;  // ERROR: 'fn' is a keyword
+}

@@ -1,0 +1,8 @@
+// Type checker test: Dtype mismatch detection
+// Expected: Type checker emits E2003 (type mismatch)
+
+fn test_dtype_error() {
+    let x: tensor<f32[2, 2]> = [[1.0, 2.0], [3.0, 4.0]];
+    let y: tensor<i32[2, 2]> = [[1, 2], [3, 4]];
+    let z = x + y;  // ERROR: Cannot add f32 and i32 tensors
+}

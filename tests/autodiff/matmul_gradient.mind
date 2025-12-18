@@ -1,0 +1,13 @@
+// Autodiff test: MatMul gradient computation
+// Expected: Autodiff computes correct matmul gradients per autodiff.md rules
+
+fn test_matmul_grad() {
+    let a: diff tensor<f32[2, 3]> = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let b: diff tensor<f32[3, 4]> = [[1.0, 2.0, 3.0, 4.0],
+                                      [5.0, 6.0, 7.0, 8.0],
+                                      [9.0, 10.0, 11.0, 12.0]];
+    let c = matmul(a, b);
+    let grad_a = backward(c, a);  // dc/da = matmul(dc/dc, b^T)
+    let grad_b = backward(c, b);  // dc/db = matmul(a^T, dc/dc)
+    return (grad_a, grad_b);
+}
