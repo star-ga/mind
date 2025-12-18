@@ -1,0 +1,11 @@
+// Backend test: GPU backend graceful failure
+// Expected: GPU-only builds report backend unavailable error
+
+// Test metadata:
+// backend: gpu
+// expected: backend_unavailable (if GPU not compiled)
+// expected: success (if GPU available)
+
+fn test_gpu() -> tensor<f32> {
+    return 42.0;
+}

@@ -1,0 +1,12 @@
+// Lexical test: Valid identifier formats
+// Expected: Lexer produces correct tokens
+
+fn test_identifiers() {
+    let x = 1;
+    let _private = 2;
+    let CamelCase = 3;
+    let snake_case = 4;
+    let SCREAMING_SNAKE = 5;
+    let with123numbers = 6;
+    let _leading_underscore = 7;
+}
