@@ -9,7 +9,7 @@
 // 1. Small hidden dimensions (16, 8)
 // 2. No bias terms (save parameters)
 // 3. ReLU activation (simple, hardware-friendly)
-// 4. Int8 quantization-ready (train in f32, deploy in i8)
+// 4. int8 quantization-ready (train in f32, deploy in i8)
 
 // ============================================================================
 // Model Architecture
@@ -65,17 +65,17 @@ fn quantize_weights(w: tensor<f32>, scale: f32) -> tensor<f32> {
 
 // Quantized inference path (simulated)
 fn predict_quantized(x: tensor<f32[10]>,
-                     w1_q: tensor<f32[10, 16]>,
-                     w2_q: tensor<f32[16, 8]>,
-                     w3_q: tensor<f32[8, 1]>,
+                     w1_quantized: tensor<f32[10, 16]>,
+                     w2_quantized: tensor<f32[16, 8]>,
+                     w3_quantized: tensor<f32[8, 1]>,
                      scale1: f32,
                      scale2: f32,
                      scale3: f32) -> tensor<f32> {
-    // Use quantized weights with scale factors
-    let w1 = w1_q * scale1;
-    let w2 = w2_q * scale2;
-    let w3 = w3_q * scale3;
-    return predict(x, w1, w2, w3);
+    // Dequantize weights for float32 inference
+    let w1_dequantized = w1_quantized * scale1;
+    let w2_dequantized = w2_quantized * scale2;
+    let w3_dequantized = w3_quantized * scale3;
+    return predict(x, w1_dequantized, w2_dequantized, w3_dequantized);
 }
 
 // ============================================================================
@@ -149,6 +149,9 @@ fn train_step(x: diff tensor<f32[10]>,
 
 fn main() {
     // Initialize weights (Xavier initialization in practice)
+    // NOTE: random_normal is from MIND standard library (tensor module)
+    // Signature: fn random_normal(shape: [i32], stddev: f32) -> tensor<f32[...]>
+    // Alternative: Use explicit initialization or import from tensor::random_normal
     let w1: tensor<f32[10, 16]> = random_normal([10, 16], stddev=0.3);
     let w2: tensor<f32[16, 8]> = random_normal([16, 8], stddev=0.4);
     let w3: tensor<f32[8, 1]> = random_normal([8, 1], stddev=0.5);
@@ -164,13 +167,13 @@ fn main() {
     print("Binary decision:", decision);
 
     // Quantize for deployment
-    let w1_q = quantize_weights(w1, scale=0.01);
-    let w2_q = quantize_weights(w2, scale=0.01);
-    let w3_q = quantize_weights(w3, scale=0.01);
+    let w1_quantized = quantize_weights(w1, scale=0.01);
+    let w2_quantized = quantize_weights(w2, scale=0.01);
+    let w3_quantized = quantize_weights(w3, scale=0.01);
 
-    let prob_q = predict_quantized(x, w1_q, w2_q, w3_q, 0.01, 0.01, 0.01);
-    print("Quantized probability:", prob_q);
-    print("Quantization error:", abs(prob - prob_q));
+    let prob_quantized = predict_quantized(x, w1_quantized, w2_quantized, w3_quantized, 0.01, 0.01, 0.01);
+    print("Quantized probability:", prob_quantized);
+    print("Quantization error:", abs(prob - prob_quantized));
 }
 
 // ============================================================================

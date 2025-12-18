@@ -111,13 +111,28 @@ echo
 # ============================================================================
 
 echo "7. Linking to executable binary..."
-clang /tmp/example.o -o /tmp/example_binary \
-    -L/path/to/mind/runtime/lib \
-    -lmind_runtime \
-    -lm
 
-echo "   Generated: /tmp/example_binary"
-ls -lh /tmp/example_binary
+# Check for MIND runtime library path
+if [ -z "${MIND_RUNTIME_LIB:-}" ]; then
+    echo "   Warning: MIND_RUNTIME_LIB not set, using placeholder path"
+    echo "   Set MIND_RUNTIME_LIB to link with actual runtime library"
+    echo "   Example: export MIND_RUNTIME_LIB=/opt/mind/runtime/lib"
+    MIND_RUNTIME_LIB="/path/to/mind/runtime/lib"
+fi
+
+if [ ! -d "$MIND_RUNTIME_LIB" ]; then
+    echo "   Note: Runtime library directory does not exist: $MIND_RUNTIME_LIB"
+    echo "   Skipping link step (would fail without actual runtime)"
+    echo "   To complete this step, install MIND runtime and set MIND_RUNTIME_LIB"
+else
+    clang /tmp/example.o -o /tmp/example_binary \
+        -L"$MIND_RUNTIME_LIB" \
+        -lmind_runtime \
+        -lm
+
+    echo "   Generated: /tmp/example_binary"
+    ls -lh /tmp/example_binary
+fi
 echo
 
 # ============================================================================
@@ -125,7 +140,12 @@ echo
 # ============================================================================
 
 echo "8. Running the compiled binary..."
-/tmp/example_binary
+if [ -f /tmp/example_binary ]; then
+    /tmp/example_binary
+else
+    echo "   Binary not created (runtime library not available)"
+    echo "   Pipeline demonstration complete through LLVM IR generation"
+fi
 echo
 
 # ============================================================================
