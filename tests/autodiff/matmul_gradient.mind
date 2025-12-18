@@ -7,7 +7,8 @@ fn test_matmul_grad() {
                                       [5.0, 6.0, 7.0, 8.0],
                                       [9.0, 10.0, 11.0, 12.0]];
     let c = matmul(a, b);
-    let grad_a = backward(c, a);  // dc/da = matmul(dc/dc, b^T)
-    let grad_b = backward(c, b);  // dc/db = matmul(a^T, dc/dc)
+    let loss = sum(c);  // Scalar loss required for backward
+    let grad_a = backward(loss, a);  // dloss/da = matmul(dloss/dc, b^T)
+    let grad_b = backward(loss, b);  // dloss/db = matmul(a^T, dloss/dc)
     return (grad_a, grad_b);
 }

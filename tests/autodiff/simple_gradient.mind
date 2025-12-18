@@ -8,6 +8,6 @@ fn square(x: diff tensor<f32>) -> diff tensor<f32> {
 fn test_gradient() {
     let x: diff tensor<f32> = 3.0;
     let y = square(x);
-    let grad_x = backward(y);  // Should be 2*3 = 6.0
+    let grad_x = backward(y, x);  // Should be 2*3 = 6.0
     return grad_x;
 }
