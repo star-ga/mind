@@ -1,0 +1,12 @@
+// Lexical test: Numeric literal formats
+// Expected: Lexer correctly parses all numeric forms
+
+fn test_numeric_literals() {
+    let decimal = 42;
+    let binary = 0b101010;
+    let octal = 0o52;
+    let hex = 0x2A;
+    let float = 3.14;
+    let scientific = 1.5e-10;
+    let negative = -123;
+}

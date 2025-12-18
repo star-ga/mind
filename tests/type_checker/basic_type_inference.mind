@@ -1,0 +1,8 @@
+// Type checker test: Basic type inference
+// Expected: Type checker infers i32 for x, f32 for y
+
+fn test_inference() {
+    let x = 42;           // Inferred as i32
+    let y = 3.14;         // Inferred as f32
+    let z: bool = true;   // Explicit annotation
+}
