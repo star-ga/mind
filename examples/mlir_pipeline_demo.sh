@@ -10,14 +10,19 @@
 
 set -e  # Exit on error
 
+# Create secure temporary directory
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
 echo "=== MIND → MLIR → LLVM → Binary Pipeline Demo ==="
+echo "Using temporary directory: $TMPDIR"
 echo
 
 # ============================================================================
 # Step 1: Create a simple MIND program
 # ============================================================================
 
-cat > /tmp/example.mind <<'EOF'
+cat > "$TMPDIR/example.mind" <<'EOF'
 // Simple matrix multiplication example
 fn matmul_example(a: tensor<f32[2, 3]>, b: tensor<f32[3, 4]>) -> tensor<f32[2, 4]> {
     return matmul(a, b);
@@ -34,8 +39,8 @@ fn main() {
 }
 EOF
 
-echo "1. Created MIND source: /tmp/example.mind"
-cat /tmp/example.mind
+echo "1. Created MIND source: $TMPDIR/example.mind"
+cat "$TMPDIR/example.mind"
 echo
 
 # ============================================================================
@@ -43,9 +48,9 @@ echo
 # ============================================================================
 
 echo "2. Compiling MIND to Core IR..."
-mind compile --emit-ir /tmp/example.mind > /tmp/example.ir
-echo "   Generated: /tmp/example.ir"
-head -20 /tmp/example.ir
+mind compile --emit-ir "$TMPDIR/example.mind" > "$TMPDIR/example.ir"
+echo "   Generated: $TMPDIR/example.ir"
+head -20 "$TMPDIR/example.ir"
 echo
 
 # ============================================================================
@@ -53,11 +58,11 @@ echo
 # ============================================================================
 
 echo "3. Lowering Core IR to MLIR..."
-mind compile --emit-mlir --features=mlir-lowering /tmp/example.mind > /tmp/example.mlir
-echo "   Generated: /tmp/example.mlir"
+mind compile --emit-mlir --features=mlir-lowering "$TMPDIR/example.mind" > "$TMPDIR/example.mlir"
+echo "   Generated: $TMPDIR/example.mlir"
 echo
 echo "   MLIR snippet:"
-head -30 /tmp/example.mlir
+head -30 "$TMPDIR/example.mlir"
 echo
 
 # ============================================================================
@@ -65,7 +70,7 @@ echo
 # ============================================================================
 
 echo "4. Optimizing MLIR with mlir-opt..."
-mlir-opt /tmp/example.mlir \
+mlir-opt "$TMPDIR/example.mlir" \
     --linalg-bufferize \
     --arith-bufferize \
     --tensor-bufferize \
@@ -76,11 +81,11 @@ mlir-opt /tmp/example.mlir \
     --convert-arith-to-llvm \
     --convert-func-to-llvm \
     --reconcile-unrealized-casts \
-    > /tmp/example_opt.mlir
+    > "$TMPDIR/example_opt.mlir"
 
-echo "   Generated: /tmp/example_opt.mlir"
+echo "   Generated: $TMPDIR/example_opt.mlir"
 echo "   Optimized MLIR snippet:"
-head -30 /tmp/example_opt.mlir
+head -30 "$TMPDIR/example_opt.mlir"
 echo
 
 # ============================================================================
@@ -88,11 +93,11 @@ echo
 # ============================================================================
 
 echo "5. Translating MLIR to LLVM IR..."
-mlir-translate --mlir-to-llvmir /tmp/example_opt.mlir > /tmp/example.ll
+mlir-translate --mlir-to-llvmir "$TMPDIR/example_opt.mlir" > "$TMPDIR/example.ll"
 
-echo "   Generated: /tmp/example.ll"
+echo "   Generated: $TMPDIR/example.ll"
 echo "   LLVM IR snippet:"
-head -40 /tmp/example.ll
+head -40 "$TMPDIR/example.ll"
 echo
 
 # ============================================================================
@@ -100,10 +105,10 @@ echo
 # ============================================================================
 
 echo "6. Compiling LLVM IR to object code..."
-llc -filetype=obj /tmp/example.ll -o /tmp/example.o
+llc -filetype=obj "$TMPDIR/example.ll" -o "$TMPDIR/example.o"
 
-echo "   Generated: /tmp/example.o"
-ls -lh /tmp/example.o
+echo "   Generated: $TMPDIR/example.o"
+ls -lh "$TMPDIR/example.o"
 echo
 
 # ============================================================================
@@ -111,6 +116,8 @@ echo
 # ============================================================================
 
 echo "7. Linking to executable binary..."
+
+BINARY_CREATED=false
 
 # Check for MIND runtime library path
 if [ -z "${MIND_RUNTIME_LIB:-}" ]; then
@@ -125,13 +132,14 @@ if [ ! -d "$MIND_RUNTIME_LIB" ]; then
     echo "   Skipping link step (would fail without actual runtime)"
     echo "   To complete this step, install MIND runtime and set MIND_RUNTIME_LIB"
 else
-    clang /tmp/example.o -o /tmp/example_binary \
+    clang "$TMPDIR/example.o" -o "$TMPDIR/example_binary" \
         -L"$MIND_RUNTIME_LIB" \
         -lmind_runtime \
         -lm
 
-    echo "   Generated: /tmp/example_binary"
-    ls -lh /tmp/example_binary
+    echo "   Generated: $TMPDIR/example_binary"
+    ls -lh "$TMPDIR/example_binary"
+    BINARY_CREATED=true
 fi
 echo
 
@@ -140,8 +148,8 @@ echo
 # ============================================================================
 
 echo "8. Running the compiled binary..."
-if [ -f /tmp/example_binary ]; then
-    /tmp/example_binary
+if [ "$BINARY_CREATED" = true ]; then
+    "$TMPDIR/example_binary"
 else
     echo "   Binary not created (runtime library not available)"
     echo "   Pipeline demonstration complete through LLVM IR generation"
