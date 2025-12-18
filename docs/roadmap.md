@@ -95,9 +95,63 @@ Enable enterprise and safety-critical adoption through stable runtime features, 
 
 ---
 
+## Phase 13 — Neuroscience & Brain-Computer Interfaces
+
+### Goals
+Establish MIND as the premier language for real-time neural signal processing and brain-computer interface (BCI) applications. Leverage MIND's native tensor operations, static shape inference, and high-performance compilation for ultra-low-latency neural decoding in next-generation BCI systems (Neuralink-style implants, research BMIs, clinical neurotechnology).
+
+### Deliverables
+
+**Near-term (Phase 13.1):**
+- Add `mind::neuro` standard library module:
+  - Specialized tensor types for neural time-series (Channel × Time × Batch)
+  - Common signal processing filters: bandpass, notch, ICA decomposition
+  - Feature extraction primitives: CSP (Common Spatial Patterns), wavelet transforms, spectral power
+- IO support for neuroscience data formats:
+  - EDF/EDF+ (European Data Format) for clinical EEG
+  - GDF (General Data Format) for BCI research
+  - Optional integration with existing Rust neuro crates
+- Example implementations:
+  - Spike detection algorithms for invasive recordings
+  - Motor intent decoding from ECoG/multi-unit activity
+  - Basic P300 and SSVEP classifiers for non-invasive BCI
+
+**Medium-term (Phase 13.2):**
+- Optimized neural decoders:
+  - RNN/LSTM templates for sequence-to-intent decoding
+  - Transformer-based models for multi-modal neural data
+  - Integration with autodiff for on-device decoder adaptation
+- Tutorials and examples:
+  - BCI Competition datasets (motor imagery, P300)
+  - OpenNeuro integration for reproducible research
+  - Real-time decoding pipeline examples
+- Performance benchmarks:
+  - Sub-millisecond inference for invasive BCI
+  - Comparison with existing frameworks (MNE-Python, FieldTrip)
+
+**Long-term (Phase 13.3):**
+- Closed-loop BCI support:
+  - Real-time feedback mechanisms
+  - Online learning and decoder adaptation
+  - Safety-critical execution guarantees for medical devices
+- Research collaborations:
+  - Partner with neuroscience labs for validation
+  - Contribute to open BCI standards (IEEE, INCF)
+  - Support for neuromorphic hardware targets
+
+### Integration with Existing Features
+
+- **Tensors**: Multi-channel neural data naturally maps to MIND's tensor model (channels, time, trials, batches)
+- **Autodiff**: Enable gradient-based decoder optimization directly on implanted devices
+- **MLIR/LLVM**: Generate highly optimized code for real-time constraints (<1ms latency)
+- **Edge Runtime**: Deploy to resource-constrained BCI hardware (ARM Cortex-M, RISC-V)
+- **Determinism**: Critical for reproducible neuroscience and FDA-regulated medical devices
+
+---
+
 ## Summary
 
-These extended phases (10–12) guide MIND into the next major development era:
+These extended phases (10–13) guide MIND into the next major development era:
 - richer SDK and examples,
 - formal benchmarks,
 - early cloud compiler,

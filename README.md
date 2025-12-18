@@ -56,6 +56,24 @@ status.
 * [IR core](docs/ir.md) — deterministic IR pipeline with verifier and printer.
 * [IR & MLIR](docs/ir-mlir.md) — compiler pipeline from parser to MLIR dialects.
 
+## Applications
+
+### Neuroscience & Brain-Computer Interfaces
+
+MIND's combination of static shape inference, reverse-mode autodiff, ultra-low-latency compilation, and deterministic execution makes it uniquely suited for real-time neural signal processing and brain-computer interface (BCI) applications:
+
+* **Real-time Neural Decoding** — Sub-millisecond inference for invasive BCI systems (Neuralink-style implants, ECoG arrays)
+* **Multi-channel Time-Series** — Native tensor operations for Channel × Time × Batch neural data
+* **On-device Adaptation** — Gradient-based decoder optimization directly on implanted devices using autodiff
+* **Reproducible Research** — Deterministic builds critical for FDA-regulated medical devices and neuroscience studies
+* **Edge Deployment** — Deploy to resource-constrained BCI hardware (ARM Cortex-M, RISC-V) with minimal runtime overhead
+
+See [Phase 13 in the roadmap](docs/roadmap.md#phase-13--neuroscience--brain-computer-interfaces) for planned neuroscience-specific standard library modules, data format support, and benchmarks.
+
+### Other Applications
+
+MIND's design also supports machine learning research, embedded AI, and safety-critical intelligent systems requiring auditable execution and reproducible builds.
+
 ## Stability & Versioning
 
 MIND Core v1 follows the public contract in mind-spec Core v1. The stability
