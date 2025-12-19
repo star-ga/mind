@@ -108,6 +108,28 @@ pub enum Instr {
         stride_w: usize,
         padding: ConvPadding,
     },
+    /// Backward pass for Conv2d: compute gradient with respect to input.
+    /// Given upstream gradient dy (NHWC) and filter (HWIO), computes dx (NHWC).
+    Conv2dGradInput {
+        dst: ValueId,
+        dy: ValueId,          // upstream gradient, NHWC
+        filter: ValueId,      // HWIO
+        input_shape: [usize; 4], // N, H, W, C - needed to allocate dst
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    },
+    /// Backward pass for Conv2d: compute gradient with respect to filter.
+    /// Given upstream gradient dy (NHWC) and input (NHWC), computes dw (HWIO).
+    Conv2dGradFilter {
+        dst: ValueId,
+        input: ValueId,       // NHWC
+        dy: ValueId,          // upstream gradient, NHWC
+        filter_shape: [usize; 4], // KH, KW, C, O - needed to allocate dst
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    },
     Index {
         dst: ValueId,
         src: ValueId,
@@ -141,6 +163,8 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Dot { dst, .. }
         | Instr::MatMul { dst, .. }
         | Instr::Conv2d { dst, .. }
+        | Instr::Conv2dGradInput { dst, .. }
+        | Instr::Conv2dGradFilter { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),

@@ -142,6 +142,8 @@ fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         | Instr::Slice { src, .. } => vec![*src],
         Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => vec![*a, *b],
         Instr::Conv2d { input, filter, .. } => vec![*input, *filter],
+        Instr::Conv2dGradInput { dy, filter, .. } => vec![*dy, *filter],
+        Instr::Conv2dGradFilter { input, dy, .. } => vec![*input, *dy],
         Instr::Gather { src, indices, .. } => vec![*src, *indices],
         Instr::Output(id) => vec![*id],
     }

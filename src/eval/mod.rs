@@ -39,6 +39,7 @@ use crate::exec;
 use value::Buffer;
 
 pub mod autodiff;
+pub mod conv2d_grad;
 pub mod ir_interp;
 pub mod lower;
 #[cfg(feature = "mlir-build")]
@@ -761,7 +762,8 @@ pub fn eval_grad_map(
         .filter(|(name, _)| wrt.contains(name))
         .collect();
 
-    let mut grads = crate::eval::autodiff::backprop_to_vars(loss_id, &tape, &requested);
+    let mut grads =
+        crate::eval::autodiff::backprop_to_vars_with_tenv(loss_id, &tape, &requested, &tenv);
     for name in wrt {
         if !grads.contains_key(name) {
             if let Some(entry) = tenv.get(name) {
