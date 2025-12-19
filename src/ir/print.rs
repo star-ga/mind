@@ -172,6 +172,50 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        Instr::Conv2dGradInput {
+            dst,
+            dy,
+            filter,
+            input_shape,
+            stride_h,
+            stride_w,
+            padding,
+        } => {
+            writeln!(
+                out,
+                "  {} = conv2d_grad_input {} {} input_shape={:?} strides=({}, {}) padding={}",
+                value_name(*dst),
+                value_name(*dy),
+                value_name(*filter),
+                input_shape,
+                stride_h,
+                stride_w,
+                format_padding(*padding)
+            )
+            .unwrap();
+        }
+        Instr::Conv2dGradFilter {
+            dst,
+            input,
+            dy,
+            filter_shape,
+            stride_h,
+            stride_w,
+            padding,
+        } => {
+            writeln!(
+                out,
+                "  {} = conv2d_grad_filter {} {} filter_shape={:?} strides=({}, {}) padding={}",
+                value_name(*dst),
+                value_name(*input),
+                value_name(*dy),
+                filter_shape,
+                stride_h,
+                stride_w,
+                format_padding(*padding)
+            )
+            .unwrap();
+        }
         Instr::Index { dst, src, indices } => {
             writeln!(
                 out,

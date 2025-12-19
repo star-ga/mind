@@ -152,6 +152,24 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, value.clone());
                 last = value;
             }
+            Instr::Conv2dGradInput {
+                dst, input_shape, ..
+            } => {
+                // Create a tensor with the input shape
+                let shape: Vec<ShapeDim> = input_shape.iter().map(|d| ShapeDim::Known(*d)).collect();
+                let v = Value::Tensor(TensorVal::new(crate::types::DType::F32, shape, None));
+                vals.insert(*dst, v.clone());
+                last = v;
+            }
+            Instr::Conv2dGradFilter {
+                dst, filter_shape, ..
+            } => {
+                // Create a tensor with the filter shape
+                let shape: Vec<ShapeDim> = filter_shape.iter().map(|d| ShapeDim::Known(*d)).collect();
+                let v = Value::Tensor(TensorVal::new(crate::types::DType::F32, shape, None));
+                vals.insert(*dst, v.clone());
+                last = v;
+            }
             Instr::Index { dst, src, .. } => {
                 let value = vals.get(src).cloned().unwrap_or(Value::Int(0));
                 vals.insert(*dst, value.clone());
