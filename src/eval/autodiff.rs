@@ -19,6 +19,8 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use crate::ast;
+#[cfg(feature = "cpu-buffers")]
+use crate::eval::conv2d_grad;
 use crate::eval::TensorVal;
 use crate::linalg;
 use crate::linalg::MatMulShapeInfo;
@@ -995,6 +997,21 @@ pub fn backprop_to_vars(
     tape: &Tape,
     vars: &BTreeMap<String, NodeId>,
 ) -> BTreeMap<String, TensorVal> {
+    backprop_to_vars_with_tenv(loss, tape, vars, &HashMap::new())
+}
+
+/// Backprop with access to tensor environment for real data computation.
+pub fn backprop_to_vars_with_tenv(
+    loss: NodeId,
+    tape: &Tape,
+    vars: &BTreeMap<String, NodeId>,
+    tenv: &HashMap<String, TensorEnvEntry>,
+) -> BTreeMap<String, TensorVal> {
+    // Create inverse mapping from NodeId to variable name for data lookup
+    let node_to_name: HashMap<NodeId, &str> = vars
+        .iter()
+        .map(|(name, id)| (*id, name.as_str()))
+        .collect();
     let mut adj: HashMap<NodeId, TensorVal> = HashMap::new();
     if let Some(loss_node) = tape.nodes.get(loss.0) {
         adj.insert(
@@ -1164,9 +1181,42 @@ pub fn backprop_to_vars(
                 }
                 accumulate_grad(&mut adj, *x, adjusted);
             }
-            Op::Conv2d { x, w, .. } => {
+            Op::Conv2d {
+                x,
+                w,
+                stride_h,
+                stride_w,
+                padding,
+            } => {
                 let x_info = &tape.nodes[x.0];
                 let w_info = &tape.nodes[w.0];
+
+                // Try to compute real gradients if buffer data is available
+                #[cfg(feature = "cpu-buffers")]
+                {
+                    let computed = try_compute_conv2d_grad(
+                        &grad,
+                        *x,
+                        *w,
+                        x_info,
+                        w_info,
+                        *stride_h,
+                        *stride_w,
+                        *padding,
+                        &node_to_name,
+                        tenv,
+                    );
+                    if let Some((dx, dw)) = computed {
+                        accumulate_grad(&mut adj, *x, dx);
+                        accumulate_grad(&mut adj, *w, dw);
+                        continue;
+                    }
+                }
+
+                // Fallback to shape-only gradients
+                #[cfg(not(feature = "cpu-buffers"))]
+                let _ = (&node_to_name, tenv, stride_h, stride_w, padding);
+
                 accumulate_grad(
                     &mut adj,
                     *x,
@@ -1440,4 +1490,96 @@ fn known_num_elems(shape: &[ShapeDim]) -> Option<usize> {
         }
     }
     Some(total)
+}
+
+/// Try to compute real Conv2d gradients when buffer data is available.
+///
+/// Returns Some((dx, dw)) if computation was successful, None otherwise.
+#[cfg(feature = "cpu-buffers")]
+#[allow(clippy::too_many_arguments)]
+fn try_compute_conv2d_grad(
+    upstream_grad: &TensorVal,
+    x_id: NodeId,
+    w_id: NodeId,
+    x_info: &NodeInfo,
+    w_info: &NodeInfo,
+    stride_h: usize,
+    stride_w: usize,
+    padding: ConvPadding,
+    node_to_name: &HashMap<NodeId, &str>,
+    tenv: &HashMap<String, TensorEnvEntry>,
+) -> Option<(TensorVal, TensorVal)> {
+    use crate::eval::value::Buffer;
+
+    // Check that we have f32 dtype
+    if !matches!(x_info.dtype, DType::F32) || !matches!(w_info.dtype, DType::F32) {
+        return None;
+    }
+
+    // Get variable names for x and w
+    let x_name = node_to_name.get(&x_id)?;
+    let w_name = node_to_name.get(&w_id)?;
+
+    // Look up tensors in environment
+    let x_entry = tenv.get(*x_name)?;
+    let w_entry = tenv.get(*w_name)?;
+
+    // Get buffer data
+    let x_buf = x_entry.value.buf.as_ref()?;
+    let w_buf = w_entry.value.buf.as_ref()?;
+
+    let x_data = match x_buf {
+        Buffer::F32(data) => data.as_slice(),
+        _ => return None,
+    };
+    let w_data = match w_buf {
+        Buffer::F32(data) => data.as_slice(),
+        _ => return None,
+    };
+
+    // Get shapes as [usize; 4]
+    let x_shape = shape_to_array4(&x_info.shape)?;
+    let w_shape = shape_to_array4(&w_info.shape)?;
+
+    // Get or materialize upstream gradient dy
+    let dy_shape = shape_to_array4(&upstream_grad.shape)?;
+    let dy_data: Vec<f32> = match &upstream_grad.buf {
+        Some(Buffer::F32(data)) => data.clone(),
+        _ => {
+            // If upstream is fill-based, materialize it
+            let fill = upstream_grad.fill? as f32;
+            let n = dy_shape.iter().product();
+            vec![fill; n]
+        }
+    };
+
+    // Compute gradients
+    let (dx_data, dw_data) = conv2d_grad::conv2d_vjp_nhwc_hwio_f32(
+        x_data, x_shape, w_data, w_shape, &dy_data, dy_shape, stride_h, stride_w, padding,
+    );
+
+    // Build result TensorVals with buffer data
+    let mut dx = TensorVal::new(DType::F32, x_info.shape.clone(), None);
+    dx.buf = Some(Buffer::F32(dx_data));
+
+    let mut dw = TensorVal::new(DType::F32, w_info.shape.clone(), None);
+    dw.buf = Some(Buffer::F32(dw_data));
+
+    Some((dx, dw))
+}
+
+/// Convert ShapeDim slice to [usize; 4] array if all dimensions are known.
+#[cfg(feature = "cpu-buffers")]
+fn shape_to_array4(shape: &[ShapeDim]) -> Option<[usize; 4]> {
+    if shape.len() != 4 {
+        return None;
+    }
+    let mut arr = [0usize; 4];
+    for (i, dim) in shape.iter().enumerate() {
+        match dim {
+            ShapeDim::Known(n) => arr[i] = *n,
+            ShapeDim::Sym(_) => return None,
+        }
+    }
+    Some(arr)
 }

@@ -131,6 +131,38 @@ fn validate_operands(
                 });
             }
         }
+        Instr::Conv2dGradInput {
+            dy,
+            filter,
+            stride_h,
+            stride_w,
+            ..
+        } => {
+            check_defined(*dy)?;
+            check_defined(*filter)?;
+            if *stride_h == 0 || *stride_w == 0 {
+                return Err(IrVerifyError::InvalidOperand {
+                    instr_index,
+                    message: "conv2d_grad_input strides must be positive".to_string(),
+                });
+            }
+        }
+        Instr::Conv2dGradFilter {
+            input,
+            dy,
+            stride_h,
+            stride_w,
+            ..
+        } => {
+            check_defined(*input)?;
+            check_defined(*dy)?;
+            if *stride_h == 0 || *stride_w == 0 {
+                return Err(IrVerifyError::InvalidOperand {
+                    instr_index,
+                    message: "conv2d_grad_filter strides must be positive".to_string(),
+                });
+            }
+        }
         Instr::Gather {
             src, indices, axis, ..
         } => {
