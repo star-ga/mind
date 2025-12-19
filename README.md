@@ -137,7 +137,7 @@ MIND follows an open-core dual licensing model maintained by STARGA Inc.
   Commercial and trademark terms are summarized in [`LICENSE-COMMERCIAL`](./LICENSE-COMMERCIAL) and governed by separate agreements with STARGA Inc.
 
 For commercial licensing, OEM partnerships, or large-scale deployments, please contact:
-`info@star.ga` or `legal@star.ga`.
+`info@star.ga`.
 
 * [Licensing overview](LICENSE)
 
