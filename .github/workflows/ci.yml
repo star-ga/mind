@@ -52,14 +52,27 @@ jobs:
           targets: ${{ matrix.target }}
           components: clippy,rustfmt
 
-      - name: Cache cargo registry
+      - name: Cache cargo registry (Unix)
+        if: runner.os != 'Windows'
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache cargo registry (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
@@ -68,6 +81,13 @@ jobs:
         run: |
           git config --global --unset-all http.proxy  || true
           git config --global --unset-all https.proxy || true
+
+      - name: Remove git proxies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --global --unset http.proxy 2>$null
+          git config --global --unset https.proxy 2>$null
 
       - name: Cargo metadata (smoke)
         shell: bash
