@@ -109,6 +109,45 @@ model, SemVer policy, and CLI guarantees are documented in
 * [Runtime & Compiler Architecture](docs/architecture.md)
 * [FFI & Runtime Embedding](docs/ffi-runtime.md)
 
+## Testing
+
+The MIND compiler includes a comprehensive test suite with 69 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
+
+### Running Tests
+
+```bash
+# Run all tests
+cargo test
+
+# Run tests with output
+cargo test -- --nocapture
+
+# Run specific test file
+cargo test --test smoke
+
+# Run tests matching a pattern
+cargo test tensor
+
+# Run tests with specific features
+cargo test --features "mlir-lowering autodiff"
+```
+
+### Test Categories
+
+| Category | Files | Description |
+|----------|-------|-------------|
+| Smoke tests | `smoke.rs` | Quick sanity checks |
+| Type system | `type_*.rs`, `typecheck_*.rs` | Type inference and checking |
+| Shapes | `shapes*.rs`, `tensor_*.rs` | Shape inference and broadcasting |
+| IR/MLIR | `ir_*.rs`, `mlir_*.rs` | IR generation and MLIR lowering |
+| Autodiff | `autodiff*.rs`, `*_grad.rs` | Reverse-mode differentiation |
+| CLI | `cli_*.rs`, `mindc.rs` | Command-line interface |
+| Execution | `exec_*.rs`, `relu_*.rs`, `conv2d_*.rs` | Runtime execution stubs |
+
+### Continuous Integration
+
+All tests run on every pull request via GitHub Actions. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the full CI configuration.
+
 ## Benchmarks
 
 The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/runtime performance, regression tracking, and methodology.

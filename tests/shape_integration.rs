@@ -16,7 +16,7 @@ fn expect_shape_code(src: &str, code: &str) {
         CompileError::TypeError(diags) => {
             let codes: Vec<&str> = diags.iter().map(|d| d.code).collect();
             assert!(
-                codes.iter().any(|c| *c == code),
+                codes.contains(&code),
                 "expected diagnostic code {code}, saw {codes:?}"
             );
         }
