@@ -15,6 +15,30 @@ MIND is a Rust-first language and runtime for building intelligent systems with 
 
 This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. Production-grade runtime backends for CPU, GPU, and accelerators live in the private [`mind-runtime`](https://github.com/cputer/mind-runtime) repository. Functions in `src/exec/*` marked with `todo!()` or `unimplemented!()` are runtime hooks that the proprietary backend fulfills.
 
+## System Requirements
+
+| Requirement | Minimum | Recommended |
+|-------------|---------|-------------|
+| Rust | 1.82+ stable | Latest stable |
+| OS | Linux, macOS, Windows | Linux x86_64 |
+| Memory | 4 GB RAM | 8 GB RAM |
+| Disk | 500 MB | 2 GB (with MLIR) |
+
+### Platform Support
+
+| Platform | Status | CI Tested |
+|----------|--------|-----------|
+| Linux x86_64 | Fully supported | Yes |
+| macOS x86_64 | Fully supported | Yes |
+| macOS ARM64 (Apple Silicon) | Fully supported | Yes |
+| Windows x86_64 | Fully supported | Yes |
+
+### Optional Dependencies
+
+- **LLVM 17+**: Required for `mlir-lowering` feature
+- **MLIR tools**: Required for `mlir-exec` feature
+- **C compiler**: Required for FFI examples
+
 ## Quick Start
 
 ```bash

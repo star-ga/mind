@@ -9,27 +9,62 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  RUST_BACKTRACE: 1
+
 jobs:
   build_test:
-    name: Build & Test (no default features)
-    runs-on: ubuntu-latest
+    name: Build & Test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: Linux x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macOS x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            name: macOS ARM64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows x86_64
+
+    runs-on: ${{ matrix.os }}
+
     env:
-      # neutralize proxies, keep sparse
+      # neutralize proxies
       http_proxy: ""
       https_proxy: ""
       no_proxy: ""
-      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
-      CARGO_TERM_COLOR: always
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust (nightly; supports edition2024)
+      - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
         with:
+          targets: ${{ matrix.target }}
           components: clippy,rustfmt
 
-      - name: Remove git proxies (belt-and-suspenders)
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Remove git proxies (Linux/macOS)
+        if: runner.os != 'Windows'
         run: |
           git config --global --unset-all http.proxy  || true
           git config --global --unset-all https.proxy || true
@@ -83,14 +118,6 @@ jobs:
             cargo test --verbose --no-default-features
           fi
 
-      - name: Install stable (fmt only)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Check formatting (stable)
-        run: cargo +stable fmt --all -- --check
-
       - name: Clippy
         shell: bash
         run: |
@@ -100,7 +127,45 @@ jobs:
             cargo clippy --no-default-features -- -D warnings
           fi
 
-      - name: Build docs (no default features)
-        run: |
-          export RUSTDOCFLAGS="-D warnings"
-          cargo doc --no-default-features --document-private-items
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build docs
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-default-features --document-private-items
+
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.82
+        uses: dtolnay/rust-toolchain@1.82
+
+      - name: Check MSRV compiles
+        run: cargo check --no-default-features
