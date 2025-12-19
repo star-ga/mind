@@ -84,8 +84,11 @@ pub mod capi {
         });
     }
 
+    /// # Safety
+    ///
+    /// `meta_out` must point to a valid, properly aligned `MindModelMeta`.
     #[no_mangle]
-    pub extern "C" fn mind_model_meta(meta_out: *mut MindModelMeta) -> c_int {
+    pub unsafe extern "C" fn mind_model_meta(meta_out: *mut MindModelMeta) -> c_int {
         clear_error();
         if meta_out.is_null() {
             return write_error("meta_out is null");
@@ -141,8 +144,11 @@ pub mod capi {
         unsafe { libc::malloc(size as usize) }
     }
 
+    /// # Safety
+    ///
+    /// `ptr` must be null or a pointer previously returned by `mind_alloc`.
     #[no_mangle]
-    pub extern "C" fn mind_free(ptr: *mut c_void) {
+    pub unsafe extern "C" fn mind_free(ptr: *mut c_void) {
         if ptr.is_null() {
             return;
         }
@@ -187,7 +193,8 @@ pub mod capi {
                 model_name: std::ptr::null(),
                 model_version: 1,
             };
-            assert_eq!(mind_model_meta(&mut meta as *mut MindModelMeta), 0);
+            // SAFETY: meta is a valid, properly aligned MindModelMeta
+            assert_eq!(unsafe { mind_model_meta(&mut meta as *mut MindModelMeta) }, 0);
             assert_eq!(meta.inputs_len, 0);
             assert_eq!(meta.outputs_len, 0);
             assert!(!meta.model_name.is_null());

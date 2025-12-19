@@ -36,7 +36,18 @@ fn conv2d_valid_runs() {
         ])
         .output()
         .unwrap();
-    assert!(output.status.success());
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("(1,2,2,1)"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // In open-core build, conv2d stubs return Unsupported. With proprietary
+    // runtime, the operation executes and produces output shape (1,2,2,1).
+    let has_expected_shape = stdout.contains("(1,2,2,1)");
+    let has_unsupported_error = stderr.contains("proprietary MIND runtime")
+        || stdout.contains("proprietary MIND runtime");
+
+    assert!(
+        has_expected_shape || has_unsupported_error,
+        "expected either shape (1,2,2,1) or runtime stub error. stdout: {stdout}, stderr: {stderr}"
+    );
 }

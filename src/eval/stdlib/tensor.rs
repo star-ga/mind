@@ -634,8 +634,8 @@ pub(crate) fn relu_tensor(mut tensor: TensorVal, mode: ExecMode) -> Result<Tenso
             materialize_filled(&mut tensor);
             #[cfg(feature = "cpu-exec")]
             {
-                if tensor.dtype == DType::F32 {
-                    if tensor.as_f32().is_some() {
+                if tensor.dtype == DType::F32
+                    && tensor.as_f32().is_some() {
                         match crate::exec::cpu::exec_relu(&tensor) {
                             Ok(out) => return Ok(out),
                             Err(err) => {
@@ -646,7 +646,6 @@ pub(crate) fn relu_tensor(mut tensor: TensorVal, mode: ExecMode) -> Result<Tenso
                             }
                         }
                     }
-                }
             }
         }
     }
@@ -782,8 +781,8 @@ pub(crate) fn conv2d_tensor(
             materialize_filled(&mut w);
             #[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]
             {
-                if x.dtype == DType::F32 && w.dtype == DType::F32 {
-                    if x.as_f32().is_some() && w.as_f32().is_some() {
+                if x.dtype == DType::F32 && w.dtype == DType::F32
+                    && x.as_f32().is_some() && w.as_f32().is_some() {
                         match crate::exec::conv::exec_conv2d(&x, &w, stride_h, stride_w, padding) {
                             Ok(t) => return Ok(t),
                             Err(err) => {
@@ -791,7 +790,6 @@ pub(crate) fn conv2d_tensor(
                             }
                         }
                     }
-                }
             }
             #[cfg(all(feature = "cpu-exec", not(feature = "cpu-conv")))]
             {

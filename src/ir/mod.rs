@@ -196,3 +196,17 @@ pub fn prepare_ir_for_backend(module: &mut IRModule) -> Result<(), IrVerifyError
     crate::opt::ir_canonical::canonicalize_module(module);
     verify::verify_module(module)
 }
+
+/// Placeholder MLIR lowering stub for testing.
+///
+/// This is a stub that produces a minimal MLIR module skeleton. Real MLIR
+/// lowering is provided by the `mlir-lowering` feature and `mind-runtime`.
+#[cfg(feature = "mlir")]
+pub fn lower_placeholder(input: &str) -> String {
+    format!(
+        r#"mlir.module {{
+  // placeholder IR for: {}
+}}"#,
+        input
+    )
+}

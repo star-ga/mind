@@ -203,7 +203,7 @@ impl<'a> GradientBuilder<'a> {
 
     fn finish(self) -> GradientResult {
         let mut gradients = BTreeMap::new();
-        for (id, _) in &self.leaves {
+        for id in self.leaves.keys() {
             if let Some(&grad) = self.grads.get(id) {
                 gradients.insert(*id, grad);
             }
