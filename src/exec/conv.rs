@@ -12,6 +12,12 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+//! Convolution execution stubs.
+//!
+//! These are intentional placeholder stubs that return `ExecError::Unsupported`.
+//! Real implementations are provided by the proprietary `mind-runtime` backend.
+//! The TODOs in this file are architectural boundary markers, not missing features.
+
 use crate::eval::value::TensorVal;
 use crate::types::ConvPadding;
 use crate::types::ShapeDim;
