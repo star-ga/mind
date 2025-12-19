@@ -50,7 +50,7 @@ All PRs must pass these checks:
 | Test | `cargo test --no-default-features` |
 | Clippy | `cargo clippy --no-default-features -- -D warnings` |
 | License | `cargo deny check` |
-| Docs | `cargo doc --no-default-features` |
+| Docs | `cargo doc --no-default-features --document-private-items` |
 
 ### Running Tests
 
@@ -211,7 +211,6 @@ src/
 Contributors are recognized in:
 
 - Release notes
-- AUTHORS file (for significant contributions)
 - GitHub contributor graphs
 
 Thank you for contributing to MIND!
