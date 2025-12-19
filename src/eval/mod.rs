@@ -902,11 +902,10 @@ fn apply_tensor_scalar(
         if let Some(buf) = tensor_buf.as_ref() {
             match (buf, &dtype) {
                 (Buffer::I32(values), DType::I32) => {
-                    if matches!(op, BinOp::Div) && !tensor_on_left {
-                        if values.iter().any(|&v| v == 0) {
+                    if matches!(op, BinOp::Div) && !tensor_on_left
+                        && values.contains(&0) {
                             return Err(EvalError::DivZero);
                         }
-                    }
                     let scalar_i32 = scalar as i32;
                     let mut out = Vec::with_capacity(values.len());
                     for &v in values {
@@ -933,11 +932,10 @@ fn apply_tensor_scalar(
                     result.buf = Some(Buffer::I32(out));
                 }
                 (Buffer::F32(values), DType::F32) => {
-                    if matches!(op, BinOp::Div) && !tensor_on_left {
-                        if values.iter().any(|&v| v == 0.0) {
+                    if matches!(op, BinOp::Div) && !tensor_on_left
+                        && values.contains(&0.0) {
                             return Err(EvalError::DivZero);
                         }
-                    }
                     let scalar_f32 = scalar as f32;
                     let mut out = Vec::with_capacity(values.len());
                     for &v in values {
@@ -1049,12 +1047,12 @@ fn apply_tensor_tensor(
         if let Some(buf) = right_buf.as_ref() {
             match buf {
                 Buffer::I32(values) => {
-                    if values.iter().any(|&v| v == 0) {
+                    if values.contains(&0) {
                         return Err(EvalError::DivZero);
                     }
                 }
                 Buffer::F32(values) => {
-                    if values.iter().any(|&v| v == 0.0) {
+                    if values.contains(&0.0) {
                         return Err(EvalError::DivZero);
                     }
                 }

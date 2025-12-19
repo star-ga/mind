@@ -220,7 +220,7 @@ fn gpu_cases() -> Vec<ConformanceCase> {
             expected_mlir: None,
             #[cfg(feature = "autodiff")]
             expected_grad_ir: None,
-            expected_error: Some("no backend available"),
+            expected_error: Some("backend unavailable"),
             run_autodiff: false,
         });
     }
