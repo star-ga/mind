@@ -361,8 +361,10 @@ pub fn eval_module_value_with_env_mode(
         #[cfg(feature = "mlir-exec")]
         ExecMode::MlirExternal(cfg) => {
             let ir = lower_to_ir(m);
-            let mut opts = mlir_export::MlirEmitOptions::default();
-            opts.mode = mlir_export::MlirEmitMode::Executable;
+            let opts = mlir_export::MlirEmitOptions {
+                mode: mlir_export::MlirEmitMode::Executable,
+                ..Default::default()
+            };
             let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
             match mlir_run::exec_mlir_text(&mlir_text, &cfg) {
                 Ok(stdout) => {
@@ -425,9 +427,10 @@ pub fn eval_module_value_with_env_mode(
             threads,
         } => {
             let ir = lower_to_ir(m);
-            let mut opts = mlir_export::MlirEmitOptions::default();
-            opts.mode = mlir_export::MlirEmitMode::Executable;
-            opts.lower_preset = Some(MlirLowerPreset::GpuDefault.as_str().to_string());
+            let opts = mlir_export::MlirEmitOptions {
+                mode: mlir_export::MlirEmitMode::Executable,
+                lower_preset: Some(MlirLowerPreset::GpuDefault.as_str().to_string()),
+            };
             let mlir_text = mlir_export::emit_mlir_with_opts(&ir, &opts);
             let cfg = mlir_gpu::GpuLaunchCfg { blocks, threads };
             match mlir_gpu::run_mlir_gpu_text(&mlir_text, backend, cfg) {
