@@ -18,8 +18,8 @@ exclude = ["assets/", "benchmarks/", "examples/"]
 [dependencies]
 logos = "0.13"
 chumsky = "0.9"
-melior = { version = "0.15", optional = true }
-inkwell = { version = "0.2", optional = true }
+melior = { version = "0.21", optional = true }
+inkwell = { version = "0.5.0", features = ["llvm18-0"], optional = true }
 clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
 anyhow = "1.0"
