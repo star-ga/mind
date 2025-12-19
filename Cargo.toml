@@ -13,7 +13,7 @@ license = "Apache-2.0"
 default-run = "mind"
 keywords = ["ai", "machine-learning", "compiler", "tensor", "autodiff"]
 categories = ["compilers", "science"]
-exclude = ["assets/", "benchmarks/", "docs/", "examples/", ".github/"]
+exclude = ["assets/", "benchmarks/", "examples/"]
 
 [dependencies]
 logos = "0.13"

@@ -45,9 +45,9 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 
 ## Security Best Practices
 
-When using MIND in production:
+When using MIND in production (as a dependency in your own applications):
 
-1. **Pin dependencies**: Use `Cargo.lock` to ensure reproducible builds
+1. **Pin dependencies**: Commit your application's `Cargo.lock` to ensure reproducible builds
 2. **Verify checksums**: Validate release artifacts before deployment
 3. **Sandbox execution**: Run compiled MIND programs in isolated environments
 4. **Audit inputs**: Validate all external data before processing
