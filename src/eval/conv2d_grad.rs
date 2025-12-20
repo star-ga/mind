@@ -127,13 +127,13 @@ pub fn conv2d_vjp_nhwc_hwio_f32(
                             let iw = iw as usize;
 
                             for c in 0..C {
-                                // dx += dy * w
                                 let w_i = idx_hwio(kh, kw, c, o, KW, C, O);
-                                let dx_i = idx_nhwc(n, ih, iw, c, H, W_in, C);
-                                dx[dx_i] += g * w[w_i];
+                                let x_i = idx_nhwc(n, ih, iw, c, H, W_in, C);
+
+                                // dx += dy * w
+                                dx[x_i] += g * w[w_i];
 
                                 // dw += dy * x
-                                let x_i = idx_nhwc(n, ih, iw, c, H, W_in, C);
                                 dw[w_i] += g * x[x_i];
                             }
                         }
@@ -160,8 +160,17 @@ pub fn conv2d_output_shape(
 
     let (oh, ow) = match padding {
         ConvPadding::Valid => {
-            let oh = (H.saturating_sub(KH)) / stride_h + 1;
-            let ow = (W.saturating_sub(KW)) / stride_w + 1;
+            // When kernel is larger than input, output is 0 (no valid positions)
+            let oh = if H >= KH {
+                (H - KH) / stride_h + 1
+            } else {
+                0
+            };
+            let ow = if W >= KW {
+                (W - KW) / stride_w + 1
+            } else {
+                0
+            };
             (oh, ow)
         }
         ConvPadding::Same => (ceil_div(H, stride_h), ceil_div(W, stride_w)),
