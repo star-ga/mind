@@ -957,8 +957,8 @@ fn element_count(shape: &[ShapeDim], axes: &[usize]) -> usize {
 
 /// Emit MLIR for Conv2dGradInput (backward pass w.r.t. input).
 ///
-/// Uses linalg.generic with explicit index math to compute dx from dy and filter.
-/// This is a correctness-first implementation using scf loops.
+/// Emits a stub that allocates a zero-filled output tensor of the correct shape.
+/// Full computation is deferred to runtime or a specialized backend lowering pass.
 #[allow(clippy::too_many_arguments)]
 fn emit_conv2d_grad_input(
     emitter: &mut MlirEmitter,
@@ -1010,8 +1010,8 @@ fn emit_conv2d_grad_input(
 
 /// Emit MLIR for Conv2dGradFilter (backward pass w.r.t. filter).
 ///
-/// Uses linalg.generic to accumulate gradients into dw from dy and input.
-/// This is a correctness-first implementation.
+/// Emits a stub that allocates a zero-filled output tensor of the correct shape.
+/// Full computation is deferred to runtime or a specialized backend lowering pass.
 #[allow(clippy::too_many_arguments)]
 fn emit_conv2d_grad_filter(
     emitter: &mut MlirEmitter,
