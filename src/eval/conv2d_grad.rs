@@ -274,4 +274,13 @@ mod tests {
         let out = conv2d_output_shape(x_shape, w_shape, 2, 2, ConvPadding::Same);
         assert_eq!(out, [2, 3, 3, 8]);
     }
+
+    #[test]
+    fn test_output_shape_kernel_larger_than_input() {
+        // Kernel (3x3) > Input (2x2) with Valid padding should produce 0-sized output
+        let x_shape = [1, 2, 2, 1];
+        let w_shape = [3, 3, 1, 1];
+        let out = conv2d_output_shape(x_shape, w_shape, 1, 1, ConvPadding::Valid);
+        assert_eq!(out, [1, 0, 0, 1], "kernel > input should produce 0-sized output");
+    }
 }
