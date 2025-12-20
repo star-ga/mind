@@ -136,9 +136,21 @@ pub mod capi {
         write_error("mind_infer is not available in this build")
     }
 
+    /// Allocate `size` bytes of host memory.
+    ///
+    /// Returns null if `size` is zero or cannot fit in `usize`. Zero-sized
+    /// requests return null without setting `LAST_ERROR`; overflow cases record
+    /// an error so callers can retrieve the cause via `mind_last_error()`.
     #[no_mangle]
     pub extern "C" fn mind_alloc(size: u64) -> *mut c_void {
         if size == 0 {
+            return ptr::null_mut();
+        }
+        // Reject requests that cannot fit in the platform pointer width to avoid
+        // truncating the allocation size or returning a null pointer without
+        // recording an error.
+        if size >= usize::MAX as u64 {
+            let _ = write_error("allocation size exceeds platform pointer width");
             return ptr::null_mut();
         }
         unsafe { libc::malloc(size as usize) }
@@ -194,7 +206,10 @@ pub mod capi {
                 model_version: 1,
             };
             // SAFETY: meta is a valid, properly aligned MindModelMeta
-            assert_eq!(unsafe { mind_model_meta(&mut meta as *mut MindModelMeta) }, 0);
+            assert_eq!(
+                unsafe { mind_model_meta(&mut meta as *mut MindModelMeta) },
+                0
+            );
             assert_eq!(meta.inputs_len, 0);
             assert_eq!(meta.outputs_len, 0);
             assert!(!meta.model_name.is_null());
@@ -206,6 +221,15 @@ pub mod capi {
             let rc = mind_infer(std::ptr::null(), 0, std::ptr::null_mut(), 0);
             assert!(rc < 0);
             assert!(last_error_as_str().is_some());
+        }
+
+        #[test]
+        fn alloc_rejects_oversized_request() {
+            clear_last_error_for_tests();
+            let ptr = mind_alloc(u64::MAX);
+            assert!(ptr.is_null());
+            let err = last_error_as_str().expect("error should be recorded");
+            assert!(err.contains("platform pointer width"));
         }
     }
 }
