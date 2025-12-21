@@ -4,9 +4,6 @@ vulnerability = "deny"
 unsound = "deny"
 unmaintained = "warn"
 yanked = "warn"
-ignore = [
-  "RUSTSEC-2024-0445",
-]
 
 [[advisories.ignore]]
 id = "RUSTSEC-2024-0445"
