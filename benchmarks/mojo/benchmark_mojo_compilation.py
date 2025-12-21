@@ -141,8 +141,8 @@ def compare_with_mind(mojo_results: Dict[str, Dict[str, float]]):
     print("="*80)
     print()
     print("Interpretation:")
-    print("  Speedup < 1.0: MIND is faster")
-    print("  Speedup > 1.0: Mojo is faster")
+    print("  Speedup > 1.0: MIND is faster (e.g., 1000x means MIND compiles 1000x faster)")
+    print("  Speedup < 1.0: Mojo is faster")
     print("  Speedup = 1.0: Equal performance")
     print()
 

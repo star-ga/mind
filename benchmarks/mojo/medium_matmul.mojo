@@ -1,5 +1,5 @@
 """
-Mojo equivalent: Medium matrix multiplication (128x256 * 256x64)
+Mojo equivalent: Medium matrix multiplication (128x256 * 256x512)
 MIND equivalent: benches/simple_benchmarks.rs - medium_matmul
 """
 
@@ -14,7 +14,7 @@ fn matmul(a: List[Float32], b: List[Float32], mut c: List[Float32], M: Int, N: I
 
 fn main():
     var M = 128
-    var N = 64
+    var N = 512
     var K = 256
 
     var a = List[Float32](capacity=M * K)
