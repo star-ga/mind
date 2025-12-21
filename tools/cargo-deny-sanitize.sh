@@ -29,6 +29,8 @@ sanitize_cvss_v4() {
     # Remove only the CVSS line to keep the advisory content intact.
     local tmpfile
     tmpfile=$(mktemp) || { echo "Failed to create temporary file for $advisory_file" >&2; return 1; }
+    # Ensure tmpfile is cleaned up on exit from this function
+    trap 'rm -f "$tmpfile"' RETURN
     sed '/^cvss = "CVSS:4\.0\//d' "$advisory_file" > "$tmpfile"
     mv "$tmpfile" "$advisory_file"
   fi

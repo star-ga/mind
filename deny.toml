@@ -7,9 +7,6 @@ ignore = [
 
 [licenses]
 version = 2
-unlicensed = "deny"
-copyleft = "warn"
-default = "allow"
 allow = [
   "MIT",
   "Apache-2.0",
