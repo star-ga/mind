@@ -273,6 +273,8 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Dot { dst, .. }
         | Instr::MatMul { dst, .. }
         | Instr::Conv2d { dst, .. }
+        | Instr::Conv2dGradInput { dst, .. }
+        | Instr::Conv2dGradFilter { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),
