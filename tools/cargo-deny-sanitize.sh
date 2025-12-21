@@ -3,6 +3,9 @@ set -euo pipefail
 
 # Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 # cannot parse (e.g., CVSS v4 metadata).
+#
+# The issue is that `cargo deny fetch` fails during parsing, so we must
+# fetch the advisory database manually via git, sanitize it, then run cargo deny.
 
 COMMAND=${1:-}
 if [[ -z "$COMMAND" ]]; then
@@ -10,12 +13,21 @@ if [[ -z "$COMMAND" ]]; then
   exit 1
 fi
 
-# Fetch advisory database first so we can patch it if needed.
-# Do not forward subcommand-specific arguments here, as they may be invalid for fetch.
-cargo deny fetch
-
 CARGO_HOME_DIR=${CARGO_HOME:-"$HOME/.cargo"}
 DB_ROOT="$CARGO_HOME_DIR/advisory-dbs"
+RUSTSEC_REPO="https://github.com/rustsec/advisory-db.git"
+RUSTSEC_DIR="$DB_ROOT/github.com-a946fc29ac602819"
+
+# Manually fetch the advisory database via git (cargo deny fetch fails on CVSS v4)
+mkdir -p "$DB_ROOT"
+if [[ -d "$RUSTSEC_DIR/.git" ]]; then
+  echo "Updating RustSec advisory database..." >&2
+  git -C "$RUSTSEC_DIR" fetch --quiet origin main
+  git -C "$RUSTSEC_DIR" reset --quiet --hard origin/main
+else
+  echo "Cloning RustSec advisory database..." >&2
+  git clone --quiet --depth 1 "$RUSTSEC_REPO" "$RUSTSEC_DIR"
+fi
 
 # Check if file contains CVSS v4 line using grep (more portable than ripgrep)
 has_cvss_v4() {
@@ -36,12 +48,12 @@ sanitize_cvss_v4() {
   fi
 }
 
+# Find all advisory files containing CVSS v4 and sanitize them
 if [[ -d "$DB_ROOT" ]]; then
-  # Find all advisory files containing CVSS v4 and sanitize them
   while IFS= read -r -d '' advisory; do
     sanitize_cvss_v4 "$advisory"
   done < <(find "$DB_ROOT" -name 'RUSTSEC-*.md' -print0)
 fi
 
-# Now run the actual command.
+# Now run the actual command (skip fetch since we already have the DB)
 cargo deny "$@"
