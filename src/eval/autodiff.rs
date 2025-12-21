@@ -1008,10 +1008,8 @@ pub fn backprop_to_vars_with_tenv(
     tenv: &HashMap<String, TensorEnvEntry>,
 ) -> BTreeMap<String, TensorVal> {
     // Create inverse mapping from NodeId to variable name for data lookup
-    let node_to_name: HashMap<NodeId, &str> = vars
-        .iter()
-        .map(|(name, id)| (*id, name.as_str()))
-        .collect();
+    let node_to_name: HashMap<NodeId, &str> =
+        vars.iter().map(|(name, id)| (*id, name.as_str())).collect();
     let mut adj: HashMap<NodeId, TensorVal> = HashMap::new();
     if let Some(loss_node) = tape.nodes.get(loss.0) {
         adj.insert(
