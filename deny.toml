@@ -1,13 +1,9 @@
 [advisories]
 version = 2
-vulnerability = "deny"
-unsound = "deny"
-unmaintained = "warn"
-yanked = "warn"
-
-[[advisories.ignore]]
-id = "RUSTSEC-2024-0445"
-reason = "Current cargo-deny release cannot parse CVSS v4 metadata; ignore until tooling updates"
+ignore = [
+  # Current cargo-deny release cannot parse CVSS v4 metadata; ignore until tooling is updated
+  "RUSTSEC-2024-0445",
+]
 
 [licenses]
 version = 2

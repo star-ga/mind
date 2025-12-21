@@ -56,7 +56,7 @@ cargo audit
 
 > **Note:** Until `cargo-deny` ships CVSS v4 support, run it through
 > `tools/cargo-deny-sanitize.sh` so the advisory database is sanitized (the
-> script removes the CVSS v4 line from `RUSTSEC-2024-0445` after `cargo deny
+> script removes CVSS v4 lines from affected advisories after `cargo deny
 > fetch`). This keeps the check working without mutating the ignore list.
 
 The `deny.toml` configuration enforces:
