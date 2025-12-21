@@ -156,7 +156,8 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 dst, input_shape, ..
             } => {
                 // Create a tensor with the input shape
-                let shape: Vec<ShapeDim> = input_shape.iter().map(|d| ShapeDim::Known(*d)).collect();
+                let shape: Vec<ShapeDim> =
+                    input_shape.iter().map(|d| ShapeDim::Known(*d)).collect();
                 let v = Value::Tensor(TensorVal::new(crate::types::DType::F32, shape, None));
                 vals.insert(*dst, v.clone());
                 last = v;
@@ -165,7 +166,8 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 dst, filter_shape, ..
             } => {
                 // Create a tensor with the filter shape
-                let shape: Vec<ShapeDim> = filter_shape.iter().map(|d| ShapeDim::Known(*d)).collect();
+                let shape: Vec<ShapeDim> =
+                    filter_shape.iter().map(|d| ShapeDim::Known(*d)).collect();
                 let v = Value::Tensor(TensorVal::new(crate::types::DType::F32, shape, None));
                 vals.insert(*dst, v.clone());
                 last = v;
