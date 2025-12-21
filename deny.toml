@@ -1,9 +1,14 @@
 [advisories]
+# Use explicit informational handling so lint levels remain forward compatible
+informational = "warn"
 vulnerability = "deny"
 unsound = "deny"
 unmaintained = "warn"
 yanked = "warn"
-ignore = ["RUSTSEC-2024-0445"]
+
+[[advisories.ignore]]
+id = "RUSTSEC-2024-0445"
+reason = "Current cargo-deny release cannot parse CVSS v4 metadata; ignore until tooling updates"
 
 [licenses]
 unlicensed = "deny"
