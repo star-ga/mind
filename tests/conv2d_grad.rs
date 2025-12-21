@@ -17,7 +17,7 @@
 //! These tests verify correctness of the analytical gradients computed by
 //! conv2d_vjp_nhwc_hwio_f32 against numerical finite-difference approximations.
 
-use mind::eval::conv2d_grad::{conv2d_output_shape, conv2d_vjp_nhwc_hwio_f32};
+use mind::eval::conv2d_grad::{conv2d_output_shape, conv2d_vjp_nhwc_hwio_f32, Conv2dVjpParams};
 use mind::types::ConvPadding;
 
 /// Compute forward Conv2d: y = conv2d(x, w)
@@ -239,17 +239,16 @@ fn test_conv2d_grad_valid_stride1() {
         .collect();
 
     // Compute analytical gradients
-    let (dx_analytic, dw_analytic) = conv2d_vjp_nhwc_hwio_f32(
-        &x,
+    let (dx_analytic, dw_analytic) = conv2d_vjp_nhwc_hwio_f32(Conv2dVjpParams {
+        x: &x,
         x_shape,
-        &w,
+        w: &w,
         w_shape,
-        &r,
-        out_shape,
-        1,
-        1,
-        ConvPadding::Valid,
-    );
+        dy: &r,
+        dy_shape: out_shape,
+        stride: [1, 1],
+        padding: ConvPadding::Valid,
+    });
 
     // Compute numerical gradients
     let eps = 1e-4;
@@ -308,17 +307,16 @@ fn test_conv2d_grad_same_stride2() {
         .collect();
 
     // Compute analytical gradients
-    let (dx_analytic, dw_analytic) = conv2d_vjp_nhwc_hwio_f32(
-        &x,
+    let (dx_analytic, dw_analytic) = conv2d_vjp_nhwc_hwio_f32(Conv2dVjpParams {
+        x: &x,
         x_shape,
-        &w,
+        w: &w,
         w_shape,
-        &r,
-        out_shape,
-        2,
-        2,
-        ConvPadding::Same,
-    );
+        dy: &r,
+        dy_shape: out_shape,
+        stride: [2, 2],
+        padding: ConvPadding::Same,
+    });
 
     // Compute numerical gradients
     let eps = 1e-4;
@@ -377,17 +375,16 @@ fn test_conv2d_grad_small_exact() {
     // dy = 1 (upstream gradient)
     let dy = vec![1.0];
 
-    let (dx, dw) = conv2d_vjp_nhwc_hwio_f32(
-        &x,
+    let (dx, dw) = conv2d_vjp_nhwc_hwio_f32(Conv2dVjpParams {
+        x: &x,
         x_shape,
-        &w,
+        w: &w,
         w_shape,
-        &dy,
-        y_shape,
-        1,
-        1,
-        ConvPadding::Valid,
-    );
+        dy: &dy,
+        dy_shape: y_shape,
+        stride: [1, 1],
+        padding: ConvPadding::Valid,
+    });
 
     // dx = dy * w (scatter)
     // dx[0,0,0,0] = dy * w[0,0,0,0] = 1 * 1 = 1
