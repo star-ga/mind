@@ -86,8 +86,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          git config --global --unset http.proxy 2>$null
-          git config --global --unset https.proxy 2>$null
+          git config --global --unset http.proxy 2>&1 | Out-Null
+          git config --global --unset https.proxy 2>&1 | Out-Null
+        continue-on-error: true
 
       - name: Cargo metadata (smoke)
         shell: bash
