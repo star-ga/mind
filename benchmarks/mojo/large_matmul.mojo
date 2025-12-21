@@ -1,5 +1,5 @@
 """
-Mojo equivalent: Large matrix multiplication (512x1024 * 1024x256)
+Mojo equivalent: Large matrix multiplication (512x1024 * 1024x512)
 MIND equivalent: benches/simple_benchmarks.rs - large_matmul
 """
 
@@ -14,7 +14,7 @@ fn matmul(a: List[Float32], b: List[Float32], mut c: List[Float32], M: Int, N: I
 
 fn main():
     var M = 512
-    var N = 256
+    var N = 512
     var K = 1024
 
     var a = List[Float32](capacity=M * K)

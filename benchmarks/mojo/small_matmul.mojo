@@ -1,5 +1,5 @@
 """
-Mojo equivalent: Small matrix multiplication (10x20 * 20x15)
+Mojo equivalent: Small matrix multiplication (10x20 * 20x30)
 MIND equivalent: benches/simple_benchmarks.rs - small_matmul
 """
 
@@ -14,7 +14,7 @@ fn matmul(a: List[Float32], b: List[Float32], mut c: List[Float32], M: Int, N: I
 
 fn main():
     var M = 10
-    var N = 15
+    var N = 30
     var K = 20
 
     var a = List[Float32](capacity=M * K)
