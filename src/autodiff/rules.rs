@@ -58,12 +58,12 @@ pub(super) fn apply_rule(
             Ok(())
         }
         Instr::Conv2d { .. } => Err(AutodiffError::UnsupportedOp { op: "conv2d" }),
-        Instr::Conv2dGradInput { .. } => {
-            Err(AutodiffError::UnsupportedOp { op: "conv2d_grad_input" })
-        }
-        Instr::Conv2dGradFilter { .. } => {
-            Err(AutodiffError::UnsupportedOp { op: "conv2d_grad_filter" })
-        }
+        Instr::Conv2dGradInput { .. } => Err(AutodiffError::UnsupportedOp {
+            op: "conv2d_grad_input",
+        }),
+        Instr::Conv2dGradFilter { .. } => Err(AutodiffError::UnsupportedOp {
+            op: "conv2d_grad_filter",
+        }),
         Instr::Dot { a, b, .. } => {
             let da = ops.add_binop(BinOp::Mul, upstream, *b);
             let db = ops.add_binop(BinOp::Mul, upstream, *a);

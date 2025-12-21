@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mind::{compile_source, CompileOptions};
 
 /// Element-wise operations
@@ -106,20 +106,13 @@ fn residual_block(
 fn bench_elementwise_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("operations_elementwise");
 
-    for (name, source) in [
-        ("chain", ELEMENTWISE_CHAIN),
-        ("deep_nest", DEEP_NEST),
-    ] {
-        group.bench_with_input(
-            BenchmarkId::new("compile", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+    for (name, source) in [("chain", ELEMENTWISE_CHAIN), ("deep_nest", DEEP_NEST)] {
+        group.bench_with_input(BenchmarkId::new("compile", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();
@@ -128,20 +121,13 @@ fn bench_elementwise_operations(c: &mut Criterion) {
 fn bench_indexing_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("operations_indexing");
 
-    for (name, source) in [
-        ("slice", INDEXING_OPS),
-        ("reduction_axes", REDUCTION_AXES),
-    ] {
-        group.bench_with_input(
-            BenchmarkId::new("compile", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+    for (name, source) in [("slice", INDEXING_OPS), ("reduction_axes", REDUCTION_AXES)] {
+        group.bench_with_input(BenchmarkId::new("compile", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();
@@ -155,16 +141,12 @@ fn bench_neural_patterns(c: &mut Criterion) {
         ("attention", ATTENTION_PATTERN),
         ("residual_block", RESIDUAL_BLOCK),
     ] {
-        group.bench_with_input(
-            BenchmarkId::new("compile", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("compile", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();

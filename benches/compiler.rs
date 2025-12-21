@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mind::{compile_source, CompileOptions};
 
 #[cfg(feature = "mlir-lowering")]
@@ -94,17 +94,14 @@ fn bench_mlir_lowering(c: &mut Criterion) {
         ("large_network", LARGE_NETWORK),
     ] {
         // Pre-compile to IR
-        let products = compile_source(source, &CompileOptions::default())
-            .expect("compilation failed");
+        let products =
+            compile_source(source, &CompileOptions::default()).expect("compilation failed");
 
         group.bench_with_input(
             BenchmarkId::new("ir_to_mlir", name),
             &products.ir,
             |b, ir| {
-                b.iter(|| {
-                    lower_to_mlir(black_box(ir), None)
-                        .expect("MLIR lowering failed")
-                });
+                b.iter(|| lower_to_mlir(black_box(ir), None).expect("MLIR lowering failed"));
             },
         );
     }
@@ -128,8 +125,7 @@ fn bench_end_to_end_compilation(c: &mut Criterion) {
                 b.iter(|| {
                     let products = compile_source(black_box(src), &CompileOptions::default())
                         .expect("compilation failed");
-                    lower_to_mlir(&products.ir, None)
-                        .expect("MLIR lowering failed")
+                    lower_to_mlir(&products.ir, None).expect("MLIR lowering failed")
                 });
             },
         );
@@ -148,17 +144,14 @@ fn bench_autodiff_generation(c: &mut Criterion) {
         ("loss_function", AUTODIFF_TARGET),
     ] {
         // Pre-compile to IR
-        let products = compile_source(source, &CompileOptions::default())
-            .expect("compilation failed");
+        let products =
+            compile_source(source, &CompileOptions::default()).expect("compilation failed");
 
         group.bench_with_input(
             BenchmarkId::new("generate_gradients", name),
             &products.ir,
             |b, ir| {
-                b.iter(|| {
-                    differentiate_function(black_box(ir), "main")
-                        .expect("autodiff failed")
-                });
+                b.iter(|| differentiate_function(black_box(ir), "main").expect("autodiff failed"));
             },
         );
     }
@@ -191,9 +184,6 @@ criterion_group!(
 );
 
 #[cfg(all(not(feature = "mlir-lowering"), not(feature = "autodiff")))]
-criterion_group!(
-    benches,
-    bench_compilation_pipeline
-);
+criterion_group!(benches, bench_compilation_pipeline);
 
 criterion_main!(benches);

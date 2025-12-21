@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mind::{compile_source, CompileOptions};
 
 /// Simple broadcasting scenarios
@@ -111,16 +111,12 @@ fn bench_shape_inference_broadcast(c: &mut Criterion) {
         ("complex", BROADCAST_COMPLEX),
         ("high_rank", HIGH_RANK),
     ] {
-        group.bench_with_input(
-            BenchmarkId::new("broadcast", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("broadcast", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();
@@ -129,20 +125,13 @@ fn bench_shape_inference_broadcast(c: &mut Criterion) {
 fn bench_shape_inference_reductions(c: &mut Criterion) {
     let mut group = c.benchmark_group("shape_inference_reductions");
 
-    for (name, source) in [
-        ("chain", REDUCTIONS),
-        ("transforms", SHAPE_TRANSFORMS),
-    ] {
-        group.bench_with_input(
-            BenchmarkId::new("reduction", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+    for (name, source) in [("chain", REDUCTIONS), ("transforms", SHAPE_TRANSFORMS)] {
+        group.bench_with_input(BenchmarkId::new("reduction", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();
@@ -157,16 +146,12 @@ fn bench_shape_inference_matmul(c: &mut Criterion) {
         ("1024x2048", MATMUL_LARGE),
         ("batched_32x128x256", MATMUL_BATCHED),
     ] {
-        group.bench_with_input(
-            BenchmarkId::new("matmul", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("matmul", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();
@@ -175,20 +160,13 @@ fn bench_shape_inference_matmul(c: &mut Criterion) {
 fn bench_shape_inference_conv(c: &mut Criterion) {
     let mut group = c.benchmark_group("shape_inference_conv");
 
-    for (name, source) in [
-        ("3x3_stride1", CONV_3x3),
-        ("5x5_stride2", CONV_5x5),
-    ] {
-        group.bench_with_input(
-            BenchmarkId::new("conv2d", name),
-            source,
-            |b, src| {
-                b.iter(|| {
-                    compile_source(black_box(src), &CompileOptions::default())
-                        .expect("compilation failed")
-                });
-            },
-        );
+    for (name, source) in [("3x3_stride1", CONV_3x3), ("5x5_stride2", CONV_5x5)] {
+        group.bench_with_input(BenchmarkId::new("conv2d", name), source, |b, src| {
+            b.iter(|| {
+                compile_source(black_box(src), &CompileOptions::default())
+                    .expect("compilation failed")
+            });
+        });
     }
 
     group.finish();
