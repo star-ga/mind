@@ -18,7 +18,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny binary
+        uses: actions/cache@v4
+        id: cache-cargo-deny
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-0.16
+
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        if: steps.cache-cargo-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked --version "^0.16"
+
       - name: Run cargo-deny with CVSS v4 sanitization
         run: ./tools/cargo-deny-sanitize.sh check
