@@ -29,25 +29,31 @@ else
   git clone --quiet --depth 1 "$RUSTSEC_REPO" "$RUSTSEC_DIR"
 fi
 
-# Sanitize CVSS v4 lines from advisory files using sed in-place
+# Sanitize CVSS v4 lines from advisory files
+# Use grep -v with temp file for reliable modification
 echo "Sanitizing CVSS v4 entries from advisory database..." >&2
-find "$DB_ROOT" -name 'RUSTSEC-*.md' -type f | while read -r advisory_file; do
+
+for advisory_file in $(find "$DB_ROOT" -name 'RUSTSEC-*.md' -type f); do
   if grep -q 'CVSS:4\.' "$advisory_file" 2>/dev/null; then
     echo "  Removing CVSS v4 from: $advisory_file" >&2
-    # Delete any line containing CVSS:4. using sed in-place
-    # Using # as delimiter to avoid escaping issues with /
-    sed -i.bak '\#CVSS:4\.#d' "$advisory_file"
-    rm -f "${advisory_file}.bak"
+
+    # Use grep -v to filter out CVSS v4 lines, write to temp, then replace
+    tmpfile="${advisory_file}.tmp.$$"
+    grep -v 'CVSS:4\.' "$advisory_file" > "$tmpfile"
+    mv -f "$tmpfile" "$advisory_file"
+
     # Verify the line was removed
     if grep -q 'CVSS:4\.' "$advisory_file" 2>/dev/null; then
-      echo "  ERROR: CVSS v4 line still present!" >&2
-      grep 'CVSS:4\.' "$advisory_file" >&2
+      echo "  ERROR: CVSS v4 line still present after removal!" >&2
+      cat "$advisory_file" >&2
       exit 1
     else
       echo "  Successfully removed CVSS v4 line" >&2
     fi
   fi
 done
+
+echo "Sanitization complete. Running cargo deny..." >&2
 
 # Now run the actual command (skip fetch since we already have the DB)
 cargo deny "$@"
