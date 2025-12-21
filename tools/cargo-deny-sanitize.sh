@@ -32,9 +32,10 @@ sanitize_cvss_v4() {
 }
 
 if [[ -d "$DB_ROOT" ]]; then
+  # Find all advisory files containing CVSS v4 and sanitize them
   while IFS= read -r -d '' advisory; do
     sanitize_cvss_v4 "$advisory"
-  done < <(find "$DB_ROOT" -name 'RUSTSEC-2024-0445.md' -print0)
+  done < <(find "$DB_ROOT" -name 'RUSTSEC-*.md' -print0)
 fi
 
 # Now run the actual command.
