@@ -41,7 +41,7 @@ def measure_compilation_time(mojo_file: Path) -> float:
 
     # Compile Mojo file (don't run, just compile)
     result = subprocess.run(
-        ["mojo", "build", str(mojo_file), "-o", "/tmp/mojo_bench_output"],
+        ["mojo", "run", "--no-optimization", str(mojo_file)],
         capture_output=True,
         text=True,
     )

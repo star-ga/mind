@@ -3,9 +3,8 @@ Mojo equivalent: Medium matrix multiplication (128x256 * 256x64)
 MIND equivalent: benches/simple_benchmarks.rs - medium_matmul
 """
 
-from memory import UnsafePointer
 
-fn matmul(a: UnsafePointer[Float32], b: UnsafePointer[Float32], c: UnsafePointer[Float32], M: Int, N: Int, K: Int):
+fn matmul(a: List[Float32], b: List[Float32], mut c: List[Float32], M: Int, N: Int, K: Int):
     for i in range(M):
         for j in range(N):
             var sum: Float32 = 0.0
@@ -18,18 +17,16 @@ fn main():
     var N = 64
     var K = 256
 
-    var a = UnsafePointer[Float32].alloc(M * K)
-    var b = UnsafePointer[Float32].alloc(K * N)
-    var c = UnsafePointer[Float32].alloc(M * N)
+    var a = List[Float32](capacity=M * K)
+    var b = List[Float32](capacity=K * N)
+    var c = List[Float32](capacity=M * N)
 
-    for i in range(M * K):
-        a[i] = 1.0
-    for i in range(K * N):
-        b[i] = 1.0
+    for _ in range(M * K):
+        a.append(1.0)
+    for _ in range(K * N):
+        b.append(1.0)
+    for _ in range(M * N):
+        c.append(0.0)
 
     matmul(a, b, c, M, N, K)
     print("Done:", c[0])
-
-    a.free()
-    b.free()
-    c.free()
