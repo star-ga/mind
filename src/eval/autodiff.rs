@@ -1552,9 +1552,16 @@ fn try_compute_conv2d_grad(
     };
 
     // Compute gradients
-    let (dx_data, dw_data) = conv2d_grad::conv2d_vjp_nhwc_hwio_f32(
-        x_data, x_shape, w_data, w_shape, &dy_data, dy_shape, stride_h, stride_w, padding,
-    );
+    let (dx_data, dw_data) = conv2d_grad::conv2d_vjp_nhwc_hwio_f32(conv2d_grad::Conv2dVjpParams {
+        x: x_data,
+        x_shape,
+        w: w_data,
+        w_shape,
+        dy: &dy_data,
+        dy_shape,
+        stride: [stride_h, stride_w],
+        padding,
+    });
 
     // Build result TensorVals with buffer data
     let mut dx = TensorVal::new(DType::F32, x_info.shape.clone(), None);

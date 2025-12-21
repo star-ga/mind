@@ -21,10 +21,22 @@
 
 use crate::types::ConvPadding;
 
+/// Parameters for convolution VJP in NHWC (input) / HWIO (weights) layout.
+pub struct Conv2dVjpParams<'a> {
+    pub x: &'a [f32],
+    pub x_shape: [usize; 4],
+    pub w: &'a [f32],
+    pub w_shape: [usize; 4],
+    pub dy: &'a [f32],
+    pub dy_shape: [usize; 4],
+    pub stride: [usize; 2],
+    pub padding: ConvPadding,
+}
+
 /// Ceiling division for usize.
 #[inline]
 fn ceil_div(a: usize, b: usize) -> usize {
-    (a + b - 1) / b
+    a.div_ceil(b)
 }
 
 /// Compute pad_top/pad_left for SAME padding given input and kernel and stride.
@@ -74,17 +86,19 @@ fn idx_hwio(kh: usize, kw: usize, c: usize, o: usize, KW: usize, C: usize, O: us
 /// This is a reference correctness-first implementation with complexity
 /// O(N * OH * OW * KH * KW * C * O).
 #[allow(non_snake_case)]
-pub fn conv2d_vjp_nhwc_hwio_f32(
-    x: &[f32],
-    x_shape: [usize; 4],
-    w: &[f32],
-    w_shape: [usize; 4],
-    dy: &[f32],
-    dy_shape: [usize; 4],
-    stride_h: usize,
-    stride_w: usize,
-    padding: ConvPadding,
-) -> (Vec<f32>, Vec<f32>) {
+pub fn conv2d_vjp_nhwc_hwio_f32(params: Conv2dVjpParams<'_>) -> (Vec<f32>, Vec<f32>) {
+    let Conv2dVjpParams {
+        x,
+        x_shape,
+        w,
+        w_shape,
+        dy,
+        dy_shape,
+        stride,
+        padding,
+    } = params;
+
+    let [stride_h, stride_w] = stride;
     let [N, H, W_in, C] = x_shape;
     let [KH, KW, Cw, O] = w_shape;
     let [Ny, OH, OW, Oy] = dy_shape;
@@ -191,17 +205,16 @@ mod tests {
         let dy = vec![1.0, 1.0, 1.0, 1.0];
         let dy_shape = [1, 2, 2, 1];
 
-        let (dx, dw) = conv2d_vjp_nhwc_hwio_f32(
-            &x,
+        let (dx, dw) = conv2d_vjp_nhwc_hwio_f32(Conv2dVjpParams {
+            x: &x,
             x_shape,
-            &w,
+            w: &w,
             w_shape,
-            &dy,
+            dy: &dy,
             dy_shape,
-            1,
-            1,
-            ConvPadding::Valid,
-        );
+            stride: [1, 1],
+            padding: ConvPadding::Valid,
+        });
 
         // Check shapes
         assert_eq!(dx.len(), 9);
@@ -232,17 +245,16 @@ mod tests {
         let dy = vec![1.0, 1.0, 1.0, 1.0];
         let dy_shape = [1, 2, 2, 1];
 
-        let (dx, dw) = conv2d_vjp_nhwc_hwio_f32(
-            &x,
+        let (dx, dw) = conv2d_vjp_nhwc_hwio_f32(Conv2dVjpParams {
+            x: &x,
             x_shape,
-            &w,
+            w: &w,
             w_shape,
-            &dy,
+            dy: &dy,
             dy_shape,
-            2,
-            2,
-            ConvPadding::Same,
-        );
+            stride: [2, 2],
+            padding: ConvPadding::Same,
+        });
 
         // Check shapes
         assert_eq!(dx.len(), 12);
