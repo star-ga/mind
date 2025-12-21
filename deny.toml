@@ -1,13 +1,11 @@
 [advisories]
-version = 2
-vulnerabilities = "deny"
+vulnerability = "deny"
 unsound = "deny"
 unmaintained = "warn"
 yanked = "warn"
 ignore = ["RUSTSEC-2024-0445"]
 
 [licenses]
-version = 2
 unlicensed = "deny"
 copyleft = "warn"
 default = "allow"
@@ -21,6 +19,5 @@ allow = [
 ]
 
 [bans]
-version = 2
 multiple-versions = "warn"
 wildcards = "deny"
