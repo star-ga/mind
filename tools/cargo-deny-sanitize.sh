@@ -53,7 +53,8 @@ for advisory_file in $(find "$DB_ROOT" -name 'RUSTSEC-*.md' -type f); do
   fi
 done
 
-echo "Sanitization complete. Running cargo deny..." >&2
+echo "Sanitization complete. Running cargo deny in offline mode..." >&2
 
-# Now run the actual command (skip fetch since we already have the DB)
-cargo deny "$@"
+# Run cargo deny in offline mode to use our pre-fetched, sanitized database
+# Without --offline, cargo deny would re-fetch and overwrite our changes
+cargo deny --offline "$@"
