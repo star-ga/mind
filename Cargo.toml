@@ -50,6 +50,26 @@ path = "src/main.rs"
 name = "mindc"
 path = "src/bin/mindc.rs"
 
+[[bench]]
+name = "compiler"
+harness = false
+
+[[bench]]
+name = "shapes"
+harness = false
+
+[[bench]]
+name = "operations"
+harness = false
+
+[[bench]]
+name = "autodiff"
+harness = false
+
+[[bench]]
+name = "simple_benchmarks"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
