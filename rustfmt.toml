@@ -1,5 +1,4 @@
 max_width = 100
 use_small_heuristics = "Default"
-wrap_comments = true
 newline_style = "Unix"
 edition = "2021"

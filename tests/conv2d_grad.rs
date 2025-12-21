@@ -17,7 +17,7 @@
 //! These tests verify correctness of the analytical gradients computed by
 //! conv2d_vjp_nhwc_hwio_f32 against numerical finite-difference approximations.
 
-use mind::eval::conv2d_grad::{conv2d_vjp_nhwc_hwio_f32, conv2d_output_shape};
+use mind::eval::conv2d_grad::{conv2d_output_shape, conv2d_vjp_nhwc_hwio_f32};
 use mind::types::ConvPadding;
 
 /// Compute forward Conv2d: y = conv2d(x, w)
@@ -142,8 +142,9 @@ fn numerical_gradient_x(
         x_plus[i] = x[i] + eps;
         x_minus[i] = x[i] - eps;
         let loss_plus = compute_loss(&x_plus, x_shape, w, w_shape, r, stride_h, stride_w, padding);
-        let loss_minus =
-            compute_loss(&x_minus, x_shape, w, w_shape, r, stride_h, stride_w, padding);
+        let loss_minus = compute_loss(
+            &x_minus, x_shape, w, w_shape, r, stride_h, stride_w, padding,
+        );
         grad[i] = (loss_plus - loss_minus) / (2.0 * eps);
         x_plus[i] = x[i];
         x_minus[i] = x[i];
@@ -171,8 +172,9 @@ fn numerical_gradient_w(
         w_plus[i] = w[i] + eps;
         w_minus[i] = w[i] - eps;
         let loss_plus = compute_loss(x, x_shape, &w_plus, w_shape, r, stride_h, stride_w, padding);
-        let loss_minus =
-            compute_loss(x, x_shape, &w_minus, w_shape, r, stride_h, stride_w, padding);
+        let loss_minus = compute_loss(
+            x, x_shape, &w_minus, w_shape, r, stride_h, stride_w, padding,
+        );
         grad[i] = (loss_plus - loss_minus) / (2.0 * eps);
         w_plus[i] = w[i];
         w_minus[i] = w[i];

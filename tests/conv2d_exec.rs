@@ -43,8 +43,8 @@ fn conv2d_valid_runs() {
     // In open-core build, conv2d stubs return Unsupported. With proprietary
     // runtime, the operation executes and produces output shape (1,2,2,1).
     let has_expected_shape = stdout.contains("(1,2,2,1)");
-    let has_unsupported_error = stderr.contains("proprietary MIND runtime")
-        || stdout.contains("proprietary MIND runtime");
+    let has_unsupported_error =
+        stderr.contains("proprietary MIND runtime") || stdout.contains("proprietary MIND runtime");
 
     assert!(
         has_expected_shape || has_unsupported_error,
