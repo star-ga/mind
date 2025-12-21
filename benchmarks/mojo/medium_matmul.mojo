@@ -1,30 +1,35 @@
 """
-Mojo equivalent: Medium matrix multiplication
+Mojo equivalent: Medium matrix multiplication (128x256 * 256x64)
 MIND equivalent: benches/simple_benchmarks.rs - medium_matmul
-
-Matrix dimensions: [128, 256] × [256, 512] = [128, 512]
 """
 
-from tensor import Tensor, TensorShape
+from memory import UnsafePointer
 
-fn matmul_medium():
-    # Initialize tensors
-    let a = Tensor[DType.float32](TensorShape(128, 256))
-    let b = Tensor[DType.float32](TensorShape(256, 512))
-
-    # Fill with ones
-    for i in range(128):
-        for j in range(256):
-            a[i, j] = 1.0
-
-    for i in range(256):
-        for j in range(512):
-            b[i, j] = 1.0
-
-    # Matrix multiplication
-    let result = a @ b
-
-    print("Result shape:", result.shape())
+fn matmul(a: UnsafePointer[Float32], b: UnsafePointer[Float32], c: UnsafePointer[Float32], M: Int, N: Int, K: Int):
+    for i in range(M):
+        for j in range(N):
+            var sum: Float32 = 0.0
+            for k in range(K):
+                sum += a[i * K + k] * b[k * N + j]
+            c[i * N + j] = sum
 
 fn main():
-    matmul_medium()
+    var M = 128
+    var N = 64
+    var K = 256
+
+    var a = UnsafePointer[Float32].alloc(M * K)
+    var b = UnsafePointer[Float32].alloc(K * N)
+    var c = UnsafePointer[Float32].alloc(M * N)
+
+    for i in range(M * K):
+        a[i] = 1.0
+    for i in range(K * N):
+        b[i] = 1.0
+
+    matmul(a, b, c, M, N, K)
+    print("Done:", c[0])
+
+    a.free()
+    b.free()
+    c.free()
