@@ -57,4 +57,5 @@ echo "Sanitization complete. Running cargo deny with fetch disabled..." >&2
 
 # Run cargo deny with --disable-fetch to use our pre-fetched, sanitized database
 # This only disables advisory DB fetching, not cargo metadata (unlike --offline)
-cargo deny --disable-fetch "$@"
+# Note: --disable-fetch must come after the subcommand (e.g., `cargo deny check --disable-fetch`)
+cargo deny "$COMMAND" --disable-fetch "${@:2}"
