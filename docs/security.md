@@ -48,11 +48,16 @@ MIND uses `cargo-deny` for dependency auditing:
 
 ```bash
 # Check for known vulnerabilities
-cargo deny check
+tools/cargo-deny-sanitize.sh check
 
 # Audit all dependencies
 cargo audit
 ```
+
+> **Note:** Until `cargo-deny` ships CVSS v4 support, run it through
+> `tools/cargo-deny-sanitize.sh` so the advisory database is sanitized (the
+> script removes the CVSS v4 line from `RUSTSEC-2024-0445` after `cargo deny
+> fetch`). This keeps the check working without mutating the ignore list.
 
 The `deny.toml` configuration enforces:
 - License compliance
