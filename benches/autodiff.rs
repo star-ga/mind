@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mind::{compile_source, differentiate_function, CompileOptions};
 
 /// Simple linear function
@@ -123,21 +123,15 @@ fn attention_qk(
 fn bench_autodiff_simple(c: &mut Criterion) {
     let mut group = c.benchmark_group("autodiff_simple");
 
-    for (name, source) in [
-        ("linear", LINEAR),
-        ("mse_loss", MSE_LOSS),
-    ] {
-        let products = compile_source(source, &CompileOptions::default())
-            .expect("compilation failed");
+    for (name, source) in [("linear", LINEAR), ("mse_loss", MSE_LOSS)] {
+        let products =
+            compile_source(source, &CompileOptions::default()).expect("compilation failed");
 
         group.bench_with_input(
             BenchmarkId::new("gradient_gen", name),
             &products.ir,
             |b, ir| {
-                b.iter(|| {
-                    differentiate_function(black_box(ir), "main")
-                        .expect("autodiff failed")
-                });
+                b.iter(|| differentiate_function(black_box(ir), "main").expect("autodiff failed"));
             },
         );
     }
@@ -148,21 +142,15 @@ fn bench_autodiff_simple(c: &mut Criterion) {
 fn bench_autodiff_mlp(c: &mut Criterion) {
     let mut group = c.benchmark_group("autodiff_mlp");
 
-    for (name, source) in [
-        ("two_layer", TWO_LAYER_MLP),
-        ("five_layer", DEEP_NETWORK),
-    ] {
-        let products = compile_source(source, &CompileOptions::default())
-            .expect("compilation failed");
+    for (name, source) in [("two_layer", TWO_LAYER_MLP), ("five_layer", DEEP_NETWORK)] {
+        let products =
+            compile_source(source, &CompileOptions::default()).expect("compilation failed");
 
         group.bench_with_input(
             BenchmarkId::new("gradient_gen", name),
             &products.ir,
             |b, ir| {
-                b.iter(|| {
-                    differentiate_function(black_box(ir), "main")
-                        .expect("autodiff failed")
-                });
+                b.iter(|| differentiate_function(black_box(ir), "main").expect("autodiff failed"));
             },
         );
     }
@@ -173,17 +161,14 @@ fn bench_autodiff_mlp(c: &mut Criterion) {
 fn bench_autodiff_conv(c: &mut Criterion) {
     let mut group = c.benchmark_group("autodiff_conv");
 
-    let products = compile_source(CONV_NETWORK, &CompileOptions::default())
-        .expect("compilation failed");
+    let products =
+        compile_source(CONV_NETWORK, &CompileOptions::default()).expect("compilation failed");
 
     group.bench_with_input(
         BenchmarkId::new("gradient_gen", "conv_net"),
         &products.ir,
         |b, ir| {
-            b.iter(|| {
-                differentiate_function(black_box(ir), "main")
-                    .expect("autodiff failed")
-            });
+            b.iter(|| differentiate_function(black_box(ir), "main").expect("autodiff failed"));
         },
     );
 
@@ -198,17 +183,14 @@ fn bench_autodiff_complex_loss(c: &mut Criterion) {
         ("complex_multi_term", COMPLEX_LOSS),
         ("attention", ATTENTION_GRAD),
     ] {
-        let products = compile_source(source, &CompileOptions::default())
-            .expect("compilation failed");
+        let products =
+            compile_source(source, &CompileOptions::default()).expect("compilation failed");
 
         group.bench_with_input(
             BenchmarkId::new("gradient_gen", name),
             &products.ir,
             |b, ir| {
-                b.iter(|| {
-                    differentiate_function(black_box(ir), "main")
-                        .expect("autodiff failed")
-                });
+                b.iter(|| differentiate_function(black_box(ir), "main").expect("autodiff failed"));
             },
         );
     }
@@ -231,8 +213,7 @@ fn bench_autodiff_end_to_end(c: &mut Criterion) {
                 b.iter(|| {
                     let products = compile_source(black_box(src), &CompileOptions::default())
                         .expect("compilation failed");
-                    differentiate_function(&products.ir, "main")
-                        .expect("autodiff failed")
+                    differentiate_function(&products.ir, "main").expect("autodiff failed")
                 });
             },
         );

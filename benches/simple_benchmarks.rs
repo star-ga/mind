@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use mind::{compile_source, CompileOptions};
 
 /// Benchmark source programs that are known to work
@@ -62,12 +62,16 @@ fn bench_compile_small(c: &mut Criterion) {
     let mut group = c.benchmark_group("compile_small");
 
     for &(name, source) in &PROGRAMS[0..3] {
-        group.bench_with_input(BenchmarkId::new("parse_check_lower", name), &source, |b, src| {
-            b.iter(|| {
-                compile_source(black_box(src), &CompileOptions::default())
-                    .expect("compilation failed")
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("parse_check_lower", name),
+            &source,
+            |b, src| {
+                b.iter(|| {
+                    compile_source(black_box(src), &CompileOptions::default())
+                        .expect("compilation failed")
+                });
+            },
+        );
     }
 
     group.finish();
@@ -77,12 +81,16 @@ fn bench_compile_medium(c: &mut Criterion) {
     let mut group = c.benchmark_group("compile_medium");
 
     for &(name, source) in &PROGRAMS[3..] {
-        group.bench_with_input(BenchmarkId::new("parse_check_lower", name), &source, |b, src| {
-            b.iter(|| {
-                compile_source(black_box(src), &CompileOptions::default())
-                    .expect("compilation failed")
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new("parse_check_lower", name),
+            &source,
+            |b, src| {
+                b.iter(|| {
+                    compile_source(black_box(src), &CompileOptions::default())
+                        .expect("compilation failed")
+                });
+            },
+        );
     }
 
     group.finish();
