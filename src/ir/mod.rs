@@ -112,8 +112,8 @@ pub enum Instr {
     /// Given upstream gradient dy (NHWC) and filter (HWIO), computes dx (NHWC).
     Conv2dGradInput {
         dst: ValueId,
-        dy: ValueId,          // upstream gradient, NHWC
-        filter: ValueId,      // HWIO
+        dy: ValueId,             // upstream gradient, NHWC
+        filter: ValueId,         // HWIO
         input_shape: [usize; 4], // N, H, W, C - needed to allocate dst
         stride_h: usize,
         stride_w: usize,
@@ -123,8 +123,8 @@ pub enum Instr {
     /// Given upstream gradient dy (NHWC) and input (NHWC), computes dw (HWIO).
     Conv2dGradFilter {
         dst: ValueId,
-        input: ValueId,       // NHWC
-        dy: ValueId,          // upstream gradient, NHWC
+        input: ValueId,           // NHWC
+        dy: ValueId,              // upstream gradient, NHWC
         filter_shape: [usize; 4], // KH, KW, C, O - needed to allocate dst
         stride_h: usize,
         stride_w: usize,

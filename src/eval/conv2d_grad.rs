@@ -161,16 +161,8 @@ pub fn conv2d_output_shape(
     let (oh, ow) = match padding {
         ConvPadding::Valid => {
             // When kernel is larger than input, output is 0 (no valid positions)
-            let oh = if H >= KH {
-                (H - KH) / stride_h + 1
-            } else {
-                0
-            };
-            let ow = if W >= KW {
-                (W - KW) / stride_w + 1
-            } else {
-                0
-            };
+            let oh = if H >= KH { (H - KH) / stride_h + 1 } else { 0 };
+            let ow = if W >= KW { (W - KW) / stride_w + 1 } else { 0 };
             (oh, ow)
         }
         ConvPadding::Same => (ceil_div(H, stride_h), ceil_div(W, stride_w)),
@@ -230,7 +222,9 @@ mod tests {
     #[test]
     fn test_conv2d_vjp_same_stride2() {
         // Test SAME padding with stride 2
-        let x = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0];
+        let x = vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ];
         let x_shape = [1, 3, 4, 1];
         let w = vec![1.0, 1.0, 1.0, 1.0];
         let w_shape = [2, 2, 1, 1];
@@ -281,6 +275,10 @@ mod tests {
         let x_shape = [1, 2, 2, 1];
         let w_shape = [3, 3, 1, 1];
         let out = conv2d_output_shape(x_shape, w_shape, 1, 1, ConvPadding::Valid);
-        assert_eq!(out, [1, 0, 0, 1], "kernel > input should produce 0-sized output");
+        assert_eq!(
+            out,
+            [1, 0, 0, 1],
+            "kernel > input should produce 0-sized output"
+        );
     }
 }
