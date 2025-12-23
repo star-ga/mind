@@ -91,8 +91,14 @@ def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float
             let b1: Tensor[f32,(256)] = 0;
             let w2: Tensor[f32,(256,10)] = 1;
             let b2: Tensor[f32,(10)] = 0;
-            let h1 = tensor.relu(add(tensor.matmul(input, w1), b1));
-            add(tensor.matmul(h1, w2), b2)
+            let h1 = tensor.relu(tensor.matmul(input, w1) + b1);
+            tensor.matmul(h1, w2) + b2
+        """,
+        "conv2d": """
+            let x: Tensor[f32,(8,56,56,64)] = 0;
+            let w: Tensor[f32,(3,3,64,64)] = 1;
+            let b: Tensor[f32,(64)] = 0;
+            tensor.relu(tensor.conv2d(x, w) + b)
         """,
     }
 
@@ -165,9 +171,14 @@ def simple_mlp(x, w1, b1, w2, b2):
 
 
 # Benchmark 6: Conv2D
-def conv2d_layer(x, kernel):
-    # Simple 2D convolution
-    return jax.lax.conv(x, kernel, (1, 1), 'SAME')
+def conv2d_layer(x, kernel, bias):
+    # Conv2d + bias + ReLU (matches MIND implementation)
+    # JAX uses NHWC format like MIND
+    # x: (batch, height, width, in_channels)
+    # kernel: (kernel_h, kernel_w, in_channels, out_channels)
+    conv_out = jax.lax.conv(x, kernel, (1, 1), 'VALID')  # No padding
+    biased = conv_out + bias
+    return jax.nn.relu(biased)
 
 
 BENCHMARKS = {
@@ -195,6 +206,14 @@ BENCHMARKS = {
             jnp.ones(256),  # b1
             jnp.ones((256, 10)),  # w2
             jnp.ones(10),  # b2
+        ],
+    ),
+    "conv2d": (
+        conv2d_layer,
+        [
+            jnp.ones((8, 56, 56, 64)),  # x (NHWC format)
+            jnp.ones((3, 3, 64, 64)),   # kernel (H, W, C_in, C_out)
+            jnp.ones(64),               # bias
         ],
     ),
 }

@@ -104,8 +104,14 @@ def measure_mind_compile_time(program_name, num_samples=20):
             let b1: Tensor[f32,(256)] = 0;
             let w2: Tensor[f32,(256,10)] = 1;
             let b2: Tensor[f32,(10)] = 0;
-            let h1 = tensor.relu(add(tensor.matmul(input, w1), b1));
-            add(tensor.matmul(h1, w2), b2)
+            let h1 = tensor.relu(tensor.matmul(input, w1) + b1);
+            tensor.matmul(h1, w2) + b2
+        """,
+        "conv2d": """
+            let x: Tensor[f32,(8,56,56,64)] = 0;
+            let w: Tensor[f32,(3,3,64,64)] = 1;
+            let b: Tensor[f32,(64)] = 0;
+            tensor.relu(tensor.conv2d(x, w) + b)
         """,
     }
 
@@ -200,17 +206,17 @@ class SimpleMLP(torch.nn.Module):
         return x
 
 
-# Benchmark 6: Conv2D Layer (ResNet-50 style)
+# Benchmark 6: Conv2D Layer
 class Conv2DLayer(torch.nn.Module):
     def __init__(self):
         super().__init__()
-        self.conv = torch.nn.Conv2d(64, 64, kernel_size=3, padding=1)
-        self.bn = torch.nn.BatchNorm2d(64)
+        # Conv2d: in_channels=64, out_channels=64, kernel=3x3, no padding
+        self.conv = torch.nn.Conv2d(64, 64, kernel_size=3, padding=0, bias=True)
         self.relu = torch.nn.ReLU()
 
     def forward(self, x):
+        # PyTorch uses NCHW format: (batch, channels, height, width)
         x = self.conv(x)
-        x = self.bn(x)
         x = self.relu(x)
         return x
 
@@ -221,6 +227,7 @@ BENCHMARKS = {
     "medium_matmul": (MediumMatMul, (1, 128, 256)),
     "large_matmul": (LargeMatMul, (1, 512, 1024)),
     "simple_mlp": (SimpleMLP, (1, 784)),
+    "conv2d": (Conv2DLayer, (8, 64, 56, 56)),  # NCHW format for PyTorch
 }
 
 
