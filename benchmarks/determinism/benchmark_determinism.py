@@ -66,15 +66,17 @@ def compile_mind_program(source_code: str, temp_file: Path) -> bytes:
 
     This uses the MIND CLI to compile a program and returns the IR.
     """
-    # Write source to temp file
-    temp_file.write_text(source_code)
+    # Use the pre-built MIND CLI binary
+    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
 
-    # Compile using MIND CLI (assuming it's available)
-    # This will parse, type-check, and generate IR
+    if not mind_binary.exists():
+        raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
+
+    # Compile using MIND CLI eval command (outputs IR)
     result = subprocess.run(
-        ["cargo", "run", "--release", "--bin", "mind", "--", "compile", str(temp_file)],
+        [str(mind_binary), "eval", source_code],
         capture_output=True,
-        cwd=Path(__file__).parent.parent.parent,  # Go to repo root
+        text=False,  # Get bytes output
     )
 
     if result.returncode != 0:
@@ -224,21 +226,26 @@ def main():
     print()
 
     # Check if MIND CLI is available
-    try:
-        result = subprocess.run(
-            ["cargo", "run", "--release", "--bin", "mind", "--", "--version"],
-            capture_output=True,
-            cwd=Path(__file__).parent.parent.parent,
-            timeout=10,
-        )
-        if result.returncode == 0:
-            print(f"MIND CLI: Available")
-        else:
-            print(f"MIND CLI: Error - {result.stderr.decode()}")
-    except Exception as e:
-        print(f"MIND CLI: Not available - {e}")
+    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    if not mind_binary.exists():
+        print(f"MIND CLI: Not found at {mind_binary}")
         print("\nNOTE: This benchmark requires the MIND compiler to be built.")
         print("Run: cargo build --release --bin mind")
+        return 1
+
+    try:
+        result = subprocess.run(
+            [str(mind_binary), "--help"],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            print(f"MIND CLI: Available at {mind_binary}")
+        else:
+            print(f"MIND CLI: Error - {result.stderr.decode()}")
+            return 1
+    except Exception as e:
+        print(f"MIND CLI: Error running binary - {e}")
         return 1
 
     print()
