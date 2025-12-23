@@ -1,0 +1,49 @@
+{
+  "system_info": {
+    "platform": "Linux-4.4.0-x86_64-with-glibc2.39",
+    "python_version": "3.11.14",
+    "pytorch_version": "2.9.1+cpu",
+    "cpu": "x86_64",
+    "cuda_available": false
+  },
+  "methodology": {
+    "mind": "Compile-time autodiff (gradient IR generation time)",
+    "pytorch": "Runtime autodiff (backward pass execution time)",
+    "note": "Both measured on same machine for fair comparison"
+  },
+  "benchmarks": {
+    "simple_quadratic": {
+      "pytorch": {
+        "time_mean_us": 51.09649999326393,
+        "time_stdev_us": 10.83351391446141
+      },
+      "mind": {
+        "time_mean_us": 4720.228249999536,
+        "time_stdev_us": 265.77952531252765
+      },
+      "ratio": 0.010825006183391439
+    },
+    "small_mlp": {
+      "pytorch": {
+        "time_mean_us": 345.93349999454404,
+        "time_stdev_us": 131.31735583268733
+      },
+      "mind": {
+        "time_mean_us": 5000.818849998723,
+        "time_stdev_us": 368.9001665309983
+      },
+      "ratio": 0.0691753711483935
+    },
+    "matmul_chain": {
+      "pytorch": {
+        "time_mean_us": 428.77225000097496,
+        "time_stdev_us": 58.87982124832934
+      },
+      "mind": {
+        "time_mean_us": 4682.053699991684,
+        "time_stdev_us": 351.3582503707922
+      },
+      "ratio": 0.09157781552179475
+    }
+  }
+}
