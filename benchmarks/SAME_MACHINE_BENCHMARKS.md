@@ -271,13 +271,15 @@ Possible issues:
    - Code now checks for both `mind` and `mind.exe` on Windows
 
 2. **Conv2D Not Equivalent** (FIXED)
-   - Removed conv2d benchmark from both PyTorch and JAX comparisons
-   - MIND's conv2d implementation is incomplete
-   - Original benchmark was comparing apples-to-oranges (ReLU vs Conv2d+BatchNorm+ReLU)
+   - Updated conv2d benchmark to be properly equivalent across all frameworks
+   - MIND uses NHWC format: conv2d + bias + ReLU
+   - PyTorch uses NCHW format: Conv2d(64,64,3) + bias + ReLU
+   - JAX uses NHWC format: conv + bias + ReLU (matches MIND)
+   - Fixed MIND syntax: `add()` → `+` operator
 
 3. **Batch Size Inconsistency** (RESOLVED)
-   - Fixed by removing conv2d benchmark
-   - All remaining benchmarks use consistent shapes
+   - All benchmarks now use batch size of 8 for conv2d
+   - Consistent shapes across all frameworks
 
 ### **📋 Remaining Benchmarks**
 
@@ -287,6 +289,7 @@ After fixes, both PyTorch and JAX benchmarks include:
 - `medium_matmul`: 128×256 @ 256×512 matrix multiplication
 - `large_matmul`: 512×1024 @ 1024×512 matrix multiplication
 - `simple_mlp`: 2-layer neural network with ReLU
+- `conv2d`: 2D convolution (8×56×56×64) + bias + ReLU
 
 All with properly equivalent MIND programs.
 

@@ -110,7 +110,7 @@ def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float
     mind_binary_base = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
 
     # Handle Windows .exe extension
-    if platform.system().lower().startswith("win"):
+    if platform.system() == "Windows":
         mind_binary = mind_binary_base.with_suffix(".exe")
         if not mind_binary.exists():
             mind_binary = mind_binary_base
