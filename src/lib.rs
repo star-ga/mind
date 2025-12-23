@@ -85,3 +85,15 @@ pub mod ffi;
 
 #[cfg(feature = "pkg")]
 pub mod package;
+
+#[cfg(feature = "python-bindings")]
+pub mod python;
+
+#[cfg(feature = "python-bindings")]
+use pyo3::prelude::*;
+
+#[cfg(feature = "python-bindings")]
+#[pymodule]
+fn mind(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    python::register_module(m)
+}
