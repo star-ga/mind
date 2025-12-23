@@ -40,8 +40,10 @@ python benchmark_real_autograd.py
 ## Expected Output
 
 ```
-=== AUTODIFF COMPARISON: MIND vs PyTorch ===
+================================================================================
+AUTODIFF COMPARISON: MIND vs PyTorch
 (Both measured on the SAME machine)
+================================================================================
 
 MIND: Compile-time autodiff (gradient IR generation)
 PyTorch: Runtime autodiff (backward pass execution)

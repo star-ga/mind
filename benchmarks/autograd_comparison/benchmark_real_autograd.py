@@ -47,7 +47,10 @@ def measure_pytorch_backward(forward_fn, device="cpu"):
     """
     Measure PyTorch backward pass time (runtime autodiff).
 
-    Returns (time_us, memory_bytes).
+    Returns:
+        Dict[str, float]: A dictionary with:
+            - "time_mean_us": Mean backward pass time in microseconds.
+            - "time_stdev_us": Standard deviation of backward pass time in microseconds.
     """
     times = []
 
@@ -86,7 +89,10 @@ def measure_mind_autodiff_time(program: str, num_samples: int = 20):
     1. Compile the forward pass
     2. Generate gradient IR
 
-    Returns compilation time in microseconds.
+    Returns:
+        Dict[str, float]: A dictionary with compilation time statistics in microseconds:
+            - "time_mean_us": Mean compilation time
+            - "time_stdev_us": Standard deviation of compilation time
     """
     mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
     if not mind_binary.exists():
