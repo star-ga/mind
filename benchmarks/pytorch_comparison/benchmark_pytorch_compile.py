@@ -71,15 +71,19 @@ def measure_torch_compile_time(model_fn, input_shape, device="cpu"):
     return (end - start) * 1_000_000
 
 
-def measure_mind_compile_time(program_name):
+def get_mind_baseline_time(program_name):
     """
-    Measure MIND compilation time by running cargo bench.
+    Get MIND compilation baseline time from previous benchmarks.
 
-    Returns compilation time in microseconds from benchmark results.
+    NOTE: These are BASELINE values from prior benchmark runs (see mojo_results.json),
+    NOT measurements performed during this benchmark run. For scientifically rigorous
+    comparison, MIND should be measured on the same system as PyTorch.
+
+    Returns compilation time in microseconds from previous benchmark results.
     """
-    # MIND baseline results from benches/simple_benchmarks.rs
-    # These are measured on the same machine
-    mind_results = {
+    # MIND baseline results from benches/simple_benchmarks.rs and mojo_results.json
+    # WARNING: These may have been measured on different hardware than current PyTorch measurements
+    mind_baselines = {
         "scalar_math": 22.0,  # From mojo_results.json
         "small_matmul": 41.1,
         "medium_matmul": 40.6,
@@ -88,7 +92,7 @@ def measure_mind_compile_time(program_name):
         "conv2d": 50.0,  # Estimated
     }
 
-    return mind_results.get(program_name, 40.0)  # Default ~40µs
+    return mind_baselines.get(program_name, 40.0)  # Default ~40µs
 
 
 # Benchmark 1: Scalar Math Operations
@@ -291,7 +295,7 @@ def main():
     for name, (model_fn, input_shape) in BENCHMARKS.items():
         try:
             pytorch_results[name] = run_benchmark(name, model_fn, input_shape, device)
-            mind_results[name] = measure_mind_compile_time(name)
+            mind_results[name] = get_mind_baseline_time(name)
             print(f"  ✓ {name}: PyTorch={format_time(pytorch_results[name]['mean_us'])}, MIND={format_time(mind_results[name])}")
             print()
         except Exception as e:

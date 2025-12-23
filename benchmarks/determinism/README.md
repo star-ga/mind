@@ -82,18 +82,18 @@ This proves:
 - Verifiable builds
 
 ### For Patents
-- Novel feature in ML compilers
-- Most ML frameworks are **non-deterministic** (PyTorch, TensorFlow)
-- MIND guarantees determinism
+- Strong, explicitly specified determinism guarantee for ML compilation
+- Many ML frameworks offer *configurable* determinism; guarantees often depend on flags, operator coverage, and hardware
+- MIND aims to provide determinism by default at the compilation level
 
 ## Comparison with Other Frameworks
 
-| Framework | Deterministic Compilation? |
-|-----------|---------------------------|
-| **MIND** | ✅ **Yes** (proven here) |
-| PyTorch | ❌ No (dynamic graphs, JIT) |
-| TensorFlow | ❌ No (AutoGraph, XLA) |
-| JAX | ⚠️ Partially (JIT may vary) |
+| Framework | Deterministic Compilation Support? |
+|-----------|------------------------------------|
+| **MIND** | ✅ Yes, by design (bitwise-identical artifacts in this benchmark) |
+| PyTorch | ✅ Configurable (deterministic algorithms / backend settings; subject to op and hardware limitations) |
+| TensorFlow | ✅ Configurable (deterministic ops and seeds when enabled; subject to op and hardware limitations) |
+| JAX | ✅ Deterministic for pure functional programs with fixed PRNG keys; some ops/hardware may still introduce nondeterminism |
 
 ## Technical Details
 
