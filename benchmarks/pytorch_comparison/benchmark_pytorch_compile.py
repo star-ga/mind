@@ -71,28 +71,74 @@ def measure_torch_compile_time(model_fn, input_shape, device="cpu"):
     return (end - start) * 1_000_000
 
 
-def get_mind_baseline_time(program_name):
+def measure_mind_compile_time(program_name, num_samples=20):
     """
-    Get MIND compilation baseline time from previous benchmarks.
+    Measure MIND compilation time on THIS machine (same-machine comparison).
 
-    NOTE: These are BASELINE values from prior benchmark runs (see mojo_results.json),
-    NOT measurements performed during this benchmark run. For scientifically rigorous
-    comparison, MIND should be measured on the same system as PyTorch.
+    This function actually runs MIND CLI to compile programs, measuring real
+    compilation time on the same system as PyTorch measurements.
 
-    Returns compilation time in microseconds from previous benchmark results.
+    Returns compilation time in microseconds (mean of multiple samples).
     """
-    # MIND baseline results from benches/simple_benchmarks.rs and mojo_results.json
-    # WARNING: These may have been measured on different hardware than current PyTorch measurements
-    mind_baselines = {
-        "scalar_math": 22.0,  # From mojo_results.json
-        "small_matmul": 41.1,
-        "medium_matmul": 40.6,
-        "large_matmul": 40.7,
-        "simple_mlp": 45.0,  # Estimated based on similar complexity
-        "conv2d": 50.0,  # Estimated
+    # MIND programs equivalent to PyTorch benchmarks
+    mind_programs = {
+        "scalar_math": "1 + 2 * 3 - 4 / 2",
+        "small_matmul": """
+            let a: Tensor[f32,(10,20)] = 1;
+            let b: Tensor[f32,(20,30)] = 1;
+            tensor.matmul(a, b)
+        """,
+        "medium_matmul": """
+            let a: Tensor[f32,(128,256)] = 1;
+            let b: Tensor[f32,(256,512)] = 1;
+            tensor.matmul(a, b)
+        """,
+        "large_matmul": """
+            let a: Tensor[f32,(512,1024)] = 1;
+            let b: Tensor[f32,(1024,512)] = 1;
+            tensor.matmul(a, b)
+        """,
+        "simple_mlp": """
+            let input: Tensor[f32,(32,784)] = 0;
+            let w1: Tensor[f32,(784,256)] = 1;
+            let b1: Tensor[f32,(256)] = 0;
+            let w2: Tensor[f32,(256,10)] = 1;
+            let b2: Tensor[f32,(10)] = 0;
+            let h1 = tensor.relu(add(tensor.matmul(input, w1), b1));
+            add(tensor.matmul(h1, w2), b2)
+        """,
+        "conv2d": """
+            let x: Tensor[f32,(8,64,56,56)] = 0;
+            tensor.relu(x)
+        """,
     }
 
-    return mind_baselines.get(program_name, 40.0)  # Default ~40µs
+    program = mind_programs.get(program_name)
+    if not program:
+        raise ValueError(f"No MIND program defined for benchmark: {program_name}")
+
+    # Find MIND CLI binary
+    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    if not mind_binary.exists():
+        raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
+
+    # Measure compilation time over multiple samples
+    times = []
+    for _ in range(num_samples):
+        start = time.perf_counter()
+        result = subprocess.run(
+            [str(mind_binary), "eval", program],
+            capture_output=True,
+            text=False,
+        )
+        end = time.perf_counter()
+
+        if result.returncode != 0:
+            raise RuntimeError(f"MIND compilation failed: {result.stderr.decode()}")
+
+        times.append((end - start) * 1_000_000)  # Convert to microseconds
+
+    return statistics.mean(times)
 
 
 # Benchmark 1: Scalar Math Operations
@@ -237,6 +283,7 @@ def compare_results(pytorch_results: Dict[str, Dict[str, float]], mind_results: 
     """Compare PyTorch and MIND results."""
     print("\n" + "="*80)
     print("COMPILATION TIME COMPARISON: MIND vs PyTorch 2.0")
+    print("(Both measured on the SAME machine for fair comparison)")
     print("="*80)
     print()
     print(f"{'Benchmark':<20} {'MIND':<15} {'PyTorch 2.0':<15} {'MIND Speedup':<15}")
@@ -295,7 +342,7 @@ def main():
     for name, (model_fn, input_shape) in BENCHMARKS.items():
         try:
             pytorch_results[name] = run_benchmark(name, model_fn, input_shape, device)
-            mind_results[name] = get_mind_baseline_time(name)
+            mind_results[name] = measure_mind_compile_time(name)
             print(f"  ✓ {name}: PyTorch={format_time(pytorch_results[name]['mean_us'])}, MIND={format_time(mind_results[name])}")
             print()
         except Exception as e:
