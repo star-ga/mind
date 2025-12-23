@@ -109,33 +109,37 @@ def matmul_chain(device="cpu"):
     return loss, [A, B, C, D]
 
 
-# MIND programs
+# MIND programs (using proper function syntax for autodiff)
 MIND_PROGRAMS = {
-    "simple_quadratic": """
-        let x: Tensor[f32,(1000)] = 0;
-        let x_squared = x * x;
-        tensor.sum(x_squared)
-    """,
-    "small_mlp": """
-        let input: Tensor[f32,(32,784)] = 0;
-        let w1: Tensor[f32,(784,256)] = 1;
-        let b1: Tensor[f32,(256)] = 0;
-        let w2: Tensor[f32,(256,10)] = 1;
-        let b2: Tensor[f32,(10)] = 0;
-        let h1 = tensor.relu(tensor.matmul(input, w1) + b1);
-        let out = tensor.matmul(h1, w2) + b2;
-        tensor.sum(out)
-    """,
-    "matmul_chain": """
-        let A: Tensor[f32,(64,128)] = 1;
-        let B: Tensor[f32,(128,256)] = 1;
-        let C: Tensor[f32,(256,128)] = 1;
-        let D: Tensor[f32,(128,64)] = 1;
-        let AB = tensor.matmul(A, B);
-        let ABC = tensor.matmul(AB, C);
-        let ABCD = tensor.matmul(ABC, D);
-        tensor.sum(ABCD)
-    """,
+    "simple_quadratic": r"""fn main(x: Tensor<F32, [1000]>) -> Tensor<F32, []> {
+    let x_squared = mul(x, x);
+    tensor.sum(x_squared)
+}""",
+    "small_mlp": r"""fn main(
+    input: Tensor<F32, [32, 784]>,
+    w1: Tensor<F32, [784, 256]>,
+    b1: Tensor<F32, [256]>,
+    w2: Tensor<F32, [256, 10]>,
+    b2: Tensor<F32, [10]>
+) -> Tensor<F32, []> {
+    let h1 = tensor.matmul(input, w1);
+    let h1_bias = add(h1, b1);
+    let h1_relu = tensor.relu(h1_bias);
+    let out = tensor.matmul(h1_relu, w2);
+    let out_bias = add(out, b2);
+    tensor.sum(out_bias)
+}""",
+    "matmul_chain": r"""fn main(
+    A: Tensor<F32, [64, 128]>,
+    B: Tensor<F32, [128, 256]>,
+    C: Tensor<F32, [256, 128]>,
+    D: Tensor<F32, [128, 64]>
+) -> Tensor<F32, []> {
+    let AB = tensor.matmul(A, B);
+    let ABC = tensor.matmul(AB, C);
+    let ABCD = tensor.matmul(ABC, D);
+    tensor.sum(ABCD)
+}""",
 }
 
 BENCHMARKS = {
