@@ -94,10 +94,6 @@ def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float
             let h1 = tensor.relu(add(tensor.matmul(input, w1), b1));
             add(tensor.matmul(h1, w2), b2)
         """,
-        "conv2d": """
-            let x: Tensor[f32,(1,64,56,56)] = 0;
-            tensor.relu(x)
-        """,
     }
 
     program = mind_programs.get(program_name)
@@ -105,7 +101,16 @@ def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float
         raise ValueError(f"No MIND program defined for benchmark: {program_name}")
 
     # Find MIND CLI binary
-    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    mind_binary_base = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+
+    # Handle Windows .exe extension
+    if platform.system().lower().startswith("win"):
+        mind_binary = mind_binary_base.with_suffix(".exe")
+        if not mind_binary.exists():
+            mind_binary = mind_binary_base
+    else:
+        mind_binary = mind_binary_base
+
     if not mind_binary.exists():
         raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
 
@@ -190,13 +195,6 @@ BENCHMARKS = {
             jnp.ones(256),  # b1
             jnp.ones((256, 10)),  # w2
             jnp.ones(10),  # b2
-        ],
-    ),
-    "conv2d": (
-        conv2d_layer,
-        [
-            jnp.ones((1, 64, 56, 56)),  # x (NCHW format)
-            jnp.ones((64, 64, 3, 3)),  # kernel
         ],
     ),
 }
