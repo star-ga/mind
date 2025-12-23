@@ -60,14 +60,32 @@ TEST_PROGRAMS = {
 }
 
 
-def compile_mind_program(source_code: str, temp_file: Path) -> bytes:
+def get_mind_binary() -> Path:
+    """
+    Get the path to the MIND CLI binary.
+
+    Handles Windows .exe extension automatically.
+    """
+    mind_binary_base = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+
+    # Handle Windows .exe extension
+    if platform.system() == "Windows":
+        mind_binary = mind_binary_base.with_suffix(".exe")
+        if not mind_binary.exists():
+            mind_binary = mind_binary_base
+    else:
+        mind_binary = mind_binary_base
+
+    return mind_binary
+
+
+def compile_mind_program(source_code: str) -> bytes:
     """
     Compile MIND program and return the IR output bytes.
 
     This uses the MIND CLI to compile a program and returns the IR.
     """
-    # Use the pre-built MIND CLI binary
-    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    mind_binary = get_mind_binary()
 
     if not mind_binary.exists():
         raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
@@ -100,8 +118,6 @@ def test_determinism(name: str, source_code: str, num_runs: int = NUM_RUNS) -> D
     print(f"\nTesting determinism: {name}")
     print("-" * 80)
 
-    temp_file = Path(f"/tmp/mind_determinism_test_{name}.mind")
-
     hashes = []
     compile_times = []
 
@@ -110,7 +126,7 @@ def test_determinism(name: str, source_code: str, num_runs: int = NUM_RUNS) -> D
 
         start = time.perf_counter()
         try:
-            output = compile_mind_program(source_code, temp_file)
+            output = compile_mind_program(source_code)
             compile_time = (time.perf_counter() - start) * 1_000_000  # Convert to µs
 
             hash_value = compute_hash(output)
@@ -226,7 +242,7 @@ def main():
     print()
 
     # Check if MIND CLI is available
-    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    mind_binary = get_mind_binary()
     if not mind_binary.exists():
         print(f"MIND CLI: Not found at {mind_binary}")
         print("\nNOTE: This benchmark requires the MIND compiler to be built.")
