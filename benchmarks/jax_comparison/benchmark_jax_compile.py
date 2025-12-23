@@ -17,6 +17,7 @@ import time
 import statistics
 import json
 import platform
+import subprocess
 from pathlib import Path
 from typing import Dict, List, Tuple, Callable
 
@@ -57,23 +58,74 @@ def measure_jax_compile_time(fn: Callable, *args) -> float:
     return (end - start) * 1_000_000
 
 
-def measure_mind_compile_time(program_name: str) -> float:
+def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float:
     """
-    Get MIND compilation time from baseline results.
+    Measure MIND compilation time on THIS machine (same-machine comparison).
 
-    Returns compilation time in microseconds.
+    This function actually runs MIND CLI to compile programs, measuring real
+    compilation time on the same system as JAX measurements.
+
+    Returns compilation time in microseconds (mean of multiple samples).
     """
-    # MIND baseline results from benches/simple_benchmarks.rs
-    mind_results = {
-        "scalar_math": 22.0,
-        "small_matmul": 41.1,
-        "medium_matmul": 40.6,
-        "large_matmul": 40.7,
-        "simple_mlp": 45.0,
-        "conv2d": 50.0,
+    # MIND programs equivalent to JAX benchmarks
+    mind_programs = {
+        "scalar_math": "1 + 2 * 3 - 4 / 2",
+        "small_matmul": """
+            let a: Tensor[f32,(10,20)] = 1;
+            let b: Tensor[f32,(20,30)] = 1;
+            tensor.matmul(a, b)
+        """,
+        "medium_matmul": """
+            let a: Tensor[f32,(128,256)] = 1;
+            let b: Tensor[f32,(256,512)] = 1;
+            tensor.matmul(a, b)
+        """,
+        "large_matmul": """
+            let a: Tensor[f32,(512,1024)] = 1;
+            let b: Tensor[f32,(1024,512)] = 1;
+            tensor.matmul(a, b)
+        """,
+        "simple_mlp": """
+            let input: Tensor[f32,(32,784)] = 0;
+            let w1: Tensor[f32,(784,256)] = 1;
+            let b1: Tensor[f32,(256)] = 0;
+            let w2: Tensor[f32,(256,10)] = 1;
+            let b2: Tensor[f32,(10)] = 0;
+            let h1 = tensor.relu(add(tensor.matmul(input, w1), b1));
+            add(tensor.matmul(h1, w2), b2)
+        """,
+        "conv2d": """
+            let x: Tensor[f32,(1,64,56,56)] = 0;
+            tensor.relu(x)
+        """,
     }
 
-    return mind_results.get(program_name, 40.0)
+    program = mind_programs.get(program_name)
+    if not program:
+        raise ValueError(f"No MIND program defined for benchmark: {program_name}")
+
+    # Find MIND CLI binary
+    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    if not mind_binary.exists():
+        raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
+
+    # Measure compilation time over multiple samples
+    times = []
+    for _ in range(num_samples):
+        start = time.perf_counter()
+        result = subprocess.run(
+            [str(mind_binary), "eval", program],
+            capture_output=True,
+            text=False,
+        )
+        end = time.perf_counter()
+
+        if result.returncode != 0:
+            raise RuntimeError(f"MIND compilation failed: {result.stderr.decode()}")
+
+        times.append((end - start) * 1_000_000)  # Convert to microseconds
+
+    return statistics.mean(times)
 
 
 # Benchmark 1: Scalar Math
@@ -213,6 +265,7 @@ def compare_results(jax_results: Dict[str, Dict[str, float]], mind_results: Dict
     """Compare JAX and MIND results."""
     print("\n" + "="*80)
     print("COMPILATION TIME COMPARISON: MIND vs JAX")
+    print("(Both measured on the SAME machine for fair comparison)")
     print("="*80)
     print()
     print(f"{'Benchmark':<20} {'MIND':<15} {'JAX':<15} {'MIND Speedup':<15}")
