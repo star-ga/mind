@@ -143,10 +143,6 @@ def test_determinism(name: str, source_code: str, num_runs: int = NUM_RUNS) -> D
                 "error": str(e),
             }
 
-    # Clean up
-    if temp_file.exists():
-        temp_file.unlink()
-
     # Verify all hashes are identical
     unique_hashes = set(hashes)
     is_deterministic = len(unique_hashes) == 1
