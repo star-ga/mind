@@ -91,12 +91,14 @@ def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float
             let b1: Tensor[f32,(256)] = 0;
             let w2: Tensor[f32,(256,10)] = 1;
             let b2: Tensor[f32,(10)] = 0;
-            let h1 = tensor.relu(add(tensor.matmul(input, w1), b1));
-            add(tensor.matmul(h1, w2), b2)
+            let h1 = tensor.relu(tensor.matmul(input, w1) + b1);
+            tensor.matmul(h1, w2) + b2
         """,
         "conv2d": """
-            let x: Tensor[f32,(1,64,56,56)] = 0;
-            tensor.relu(x)
+            let x: Tensor[f32,(8,56,56,64)] = 0;
+            let w: Tensor[f32,(3,3,64,64)] = 1;
+            let b: Tensor[f32,(64)] = 0;
+            tensor.relu(tensor.conv2d(x, w) + b)
         """,
     }
 
@@ -105,7 +107,16 @@ def measure_mind_compile_time(program_name: str, num_samples: int = 20) -> float
         raise ValueError(f"No MIND program defined for benchmark: {program_name}")
 
     # Find MIND CLI binary
-    mind_binary = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+    mind_binary_base = Path(__file__).parent.parent.parent / "target" / "release" / "mind"
+
+    # Handle Windows .exe extension
+    if platform.system().lower().startswith("win"):
+        mind_binary = mind_binary_base.with_suffix(".exe")
+        if not mind_binary.exists():
+            mind_binary = mind_binary_base
+    else:
+        mind_binary = mind_binary_base
+
     if not mind_binary.exists():
         raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
 
@@ -160,9 +171,14 @@ def simple_mlp(x, w1, b1, w2, b2):
 
 
 # Benchmark 6: Conv2D
-def conv2d_layer(x, kernel):
-    # Simple 2D convolution
-    return jax.lax.conv(x, kernel, (1, 1), 'SAME')
+def conv2d_layer(x, kernel, bias):
+    # Conv2d + bias + ReLU (matches MIND implementation)
+    # JAX uses NHWC format like MIND
+    # x: (batch, height, width, in_channels)
+    # kernel: (kernel_h, kernel_w, in_channels, out_channels)
+    conv_out = jax.lax.conv(x, kernel, (1, 1), 'VALID')  # No padding
+    biased = conv_out + bias
+    return jax.nn.relu(biased)
 
 
 BENCHMARKS = {
@@ -195,8 +211,9 @@ BENCHMARKS = {
     "conv2d": (
         conv2d_layer,
         [
-            jnp.ones((1, 64, 56, 56)),  # x (NCHW format)
-            jnp.ones((64, 64, 3, 3)),  # kernel
+            jnp.ones((8, 56, 56, 64)),  # x (NHWC format)
+            jnp.ones((3, 3, 64, 64)),   # kernel (H, W, C_in, C_out)
+            jnp.ones(64),               # bias
         ],
     ),
 }
