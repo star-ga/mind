@@ -426,7 +426,11 @@ fn format_type(dtype: &DType, shape: &[ShapeDim]) -> String {
         dtype.as_str().to_string()
     } else {
         let shape_str = format_shape_dims(shape);
-        format!("[{};{}]", dtype.as_str(), &shape_str[1..shape_str.len() - 1])
+        format!(
+            "[{};{}]",
+            dtype.as_str(),
+            &shape_str[1..shape_str.len() - 1]
+        )
     }
 }
 
