@@ -30,7 +30,7 @@
 //! mind-ai --mode no_io,no_unsafe
 //! ```
 
-use std::collections::HashMap;
+
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -86,7 +86,7 @@ struct SessionMode {
 
 impl SessionMode {
     fn parse(s: &str) -> Self {
-        let mut _mode = SessionMode::default();
+        let mut mode = SessionMode::default();
         for flag in s.split(',') {
             match flag.trim() {
                 "no_io" => mode.no_io = true,
@@ -607,12 +607,14 @@ fn main() {
         };
 
         // Handle heredoc
-        if let Some((seq, ref cmd, ref mut content)) = heredoc_buffer {
+        if let Some((seq, cmd, ref mut content)) = heredoc_buffer.as_mut() {
             if line.trim() == "EOF" {
                 // Process accumulated heredoc
                 let full_args = content.clone();
+                let cmd_clone = cmd.clone();
+                let seq_val = *seq;
                 heredoc_buffer = None;
-                if let Some(response) = server.dispatch(seq, &cmd, &full_args) {
+                if let Some(response) = server.dispatch(seq_val, &cmd_clone, &full_args) {
                     writeln!(stdout, "{}", response).ok();
                     stdout.flush().ok();
                 }
