@@ -404,8 +404,7 @@ impl MapServer {
 
                 // Extract after position
                 let _after_id = if let Some(rest) = args.strip_prefix("after=N") {
-                    rest
-                        .split_whitespace()
+                    rest.split_whitespace()
                         .next()
                         .and_then(|s| s.parse::<usize>().ok())
                 } else {
