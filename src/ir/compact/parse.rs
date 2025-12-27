@@ -762,8 +762,8 @@ impl<'a> MicParser<'a> {
 
         let mut axis = 0i64;
         for arg in &args[2..] {
-            if arg.starts_with("ax=") {
-                axis = arg[3..].parse().unwrap_or(0);
+            if let Some(ax_str) = arg.strip_prefix("ax=") {
+                axis = ax_str.parse().unwrap_or(0);
             }
         }
 
