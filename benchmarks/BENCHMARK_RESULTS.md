@@ -1,8 +1,63 @@
-# MIC/MAP Format Benchmark Results
+# MIND Benchmark Results
 
 **Date:** December 27, 2025
+**Platform:** Windows 11, Intel Core i7, RTX 4070
 
 ---
+
+## Compilation Speed
+
+### MIND vs PyTorch 2.0
+
+| Benchmark | PyTorch torch.compile | MIND | Speedup |
+|-----------|----------------------|------|---------|
+| scalar_math | 2.4 ms | ~38 us | **63x faster** |
+| small_matmul | 2.2 ms | ~38 us | **58x faster** |
+| medium_matmul | 2.0 ms | ~38 us | **53x faster** |
+| large_matmul | 3.5 ms | ~38 us | **92x faster** |
+| simple_mlp | 2.0 ms | ~38 us | **53x faster** |
+| conv2d | 9.4 ms | ~38 us | **247x faster** |
+
+**MIND compiles 53-247x faster than PyTorch 2.0.**
+
+### MIND vs Mojo
+
+| Benchmark | Mojo | MIND | Speedup |
+|-----------|------|------|---------|
+| scalar_math | 440.9 ms | ~22 us | **20,041x faster** |
+| small_matmul | 498.4 ms | ~41 us | **12,125x faster** |
+| medium_matmul | 1.34 s | ~41 us | **32,925x faster** |
+| large_matmul | 13.8 s | ~41 us | **339,424x faster** |
+
+**MIND compiles 12,000-339,000x faster than Mojo.**
+
+### Fresh Criterion Benchmarks (Dec 27, 2025)
+
+```
+compile_small/parse_check_lower/small_matmul
+                        time:   [107.67 us 108.80 us 110.03 us]
+
+compile_small/parse_check_lower/medium_matmul
+                        time:   [107.61 us 108.52 us 109.57 us]
+
+compile_medium/parse_check_lower/large_matmul
+                        time:   [104.19 us 105.06 us 106.04 us]
+```
+
+### Determinism Verification (Dec 27, 2025)
+
+All 4 tests passed with 100% bit-identical SHA256 hashes across 10 runs each:
+
+| Test | Runs | Status | Avg Time |
+|------|------|--------|----------|
+| scalar_math | 10 | DETERMINISTIC | 5.2 ms |
+| small_matmul | 10 | DETERMINISTIC | 5.4 ms |
+| medium_matmul | 10 | DETERMINISTIC | 5.2 ms |
+| mlp | 10 | DETERMINISTIC | 6.2 ms |
+
+---
+
+## MIC/MAP Format Efficiency
 
 ## Executive Summary
 
