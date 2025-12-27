@@ -228,7 +228,7 @@ impl MapServer {
         // Parse args
         let mut mic_ver = 1u32;
         let mut map_ver = 1u32;
-        let mut _mode = SessionMode::default();
+        let mut mode = SessionMode::default();
 
         for arg in args.split_whitespace() {
             if arg.starts_with("mic=") {
@@ -236,7 +236,7 @@ impl MapServer {
             } else if arg.starts_with("map=") {
                 map_ver = arg[4..].parse().unwrap_or(1);
             } else if arg.starts_with("mode=") {
-                _mode = SessionMode::parse(&arg[5..]);
+                mode = SessionMode::parse(&arg[5..]);
             }
         }
 
@@ -550,14 +550,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Parse arguments
-    let mut _mode = SessionMode::default();
+    let mut mode = SessionMode::default();
     let mut tcp_port: Option<u16> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--mode" if i + 1 < args.len() => {
-                _mode = SessionMode::parse(&args[i + 1]);
+                mode = SessionMode::parse(&args[i + 1]);
                 i += 2;
             }
             "--tcp" if i + 1 < args.len() => {
