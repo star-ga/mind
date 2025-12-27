@@ -63,8 +63,7 @@ impl StringInterner {
         if self.strings.len() >= MAX_INTERNED_STRINGS {
             eprintln!(
                 "[ERROR] String interner at capacity ({}), refusing to intern '{}' - FAIL FAST",
-                MAX_INTERNED_STRINGS,
-                s
+                MAX_INTERNED_STRINGS, s
             );
             return None; // Fail-fast: caller must handle this
         }
@@ -197,6 +196,9 @@ mod tests {
         // Verify that the interner has a documented capacity limit
         // This is a documentation test to ensure the limit exists
         assert!(super::MAX_INTERNED_STRINGS > 0);
-        assert!(super::MAX_INTERNED_STRINGS <= 1_000_000, "Limit should be reasonable");
+        assert!(
+            super::MAX_INTERNED_STRINGS <= 1_000_000,
+            "Limit should be reasonable"
+        );
     }
 }
