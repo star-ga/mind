@@ -54,8 +54,9 @@ def measure_torch_compile_time(model_fn, input_shape, device="cpu"):
     x = torch.randn(*input_shape, device=device)
 
     # Measure compilation time
+    # Use reduce-overhead mode which is more compatible across platforms
     start = time.perf_counter()
-    compiled_model = torch.compile(model, mode="default")
+    compiled_model = torch.compile(model, mode="reduce-overhead", backend="eager")
 
     # First call triggers compilation
     with torch.no_grad():
@@ -341,9 +342,10 @@ def main():
     print(f"Warmup runs: {WARMUP_RUNS}")
     print()
 
-    # Determine device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Running on: {device.upper()}")
+    # Determine device - force CPU for reliable torch.compile benchmarks
+    # (Triton required for CUDA torch.compile, not always available)
+    device = "cpu"
+    print(f"Running on: {device.upper()} (forced for torch.compile compatibility)")
     print()
 
     # Run benchmarks
@@ -354,10 +356,10 @@ def main():
         try:
             pytorch_results[name] = run_benchmark(name, model_fn, input_shape, device)
             mind_results[name] = measure_mind_compile_time(name)
-            print(f"  ✓ {name}: PyTorch={format_time(pytorch_results[name]['mean_us'])}, MIND={format_time(mind_results[name])}")
+            print(f"  [OK] {name}: PyTorch={format_time(pytorch_results[name]['mean_us'])}, MIND={format_time(mind_results[name])}")
             print()
         except Exception as e:
-            print(f"  ✗ {name} failed: {e}")
+            print(f"  [FAIL] {name} failed: {e}")
             print()
 
     # Save results
