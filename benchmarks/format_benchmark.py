@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
-MIC/MAP vs JSON/TOML Benchmark
+MIC/MAP vs JSON/TOML/TOON Benchmark
 Compares token efficiency, file size, and parse speed
 """
 
 import json
 import time
+import sys
+
+# Fix encoding for Windows
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # ============================================================
 # SAMPLE DATA
@@ -186,12 +190,118 @@ def benchmark(name, text):
         "lines": len(text.strip().split("\n")),
     }
 
+# TOON format (Token-Oriented Object Notation)
+SAMPLE_TOON = """version: 1
+symbols[4]: input,weight,bias,output
+outputs[1]: 5
+types[4]{id,dtype,shape}:
+  0,f32,B:784
+  1,f32,784:256
+  2,f32,256
+  3,f32,B:256
+nodes[6]{id,op,inputs,type_id}:
+  0,param,S0,0
+  1,param,S1,1
+  2,param,S2,2
+  3,matmul,N0:N1,3
+  4,add,N3:N2,3
+  5,relu,N4,3"""
+
+# TOML format
+SAMPLE_TOML = """version = 1
+symbols = ["input", "weight", "bias", "output"]
+outputs = [5]
+
+[[types]]
+id = 0
+dtype = "f32"
+shape = ["B", 784]
+
+[[types]]
+id = 1
+dtype = "f32"
+shape = [784, 256]
+
+[[types]]
+id = 2
+dtype = "f32"
+shape = [256]
+
+[[types]]
+id = 3
+dtype = "f32"
+shape = ["B", 256]
+
+[[nodes]]
+id = 0
+op = "param"
+symbol = 0
+type_id = 0
+
+[[nodes]]
+id = 1
+op = "param"
+symbol = 1
+type_id = 1
+
+[[nodes]]
+id = 2
+op = "param"
+symbol = 2
+type_id = 2
+
+[[nodes]]
+id = 3
+op = "matmul"
+inputs = [0, 1]
+type_id = 3
+
+[[nodes]]
+id = 4
+op = "add"
+inputs = [3, 2]
+type_id = 3
+
+[[nodes]]
+id = 5
+op = "relu"
+inputs = [4]
+type_id = 3"""
+
+def toon_parse(text):
+    """Parse TOON format (simplified)"""
+    result = {"symbols": [], "types": [], "nodes": [], "outputs": []}
+    lines = text.strip().split("\n")
+    for line in lines:
+        line = line.strip()
+        if line.startswith("version:"):
+            result["version"] = int(line.split(":")[1].strip())
+        elif line.startswith("symbols"):
+            symbols = line.split(":")[1].strip()
+            result["symbols"] = symbols.split(",")
+        elif "," in line and not line.startswith("types") and not line.startswith("nodes"):
+            result["nodes"].append(line)
+    return result
+
+def benchmark_parse_speed(name, text, parse_func, iterations=10000):
+    """Benchmark parse speed"""
+    start = time.perf_counter()
+    for _ in range(iterations):
+        parse_func(text)
+    elapsed = time.perf_counter() - start
+    return {
+        "name": name,
+        "iterations": iterations,
+        "total_ms": elapsed * 1000,
+        "per_parse_us": (elapsed * 1_000_000) / iterations,
+    }
+
 # ============================================================
 # RUN BENCHMARKS
 # ============================================================
 
 print("=" * 70)
-print("  MIC vs JSON - IR Serialization Benchmark")
+print("  IR Serialization Benchmark - All Formats")
 print("=" * 70)
 print()
 
@@ -201,22 +311,36 @@ mic_text = mic_serialize(SAMPLE_IR)
 
 results = [
     benchmark("JSON (pretty)", json_text),
-    benchmark("JSON (compact)", json_compact),
+    benchmark("TOML", SAMPLE_TOML),
+    benchmark("TOON", SAMPLE_TOON),
     benchmark("MIC", mic_text),
 ]
 
-print(f"{'Format':<18} {'Size':<12} {'Tokens':<10} {'Lines':<8}")
+print(f"{'Format':<18} {'Size':<12} {'Tokens':<10} {'Lines':<8} {'vs JSON':<10}")
 print("-" * 70)
-for r in results:
-    print(f"{r['name']:<18} {r['size']:<12} {r['tokens']:<10} {r['lines']:<8}")
-
-json_size = results[0]["size"]
 json_tokens = results[0]["tokens"]
-mic_size = results[2]["size"]
-mic_tokens = results[2]["tokens"]
+for r in results:
+    ratio = f"{json_tokens/r['tokens']:.1f}x" if r['tokens'] > 0 else "N/A"
+    print(f"{r['name']:<18} {r['size']:<12} {r['tokens']:<10} {r['lines']:<8} {ratio:<10}")
 
 print()
-print(f"MIC vs JSON: {json_size/mic_size:.1f}x smaller, {json_tokens/mic_tokens:.1f}x fewer tokens")
+print("=" * 70)
+print("  Parse Speed Benchmark (10,000 iterations)")
+print("=" * 70)
+print()
+
+speed_results = [
+    benchmark_parse_speed("JSON", json_text, json.loads),
+    benchmark_parse_speed("MIC", mic_text, mic_parse),
+    benchmark_parse_speed("TOON", SAMPLE_TOON, toon_parse),
+]
+
+print(f"{'Format':<12} {'Total (ms)':<15} {'Per Parse (us)':<18} {'vs JSON':<12}")
+print("-" * 70)
+json_speed = speed_results[0]["per_parse_us"]
+for r in speed_results:
+    ratio = f"{json_speed/r['per_parse_us']:.1f}x faster" if r['per_parse_us'] < json_speed else f"{r['per_parse_us']/json_speed:.1f}x slower" if r['per_parse_us'] > json_speed else "baseline"
+    print(f"{r['name']:<12} {r['total_ms']:<15.2f} {r['per_parse_us']:<18.2f} {ratio:<12}")
 
 print()
 print("=" * 70)
@@ -234,6 +358,9 @@ print(f"{jsonrpc_stats['name']:<18} {jsonrpc_stats['size']:<12} {jsonrpc_stats['
 
 print()
 print(f"MAP vs JSON-RPC: {jsonrpc_stats['size']/map_stats['size']:.1f}x smaller, {jsonrpc_stats['tokens']/map_stats['tokens']:.1f}x fewer tokens")
+
+mic_stats = results[3]  # MIC is 4th in results list
+mic_tokens = mic_stats["tokens"]
 
 print()
 print("=" * 70)
