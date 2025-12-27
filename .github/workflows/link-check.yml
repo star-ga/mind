@@ -19,6 +19,9 @@ jobs:
             --no-progress
             --include-fragments
             --exclude-mail
+            --exclude 'https://github.com/cputer/mind-runtime'
+            --exclude 'https://github.com/cputer/mind-spec'
+            --exclude 'https://github.com/cputer/mind/pull/NNNN'
             README.md
             docs/**/*.md
             CONTRIBUTING.md
