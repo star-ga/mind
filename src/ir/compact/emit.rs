@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::ir::{BinOp, IRModule, Instr};
-use crate::types::{ConvPadding, DType, ShapeDim};
+use crate::types::{DType, ShapeDim};
 
 use super::MIC_HEADER;
 
@@ -127,6 +127,7 @@ impl MicEmitter {
         }
     }
 
+    #[allow(dead_code)]
     fn intern_symbol(&mut self, name: &str) -> usize {
         let next_id = self.symbols.len();
         *self.symbols.entry(name.to_string()).or_insert(next_id)
