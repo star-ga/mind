@@ -238,7 +238,7 @@ impl MapServer {
             } else if let Some(val) = arg.strip_prefix("map=") {
                 map_ver = val.parse().unwrap_or(1);
             } else if let Some(val) = arg.strip_prefix("mode=") {
-                _mode = SessionMode::parse(val);
+                mode = SessionMode::parse(val);
             }
         }
 
