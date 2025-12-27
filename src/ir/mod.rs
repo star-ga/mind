@@ -18,6 +18,7 @@ use crate::types::ShapeDim;
 
 use std::fmt;
 
+pub mod compact;
 mod print;
 mod verify;
 

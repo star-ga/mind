@@ -61,8 +61,8 @@ impl StringInterner {
 
         // Security: Enforce maximum interned strings to prevent memory DoS
         if self.strings.len() >= MAX_INTERNED_STRINGS {
-            log::error!(
-                "String interner at capacity ({}), refusing to intern '{}' - FAIL FAST",
+            eprintln!(
+                "[ERROR] String interner at capacity ({}), refusing to intern '{}' - FAIL FAST",
                 MAX_INTERNED_STRINGS,
                 s
             );
