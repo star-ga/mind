@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use crate::ir::{BinOp, IRModule, Instr, ValueId};
+use crate::ir::{BinOp, IRModule, Instr};
 use crate::types::{ConvPadding, DType, ShapeDim};
 
 use super::MIC_HEADER;

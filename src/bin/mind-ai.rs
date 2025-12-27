@@ -32,7 +32,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Extension trait for poison-safe mutex locking.
 ///
@@ -86,7 +86,7 @@ struct SessionMode {
 
 impl SessionMode {
     fn parse(s: &str) -> Self {
-        let mut mode = SessionMode::default();
+        let mut _mode = SessionMode::default();
         for flag in s.split(',') {
             match flag.trim() {
                 "no_io" => mode.no_io = true,
@@ -228,7 +228,7 @@ impl MapServer {
         // Parse args
         let mut mic_ver = 1u32;
         let mut map_ver = 1u32;
-        let mut mode = SessionMode::default();
+        let mut _mode = SessionMode::default();
 
         for arg in args.split_whitespace() {
             if arg.starts_with("mic=") {
@@ -236,7 +236,7 @@ impl MapServer {
             } else if arg.starts_with("map=") {
                 map_ver = arg[4..].parse().unwrap_or(1);
             } else if arg.starts_with("mode=") {
-                mode = SessionMode::parse(&arg[5..]);
+                _mode = SessionMode::parse(&arg[5..]);
             }
         }
 
@@ -364,12 +364,12 @@ impl MapServer {
         }
     }
 
-    fn handle_verify(&self, seq: u64, args: &str) -> Option<String> {
+    fn handle_verify(&self, seq: u64, _args: &str) -> Option<String> {
         // Same as check for now
         self.handle_check(seq)
     }
 
-    fn handle_lint(&self, seq: u64, args: &str) -> Option<String> {
+    fn handle_lint(&self, seq: u64, _args: &str) -> Option<String> {
         let session = self.session.lock_or_recover();
 
         match &session.module {
@@ -395,7 +395,7 @@ impl MapServer {
                 };
 
                 // Extract after position
-                let after_id = if args.starts_with("after=N") {
+                let _after_id = if args.starts_with("after=N") {
                     args[7..].split_whitespace().next().and_then(|s| s.parse::<usize>().ok())
                 } else {
                     None
@@ -409,7 +409,8 @@ impl MapServer {
                 new_mic.push('\n');
 
                 session.module = Some(new_mic);
-                session.count_entries(session.module.as_ref().unwrap());
+                let mic_ref = session.module.as_ref().unwrap().clone();
+                session.count_entries(&mic_ref);
 
                 // Extract new node ID from content
                 let new_id = node_content
@@ -449,7 +450,8 @@ impl MapServer {
                     .join("\n");
 
                 session.module = Some(new_mic);
-                session.count_entries(session.module.as_ref().unwrap());
+                let mic_ref = session.module.as_ref().unwrap().clone();
+                session.count_entries(&mic_ref);
 
                 Some(format!("={} ok", seq))
             }
@@ -485,7 +487,8 @@ impl MapServer {
                     .join("\n");
 
                 session.module = Some(new_mic);
-                session.count_entries(session.module.as_ref().unwrap());
+                let mic_ref = session.module.as_ref().unwrap().clone();
+                session.count_entries(&mic_ref);
 
                 Some(format!("={} ok", seq))
             }
@@ -547,14 +550,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Parse arguments
-    let mut mode = SessionMode::default();
+    let mut _mode = SessionMode::default();
     let mut tcp_port: Option<u16> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--mode" if i + 1 < args.len() => {
-                mode = SessionMode::parse(&args[i + 1]);
+                _mode = SessionMode::parse(&args[i + 1]);
                 i += 2;
             }
             "--tcp" if i + 1 < args.len() => {
@@ -604,7 +607,7 @@ fn main() {
         };
 
         // Handle heredoc
-        if let Some((seq, cmd, ref mut content)) = heredoc_buffer {
+        if let Some((seq, ref cmd, ref mut content)) = heredoc_buffer {
             if line.trim() == "EOF" {
                 // Process accumulated heredoc
                 let full_args = content.clone();
