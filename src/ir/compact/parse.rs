@@ -231,8 +231,8 @@ impl<'a> MicParser<'a> {
             Ok(TypeInfo { dtype, shape })
         } else {
             // Scalar type
-            let dtype = DType::parse(spec)
-                .ok_or_else(|| self.error(format!("invalid dtype: {}", spec)))?;
+            let dtype =
+                DType::parse(spec).ok_or_else(|| self.error(format!("invalid dtype: {}", spec)))?;
             Ok(TypeInfo {
                 dtype,
                 shape: vec![],
@@ -356,15 +356,15 @@ impl<'a> MicParser<'a> {
         let mut type_id: Option<usize> = None;
 
         for arg in args {
-            if arg.starts_with("fill=") {
+            if let Some(fill_val) = arg.strip_prefix("fill=") {
                 fill = Some(
-                    arg[5..]
+                    fill_val
                         .parse()
                         .map_err(|_| self.error(format!("invalid fill value: {}", arg)))?,
                 );
-            } else if arg.starts_with('T') {
+            } else if let Some(type_str) = arg.strip_prefix('T') {
                 type_id = Some(
-                    arg[1..]
+                    type_str
                         .parse()
                         .map_err(|_| self.error(format!("invalid type ref: {}", arg)))?,
                 );
@@ -573,8 +573,8 @@ impl<'a> MicParser<'a> {
                     stride_h = strides[0];
                     stride_w = strides[1];
                 }
-            } else if arg.starts_with("p=") {
-                padding = ConvPadding::parse(&arg[2..])
+            } else if let Some(pad_str) = arg.strip_prefix("p=") {
+                padding = ConvPadding::parse(pad_str)
                     .ok_or_else(|| self.error(format!("invalid padding: {}", arg)))?;
             }
         }
@@ -618,8 +618,8 @@ impl<'a> MicParser<'a> {
                     stride_h = strides[0];
                     stride_w = strides[1];
                 }
-            } else if arg.starts_with("p=") {
-                padding = ConvPadding::parse(&arg[2..])
+            } else if let Some(pad_str) = arg.strip_prefix("p=") {
+                padding = ConvPadding::parse(pad_str)
                     .ok_or_else(|| self.error(format!("invalid padding: {}", arg)))?;
             }
         }
@@ -664,8 +664,8 @@ impl<'a> MicParser<'a> {
                     stride_h = strides[0];
                     stride_w = strides[1];
                 }
-            } else if arg.starts_with("p=") {
-                padding = ConvPadding::parse(&arg[2..])
+            } else if let Some(pad_str) = arg.strip_prefix("p=") {
+                padding = ConvPadding::parse(pad_str)
                     .ok_or_else(|| self.error(format!("invalid padding: {}", arg)))?;
             }
         }
@@ -913,13 +913,7 @@ N0 const.i64 42 T0
     fn test_parse_quoted_string() {
         let parser = MicParser::new("");
         assert_eq!(parser.parse_quoted_string("\"hello\"").unwrap(), "hello");
-        assert_eq!(
-            parser.parse_quoted_string("\"a\\\"b\"").unwrap(),
-            "a\"b"
-        );
-        assert_eq!(
-            parser.parse_quoted_string("\"a\\nb\"").unwrap(),
-            "a\nb"
-        );
+        assert_eq!(parser.parse_quoted_string("\"a\\\"b\"").unwrap(), "a\"b");
+        assert_eq!(parser.parse_quoted_string("\"a\\nb\"").unwrap(), "a\nb");
     }
 }

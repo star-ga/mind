@@ -229,7 +229,10 @@ O N2
     fn test_shape_dim_limit() {
         // RFC-0001: Limit shape dimensions
         let mut shape = (0..50).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-        let mic = format!("mic@1\nT0 [f32;{}]\nN0 const.tensor fill=0.0 T0\nO N0\n", shape);
+        let mic = format!(
+            "mic@1\nT0 [f32;{}]\nN0 const.tensor fill=0.0 T0\nO N0\n",
+            shape
+        );
 
         let result = parse_mic(&mic);
         assert!(result.is_err(), "Should reject too many shape dimensions");
