@@ -1,0 +1,36 @@
+COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
+
+The source code in this repository is the Community Edition of the MIND language and core compiler
+and is provided under the Apache License, Version 2.0 (see `LICENSE`).
+
+The following are NOT licensed under the Apache License, Version 2.0 and require a separate commercial agreement
+with STARGA Inc.:
+
+1. MIND Enterprise Edition features
+   (advanced optimizations, cluster and GPU management, observability, multi-tenant control plane,
+   advanced scheduling, and similar enterprise-only capabilities).
+
+2. Hosted “MIND Cloud” / SaaS services
+   operated or branded by STARGA Inc., including managed compilation, optimization, or execution
+   services that are not fully covered by the public Community Edition code in this repository.
+
+3. Proprietary extensions, plugins, or integrations
+   that are distributed separately from this repository or explicitly marked as “Enterprise”,
+   “Commercial”, or “Proprietary”.
+
+4. Use of MIND trademarks, logos, and brand
+   in any way that suggests partnership, endorsement, or official certification by STARGA Inc.,
+   unless explicitly agreed in writing.
+
+Commercial licensing, OEM deals, and large-scale enterprise usage:
+
+Please contact STARGA Inc. at:
+  legal@star.ga
+  or
+  info@star.ga
+
+to obtain a commercial license agreement, enterprise terms, or a tailored partnership contract.
+
+This `LICENSE-COMMERCIAL` file is a notice and high-level summary.
+The actual commercial rights and obligations will be governed by a separate
+signed agreement between you and STARGA Inc.

@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  RUST_BACKTRACE: 1
+
+jobs:
+  build_test:
+    name: Build & Test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: Linux x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macOS x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            name: macOS ARM64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      # neutralize proxies
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: ${{ matrix.target }}
+          components: clippy,rustfmt
+
+      - name: Cache cargo registry (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Cache cargo registry (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~\.cargo\registry
+            ~\.cargo\git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Remove git proxies (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          git config --global --unset-all http.proxy  || true
+          git config --global --unset-all https.proxy || true
+
+      - name: Remove git proxies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          git config --global --unset http.proxy 2>&1 | Out-Null
+          git config --global --unset https.proxy 2>&1 | Out-Null
+        continue-on-error: true
+
+      - name: Cargo metadata (smoke)
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo metadata --format-version=1 --locked
+          else
+            cargo metadata --format-version=1
+          fi
+
+      - name: Check compiles (no features)
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo check --no-default-features --locked
+          else
+            cargo check --no-default-features
+          fi
+
+      - name: Feature compile matrix
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo check --no-default-features --locked
+            cargo check --no-default-features --features cpu-exec --locked
+            cargo check --no-default-features --features pkg --locked
+          else
+            cargo check --no-default-features
+            cargo check --no-default-features --features cpu-exec
+            cargo check --no-default-features --features pkg
+          fi
+
+      - name: Build
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo build --verbose --no-default-features --locked
+          else
+            cargo build --verbose --no-default-features
+          fi
+
+      - name: Test
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo test --verbose --no-default-features --locked
+          else
+            cargo test --verbose --no-default-features
+          fi
+
+      - name: Clippy
+        shell: bash
+        run: |
+          if [ -f Cargo.lock ]; then
+            cargo clippy --no-default-features --locked -- -D warnings
+          else
+            cargo clippy --no-default-features -- -D warnings
+          fi
+
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Build docs
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-default-features --document-private-items
+
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.82
+        uses: dtolnay/rust-toolchain@1.82
+
+      - name: Check MSRV compiles
+        run: cargo check --no-default-features

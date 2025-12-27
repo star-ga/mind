@@ -1,0 +1,110 @@
+[package]
+name = "mind"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+authors = ["MIND Language Contributors"]
+description = "The native language for intelligent systems"
+repository = "https://github.com/cputer/mind"
+homepage = "https://github.com/cputer/mind"
+documentation = "https://github.com/cputer/mind/tree/main/docs"
+readme = "README.md"
+license = "Apache-2.0"
+default-run = "mind"
+keywords = ["ai", "machine-learning", "compiler", "tensor", "autodiff"]
+categories = ["compilers", "science"]
+exclude = ["assets/", "benchmarks/", "examples/"]
+
+[dependencies]
+logos = "0.13"
+chumsky = "0.9"
+melior = { version = "0.21", optional = true }
+inkwell = { version = "0.5.0", features = ["llvm18-0"], optional = true }
+clap = { version = "4.4", features = ["derive"] }
+colored = "2.0"
+anyhow = "1.0"
+thiserror = "1.0"
+libloading = { version = "0.8", optional = true }
+libc = { version = "0.2", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+which = { version = "6", optional = true }
+tempfile = { version = "3", optional = true }
+toml = { version = "0.8", optional = true }
+tar = { version = "0.4", optional = true }
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"], optional = true }
+sha2 = { version = "0.10", optional = true }
+dirs = { version = "5", optional = true }
+pyo3 = { version = "0.22", optional = true, features = ["extension-module"] }
+
+[dev-dependencies]
+criterion = "0.5"
+proptest = "1.4"
+tempfile = "3"
+which = "6"
+
+[lib]
+name = "mind"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "mind"
+path = "src/main.rs"
+
+[[bin]]
+name = "mindc"
+path = "src/bin/mindc.rs"
+
+[[bench]]
+name = "compiler"
+harness = false
+
+[[bench]]
+name = "shapes"
+harness = false
+
+[[bench]]
+name = "operations"
+harness = false
+
+[[bench]]
+name = "autodiff"
+harness = false
+
+[[bench]]
+name = "simple_benchmarks"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[features]
+default = []
+autodiff = []
+cpu-buffers = []
+cpu-exec = ["cpu-buffers"]
+cpu-conv = ["cpu-exec"]
+mlir = []
+mlir-lowering = []
+mlir_backend = ["melior"]
+llvm = ["inkwell"]
+mlir-subprocess = ["which"]
+mlir-exec = ["mlir-subprocess", "tempfile"]
+mlir-jit = ["libloading"]
+mlir-gpu = []
+mlir-build = ["mlir-subprocess", "tempfile"]
+ffi-c = ["libc"]
+ffi-examples = []
+pkg = ["toml", "tar", "flate2", "sha2", "dirs"]
+registry = []
+python-bindings = ["pyo3"]
+
+[build-dependencies]
+cc = "1"
+

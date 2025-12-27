@@ -1,0 +1,13 @@
+name-template: 'v$NEXT_PATCH_VERSION'
+tag-template: 'v$NEXT_PATCH_VERSION'
+categories:
+  - title: 🚀 Features
+    labels: [feature, enhancement]
+  - title: 🐛 Fixes
+    labels: [bug]
+  - title: 🧰 Maintenance
+    labels: [chore, refactor, docs]
+change-template: '- $TITLE (#$NUMBER) — @$AUTHOR'
+template: |
+  ## Changes
+  $CHANGES

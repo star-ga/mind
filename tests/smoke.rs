@@ -1,0 +1,29 @@
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0 (the “License”);
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at:
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an “AS IS” BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Part of the MIND project (Machine Intelligence Native Design).
+
+use mind::lexer;
+use mind::parser;
+use mind::type_checker;
+use mind::types::ValueType;
+
+#[test]
+fn lex_parse_check_minimal() {
+    let toks = lexer::lex("x 123");
+    assert!(toks.len() >= 2);
+    let m = parser::parse("x 123").expect("parse");
+    let mut env = std::collections::HashMap::new();
+    env.insert("x".to_string(), ValueType::ScalarI32);
+    let diags = type_checker::check_module_types(&m, "x 123", &env);
+    assert!(diags.is_empty());
+}

@@ -1,0 +1,47 @@
+{
+  "scalar_math": {
+    "mojo_mean_us": 440910.657,
+    "mojo_median_us": 441952.246,
+    "mojo_stdev_us": 11735.847,
+    "mojo_min_us": 414795.855,
+    "mojo_max_us": 461744.319,
+    "mojo_samples": 20,
+    "mind_mean_us": 22.0,
+    "speedup": 20041.39
+  },
+  "small_matmul": {
+    "mojo_mean_us": 498387.839,
+    "mojo_median_us": 499644.824,
+    "mojo_stdev_us": 8351.753,
+    "mojo_min_us": 485105.199,
+    "mojo_max_us": 514936.278,
+    "mojo_samples": 20,
+    "mind_mean_us": 41.1,
+    "speedup": 12125.01
+  },
+  "medium_matmul": {
+    "mojo_mean_us": 1336751.375,
+    "mojo_median_us": 1338582.428,
+    "mojo_stdev_us": 17636.061,
+    "mojo_min_us": 1310705.763,
+    "mojo_max_us": 1371786.659,
+    "mojo_samples": 20,
+    "mind_mean_us": 40.6,
+    "speedup": 32924.91
+  },
+  "large_matmul": {
+    "mojo_mean_us": 13814613.402,
+    "mojo_median_us": 13752180.213,
+    "mojo_stdev_us": 168885.842,
+    "mojo_min_us": 13638213.009,
+    "mojo_max_us": 14247361.123,
+    "mojo_samples": 20,
+    "mind_mean_us": 40.7,
+    "speedup": 339424.16
+  },
+  "metadata": {
+    "mojo_version": "0.25.7.0",
+    "measured_on_same_machine": true,
+    "note": "MIND compiles 20,000x to 340,000x faster than Mojo for these benchmarks"
+  }
+}
