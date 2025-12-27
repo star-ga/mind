@@ -152,6 +152,22 @@ All tests run on every pull request via GitHub Actions. See [`.github/workflows/
 
 The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/runtime performance, regression tracking, and methodology.
 
+### MIC/MAP Format Efficiency
+
+| Format | Tokens | vs JSON | Parse Speed | Annual Cost (1M IRs) |
+|--------|--------|---------|-------------|----------------------|
+| JSON | 278 | baseline | 5.31 us | $8,340 |
+| TOML | 151 | 1.8x | 137.06 us | $4,530 |
+| TOON | 67 | 4.1x | 2.67 us | $2,010 |
+| **MIC** | **52** | **5.3x** | **2.26 us** | **$1,560** |
+
+| Protocol | Tokens | vs JSON-RPC |
+|----------|--------|-------------|
+| JSON-RPC | 251 | baseline |
+| **MAP** | **58** | **4.3x fewer** |
+
+**MIC saves $6,780/year per million IR operations vs JSON.** See [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md) for full methodology.
+
 ## Roadmap
 
 Upcoming milestones and release planning live in [`/docs/roadmap.md`](docs/roadmap.md).
