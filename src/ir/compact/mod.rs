@@ -284,7 +284,12 @@ O N0
 
     #[test]
     fn test_all_binops() {
-        for (op_str, op) in [("add", BinOp::Add), ("sub", BinOp::Sub), ("mul", BinOp::Mul), ("div", BinOp::Div)] {
+        for (op_str, op) in [
+            ("add", BinOp::Add),
+            ("sub", BinOp::Sub),
+            ("mul", BinOp::Mul),
+            ("div", BinOp::Div),
+        ] {
             let mic = format!(
                 "mic@1\nT0 f32\nN0 const.i64 10 T0\nN1 const.i64 5 T0\nN2 {} N0 N1 T0\nO N2\n",
                 op_str
