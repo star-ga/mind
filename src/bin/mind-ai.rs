@@ -174,18 +174,18 @@ impl MapServer {
 
         // Parse request: @<seq> <command> [args...]
         if !line.starts_with('@') {
-            return Some(format!("!error invalid request format"));
+            return Some("!error invalid request format".to_string());
         }
 
         let rest = &line[1..];
         let parts: Vec<&str> = rest.splitn(2, ' ').collect();
         if parts.is_empty() {
-            return Some(format!("!error missing sequence number"));
+            return Some("!error missing sequence number".to_string());
         }
 
         let seq: u64 = match parts[0].parse() {
             Ok(s) => s,
-            Err(_) => return Some(format!("!error invalid sequence number")),
+            Err(_) => return Some("!error invalid sequence number".to_string()),
         };
 
         if parts.len() < 2 {
@@ -233,12 +233,12 @@ impl MapServer {
         let mut mode = SessionMode::default();
 
         for arg in args.split_whitespace() {
-            if arg.starts_with("mic=") {
-                mic_ver = arg[4..].parse().unwrap_or(1);
-            } else if arg.starts_with("map=") {
-                map_ver = arg[4..].parse().unwrap_or(1);
-            } else if arg.starts_with("mode=") {
-                mode = SessionMode::parse(&arg[5..]);
+            if let Some(val) = arg.strip_prefix("mic=") {
+                mic_ver = val.parse().unwrap_or(1);
+            } else if let Some(val) = arg.strip_prefix("map=") {
+                map_ver = val.parse().unwrap_or(1);
+            } else if let Some(val) = arg.strip_prefix("mode=") {
+                _mode = SessionMode::parse(val);
             }
         }
 
@@ -403,8 +403,8 @@ impl MapServer {
                 };
 
                 // Extract after position
-                let _after_id = if args.starts_with("after=N") {
-                    args[7..]
+                let _after_id = if let Some(rest) = args.strip_prefix("after=N") {
+                    rest
                         .split_whitespace()
                         .next()
                         .and_then(|s| s.parse::<usize>().ok())
@@ -562,14 +562,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Parse arguments
-    let mut mode = SessionMode::default();
+    let mut _mode = SessionMode::default();
     let mut tcp_port: Option<u16> = None;
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--mode" if i + 1 < args.len() => {
-                mode = SessionMode::parse(&args[i + 1]);
+                _mode = SessionMode::parse(&args[i + 1]);
                 i += 2;
             }
             "--tcp" if i + 1 < args.len() => {
