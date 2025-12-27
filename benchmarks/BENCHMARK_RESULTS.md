@@ -2,26 +2,111 @@
 
 **Date:** December 27, 2025
 
-## Summary
+---
 
-| Format/Protocol | vs Baseline | Token Reduction |
-|-----------------|-------------|-----------------|
-| **MIC** vs JSON | **5.3x** smaller | 226 tokens saved |
-| **MAP** vs JSON-RPC | **4.3x** smaller | 193 tokens saved |
+## Executive Summary
+
+| Format | Tokens | vs JSON | Reduction | Parse Speed |
+|--------|--------|---------|-----------|-------------|
+| JSON | 283 | 1.0x | baseline | 5.20 us |
+| TOML | 151 | 1.9x | 47% | N/A |
+| TOON | 67 | 4.2x | 76% | 2.74 us |
+| **MIC** | **52** | **5.4x** | **82%** | **2.15 us** |
+
+**MIC is the most token-efficient AND fastest format for IR serialization.**
 
 ---
 
-## MIC vs JSON - IR Serialization
+## Token Efficiency Chart
 
-| Format | Size (bytes) | Tokens | Lines |
-|--------|--------------|--------|-------|
-| JSON (pretty) | 1,115 | 278 | 91 |
-| JSON (compact) | 512 | 128 | 1 |
-| **MIC** | **209** | **52** | **16** |
+```
+Tokens (fewer = better)
 
-**Result: MIC is 5.3x more token-efficient than JSON**
+JSON     ████████████████████████████████████████████████████████  283
+TOML     ██████████████████████████████                            151
+TOON     █████████████                                              67
+MIC      ██████████                                                 52
+         ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+         0        50       100       150       200       250       300
+```
 
-### Sample: MIC Format
+## Size Comparison Chart (bytes)
+
+```
+Size in Bytes (smaller = better)
+
+JSON     ████████████████████████████████████████████████████████  1133
+TOML     ██████████████████████████████                             607
+TOON     █████████████                                              269
+MIC      ██████████                                                 209
+         ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+         0       200       400       600       800      1000      1200
+```
+
+## Reduction vs JSON Chart
+
+```
+Token Reduction vs JSON (higher = better)
+
+JSON     ▓                                                          1.0x
+TOML     ▓▓▓▓▓▓▓▓▓▓                                                 1.9x
+TOON     ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                                      4.2x
+MIC      ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓                                5.4x
+         ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+         0x       1x        2x        3x        4x        5x        6x
+```
+
+---
+
+## Parse Speed Benchmark
+
+```
+Parse Speed (microseconds per parse, lower = better)
+
+JSON     ██████████████████████████████████████████████████████████  5.20 us
+TOON     ███████████████████████████                                 2.74 us
+MIC      ██████████████████████                                      2.15 us
+         ├─────────┼─────────┼─────────┼─────────┼─────────┼─────────┤
+         0        1         2         3         4         5         6 us
+```
+
+| Format | Per Parse (us) | vs JSON |
+|--------|----------------|---------|
+| JSON | 5.20 | baseline |
+| TOON | 2.74 | 1.9x faster |
+| **MIC** | **2.15** | **2.4x faster** |
+
+**MIC parses 2.4x faster than JSON with half the code size.**
+
+---
+
+## Detailed Results
+
+### IR Serialization Benchmark
+
+| Format | Size (bytes) | Tokens | Lines | vs JSON |
+|--------|--------------|--------|-------|---------|
+| JSON (pretty) | 1,133 | 283 | 91 | 1.0x |
+| JSON (compact) | 539 | 134 | 1 | 2.1x |
+| TOML | 607 | 151 | 59 | 1.9x |
+| TOON | 269 | 67 | 15 | 4.2x |
+| **MIC** | **209** | **52** | **16** | **5.4x** |
+
+### Head-to-Head Comparisons
+
+| Comparison | Winner | Margin |
+|------------|--------|--------|
+| MIC vs JSON | MIC | 5.4x fewer tokens |
+| MIC vs TOML | MIC | 2.9x fewer tokens |
+| MIC vs TOON | MIC | 1.3x fewer tokens |
+| TOON vs JSON | TOON | 4.2x fewer tokens |
+| TOON vs TOML | TOON | 2.3x fewer tokens |
+
+---
+
+## Sample Formats
+
+### MIC (52 tokens) - Winner
 ```
 mic@1
 S0 "input"
@@ -41,24 +126,56 @@ N5 relu N4 T3
 O N5
 ```
 
-### Sample: Equivalent JSON
+### TOON (67 tokens)
+```
+version: 1
+symbols[4]: input,weight,bias,output
+outputs[1]: 5
+types[4]{id,dtype,shape}:
+  0,f32,B:784
+  1,f32,784:256
+  2,f32,256
+  3,f32,B:256
+nodes[6]{id,op,inputs,type_id}:
+  0,param,S0,0
+  1,param,S1,1
+  2,param,S2,2
+  3,matmul,N0:N1,3
+  4,add,N3:N2,3
+  5,relu,N4,3
+```
+
+### TOML (151 tokens)
+```toml
+version = 1
+symbols = ["input", "weight", "bias", "output"]
+outputs = [5]
+
+[[types]]
+id = 0
+dtype = "f32"
+shape = ["B", 784]
+
+[[nodes]]
+id = 0
+op = "param"
+symbol = 0
+type_id = 0
+...
+```
+
+### JSON (283 tokens)
 ```json
 {
   "version": 1,
   "symbols": ["input", "weight", "bias", "output"],
   "types": [
     {"id": 0, "dtype": "f32", "shape": ["B", 784]},
-    {"id": 1, "dtype": "f32", "shape": [784, 256]},
-    {"id": 2, "dtype": "f32", "shape": [256]},
-    {"id": 3, "dtype": "f32", "shape": ["B", 256]}
+    ...
   ],
   "nodes": [
     {"id": 0, "op": "param", "symbol": 0, "type": 0},
-    {"id": 1, "op": "param", "symbol": 1, "type": 1},
-    {"id": 2, "op": "param", "symbol": 2, "type": 2},
-    {"id": 3, "op": "matmul", "inputs": [0, 1], "type": 3},
-    {"id": 4, "op": "add", "inputs": [3, 2], "type": 3},
-    {"id": 5, "op": "relu", "inputs": [4], "type": 3}
+    ...
   ],
   "outputs": [5]
 }
@@ -66,16 +183,25 @@ O N5
 
 ---
 
-## MAP vs JSON-RPC - Protocol Communication
+## MAP Protocol Benchmark
 
-| Protocol | Size (bytes) | Tokens | Lines |
-|----------|--------------|--------|-------|
-| **MAP** | **234** | **58** | **17** |
-| JSON-RPC | 1,004 | 251 | 63 |
+| Protocol | Size | Tokens | vs JSON-RPC |
+|----------|------|--------|-------------|
+| JSON-RPC | 1,004 | 251 | 1.0x |
+| **MAP** | **234** | **58** | **4.3x** |
 
-**Result: MAP is 4.3x more token-efficient than JSON-RPC**
+```
+Protocol Tokens (fewer = better)
 
-### Sample: MAP Session
+JSON-RPC  ████████████████████████████████████████████████████  251
+MAP       ████████████                                           58
+          ├─────────┼─────────┼─────────┼─────────┼─────────┼────┤
+          0        50       100       150       200       250
+```
+
+### MAP vs JSON-RPC Sample
+
+**MAP (58 tokens):**
 ```
 @1 hello mic=1 map=1
 =1 ok version=1.0 features=[patch,check,dump]
@@ -83,74 +209,82 @@ O N5
 mic@1
 T0 f32
 N0 const.f32 1.0 T0
-N1 const.f32 2.0 T0
-N2 add N0 N1 T0
-O N2
+O N0
 EOF
-=2 ok nodes=3
-@3 check
-=3 ok valid=true
-@4 dump
-=4 ok mic@1...
-@5 bye
-=5 ok
+=2 ok nodes=1
+@3 bye
+=3 ok
 ```
 
-### Sample: Equivalent JSON-RPC Session
+**JSON-RPC (251 tokens):**
 ```json
-{"jsonrpc": "2.0", "method": "hello", "params": {"mic_version": 1, "map_version": 1}, "id": 1}
-{"jsonrpc": "2.0", "result": {"version": "1.0", "features": ["patch", "check", "dump"]}, "id": 1}
-{"jsonrpc": "2.0", "method": "load", "params": {"module": {...}}, "id": 2}
-{"jsonrpc": "2.0", "result": {"nodes": 3}, "id": 2}
-{"jsonrpc": "2.0", "method": "check", "id": 3}
-{"jsonrpc": "2.0", "result": {"valid": true}, "id": 3}
+{"jsonrpc":"2.0","method":"hello","params":{"mic":1,"map":1},"id":1}
+{"jsonrpc":"2.0","result":{"version":"1.0","features":["patch","check","dump"]},"id":1}
+{"jsonrpc":"2.0","method":"load","params":{"module":{...}},"id":2}
 ...
 ```
 
 ---
 
-## Why Token Efficiency Matters for AI Agents
+## Why MIC Wins
 
-1. **Cost Reduction**: LLM API costs are per-token. 5x reduction = 5x cost savings.
-2. **Context Window**: More IR fits in limited context windows (128k, 200k tokens).
-3. **Latency**: Fewer tokens = faster response times.
-4. **Accuracy**: Less noise = better model understanding of IR structure.
+### Design Advantages
+
+| Feature | MIC | TOON | TOML | JSON |
+|---------|-----|------|------|------|
+| Domain-specific | Yes | No | No | No |
+| Type notation | `[f32;B,784]` | `f32,B:784` | verbose | verbose |
+| Node notation | `N3 matmul N0 N1` | CSV row | verbose | verbose |
+| Headers needed | No | Yes | No | No |
+| Array lengths | Implicit | Explicit | Implicit | Implicit |
+| Nesting | Flat | Flat | Deep | Deep |
+| Git-friendly | Yes | Yes | Partial | No |
+| **Parse speed** | **2.15 us** | 2.74 us | N/A | 5.20 us |
+
+### Token Savings Breakdown
+
+| Element | MIC | JSON | Savings |
+|---------|-----|------|---------|
+| Type definition | 15 chars | 45 chars | 3x |
+| Node definition | 20 chars | 55 chars | 2.8x |
+| Shape notation | `B,784` | `["B", 784]` | 2x |
+| References | `N0` | `{"ref": 0}` | 5x |
 
 ---
 
-## MIC Design Advantages
+## Use Case Recommendations
 
-| Feature | MIC | JSON |
-|---------|-----|------|
-| Line-oriented | Yes (git-friendly) | No |
-| Stable IDs | Yes (N0, N1, N2...) | No |
-| Nested structure | Flat | Deep nesting |
-| Human readable | High | Medium |
-| Incremental patching | Native support | Requires full replace |
-| Comments | Supported (#) | Not supported |
+| Use Case | Best Format | Reason |
+|----------|-------------|--------|
+| AI agent IR editing | **MIC** | Maximum token efficiency |
+| AI agent protocols | **MAP** | 4.3x better than JSON-RPC |
+| Config files | TOML | Human readability |
+| API responses | JSON | Universal support |
+| Tabular AI data | TOON | Good for uniform arrays |
 
 ---
 
-## MAP Design Advantages
+## Cost Impact (GPT-4 Pricing)
 
-| Feature | MAP | JSON-RPC |
-|---------|-----|----------|
-| Request format | `@seq cmd args` | `{"jsonrpc":"2.0",...}` |
-| Response format | `=seq result` | `{"jsonrpc":"2.0",...}` |
-| Heredoc support | Native (`<<EOF`) | None |
-| Overhead per message | ~10 bytes | ~50+ bytes |
-| Error format | `=seq err msg="..."` | `{"error":{"code":...}}` |
+At $0.03/1K tokens (input):
+
+| Format | Tokens/IR | Cost/1K IRs | Annual (1M IRs) |
+|--------|-----------|-------------|-----------------|
+| JSON | 283 | $8.49 | $8,490 |
+| TOML | 151 | $4.53 | $4,530 |
+| TOON | 67 | $2.01 | $2,010 |
+| **MIC** | **52** | **$1.56** | **$1,560** |
+
+**MIC saves $6,930/year per million IR operations vs JSON.**
 
 ---
 
 ## Methodology
 
-- Token count estimated at ~4 characters per token (GPT-style)
-- Tests run on identical IR structures
-- Protocol comparison uses equivalent 5-command sessions
+- Token count: ~4 characters per token (GPT-style estimation)
+- Test data: 6-node neural network layer (param, matmul, add, relu)
+- All formats encode identical IR structure
 - Benchmark script: `benchmarks/format_benchmark.py`
-
----
 
 ## Reproduction
 
@@ -158,3 +292,11 @@ EOF
 cd mind-main
 python benchmarks/format_benchmark.py
 ```
+
+---
+
+## References
+
+- [TOON Format](https://github.com/toon-format/toon) - Token-Oriented Object Notation
+- [MIC Specification](https://github.com/cputer/mind-spec/blob/main/rfcs/0001-mindir-compact.md)
+- [MAP Specification](https://github.com/cputer/mind-spec/blob/main/rfcs/0002-mind-ai-protocol.md)
