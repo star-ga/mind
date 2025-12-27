@@ -160,8 +160,7 @@ impl<'a> MicParser<'a> {
             // Check version header
             if line == MIC_HEADER {
                 return Ok(());
-            } else if line.starts_with("mic@") {
-                let version_str = &line[4..];
+            } else if let Some(version_str) = line.strip_prefix("mic@") {
                 if let Ok(version) = version_str.parse::<u32>() {
                     if version != MIC_VERSION {
                         return Err(self.error(format!(
@@ -487,11 +486,7 @@ impl<'a> MicParser<'a> {
             }
         }
 
-        Ok(Instr::ExpandDims {
-            dst: id,
-            src,
-            axis,
-        })
+        Ok(Instr::ExpandDims { dst: id, src, axis })
     }
 
     fn parse_squeeze(&self, id: ValueId, args: &[&str]) -> Result<Instr, MicParseError> {
@@ -509,11 +504,7 @@ impl<'a> MicParser<'a> {
             }
         }
 
-        Ok(Instr::Squeeze {
-            dst: id,
-            src,
-            axes,
-        })
+        Ok(Instr::Squeeze { dst: id, src, axes })
     }
 
     fn parse_transpose(&self, id: ValueId, args: &[&str]) -> Result<Instr, MicParseError> {
@@ -531,11 +522,7 @@ impl<'a> MicParser<'a> {
             }
         }
 
-        Ok(Instr::Transpose {
-            dst: id,
-            src,
-            perm,
-        })
+        Ok(Instr::Transpose { dst: id, src, perm })
     }
 
     fn parse_dot(&self, id: ValueId, args: &[&str]) -> Result<Instr, MicParseError> {
@@ -760,11 +747,7 @@ impl<'a> MicParser<'a> {
             }
         }
 
-        Ok(Instr::Slice {
-            dst: id,
-            src,
-            dims,
-        })
+        Ok(Instr::Slice { dst: id, src, dims })
     }
 
     fn parse_gather(&self, id: ValueId, args: &[&str]) -> Result<Instr, MicParseError> {
