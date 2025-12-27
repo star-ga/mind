@@ -152,6 +152,19 @@ All tests run on every pull request via GitHub Actions. See [`.github/workflows/
 
 The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/runtime performance, regression tracking, and methodology.
 
+### Compilation Speed (Dec 27, 2025)
+
+| vs Framework | MIND Speedup |
+|--------------|--------------|
+| PyTorch 2.0 torch.compile | **53-247x faster** |
+| Mojo | **12,000-339,000x faster** |
+
+| Benchmark | PyTorch | Mojo | MIND |
+|-----------|---------|------|------|
+| scalar_math | 2.4 ms | 440.9 ms | ~38 us |
+| matmul | 2.0-3.5 ms | 498ms-13.8s | ~105 us |
+| conv2d | 9.4 ms | - | ~38 us |
+
 ### MIC/MAP Format Efficiency
 
 | Format | Tokens | vs JSON | Parse Speed | Annual Cost (1M IRs) |
