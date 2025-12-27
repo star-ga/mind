@@ -159,7 +159,7 @@ Upcoming milestones and release planning live in [`/docs/roadmap.md`](docs/roadm
 ## Links
 
 * [Architecture diagram](assets/diagrams/architecture.svg)
-* [Brand assets](assets/logo/mind.svg) · [Social cover](assets/social/og-cover.svg)
+* [Brand assets](assets/logo/mind-logo.svg) · [Social cover](assets/social/og-cover.svg)
 * [Contributing guidelines](CONTRIBUTING.md)
 * [Security policy](SECURITY.md)
 
