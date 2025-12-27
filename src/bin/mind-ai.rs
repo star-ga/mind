@@ -30,7 +30,6 @@
 //! mind-ai --mode no_io,no_unsafe
 //! ```
 
-
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -218,7 +217,10 @@ impl MapServer {
             "patch.replace" => self.handle_patch_replace(seq, args),
             "query.node" => self.handle_query_node(seq, args),
             "query.stats" => self.handle_query_stats(seq),
-            _ => Some(format!("={} err code=E005 msg=\"unknown command: {}\"", seq, cmd)),
+            _ => Some(format!(
+                "={} err code=E005 msg=\"unknown command: {}\"",
+                seq, cmd
+            )),
         }
     }
 
@@ -279,7 +281,10 @@ impl MapServer {
         // Validate version header
         let first_line = mic_content.lines().next().unwrap_or("");
         if !first_line.trim().starts_with("mic@") {
-            return Some(format!("={} err line=1 msg=\"missing version header\"", seq));
+            return Some(format!(
+                "={} err line=1 msg=\"missing version header\"",
+                seq
+            ));
         }
 
         session.module = Some(mic_content.to_string());
@@ -307,7 +312,10 @@ impl MapServer {
                 if format == "mic" {
                     Some(format!("={} ok <<EOF\n{}\nEOF", seq, mic))
                 } else {
-                    Some(format!("={} err msg=\"format {} not implemented\"", seq, format))
+                    Some(format!(
+                        "={} err msg=\"format {} not implemented\"",
+                        seq, format
+                    ))
                 }
             }
             None => Some(format!("={} err msg=\"no module loaded\"", seq)),
@@ -396,7 +404,10 @@ impl MapServer {
 
                 // Extract after position
                 let _after_id = if args.starts_with("after=N") {
-                    args[7..].split_whitespace().next().and_then(|s| s.parse::<usize>().ok())
+                    args[7..]
+                        .split_whitespace()
+                        .next()
+                        .and_then(|s| s.parse::<usize>().ok())
                 } else {
                     None
                 };
@@ -514,7 +525,8 @@ impl MapServer {
                                 .filter(|s| s.starts_with('N'))
                                 .copied()
                                 .collect();
-                            let type_ref = parts.iter().find(|s| s.starts_with('T')).unwrap_or(&"T?");
+                            let type_ref =
+                                parts.iter().find(|s| s.starts_with('T')).unwrap_or(&"T?");
 
                             return Some(format!(
                                 "={} ok kind={} inputs=[{}] type={}",
@@ -591,8 +603,10 @@ fn main() {
     }
 
     // Stdio mode
-    eprintln!("Mind AI Protocol Server v{} ready (MIC v{}, MAP v{})",
-        SERVER_VERSION, MIC_VERSION, MAP_VERSION);
+    eprintln!(
+        "Mind AI Protocol Server v{} ready (MIC v{}, MAP v{})",
+        SERVER_VERSION, MIC_VERSION, MAP_VERSION
+    );
 
     let stdin = std::io::stdin();
     let reader = BufReader::new(stdin.lock());

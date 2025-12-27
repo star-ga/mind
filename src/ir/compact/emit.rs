@@ -213,7 +213,11 @@ impl MicEmitter {
                 )
                 .unwrap();
             }
-            Instr::Reshape { dst, src, new_shape } => {
+            Instr::Reshape {
+                dst,
+                src,
+                new_shape,
+            } => {
                 let tid = self.get_type_id(&DType::F32, new_shape);
                 let shape_str = format_shape_dims(new_shape);
                 writeln!(
