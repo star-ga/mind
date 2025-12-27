@@ -11,6 +11,17 @@ import sys
 # Fix encoding for Windows
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
+# Try to import TOML parser
+try:
+    import tomllib  # Python 3.11+
+    HAS_TOML = True
+except ImportError:
+    try:
+        import tomli as tomllib  # Fallback
+        HAS_TOML = True
+    except ImportError:
+        HAS_TOML = False
+
 # ============================================================
 # SAMPLE DATA
 # ============================================================
@@ -334,6 +345,11 @@ speed_results = [
     benchmark_parse_speed("MIC", mic_text, mic_parse),
     benchmark_parse_speed("TOON", SAMPLE_TOON, toon_parse),
 ]
+
+if HAS_TOML:
+    def toml_parse(text):
+        return tomllib.loads(text)
+    speed_results.insert(1, benchmark_parse_speed("TOML", SAMPLE_TOML, toml_parse))
 
 print(f"{'Format':<12} {'Total (ms)':<15} {'Per Parse (us)':<18} {'vs JSON':<12}")
 print("-" * 70)
