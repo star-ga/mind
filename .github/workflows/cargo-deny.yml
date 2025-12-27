@@ -1,0 +1,34 @@
+name: Cargo Deny
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  deny:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_HOME: /home/runner/.cargo
+      CARGO_INCREMENTAL: 0
+      CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo-deny binary
+        uses: actions/cache@v4
+        id: cache-cargo-deny
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-0.16-${{ runner.os }}
+
+      - name: Install cargo-deny
+        if: steps.cache-cargo-deny.outputs.cache-hit != 'true'
+        run: cargo install cargo-deny --locked --version "^0.16"
+
+      - name: Run cargo-deny with CVSS v4 sanitization
+        run: ./tools/cargo-deny-sanitize.sh check

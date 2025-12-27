@@ -1,0 +1,9 @@
+// IR verification test: SSA property validation
+// Expected: IR verifier accepts valid SSA form
+
+fn test_ssa() {
+    let x = 1.0;
+    let y = 2.0;
+    let z = x + y;
+    return z;
+}

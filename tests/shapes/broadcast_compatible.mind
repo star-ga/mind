@@ -1,0 +1,8 @@
+// Shape test: Compatible broadcasting
+// Expected: Shape checker computes broadcast result shape [2, 3]
+
+fn test_broadcast() -> tensor<f32[2, 3]> {
+    let a: tensor<f32[2, 3]> = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let b: tensor<f32[3]> = [0.1, 0.2, 0.3];
+    return a + b;  // [2,3] + [3] → [2,3]
+}

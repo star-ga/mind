@@ -1,0 +1,10 @@
+// Backend test: CPU backend availability
+// Expected: CPU backend always available for CPU profile
+
+// Test metadata:
+// backend: cpu
+// expected: success
+
+fn test_cpu() -> tensor<f32> {
+    return 42.0;
+}
