@@ -64,7 +64,7 @@ impl<T> MutexExt<T> for Mutex<T> {
         match self.lock() {
             Ok(guard) => guard,
             Err(poisoned) => {
-                log::warn!("Mutex poisoned - recovering (see Poison Recovery Policy docs)");
+                eprintln!("[WARN] Mutex poisoned - recovering (see Poison Recovery Policy docs)");
                 poisoned.into_inner()
             }
         }
