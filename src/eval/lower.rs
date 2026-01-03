@@ -273,6 +273,104 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 id
             })
         }
+        ast::Node::FnDef { name, params, body, .. } => {
+            // Lower function definition
+            let mut fn_ir = IRModule::new();
+            let mut fn_env = env.clone();
+
+            // Create parameters
+            let mut param_pairs = Vec::new();
+            for (idx, param) in params.iter().enumerate() {
+                let param_id = fn_ir.fresh();
+                fn_ir.instrs.push(Instr::Param {
+                    dst: param_id,
+                    name: param.name.clone(),
+                    index: idx,
+                });
+                fn_env.insert(param.name.clone(), param_id);
+                param_pairs.push((param.name.clone(), param_id));
+            }
+
+            // Lower function body
+            let mut ret_id = None;
+            for stmt in body {
+                match stmt {
+                    ast::Node::Return { value, .. } => {
+                        if let Some(val) = value {
+                            ret_id = Some(lower_expr(val, &mut fn_ir, &fn_env));
+                        }
+                        fn_ir.instrs.push(Instr::Return { value: ret_id });
+                    }
+                    ast::Node::Let { name, ann, value, .. } => {
+                        let id = match ann {
+                            Some(TypeAnn::Tensor { dtype, dims }) | Some(TypeAnn::DiffTensor { dtype, dims }) => {
+                                lower_tensor_binding(&mut fn_ir, value, dtype, dims, &fn_env)
+                            }
+                            _ => lower_expr(value, &mut fn_ir, &fn_env),
+                        };
+                        fn_env.insert(name.clone(), id);
+                    }
+                    ast::Node::Assign { name, value, .. } => {
+                        let id = lower_expr(value, &mut fn_ir, &fn_env);
+                        fn_env.insert(name.clone(), id);
+                    }
+                    other => {
+                        let id = lower_expr(other, &mut fn_ir, &fn_env);
+                        ret_id = Some(id);
+                    }
+                }
+            }
+
+            // Add function definition to IR
+            ir.instrs.push(Instr::FnDef {
+                name: name.clone(),
+                params: param_pairs,
+                ret_id,
+                body: fn_ir.instrs,
+            });
+
+            // Function definitions don't produce a value
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
+        ast::Node::Return { value, .. } => {
+            let ret_val = value.as_ref().map(|v| lower_expr(v, ir, env));
+            ir.instrs.push(Instr::Return { value: ret_val });
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
+        ast::Node::Block { stmts, .. } => {
+            let mut last_id = None;
+            for stmt in stmts {
+                last_id = Some(lower_expr(stmt, ir, env));
+            }
+            last_id.unwrap_or_else(|| {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, 0));
+                id
+            })
+        }
+        ast::Node::If { cond, then_branch, else_branch, .. } => {
+            // Lower condition
+            let _cond_id = lower_expr(cond, ir, env);
+            // For now, just lower the then branch (control flow needs more work)
+            let mut last_id = None;
+            for stmt in then_branch {
+                last_id = Some(lower_expr(stmt, ir, env));
+            }
+            if let Some(else_stmts) = else_branch {
+                for stmt in else_stmts {
+                    last_id = Some(lower_expr(stmt, ir, env));
+                }
+            }
+            last_id.unwrap_or_else(|| {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, 0));
+                id
+            })
+        }
         _ => {
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));

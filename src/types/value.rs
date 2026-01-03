@@ -17,12 +17,16 @@ use super::TensorType;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     ScalarI32,
+    ScalarI64,
+    ScalarF32,
+    ScalarF64,
+    ScalarBool,
     Tensor(TensorType),
     GradMap(Vec<(String, TensorType)>),
 }
 
 impl ValueType {
     pub fn is_scalar(&self) -> bool {
-        matches!(self, ValueType::ScalarI32)
+        matches!(self, ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarF32 | ValueType::ScalarF64 | ValueType::ScalarBool)
     }
 }
