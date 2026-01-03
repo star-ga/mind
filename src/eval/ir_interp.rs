@@ -192,6 +192,7 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                     last = v;
                 }
             }
+            _ => {}
         }
     }
 

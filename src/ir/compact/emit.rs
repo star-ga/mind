@@ -123,6 +123,7 @@ impl MicEmitter {
                     self.intern_scalar_type(&DType::F32);
                 }
                 Instr::Output(_) => {}
+                _ => {}
             }
         }
     }
@@ -402,6 +403,7 @@ impl MicEmitter {
             Instr::Output(id) => {
                 writeln!(&mut self.output, "O N{}", id.0).unwrap();
             }
+            _ => {}
         }
     }
 }

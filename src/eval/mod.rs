@@ -287,7 +287,7 @@ pub fn eval_module_value_with_env_mode(
             } => {
                 let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                 let stored = match ann {
-                    Some(TypeAnn::Tensor { dtype, dims }) => {
+                    Some(TypeAnn::Tensor { dtype, dims }) | Some(TypeAnn::DiffTensor { dtype, dims }) => {
                         let (dtype, shape) = parse_tensor_ann(dtype, dims)?;
                         let fill = match rhs {
                             Value::Int(n) => Some(n as f64),
@@ -296,7 +296,7 @@ pub fn eval_module_value_with_env_mode(
                         };
                         Value::Tensor(TensorVal::new(dtype, shape, fill))
                     }
-                    Some(TypeAnn::ScalarI32) | None => rhs,
+                    Some(TypeAnn::ScalarI32) | Some(TypeAnn::ScalarI64) | Some(TypeAnn::ScalarF32) | Some(TypeAnn::ScalarF64) | Some(TypeAnn::ScalarBool) | None => rhs,
                 };
                 if let Value::Int(n) = stored {
                     env.insert(name.clone(), n);
@@ -731,6 +731,47 @@ pub(crate) fn eval_value_expr_mode(
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => {
             eval_value_expr_mode(value, env, tensor_env, mode.clone())
+        }
+        // Function definitions and control flow - placeholder implementation
+        Node::FnDef { .. } => Ok(Value::Int(0)), // Functions are not executed as expressions
+        Node::Return { value, .. } => {
+            if let Some(v) = value {
+                eval_value_expr_mode(v, env, tensor_env, mode.clone())
+            } else {
+                Ok(Value::Int(0))
+            }
+        }
+        Node::Block { stmts, .. } => {
+            let mut result = Value::Int(0);
+            for stmt in stmts {
+                result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
+            }
+            Ok(result)
+        }
+        Node::If { cond, then_branch, else_branch, .. } => {
+            let cond_val = eval_value_expr_mode(cond, env, tensor_env, mode.clone())?;
+            match cond_val {
+                Value::Int(0) => {
+                    // False branch
+                    if let Some(else_stmts) = else_branch {
+                        let mut result = Value::Int(0);
+                        for stmt in else_stmts {
+                            result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
+                        }
+                        Ok(result)
+                    } else {
+                        Ok(Value::Int(0))
+                    }
+                }
+                _ => {
+                    // True branch
+                    let mut result = Value::Int(0);
+                    for stmt in then_branch {
+                        result = eval_value_expr_mode(stmt, env, tensor_env, mode.clone())?;
+                    }
+                    Ok(result)
+                }
+            }
         }
     }
 }

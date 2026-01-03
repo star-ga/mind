@@ -22,15 +22,11 @@
 use chumsky::prelude::*;
 
 use crate::ast::BinOp;
-
 use crate::ast::Literal;
-
 use crate::ast::Module;
-
 use crate::ast::Node;
-
+use crate::ast::Param;
 use crate::ast::Span;
-
 use crate::ast::TypeAnn;
 
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
@@ -618,8 +614,55 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         .then_ignore(just(')'))
         .padded();
 
+    // Tensor type: tensor<f32[N, M]> or tensor<f32[3, 4]>
+    let tensor_dims = just('[')
+        .padded()
+        .ignore_then(
+            choice((text::int(10), text::ident()))
+                .map(|s: String| s)
+                .padded()
+                .separated_by(just(',').padded())
+                .allow_trailing(),
+        )
+        .then_ignore(just(']').padded());
+
+    let tensor_type = kw("tensor")
+        .ignore_then(just('<').padded())
+        .ignore_then(dtype.clone())
+        .then(tensor_dims.clone())
+        .then_ignore(just('>').padded())
+        .map(|(dt, shape)| TypeAnn::Tensor {
+            dtype: dt,
+            dims: shape,
+        });
+
+    // Differentiable tensor: diff tensor<f32[N, M]>
+    let diff_tensor_type = kw("diff")
+        .padded()
+        .ignore_then(kw("tensor"))
+        .ignore_then(just('<').padded())
+        .ignore_then(dtype.clone())
+        .then(tensor_dims.clone())
+        .then_ignore(just('>').padded())
+        .map(|(dt, shape)| TypeAnn::DiffTensor {
+            dtype: dt,
+            dims: shape,
+        });
+
+    // Scalar types
+    let scalar_type = choice((
+        kw("i32").to(TypeAnn::ScalarI32),
+        kw("i64").to(TypeAnn::ScalarI64),
+        kw("f32").to(TypeAnn::ScalarF32),
+        kw("f64").to(TypeAnn::ScalarF64),
+        kw("bool").to(TypeAnn::ScalarBool),
+    ));
+
     let type_ann = choice((
-        dtype.clone().map(|_| TypeAnn::ScalarI32),
+        diff_tensor_type,
+        tensor_type,
+        scalar_type,
+        // Legacy Tensor[...] syntax
         kw("Tensor")
             .ignore_then(just('['))
             .ignore_then(dtype.clone())
@@ -655,7 +698,8 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                     span,
                 }
             },
-        );
+        )
+        .boxed();
 
     let assign_stmt = text::ident()
         .map_with_span(|s: String, _| s)
@@ -668,9 +712,83 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 value: Box::new(value),
                 span,
             }
+        })
+        .boxed();
+
+    // Return statement: return expr
+    let return_stmt = kw("return")
+        .padded()
+        .ignore_then(expr.clone().or_not())
+        .map_with_span(|value, sp: std::ops::Range<usize>| {
+            let span = Span::new(sp.start, sp.end);
+            Node::Return {
+                value: value.map(Box::new),
+                span,
+            }
+        })
+        .boxed();
+
+    // Function parameter: name: type
+    let param = text::ident()
+        .map_with_span(|s: String, sp: std::ops::Range<usize>| (s, Span::new(sp.start, sp.end)))
+        .then_ignore(just(':').padded())
+        .then(type_ann.clone())
+        .map_with_span(|((name, _), ty), sp: std::ops::Range<usize>| {
+            Param {
+                name,
+                ty,
+                span: Span::new(sp.start, sp.end),
+            }
         });
 
-    let stmt = choice((let_stmt, assign_stmt, expr.clone())).padded();
+    // Parameter list: (param, param, ...)
+    let param_list = just('(')
+        .padded()
+        .ignore_then(
+            param
+                .separated_by(just(',').padded())
+                .allow_trailing(),
+        )
+        .then_ignore(just(')').padded());
+
+    // Return type: -> type
+    let return_type = just('-')
+        .then(just('>'))
+        .padded()
+        .ignore_then(type_ann.clone());
+
+    // Statement inside function body
+    let fn_body_stmt = choice((return_stmt.clone(), let_stmt.clone(), assign_stmt.clone(), expr.clone())).padded();
+
+    // Function body: { stmts }
+    let fn_body = just('{')
+        .padded()
+        .ignore_then(
+            fn_body_stmt
+                .separated_by(one_of(";\n").repeated())
+                .allow_trailing(),
+        )
+        .then_ignore(just('}').padded());
+
+    // Function definition: fn name(params) -> ret_type { body }
+    let fn_def = kw("fn")
+        .padded()
+        .ignore_then(text::ident())
+        .then(param_list)
+        .then(return_type.or_not())
+        .then(fn_body)
+        .map_with_span(|(((name, params), ret_type), body), sp: std::ops::Range<usize>| {
+            let span = Span::new(sp.start, sp.end);
+            Node::FnDef {
+                name,
+                params,
+                ret_type,
+                body,
+                span,
+            }
+        });
+
+    let stmt = choice((fn_def, return_stmt, let_stmt, assign_stmt, expr.clone())).padded();
 
     let stmts = stmt
         .separated_by(one_of(";\n").repeated().at_least(1))
@@ -680,8 +798,25 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
     stmts.map(|items| Module { items })
 }
 
+/// Strip single-line comments (`// ...`) from source code.
+/// Preserves line structure for accurate error reporting.
+fn strip_comments(input: &str) -> String {
+    input
+        .lines()
+        .map(|line| {
+            if let Some(idx) = line.find("//") {
+                &line[..idx]
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub fn parse(input: &str) -> Result<Module, Vec<Simple<char>>> {
-    parser().parse(input)
+    let stripped = strip_comments(input);
+    parser().parse(stripped.as_str())
 }
 
 /// Parse with pretty diagnostics instead of raw chumsky errors.
@@ -693,13 +828,15 @@ pub fn parse_with_diagnostics_in_file(
     input: &str,
     file: Option<&str>,
 ) -> Result<Module, Vec<PrettyDiagnostic>> {
-    let (maybe_module, errs) = parser().parse_recovery(input);
+    let stripped = strip_comments(input);
+    let (maybe_module, errs) = parser().parse_recovery(stripped.as_str());
     if errs.is_empty() {
         Ok(maybe_module.expect("parser returned no module without errors"))
     } else {
+        // Use stripped source for span mapping since parser operates on stripped content
         let ds = errs
             .into_iter()
-            .map(|e| pretty_from_chumsky(input, file, e))
+            .map(|e| pretty_from_chumsky(stripped.as_str(), file, e))
             .collect();
         Err(ds)
     }

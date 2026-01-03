@@ -115,5 +115,6 @@ pub(super) fn apply_rule(
             Ok(())
         }
         Instr::Output(_) => Ok(()),
+        _ => Ok(()),
     }
 }

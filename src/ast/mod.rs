@@ -63,7 +63,21 @@ pub enum BinOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeAnn {
     ScalarI32,
+    ScalarI64,
+    ScalarF32,
+    ScalarF64,
+    ScalarBool,
     Tensor { dtype: String, dims: Vec<String> },
+    /// Differentiable tensor: `diff tensor<f32[N, M]>`
+    DiffTensor { dtype: String, dims: Vec<String> },
+}
+
+/// Function parameter: `name: type`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Param {
+    pub name: String,
+    pub ty: TypeAnn,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +196,31 @@ pub enum Node {
         value: Box<Node>,
         span: Span,
     },
+    /// Function definition: `fn name(params) -> ret_type { body }`
+    FnDef {
+        name: String,
+        params: Vec<Param>,
+        ret_type: Option<TypeAnn>,
+        body: Vec<Node>,
+        span: Span,
+    },
+    /// Return statement: `return expr`
+    Return {
+        value: Option<Box<Node>>,
+        span: Span,
+    },
+    /// Block of statements: `{ stmts }`
+    Block {
+        stmts: Vec<Node>,
+        span: Span,
+    },
+    /// If expression: `if cond { then } else { else }`
+    If {
+        cond: Box<Node>,
+        then_branch: Vec<Node>,
+        else_branch: Option<Vec<Node>>,
+        span: Span,
+    },
 }
 
 impl Node {
@@ -208,7 +247,11 @@ impl Node {
             | Node::CallTensorRelu { span, .. }
             | Node::CallTensorConv2d { span, .. }
             | Node::Let { span, .. }
-            | Node::Assign { span, .. } => *span,
+            | Node::Assign { span, .. }
+            | Node::FnDef { span, .. }
+            | Node::Return { span, .. }
+            | Node::Block { span, .. }
+            | Node::If { span, .. } => *span,
         }
     }
 
