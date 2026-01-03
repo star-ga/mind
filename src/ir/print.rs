@@ -255,6 +255,7 @@ fn format_instr(instr: &Instr, out: &mut String) {
         Instr::Output(id) => {
             writeln!(out, "  output {}", value_name(*id)).unwrap();
         }
+        _ => {}
     }
 }
 

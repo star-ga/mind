@@ -87,6 +87,10 @@ fn describe_tensor(tensor: &TensorType) -> String {
 fn describe_value_type(v: &ValueType) -> String {
     match v {
         ValueType::ScalarI32 => "Scalar[i32]".to_string(),
+        ValueType::ScalarI64 => "Scalar[i64]".to_string(),
+        ValueType::ScalarF32 => "Scalar[f32]".to_string(),
+        ValueType::ScalarF64 => "Scalar[f64]".to_string(),
+        ValueType::ScalarBool => "Scalar[bool]".to_string(),
         ValueType::Tensor(tensor) => describe_tensor(tensor),
         ValueType::GradMap(entries) => {
             let mut parts = Vec::new();
@@ -203,7 +207,9 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
             }
         }
         (ValueType::Tensor(t), ValueType::ScalarI32)
-        | (ValueType::ScalarI32, ValueType::Tensor(t)) => {
+        | (ValueType::ScalarI32, ValueType::Tensor(t))
+        | (ValueType::Tensor(t), ValueType::ScalarF32)
+        | (ValueType::ScalarF32, ValueType::Tensor(t)) => {
             if t.dtype == DType::F32 {
                 promote_scalar_to(t.dtype.clone()).map(|_| DType::F32)
             } else {
@@ -211,7 +217,10 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
             }
         }
         (ValueType::ScalarI32, ValueType::ScalarI32) => None,
+        (ValueType::ScalarF32, ValueType::ScalarF32) => Some(DType::F32),
+        (ValueType::ScalarBool, ValueType::ScalarBool) => None,
         (ValueType::GradMap(_), _) | (_, ValueType::GradMap(_)) => None,
+        _ => None, // Other scalar combinations
     }
 }
 
@@ -1164,6 +1173,29 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             }
         }
         Node::Let { value, .. } | Node::Assign { value, .. } => infer_expr(value, env),
+        // Function definitions don't have a value type in expression context
+        Node::FnDef { span, .. } => Ok((ValueType::ScalarI32, *span)), // Placeholder
+        Node::Return { value, span } => {
+            if let Some(v) = value {
+                infer_expr(v, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span)) // Void return
+            }
+        }
+        Node::Block { stmts, span } => {
+            if let Some(last) = stmts.last() {
+                infer_expr(last, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
+        Node::If { then_branch, span, .. } => {
+            if let Some(last) = then_branch.last() {
+                infer_expr(last, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
     }
 }
 
@@ -1450,7 +1482,11 @@ fn shape_from_dims(dims: &[String]) -> Vec<ShapeDim> {
 fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
     match ann {
         crate::ast::TypeAnn::ScalarI32 => Some(ValueType::ScalarI32),
-        crate::ast::TypeAnn::Tensor { dtype, dims } => {
+        crate::ast::TypeAnn::ScalarI64 => Some(ValueType::ScalarI64),
+        crate::ast::TypeAnn::ScalarF32 => Some(ValueType::ScalarF32),
+        crate::ast::TypeAnn::ScalarF64 => Some(ValueType::ScalarF64),
+        crate::ast::TypeAnn::ScalarBool => Some(ValueType::ScalarBool),
+        crate::ast::TypeAnn::Tensor { dtype, dims } | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
             let dt = dtype_from_str(dtype)?;
             let shape = shape_from_dims(dims);
             Some(ValueType::Tensor(TensorType::new(dt, shape)))

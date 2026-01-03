@@ -178,6 +178,7 @@ fn validate_operands(
         Instr::Output(id) => {
             check_defined(*id)?;
         }
+        _ => {}
     }
 
     Ok(())

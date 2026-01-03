@@ -148,6 +148,29 @@ pub enum Instr {
         axis: i64,
     },
     Output(ValueId),
+    /// Function definition
+    FnDef {
+        name: String,
+        params: Vec<(String, ValueId)>,
+        ret_id: Option<ValueId>,
+        body: Vec<Instr>,
+    },
+    /// Function call
+    Call {
+        dst: ValueId,
+        name: String,
+        args: Vec<ValueId>,
+    },
+    /// Return from function
+    Return {
+        value: Option<ValueId>,
+    },
+    /// Function parameter
+    Param {
+        dst: ValueId,
+        name: String,
+        index: usize,
+    },
 }
 
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
@@ -168,8 +191,10 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Conv2dGradFilter { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
-        | Instr::Gather { dst, .. } => Some(*dst),
-        Instr::Output(_) => None,
+        | Instr::Gather { dst, .. }
+        | Instr::Call { dst, .. }
+        | Instr::Param { dst, .. } => Some(*dst),
+        Instr::Output(_) | Instr::FnDef { .. } | Instr::Return { .. } => None,
     }
 }
 

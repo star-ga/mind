@@ -146,5 +146,6 @@ fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         Instr::Conv2dGradFilter { input, dy, .. } => vec![*input, *dy],
         Instr::Gather { src, indices, .. } => vec![*src, *indices],
         Instr::Output(id) => vec![*id],
+        _ => vec![],
     }
 }
