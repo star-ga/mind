@@ -279,6 +279,7 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),
         Instr::Output(_) => None,
+        _ => None,
     }
 }
 

@@ -335,6 +335,7 @@ fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
             emitter.record_output(*id);
             emitter.write_fmt(format_args!("    // result: %{}\n", id.0));
         }
+        _ => {}
     }
 }
 
