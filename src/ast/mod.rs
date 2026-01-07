@@ -67,9 +67,15 @@ pub enum TypeAnn {
     ScalarF32,
     ScalarF64,
     ScalarBool,
-    Tensor { dtype: String, dims: Vec<String> },
+    Tensor {
+        dtype: String,
+        dims: Vec<String>,
+    },
     /// Differentiable tensor: `diff tensor<f32[N, M]>`
-    DiffTensor { dtype: String, dims: Vec<String> },
+    DiffTensor {
+        dtype: String,
+        dims: Vec<String>,
+    },
 }
 
 /// Function parameter: `name: type`
