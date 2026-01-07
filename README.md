@@ -181,6 +181,15 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 **MIC saves $6,780/year per million IR operations vs JSON.** See [`benchmarks/BENCHMARK_RESULTS.md`](benchmarks/BENCHMARK_RESULTS.md) for full methodology.
 
+## Proof of Systems
+
+MIND powers real-world applications demonstrating its capabilities:
+
+| Project | Description | Highlights |
+|---------|-------------|------------|
+| [Mind-Ray](https://github.com/cputer/mind-ray) | GPU path tracer | 10-50x faster than Mitsuba 3, Cycles, Falcor |
+| [NikolaChess](https://github.com/cputer/NikolaChess) | NNUE chess engine | GPU-accelerated search, +600 Elo with NNUE |
+
 ## Roadmap
 
 Upcoming milestones and release planning live in [`/docs/roadmap.md`](docs/roadmap.md).
