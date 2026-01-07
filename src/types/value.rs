@@ -27,6 +27,13 @@ pub enum ValueType {
 
 impl ValueType {
     pub fn is_scalar(&self) -> bool {
-        matches!(self, ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarF32 | ValueType::ScalarF64 | ValueType::ScalarBool)
+        matches!(
+            self,
+            ValueType::ScalarI32
+                | ValueType::ScalarI64
+                | ValueType::ScalarF32
+                | ValueType::ScalarF64
+                | ValueType::ScalarBool
+        )
     }
 }

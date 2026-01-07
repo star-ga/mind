@@ -273,7 +273,9 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 id
             })
         }
-        ast::Node::FnDef { name, params, body, .. } => {
+        ast::Node::FnDef {
+            name, params, body, ..
+        } => {
             // Lower function definition
             let mut fn_ir = IRModule::new();
             let mut fn_env = env.clone();
@@ -301,9 +303,12 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                         }
                         fn_ir.instrs.push(Instr::Return { value: ret_id });
                     }
-                    ast::Node::Let { name, ann, value, .. } => {
+                    ast::Node::Let {
+                        name, ann, value, ..
+                    } => {
                         let id = match ann {
-                            Some(TypeAnn::Tensor { dtype, dims }) | Some(TypeAnn::DiffTensor { dtype, dims }) => {
+                            Some(TypeAnn::Tensor { dtype, dims })
+                            | Some(TypeAnn::DiffTensor { dtype, dims }) => {
                                 lower_tensor_binding(&mut fn_ir, value, dtype, dims, &fn_env)
                             }
                             _ => lower_expr(value, &mut fn_ir, &fn_env),
@@ -352,7 +357,12 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 id
             })
         }
-        ast::Node::If { cond, then_branch, else_branch, .. } => {
+        ast::Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             // Lower condition
             let _cond_id = lower_expr(cond, ir, env);
             // For now, just lower the then branch (control flow needs more work)

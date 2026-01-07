@@ -629,7 +629,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
     let tensor_type = kw("tensor")
         .ignore_then(just('<').padded())
         .ignore_then(dtype.clone())
-        .then(tensor_dims.clone())
+        .then(tensor_dims)
         .then_ignore(just('>').padded())
         .map(|(dt, shape)| TypeAnn::Tensor {
             dtype: dt,
@@ -642,7 +642,7 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         .ignore_then(kw("tensor"))
         .ignore_then(just('<').padded())
         .ignore_then(dtype.clone())
-        .then(tensor_dims.clone())
+        .then(tensor_dims)
         .then_ignore(just('>').padded())
         .map(|(dt, shape)| TypeAnn::DiffTensor {
             dtype: dt,
@@ -733,22 +733,16 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         .map_with_span(|s: String, sp: std::ops::Range<usize>| (s, Span::new(sp.start, sp.end)))
         .then_ignore(just(':').padded())
         .then(type_ann.clone())
-        .map_with_span(|((name, _), ty), sp: std::ops::Range<usize>| {
-            Param {
-                name,
-                ty,
-                span: Span::new(sp.start, sp.end),
-            }
+        .map_with_span(|((name, _), ty), sp: std::ops::Range<usize>| Param {
+            name,
+            ty,
+            span: Span::new(sp.start, sp.end),
         });
 
     // Parameter list: (param, param, ...)
     let param_list = just('(')
         .padded()
-        .ignore_then(
-            param
-                .separated_by(just(',').padded())
-                .allow_trailing(),
-        )
+        .ignore_then(param.separated_by(just(',').padded()).allow_trailing())
         .then_ignore(just(')').padded());
 
     // Return type: -> type
@@ -758,7 +752,13 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         .ignore_then(type_ann.clone());
 
     // Statement inside function body
-    let fn_body_stmt = choice((return_stmt.clone(), let_stmt.clone(), assign_stmt.clone(), expr.clone())).padded();
+    let fn_body_stmt = choice((
+        return_stmt.clone(),
+        let_stmt.clone(),
+        assign_stmt.clone(),
+        expr.clone(),
+    ))
+    .padded();
 
     // Function body: { stmts }
     let fn_body = just('{')
@@ -777,16 +777,18 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         .then(param_list)
         .then(return_type.or_not())
         .then(fn_body)
-        .map_with_span(|(((name, params), ret_type), body), sp: std::ops::Range<usize>| {
-            let span = Span::new(sp.start, sp.end);
-            Node::FnDef {
-                name,
-                params,
-                ret_type,
-                body,
-                span,
-            }
-        });
+        .map_with_span(
+            |(((name, params), ret_type), body), sp: std::ops::Range<usize>| {
+                let span = Span::new(sp.start, sp.end);
+                Node::FnDef {
+                    name,
+                    params,
+                    ret_type,
+                    body,
+                    span,
+                }
+            },
+        );
 
     let stmt = choice((fn_def, return_stmt, let_stmt, assign_stmt, expr.clone())).padded();
 
