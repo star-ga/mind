@@ -1189,7 +1189,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 Ok((ValueType::ScalarI32, *span))
             }
         }
-        Node::If { then_branch, span, .. } => {
+        Node::If {
+            then_branch, span, ..
+        } => {
             if let Some(last) = then_branch.last() {
                 infer_expr(last, env)
             } else {
@@ -1486,7 +1488,8 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         crate::ast::TypeAnn::ScalarF32 => Some(ValueType::ScalarF32),
         crate::ast::TypeAnn::ScalarF64 => Some(ValueType::ScalarF64),
         crate::ast::TypeAnn::ScalarBool => Some(ValueType::ScalarBool),
-        crate::ast::TypeAnn::Tensor { dtype, dims } | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
+        crate::ast::TypeAnn::Tensor { dtype, dims }
+        | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
             let dt = dtype_from_str(dtype)?;
             let shape = shape_from_dims(dims);
             Some(ValueType::Tensor(TensorType::new(dt, shape)))
