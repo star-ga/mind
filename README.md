@@ -2,7 +2,7 @@
   <img src="assets/logo/mind-logo.svg" alt="MIND logo" width="512" />
 </p>
 
-# MIND — Native Language for Intelligent Systems
+# MIND — Machine Intelligence Native Design
 
 [![CI](https://github.com/cputer/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/cputer/mind/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
