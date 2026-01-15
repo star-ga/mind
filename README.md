@@ -189,6 +189,7 @@ MIND powers real-world applications demonstrating its capabilities:
 |---------|-------------|------------|
 | [Mind-Ray](https://github.com/cputer/mind-ray) | GPU path tracer | 10-50x faster than Mitsuba 3, Cycles, Falcor |
 | [NikolaChess](https://github.com/cputer/NikolaChess) | NNUE chess engine | GPU-accelerated search, +600 Elo with NNUE |
+| [Fractal Voyager](https://github.com/cputer/fractal-voyager) | Real-time fractal explorer | WebGPU/WebGL2, audio-reactive, infinite zoom |
 
 ## Roadmap
 
