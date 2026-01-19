@@ -1,7 +1,7 @@
 # MIND: The Native Language for Intelligent Systems
 
 **CPUTER Inc. — California, USA**  \
-Contact: [info@cputer.com](mailto:info@cputer.com) | +1 (844) 394-1538 | Web: [mindlang.dev](https://mindlang.dev)
+Contact: [info@star.ga](mailto:info@star.ga) | +1 (844) 394-1538 | Web: [mindlang.dev](https://mindlang.dev)
 
 ## Executive Summary
 
@@ -145,8 +145,8 @@ The broader vision encompasses Naestro, an AI operating system that leverages MI
 **CPUTER Inc.**  \
 California, USA  \
 Phone: +1 (844) 394-1538  \
-Email: [info@cputer.com](mailto:info@cputer.com)  \
-Web: [https://mindlang.dev](https://mindlang.dev) | [https://cputer.com](https://cputer.com)
+Email: [info@star.ga](mailto:info@star.ga)  \
+Web: [https://mindlang.dev](https://mindlang.dev) | [https://star.ga](https://star.ga)
 
 ---
 

@@ -8,7 +8,7 @@ This document tracks all PRs created to address Copilot review issues from PR #1
 
 ### PR #1: Fix Critical Methodology Issues ✅
 **Branch**: `claude/fix-benchmark-issues-SygXj`
-**Link**: https://github.com/cputer/mind/pull/new/claude/fix-benchmark-issues-SygXj
+**Link**: https://github.com/star-ga/mind/pull/new/claude/fix-benchmark-issues-SygXj
 
 **Status**: ✅ Merged
 
@@ -29,7 +29,7 @@ This document tracks all PRs created to address Copilot review issues from PR #1
 
 ### PR #2: Same-Machine Benchmarks (MOST CRITICAL) ⏳
 **Branch**: `claude/same-machine-benchmarks-SygXj`
-**Link**: https://github.com/cputer/mind/pull/new/claude/same-machine-benchmarks-SygXj
+**Link**: https://github.com/star-ga/mind/pull/new/claude/same-machine-benchmarks-SygXj
 
 **Status**: ⏳ Awaiting Copilot Review
 
@@ -66,7 +66,7 @@ This document tracks all PRs created to address Copilot review issues from PR #1
 
 ### PR #3: Real Autograd Benchmark ⏳
 **Branch**: `claude/remove-fabricated-estimates-SygXj`
-**Link**: https://github.com/cputer/mind/pull/new/claude/remove-fabricated-estimates-SygXj
+**Link**: https://github.com/star-ga/mind/pull/new/claude/remove-fabricated-estimates-SygXj
 
 **Status**: ⏳ Awaiting Copilot Review
 

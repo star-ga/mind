@@ -1,7 +1,7 @@
 # MIND Conformance Test Corpus
 
 This directory contains the **golden test corpus** for MIND Core v1.0 conformance as specified in
-[mind-spec/spec/v1.0/conformance.md](https://github.com/cputer/mind-spec/blob/main/spec/v1.0/conformance.md).
+[mind-spec/spec/v1.0/conformance.md](https://github.com/star-ga/mind-spec/blob/main/spec/v1.0/conformance.md).
 
 ## Test Organization
 
@@ -124,6 +124,6 @@ The test corpus is versioned with the specification:
 
 ## References
 
-- [Conformance Specification](https://github.com/cputer/mind-spec/blob/main/spec/v1.0/conformance.md)
-- [Error Catalog](https://github.com/cputer/mind-spec/blob/main/spec/v1.0/errors.md)
-- [Core IR Specification](https://github.com/cputer/mind-spec/blob/main/spec/v1.0/ir.md)
+- [Conformance Specification](https://github.com/star-ga/mind-spec/blob/main/spec/v1.0/conformance.md)
+- [Error Catalog](https://github.com/star-ga/mind-spec/blob/main/spec/v1.0/errors.md)
+- [Core IR Specification](https://github.com/star-ga/mind-spec/blob/main/spec/v1.0/ir.md)

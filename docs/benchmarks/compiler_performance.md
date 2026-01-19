@@ -211,7 +211,7 @@ tensor.matmul(a, b)
 rustup update
 
 # Clone repository
-git clone https://github.com/cputer/mind.git
+git clone https://github.com/star-ga/mind.git
 cd mind
 
 # Run benchmarks
@@ -256,6 +256,6 @@ compile_medium/parse_check_lower/large_matmul
 ## Contact
 
 For benchmark methodology questions or to reproduce these results:
-- **Repository**: https://github.com/cputer/mind
+- **Repository**: https://github.com/star-ga/mind
 - **Benchmark Code**: `/benches/simple_benchmarks.rs`
 - **Documentation**: `/docs/benchmarks/`

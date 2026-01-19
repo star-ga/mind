@@ -25,7 +25,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 ### Setup
 
 ```bash
-git clone https://github.com/cputer/mind.git
+git clone https://github.com/star-ga/mind.git
 cd mind
 cargo build --no-default-features
 cargo test --no-default-features
