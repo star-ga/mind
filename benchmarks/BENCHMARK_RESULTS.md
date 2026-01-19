@@ -412,5 +412,5 @@ python benchmarks/format_benchmark.py
 ## References
 
 - [TOON Format](https://github.com/toon-format/toon) - Token-Oriented Object Notation
-- [MIC Specification](https://github.com/cputer/mind-spec/blob/main/rfcs/0001-mindir-compact.md)
-- [MAP Specification](https://github.com/cputer/mind-spec/blob/main/rfcs/0002-mind-ai-protocol.md)
+- [MIC Specification](https://github.com/star-ga/mind-spec/blob/main/rfcs/0001-mindir-compact.md)
+- [MAP Specification](https://github.com/star-ga/mind-spec/blob/main/rfcs/0002-mind-ai-protocol.md)

@@ -141,4 +141,4 @@ This benchmark supports MIND patent claims about compilation speed:
 
 - JAX: https://github.com/google/jax
 - XLA: https://www.tensorflow.org/xla
-- MIND: https://github.com/cputer/mind
+- MIND: https://github.com/star-ga/mind

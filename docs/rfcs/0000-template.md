@@ -1,7 +1,7 @@
 # RFC 0000: [Title]
 
 - **Start Date**: YYYY-MM-DD
-- **RFC PR**: [#NNNN](https://github.com/cputer/mind/pull/NNNN)
+- **RFC PR**: [#NNNN](https://github.com/star-ga/mind/pull/NNNN)
 - **Status**: Draft | In Review | Accepted | Rejected | Implemented
 
 ## Summary
