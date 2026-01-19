@@ -41,17 +41,17 @@
 //! O 6
 //! ```
 
-mod types;
-mod parse;
-mod emit;
-mod varint;
 mod binary;
+mod emit;
+mod parse;
+mod types;
+mod varint;
 
-pub use types::{DType, TensorType, Opcode, Value, Graph, GraphEq};
-pub use parse::{parse_mic2, Mic2ParseError};
+pub use binary::{emit_micb, parse_micb, MicbError};
 pub use emit::{emit_mic2, Mic2Emitter};
-pub use varint::{uleb128_read, uleb128_write, zigzag_encode, zigzag_decode};
-pub use binary::{parse_micb, emit_micb, MicbError};
+pub use parse::{parse_mic2, Mic2ParseError};
+pub use types::{DType, Graph, GraphEq, Opcode, TensorType, Value};
+pub use varint::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
 
 /// MIC v2 text format version header.
 pub const MIC2_HEADER: &str = "mic@2";
@@ -113,7 +113,10 @@ mod tests {
 
     #[test]
     fn test_detect_micb() {
-        assert_eq!(detect_format(&[0x4D, 0x49, 0x43, 0x42, 0x02]), MicFormat::MicB);
+        assert_eq!(
+            detect_format(&[0x4D, 0x49, 0x43, 0x42, 0x02]),
+            MicFormat::MicB
+        );
     }
 
     #[test]

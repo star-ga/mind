@@ -129,7 +129,10 @@ impl TensorType {
 
     /// Create a scalar (rank-0) tensor type.
     pub fn scalar(dtype: DType) -> Self {
-        Self { dtype, shape: vec![] }
+        Self {
+            dtype,
+            shape: vec![],
+        }
     }
 
     /// Get the rank (number of dimensions).
@@ -194,9 +197,7 @@ impl Opcode {
             "/" => Some(Self::Div),
             "r" => Some(Self::Relu),
             "s" => {
-                let axis = params.first()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(-1);
+                let axis = params.first().and_then(|s| s.parse().ok()).unwrap_or(-1);
                 Some(Self::Softmax(axis))
             }
             "sig" => Some(Self::Sigmoid),
@@ -204,49 +205,33 @@ impl Opcode {
             "gelu" => Some(Self::Gelu),
             "ln" => Some(Self::LayerNorm),
             "t" => {
-                let perm: Vec<i64> = params.iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+                let perm: Vec<i64> = params.iter().filter_map(|s| s.parse().ok()).collect();
                 Some(Self::Transpose(perm))
             }
             "rshp" => Some(Self::Reshape),
             "sum" => {
-                let axes: Vec<i64> = params.iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+                let axes: Vec<i64> = params.iter().filter_map(|s| s.parse().ok()).collect();
                 Some(Self::Sum(axes))
             }
             "mean" => {
-                let axes: Vec<i64> = params.iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+                let axes: Vec<i64> = params.iter().filter_map(|s| s.parse().ok()).collect();
                 Some(Self::Mean(axes))
             }
             "max" => {
-                let axes: Vec<i64> = params.iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
+                let axes: Vec<i64> = params.iter().filter_map(|s| s.parse().ok()).collect();
                 Some(Self::Max(axes))
             }
             "cat" => {
-                let axis = params.first()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                let axis = params.first().and_then(|s| s.parse().ok()).unwrap_or(0);
                 Some(Self::Concat(axis))
             }
             "split" => {
-                let axis = params.first()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
-                let n = params.get(1)
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(2);
+                let axis = params.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+                let n = params.get(1).and_then(|s| s.parse().ok()).unwrap_or(2);
                 Some(Self::Split(axis, n))
             }
             "gth" => {
-                let axis = params.first()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                let axis = params.first().and_then(|s| s.parse().ok()).unwrap_or(0);
                 Some(Self::Gather(axis))
             }
             _ => None,
@@ -422,10 +407,7 @@ impl Graph {
                 Value::Node(_, inputs) => {
                     for &inp in inputs {
                         if inp >= vid {
-                            return Err(format!(
-                                "Value {} has forward reference to {}",
-                                vid, inp
-                            ));
+                            return Err(format!("Value {} has forward reference to {}", vid, inp));
                         }
                     }
                 }
@@ -449,17 +431,20 @@ impl Graph {
         let mut g = Self::new();
 
         // Types: T0=[128,128], T1=[128]
-        g.add_type(TensorType::new(DType::F16, vec!["128".into(), "128".into()]));
+        g.add_type(TensorType::new(
+            DType::F16,
+            vec!["128".into(), "128".into()],
+        ));
         g.add_type(TensorType::new(DType::F16, vec!["128".into()]));
 
         // Values (implicit IDs: 0, 1, 2, ...)
-        g.add_value(Value::arg("X", 0));      // id=0
-        g.add_value(Value::param("W", 0));    // id=1
-        g.add_value(Value::param("b", 1));    // id=2
+        g.add_value(Value::arg("X", 0)); // id=0
+        g.add_value(Value::param("W", 0)); // id=1
+        g.add_value(Value::param("b", 1)); // id=2
         g.add_value(Value::node(Opcode::Matmul, vec![0, 1])); // id=3: X @ W
-        g.add_value(Value::node(Opcode::Add, vec![3, 2]));    // id=4: (X@W) + b
-        g.add_value(Value::node(Opcode::Relu, vec![4]));      // id=5: relu(...)
-        g.add_value(Value::node(Opcode::Add, vec![5, 0]));    // id=6: relu(...) + X
+        g.add_value(Value::node(Opcode::Add, vec![3, 2])); // id=4: (X@W) + b
+        g.add_value(Value::node(Opcode::Relu, vec![4])); // id=5: relu(...)
+        g.add_value(Value::node(Opcode::Add, vec![5, 0])); // id=6: relu(...) + X
 
         g.set_output(6);
         g
