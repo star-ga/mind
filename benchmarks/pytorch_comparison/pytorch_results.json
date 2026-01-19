@@ -1,73 +1,71 @@
 {
   "system_info": {
-    "platform": "Windows-11-10.0.26200-SP0",
-    "python_version": "3.12.0",
-    "pytorch_version": "2.8.0.dev20250506+cu128",
-    "cpu": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
-    "cuda_available": true,
-    "cuda_version": "12.8",
-    "gpu": "NVIDIA GeForce RTX 4070 Laptop GPU"
+    "platform": "Linux-6.14.0-37-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.12",
+    "pytorch_version": "2.9.1+cpu",
+    "cpu": "x86_64",
+    "cuda_available": false
   },
   "benchmarks": {
     "scalar_math": {
-      "pytorch_mean_us": 400.5300113931298,
-      "pytorch_median_us": 388.7999919243157,
-      "pytorch_stdev_us": 27.563655690792025,
-      "pytorch_min_us": 374.50005766004324,
-      "pytorch_max_us": 459.50000640004873,
+      "pytorch_mean_us": 42780.29421111569,
+      "pytorch_median_us": 41346.68200276792,
+      "pytorch_stdev_us": 4276.121412466234,
+      "pytorch_min_us": 39985.74800789356,
+      "pytorch_max_us": 54293.812019750476,
       "pytorch_samples": 10,
-      "mind_mean_us": 5255.380010930821,
-      "speedup": 0.07621333006558147
+      "mind_mean_us": 1387.4358381144702,
+      "speedup": 30.834070330239015
     },
     "small_matmul": {
-      "pytorch_mean_us": 417.87000373005867,
-      "pytorch_median_us": 405.4500022903085,
-      "pytorch_stdev_us": 64.39171193005348,
-      "pytorch_min_us": 360.69995258003473,
-      "pytorch_max_us": 584.6000276505947,
+      "pytorch_mean_us": 61455.47282649204,
+      "pytorch_median_us": 47494.296508375555,
+      "pytorch_stdev_us": 42890.9617159332,
+      "pytorch_min_us": 43453.41201405972,
+      "pytorch_max_us": 182881.58299401402,
       "pytorch_samples": 10,
-      "mind_mean_us": 5283.749999944121,
-      "speedup": 0.07908587721494732
+      "mind_mean_us": 1331.747748190537,
+      "speedup": 46.14648150146481
     },
     "medium_matmul": {
-      "pytorch_mean_us": 845.2900103293359,
-      "pytorch_median_us": 841.6500058956444,
-      "pytorch_stdev_us": 33.46437017326666,
-      "pytorch_min_us": 785.500044003129,
-      "pytorch_max_us": 905.499910004437,
+      "pytorch_mean_us": 48370.2375786379,
+      "pytorch_median_us": 47887.57243659347,
+      "pytorch_stdev_us": 3755.6410002662496,
+      "pytorch_min_us": 43763.3270630613,
+      "pytorch_max_us": 55919.7150869295,
       "pytorch_samples": 10,
-      "mind_mean_us": 5367.2549955081195,
-      "speedup": 0.15749019024375832
+      "mind_mean_us": 1306.3468504697084,
+      "speedup": 37.027101616424424
     },
     "large_matmul": {
-      "pytorch_mean_us": 1747.82999092713,
-      "pytorch_median_us": 1708.2500271499157,
-      "pytorch_stdev_us": 171.16636711258087,
-      "pytorch_min_us": 1498.800003901124,
-      "pytorch_max_us": 2100.4999289289117,
+      "pytorch_mean_us": 52398.576971609145,
+      "pytorch_median_us": 50352.43695601821,
+      "pytorch_stdev_us": 5596.716029474433,
+      "pytorch_min_us": 45658.87991338968,
+      "pytorch_max_us": 63337.49194163829,
       "pytorch_samples": 10,
-      "mind_mean_us": 5356.054997537285,
-      "speedup": 0.3263278647681517
+      "mind_mean_us": 1352.8758310712874,
+      "speedup": 38.7312536510589
     },
     "simple_mlp": {
-      "pytorch_mean_us": 748.1900160200894,
-      "pytorch_median_us": 689.8500141687691,
-      "pytorch_stdev_us": 125.37586840607096,
-      "pytorch_min_us": 647.5000409409404,
-      "pytorch_max_us": 1050.0000789761543,
+      "pytorch_mean_us": 64300.52878567949,
+      "pytorch_median_us": 63178.35993831977,
+      "pytorch_stdev_us": 4653.327536661005,
+      "pytorch_min_us": 60093.250940553844,
+      "pytorch_max_us": 76001.36497057974,
       "pytorch_samples": 10,
-      "mind_mean_us": 5534.785019699484,
-      "speedup": 0.13517959836870286
+      "mind_mean_us": 1381.8178558722138,
+      "speedup": 46.53328838705193
     },
     "conv2d": {
-      "pytorch_mean_us": 4331.4899783581495,
-      "pytorch_median_us": 4355.849989224225,
-      "pytorch_stdev_us": 130.36350829032168,
-      "pytorch_min_us": 4151.199944317341,
-      "pytorch_max_us": 4558.90002194792,
+      "pytorch_mean_us": 79273.33498373628,
+      "pytorch_median_us": 79871.550493408,
+      "pytorch_stdev_us": 6372.8289058280925,
+      "pytorch_min_us": 70948.89099244028,
+      "pytorch_max_us": 92222.36403729767,
       "pytorch_samples": 10,
-      "mind_mean_us": 5375.0199906062335,
-      "speedup": 0.8058556035006695
+      "mind_mean_us": 1506.9667075295001,
+      "speedup": 52.60456955528623
     }
   }
 }

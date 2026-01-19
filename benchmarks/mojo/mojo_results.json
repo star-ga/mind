@@ -1,47 +1,34 @@
 {
   "scalar_math": {
-    "mojo_mean_us": 440910.657,
-    "mojo_median_us": 441952.246,
-    "mojo_stdev_us": 11735.847,
-    "mojo_min_us": 414795.855,
-    "mojo_max_us": 461744.319,
-    "mojo_samples": 20,
-    "mind_mean_us": 22.0,
-    "speedup": 20041.39
+    "mean_us": 908418.5847488698,
+    "median_us": 899533.8435051963,
+    "stdev_us": 31480.957961438555,
+    "min_us": 875609.971000813,
+    "max_us": 981683.6679819971,
+    "samples": 20
   },
   "small_matmul": {
-    "mojo_mean_us": 498387.839,
-    "mojo_median_us": 499644.824,
-    "mojo_stdev_us": 8351.753,
-    "mojo_min_us": 485105.199,
-    "mojo_max_us": 514936.278,
-    "mojo_samples": 20,
-    "mind_mean_us": 41.1,
-    "speedup": 12125.01
+    "mean_us": 928328.6010904703,
+    "median_us": 928580.4450046271,
+    "stdev_us": 17946.197162177705,
+    "min_us": 894639.7509425879,
+    "max_us": 980663.5569548234,
+    "samples": 20
   },
   "medium_matmul": {
-    "mojo_mean_us": 1336751.375,
-    "mojo_median_us": 1338582.428,
-    "mojo_stdev_us": 17636.061,
-    "mojo_min_us": 1310705.763,
-    "mojo_max_us": 1371786.659,
-    "mojo_samples": 20,
-    "mind_mean_us": 40.6,
-    "speedup": 32924.91
+    "mean_us": 914881.9730209652,
+    "median_us": 910918.3865366504,
+    "stdev_us": 23470.101418865845,
+    "min_us": 876968.4080034494,
+    "max_us": 972096.8340989202,
+    "samples": 20
   },
   "large_matmul": {
-    "mojo_mean_us": 13814613.402,
-    "mojo_median_us": 13752180.213,
-    "mojo_stdev_us": 168885.842,
-    "mojo_min_us": 13638213.009,
-    "mojo_max_us": 14247361.123,
-    "mojo_samples": 20,
-    "mind_mean_us": 40.7,
-    "speedup": 339424.16
-  },
-  "metadata": {
-    "mojo_version": "0.25.7.0",
-    "measured_on_same_machine": true,
-    "note": "MIND compiles 20,000x to 340,000x faster than Mojo for these benchmarks"
+    "mean_us": 913196.8059868086,
+    "median_us": 913649.2809629999,
+    "stdev_us": 14895.989847786024,
+    "min_us": 885975.7910249755,
+    "max_us": 937909.5300100744,
+    "samples": 20
   }
 }
