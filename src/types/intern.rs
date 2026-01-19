@@ -192,6 +192,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::assertions_on_constants)]
     fn test_interner_capacity_documented() {
         // Verify that the interner has a documented capacity limit
         // This is a documentation test to ensure the limit exists

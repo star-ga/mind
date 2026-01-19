@@ -74,7 +74,7 @@ pub const MIC_HEADER: &str = "mic@1";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{BinOp, IRModule, Instr, ValueId};
+    use crate::ir::{BinOp, IRModule, Instr};
     use crate::types::{DType, ShapeDim};
 
     #[test]
@@ -244,7 +244,7 @@ O N2
     #[test]
     fn test_shape_dim_limit() {
         // RFC-0001: Limit shape dimensions
-        let mut shape = (0..50).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        let shape = (0..50).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
         let mic = format!(
             "mic@1\nT0 [f32;{}]\nN0 const.tensor fill=0.0 T0\nO N0\n",
             shape
@@ -303,7 +303,7 @@ O N0
 
     #[test]
     fn test_all_binops() {
-        for (op_str, op) in [
+        for (op_str, _op) in [
             ("add", BinOp::Add),
             ("sub", BinOp::Sub),
             ("mul", BinOp::Mul),
