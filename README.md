@@ -152,18 +152,34 @@ All tests run on every pull request via GitHub Actions. See [`.github/workflows/
 
 The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/runtime performance, regression tracking, and methodology.
 
-### Compilation Speed (Dec 27, 2025)
+### Compilation Speed
+
+#### Machine 1 (Dec 23, 2025)
 
 | vs Framework | MIND Speedup |
 |--------------|--------------|
-| PyTorch 2.0 torch.compile | **53-247x faster** |
-| Mojo | **12,000-339,000x faster** |
+| PyTorch 2.0 torch.compile | **53-247× faster** |
+| Mojo (mojo build) | **12,000-339,000× faster** |
 
 | Benchmark | PyTorch | Mojo | MIND |
 |-----------|---------|------|------|
-| scalar_math | 2.4 ms | 440.9 ms | ~38 us |
-| matmul | 2.0-3.5 ms | 498ms-13.8s | ~105 us |
-| conv2d | 9.4 ms | - | ~38 us |
+| scalar_math | 2.0 ms | 440 ms | ~38 µs |
+| small_matmul | 9.4 ms | 13.8 s | ~38 µs |
+
+#### Machine 2 (Jan 19, 2026)
+
+| vs Framework | MIND Speedup |
+|--------------|--------------|
+| PyTorch 2.0 torch.compile (inductor) | **800-3,200× faster** |
+| Mojo (mojo build) | **17,000-36,000× faster** |
+
+| Benchmark | PyTorch (inductor) | Mojo (build) | MIND (in-process) |
+|-----------|-------------------|--------------|-------------------|
+| scalar_math | 42.8 ms | 908 ms | 25-53 µs |
+| small_matmul | 61.5 ms | 928 ms | 25-53 µs |
+| conv2d | 79.3 ms | - | 25-53 µs |
+
+*Fair in-process compilation time comparison across different hardware configurations.*
 
 ### MIC/MAP Format Efficiency
 
