@@ -18,7 +18,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 
 1. **Do NOT file a public GitHub issue** for security vulnerabilities
 2. **Email**: Send details to `security@star.ga`
-3. **Alternative**: Contact the repo owner (@cputer) directly via GitHub's private vulnerability reporting
+3. **Alternative**: Contact the repo owner (@star-ga) directly via GitHub's private vulnerability reporting
 
 ### What to Include
 
@@ -78,4 +78,4 @@ Out of scope:
 
 - Security issues: `security@star.ga`
 - General inquiries: `info@star.ga`
-- Repository owner: [@cputer](https://github.com/cputer)
+- Repository owner: [@star-ga](https://github.com/star-ga)

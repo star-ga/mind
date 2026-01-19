@@ -1,6 +1,6 @@
 # Same-Machine Benchmarks - Addressing Copilot Concerns
 
-**PR**: https://github.com/cputer/mind/pull/new/claude/same-machine-benchmarks-SygXj
+**PR**: https://github.com/star-ga/mind/pull/new/claude/same-machine-benchmarks-SygXj
 
 **Branch**: `claude/same-machine-benchmarks-SygXj`
 
@@ -313,4 +313,4 @@ All with properly equivalent MIND programs.
 
 **Status**: Copilot fixes applied, awaiting re-review ✅
 **Branch**: `claude/same-machine-benchmarks-SygXj`
-**PR Link**: https://github.com/cputer/mind/pull/new/claude/same-machine-benchmarks-SygXj
+**PR Link**: https://github.com/star-ga/mind/pull/new/claude/same-machine-benchmarks-SygXj
