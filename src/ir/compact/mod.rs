@@ -14,40 +14,56 @@
 
 //! MindIR Compact (MIC) format - Token-efficient IR serialization for AI agents.
 //!
-//! MIC is a text-based, line-oriented format designed for:
-//! - Minimal token usage (4x reduction vs JSON)
-//! - Git-friendly diffs (one node per line)
-//! - Stable IDs for safe patching
-//! - Deterministic canonicalization
+//! MIC supports two format versions:
 //!
-//! # Format Overview
+//! ## mic@1 (Legacy)
 //!
+//! Text format with explicit node IDs:
 //! ```text
-//! mic@1                    # Version header
-//! S0 "input"               # Symbol table
-//! T0 f32                   # Type table
-//! T1 [f32;3,4]             # Tensor type
-//! N1 const.i64 42 T0       # Node definitions
-//! N2 add N1 N1 T0          # Binary op
-//! O N2                     # Output marker
+//! mic@1
+//! T0 f32
+//! N0 const.i64 42 T0
+//! N1 add N0 N0 T0
+//! O N1
 //! ```
 //!
-//! # Example
+//! ## mic@2 (Recommended)
 //!
+//! Text format with implicit value IDs for ~40% token reduction:
+//! ```text
+//! mic@2
+//! T0 f16 128 128
+//! a X T0
+//! p W T0
+//! m 0 1
+//! O 2
 //! ```
-//! use mind::ir::compact::{emit_mic, parse_mic};
-//! use mind::ir::IRModule;
 //!
-//! let module = IRModule::new();
-//! let mic = emit_mic(&module);
-//! let parsed = parse_mic(&mic).unwrap();
+//! ## MIC-B v2 (Binary)
+//!
+//! Compact binary format with ULEB128 varints, ~4x smaller than text.
+//!
+//! # Format Detection
+//!
+//! Use `detect_format()` to identify input format:
+//! ```ignore
+//! use mind::ir::compact::{detect_format, MicFormat};
+//!
+//! match detect_format(data) {
+//!     MicFormat::Mic1 => parse_mic(data),
+//!     MicFormat::Mic2 => v2::parse_mic2(data),
+//!     MicFormat::MicB => v2::parse_micb(data),
+//!     MicFormat::Unknown => Err(...),
+//! }
 //! ```
 
 mod emit;
 mod parse;
+pub mod v2;
 
 pub use emit::{emit_mic, MicEmitter};
 pub use parse::{parse_mic, MicParseError};
+pub use v2::{detect_format, MicFormat};
 
 /// MIC format version.
 pub const MIC_VERSION: u32 = 1;
