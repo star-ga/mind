@@ -115,6 +115,7 @@ pub fn sleb128_read<R: Read>(r: &mut R) -> std::io::Result<i64> {
 }
 
 /// Calculate the encoded size of a value in ULEB128.
+#[allow(dead_code)]
 pub fn uleb128_size(mut value: u64) -> usize {
     let mut size = 0;
     loop {
