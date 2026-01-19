@@ -81,9 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Links
 
-- Repository: https://github.com/cputer/mind
-- Documentation: https://github.com/cputer/mind/tree/main/docs
-- Issues: https://github.com/cputer/mind/issues
+- Repository: https://github.com/star-ga/mind
+- Documentation: https://github.com/star-ga/mind/tree/main/docs
+- Issues: https://github.com/star-ga/mind/issues
 
-[Unreleased]: https://github.com/cputer/mind/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/cputer/mind/releases/tag/v0.1.0
+[Unreleased]: https://github.com/star-ga/mind/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/star-ga/mind/releases/tag/v0.1.0

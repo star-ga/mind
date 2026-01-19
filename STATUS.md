@@ -77,7 +77,7 @@ All checks passing:
 
 ## Known Issues
 
-See [GitHub Issues](https://github.com/cputer/mind/issues) for tracked bugs and enhancements.
+See [GitHub Issues](https://github.com/star-ga/mind/issues) for tracked bugs and enhancements.
 
 ### Code TODOs
 

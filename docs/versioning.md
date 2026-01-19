@@ -56,5 +56,5 @@ MIND Core currently publishes 0.y.z versions with the following rules:
 
 ## References
 
-- mind-spec Core v1: https://github.com/cputer/mind-spec/tree/main/spec/v1.0
+- mind-spec Core v1: https://github.com/star-ga/mind-spec/tree/main/spec/v1.0
 - Error model: see [`docs/errors.md`](errors.md).

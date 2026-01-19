@@ -18,7 +18,7 @@
 //!
 //! This module contains stub implementations that define the execution backend
 //! interface. Real implementations are provided by the proprietary `mind-runtime`
-//! backend (see <https://github.com/cputer/mind-runtime>).
+//! backend (see <https://github.com/star-ga/mind-runtime>).
 //!
 //! # TODO(runtime) Markers
 //!

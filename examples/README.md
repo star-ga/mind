@@ -76,7 +76,7 @@ mind build --features=mlir-lowering examples/cnn_classifier.mind -o cnn_binary
 
 ## Additional Resources
 
-- [MIND Language Specification](https://github.com/cputer/mind-spec)
+- [MIND Language Specification](https://github.com/star-ga/mind-spec)
 - [Autodiff Specification](../docs/autodiff.md)
 - [MLIR Lowering Guide](../docs/mlir-lowering.md)
 

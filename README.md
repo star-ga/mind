@@ -4,7 +4,7 @@
 
 # MIND — Machine Intelligence Native Design
 
-[![CI](https://github.com/cputer/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/cputer/mind/actions/workflows/ci.yml)
+[![CI](https://github.com/star-ga/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/star-ga/mind/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 ## Overview
@@ -13,7 +13,7 @@ MIND is a Rust-first language and runtime for building intelligent systems with 
 
 ## Open-core vs proprietary runtime
 
-This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. Production-grade runtime backends for CPU, GPU, and accelerators live in the private [`mind-runtime`](https://github.com/cputer/mind-runtime) repository. Functions in `src/exec/*` marked with `todo!()` or `unimplemented!()` are runtime hooks that the proprietary backend fulfills.
+This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. Production-grade runtime backends for CPU, GPU, and accelerators live in the private [`mind-runtime`](https://github.com/star-ga/mind-runtime) repository. Functions in `src/exec/*` marked with `todo!()` or `unimplemented!()` are runtime hooks that the proprietary backend fulfills.
 
 ## System Requirements
 
@@ -42,7 +42,7 @@ This repository contains the open-core stack: the MIND language, type system, co
 ## Quick Start
 
 ```bash
-git clone https://github.com/cputer/mind.git
+git clone https://github.com/star-ga/mind.git
 cd mind
 cargo run -- eval "let x: Tensor[f32,(2,3)] = 0; x + 1"
 ```
@@ -203,9 +203,9 @@ MIND powers real-world applications demonstrating its capabilities:
 
 | Project | Description | Highlights |
 |---------|-------------|------------|
-| [Mind-Ray](https://github.com/cputer/mind-ray) | GPU path tracer | 10-50x faster than Mitsuba 3, Cycles, Falcor |
-| [NikolaChess](https://github.com/cputer/NikolaChess) | NNUE chess engine | GPU-accelerated search, +600 Elo with NNUE |
-| [Fractal Voyager](https://github.com/cputer/fractal-voyager) | Real-time fractal explorer | WebGPU/WebGL2, audio-reactive, infinite zoom |
+| [Mind-Ray](https://github.com/star-ga/mind-ray) | GPU path tracer | 10-50x faster than Mitsuba 3, Cycles, Falcor |
+| [NikolaChess](https://github.com/star-ga/NikolaChess) | NNUE chess engine | GPU-accelerated search, +600 Elo with NNUE |
+| [Fractal Voyager](https://github.com/star-ga/fractal-voyager) | Real-time fractal explorer | WebGPU/WebGL2, audio-reactive, infinite zoom |
 
 ## Roadmap
 
@@ -237,4 +237,4 @@ For commercial licensing, OEM partnerships, or large-scale deployments, please c
 
 ---
 
-Looking for implementation details? Start in [`/docs`](docs/README.md) and join the conversation in [mind-runtime](https://github.com/cputer/mind-runtime) and [mind-spec](https://github.com/cputer/mind-spec).
+Looking for implementation details? Start in [`/docs`](docs/README.md) and join the conversation in [mind-runtime](https://github.com/star-ga/mind-runtime) and [mind-spec](https://github.com/star-ga/mind-spec).

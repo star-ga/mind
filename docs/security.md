@@ -96,7 +96,7 @@ The MIND compiler is written in Rust, providing:
 
 ## Reporting Vulnerabilities
 
-Report security issues privately to the repo owner (@cputer). See [SECURITY.md](../SECURITY.md) for the full policy.
+Report security issues privately to the repo owner (@star-ga). See [SECURITY.md](../SECURITY.md) for the full policy.
 
 ## Compliance Considerations
 
