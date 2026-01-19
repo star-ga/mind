@@ -78,7 +78,7 @@ pub enum MicFormat {
 /// Detect the format of input bytes.
 pub fn detect_format(data: &[u8]) -> MicFormat {
     // Check for binary magic first
-    if data.len() >= 5 && &data[0..4] == MICB_MAGIC {
+    if data.len() >= 5 && data[0..4] == MICB_MAGIC {
         return MicFormat::MicB;
     }
 
