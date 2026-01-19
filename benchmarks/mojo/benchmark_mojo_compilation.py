@@ -33,26 +33,41 @@ BENCHMARKS = {
 
 def measure_compilation_time(mojo_file: Path) -> float:
     """
-    Measure compilation time for a Mojo file.
+    Measure COMPILATION-ONLY time for a Mojo file.
+
+    Uses 'mojo build' to compile without executing.
+    This is the fair comparison to MIND's compile_source().
 
     Returns time in microseconds.
     """
-    start = time.perf_counter()
+    import tempfile
+    import os
 
-    # Compile Mojo file (don't run, just compile)
-    result = subprocess.run(
-        ["mojo", "run", "--no-optimization", str(mojo_file)],
-        capture_output=True,
-        text=True,
-    )
+    # Create temp output file for the compiled binary
+    with tempfile.NamedTemporaryFile(suffix='.out', delete=False) as tmp:
+        output_path = tmp.name
 
-    end = time.perf_counter()
+    try:
+        start = time.perf_counter()
 
-    if result.returncode != 0:
-        raise RuntimeError(f"Compilation failed: {result.stderr}")
+        # Compile Mojo file WITHOUT running (compile-only)
+        result = subprocess.run(
+            ["mojo", "build", str(mojo_file), "-o", output_path],
+            capture_output=True,
+            text=True,
+        )
 
-    # Convert to microseconds for comparison with MIND benchmarks
-    return (end - start) * 1_000_000
+        end = time.perf_counter()
+
+        if result.returncode != 0:
+            raise RuntimeError(f"Compilation failed: {result.stderr}")
+
+        # Convert to microseconds for comparison with MIND benchmarks
+        return (end - start) * 1_000_000
+    finally:
+        # Clean up the compiled binary
+        if os.path.exists(output_path):
+            os.remove(output_path)
 
 
 def run_benchmark(name: str, mojo_file: Path) -> Dict[str, float]:
@@ -108,17 +123,19 @@ def compare_with_mind(mojo_results: Dict[str, Dict[str, float]]):
     """
     Compare Mojo results with MIND benchmarks.
 
-    MIND results from benches/simple_benchmarks.rs:
-    - scalar_math: 17.893 µs
-    - small_matmul: 29.111 µs
-    - medium_matmul: 29.384 µs
-    - large_matmul: 30.143 µs
+    MIND results from Criterion benchmarks (Linux, i7-5930K):
+    - scalar_math: 25.3 µs (in-process, hot path)
+    - small_matmul: 53.5 µs
+    - medium_matmul: 52.8 µs
+    - large_matmul: 52.2 µs
+
+    Note: For fair subprocess comparison, add ~1.2ms process overhead.
     """
     mind_results = {
-        "scalar_math": 17.893,
-        "small_matmul": 29.111,
-        "medium_matmul": 29.384,
-        "large_matmul": 30.143,
+        "scalar_math": 25.3,
+        "small_matmul": 53.5,
+        "medium_matmul": 52.8,
+        "large_matmul": 52.2,
     }
 
     print("\n" + "="*80)

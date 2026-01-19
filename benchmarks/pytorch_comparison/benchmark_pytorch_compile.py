@@ -54,9 +54,12 @@ def measure_torch_compile_time(model_fn, input_shape, device="cpu"):
     x = torch.randn(*input_shape, device=device)
 
     # Measure compilation time
-    # Use reduce-overhead mode which is more compatible across platforms
+    # Use inductor backend for REAL compilation (not eager which is a no-op)
+    # Clear any cached compilations first
+    torch.compiler.reset()
+
     start = time.perf_counter()
-    compiled_model = torch.compile(model, mode="reduce-overhead", backend="eager")
+    compiled_model = torch.compile(model, backend="inductor")
 
     # First call triggers compilation
     with torch.no_grad():
