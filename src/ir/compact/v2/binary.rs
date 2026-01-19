@@ -246,10 +246,7 @@ impl MicbDecoder {
         r.read_exact(&mut magic)?;
         if magic != MICB_MAGIC {
             return Err(MicbError {
-                message: format!(
-                    "invalid magic: expected {:?}, got {:?}",
-                    MICB_MAGIC, magic
-                ),
+                message: format!("invalid magic: expected {:?}, got {:?}", MICB_MAGIC, magic),
             });
         }
 
@@ -578,7 +575,10 @@ mod tests {
         let mut graph = Graph::new();
 
         // Same dim used multiple times
-        graph.add_type(TensorType::new(DType::F32, vec!["128".into(), "128".into()]));
+        graph.add_type(TensorType::new(
+            DType::F32,
+            vec!["128".into(), "128".into()],
+        ));
         graph.add_type(TensorType::new(DType::F32, vec!["128".into()]));
         graph.add_value(Value::arg("x", 0));
 

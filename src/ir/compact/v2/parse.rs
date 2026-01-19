@@ -65,11 +65,7 @@ pub fn parse_mic2(input: &str) -> Result<Graph, Mic2ParseError> {
     if lines.len() > MAX_LINE_COUNT {
         return Err(Mic2ParseError {
             line: 0,
-            message: format!(
-                "too many lines: {} (max {})",
-                lines.len(),
-                MAX_LINE_COUNT
-            ),
+            message: format!("too many lines: {} (max {})", lines.len(), MAX_LINE_COUNT),
         });
     }
 
@@ -168,10 +164,7 @@ impl<'a> Mic2Parser<'a> {
                 )));
             }
 
-            return Err(self.error(format!(
-                "expected '{}' header, got '{}'",
-                MIC2_HEADER, line
-            )));
+            return Err(self.error(format!("expected '{}' header, got '{}'", MIC2_HEADER, line)));
         }
 
         Err(self.error("empty input or missing header"))
@@ -280,7 +273,9 @@ impl<'a> Mic2Parser<'a> {
             if inputs.len() != expected {
                 return Err(self.error(format!(
                     "opcode '{}' requires {} inputs, got {}",
-                    opcode_tok, expected, inputs.len()
+                    opcode_tok,
+                    expected,
+                    inputs.len()
                 )));
             }
         }
@@ -336,8 +331,7 @@ impl<'a> Mic2Parser<'a> {
         if self.current_value_id >= MAX_VALUE_COUNT {
             return Err(self.error(format!(
                 "too many values: {} (max {})",
-                self.current_value_id,
-                MAX_VALUE_COUNT
+                self.current_value_id, MAX_VALUE_COUNT
             )));
         }
 

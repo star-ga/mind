@@ -159,15 +159,7 @@ mod tests {
 
     #[test]
     fn test_uleb128_large_values() {
-        let test_values = [
-            255u64,
-            256,
-            1000,
-            10000,
-            100000,
-            u32::MAX as u64,
-            u64::MAX,
-        ];
+        let test_values = [255u64, 256, 1000, 10000, 100000, u32::MAX as u64, u64::MAX];
 
         for v in test_values {
             let mut buf = Vec::new();
