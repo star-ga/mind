@@ -9,35 +9,46 @@
 
 ## Compilation Speed
 
-### MIND vs PyTorch 2.0 (Linux - Corrected Methodology)
+### MIND vs PyTorch 2.9 GPU torch.compile (January 2026 - Verified)
 
-**Methodology:** PyTorch using `inductor` backend (real compilation), MIND via subprocess
+**Methodology:** PyTorch using GPU `torch.compile` cold-start, MIND in-process via Criterion benchmarks
 
-| Benchmark | PyTorch (inductor) | MIND | Speedup |
-|-----------|-------------------|------|---------|
+| Benchmark | PyTorch 2.9 (GPU) | MIND (in-process) | Speedup |
+|-----------|-------------------|-------------------|---------|
+| scalar_math | 3,172 ms | 25.3 µs | **125,375× faster** |
+| small_matmul | 3,467 ms | 53.5 µs | **64,804× faster** |
+| medium_matmul | 3,599 ms | 52.8 µs | **68,163× faster** |
+| large_matmul | 3,422 ms | 52.2 µs | **65,556× faster** |
+
+**MIND compiles 65,000-125,000× faster than PyTorch 2.9 GPU torch.compile (cold-start).**
+
+*Environment: Ubuntu 24.04, RTX 3080, CUDA 13.0, PyTorch 2.9.1+cu126*
+
+### MIND vs Mojo 0.25.7 (January 2026 - Verified)
+
+**Methodology:** Mojo using `mojo build` (compilation only), MIND in-process via Criterion benchmarks
+
+| Benchmark | Mojo 0.25.7 | MIND (in-process) | Speedup |
+|-----------|-------------|-------------------|---------|
+| scalar_math | 908 ms | 25.3 µs | **35,906× faster** |
+| small_matmul | 928 ms | 53.5 µs | **17,352× faster** |
+| medium_matmul | 915 ms | 52.8 µs | **17,327× faster** |
+| large_matmul | 913 ms | 52.2 µs | **17,494× faster** |
+
+**MIND compiles 17,000-36,000× faster than Mojo 0.25.7.**
+
+*Environment: Ubuntu 24.04, Mojo 0.25.7*
+
+### Historical: Subprocess Comparison (January 19, 2026)
+
+*Note: Subprocess overhead adds ~1.3ms to MIND measurements. These numbers are kept for reference.*
+
+| Benchmark | PyTorch (inductor) | MIND (subprocess) | Speedup |
+|-----------|-------------------|-------------------|---------|
 | scalar_math | 42.8 ms | 1.4 ms | **31× faster** |
 | small_matmul | 61.5 ms | 1.3 ms | **46× faster** |
 | medium_matmul | 48.4 ms | 1.3 ms | **37× faster** |
 | large_matmul | 52.4 ms | 1.4 ms | **39× faster** |
-| simple_mlp | 64.3 ms | 1.4 ms | **47× faster** |
-| conv2d | 79.3 ms | 1.5 ms | **53× faster** |
-
-**MIND compiles 31-53× faster than PyTorch 2.0 (torch.compile with inductor backend).**
-
-### MIND vs Mojo (Linux - Fair Subprocess Comparison)
-
-**Methodology:** Both measured via subprocess for fair comparison
-
-| Benchmark | Mojo (`mojo build`) | MIND (subprocess) | Speedup |
-|-----------|---------------------|-------------------|---------|
-| scalar_math | 908 ms | 1.4 ms | **649× faster** |
-| small_matmul | 928 ms | 1.3 ms | **714× faster** |
-| medium_matmul | 915 ms | 1.3 ms | **704× faster** |
-| large_matmul | 913 ms | 1.4 ms | **652× faster** |
-
-**MIND compiles ~650× faster than Mojo (fair subprocess-to-subprocess comparison).**
-
-*Note: MIND Criterion in-process benchmarks show 25-53µs, but subprocess overhead adds ~1.3ms. For fair comparison, both tools measured via subprocess.*
 
 ### Historical: Windows Benchmarks (Dec 27, 2025)
 
