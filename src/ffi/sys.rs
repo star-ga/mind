@@ -34,12 +34,7 @@ pub mod linux {
                 return true; // Already being traced
             }
             // Detach from self
-            ptrace(
-                PTRACE_DETACH,
-                0,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            );
+            ptrace(PTRACE_DETACH, 0, std::ptr::null_mut(), std::ptr::null_mut());
             false
         }
     }
@@ -222,7 +217,11 @@ pub fn platform_name() -> &'static str {
 /// Expose to Mind language as `sys.is_debugger_present()`
 #[no_mangle]
 pub extern "C" fn mind_sys_is_debugger_present() -> c_int {
-    if is_debugger_present() { 1 } else { 0 }
+    if is_debugger_present() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Expose to Mind language as `sys.platform()`
@@ -247,7 +246,11 @@ pub extern "C" fn mind_sys_timing_check() -> c_int {
     let elapsed = start.elapsed();
 
     // More than 50ms = suspicious
-    if elapsed.as_millis() > 50 { 1 } else { 0 }
+    if elapsed.as_millis() > 50 {
+        1
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
