@@ -185,8 +185,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust 1.82
-        uses: dtolnay/rust-toolchain@1.82
+      - name: Install Rust 1.85
+        uses: dtolnay/rust-toolchain@1.85
 
       - name: Check MSRV compiles
         run: cargo check --no-default-features

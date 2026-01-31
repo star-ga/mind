@@ -2,7 +2,7 @@
 name = "mind"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 authors = ["MIND Language Contributors"]
 description = "The native language for intelligent systems"
 repository = "https://github.com/star-ga/mind"
