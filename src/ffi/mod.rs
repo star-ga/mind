@@ -236,3 +236,6 @@ pub mod capi {
 
 #[cfg(feature = "ffi-c")]
 pub mod header;
+
+// System-level FFI for protection (anti-debug, platform detection)
+pub mod sys;
