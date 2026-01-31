@@ -90,7 +90,11 @@ jobs:
           cd target/${{ matrix.target }}/release
           tar -czf ../../../${{ matrix.artifact }}.${{ matrix.ext }} mindc
           cd ../../..
-          sha256sum ${{ matrix.artifact }}.${{ matrix.ext }} > ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
+          if command -v sha256sum &> /dev/null; then
+            sha256sum ${{ matrix.artifact }}.${{ matrix.ext }} > ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
+          else
+            shasum -a 256 ${{ matrix.artifact }}.${{ matrix.ext }} > ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
+          fi
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
