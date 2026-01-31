@@ -1,0 +1,192 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: Linux x86_64
+            artifact: mindc-linux-x64
+            ext: tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            name: Linux ARM64
+            artifact: mindc-linux-arm64
+            ext: tar.gz
+            cross: true
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: macOS x86_64
+            artifact: mindc-macos-x64
+            ext: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            name: macOS ARM64
+            artifact: mindc-macos-arm64
+            ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: Windows x86_64
+            artifact: mindc-windows-x64
+            ext: zip
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: release-${{ matrix.target }}-${{ hashFiles('**/Cargo.toml') }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build (native)
+        if: "!matrix.cross"
+        run: cargo build --release --target ${{ matrix.target }} --bin mindc
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} --bin mindc
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czf ../../../${{ matrix.artifact }}.${{ matrix.ext }} mindc
+          cd ../../..
+          sha256sum ${{ matrix.artifact }}.${{ matrix.ext }} > ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd target\${{ matrix.target }}\release
+          7z a ..\..\..\${{ matrix.artifact }}.${{ matrix.ext }} mindc.exe
+          cd ..\..\..
+          $hash = (Get-FileHash ${{ matrix.artifact }}.${{ matrix.ext }} -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "${{ matrix.artifact }}.${{ matrix.ext }}.sha256" -Value "$hash  ${{ matrix.artifact }}.${{ matrix.ext }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}.${{ matrix.ext }}
+            ${{ matrix.artifact }}.${{ matrix.ext }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "tag=v${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create tag (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a v${{ inputs.version }} -m "Release v${{ inputs.version }}"
+          git push origin v${{ inputs.version }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: MIND Compiler v${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/mindc-linux-x64.tar.gz
+            artifacts/mindc-linux-x64.tar.gz.sha256
+            artifacts/mindc-linux-arm64.tar.gz
+            artifacts/mindc-linux-arm64.tar.gz.sha256
+            artifacts/mindc-macos-x64.tar.gz
+            artifacts/mindc-macos-x64.tar.gz.sha256
+            artifacts/mindc-macos-arm64.tar.gz
+            artifacts/mindc-macos-arm64.tar.gz.sha256
+            artifacts/mindc-windows-x64.zip
+            artifacts/mindc-windows-x64.zip.sha256
+          body: |
+            ## MIND Compiler v${{ steps.version.outputs.version }}
+
+            The native language for intelligent systems.
+
+            ### Downloads
+
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Linux | x86_64 | `mindc-linux-x64.tar.gz` |
+            | Linux | ARM64 | `mindc-linux-arm64.tar.gz` |
+            | macOS | Intel | `mindc-macos-x64.tar.gz` |
+            | macOS | Apple Silicon | `mindc-macos-arm64.tar.gz` |
+            | Windows | x86_64 | `mindc-windows-x64.zip` |
+
+            ### Quick Install
+
+            ```bash
+            # Linux/macOS
+            curl -LO https://github.com/star-ga/mind/releases/download/v${{ steps.version.outputs.version }}/mindc-linux-x64.tar.gz
+            tar -xzf mindc-linux-x64.tar.gz
+            sudo mv mindc /usr/local/bin/
+            mindc --version
+            ```
+
+            ---
+            **MIND Language**: https://github.com/star-ga/mind
