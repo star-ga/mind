@@ -248,6 +248,11 @@ fn compile_sources(
     let obj_dir = project_root.join("target").join("obj");
     fs::create_dir_all(&obj_dir)?;
 
+    // Determine which file is the entry point
+    let manifest = load_manifest(project_root)?;
+    let entry_path = project_root.join(&manifest.build.entry);
+    let entry_canonical = entry_path.canonicalize().unwrap_or(entry_path.clone());
+
     let mut objects = Vec::new();
 
     for source in sources {
@@ -261,9 +266,12 @@ fn compile_sources(
             println!("  Compiling: {}", source.display());
         }
 
-        // For now, we'll create a stub object file
-        // In a full implementation, this would invoke the MIND compiler pipeline
-        compile_single_source(source, &obj_path, backend, opts)?;
+        // Check if this is the entry point
+        let source_canonical = source.canonicalize().unwrap_or(source.clone());
+        let is_entry = source_canonical == entry_canonical;
+
+        // Compile with appropriate mode
+        compile_single_source(source, &obj_path, backend, opts, is_entry)?;
 
         objects.push(obj_path);
     }
@@ -277,6 +285,7 @@ fn compile_single_source(
     output: &Path,
     backend: &str,
     opts: &BuildOptions,
+    is_entry: bool,  // true if this is the main entry point
 ) -> Result<()> {
     use crate::eval;
     use crate::parser;
@@ -307,7 +316,7 @@ fn compile_single_source(
         Ok(p) => p,
         Err(_) => {
             // Fall back to embedding source for runtime JIT
-            return compile_embedded_source(source, &source_code, output, backend, opts);
+            return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
         }
     };
 
@@ -315,7 +324,7 @@ fn compile_single_source(
     let module = match parser::parse_with_diagnostics(&source_code) {
         Ok(m) => m,
         Err(_) => {
-            return compile_embedded_source(source, &source_code, output, backend, opts);
+            return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
         }
     };
 
@@ -352,7 +361,7 @@ fn compile_single_source(
             }
             Err(_) => {
                 // MLIR tools not available, fall back to embedded source
-                return compile_embedded_source(source, &source_code, output, backend, opts);
+                return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
             }
         }
     }
@@ -360,7 +369,7 @@ fn compile_single_source(
     #[cfg(not(feature = "mlir-build"))]
     {
         let _ = mlir;  // Suppress unused variable warning
-        compile_embedded_source(source, &source_code, output, backend, opts)
+        compile_embedded_source(source, &source_code, output, backend, opts, is_entry)
     }
 }
 
@@ -371,22 +380,33 @@ fn compile_embedded_source(
     output: &Path,
     backend: &str,
     _opts: &BuildOptions,
+    is_entry: bool,  // true if this is the main entry point
 ) -> Result<()> {
-    // Create a C file that embeds the MIND source and calls the runtime
+    // Create a C file that embeds the MIND source
     let escaped_source = source_code
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n");
 
-    let c_code = format!(r#"
-/* Auto-generated MIND module wrapper */
+    let module_name = source.file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .replace('-', "_");
+
+    let c_code = if is_entry {
+        // Entry point: include main() that calls mind_main
+        format!(r#"
+/* Auto-generated MIND entry point wrapper */
 #include <stdio.h>
 #include <stdlib.h>
 #include <dlfcn.h>
 
-static const char MIND_SOURCE[] = "{source}";
+static const char MIND_SOURCE_{module}[] = "{source}";
 static const char MIND_BACKEND[] = "{backend}";
 static const char MIND_FILE[] = "{file}";
+
+/* Forward declarations for other modules */
+extern const char* mind_get_module_source(const char* name);
 
 typedef int (*mind_main_fn)(int argc, char** argv, const char* source, const char* backend);
 
@@ -396,30 +416,47 @@ int main(int argc, char** argv) {{
         lib = dlopen("libmind_cpu_linux-x64.so", RTLD_NOW);
     }}
     if (!lib) {{
-        fprintf(stderr, "Error: MIND runtime not found\n");
+        fprintf(stderr, "Error: MIND runtime not found\\n");
+        fprintf(stderr, "Run: curl -fsSL https://nikolachess.com/install.sh | bash\\n");
         return 1;
     }}
 
-    mind_main_fn mind_main = (mind_main_fn)dlsym(lib, "mind_main");
-    if (!mind_main) {{
-        fprintf(stderr, "Error: mind_main not found in runtime\n");
+    mind_main_fn mind_main_ptr = (mind_main_fn)dlsym(lib, "mind_main");
+    if (!mind_main_ptr) {{
+        fprintf(stderr, "Error: mind_main not found in runtime\\n");
         dlclose(lib);
         return 1;
     }}
 
-    int result = mind_main(argc, argv, MIND_SOURCE, MIND_BACKEND);
+    int result = mind_main_ptr(argc, argv, MIND_SOURCE_{module}, MIND_BACKEND);
     dlclose(lib);
     return result;
 }}
 "#,
-        source = escaped_source,
-        backend = backend,
-        file = source.file_name().unwrap_or_default().to_string_lossy(),
-    );
+            module = module_name,
+            source = escaped_source,
+            backend = backend,
+            file = source.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    } else {
+        // Non-entry module: just export the source
+        format!(r#"
+/* Auto-generated MIND module: {file} */
+static const char MIND_MODULE_{module}_SOURCE[] = "{source}";
+
+const char* mind_module_{module}_get_source(void) {{
+    return MIND_MODULE_{module}_SOURCE;
+}}
+"#,
+            module = module_name,
+            source = escaped_source,
+            file = source.file_name().unwrap_or_default().to_string_lossy(),
+        )
+    };
 
     // Write C file and compile with cc
     let c_path = output.with_extension("c");
-    fs::write(&c_path, c_code)?;
+    fs::write(&c_path, &c_code)?;
 
     let status = Command::new("cc")
         .args(["-c", "-fPIC", "-O2"])
