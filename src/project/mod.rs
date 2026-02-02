@@ -325,16 +325,15 @@ fn link_binary(
     let manifest = load_manifest(&project_root)?;
     let entry_path = project_root.join(&manifest.build.entry);
 
-    // Map backend to encrypted runtime package
-    // These are NikolaChess-specific encrypted libs, NOT raw mind-runtime
+    // Map backend to runtime library
     let runtime_lib = match backend {
         "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" => {
-            "libnikola_cuda.so"
+            "libmind_cuda_linux-x64.so"
         }
-        "rocm" | "rocm-mi300" => "libnikola_rocm.so",
-        "metal" | "metal-m4" => "libnikola_metal.dylib",
-        "webgpu" => "libnikola_webgpu.so",
-        _ => "libnikola_cpu.so",
+        "rocm" | "rocm-mi300" => "libmind_rocm_linux-x64.so",
+        "metal" | "metal-m4" => "libmind_metal_macos-arm64.dylib",
+        "webgpu" => "libmind_webgpu_linux-x64.so",
+        _ => "libmind_cpu_linux-x64.so",
     };
 
     #[cfg(unix)]
@@ -399,36 +398,41 @@ fi
     Ok(())
 }
 
-/// Find the encrypted runtime package for a backend
+/// Find the MIND runtime library for a backend
 fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Cannot determine home directory"))?;
     let nikolachess_lib = home.join(".nikolachess").join("lib");
+    let mind_lib = home.join(".mind").join("lib");
 
-    // Map backend to encrypted package name
-    // These are NikolaChess-specific encrypted libs
+    // Map backend to library name
     let lib_name = match backend {
         "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" => {
-            "libnikola_cuda.so"
+            "libmind_cuda_linux-x64.so"
         }
-        "rocm" | "rocm-mi300" => "libnikola_rocm.so",
-        "metal" | "metal-m4" => "libnikola_metal.dylib",
-        "webgpu" => "libnikola_webgpu.so",
-        _ => "libnikola_cpu.so",
+        "rocm" | "rocm-mi300" => "libmind_rocm_linux-x64.so",
+        "metal" | "metal-m4" => "libmind_metal_macos-arm64.dylib",
+        "webgpu" => "libmind_webgpu_linux-x64.so",
+        _ => "libmind_cpu_linux-x64.so",
     };
 
-    // Check for encrypted package
-    let lib_path = nikolachess_lib.join(lib_name);
-    if lib_path.exists() {
-        return Ok(nikolachess_lib);
+    // Search in known locations
+    for lib_dir in [&nikolachess_lib, &mind_lib] {
+        let lib_path = lib_dir.join(lib_name);
+        if lib_path.exists() {
+            return Ok(lib_dir.clone());
+        }
     }
 
-    // Fallback: check if lib directory exists
+    // Fallback: check if any lib exists
     if nikolachess_lib.exists() {
         return Ok(nikolachess_lib);
     }
+    if mind_lib.exists() {
+        return Ok(mind_lib);
+    }
 
     Err(anyhow!(
-        "NikolaChess runtime package not found for backend '{}'. Run:\n  curl -fsSL https://nikolachess.com/install.sh | bash",
+        "MIND runtime not found for backend '{}'. Run the install script first.",
         backend
     ))
 }
