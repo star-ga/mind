@@ -276,22 +276,33 @@ fn compile_single_source(
     source: &Path,
     output: &Path,
     backend: &str,
-    opts: &BuildOptions,
+    _opts: &BuildOptions,
 ) -> Result<()> {
-    // Read source
+    // Read source to verify it exists
     let source_code = fs::read_to_string(source)
         .with_context(|| format!("Failed to read source: {}", source.display()))?;
 
-    // For CUDA/GPU targets, we need to generate appropriate code
-    // This is a simplified implementation - in production this would use
-    // the full MIND compiler pipeline
+    let _ = backend;
 
-    let _ = (&source_code, backend, opts);
+    // TODO: Full MIND compilation requires parser support for:
+    // - import statements
+    // - tensor types (tensor<f16, (16, 8, 8)>)
+    // - GPU blocks (on(cuda::gpu0) { })
+    // - SIMD intrinsics
+    // - Full type system
+    //
+    // For now, we create IR stubs. The runtime library handles
+    // actual code execution through JIT compilation.
 
-    // Create a placeholder object file for now
-    // Real implementation would generate actual machine code
-    fs::write(output, b"MIND_OBJ\0")?;
+    // Create an IR stub that references the source
+    let ir_stub = format!(
+        "// MIND IR for {}\n// Source size: {} bytes\n// Backend: {}\nmodule {{\n  // IR placeholder - runtime JIT compiles from source\n}}\n",
+        source.file_name().unwrap_or_default().to_string_lossy(),
+        source_code.len(),
+        backend
+    );
 
+    fs::write(output, ir_stub.as_bytes())?;
     Ok(())
 }
 
@@ -309,18 +320,59 @@ fn link_binary(
         println!("  Linking with runtime: {}", lib_dir.display());
     }
 
-    // For now, create a stub executable
-    // Real implementation would invoke the linker
+    // Get the project source directory for runtime to load
+    let project_root = find_project_root()?;
+    let manifest = load_manifest(&project_root)?;
+    let entry_path = project_root.join(&manifest.build.entry);
+
+    // Map backend to runtime library
+    let runtime_lib = match backend {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" => {
+            "libmind_cuda_linux-x64.so"
+        }
+        "rocm" | "rocm-mi300" => "libmind_rocm_linux-x64.so",
+        "metal" | "metal-m4" => "libmind_metal_macos-arm64.dylib",
+        "webgpu" => "libmind_webgpu_linux-x64.so",
+        _ => "libmind_cpu_linux-x64.so",
+    };
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        // Create a shell script wrapper that loads the runtime and executes
-        let script = format!(
-            "#!/bin/bash\n# MIND {} Binary\nexec \"$0.real\" \"$@\"\n",
-            backend
+        // Create an executable launcher script that loads the runtime
+        let script = format!(r#"#!/bin/bash
+# {name} v{version} - Built with MIND
+# Backend: {backend}
+# Runtime: {runtime}
+
+MIND_ROOT="{project_root}"
+MIND_ENTRY="{entry}"
+MIND_BACKEND="{backend}"
+MIND_LIB_DIR="{lib_dir}"
+
+export LD_LIBRARY_PATH="$MIND_LIB_DIR:$LD_LIBRARY_PATH"
+export MIND_SOURCE_ROOT="$MIND_ROOT/src"
+export MIND_BACKEND="$MIND_BACKEND"
+
+# The runtime JIT-compiles and executes the MIND source
+if [ -f "$MIND_LIB_DIR/{runtime}" ]; then
+    exec "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@"
+else
+    echo "Error: MIND runtime not found at $MIND_LIB_DIR/{runtime}"
+    echo "Run: curl -fsSL https://nikolachess.com/install.sh | bash"
+    exit 1
+fi
+"#,
+            name = manifest.package.name,
+            version = manifest.package.version,
+            backend = backend,
+            runtime = runtime_lib,
+            project_root = project_root.display(),
+            entry = entry_path.display(),
+            lib_dir = lib_dir.display(),
         );
+
         fs::write(output, script)?;
 
         let mut perms = fs::metadata(output)?.permissions();
@@ -330,7 +382,17 @@ fn link_binary(
 
     #[cfg(not(unix))]
     {
-        fs::write(output, b"MIND_EXE")?;
+        // Windows batch file
+        let script = format!(
+            "@echo off\r\nrem {} v{} - Built with MIND\r\nset MIND_BACKEND={}\r\n\"{}\"/{}\" --entry \"{}\" %*\r\n",
+            manifest.package.name,
+            manifest.package.version,
+            backend,
+            lib_dir.display(),
+            runtime_lib,
+            entry_path.display(),
+        );
+        fs::write(output, script)?;
     }
 
     Ok(())
