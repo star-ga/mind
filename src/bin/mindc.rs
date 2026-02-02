@@ -23,6 +23,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use mind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use mind::ops::core_v1;
 use mind::pipeline::{compile_source_with_name, CompileOptions};
+use mind::project::{build_project, run_project, BuildOptions};
 use mind::BackendTarget;
 use mind::{conformance, ConformanceOptions, ConformanceProfile};
 
@@ -45,6 +46,33 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Build a MIND project (reads Mind.toml).
+    Build {
+        /// Build in release mode with optimizations.
+        #[arg(long)]
+        release: bool,
+        /// Target backend (cpu, cuda, cuda-ampere, rocm, metal, webgpu, etc.).
+        #[arg(long, value_name = "TARGET")]
+        target: Option<String>,
+        /// Show verbose output.
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Build and run a MIND project.
+    Run {
+        /// Build in release mode with optimizations.
+        #[arg(long)]
+        release: bool,
+        /// Target backend (cpu, cuda, cuda-ampere, rocm, metal, webgpu, etc.).
+        #[arg(long, value_name = "TARGET")]
+        target: Option<String>,
+        /// Show verbose output.
+        #[arg(short, long)]
+        verbose: bool,
+        /// Arguments to pass to the program (after --).
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
     /// Run the Core v1 conformance suite.
     Conformance {
         /// Which profile to execute (cpu|gpu).
@@ -102,14 +130,24 @@ struct CompileArgs {
 fn main() {
     let cli = Cli::parse();
 
-    if let Some(Command::Conformance { profile }) = &cli.command {
-        run_conformance(profile);
-        return;
-    }
-
-    if matches!(cli.command, Some(Command::Ops { .. })) {
-        print_ops(&cli.command);
-        return;
+    match &cli.command {
+        Some(Command::Build { release, target, verbose }) => {
+            run_build_command(*release, target.clone(), *verbose);
+            return;
+        }
+        Some(Command::Run { release, target, verbose, args }) => {
+            run_run_command(*release, target.clone(), *verbose, args.clone());
+            return;
+        }
+        Some(Command::Conformance { profile }) => {
+            run_conformance(profile);
+            return;
+        }
+        Some(Command::Ops { .. }) => {
+            print_ops(&cli.command);
+            return;
+        }
+        None => {}
     }
 
     if cli.compile.version {
@@ -198,6 +236,47 @@ fn main() {
     }
 
     emit_mlir_if_requested(&cli.compile, &products);
+}
+
+fn run_build_command(release: bool, target: Option<String>, verbose: bool) {
+    let opts = BuildOptions {
+        release,
+        target,
+        verbose,
+    };
+
+    match build_project(&opts) {
+        Ok(result) => {
+            println!(
+                "   {} {} ({})",
+                if release { "Release" } else { "Debug" },
+                result.target,
+                result.output_path.display()
+            );
+        }
+        Err(err) => {
+            eprintln!("error: {}", err);
+            process::exit(1);
+        }
+    }
+}
+
+fn run_run_command(release: bool, target: Option<String>, verbose: bool, args: Vec<String>) {
+    let opts = BuildOptions {
+        release,
+        target,
+        verbose,
+    };
+
+    match run_project(&args, &opts) {
+        Ok(code) => {
+            process::exit(code);
+        }
+        Err(err) => {
+            eprintln!("error: {}", err);
+            process::exit(1);
+        }
+    }
 }
 
 fn print_ops(command: &Option<Command>) {
