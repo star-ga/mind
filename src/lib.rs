@@ -86,6 +86,8 @@ pub mod ffi;
 #[cfg(feature = "pkg")]
 pub mod package;
 
+pub mod project;
+
 #[cfg(feature = "python-bindings")]
 pub mod python;
 
