@@ -131,11 +131,20 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Some(Command::Build { release, target, verbose }) => {
+        Some(Command::Build {
+            release,
+            target,
+            verbose,
+        }) => {
             run_build_command(*release, target.clone(), *verbose);
             return;
         }
-        Some(Command::Run { release, target, verbose, args }) => {
+        Some(Command::Run {
+            release,
+            target,
+            verbose,
+            args,
+        }) => {
             run_run_command(*release, target.clone(), *verbose, args.clone());
             return;
         }
