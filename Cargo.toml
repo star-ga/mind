@@ -85,7 +85,7 @@ opt-level = 0
 debug = true
 
 [features]
-default = []
+default = ["aot"]
 autodiff = []
 cpu-buffers = []
 cpu-exec = ["cpu-buffers"]
@@ -104,6 +104,10 @@ ffi-examples = []
 pkg = ["tar", "flate2", "sha2"]
 registry = []
 python-bindings = ["pyo3"]
+# AOT compilation support - produces native executables
+aot = ["mlir-build", "mlir-lowering", "autodiff"]
+# Full compiler with all features
+full = ["aot", "autodiff", "cpu-exec", "cpu-conv", "pkg", "ffi-c"]
 
 [build-dependencies]
 cc = "1"
