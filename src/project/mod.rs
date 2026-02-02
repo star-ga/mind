@@ -101,21 +101,11 @@ pub struct ProfileConfig {
 }
 
 /// Build options for project compilation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BuildOptions {
     pub release: bool,
     pub target: Option<String>,
     pub verbose: bool,
-}
-
-impl Default for BuildOptions {
-    fn default() -> Self {
-        Self {
-            release: false,
-            target: None,
-            verbose: false,
-        }
-    }
 }
 
 /// Build result
@@ -135,7 +125,9 @@ pub fn find_project_root() -> Result<PathBuf> {
             return Ok(current);
         }
         if !current.pop() {
-            return Err(anyhow!("Could not find Mind.toml in current directory or any parent"));
+            return Err(anyhow!(
+                "Could not find Mind.toml in current directory or any parent"
+            ));
         }
     }
 }
@@ -192,7 +184,9 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
 
     // Determine output name
     let output_name = if let Some(cfg) = target_config {
-        cfg.output.clone().unwrap_or_else(|| manifest.build.output.clone())
+        cfg.output
+            .clone()
+            .unwrap_or_else(|| manifest.build.output.clone())
     } else {
         manifest.build.output.clone()
     };
@@ -208,7 +202,10 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
     let sources = collect_sources(&project_root, &manifest.build.entry)?;
 
     if opts.verbose {
-        println!("Building {} v{}", manifest.package.name, manifest.package.version);
+        println!(
+            "Building {} v{}",
+            manifest.package.name, manifest.package.version
+        );
         println!("  Target: {}", target_name);
         println!("  Profile: {}", profile_dir);
         println!("  Sources: {} files", sources.len());
@@ -256,7 +253,8 @@ fn compile_sources(
     let mut objects = Vec::new();
 
     for source in sources {
-        let source_name = source.file_stem()
+        let source_name = source
+            .file_stem()
             .ok_or_else(|| anyhow!("Invalid source file: {}", source.display()))?
             .to_string_lossy();
 
@@ -280,12 +278,13 @@ fn compile_sources(
 }
 
 /// Compile a single source file to native object code
+#[allow(clippy::needless_return)]
 fn compile_single_source(
     source: &Path,
     output: &Path,
     backend: &str,
     opts: &BuildOptions,
-    is_entry: bool,  // true if this is the main entry point
+    is_entry: bool, // true if this is the main entry point
 ) -> Result<()> {
     use crate::eval;
     use crate::parser;
@@ -298,8 +297,8 @@ fn compile_single_source(
 
     // Parse and compile to IR
     let target = match backend {
-        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" |
-        "rocm" | "rocm-mi300" | "metal" | "metal-m4" | "webgpu" | "directx" | "oneapi" => {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" | "rocm"
+        | "rocm-mi300" | "metal" | "metal-m4" | "webgpu" | "directx" | "oneapi" => {
             BackendTarget::Gpu
         }
         _ => BackendTarget::Cpu,
@@ -312,7 +311,11 @@ fn compile_single_source(
     };
 
     // Try to compile - if parser doesn't support all syntax, fall back to embedding
-    let _products = match compile_source_with_name(&source_code, Some(&source.to_string_lossy()), &compile_opts) {
+    let _products = match compile_source_with_name(
+        &source_code,
+        Some(&source.to_string_lossy()),
+        &compile_opts,
+    ) {
         Ok(p) => p,
         Err(_) => {
             // Fall back to embedding source for runtime JIT
@@ -350,7 +353,11 @@ fn compile_single_source(
                     emit_llvm_file: None,
                     emit_obj_file: Some(output),
                     emit_shared: None,
-                    opt_pipeline: if opts.release { Some("canonicalize,cse,loop-invariant-code-motion") } else { None },
+                    opt_pipeline: if opts.release {
+                        Some("canonicalize,cse,loop-invariant-code-motion")
+                    } else {
+                        None
+                    },
                     target_triple: Some(get_target_triple(backend)),
                 };
 
@@ -361,14 +368,21 @@ fn compile_single_source(
             }
             Err(_) => {
                 // MLIR tools not available, fall back to embedded source
-                return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
+                return compile_embedded_source(
+                    source,
+                    &source_code,
+                    output,
+                    backend,
+                    opts,
+                    is_entry,
+                );
             }
         }
     }
 
     #[cfg(not(feature = "mlir-build"))]
     {
-        let _ = mlir;  // Suppress unused variable warning
+        let _ = mlir; // Suppress unused variable warning
         compile_embedded_source(source, &source_code, output, backend, opts, is_entry)
     }
 }
@@ -380,7 +394,7 @@ fn compile_embedded_source(
     output: &Path,
     backend: &str,
     _opts: &BuildOptions,
-    is_entry: bool,  // true if this is the main entry point
+    is_entry: bool, // true if this is the main entry point
 ) -> Result<()> {
     // Create a C file that embeds the MIND source
     let escaped_source = source_code
@@ -388,14 +402,16 @@ fn compile_embedded_source(
         .replace('"', "\\\"")
         .replace('\n', "\\n");
 
-    let module_name = source.file_stem()
+    let module_name = source
+        .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .replace('-', "_");
 
     let c_code = if is_entry {
         // Entry point: include main() that calls mind_main
-        format!(r#"
+        format!(
+            r#"
 /* Auto-generated MIND entry point wrapper */
 #include <stdio.h>
 #include <stdlib.h>
@@ -440,7 +456,8 @@ int main(int argc, char** argv) {{
         )
     } else {
         // Non-entry module: just export the source
-        format!(r#"
+        format!(
+            r#"
 /* Auto-generated MIND module: {file} */
 static const char MIND_MODULE_{module}_SOURCE[] = "{source}";
 
@@ -480,27 +497,43 @@ const char* mind_module_{module}_get_source(void) {{
 fn get_target_triple(backend: &str) -> &'static str {
     match backend {
         // GPU backends use host triple for the launcher
-        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" |
-        "rocm" | "rocm-mi300" | "webgpu" | "directx" | "oneapi" => {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" | "rocm"
+        | "rocm-mi300" | "webgpu" | "directx" | "oneapi" => {
             #[cfg(target_os = "linux")]
-            { "x86_64-unknown-linux-gnu" }
+            {
+                "x86_64-unknown-linux-gnu"
+            }
             #[cfg(target_os = "macos")]
-            { "aarch64-apple-darwin" }
+            {
+                "aarch64-apple-darwin"
+            }
             #[cfg(target_os = "windows")]
-            { "x86_64-pc-windows-msvc" }
+            {
+                "x86_64-pc-windows-msvc"
+            }
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            { "x86_64-unknown-linux-gnu" }
+            {
+                "x86_64-unknown-linux-gnu"
+            }
         }
         "metal" | "metal-m4" => "aarch64-apple-darwin",
         _ => {
             #[cfg(target_os = "linux")]
-            { "x86_64-unknown-linux-gnu" }
+            {
+                "x86_64-unknown-linux-gnu"
+            }
             #[cfg(target_os = "macos")]
-            { "aarch64-apple-darwin" }
+            {
+                "aarch64-apple-darwin"
+            }
             #[cfg(target_os = "windows")]
-            { "x86_64-pc-windows-msvc" }
+            {
+                "x86_64-pc-windows-msvc"
+            }
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            { "x86_64-unknown-linux-gnu" }
+            {
+                "x86_64-unknown-linux-gnu"
+            }
         }
     }
 }
@@ -542,7 +575,8 @@ fn link_binary(
     {
         use std::os::unix::fs::PermissionsExt;
 
-        let script = format!(r#"#!/bin/bash
+        let script = format!(
+            r#"#!/bin/bash
 # {name} v{version} - Built with MIND
 # Backend: {backend}
 # Runtime: {runtime}
@@ -613,53 +647,86 @@ fn get_runtime_lib_names(backend: &str) -> (&'static str, &'static str) {
     match backend {
         "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" => {
             #[cfg(target_os = "linux")]
-            { ("libmind_cuda_linux-x64.so", "mind_cuda_linux-x64") }
+            {
+                ("libmind_cuda_linux-x64.so", "mind_cuda_linux-x64")
+            }
             #[cfg(target_os = "windows")]
-            { ("mind_cuda_windows-x64.dll", "mind_cuda_windows-x64") }
+            {
+                ("mind_cuda_windows-x64.dll", "mind_cuda_windows-x64")
+            }
             #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            { ("libmind_cuda_linux-x64.so", "mind_cuda_linux-x64") }
+            {
+                ("libmind_cuda_linux-x64.so", "mind_cuda_linux-x64")
+            }
         }
         "rocm" | "rocm-mi300" => {
             #[cfg(target_os = "linux")]
-            { ("libmind_rocm_linux-x64.so", "mind_rocm_linux-x64") }
+            {
+                ("libmind_rocm_linux-x64.so", "mind_rocm_linux-x64")
+            }
             #[cfg(target_os = "windows")]
-            { ("mind_rocm_windows-x64.dll", "mind_rocm_windows-x64") }
+            {
+                ("mind_rocm_windows-x64.dll", "mind_rocm_windows-x64")
+            }
             #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            { ("libmind_rocm_linux-x64.so", "mind_rocm_linux-x64") }
+            {
+                ("libmind_rocm_linux-x64.so", "mind_rocm_linux-x64")
+            }
         }
-        "metal" | "metal-m4" => {
-            ("libmind_metal_macos-arm64.dylib", "mind_metal_macos-arm64")
-        }
+        "metal" | "metal-m4" => ("libmind_metal_macos-arm64.dylib", "mind_metal_macos-arm64"),
         "webgpu" => {
             #[cfg(target_os = "linux")]
-            { ("libmind_webgpu_linux-x64.so", "mind_webgpu_linux-x64") }
+            {
+                ("libmind_webgpu_linux-x64.so", "mind_webgpu_linux-x64")
+            }
             #[cfg(target_os = "macos")]
-            { ("libmind_webgpu_macos-arm64.dylib", "mind_webgpu_macos-arm64") }
+            {
+                (
+                    "libmind_webgpu_macos-arm64.dylib",
+                    "mind_webgpu_macos-arm64",
+                )
+            }
             #[cfg(target_os = "windows")]
-            { ("mind_webgpu_windows-x64.dll", "mind_webgpu_windows-x64") }
+            {
+                ("mind_webgpu_windows-x64.dll", "mind_webgpu_windows-x64")
+            }
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            { ("libmind_webgpu_linux-x64.so", "mind_webgpu_linux-x64") }
+            {
+                ("libmind_webgpu_linux-x64.so", "mind_webgpu_linux-x64")
+            }
         }
-        "directx" => {
-            ("mind_directx_windows-x64.dll", "mind_directx_windows-x64")
-        }
+        "directx" => ("mind_directx_windows-x64.dll", "mind_directx_windows-x64"),
         "oneapi" => {
             #[cfg(target_os = "linux")]
-            { ("libmind_oneapi_linux-x64.so", "mind_oneapi_linux-x64") }
+            {
+                ("libmind_oneapi_linux-x64.so", "mind_oneapi_linux-x64")
+            }
             #[cfg(target_os = "windows")]
-            { ("mind_oneapi_windows-x64.dll", "mind_oneapi_windows-x64") }
+            {
+                ("mind_oneapi_windows-x64.dll", "mind_oneapi_windows-x64")
+            }
             #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            { ("libmind_oneapi_linux-x64.so", "mind_oneapi_linux-x64") }
+            {
+                ("libmind_oneapi_linux-x64.so", "mind_oneapi_linux-x64")
+            }
         }
         _ => {
             #[cfg(target_os = "linux")]
-            { ("libmind_cpu_linux-x64.so", "mind_cpu_linux-x64") }
+            {
+                ("libmind_cpu_linux-x64.so", "mind_cpu_linux-x64")
+            }
             #[cfg(target_os = "macos")]
-            { ("libmind_cpu_macos-arm64.dylib", "mind_cpu_macos-arm64") }
+            {
+                ("libmind_cpu_macos-arm64.dylib", "mind_cpu_macos-arm64")
+            }
             #[cfg(target_os = "windows")]
-            { ("mind_cpu_windows-x64.dll", "mind_cpu_windows-x64") }
+            {
+                ("mind_cpu_windows-x64.dll", "mind_cpu_windows-x64")
+            }
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            { ("libmind_cpu_linux-x64.so", "mind_cpu_linux-x64") }
+            {
+                ("libmind_cpu_linux-x64.so", "mind_cpu_linux-x64")
+            }
         }
     }
 }
@@ -690,7 +757,7 @@ fn native_link(
     cmd.arg(format!("-l{}", runtime_link));
 
     // Link standard libraries
-    cmd.arg("-ldl");  // For dlopen on Linux
+    cmd.arg("-ldl"); // For dlopen on Linux
     cmd.arg("-lpthread");
     cmd.arg("-lm");
 
@@ -717,11 +784,15 @@ fn native_link(
         println!("  Link command: {:?}", cmd);
     }
 
-    let status = cmd.status()
+    let status = cmd
+        .status()
         .with_context(|| format!("Failed to run linker: {}", cc))?;
 
     if !status.success() {
-        return Err(anyhow!("Linking failed with exit code: {:?}", status.code()));
+        return Err(anyhow!(
+            "Linking failed with exit code: {:?}",
+            status.code()
+        ));
     }
 
     Ok(())
