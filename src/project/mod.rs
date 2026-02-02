@@ -271,44 +271,206 @@ fn compile_sources(
     Ok(objects)
 }
 
-/// Compile a single source file
+/// Compile a single source file to native object code
 fn compile_single_source(
     source: &Path,
     output: &Path,
     backend: &str,
-    _opts: &BuildOptions,
+    opts: &BuildOptions,
 ) -> Result<()> {
-    // Read source to verify it exists
+    use crate::eval;
+    use crate::parser;
+    use crate::pipeline::{compile_source_with_name, CompileOptions};
+    use crate::runtime::types::BackendTarget;
+
+    // Read source
     let source_code = fs::read_to_string(source)
         .with_context(|| format!("Failed to read source: {}", source.display()))?;
 
-    let _ = backend;
+    // Parse and compile to IR
+    let target = match backend {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" |
+        "rocm" | "rocm-mi300" | "metal" | "metal-m4" | "webgpu" | "directx" | "oneapi" => {
+            BackendTarget::Gpu
+        }
+        _ => BackendTarget::Cpu,
+    };
 
-    // TODO: Full MIND compilation requires parser support for:
-    // - import statements
-    // - tensor types (tensor<f16, (16, 8, 8)>)
-    // - GPU blocks (on(cuda::gpu0) { })
-    // - SIMD intrinsics
-    // - Full type system
-    //
-    // For now, we create IR stubs. The runtime library handles
-    // actual code execution through JIT compilation.
+    let compile_opts = CompileOptions {
+        func: None,
+        enable_autodiff: false,
+        target,
+    };
 
-    // Create an IR stub that references the source
-    let ir_stub = format!(
-        "// MIND IR for {}\n// Source size: {} bytes\n// Backend: {}\nmodule {{\n  // IR placeholder - runtime JIT compiles from source\n}}\n",
-        source.file_name().unwrap_or_default().to_string_lossy(),
-        source_code.len(),
-        backend
+    // Try to compile - if parser doesn't support all syntax, fall back to embedding
+    let _products = match compile_source_with_name(&source_code, Some(&source.to_string_lossy()), &compile_opts) {
+        Ok(p) => p,
+        Err(_) => {
+            // Fall back to embedding source for runtime JIT
+            return compile_embedded_source(source, &source_code, output, backend, opts);
+        }
+    };
+
+    // Parse again to get AST for IR lowering
+    let module = match parser::parse_with_diagnostics(&source_code) {
+        Ok(m) => m,
+        Err(_) => {
+            return compile_embedded_source(source, &source_code, output, backend, opts);
+        }
+    };
+
+    // Lower AST to IR, then to MLIR
+    let ir_module = eval::lower_to_ir(&module);
+    let preset_str = if opts.release { "arith-linalg" } else { "core" };
+    let mlir_opts = eval::MlirEmitOptions {
+        lower_preset: Some(preset_str.to_string()),
+        mode: eval::MlirEmitMode::Executable,
+    };
+    let mlir = eval::emit_mlir_with_opts(&ir_module, &mlir_opts);
+
+    // Use mlir-build if available
+    #[cfg(feature = "mlir-build")]
+    {
+        use crate::eval::mlir_build;
+
+        match mlir_build::resolve_tools() {
+            Ok(tools) => {
+                let build_opts = mlir_build::BuildOptions {
+                    preset: if opts.release { "arith-linalg" } else { "core" },
+                    emit_mlir_file: None,
+                    emit_llvm_file: None,
+                    emit_obj_file: Some(output),
+                    emit_shared: None,
+                    opt_pipeline: if opts.release { Some("canonicalize,cse,loop-invariant-code-motion") } else { None },
+                    target_triple: Some(get_target_triple(backend)),
+                };
+
+                mlir_build::build_all(&mlir, &tools, &build_opts)
+                    .map_err(|e| anyhow!("MLIR build failed: {}", e))?;
+
+                return Ok(());
+            }
+            Err(_) => {
+                // MLIR tools not available, fall back to embedded source
+                return compile_embedded_source(source, &source_code, output, backend, opts);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "mlir-build"))]
+    {
+        let _ = mlir;  // Suppress unused variable warning
+        compile_embedded_source(source, &source_code, output, backend, opts)
+    }
+}
+
+/// Compile source by embedding it for runtime JIT
+fn compile_embedded_source(
+    source: &Path,
+    source_code: &str,
+    output: &Path,
+    backend: &str,
+    _opts: &BuildOptions,
+) -> Result<()> {
+    // Create a C file that embeds the MIND source and calls the runtime
+    let escaped_source = source_code
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+
+    let c_code = format!(r#"
+/* Auto-generated MIND module wrapper */
+#include <stdio.h>
+#include <stdlib.h>
+#include <dlfcn.h>
+
+static const char MIND_SOURCE[] = "{source}";
+static const char MIND_BACKEND[] = "{backend}";
+static const char MIND_FILE[] = "{file}";
+
+typedef int (*mind_main_fn)(int argc, char** argv, const char* source, const char* backend);
+
+int main(int argc, char** argv) {{
+    void* lib = dlopen("libmind_{backend}_linux-x64.so", RTLD_NOW);
+    if (!lib) {{
+        lib = dlopen("libmind_cpu_linux-x64.so", RTLD_NOW);
+    }}
+    if (!lib) {{
+        fprintf(stderr, "Error: MIND runtime not found\n");
+        return 1;
+    }}
+
+    mind_main_fn mind_main = (mind_main_fn)dlsym(lib, "mind_main");
+    if (!mind_main) {{
+        fprintf(stderr, "Error: mind_main not found in runtime\n");
+        dlclose(lib);
+        return 1;
+    }}
+
+    int result = mind_main(argc, argv, MIND_SOURCE, MIND_BACKEND);
+    dlclose(lib);
+    return result;
+}}
+"#,
+        source = escaped_source,
+        backend = backend,
+        file = source.file_name().unwrap_or_default().to_string_lossy(),
     );
 
-    fs::write(output, ir_stub.as_bytes())?;
+    // Write C file and compile with cc
+    let c_path = output.with_extension("c");
+    fs::write(&c_path, c_code)?;
+
+    let status = Command::new("cc")
+        .args(["-c", "-fPIC", "-O2"])
+        .arg(&c_path)
+        .arg("-o")
+        .arg(output)
+        .status()
+        .with_context(|| "Failed to run C compiler")?;
+
+    if !status.success() {
+        return Err(anyhow!("C compilation failed for {}", source.display()));
+    }
+
+    // Clean up intermediate C file
+    let _ = fs::remove_file(&c_path);
+
     Ok(())
 }
 
-/// Link object files into a binary
+/// Get the LLVM target triple for a backend
+fn get_target_triple(backend: &str) -> &'static str {
+    match backend {
+        // GPU backends use host triple for the launcher
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" |
+        "rocm" | "rocm-mi300" | "webgpu" | "directx" | "oneapi" => {
+            #[cfg(target_os = "linux")]
+            { "x86_64-unknown-linux-gnu" }
+            #[cfg(target_os = "macos")]
+            { "aarch64-apple-darwin" }
+            #[cfg(target_os = "windows")]
+            { "x86_64-pc-windows-msvc" }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            { "x86_64-unknown-linux-gnu" }
+        }
+        "metal" | "metal-m4" => "aarch64-apple-darwin",
+        _ => {
+            #[cfg(target_os = "linux")]
+            { "x86_64-unknown-linux-gnu" }
+            #[cfg(target_os = "macos")]
+            { "aarch64-apple-darwin" }
+            #[cfg(target_os = "windows")]
+            { "x86_64-pc-windows-msvc" }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            { "x86_64-unknown-linux-gnu" }
+        }
+    }
+}
+
+/// Link object files into a native executable binary
 fn link_binary(
-    _objects: &[PathBuf],
+    objects: &[PathBuf],
     output: &Path,
     backend: &str,
     opts: &BuildOptions,
@@ -320,27 +482,29 @@ fn link_binary(
         println!("  Linking with runtime: {}", lib_dir.display());
     }
 
-    // Get the project source directory for runtime to load
+    // Determine runtime library name
+    let (runtime_lib, runtime_link) = get_runtime_lib_names(backend);
+
+    // Try native linking first
+    let link_result = native_link(objects, output, &lib_dir, runtime_link, opts);
+
+    if link_result.is_ok() {
+        return Ok(());
+    }
+
+    // Fallback to wrapper script if native linking fails
+    if opts.verbose {
+        println!("  Native linking failed, creating launcher script");
+    }
+
     let project_root = find_project_root()?;
     let manifest = load_manifest(&project_root)?;
     let entry_path = project_root.join(&manifest.build.entry);
-
-    // Map backend to runtime library
-    let runtime_lib = match backend {
-        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" => {
-            "libmind_cuda_linux-x64.so"
-        }
-        "rocm" | "rocm-mi300" => "libmind_rocm_linux-x64.so",
-        "metal" | "metal-m4" => "libmind_metal_macos-arm64.dylib",
-        "webgpu" => "libmind_webgpu_linux-x64.so",
-        _ => "libmind_cpu_linux-x64.so",
-    };
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        // Create an executable launcher script that loads the runtime
         let script = format!(r#"#!/bin/bash
 # {name} v{version} - Built with MIND
 # Backend: {backend}
@@ -355,9 +519,18 @@ export LD_LIBRARY_PATH="$MIND_LIB_DIR:$LD_LIBRARY_PATH"
 export MIND_SOURCE_ROOT="$MIND_ROOT/src"
 export MIND_BACKEND="$MIND_BACKEND"
 
-# The runtime JIT-compiles and executes the MIND source
-if [ -f "$MIND_LIB_DIR/{runtime}" ]; then
-    exec "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@"
+# Execute the runtime interpreter
+if [ -f "$MIND_LIB_DIR/mind-runtime" ]; then
+    exec "$MIND_LIB_DIR/mind-runtime" --backend "$MIND_BACKEND" --entry "$MIND_ENTRY" "$@"
+elif [ -f "$MIND_LIB_DIR/{runtime}" ]; then
+    # Direct library execution via ld.so
+    exec /lib64/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
+    exec /lib/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
+    {{
+        echo "Error: MIND runtime not executable"
+        echo "Run: curl -fsSL https://nikolachess.com/install.sh | bash"
+        exit 1
+    }}
 else
     echo "Error: MIND runtime not found at $MIND_LIB_DIR/{runtime}"
     echo "Run: curl -fsSL https://nikolachess.com/install.sh | bash"
@@ -382,17 +555,136 @@ fi
 
     #[cfg(not(unix))]
     {
-        // Windows batch file
         let script = format!(
-            "@echo off\r\nrem {} v{} - Built with MIND\r\nset MIND_BACKEND={}\r\n\"{}\"/{}\" --entry \"{}\" %*\r\n",
+            "@echo off\r\nrem {} v{} - Built with MIND\r\nset MIND_BACKEND={}\r\nset PATH=%PATH%;{}\r\n\"{}/mind-runtime.exe\" --backend {} --entry \"{}\" %*\r\n",
             manifest.package.name,
             manifest.package.version,
             backend,
             lib_dir.display(),
-            runtime_lib,
+            lib_dir.display(),
+            backend,
             entry_path.display(),
         );
         fs::write(output, script)?;
+    }
+
+    Ok(())
+}
+
+/// Get runtime library names for a backend
+fn get_runtime_lib_names(backend: &str) -> (&'static str, &'static str) {
+    match backend {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" => {
+            #[cfg(target_os = "linux")]
+            { ("libmind_cuda_linux-x64.so", "mind_cuda_linux-x64") }
+            #[cfg(target_os = "windows")]
+            { ("mind_cuda_windows-x64.dll", "mind_cuda_windows-x64") }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            { ("libmind_cuda_linux-x64.so", "mind_cuda_linux-x64") }
+        }
+        "rocm" | "rocm-mi300" => {
+            #[cfg(target_os = "linux")]
+            { ("libmind_rocm_linux-x64.so", "mind_rocm_linux-x64") }
+            #[cfg(target_os = "windows")]
+            { ("mind_rocm_windows-x64.dll", "mind_rocm_windows-x64") }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            { ("libmind_rocm_linux-x64.so", "mind_rocm_linux-x64") }
+        }
+        "metal" | "metal-m4" => {
+            ("libmind_metal_macos-arm64.dylib", "mind_metal_macos-arm64")
+        }
+        "webgpu" => {
+            #[cfg(target_os = "linux")]
+            { ("libmind_webgpu_linux-x64.so", "mind_webgpu_linux-x64") }
+            #[cfg(target_os = "macos")]
+            { ("libmind_webgpu_macos-arm64.dylib", "mind_webgpu_macos-arm64") }
+            #[cfg(target_os = "windows")]
+            { ("mind_webgpu_windows-x64.dll", "mind_webgpu_windows-x64") }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            { ("libmind_webgpu_linux-x64.so", "mind_webgpu_linux-x64") }
+        }
+        "directx" => {
+            ("mind_directx_windows-x64.dll", "mind_directx_windows-x64")
+        }
+        "oneapi" => {
+            #[cfg(target_os = "linux")]
+            { ("libmind_oneapi_linux-x64.so", "mind_oneapi_linux-x64") }
+            #[cfg(target_os = "windows")]
+            { ("mind_oneapi_windows-x64.dll", "mind_oneapi_windows-x64") }
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            { ("libmind_oneapi_linux-x64.so", "mind_oneapi_linux-x64") }
+        }
+        _ => {
+            #[cfg(target_os = "linux")]
+            { ("libmind_cpu_linux-x64.so", "mind_cpu_linux-x64") }
+            #[cfg(target_os = "macos")]
+            { ("libmind_cpu_macos-arm64.dylib", "mind_cpu_macos-arm64") }
+            #[cfg(target_os = "windows")]
+            { ("mind_cpu_windows-x64.dll", "mind_cpu_windows-x64") }
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+            { ("libmind_cpu_linux-x64.so", "mind_cpu_linux-x64") }
+        }
+    }
+}
+
+/// Attempt native linking with clang/gcc
+fn native_link(
+    objects: &[PathBuf],
+    output: &Path,
+    lib_dir: &Path,
+    runtime_link: &str,
+    opts: &BuildOptions,
+) -> Result<()> {
+    // Find a C compiler for linking
+    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+
+    let mut cmd = Command::new(&cc);
+
+    // Add object files
+    for obj in objects {
+        cmd.arg(obj);
+    }
+
+    // Output path
+    cmd.arg("-o").arg(output);
+
+    // Link against runtime library
+    cmd.arg(format!("-L{}", lib_dir.display()));
+    cmd.arg(format!("-l{}", runtime_link));
+
+    // Link standard libraries
+    cmd.arg("-ldl");  // For dlopen on Linux
+    cmd.arg("-lpthread");
+    cmd.arg("-lm");
+
+    // Add rpath for runtime library lookup
+    #[cfg(target_os = "linux")]
+    {
+        cmd.arg(format!("-Wl,-rpath,{}", lib_dir.display()));
+        cmd.arg("-Wl,-rpath,$ORIGIN/../lib");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        cmd.arg(format!("-Wl,-rpath,{}", lib_dir.display()));
+        cmd.arg("-Wl,-rpath,@executable_path/../lib");
+    }
+
+    // Optimization flags
+    if opts.release {
+        cmd.arg("-O3");
+        cmd.arg("-flto");
+    }
+
+    if opts.verbose {
+        println!("  Link command: {:?}", cmd);
+    }
+
+    let status = cmd.status()
+        .with_context(|| format!("Failed to run linker: {}", cc))?;
+
+    if !status.success() {
+        return Err(anyhow!("Linking failed with exit code: {:?}", status.code()));
     }
 
     Ok(())
