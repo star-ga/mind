@@ -494,6 +494,7 @@ const char* mind_module_{module}_get_source(void) {{
 }
 
 /// Get the LLVM target triple for a backend
+#[allow(dead_code)]
 fn get_target_triple(backend: &str) -> &'static str {
     match backend {
         // GPU backends use host triple for the launcher
