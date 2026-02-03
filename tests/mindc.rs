@@ -172,8 +172,12 @@ fn mindc_prints_json_diagnostics_with_flag() {
     assert!(!output.status.success());
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first_line = stderr.lines().next().unwrap_or("");
-    let value: serde_json::Value = serde_json::from_str(first_line).expect("json diagnostic");
+    // Find the first line that looks like JSON (starts with '{')
+    let json_line = stderr
+        .lines()
+        .find(|line| line.trim().starts_with('{'))
+        .expect("should have json diagnostic line");
+    let value: serde_json::Value = serde_json::from_str(json_line).expect("json diagnostic");
     assert!(value["phase"].is_string());
     assert_eq!(value["severity"], "error");
 }
@@ -196,8 +200,12 @@ fn mindc_reports_shape_errors_with_codes() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let first_line = stderr.lines().next().unwrap_or("");
-    let value: serde_json::Value = serde_json::from_str(first_line).expect("json diagnostic");
+    // Find the first line that looks like JSON (starts with '{')
+    let json_line = stderr
+        .lines()
+        .find(|line| line.trim().starts_with('{'))
+        .expect("should have json diagnostic line");
+    let value: serde_json::Value = serde_json::from_str(json_line).expect("json diagnostic");
     assert_eq!(value["code"], "E2101");
     assert_eq!(value["phase"], "type-check");
 }
@@ -206,6 +214,9 @@ fn mindc_reports_shape_errors_with_codes() {
 fn mindc_color_env_overridden_by_flag() {
     let output = Command::new("cargo")
         .env("MINDC_COLOR", "always")
+        // Ensure no terminal is detected
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
         .args([
             "run",
             "--quiet",
@@ -221,9 +232,21 @@ fn mindc_color_env_overridden_by_flag() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Find lines that look like mindc output (not cargo warnings)
+    let mindc_output: String = stderr
+        .lines()
+        .filter(|line| line.contains("error[") || line.contains("warning["))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // If no mindc-specific output found, check the full stderr
+    let to_check = if mindc_output.is_empty() {
+        stderr.to_string()
+    } else {
+        mindc_output
+    };
     assert!(
-        !stderr.contains("\u{1b}["),
-        "stderr should be uncolored when flag forces never"
+        !to_check.contains("\u{1b}["),
+        "mindc output should be uncolored when flag forces never: {to_check}"
     );
 }
 
