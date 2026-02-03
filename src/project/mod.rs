@@ -554,6 +554,7 @@ fn link_binary(
     }
 
     // Determine runtime library name
+    #[allow(unused_variables)]
     let (runtime_lib, runtime_link) = get_runtime_lib_names(backend);
 
     // Try native linking first
