@@ -554,7 +554,7 @@ fn link_binary(
     }
 
     // Determine runtime library name
-    let (runtime_lib, runtime_link) = get_runtime_lib_names(backend);
+    let (_runtime_lib, runtime_link) = get_runtime_lib_names(backend);
 
     // Try native linking first
     let link_result = native_link(objects, output, &lib_dir, runtime_link, opts);
