@@ -658,11 +658,9 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         kw("bool").to(TypeAnn::ScalarBool),
     ));
 
+    // Order matters for performance: most common first
     let type_ann = choice((
-        diff_tensor_type,
-        tensor_type,
-        scalar_type,
-        // Legacy Tensor[...] syntax
+        // Legacy Tensor[...] syntax - most common in benchmarks
         kw("Tensor")
             .ignore_then(just('['))
             .ignore_then(dtype.clone())
@@ -673,6 +671,11 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
                 dtype: dt,
                 dims: shape,
             }),
+        // Scalar types - fast keyword check
+        scalar_type,
+        // Modern tensor<...> syntax
+        tensor_type,
+        diff_tensor_type,
     ))
     .padded()
     .boxed();
