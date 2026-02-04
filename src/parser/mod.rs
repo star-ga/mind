@@ -790,7 +790,23 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
             },
         );
 
-    let stmt = choice((fn_def, return_stmt, let_stmt, assign_stmt, expr.clone())).padded();
+    // Import statement: `import std.io;` or `import module.submodule;`
+    let import_stmt = kw("import")
+        .padded()
+        .ignore_then(
+            text::ident()
+                .separated_by(just('.'))
+                .at_least(1)
+                .collect::<Vec<String>>(),
+        )
+        .then_ignore(just(';').or_not().padded())
+        .map_with_span(|path, sp: std::ops::Range<usize>| {
+            let span = Span::new(sp.start, sp.end);
+            Node::Import { path, span }
+        })
+        .boxed();
+
+    let stmt = choice((import_stmt, fn_def, return_stmt, let_stmt, assign_stmt, expr.clone())).padded();
 
     let stmts = stmt
         .separated_by(one_of(";\n").repeated().at_least(1))

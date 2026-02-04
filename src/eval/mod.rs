@@ -784,6 +784,8 @@ pub(crate) fn eval_value_expr_mode(
                 }
             }
         }
+        // Import statements are module-level declarations, no runtime value
+        Node::Import { .. } => Ok(Value::Int(0)),
     }
 }
 

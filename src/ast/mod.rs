@@ -227,6 +227,11 @@ pub enum Node {
         else_branch: Option<Vec<Node>>,
         span: Span,
     },
+    /// Import statement: `import std.io;`
+    Import {
+        path: Vec<String>,
+        span: Span,
+    },
 }
 
 impl Node {
@@ -257,7 +262,8 @@ impl Node {
             | Node::FnDef { span, .. }
             | Node::Return { span, .. }
             | Node::Block { span, .. }
-            | Node::If { span, .. } => *span,
+            | Node::If { span, .. }
+            | Node::Import { span, .. } => *span,
         }
     }
 
