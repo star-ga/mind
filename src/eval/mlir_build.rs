@@ -168,7 +168,8 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
 
 #[cfg(feature = "mlir-build")]
 fn run_mlir_opt(input: &str, pipeline: &str, tools: &BuildTools) -> Result<String, BuildError> {
-    let args = vec![format!("--pass-pipeline={pipeline}")];
+    // MLIR 18+ requires pass pipeline to be wrapped with anchor operation
+    let args = vec![format!("--pass-pipeline=builtin.module({pipeline})")];
     let output = run_command(
         &tools.mlir_opt,
         &args,
