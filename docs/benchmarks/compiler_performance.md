@@ -1,6 +1,7 @@
 # MIND Compiler Performance Benchmarks
 
 **Date**: 2025-12-21
+**Commit**: `0273785`
 **System**: Linux 4.4.0
 **Rust Version**: 1.82+
 **Build Profile**: Release (opt-level=3, LTO=true)
