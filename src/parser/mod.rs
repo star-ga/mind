@@ -806,7 +806,15 @@ pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
         })
         .boxed();
 
-    let stmt = choice((import_stmt, fn_def, return_stmt, let_stmt, assign_stmt, expr.clone())).padded();
+    let stmt = choice((
+        import_stmt,
+        fn_def,
+        return_stmt,
+        let_stmt,
+        assign_stmt,
+        expr.clone(),
+    ))
+    .padded();
 
     let stmts = stmt
         .separated_by(one_of(";\n").repeated().at_least(1))
