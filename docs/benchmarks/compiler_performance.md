@@ -1,17 +1,46 @@
 # MIND Compiler Performance Benchmarks
 
-**Date**: 2025-12-21
-**Commit**: `0273785`
-**System**: Linux 4.4.0
-**Rust Version**: 1.82+
-**Build Profile**: Release (opt-level=3, LTO=true)
-**Criterion Version**: 0.5.1
-
 ## Summary
 
 MIND demonstrates **extremely fast compilation performance** across all tested workloads, with compilation times in the **microsecond range** for typical tensor programs.
 
-### Key Results
+## Production Benchmarks (v0.1.6+)
+
+**Commit**: `411bbe8`
+**Features**: Full typed tensors, function lowering, imports, AOT pipeline
+
+| Workload | Compilation Time | Description |
+|----------|-----------------|-------------|
+| Scalar Math | **26 µs** | Simple arithmetic: `1 + 2 * 3 - 4 / 2` |
+| Small MatMul | **45 µs** | Matrix multiplication `[10,20] × [20,30]` |
+| Medium MatMul | **45 µs** | Matrix multiplication `[128,256] × [256,512]` |
+| Large MatMul | **45 µs** | Matrix multiplication `[512,1024] × [1024,512]` |
+
+### Baseline vs Production Comparison
+
+| Test | Baseline (minimal) | Production (full features) | Overhead |
+|------|-------------------|---------------------------|----------|
+| scalar_math | 21 µs | 26 µs | +24% |
+| small_matmul | 37 µs | 45 µs | +22% |
+| medium_matmul | 37 µs | 45 µs | +22% |
+| large_matmul | 37 µs | 45 µs | +22% |
+
+The ~22% overhead comes from production features:
+- **Typed tensor annotations** (`tensor<f32[N,M]>`, `diff tensor<...>`)
+- **Function lowering** (FnDef, Return, Block handling)
+- **Module imports** (`import std.io`)
+- **Extended type checking** (ScalarI64, ScalarF32, ScalarF64, ScalarBool)
+
+This tradeoff favors **safety, determinism, and typed tensors** over minimal microsecond differences.
+
+---
+
+## Historical Baseline (December 2025)
+
+**Date**: 2025-12-21
+**Commit**: `0273785`
+**System**: Linux 4.4.0
+**Features**: Minimal parser without typed tensor annotations
 
 | Workload | Compilation Time | Description |
 |----------|-----------------|-------------|
@@ -20,7 +49,7 @@ MIND demonstrates **extremely fast compilation performance** across all tested w
 | Medium MatMul | **29.4 µs** | Matrix multiplication `[128,256] × [256,512]` |
 | Large MatMul | **30.1 µs** | Matrix multiplication `[512,1024] × [1024,512]` |
 
-> **Note:** Since these benchmarks were recorded, additional production features have been added including the module import system, project build commands, AOT compilation pipeline, and cross-platform support. These enhancements expand compiler capabilities while maintaining microsecond-range performance.
+> **Note:** These numbers were recorded on different hardware (Linux 4.4.0). Absolute times vary by machine; relative comparisons are more meaningful.
 
 ## Detailed Results
 
