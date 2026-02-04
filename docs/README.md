@@ -4,6 +4,7 @@ This directory collects deep technical documentation for the MIND language, comp
 
 ## Core Guides
 
+- [CLI Reference](cli.md)
 - [Architecture](architecture.md)
 - [Type System](type-system.md)
 - [Autodiff](autodiff.md)
