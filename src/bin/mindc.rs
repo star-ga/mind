@@ -30,6 +30,12 @@ use mind::{conformance, ConformanceOptions, ConformanceProfile};
 #[cfg(feature = "mlir-lowering")]
 use mind::pipeline::{lower_to_mlir, MlirProducts};
 
+#[cfg(all(feature = "mlir-build", not(feature = "mlir-lowering")))]
+use mind::pipeline::lower_to_mlir;
+
+#[cfg(feature = "mlir-build")]
+use std::path::Path;
+
 #[derive(Parser, Debug)]
 #[command(
     author,
@@ -116,6 +122,9 @@ struct CompileArgs {
     /// Only verify the pipeline without emitting artifacts.
     #[arg(long)]
     verify_only: bool,
+    /// Emit object file (.o) to the specified path.
+    #[arg(long, value_name = "PATH")]
+    emit_obj: Option<String>,
     /// Select the execution target backend (cpu|gpu).
     #[arg(long, value_name = "TARGET", default_value = "cpu")]
     target: String,
@@ -245,6 +254,7 @@ fn main() {
     }
 
     emit_mlir_if_requested(&cli.compile, &products);
+    emit_obj_if_requested(&cli.compile, &products);
 }
 
 fn run_build_command(release: bool, target: Option<String>, verbose: bool) {
@@ -422,4 +432,70 @@ fn resolve_color_choice(flag: &Option<String>) -> ColorChoice {
         return ColorChoice::parse(&env).unwrap_or(ColorChoice::Auto);
     }
     ColorChoice::Auto
+}
+
+#[cfg(feature = "mlir-build")]
+fn emit_obj_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompileProducts) {
+    let obj_path = match &cli.emit_obj {
+        Some(path) => path,
+        None => return,
+    };
+
+    // First lower to MLIR
+    let grads = {
+        #[cfg(feature = "autodiff")]
+        {
+            products.grad.as_ref()
+        }
+        #[cfg(not(feature = "autodiff"))]
+        {
+            None
+        }
+    };
+
+    let mlir = match lower_to_mlir(&products.ir, grads) {
+        Ok(mlir) => mlir,
+        Err(err) => {
+            eprintln!("error[mlir]: {err}");
+            process::exit(1);
+        }
+    };
+
+    // Resolve build tools
+    let tools = match mind::eval::mlir_build::resolve_tools() {
+        Ok(tools) => tools,
+        Err(err) => {
+            eprintln!("error[build]: {err}");
+            process::exit(1);
+        }
+    };
+
+    // Build object file
+    let opts = mind::eval::mlir_build::BuildOptions {
+        preset: "core",
+        emit_mlir_file: None,
+        emit_llvm_file: None,
+        emit_obj_file: Some(Path::new(obj_path)),
+        emit_shared: None,
+        opt_pipeline: None,
+        target_triple: None,
+    };
+
+    match mind::eval::mlir_build::build_all(&mlir.primal_mlir, &tools, &opts) {
+        Ok(_) => {
+            eprintln!("Wrote object file: {}", obj_path);
+        }
+        Err(err) => {
+            eprintln!("error[build]: {err}");
+            process::exit(1);
+        }
+    }
+}
+
+#[cfg(not(feature = "mlir-build"))]
+fn emit_obj_if_requested(cli: &CompileArgs, _products: &mind::pipeline::CompileProducts) {
+    if cli.emit_obj.is_some() {
+        eprintln!("error[build]: --emit-obj requires building with the 'mlir-build' feature");
+        process::exit(1);
+    }
 }
