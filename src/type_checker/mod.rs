@@ -1198,6 +1198,8 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 Ok((ValueType::ScalarI32, *span))
             }
         }
+        // Import statements don't have a value type; they're module-level declarations
+        Node::Import { span, .. } => Ok((ValueType::ScalarI32, *span)),
     }
 }
 
@@ -1586,6 +1588,8 @@ pub fn check_module_types_in_file(
                     (_, Err(e)) => errs.push(diag_from_type_err(src, file, e)),
                 }
             }
+            // Import statements are handled at module level; skip type checking
+            Node::Import { .. } => {}
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
                     errs.push(diag_from_type_err(src, file, e));
