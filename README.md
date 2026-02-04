@@ -55,9 +55,41 @@ The `mindc` binary provides a deterministic source→IR→MLIR pipeline suitable
 for demos and snapshot tests:
 
 ```bash
+# Basic compilation to IR
 cargo run --bin mindc -- examples/hello_tensor.mind --emit-ir
+
+# Autodiff gradient IR
 cargo run --bin mindc -- examples/hello_tensor.mind --func main --autodiff --emit-grad-ir
+
+# MLIR output (requires mlir-lowering feature)
 cargo run --features "mlir-lowering autodiff" --bin mindc -- examples/hello_tensor.mind --func main --autodiff --emit-mlir
+
+# Verify without emitting output
+cargo run --bin mindc -- examples/hello_tensor.mind --verify-only
+
+# Build object file (requires aot feature)
+cargo run --features aot --bin mindc -- examples/hello_tensor.mind --emit-obj output.o
+```
+
+### Project Commands
+
+```bash
+# Build a MIND project (reads Mind.toml)
+mindc build
+
+# Build and run a MIND project
+mindc run
+```
+
+### Feature Flags
+
+By default, `mindc` builds with minimal features for fast compilation. Enable
+additional features as needed:
+
+```bash
+cargo build --features aot        # AOT compilation (--emit-obj, project builds)
+cargo build --features autodiff   # Autodiff support
+cargo build --features full       # All features
 ```
 
 MLIR emission requires the `mlir-lowering` feature. Autodiff support is
