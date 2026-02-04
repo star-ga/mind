@@ -85,7 +85,7 @@ opt-level = 0
 debug = true
 
 [features]
-default = ["aot"]
+default = []
 autodiff = []
 cpu-buffers = []
 cpu-exec = ["cpu-buffers"]
