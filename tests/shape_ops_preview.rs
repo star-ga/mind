@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use mind::eval;
-use mind::parser;
+use libmind::eval;
+use libmind::parser;
 #[test]
 fn reshape_and_back_grad_shape_only() {
     let src = r#"

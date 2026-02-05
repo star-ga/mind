@@ -44,7 +44,7 @@ tempfile = "3"
 which = "6"
 
 [lib]
-name = "mind"
+name = "libmind"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]

@@ -14,12 +14,12 @@
 
 use std::collections::HashMap;
 
-use mind::parser;
-use mind::type_checker;
-use mind::types::DType;
-use mind::types::ShapeDim;
-use mind::types::TensorType;
-use mind::types::ValueType;
+use libmind::parser;
+use libmind::type_checker;
+use libmind::types::DType;
+use libmind::types::ShapeDim;
+use libmind::types::TensorType;
+use libmind::types::ValueType;
 #[test]
 fn tensor_plus_tensor_same_shape() {
     let src = "a + b";

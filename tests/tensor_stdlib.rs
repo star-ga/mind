@@ -14,9 +14,9 @@
 
 use std::collections::HashMap;
 
-use mind::eval;
+use libmind::eval;
 
-use mind::parser;
+use libmind::parser;
 
 fn eval_source(src: &str) -> eval::Value {
     let module = parser::parse(src).unwrap();

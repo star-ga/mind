@@ -17,7 +17,7 @@
 use std::fs;
 use std::process::Command;
 
-use mind::eval;
+use libmind::eval;
 use tempfile::tempdir;
 
 fn ensure_toolchain() -> bool {

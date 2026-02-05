@@ -1,4 +1,4 @@
-use mind::shapes::engine::{
+use libmind::shapes::engine::{
     broadcast_shapes, infer_output_shape, is_elementwise, rule_for_op, ShapeErrorKind,
     ShapeRuleKind,
 };

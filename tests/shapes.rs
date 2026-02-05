@@ -9,8 +9,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use mind::shapes::*;
-use mind::types::{ConvPadding, ShapeDim};
+use libmind::shapes::*;
+use libmind::types::{ConvPadding, ShapeDim};
 
 fn kd(n: usize) -> ShapeDim {
     ShapeDim::Known(n)
