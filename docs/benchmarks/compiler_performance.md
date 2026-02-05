@@ -4,10 +4,10 @@
 
 MIND demonstrates **extremely fast compilation performance** across all tested workloads, with compilation times in the **microsecond range** for typical tensor programs.
 
-## Production Benchmarks (v0.1.7)
+## Production Benchmarks (v0.1.9)
 
-**Commit**: `aaf68f6`
-**Features**: Full typed tensors, function lowering, imports, AOT pipeline, optimized parser
+**Current Version**: v0.1.9
+**Features**: Full typed tensors, function lowering, imports, AOT pipeline, optimized parser, lib renamed to `libmind`
 
 | Workload | Compilation Time | Description |
 |----------|-----------------|-------------|
@@ -22,7 +22,9 @@ MIND demonstrates **extremely fast compilation performance** across all tested w
 |---------|-------------|------------|------------|
 | Baseline (Dec 2025) | 21 µs | 37 µs | Minimal parser |
 | v0.1.6 | 26 µs | ~55 µs | Full typed tensors (no optimization) |
-| **v0.1.7** | 26 µs | **45 µs** | Parser choice reordering (**-18%**) |
+| v0.1.7 | 26 µs | 45 µs | Parser choice reordering (-18%) |
+| v0.1.8 | 26 µs | 45 µs | Stable (no perf changes) |
+| **v0.1.9** | 26 µs | **45 µs** | Lib rename, Windows fixes, formatting |
 
 ### Baseline vs Production Comparison
 
