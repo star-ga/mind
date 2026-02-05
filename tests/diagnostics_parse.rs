@@ -12,7 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::parser;
+use libmind::parser;
 
 #[test]
 fn shows_pretty_error_for_unexpected_paren() {
@@ -22,7 +22,7 @@ fn shows_pretty_error_for_unexpected_paren() {
     };
     let joined = diags
         .iter()
-        .map(|d| mind::diagnostics::render(src, d))
+        .map(|d| libmind::diagnostics::render(src, d))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(joined.contains("error"));
@@ -36,7 +36,7 @@ fn shows_error_for_unclosed_paren() {
     let Err(diags) = parser::parse_with_diagnostics(src) else {
         panic!("expected error");
     };
-    let s = mind::diagnostics::render(src, &diags[0]);
+    let s = libmind::diagnostics::render(src, &diags[0]);
     assert!(s.contains("line 1"));
     assert!(s.contains("^"));
 }

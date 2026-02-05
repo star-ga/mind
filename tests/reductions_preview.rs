@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use mind::eval;
-use mind::parser;
+use libmind::eval;
+use libmind::parser;
 #[test]
 fn sum_all_axes_preview() {
     let src = r#"

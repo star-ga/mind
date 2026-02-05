@@ -2,9 +2,9 @@
 
 use std::collections::BTreeMap;
 
-use mind::differentiate_function;
-use mind::ir::{BinOp, IRModule, Instr, ValueId};
-use mind::types::{DType, ShapeDim};
+use libmind::differentiate_function;
+use libmind::ir::{BinOp, IRModule, Instr, ValueId};
+use libmind::types::{DType, ShapeDim};
 
 fn scalar_const(ir: &mut IRModule, value: i64) -> ValueId {
     let id = ir.fresh();

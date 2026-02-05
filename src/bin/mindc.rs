@@ -20,18 +20,18 @@ use std::process;
 
 use clap::{ArgAction, Parser, Subcommand};
 
-use mind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
-use mind::ops::core_v1;
-use mind::pipeline::{compile_source_with_name, CompileOptions};
-use mind::project::{build_project, run_project, BuildOptions};
-use mind::BackendTarget;
-use mind::{conformance, ConformanceOptions, ConformanceProfile};
+use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
+use libmind::ops::core_v1;
+use libmind::pipeline::{compile_source_with_name, CompileOptions};
+use libmind::project::{build_project, run_project, BuildOptions};
+use libmind::BackendTarget;
+use libmind::{conformance, ConformanceOptions, ConformanceProfile};
 
 #[cfg(feature = "mlir-lowering")]
-use mind::pipeline::{lower_to_mlir, MlirProducts};
+use libmind::pipeline::{lower_to_mlir, MlirProducts};
 
 #[cfg(all(feature = "mlir-build", not(feature = "mlir-lowering")))]
-use mind::pipeline::lower_to_mlir;
+use libmind::pipeline::lower_to_mlir;
 
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
@@ -375,7 +375,7 @@ fn run_conformance(profile: &str) {
 }
 
 #[cfg(feature = "mlir-lowering")]
-fn emit_mlir_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompileProducts) {
+fn emit_mlir_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
     if !cli.emit_mlir {
         return;
     }
@@ -409,7 +409,7 @@ fn emit_mlir_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompileP
 }
 
 #[cfg(not(feature = "mlir-lowering"))]
-fn emit_mlir_if_requested(cli: &CompileArgs, _products: &mind::pipeline::CompileProducts) {
+fn emit_mlir_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::CompileProducts) {
     if cli.emit_mlir {
         eprintln!("error[mlir]: MLIR emission requires building with the 'mlir-lowering' feature");
         process::exit(1);
@@ -435,7 +435,7 @@ fn resolve_color_choice(flag: &Option<String>) -> ColorChoice {
 }
 
 #[cfg(feature = "mlir-build")]
-fn emit_obj_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompileProducts) {
+fn emit_obj_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
     let obj_path = match &cli.emit_obj {
         Some(path) => path,
         None => return,
@@ -462,7 +462,7 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompilePr
     };
 
     // Resolve build tools
-    let tools = match mind::eval::mlir_build::resolve_tools() {
+    let tools = match libmind::eval::mlir_build::resolve_tools() {
         Ok(tools) => tools,
         Err(err) => {
             eprintln!("error[build]: {err}");
@@ -471,7 +471,7 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompilePr
     };
 
     // Build object file
-    let opts = mind::eval::mlir_build::BuildOptions {
+    let opts = libmind::eval::mlir_build::BuildOptions {
         preset: "core",
         emit_mlir_file: None,
         emit_llvm_file: None,
@@ -481,7 +481,7 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompilePr
         target_triple: None,
     };
 
-    match mind::eval::mlir_build::build_all(&mlir.primal_mlir, &tools, &opts) {
+    match libmind::eval::mlir_build::build_all(&mlir.primal_mlir, &tools, &opts) {
         Ok(_) => {
             eprintln!("Wrote object file: {}", obj_path);
         }
@@ -493,7 +493,7 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &mind::pipeline::CompilePr
 }
 
 #[cfg(not(feature = "mlir-build"))]
-fn emit_obj_if_requested(cli: &CompileArgs, _products: &mind::pipeline::CompileProducts) {
+fn emit_obj_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::CompileProducts) {
     if cli.emit_obj.is_some() {
         eprintln!("error[build]: --emit-obj requires building with the 'mlir-build' feature");
         process::exit(1);

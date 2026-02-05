@@ -26,13 +26,13 @@ use clap::Parser;
 use clap::Subcommand;
 
 #[cfg(feature = "pkg")]
-use mind::package::{
+use libmind::package::{
     build_package, default_install_dir, inspect_package, install_package, MindManifest,
 };
 
-use mind::diagnostics;
-use mind::eval;
-use mind::parser;
+use libmind::diagnostics;
+use libmind::eval;
+use libmind::parser;
 
 use std::collections::HashMap;
 use std::io;
@@ -722,14 +722,14 @@ fn run_repl() {
     }
 }
 
-fn report_eval_error(err: eval::EvalError, src: &str, module: &mind::ast::Module) {
+fn report_eval_error(err: eval::EvalError, src: &str, module: &libmind::ast::Module) {
     match err {
         eval::EvalError::TypeError(rendered) => {
             eprintln!("Evaluation error: type error");
             eprintln!("{rendered}");
-            let diags = mind::type_checker::check_module_types(module, src, &HashMap::new());
+            let diags = libmind::type_checker::check_module_types(module, src, &HashMap::new());
             for d in diags {
-                eprintln!("{}", mind::diagnostics::render(src, &d));
+                eprintln!("{}", libmind::diagnostics::render(src, &d));
             }
         }
         other => {

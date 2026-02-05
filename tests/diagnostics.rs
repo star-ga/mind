@@ -12,7 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::diagnostics::{
+use libmind::diagnostics::{
     ColorChoice, Diagnostic, DiagnosticEmitter, DiagnosticFormat, Severity, Span,
 };
 

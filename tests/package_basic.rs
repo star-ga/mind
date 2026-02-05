@@ -16,11 +16,11 @@
 
 use std::fs;
 
-use mind::package::build_package;
+use libmind::package::build_package;
 
-use mind::package::inspect_package;
+use libmind::package::inspect_package;
 
-use mind::package::MindManifest;
+use libmind::package::MindManifest;
 
 use tempfile::tempdir;
 

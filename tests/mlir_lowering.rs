@@ -1,8 +1,8 @@
 #![cfg(feature = "mlir-lowering")]
 
-use mind::compile_ir_to_mlir_text;
-use mind::ir::{BinOp, IRModule, Instr, ValueId};
-use mind::types::{ConvPadding, DType, ShapeDim};
+use libmind::compile_ir_to_mlir_text;
+use libmind::ir::{BinOp, IRModule, Instr, ValueId};
+use libmind::types::{ConvPadding, DType, ShapeDim};
 
 fn tensor_const(
     module: &mut IRModule,
@@ -147,7 +147,7 @@ fn reports_unsupported_ops() {
     module.instrs.push(Instr::Output(dst));
 
     let err = compile_ir_to_mlir_text(&mut module).expect_err("gather is not lowered in phase 1");
-    assert!(matches!(err, mind::MlirLowerError::UnsupportedOp { .. }));
+    assert!(matches!(err, libmind::MlirLowerError::UnsupportedOp { .. }));
 }
 
 #[test]
@@ -208,5 +208,5 @@ fn conv2d_mismatched_channels() {
     module.instrs.push(Instr::Output(dst));
 
     let err = compile_ir_to_mlir_text(&mut module).expect_err("channel mismatch should error");
-    assert!(matches!(err, mind::MlirLowerError::ShapeError(msg) if msg.contains("input channels")));
+    assert!(matches!(err, libmind::MlirLowerError::ShapeError(msg) if msg.contains("input channels")));
 }

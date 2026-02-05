@@ -47,7 +47,7 @@
 //!
 //! Use `detect_format()` to identify input format:
 //! ```ignore
-//! use mind::ir::compact::{detect_format, MicFormat};
+//! use libmind::ir::compact::{detect_format, MicFormat};
 //!
 //! match detect_format(data) {
 //!     MicFormat::Mic1 => parse_mic(data),
