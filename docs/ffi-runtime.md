@@ -19,13 +19,13 @@ Backends implement `MindRuntime` to provide real allocators and kernel dispatch.
 3. Use the runtime to allocate inputs, run operations, and collect outputs through the backend-specific API.
 
 ```rust
-use mind::runtime_interface::{DeviceKind, MindRuntime, NoOpRuntime, TensorDesc};
-use mind::types::ShapeDim;
+use libmind::runtime_interface::{DeviceKind, MindRuntime, NoOpRuntime, TensorDesc};
+use libmind::types::ShapeDim;
 
 fn run_demo(runtime: &dyn MindRuntime) {
     let buffer = runtime.allocate(&TensorDesc {
         shape: vec![ShapeDim::Known(2), ShapeDim::Known(3)],
-        dtype: mind::types::DType::F32,
+        dtype: libmind::types::DType::F32,
         device: Some(DeviceKind::Cpu),
     });
     runtime.run_op("demo_op", &[buffer], &[]);
