@@ -123,19 +123,20 @@ def compare_with_mind(mojo_results: Dict[str, Dict[str, float]]):
     """
     Compare Mojo results with MIND benchmarks.
 
-    MIND results from Criterion benchmarks (Linux, i7-5930K):
-    - scalar_math: 25.3 µs (in-process, hot path)
-    - small_matmul: 53.5 µs
-    - medium_matmul: 52.8 µs
-    - large_matmul: 52.2 µs
+    MIND reference results from Criterion benchmarks:
+    Platform: Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, RTX 3080, CUDA 13.0
 
-    Note: For fair subprocess comparison, add ~1.2ms process overhead.
+    These are in-process compile times (no subprocess overhead):
+    - scalar_math: 25 µs
+    - small_matmul: 53 µs
+    - medium_matmul: 53 µs
+    - large_matmul: 52 µs
     """
     mind_results = {
-        "scalar_math": 25.3,
-        "small_matmul": 53.5,
-        "medium_matmul": 52.8,
-        "large_matmul": 52.2,
+        "scalar_math": 25,
+        "small_matmul": 53,
+        "medium_matmul": 53,
+        "large_matmul": 52,
     }
 
     print("\n" + "="*80)
