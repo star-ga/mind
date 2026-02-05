@@ -3,7 +3,76 @@
 **Last Updated:** February 5, 2026
 **Reference Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 13.0
 
-> **Note:** All official benchmarks use the Linux reference platform for consistency. Windows performance varies by hardware configuration.
+---
+
+## Scientific Methodology
+
+### Why Subprocess Overhead Matters
+
+When benchmarking compilation speed, there are two ways to measure:
+
+1. **In-process measurement** — Directly call the compiler function and measure wall-clock time. This captures *pure compilation time* without process startup overhead.
+
+2. **Subprocess measurement** — Spawn a new process to run the compiler CLI. This includes:
+   - Process creation (~500-2000 µs on Linux, ~2000-5000 µs on Windows)
+   - Binary loading and initialization
+   - Actual compilation
+   - Process teardown
+
+For fair comparison, we use **in-process Criterion benchmarks** for MIND, which measure only the `compile_source()` function call — the actual work being done.
+
+### Subprocess Overhead Subtraction
+
+When MIND is invoked via CLI (for comparison scripts), we subtract the subprocess baseline:
+
+```
+Pure Compile Time = Total CLI Time - Subprocess Baseline
+```
+
+**Subprocess baseline** is measured by running `mind --version` (minimal work, same process overhead).
+
+| Platform | Typical Subprocess Overhead |
+|----------|----------------------------|
+| Linux x86_64 | ~1,200-1,500 µs |
+| macOS ARM64 | ~800-1,200 µs |
+| Windows x86_64 | ~2,000-5,000 µs |
+
+### Reference Platform
+
+All official benchmarks use a single reference platform for reproducibility:
+
+| Component | Specification |
+|-----------|---------------|
+| OS | Ubuntu 24.04 LTS |
+| CPU | Intel Core i7-5930K @ 3.50GHz |
+| Memory | 64GB DDR4 |
+| GPU | NVIDIA RTX 3080 10GB |
+| CUDA | 13.0 |
+| Rust | 1.82+ stable |
+
+### Measurement Protocol
+
+1. **Warmup**: 3-5 runs discarded to warm caches
+2. **Sampling**: 20+ runs collected
+3. **Statistics**: Mean, median, std deviation reported
+4. **Tool**: Criterion.rs for MIND (statistically rigorous)
+5. **Isolation**: Single-threaded, no background processes
+
+### Reproducing Results
+
+```bash
+# Clone and build
+git clone https://github.com/star-ga/mind.git
+cd mind
+cargo build --release
+
+# Run Criterion benchmarks (in-process, no subprocess overhead)
+cargo bench --bench simple_benchmarks
+
+# Run comparison benchmarks (with subprocess overhead subtraction)
+cd benchmarks/pytorch_comparison
+python benchmark_pytorch_compile.py
+```
 
 ---
 
