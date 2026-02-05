@@ -33,27 +33,25 @@ const PROGRAMS: &[(&str, &str)] = &[
         r#"
             let x: Tensor[f32,(64,64)] = 1;
             let y: Tensor[f32,(64,64)] = 2;
-            let sum = add(x, y);
-            let prod = mul(sum, x);
+            let sum = x + y;
+            let prod = sum * x;
             tensor.relu(prod)
         "#,
     ),
     (
         "reductions",
         r#"
-            let x: Tensor[f32,(128,256,512)] = 1;
-            let sum1 = tensor.sum(x, [0]);
-            let sum2 = tensor.sum(sum1, [0]);
-            tensor.mean(sum2)
+            let x: Tensor[f32,(128,256)] = 1;
+            let sum1 = tensor.sum(x, axes=[0]);
+            tensor.mean(sum1)
         "#,
     ),
     (
         "reshape_ops",
         r#"
-            let x: Tensor[f32,(32,64,128)] = 1;
-            let reshaped = tensor.reshape(x, [32,8192]);
-            let transposed = tensor.transpose(reshaped, [1,0]);
-            transposed
+            let x: Tensor[f32,(32,64)] = 1;
+            let reshaped = tensor.reshape(x, (64,32));
+            tensor.transpose(reshaped)
         "#,
     ),
 ];
