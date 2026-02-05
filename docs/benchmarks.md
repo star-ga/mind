@@ -48,9 +48,9 @@ The following baselines were collected on reference hardware (AMD Ryzen 9 5900X,
 
 | Category | Test Count | Total Time |
 |----------|------------|------------|
-| Unit tests | 156 | 2.8 s |
-| Integration tests | 69 files | 12 s |
-| Full suite | All | 15 s |
+| Unit tests | 80 | ~0.2 s |
+| Integration tests | 89 | ~0.5 s |
+| Full suite | 169+ | ~1 s |
 
 ## Metrics
 

@@ -143,7 +143,7 @@ model, SemVer policy, and CLI guarantees are documented in
 
 ## Testing
 
-The MIND compiler includes a comprehensive test suite with 69 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
+The MIND compiler includes a comprehensive test suite with 169+ tests across 69 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
 
 ### Running Tests
 
@@ -186,32 +186,21 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 ### Compilation Speed
 
-#### Windows 11 Desktop (Dec 2025)
+#### Reference Benchmarks (v0.1.9)
 
 | vs Framework | MIND Speedup |
 |--------------|--------------|
-| PyTorch 2.0 torch.compile (inductor) | **800-3,200× faster** |
-| Mojo (mojo build) | **17,000-36,000× faster** |
+| PyTorch 2.0 torch.compile (inductor) | **1,000-2,400× faster** |
+| Mojo (mojo build) | **20,000-35,000× faster** |
 
 | Benchmark | PyTorch (inductor) | Mojo (build) | MIND (in-process) |
 |-----------|-------------------|--------------|-------------------|
-| scalar_math | 43 ms | 908 ms | ~38 µs |
-| small_matmul | 62 ms | 928 ms | ~38 µs |
+| scalar_math | 43 ms | 908 ms | **26 µs** |
+| small_matmul | 62 ms | 928 ms | **45 µs** |
+| medium_matmul | - | - | **46 µs** |
+| large_matmul | - | - | **45 µs** |
 
-#### Ubuntu Linux Server (Jan 2026)
-
-| vs Framework | MIND Speedup |
-|--------------|--------------|
-| PyTorch 2.0 torch.compile (inductor) | **800-3,200× faster** |
-| Mojo (mojo build) | **17,000-36,000× faster** |
-
-| Benchmark | PyTorch (inductor) | Mojo (build) | MIND (in-process) |
-|-----------|-------------------|--------------|-------------------|
-| scalar_math | 42.8 ms | 908 ms | 25-53 µs |
-| small_matmul | 61.5 ms | 928 ms | 25-53 µs |
-| conv2d | 79.3 ms | - | 25-53 µs |
-
-*Fair in-process compilation time comparison across Windows and Linux platforms.*
+*In-process compilation benchmarks. See [docs/benchmarks/compiler_performance.md](docs/benchmarks/compiler_performance.md) for methodology.*
 
 ### MIC/MAP Format Efficiency
 
