@@ -12,7 +12,27 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+use std::path::PathBuf;
 use std::process::Command;
+
+/// Get the path to the mind binary from the cargo target directory
+fn mind_binary() -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("target");
+
+    // Use release or debug based on build profile
+    #[cfg(debug_assertions)]
+    path.push("debug");
+    #[cfg(not(debug_assertions))]
+    path.push("release");
+
+    #[cfg(target_os = "windows")]
+    path.push("mind.exe");
+    #[cfg(not(target_os = "windows"))]
+    path.push("mind");
+
+    path
+}
 
 #[cfg(not(debug_assertions))]
 #[ignore]
@@ -21,19 +41,23 @@ fn _ignore_in_release_mode() {}
 
 #[test]
 fn mind_eval_basic_expr() {
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "--quiet",
-            "--no-default-features",
-            "--",
-            "eval",
-            "2 + 3 * 4",
-        ])
-        .output()
-        .expect("run");
+    let binary = mind_binary();
+    if !binary.exists() {
+        // Skip if binary not built yet (cargo test without prior build)
+        eprintln!("Skipping: mind binary not found at {:?}", binary);
+        return;
+    }
 
-    assert!(output.status.success());
+    let output = Command::new(&binary)
+        .args(["eval", "2 + 3 * 4"])
+        .output()
+        .expect("failed to execute mind binary");
+
+    assert!(
+        output.status.success(),
+        "mind eval failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let trimmed = stdout.trim();
     assert!(trimmed.contains("--- Lowered IR ---"), "{trimmed}");

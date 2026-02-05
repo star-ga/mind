@@ -4,3 +4,11 @@ crates-io = { protocol = "sparse" }
 [net]
 retry = 3
 git-fetch-with-cli = true
+
+# Windows linker configuration to fix LNK1318 (too many open PDB files) error
+# Use /pdbpagesize to allow larger PDB files without hitting limits
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/pdbpagesize:8192"]
+
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "link-arg=-Wl,--no-keep-memory"]
