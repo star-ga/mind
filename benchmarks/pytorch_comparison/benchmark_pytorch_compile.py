@@ -75,12 +75,34 @@ def measure_torch_compile_time(model_fn, input_shape, device="cpu"):
     return (end - start) * 1_000_000
 
 
-def measure_mind_compile_time(program_name, num_samples=20):
+def measure_subprocess_baseline(mind_binary, num_samples=10):
+    """
+    Measure subprocess startup overhead by running `mind --version`.
+    This captures process spawn + binary load time without compilation.
+    """
+    times = []
+    for _ in range(num_samples):
+        start = time.perf_counter()
+        subprocess.run(
+            [str(mind_binary), "--version"],
+            capture_output=True,
+            text=False,
+        )
+        end = time.perf_counter()
+        times.append((end - start) * 1_000_000)
+    return statistics.mean(times)
+
+
+def measure_mind_compile_time(program_name, num_samples=20, subtract_overhead=True):
     """
     Measure MIND compilation time on THIS machine (same-machine comparison).
 
-    This function actually runs MIND CLI to compile programs, measuring real
+    This function runs MIND CLI to compile programs, measuring real
     compilation time on the same system as PyTorch measurements.
+
+    When subtract_overhead=True (default), subprocess startup overhead is
+    subtracted to report pure compilation time comparable to in-process
+    Criterion benchmarks.
 
     Returns compilation time in microseconds (mean of multiple samples).
     """
@@ -137,6 +159,12 @@ def measure_mind_compile_time(program_name, num_samples=20):
     if not mind_binary.exists():
         raise RuntimeError(f"MIND CLI not found at {mind_binary}. Run: cargo build --release --bin mind")
 
+    # Measure subprocess baseline overhead
+    baseline_overhead = 0
+    if subtract_overhead:
+        baseline_overhead = measure_subprocess_baseline(mind_binary)
+        print(f"    Subprocess baseline: {baseline_overhead:.0f} µs (will be subtracted)")
+
     # Measure compilation time over multiple samples
     times = []
     for _ in range(num_samples):
@@ -151,7 +179,10 @@ def measure_mind_compile_time(program_name, num_samples=20):
         if result.returncode != 0:
             raise RuntimeError(f"MIND compilation failed: {result.stderr.decode()}")
 
-        times.append((end - start) * 1_000_000)  # Convert to microseconds
+        raw_time = (end - start) * 1_000_000  # Convert to microseconds
+        # Subtract baseline to get pure compile time
+        adjusted_time = max(raw_time - baseline_overhead, 1)  # Floor at 1µs
+        times.append(adjusted_time)
 
     return statistics.mean(times)
 

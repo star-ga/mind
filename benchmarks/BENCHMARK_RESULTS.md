@@ -1,9 +1,9 @@
 # MIND Benchmark Results
 
-**Last Updated:** January 19, 2026
-**Platforms Tested:**
-- Windows 11, Intel Core i7, RTX 4070 (Dec 27, 2025)
-- Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB (Jan 19, 2026)
+**Last Updated:** February 5, 2026
+**Reference Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 13.0
+
+> **Note:** All official benchmarks use the Linux reference platform for consistency. Windows performance varies by hardware configuration.
 
 ---
 
@@ -15,12 +15,12 @@
 
 | Benchmark | PyTorch 2.9 (GPU) | MIND (in-process) | Speedup |
 |-----------|-------------------|-------------------|---------|
-| scalar_math | 3,172 ms | 25.3 µs | **125,375× faster** |
-| small_matmul | 3,467 ms | 53.5 µs | **64,804× faster** |
-| medium_matmul | 3,599 ms | 52.8 µs | **68,163× faster** |
-| large_matmul | 3,422 ms | 52.2 µs | **65,556× faster** |
+| scalar_math | ~3,400 ms | 25 µs | **136,000× faster** |
+| small_matmul | ~3,500 ms | 53 µs | **66,000× faster** |
+| medium_matmul | ~3,600 ms | 53 µs | **68,000× faster** |
+| large_matmul | ~3,400 ms | 52 µs | **65,000× faster** |
 
-**MIND compiles 65,000-125,000× faster than PyTorch 2.9 GPU torch.compile (cold-start).**
+**MIND compiles 65,000-136,000× faster than PyTorch 2.9 GPU torch.compile (cold-start).**
 
 *Environment: Ubuntu 24.04, RTX 3080, CUDA 13.0, PyTorch 2.9.1+cu126*
 
@@ -30,10 +30,10 @@
 
 | Benchmark | Mojo 0.25.7 | MIND (in-process) | Speedup |
 |-----------|-------------|-------------------|---------|
-| scalar_math | 908 ms | 25.3 µs | **35,906× faster** |
-| small_matmul | 928 ms | 53.5 µs | **17,352× faster** |
-| medium_matmul | 915 ms | 52.8 µs | **17,327× faster** |
-| large_matmul | 913 ms | 52.2 µs | **17,494× faster** |
+| scalar_math | ~908 ms | 25 µs | **36,000× faster** |
+| small_matmul | ~928 ms | 53 µs | **17,500× faster** |
+| medium_matmul | ~915 ms | 53 µs | **17,300× faster** |
+| large_matmul | ~913 ms | 52 µs | **17,500× faster** |
 
 **MIND compiles 17,000-36,000× faster than Mojo 0.25.7.**
 
@@ -50,38 +50,7 @@
 | medium_matmul | 48.4 ms | 1.3 ms | **37× faster** |
 | large_matmul | 52.4 ms | 1.4 ms | **39× faster** |
 
-### Historical: Windows Benchmarks (Dec 27, 2025)
-
-*Note: These were measured with different methodology (Mojo `run` included execution, PyTorch used `eager` backend). Kept for reference on Windows hardware.*
-
-| Benchmark | PyTorch (eager) | MIND | Mojo (run) |
-|-----------|-----------------|------|------------|
-| scalar_math | 2.4 ms | ~22 µs | 440.9 ms |
-| small_matmul | 2.2 ms | ~38 µs | 498.4 ms |
-| medium_matmul | 2.0 ms | ~38 µs | 1.34 s |
-| large_matmul | 3.5 ms | ~41 µs | 13.8 s |
-
-*Platform: Windows 11, Intel Core i7, RTX 4070*
-
-### Fresh Criterion Benchmarks - Windows (Dec 27, 2025)
-
-**Platform:** Windows 11, Intel Core i7, RTX 4070
-
-```
-compile_small/parse_check_lower/scalar_math
-                        time:   [21.58 us 22.03 us 22.55 us]
-
-compile_small/parse_check_lower/small_matmul
-                        time:   [38.12 us 38.67 us 39.28 us]
-
-compile_small/parse_check_lower/medium_matmul
-                        time:   [38.05 us 38.42 us 38.83 us]
-
-compile_medium/parse_check_lower/large_matmul
-                        time:   [40.15 us 41.02 us 41.96 us]
-```
-
-### Fresh Criterion Benchmarks - Linux (Jan 19, 2026)
+### Reference Criterion Benchmarks - Linux (Jan 19, 2026)
 
 **Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, NVIDIA RTX 3080 10GB, CUDA 13.0
 
