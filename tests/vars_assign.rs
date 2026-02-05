@@ -12,8 +12,8 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::eval;
-use mind::parser;
+use libmind::eval;
+use libmind::parser;
 
 #[test]
 fn let_and_use_variable() {

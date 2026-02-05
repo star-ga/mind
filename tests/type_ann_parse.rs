@@ -12,7 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::parser;
+use libmind::parser;
 
 #[test]
 fn parses_scalar_annotation() {

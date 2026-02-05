@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use mind::eval;
-use mind::parser;
+use libmind::eval;
+use libmind::parser;
 #[test]
 fn matmul_preview_fill() {
     let src = r#"

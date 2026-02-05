@@ -17,9 +17,9 @@
 use std::fs;
 use std::time::Duration;
 
-use mind::eval;
+use libmind::eval;
 
-use mind::parser;
+use libmind::parser;
 
 use tempfile::tempdir;
 

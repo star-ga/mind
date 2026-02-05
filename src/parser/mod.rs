@@ -14,7 +14,7 @@
 
 //! # Example
 //! ```
-//! use mind::{parser, eval};
+//! use libmind::{parser, eval};
 //! let module = parser::parse("1 + 2 * 3").unwrap();
 //! assert_eq!(eval::eval_first_expr(&module).unwrap(), 7);
 //! ```

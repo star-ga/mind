@@ -19,10 +19,10 @@ fn gather_inserts_idx_shape() {
         let idx: Tensor[i32,(2)] = 0;
         tensor.gather(x, axis=1, idx)
     "#;
-    let m = mind::parser::parse(src).unwrap();
+    let m = libmind::parser::parse(src).unwrap();
     let mut env = std::collections::HashMap::new();
-    let v = mind::eval::eval_module_value_with_env(&m, &mut env, Some(src)).unwrap();
-    let s = mind::eval::format_value_human(&v);
+    let v = libmind::eval::eval_module_value_with_env(&m, &mut env, Some(src)).unwrap();
+    let s = libmind::eval::format_value_human(&v);
     assert!(s.contains("(3,2)"));
     assert!(s.contains("fill=5"));
 }

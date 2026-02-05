@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```
-//! use mind::types::intern::intern_str;
+//! use libmind::types::intern::intern_str;
 //!
 //! let s1 = intern_str("batch_size");
 //! let s2 = intern_str("batch_size");
@@ -89,7 +89,7 @@ impl StringInterner {
 /// # Example
 ///
 /// ```
-/// use mind::types::intern::intern_str;
+/// use libmind::types::intern::intern_str;
 ///
 /// let s = intern_str("N");
 /// assert_eq!(s, "N");
@@ -108,7 +108,7 @@ pub fn intern_str(s: &str) -> &'static str {
 /// # Example
 ///
 /// ```
-/// use mind::types::intern::try_intern_str;
+/// use libmind::types::intern::try_intern_str;
 ///
 /// let s = try_intern_str("N");
 /// assert_eq!(s, Some("N"));

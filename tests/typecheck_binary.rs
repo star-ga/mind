@@ -14,9 +14,9 @@
 
 use std::collections::HashMap;
 
-use mind::parser;
-use mind::type_checker;
-use mind::types::ValueType;
+use libmind::parser;
+use libmind::type_checker;
+use libmind::types::ValueType;
 #[test]
 fn scalars_ok() {
     let src = "1 + 2 * 3";
