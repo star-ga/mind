@@ -77,12 +77,7 @@ fn mindc_accepts_cpu_target_flag() {
     }
 
     let output = Command::new(&binary)
-        .args([
-            "tests/fixtures/simple.mind",
-            "--emit-ir",
-            "--target",
-            "cpu",
-        ])
+        .args(["tests/fixtures/simple.mind", "--emit-ir", "--target", "cpu"])
         .output()
         .expect("run mindc with cpu target");
 
@@ -188,11 +183,7 @@ fn mindc_prints_json_diagnostics_with_flag() {
     }
 
     let output = Command::new(&binary)
-        .args([
-            "tests/fixtures/invalid.mind",
-            "--diagnostic-format",
-            "json",
-        ])
+        .args(["tests/fixtures/invalid.mind", "--diagnostic-format", "json"])
         .output()
         .expect("run mindc json diagnostics");
 
@@ -249,11 +240,7 @@ fn mindc_color_env_overridden_by_flag() {
         // Ensure no terminal is detected
         .env("NO_COLOR", "1")
         .env("TERM", "dumb")
-        .args([
-            "tests/fixtures/invalid.mind",
-            "--color",
-            "never",
-        ])
+        .args(["tests/fixtures/invalid.mind", "--color", "never"])
         .output()
         .expect("run mindc color flag");
 

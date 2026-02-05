@@ -208,5 +208,7 @@ fn conv2d_mismatched_channels() {
     module.instrs.push(Instr::Output(dst));
 
     let err = compile_ir_to_mlir_text(&mut module).expect_err("channel mismatch should error");
-    assert!(matches!(err, libmind::MlirLowerError::ShapeError(msg) if msg.contains("input channels")));
+    assert!(
+        matches!(err, libmind::MlirLowerError::ShapeError(msg) if msg.contains("input channels"))
+    );
 }
