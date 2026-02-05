@@ -89,10 +89,9 @@ split-debuginfo = "packed"
 
 [profile.test]
 inherits = "dev"
-# Further reduce PDB file count for tests on Windows
-codegen-units = 8
-debug = 1
-split-debuginfo = "packed"
+# Disable debug info for tests to avoid Windows LNK1318 PDB errors
+codegen-units = 1
+debug = false
 
 [features]
 default = []
