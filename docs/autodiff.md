@@ -21,7 +21,7 @@ Key properties:
 Enable the `autodiff` feature and call the entry point:
 
 ```rust
-use mind::differentiate_function;
+use libmind::differentiate_function;
 
 let gradients = differentiate_function(&ir, "main")?;
 println!("{}", gradients);
