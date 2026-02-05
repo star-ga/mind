@@ -83,6 +83,16 @@ codegen-units = 1
 [profile.dev]
 opt-level = 0
 debug = true
+# Reduce codegen units to prevent LNK1318 (too many PDB files) on Windows
+codegen-units = 16
+split-debuginfo = "packed"
+
+[profile.test]
+inherits = "dev"
+# Further reduce PDB file count for tests on Windows
+codegen-units = 8
+debug = 1
+split-debuginfo = "packed"
 
 [features]
 default = []

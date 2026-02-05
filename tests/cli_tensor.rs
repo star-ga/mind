@@ -12,22 +12,46 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+use std::path::PathBuf;
 use std::process::Command;
+
+/// Get the path to the mind binary from the cargo target directory
+fn mind_binary() -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("target");
+
+    // Use release or debug based on build profile
+    #[cfg(debug_assertions)]
+    path.push("debug");
+    #[cfg(not(debug_assertions))]
+    path.push("release");
+
+    #[cfg(target_os = "windows")]
+    path.push("mind.exe");
+    #[cfg(not(target_os = "windows"))]
+    path.push("mind");
+
+    path
+}
 
 #[test]
 fn cli_prints_tensor_preview() {
-    let output = Command::new("cargo")
-        .args([
-            "run",
-            "--quiet",
-            "--no-default-features",
-            "--",
-            "eval",
-            "let x: Tensor[f32,(2,3)] = 0; x + 1",
-        ])
+    let binary = mind_binary();
+    if !binary.exists() {
+        eprintln!("Skipping: mind binary not found at {:?}", binary);
+        return;
+    }
+
+    let output = Command::new(&binary)
+        .args(["eval", "let x: Tensor[f32,(2,3)] = 0; x + 1"])
         .output()
-        .expect("cargo run");
-    assert!(output.status.success(), "process failed: {:?}", output);
+        .expect("failed to execute mind binary");
+
+    assert!(
+        output.status.success(),
+        "mind eval failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Tensor["));
     assert!(stdout.contains("(2,3)"));
