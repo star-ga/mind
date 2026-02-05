@@ -5,10 +5,14 @@ crates-io = { protocol = "sparse" }
 retry = 3
 git-fetch-with-cli = true
 
+# Limit parallel jobs to avoid Windows PDB server LIMIT (12) error (LNK1318)
+# mspdbsrv.exe can only handle ~12 concurrent connections
+[build]
+jobs = 2
+
 # Windows linker configuration to fix LNK1318 (too many open PDB files) error
-# Use /pdbpagesize to allow larger PDB files without hitting limits
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "link-arg=/pdbpagesize:8192"]
+rustflags = ["-C", "link-arg=/DEBUG:NONE", "-C", "link-arg=/pdbpagesize:8192"]
 
 [target.x86_64-pc-windows-gnu]
 rustflags = ["-C", "link-arg=-Wl,--no-keep-memory"]
