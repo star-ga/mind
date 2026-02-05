@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-02-05
+
+### Changed
+- **BREAKING**: Renamed library crate from `mind` to `libmind` to avoid Windows PDB filename collision
+- Updated all imports: `use mind::` → `use libmind::`
+- Benchmark numbers aligned across README and docs
+
+### Fixed
+- Windows LNK1318 PDB linker errors by limiting parallel build jobs
+- Format check CI failures (CRLF → LF line endings)
+
+### Documentation
+- Updated test counts to 169+ tests across 70 test files
+- Aligned benchmark numbers between README and docs/benchmarks/
+- Added v0.1.8 and v0.1.9 to compiler_performance.md version history
+
+## [0.1.8] - 2026-01-15
+
 ### Added
 - Comprehensive documentation for `TODO(runtime)` markers in `src/exec/mod.rs`
 - Test execution examples in README.md
@@ -57,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conv2D with padding modes (Same, Valid)
 
 #### Developer Experience
-- 69 integration tests covering all subsystems
+- 70 integration test files covering all subsystems
 - GitHub Actions CI for Linux, macOS, Windows
 - Clippy and rustfmt enforcement
 - Comprehensive documentation in `/docs`
@@ -85,5 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: https://github.com/star-ga/mind/tree/main/docs
 - Issues: https://github.com/star-ga/mind/issues
 
-[Unreleased]: https://github.com/star-ga/mind/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/star-ga/mind/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
+[0.1.8]: https://github.com/star-ga/mind/releases/tag/v0.1.8
 [0.1.0]: https://github.com/star-ga/mind/releases/tag/v0.1.0
