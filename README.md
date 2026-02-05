@@ -143,7 +143,7 @@ model, SemVer policy, and CLI guarantees are documented in
 
 ## Testing
 
-The MIND compiler includes a comprehensive test suite with 169+ tests across 69 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
+The MIND compiler includes a comprehensive test suite with 169+ tests across 70 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
 
 ### Running Tests
 
