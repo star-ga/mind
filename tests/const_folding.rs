@@ -12,9 +12,9 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::ast::Node;
-use mind::opt::fold;
-use mind::parser;
+use libmind::ast::Node;
+use libmind::opt::fold;
+use libmind::parser;
 
 #[test]
 fn folds_simple_arith() {

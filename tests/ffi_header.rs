@@ -16,7 +16,7 @@
 
 #[test]
 fn header_contains_expected_symbols() {
-    let header = mind::ffi::header::generate_header();
+    let header = libmind::ffi::header::generate_header();
     assert!(header.contains("MindTensor"));
     assert!(header.contains("mind_infer"));
 }

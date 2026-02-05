@@ -1,11 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use mind::{compile_source, CompileOptions};
+use libmind::{compile_source, CompileOptions};
 
 #[cfg(feature = "mlir-lowering")]
-use mind::lower_to_mlir;
+use libmind::lower_to_mlir;
 
 #[cfg(feature = "autodiff")]
-use mind::differentiate_function;
+use libmind::differentiate_function;
 
 /// Small program: Simple matrix multiplication
 const SMALL_MATMUL: &str = r#"

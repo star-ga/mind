@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use mind::eval;
-use mind::parser;
+use libmind::eval;
+use libmind::parser;
 #[test]
 fn grad_add_is_ones() {
     let src = "let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x + 1), wrt=[x])";

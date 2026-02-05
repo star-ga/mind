@@ -14,9 +14,9 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::eval;
+use libmind::eval;
 
-use mind::parser;
+use libmind::parser;
 
 #[test]
 fn mlir_opt_runs_when_available() {

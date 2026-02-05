@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use mind::{compile_source, CompileOptions};
+use libmind::{compile_source, CompileOptions};
 
 /// Simple broadcasting scenarios
 const BROADCAST_SIMPLE: &str = r#"

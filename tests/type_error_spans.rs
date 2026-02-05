@@ -14,11 +14,11 @@
 
 use std::collections::HashMap;
 
-use mind::diagnostics;
+use libmind::diagnostics;
 
-use mind::parser;
+use libmind::parser;
 
-use mind::type_checker;
+use libmind::type_checker;
 
 #[test]
 fn unknown_ident_points_to_name() {

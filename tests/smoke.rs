@@ -12,10 +12,10 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::lexer;
-use mind::parser;
-use mind::type_checker;
-use mind::types::ValueType;
+use libmind::lexer;
+use libmind::parser;
+use libmind::type_checker;
+use libmind::types::ValueType;
 
 #[test]
 fn lex_parse_check_minimal() {

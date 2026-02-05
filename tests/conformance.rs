@@ -1,4 +1,4 @@
-use mind::conformance::{run_conformance, ConformanceOptions, ConformanceProfile};
+use libmind::conformance::{run_conformance, ConformanceOptions, ConformanceProfile};
 
 #[cfg(not(debug_assertions))]
 #[ignore]

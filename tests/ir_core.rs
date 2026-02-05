@@ -1,4 +1,4 @@
-use mind::ir::{
+use libmind::ir::{
     canonicalize_module, format_ir_module, prepare_ir_for_backend, verify_module, BinOp, IRModule,
     Instr, IrVerifyError, ValueId,
 };

@@ -13,9 +13,9 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 #[cfg(feature = "autodiff")]
-use mind::ir::Instr;
-use mind::pipeline::{compile_source, CompileOptions};
-use mind::runtime::types::BackendTarget;
+use libmind::ir::Instr;
+use libmind::pipeline::{compile_source, CompileOptions};
+use libmind::runtime::types::BackendTarget;
 
 #[cfg(feature = "autodiff")]
 const AUTODIFF_FIXTURE: &str = include_str!("fixtures/autodiff.mind");
@@ -111,7 +111,7 @@ fn pipeline_emits_grad_ir() {
 #[cfg(feature = "mlir-lowering")]
 #[test]
 fn lower_to_mlir_produces_stable_text() {
-    use mind::pipeline::lower_to_mlir;
+    use libmind::pipeline::lower_to_mlir;
 
     let src = "1 + 2";
     let opts = CompileOptions {
@@ -134,7 +134,7 @@ fn lower_to_mlir_produces_stable_text() {
 #[cfg(all(feature = "mlir-lowering", feature = "autodiff"))]
 #[test]
 fn pipeline_emits_mlir() {
-    use mind::pipeline::lower_to_mlir;
+    use libmind::pipeline::lower_to_mlir;
 
     let opts = CompileOptions {
         // Compile the autodiff fixture with gradients enabled for `main`.

@@ -16,7 +16,7 @@
 //!
 //! # Example
 //! ```
-//! use mind::types::{TensorType, DType, ShapeDim};
+//! use libmind::types::{TensorType, DType, ShapeDim};
 //! let ty = TensorType::new(DType::F32, vec![ShapeDim::Known(2), ShapeDim::Known(3)]);
 //! assert_eq!(ty.shape.len(), 2);
 //! ```

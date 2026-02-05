@@ -1,4 +1,4 @@
-use mind::ops::core_v1;
+use libmind::ops::core_v1;
 
 #[test]
 fn core_v1_contains_expected_ops() {

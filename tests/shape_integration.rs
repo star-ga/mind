@@ -1,5 +1,5 @@
-use mind::pipeline::{compile_source_with_name, CompileError, CompileOptions};
-use mind::runtime::types::BackendTarget;
+use libmind::pipeline::{compile_source_with_name, CompileError, CompileOptions};
+use libmind::runtime::types::BackendTarget;
 
 fn compile_opts() -> CompileOptions {
     CompileOptions {

@@ -12,7 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use mind::stdlib::tensor::Tensor;
+use libmind::stdlib::tensor::Tensor;
 
 #[test]
 fn tensor_shape_and_reshape() {
