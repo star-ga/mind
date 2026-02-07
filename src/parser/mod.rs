@@ -1,11 +1,11 @@
 // Copyright 2025 STARGA Inc.
-// Licensed under the Apache License, Version 2.0 (the “License”);
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at:
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an “AS IS” BASIS,
+// distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
@@ -19,812 +19,1044 @@
 //! assert_eq!(eval::eval_first_expr(&module).unwrap(), 7);
 //! ```
 
-use chumsky::prelude::*;
-
-use crate::ast::BinOp;
-use crate::ast::Literal;
-use crate::ast::Module;
-use crate::ast::Node;
-use crate::ast::Param;
-use crate::ast::Span;
-use crate::ast::TypeAnn;
-
+use crate::ast::{BinOp, Literal, Module, Node, Param, Span, TypeAnn};
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
-fn kw(s: &'static str) -> impl Parser<char, &'static str, Error = Simple<char>> {
-    text::keyword(s).to(s)
+#[derive(Debug, Clone)]
+pub struct ParseError {
+    pub offset: usize,
+    pub message: String,
 }
 
-pub fn parser() -> impl Parser<char, Module, Error = Simple<char>> {
-    enum ReduceArg {
-        Axes(Vec<i32>),
-        Keepdims(bool),
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "at offset {}: {}", self.offset, self.message)
+    }
+}
+
+struct P<'a> {
+    b: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> P<'a> {
+    fn new(src: &'a str) -> Self {
+        Self {
+            b: src.as_bytes(),
+            pos: 0,
+        }
     }
 
-    let int = text::int(10).map_with_span(|s: String, sp: std::ops::Range<usize>| {
-        let span = Span::new(sp.start, sp.end);
-        Node::Lit(Literal::Int(s.parse().unwrap()), span)
-    });
-    let ident_expr = text::ident().map_with_span(|s: String, sp: std::ops::Range<usize>| {
-        let span = Span::new(sp.start, sp.end);
-        Node::Lit(Literal::Ident(s), span)
-    });
-    let dotted_ident = text::ident::<char, Simple<char>>()
-        .then(just('.').ignore_then(text::ident()).repeated())
-        .map(|(first, rest)| {
-            let mut name = first;
-            for part in rest {
-                name.push('.');
-                name.push_str(&part);
+    #[inline(always)]
+    fn at_end(&self) -> bool {
+        self.pos >= self.b.len()
+    }
+
+    #[inline(always)]
+    fn peek(&self) -> Option<u8> {
+        self.b.get(self.pos).copied()
+    }
+
+    #[inline(always)]
+    fn at(&self, ch: u8) -> bool {
+        self.peek() == Some(ch)
+    }
+
+    #[inline(always)]
+    fn advance(&mut self) {
+        self.pos += 1;
+    }
+
+    fn skip_ws(&mut self) {
+        while self.pos < self.b.len() {
+            match self.b[self.pos] {
+                b' ' | b'\t' | b'\r' => self.pos += 1,
+                _ => break,
             }
-            name
-        });
-
-    let expr = recursive(|expr| {
-        let bool_lit = choice((kw("true").to(true), kw("false").to(false)))
-            .padded()
-            .boxed();
-        let signed_int = just('-')
-            .or_not()
-            .then(text::int(10))
-            .map(|(sign, digits): (Option<char>, String)| {
-                let mut value = digits.parse::<i32>().unwrap();
-                if sign.is_some() {
-                    value = -value;
-                }
-                value
-            })
-            .padded();
-        let axes_list = just('[')
-            .padded()
-            .ignore_then(signed_int.separated_by(just(',').padded()).allow_trailing())
-            .then_ignore(just(']').padded());
-
-        let tuple_or_paren = just('(')
-            .ignore_then(
-                expr.clone()
-                    .separated_by(just(',').padded())
-                    .allow_trailing(),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(|items, sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                if items.len() == 1 {
-                    Node::Paren(Box::new(items.into_iter().next().unwrap()), span)
-                } else {
-                    Node::Tuple {
-                        elements: items,
-                        span,
-                    }
-                }
-            });
-
-        let wrt_list = just(',')
-            .padded()
-            .ignore_then(kw("wrt"))
-            .ignore_then(just('=').padded())
-            .ignore_then(just('[').padded())
-            .ignore_then(
-                text::ident()
-                    .padded()
-                    .separated_by(just(',').padded())
-                    .allow_trailing(),
-            )
-            .then_ignore(just(']').padded());
-
-        let grad_call = kw("grad")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone().then(wrt_list.or_not()))
-            .then_ignore(just(')').padded())
-            .map_with_span(|(loss, maybe_wrt), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallGrad {
-                    loss: Box::new(loss),
-                    wrt: maybe_wrt.unwrap_or_default(),
-                    span,
-                }
-            })
-            .boxed();
-
-        let reduce_arg = choice((
-            kw("axes")
-                .ignore_then(just('=').padded())
-                .ignore_then(axes_list)
-                .map(ReduceArg::Axes),
-            kw("keepdims")
-                .ignore_then(just('=').padded())
-                .ignore_then(bool_lit.clone())
-                .map(ReduceArg::Keepdims),
-        ))
-        .boxed();
-
-        let tensor_sum_call = just("tensor.sum")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then(
-                just(',')
-                    .padded()
-                    .ignore_then(reduce_arg.clone())
-                    .repeated(),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(|(x, extras), sp: std::ops::Range<usize>| {
-                let mut axes = Vec::new();
-                let mut keepdims = false;
-                for arg in extras {
-                    match arg {
-                        ReduceArg::Axes(v) => axes = v,
-                        ReduceArg::Keepdims(v) => keepdims = v,
-                    }
-                }
-                let span = Span::new(sp.start, sp.end);
-                Node::CallTensorSum {
-                    x: Box::new(x),
-                    axes,
-                    keepdims,
-                    span,
-                }
-            });
-
-        let tensor_mean_call = just("tensor.mean")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then(
-                just(',')
-                    .padded()
-                    .ignore_then(reduce_arg.clone())
-                    .repeated(),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(|(x, extras), sp: std::ops::Range<usize>| {
-                let mut axes = Vec::new();
-                let mut keepdims = false;
-                for arg in extras {
-                    match arg {
-                        ReduceArg::Axes(v) => axes = v,
-                        ReduceArg::Keepdims(v) => keepdims = v,
-                    }
-                }
-                let span = Span::new(sp.start, sp.end);
-                Node::CallTensorMean {
-                    x: Box::new(x),
-                    axes,
-                    keepdims,
-                    span,
-                }
-            });
-
-        let reshape_dims = just('(')
-            .padded()
-            .ignore_then(
-                choice((text::int(10), text::ident()))
-                    .map(|s: String| s)
-                    .padded()
-                    .separated_by(just(',').padded())
-                    .allow_trailing(),
-            )
-            .then_ignore(just(')').padded());
-
-        let tensor_reshape_call = just("tensor.reshape")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(reshape_dims)
-            .then_ignore(just(')').padded())
-            .map_with_span(|(x, dims), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallReshape {
-                    x: Box::new(x),
-                    dims,
-                    span,
-                }
-            });
-
-        let expand_axis = kw("axis")
-            .ignore_then(just('=').padded())
-            .ignore_then(signed_int);
-
-        let tensor_expand_dims_call = just("tensor.expand_dims")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(expand_axis)
-            .then_ignore(just(')').padded())
-            .map_with_span(|(x, axis), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallExpandDims {
-                    x: Box::new(x),
-                    axis,
-                    span,
-                }
-            });
-
-        let squeeze_axes = kw("axes")
-            .ignore_then(just('=').padded())
-            .ignore_then(axes_list);
-
-        let tensor_squeeze_call = just("tensor.squeeze")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then(just(',').padded().ignore_then(squeeze_axes).or_not())
-            .then_ignore(just(')').padded())
-            .map_with_span(|(x, maybe_axes), sp: std::ops::Range<usize>| {
-                let axes = maybe_axes.unwrap_or_default();
-                let span = Span::new(sp.start, sp.end);
-                Node::CallSqueeze {
-                    x: Box::new(x),
-                    axes,
-                    span,
-                }
-            });
-
-        let transpose_axes = kw("axes")
-            .ignore_then(just('=').padded())
-            .ignore_then(axes_list);
-
-        let tensor_transpose_call = just("tensor.transpose")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then(just(',').padded().ignore_then(transpose_axes).or_not())
-            .then_ignore(just(')').padded())
-            .map_with_span(|(x, maybe_axes), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallTranspose {
-                    x: Box::new(x),
-                    axes: maybe_axes,
-                    span,
-                }
-            });
-
-        let tensor_index_call = just("tensor.index")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(
-                kw("axis")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("i")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(|((x, axis), i), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallIndex {
-                    x: Box::new(x),
-                    axis,
-                    i,
-                    span,
-                }
-            });
-
-        let tensor_slice_call = just("tensor.slice")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(
-                kw("axis")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("start")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("end")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(|(((x, axis), start), end), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallSlice {
-                    x: Box::new(x),
-                    axis,
-                    start,
-                    end,
-                    span,
-                }
-            });
-
-        let tensor_slice_stride_call = just("tensor.slice_stride")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(
-                kw("axis")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("start")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("end")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("step")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(
-                |((((x, axis), start), end), step), sp: std::ops::Range<usize>| {
-                    let span = Span::new(sp.start, sp.end);
-                    Node::CallSliceStride {
-                        x: Box::new(x),
-                        axis,
-                        start,
-                        end,
-                        step,
-                        span,
-                    }
-                },
-            );
-
-        let tensor_gather_call = just("tensor.gather")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(
-                kw("axis")
-                    .ignore_then(just('=').padded())
-                    .ignore_then(signed_int),
-            )
-            .then_ignore(just(',').padded())
-            .then(
-                kw("idx")
-                    .ignore_then(just('=').padded())
-                    .to(())
-                    .or_not()
-                    .then(expr.clone())
-                    .map(|(_, idx_expr)| idx_expr),
-            )
-            .then_ignore(just(')').padded())
-            .map_with_span(|((x, axis), idx), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallGather {
-                    x: Box::new(x),
-                    axis,
-                    idx: Box::new(idx),
-                    span,
-                }
-            });
-
-        let tensor_dot_call = just("tensor.dot")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(expr.clone())
-            .then_ignore(just(')').padded())
-            .map_with_span(|(a, b), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallDot {
-                    a: Box::new(a),
-                    b: Box::new(b),
-                    span,
-                }
-            });
-
-        let tensor_matmul_call = just("tensor.matmul")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(expr.clone())
-            .then_ignore(just(')').padded())
-            .map_with_span(|(a, b), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallMatMul {
-                    a: Box::new(a),
-                    b: Box::new(b),
-                    span,
-                }
-            });
-
-        enum Conv2dArg {
-            StrideH(usize),
-            StrideW(usize),
-            Padding(ConvPadding),
         }
+    }
 
-        let stride_value = signed_int
-            .map_with_span(|v, sp: std::ops::Range<usize>| (v, sp))
-            .try_map(|(value, sp), _| {
-                if value <= 0 {
-                    Err(Simple::custom(sp, "stride must be positive"))
+    fn skip_ws_and_newlines(&mut self) {
+        while self.pos < self.b.len() {
+            match self.b[self.pos] {
+                b' ' | b'\t' | b'\r' | b'\n' => self.pos += 1,
+                _ => break,
+            }
+        }
+    }
+
+    fn eat(&mut self, ch: u8) -> bool {
+        if self.at(ch) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect(&mut self, ch: u8) -> Result<(), ParseError> {
+        if self.eat(ch) {
+            Ok(())
+        } else {
+            Err(self.err(format!("expected '{}', found {:?}",
+                ch as char,
+                self.peek().map(|c| c as char),
+            )))
+        }
+    }
+
+    fn err(&self, message: String) -> ParseError {
+        ParseError { offset: self.pos, message }
+    }
+
+    fn starts_with(&self, s: &[u8]) -> bool {
+        self.b[self.pos..].starts_with(s)
+    }
+
+    fn is_ident_start(ch: u8) -> bool {
+        ch.is_ascii_alphabetic() || ch == b'_'
+    }
+
+    fn is_ident_cont(ch: u8) -> bool {
+        ch.is_ascii_alphanumeric() || ch == b'_'
+    }
+
+    /// Read an identifier word (no dots). Returns None if not at an ident.
+    fn word(&mut self) -> Option<&'a str> {
+        let start = self.pos;
+        if self.pos >= self.b.len() || !Self::is_ident_start(self.b[self.pos]) {
+            return None;
+        }
+        while self.pos < self.b.len() && Self::is_ident_cont(self.b[self.pos]) {
+            self.pos += 1;
+        }
+        Some(std::str::from_utf8(&self.b[start..self.pos]).unwrap())
+    }
+
+    /// Read a dotted identifier like `tensor.matmul` or `foo.bar.baz`.
+    fn dotted_ident(&mut self) -> Option<String> {
+        let first = self.word()?;
+        let mut name = first.to_string();
+        while self.pos < self.b.len() && self.b[self.pos] == b'.' {
+            let saved = self.pos;
+            self.pos += 1; // skip '.'
+            match self.word() {
+                Some(part) => {
+                    name.push('.');
+                    name.push_str(part);
+                }
+                None => {
+                    self.pos = saved;
+                    break;
+                }
+            }
+        }
+        Some(name)
+    }
+
+    /// Read digits as a string.
+    fn digits(&mut self) -> Option<String> {
+        let start = self.pos;
+        while self.pos < self.b.len() && self.b[self.pos].is_ascii_digit() {
+            self.pos += 1;
+        }
+        if self.pos == start {
+            return None;
+        }
+        Some(std::str::from_utf8(&self.b[start..self.pos]).unwrap().to_string())
+    }
+
+    /// Check if keyword `kw` is at current position followed by non-ident char.
+    fn at_keyword(&self, kw: &[u8]) -> bool {
+        if !self.starts_with(kw) {
+            return false;
+        }
+        let after = self.pos + kw.len();
+        after >= self.b.len() || !Self::is_ident_cont(self.b[after])
+    }
+
+    /// Consume keyword if present, returning true.
+    fn eat_keyword(&mut self, kw: &str) -> bool {
+        if self.at_keyword(kw.as_bytes()) {
+            self.pos += kw.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn signed_int(&mut self) -> Result<i32, ParseError> {
+        self.skip_ws();
+        let neg = self.eat(b'-');
+        self.skip_ws();
+        let d = self.digits().ok_or_else(|| self.err("expected integer".into()))?;
+        let mut v: i32 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
+        if neg { v = -v; }
+        Ok(v)
+    }
+
+    fn axes_list(&mut self) -> Result<Vec<i32>, ParseError> {
+        self.skip_ws();
+        self.expect(b'[')?;
+        let mut axes = Vec::new();
+        self.skip_ws();
+        if !self.at(b']') {
+            axes.push(self.signed_int()?);
+            loop {
+                self.skip_ws();
+                if !self.eat(b',') { break; }
+                self.skip_ws();
+                if self.at(b']') { break; } // trailing comma
+                axes.push(self.signed_int()?);
+            }
+        }
+        self.skip_ws();
+        self.expect(b']')?;
+        Ok(axes)
+    }
+
+    fn dim_list_parens(&mut self) -> Result<Vec<String>, ParseError> {
+        self.skip_ws();
+        self.expect(b'(')?;
+        let mut dims = Vec::new();
+        self.skip_ws();
+        if !self.at(b')') {
+            dims.push(self.dim_value()?);
+            loop {
+                self.skip_ws();
+                if !self.eat(b',') { break; }
+                self.skip_ws();
+                if self.at(b')') { break; }
+                dims.push(self.dim_value()?);
+            }
+        }
+        self.skip_ws();
+        self.expect(b')')?;
+        Ok(dims)
+    }
+
+    fn dim_value(&mut self) -> Result<String, ParseError> {
+        self.skip_ws();
+        if let Some(d) = self.digits() {
+            return Ok(d);
+        }
+        if let Some(w) = self.word() {
+            return Ok(w.to_string());
+        }
+        Err(self.err("expected dimension (integer or symbol)".into()))
+    }
+
+    fn dim_list_brackets(&mut self) -> Result<Vec<String>, ParseError> {
+        self.skip_ws();
+        self.expect(b'[')?;
+        let mut dims = Vec::new();
+        self.skip_ws();
+        if !self.at(b']') {
+            dims.push(self.dim_value()?);
+            loop {
+                self.skip_ws();
+                if !self.eat(b',') { break; }
+                self.skip_ws();
+                if self.at(b']') { break; }
+                dims.push(self.dim_value()?);
+            }
+        }
+        self.skip_ws();
+        self.expect(b']')?;
+        Ok(dims)
+    }
+
+    fn dtype(&mut self) -> Result<String, ParseError> {
+        self.skip_ws();
+        if self.at_keyword(b"f32") {
+            self.pos += 3;
+            return Ok("f32".into());
+        }
+        if self.at_keyword(b"i32") {
+            self.pos += 3;
+            return Ok("i32".into());
+        }
+        Err(self.err("expected dtype (f32 or i32)".into()))
+    }
+
+    fn type_ann(&mut self) -> Result<TypeAnn, ParseError> {
+        self.skip_ws();
+        // Tensor[f32,(dims)] — legacy syntax
+        if self.at_keyword(b"Tensor") {
+            self.pos += 6; // "Tensor"
+            self.skip_ws();
+            self.expect(b'[')?;
+            let dt = self.dtype()?;
+            self.skip_ws();
+            self.expect(b',')?;
+            let dims = self.dim_list_parens()?;
+            self.skip_ws();
+            self.expect(b']')?;
+            return Ok(TypeAnn::Tensor { dtype: dt, dims });
+        }
+        // diff tensor<f32[dims]>
+        if self.at_keyword(b"diff") {
+            self.pos += 4;
+            self.skip_ws_and_newlines();
+            if !self.eat_keyword("tensor") {
+                return Err(self.err("expected 'tensor' after 'diff'".into()));
+            }
+            self.skip_ws();
+            self.expect(b'<')?;
+            let dt = self.dtype()?;
+            let dims = self.dim_list_brackets()?;
+            self.skip_ws();
+            self.expect(b'>')?;
+            return Ok(TypeAnn::DiffTensor { dtype: dt, dims });
+        }
+        // tensor<f32[dims]>
+        if self.at_keyword(b"tensor") {
+            self.pos += 6;
+            self.skip_ws();
+            self.expect(b'<')?;
+            let dt = self.dtype()?;
+            let dims = self.dim_list_brackets()?;
+            self.skip_ws();
+            self.expect(b'>')?;
+            return Ok(TypeAnn::Tensor { dtype: dt, dims });
+        }
+        // Scalar types
+        if self.at_keyword(b"i32") { self.pos += 3; return Ok(TypeAnn::ScalarI32); }
+        if self.at_keyword(b"i64") { self.pos += 3; return Ok(TypeAnn::ScalarI64); }
+        if self.at_keyword(b"f32") { self.pos += 3; return Ok(TypeAnn::ScalarF32); }
+        if self.at_keyword(b"f64") { self.pos += 3; return Ok(TypeAnn::ScalarF64); }
+        if self.at_keyword(b"bool") { self.pos += 4; return Ok(TypeAnn::ScalarBool); }
+        Err(self.err("expected type annotation".into()))
+    }
+
+    fn parse_module(&mut self) -> Result<Module, ParseError> {
+        let mut items = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at_end() {
+            items.push(self.parse_stmt()?);
+            // Skip statement separators
+            self.skip_ws();
+            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n') {
+                self.pos += 1;
+                self.skip_ws();
+            }
+        }
+        Ok(Module { items })
+    }
+
+    fn parse_fn_body_stmts(&mut self) -> Result<Vec<Node>, ParseError> {
+        let mut stmts = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at_end() && !self.at(b'}') {
+            stmts.push(self.parse_stmt()?);
+            self.skip_ws();
+            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n') {
+                self.pos += 1;
+                self.skip_ws();
+            }
+        }
+        Ok(stmts)
+    }
+
+    fn parse_stmt(&mut self) -> Result<Node, ParseError> {
+        self.skip_ws_and_newlines();
+        if self.at_keyword(b"import") { return self.parse_import(); }
+        if self.at_keyword(b"fn") { return self.parse_fn_def(); }
+        if self.at_keyword(b"return") { return self.parse_return(); }
+        if self.at_keyword(b"let") { return self.parse_let(); }
+        // Expression or assignment
+        let start = self.pos;
+        let expr = self.parse_expr()?;
+        self.skip_ws();
+        // Check for assignment: bare ident followed by '='
+        if let Node::Lit(Literal::Ident(ref name), _) = expr {
+            if self.at(b'=') && !self.starts_with(b"==") {
+                let name = name.clone();
+                self.advance(); // consume '='
+                self.skip_ws_and_newlines();
+                let value = self.parse_expr()?;
+                let span = Span::new(start, self.pos);
+                return Ok(Node::Assign { name, value: Box::new(value), span });
+            }
+        }
+        Ok(expr)
+    }
+
+    fn parse_import(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "import"
+        self.skip_ws();
+        let mut path = Vec::new();
+        let first = self.word().ok_or_else(|| self.err("expected module name".into()))?;
+        path.push(first.to_string());
+        while self.eat(b'.') {
+            let part = self.word().ok_or_else(|| self.err("expected module name after '.'".into()))?;
+            path.push(part.to_string());
+        }
+        self.skip_ws();
+        self.eat(b';'); // optional semicolon
+        let span = Span::new(start, self.pos);
+        Ok(Node::Import { path, span })
+    }
+
+    fn parse_fn_def(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 2; // "fn"
+        self.skip_ws_and_newlines();
+        let name = self.word().ok_or_else(|| self.err("expected function name".into()))?.to_string();
+        self.skip_ws_and_newlines();
+        // Parameter list
+        self.expect(b'(')?;
+        let mut params = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b')') {
+            params.push(self.parse_param()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') { break; }
+                self.skip_ws_and_newlines();
+                if self.at(b')') { break; }
+                params.push(self.parse_param()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        self.skip_ws_and_newlines();
+        // Optional return type
+        let ret_type = if self.starts_with(b"->") {
+            self.pos += 2;
+            self.skip_ws_and_newlines();
+            Some(self.type_ann()?)
+        } else {
+            None
+        };
+        self.skip_ws_and_newlines();
+        // Body
+        self.expect(b'{')?;
+        let body = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::FnDef { name, params, ret_type, body, span })
+    }
+
+    fn parse_param(&mut self) -> Result<Param, ParseError> {
+        self.skip_ws_and_newlines();
+        let start = self.pos;
+        let name = self.word().ok_or_else(|| self.err("expected parameter name".into()))?.to_string();
+        self.skip_ws();
+        self.expect(b':')?;
+        self.skip_ws_and_newlines();
+        let ty = self.type_ann()?;
+        let span = Span::new(start, self.pos);
+        Ok(Param { name, ty, span })
+    }
+
+    fn parse_return(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "return"
+        self.skip_ws();
+        // Check if there's a value expression
+        let value = if !self.at_end() && !self.at(b'}') && !self.at(b';') && !self.at(b'\n') {
+            Some(Box::new(self.parse_expr()?))
+        } else {
+            None
+        };
+        let span = Span::new(start, self.pos);
+        Ok(Node::Return { value, span })
+    }
+
+    fn parse_let(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 3; // "let"
+        self.skip_ws_and_newlines();
+        let name = self.word().ok_or_else(|| self.err("expected variable name".into()))?.to_string();
+        self.skip_ws_and_newlines();
+        // Optional type annotation
+        let ann = if self.eat(b':') {
+            self.skip_ws_and_newlines();
+            Some(self.type_ann()?)
+        } else {
+            None
+        };
+        self.skip_ws_and_newlines();
+        self.expect(b'=')?;
+        self.skip_ws_and_newlines();
+        let value = self.parse_expr()?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Let { name, ann, value: Box::new(value), span })
+    }
+
+    fn parse_expr(&mut self) -> Result<Node, ParseError> {
+        self.parse_additive()
+    }
+
+    fn parse_additive(&mut self) -> Result<Node, ParseError> {
+        let mut left = self.parse_multiplicative()?;
+        loop {
+            self.skip_ws();
+            let op = if self.at(b'+') {
+                self.advance();
+                BinOp::Add
+            } else if self.at(b'-') {
+                // Distinguish subtraction from negative number by context:
+                // After a complete expression, '-' is always subtraction.
+                self.advance();
+                BinOp::Sub
+            } else {
+                break;
+            };
+            self.skip_ws_and_newlines();
+            let right = self.parse_multiplicative()?;
+            let span = Span::new(left.span_start(), right.span_end());
+            left = Node::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_multiplicative(&mut self) -> Result<Node, ParseError> {
+        let mut left = self.parse_atom()?;
+        loop {
+            self.skip_ws();
+            let op = if self.at(b'*') {
+                self.advance();
+                BinOp::Mul
+            } else if self.at(b'/') {
+                self.advance();
+                BinOp::Div
+            } else {
+                break;
+            };
+            self.skip_ws_and_newlines();
+            let right = self.parse_atom()?;
+            let span = Span::new(left.span_start(), right.span_end());
+            left = Node::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    fn parse_atom(&mut self) -> Result<Node, ParseError> {
+        self.skip_ws_and_newlines();
+        if self.at_end() {
+            return Err(self.err("unexpected end of input".into()));
+        }
+        // Parenthesized expression or tuple
+        if self.at(b'(') {
+            return self.parse_tuple_or_paren();
+        }
+        // Integer literal
+        if self.peek().map_or(false, |c| c.is_ascii_digit()) {
+            return self.parse_int_lit();
+        }
+        // Must be identifier-based
+        let start = self.pos;
+        let ident = self.dotted_ident()
+            .ok_or_else(|| self.err("expected expression".into()))?;
+        self.skip_ws();
+        match ident.as_str() {
+            "grad" if self.at(b'(') => self.parse_grad_call(start),
+            "tensor.sum" if self.at(b'(') => self.parse_tensor_sum(start),
+            "tensor.mean" if self.at(b'(') => self.parse_tensor_mean(start),
+            "tensor.reshape" if self.at(b'(') => self.parse_tensor_reshape(start),
+            "tensor.expand_dims" if self.at(b'(') => self.parse_tensor_expand_dims(start),
+            "tensor.squeeze" if self.at(b'(') => self.parse_tensor_squeeze(start),
+            "tensor.transpose" if self.at(b'(') => self.parse_tensor_transpose(start),
+            "tensor.index" if self.at(b'(') => self.parse_tensor_index(start),
+            "tensor.slice_stride" if self.at(b'(') => self.parse_tensor_slice_stride(start),
+            "tensor.slice" if self.at(b'(') => self.parse_tensor_slice(start),
+            "tensor.gather" if self.at(b'(') => self.parse_tensor_gather(start),
+            "tensor.dot" if self.at(b'(') => self.parse_tensor_dot(start),
+            "tensor.matmul" if self.at(b'(') => self.parse_tensor_matmul(start),
+            "tensor.relu" if self.at(b'(') => self.parse_tensor_relu(start),
+            "tensor.conv2d" if self.at(b'(') => self.parse_tensor_conv2d(start),
+            _ => {
+                if self.at(b'(') {
+                    self.parse_generic_call(ident, start)
                 } else {
-                    Ok(value as usize)
+                    let span = Span::new(start, self.pos);
+                    Ok(Node::Lit(Literal::Ident(ident), span))
                 }
-            });
+            }
+        }
+    }
 
-        let padding_value = just('"')
-            .ignore_then(filter(|c| *c != '"').repeated().collect::<String>())
-            .then_ignore(just('"'))
-            .map_with_span(|s, sp: std::ops::Range<usize>| (s, sp))
-            .try_map(|(value, sp), _| {
-                value
-                    .parse()
-                    .map(Conv2dArg::Padding)
-                    .map_err(|_| Simple::custom(sp, "padding must be \"valid\" or \"same\""))
-            });
+    fn parse_int_lit(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        let d = self.digits().ok_or_else(|| self.err("expected integer".into()))?;
+        let val: i64 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Lit(Literal::Int(val), span))
+    }
 
-        let conv2d_arg = choice((
-            kw("stride_h")
-                .ignore_then(just('=').padded())
-                .ignore_then(stride_value.map(Conv2dArg::StrideH)),
-            kw("stride_w")
-                .ignore_then(just('=').padded())
-                .ignore_then(stride_value.map(Conv2dArg::StrideW)),
-            kw("padding")
-                .ignore_then(just('=').padded())
-                .ignore_then(padding_value),
-        ));
+    fn parse_tuple_or_paren(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.expect(b'(')?;
+        let mut items = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b')') {
+            items.push(self.parse_expr()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') { break; }
+                self.skip_ws_and_newlines();
+                if self.at(b')') { break; }
+                items.push(self.parse_expr()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        if items.len() == 1 {
+            Ok(Node::Paren(Box::new(items.into_iter().next().unwrap()), span))
+        } else {
+            Ok(Node::Tuple { elements: items, span })
+        }
+    }
 
-        let tensor_relu_call = just("tensor.relu")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(')').padded())
-            .map_with_span(|x, sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::CallTensorRelu {
-                    x: Box::new(x),
-                    span,
-                }
-            });
+    fn parse_generic_call(&mut self, callee: String, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        let mut args = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b')') {
+            args.push(self.parse_expr()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') { break; }
+                self.skip_ws_and_newlines();
+                if self.at(b')') { break; }
+                args.push(self.parse_expr()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Call { callee, args, span })
+    }
 
-        let tensor_conv2d_call = just("tensor.conv2d")
-            .ignore_then(just('(').padded())
-            .ignore_then(expr.clone())
-            .then_ignore(just(',').padded())
-            .then(expr.clone())
-            .then(just(',').padded().ignore_then(conv2d_arg).repeated())
-            .then_ignore(just(')').padded())
-            .map_with_span(|((x, w), extras), sp: std::ops::Range<usize>| {
-                let mut stride_h = 1usize;
-                let mut stride_w = 1usize;
-                let mut padding = ConvPadding::Valid;
-                for arg in extras {
-                    match arg {
-                        Conv2dArg::StrideH(v) => stride_h = v,
-                        Conv2dArg::StrideW(v) => stride_w = v,
-                        Conv2dArg::Padding(p) => padding = p,
+    fn parse_grad_call(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let loss = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        // Optional wrt=[...]
+        let wrt = if self.eat(b',') {
+            self.skip_ws_and_newlines();
+            if self.eat_keyword("wrt") {
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                self.expect(b'[')?;
+                let mut vars = Vec::new();
+                self.skip_ws();
+                if !self.at(b']') {
+                    let w = self.word().ok_or_else(|| self.err("expected variable name".into()))?;
+                    vars.push(w.to_string());
+                    loop {
+                        self.skip_ws();
+                        if !self.eat(b',') { break; }
+                        self.skip_ws();
+                        if self.at(b']') { break; }
+                        let w = self.word().ok_or_else(|| self.err("expected variable name".into()))?;
+                        vars.push(w.to_string());
                     }
                 }
-                let span = Span::new(sp.start, sp.end);
-                Node::CallTensorConv2d {
-                    x: Box::new(x),
-                    w: Box::new(w),
-                    stride_h,
-                    stride_w,
-                    padding,
-                    span,
-                }
-            });
-
-        let call = dotted_ident
-            .map_with_span(|name, sp: std::ops::Range<usize>| (name, Span::new(sp.start, sp.end)))
-            .then(
-                just('(')
-                    .padded()
-                    .ignore_then(
-                        expr.clone()
-                            .separated_by(just(',').padded())
-                            .allow_trailing(),
-                    )
-                    .then_ignore(just(')').padded()),
-            )
-            .map_with_span(
-                |((callee, _callee_span), args), sp: std::ops::Range<usize>| {
-                    let span = Span::new(sp.start, sp.end);
-                    Node::Call { callee, args, span }
-                },
-            );
-
-        let atom = choice((
-            grad_call,
-            tensor_sum_call,
-            tensor_mean_call,
-            tensor_reshape_call,
-            tensor_expand_dims_call,
-            tensor_squeeze_call,
-            tensor_transpose_call,
-            tensor_index_call,
-            tensor_slice_call,
-            tensor_slice_stride_call,
-            tensor_gather_call,
-            tensor_dot_call,
-            tensor_matmul_call,
-            tensor_relu_call,
-            tensor_conv2d_call,
-            call,
-            int,
-            ident_expr,
-            tuple_or_paren,
-        ))
-        .padded()
-        .boxed();
-
-        let product = atom
-            .clone()
-            .then(
-                (choice((just('*').to(BinOp::Mul), just('/').to(BinOp::Div)))
-                    .padded()
-                    .then(atom.clone()))
-                .repeated(),
-            )
-            .foldl(|l, (op, r)| {
-                let span = Span::new(l.span_start(), r.span_end());
-                Node::Binary {
-                    op,
-                    left: Box::new(l),
-                    right: Box::new(r),
-                    span,
-                }
-            });
-
-        product
-            .clone()
-            .then(
-                (choice((just('+').to(BinOp::Add), just('-').to(BinOp::Sub)))
-                    .padded()
-                    .then(product))
-                .repeated(),
-            )
-            .foldl(|l, (op, r)| {
-                let span = Span::new(l.span_start(), r.span_end());
-                Node::Binary {
-                    op,
-                    left: Box::new(l),
-                    right: Box::new(r),
-                    span,
-                }
-            })
-    });
-
-    let dtype = choice((
-        just("i32").to("i32".to_string()),
-        just("f32").to("f32".to_string()),
-    ))
-    .padded();
-
-    let dim = choice((
-        text::int(10).map(|s: String| s),
-        text::ident().map(|s: String| s),
-    ))
-    .padded();
-
-    let dims = just('(')
-        .ignore_then(dim.separated_by(just(',').padded()).allow_trailing())
-        .then_ignore(just(')'))
-        .padded();
-
-    // Tensor type: tensor<f32[N, M]> or tensor<f32[3, 4]>
-    let tensor_dims = just('[')
-        .padded()
-        .ignore_then(
-            choice((text::int(10), text::ident()))
-                .map(|s: String| s)
-                .padded()
-                .separated_by(just(',').padded())
-                .allow_trailing(),
-        )
-        .then_ignore(just(']').padded());
-
-    let tensor_type = kw("tensor")
-        .ignore_then(just('<').padded())
-        .ignore_then(dtype.clone())
-        .then(tensor_dims)
-        .then_ignore(just('>').padded())
-        .map(|(dt, shape)| TypeAnn::Tensor {
-            dtype: dt,
-            dims: shape,
-        });
-
-    // Differentiable tensor: diff tensor<f32[N, M]>
-    let diff_tensor_type = kw("diff")
-        .padded()
-        .ignore_then(kw("tensor"))
-        .ignore_then(just('<').padded())
-        .ignore_then(dtype.clone())
-        .then(tensor_dims)
-        .then_ignore(just('>').padded())
-        .map(|(dt, shape)| TypeAnn::DiffTensor {
-            dtype: dt,
-            dims: shape,
-        });
-
-    // Scalar types
-    let scalar_type = choice((
-        kw("i32").to(TypeAnn::ScalarI32),
-        kw("i64").to(TypeAnn::ScalarI64),
-        kw("f32").to(TypeAnn::ScalarF32),
-        kw("f64").to(TypeAnn::ScalarF64),
-        kw("bool").to(TypeAnn::ScalarBool),
-    ));
-
-    // Order matters for performance: most common first
-    let type_ann = choice((
-        // Legacy Tensor[...] syntax - most common in benchmarks
-        kw("Tensor")
-            .ignore_then(just('['))
-            .ignore_then(dtype.clone())
-            .then_ignore(just(',').padded())
-            .then(dims)
-            .then_ignore(just(']'))
-            .map(|(dt, shape)| TypeAnn::Tensor {
-                dtype: dt,
-                dims: shape,
-            }),
-        // Scalar types - fast keyword check
-        scalar_type,
-        // Modern tensor<...> syntax
-        tensor_type,
-        diff_tensor_type,
-    ))
-    .padded()
-    .boxed();
-
-    let let_stmt = kw("let")
-        .padded()
-        .ignore_then(
-            text::ident().map_with_span(|s: String, sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                (s, span)
-            }),
-        )
-        .then(just(':').ignore_then(type_ann.clone()).or_not().padded())
-        .then_ignore(just('=').padded())
-        .then(expr.clone())
-        .map_with_span(
-            |(((name, _name_span), ann), value), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::Let {
-                    name,
-                    ann,
-                    value: Box::new(value),
-                    span,
-                }
-            },
-        )
-        .boxed();
-
-    let assign_stmt = text::ident()
-        .map_with_span(|s: String, _| s)
-        .then_ignore(just('=').padded())
-        .then(expr.clone())
-        .map_with_span(|(name, value), sp: std::ops::Range<usize>| {
-            let span = Span::new(sp.start, sp.end);
-            Node::Assign {
-                name,
-                value: Box::new(value),
-                span,
+                self.skip_ws();
+                self.expect(b']')?;
+                vars
+            } else {
+                Vec::new()
             }
-        })
-        .boxed();
+        } else {
+            Vec::new()
+        };
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallGrad { loss: Box::new(loss), wrt, span })
+    }
 
-    // Return statement: return expr
-    let return_stmt = kw("return")
-        .padded()
-        .ignore_then(expr.clone().or_not())
-        .map_with_span(|value, sp: std::ops::Range<usize>| {
-            let span = Span::new(sp.start, sp.end);
-            Node::Return {
-                value: value.map(Box::new),
-                span,
-            }
-        })
-        .boxed();
-
-    // Function parameter: name: type
-    let param = text::ident()
-        .map_with_span(|s: String, sp: std::ops::Range<usize>| (s, Span::new(sp.start, sp.end)))
-        .then_ignore(just(':').padded())
-        .then(type_ann.clone())
-        .map_with_span(|((name, _), ty), sp: std::ops::Range<usize>| Param {
-            name,
-            ty,
-            span: Span::new(sp.start, sp.end),
-        });
-
-    // Parameter list: (param, param, ...)
-    let param_list = just('(')
-        .padded()
-        .ignore_then(param.separated_by(just(',').padded()).allow_trailing())
-        .then_ignore(just(')').padded());
-
-    // Return type: -> type
-    let return_type = just('-')
-        .then(just('>'))
-        .padded()
-        .ignore_then(type_ann.clone());
-
-    // Statement inside function body
-    let fn_body_stmt = choice((
-        return_stmt.clone(),
-        let_stmt.clone(),
-        assign_stmt.clone(),
-        expr.clone(),
-    ))
-    .padded();
-
-    // Function body: { stmts }
-    let fn_body = just('{')
-        .padded()
-        .ignore_then(
-            fn_body_stmt
-                .separated_by(one_of(";\n").repeated())
-                .allow_trailing(),
-        )
-        .then_ignore(just('}').padded());
-
-    // Function definition: fn name(params) -> ret_type { body }
-    let fn_def = kw("fn")
-        .padded()
-        .ignore_then(text::ident())
-        .then(param_list)
-        .then(return_type.or_not())
-        .then(fn_body)
-        .map_with_span(
-            |(((name, params), ret_type), body), sp: std::ops::Range<usize>| {
-                let span = Span::new(sp.start, sp.end);
-                Node::FnDef {
-                    name,
-                    params,
-                    ret_type,
-                    body,
-                    span,
+    fn parse_reduce_args(&mut self) -> Result<(Vec<i32>, bool), ParseError> {
+        let mut axes = Vec::new();
+        let mut keepdims = false;
+        while self.eat(b',') {
+            self.skip_ws_and_newlines();
+            if self.at_keyword(b"axes") {
+                self.pos += 4;
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                axes = self.axes_list()?;
+            } else if self.at_keyword(b"keepdims") {
+                self.pos += 8;
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                if self.eat_keyword("true") {
+                    keepdims = true;
+                } else if self.eat_keyword("false") {
+                    keepdims = false;
+                } else {
+                    return Err(self.err("expected 'true' or 'false'".into()));
                 }
-            },
-        );
+            } else {
+                break;
+            }
+            self.skip_ws_and_newlines();
+        }
+        Ok((axes, keepdims))
+    }
 
-    // Import statement: `import std.io;` or `import module.submodule;`
-    let import_stmt = kw("import")
-        .padded()
-        .ignore_then(
-            text::ident()
-                .separated_by(just('.'))
-                .at_least(1)
-                .collect::<Vec<String>>(),
-        )
-        .then_ignore(just(';').or_not().padded())
-        .map_with_span(|path, sp: std::ops::Range<usize>| {
-            let span = Span::new(sp.start, sp.end);
-            Node::Import { path, span }
-        })
-        .boxed();
+    fn parse_tensor_sum(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        let (axes, keepdims) = self.parse_reduce_args()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallTensorSum { x: Box::new(x), axes, keepdims, span })
+    }
 
-    let stmt = choice((
-        import_stmt,
-        fn_def,
-        return_stmt,
-        let_stmt,
-        assign_stmt,
-        expr.clone(),
-    ))
-    .padded();
+    fn parse_tensor_mean(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        let (axes, keepdims) = self.parse_reduce_args()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallTensorMean { x: Box::new(x), axes, keepdims, span })
+    }
 
-    let stmts = stmt
-        .separated_by(one_of(";\n").repeated().at_least(1))
-        .allow_trailing()
-        .at_least(1);
+    fn parse_tensor_reshape(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        let dims = self.dim_list_parens()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallReshape { x: Box::new(x), dims, span })
+    }
 
-    stmts.map(|items| Module { items })
+    fn parse_tensor_expand_dims(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("axis") {
+            return Err(self.err("expected 'axis='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let axis = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallExpandDims { x: Box::new(x), axis, span })
+    }
+
+    fn parse_tensor_squeeze(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        let axes = if self.eat(b',') {
+            self.skip_ws_and_newlines();
+            if self.eat_keyword("axes") {
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                self.axes_list()?
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallSqueeze { x: Box::new(x), axes, span })
+    }
+
+    fn parse_tensor_transpose(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        let axes = if self.eat(b',') {
+            self.skip_ws_and_newlines();
+            if self.eat_keyword("axes") {
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                Some(self.axes_list()?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallTranspose { x: Box::new(x), axes, span })
+    }
+
+    fn parse_tensor_index(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("axis") {
+            return Err(self.err("expected 'axis='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let axis = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("i") {
+            return Err(self.err("expected 'i='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let i = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallIndex { x: Box::new(x), axis, i, span })
+    }
+
+    fn parse_tensor_slice(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("axis") {
+            return Err(self.err("expected 'axis='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let axis = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("start") {
+            return Err(self.err("expected 'start='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let s = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("end") {
+            return Err(self.err("expected 'end='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let e = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallSlice { x: Box::new(x), axis, start: s, end: e, span })
+    }
+
+    fn parse_tensor_slice_stride(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("axis") {
+            return Err(self.err("expected 'axis='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let axis = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("start") {
+            return Err(self.err("expected 'start='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let s = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("end") {
+            return Err(self.err("expected 'end='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let e = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("step") {
+            return Err(self.err("expected 'step='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let step = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallSliceStride { x: Box::new(x), axis, start: s, end: e, step, span })
+    }
+
+    fn parse_tensor_gather(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("axis") {
+            return Err(self.err("expected 'axis='".into()));
+        }
+        self.skip_ws();
+        self.expect(b'=')?;
+        let axis = self.signed_int()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        // Optional "idx=" prefix — only consume if '=' follows
+        if self.at_keyword(b"idx") {
+            let saved = self.pos;
+            self.pos += 3;
+            self.skip_ws();
+            if self.eat(b'=') {
+                self.skip_ws_and_newlines();
+            } else {
+                self.pos = saved; // not a keyword arg, restore
+            }
+        }
+        let idx = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallGather { x: Box::new(x), axis, idx: Box::new(idx), span })
+    }
+
+    fn parse_tensor_dot(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let a = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        let b = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallDot { a: Box::new(a), b: Box::new(b), span })
+    }
+
+    fn parse_tensor_matmul(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let a = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        let b = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallMatMul { a: Box::new(a), b: Box::new(b), span })
+    }
+
+    fn parse_tensor_relu(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallTensorRelu { x: Box::new(x), span })
+    }
+
+    fn parse_tensor_conv2d(&mut self, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'(')?;
+        self.skip_ws_and_newlines();
+        let x = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b',')?;
+        self.skip_ws_and_newlines();
+        let w = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        // Optional keyword args
+        let mut stride_h = 1usize;
+        let mut stride_w = 1usize;
+        let mut padding = ConvPadding::Valid;
+        while self.eat(b',') {
+            self.skip_ws_and_newlines();
+            if self.eat_keyword("stride_h") {
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                let v = self.signed_int()?;
+                if v <= 0 { return Err(self.err("stride must be positive".into())); }
+                stride_h = v as usize;
+            } else if self.eat_keyword("stride_w") {
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                let v = self.signed_int()?;
+                if v <= 0 { return Err(self.err("stride must be positive".into())); }
+                stride_w = v as usize;
+            } else if self.eat_keyword("padding") {
+                self.skip_ws();
+                self.expect(b'=')?;
+                self.skip_ws();
+                self.expect(b'"')?;
+                let pstart = self.pos;
+                while self.pos < self.b.len() && self.b[self.pos] != b'"' {
+                    self.pos += 1;
+                }
+                let pval = std::str::from_utf8(&self.b[pstart..self.pos]).unwrap();
+                padding = ConvPadding::parse(pval)
+                    .ok_or_else(|| self.err("padding must be \"valid\" or \"same\"".into()))?;
+                self.expect(b'"')?;
+            } else {
+                break;
+            }
+            self.skip_ws_and_newlines();
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallTensorConv2d { x: Box::new(x), w: Box::new(w), stride_h, stride_w, padding, span })
+    }
 }
 
 /// Strip single-line comments (`// ...`) from source code.
@@ -843,12 +1075,16 @@ fn strip_comments(input: &str) -> String {
         .join("\n")
 }
 
-pub fn parse(input: &str) -> Result<Module, Vec<Simple<char>>> {
+pub fn parse(input: &str) -> Result<Module, Vec<ParseError>> {
     let stripped = strip_comments(input);
-    parser().parse(stripped.as_str())
+    let mut p = P::new(&stripped);
+    match p.parse_module() {
+        Ok(m) => Ok(m),
+        Err(e) => Err(vec![e]),
+    }
 }
 
-/// Parse with pretty diagnostics instead of raw chumsky errors.
+/// Parse with pretty diagnostics instead of raw parse errors.
 pub fn parse_with_diagnostics(input: &str) -> Result<Module, Vec<PrettyDiagnostic>> {
     parse_with_diagnostics_in_file(input, None)
 }
@@ -858,33 +1094,20 @@ pub fn parse_with_diagnostics_in_file(
     file: Option<&str>,
 ) -> Result<Module, Vec<PrettyDiagnostic>> {
     let stripped = strip_comments(input);
-    let (maybe_module, errs) = parser().parse_recovery(stripped.as_str());
-    if errs.is_empty() {
-        Ok(maybe_module.expect("parser returned no module without errors"))
-    } else {
-        // Use stripped source for span mapping since parser operates on stripped content
-        let ds = errs
-            .into_iter()
-            .map(|e| pretty_from_chumsky(stripped.as_str(), file, e))
-            .collect();
-        Err(ds)
-    }
-}
-
-fn pretty_from_chumsky(
-    source: &str,
-    file: Option<&str>,
-    e: chumsky::error::Simple<char>,
-) -> PrettyDiagnostic {
-    let span = e.span();
-    let span = DiagnosticSpan::from_offsets(source, span.start, span.end, file);
-    PrettyDiagnostic {
-        phase: "parse",
-        code: "E1001",
-        severity: crate::diagnostics::Severity::Error,
-        message: e.to_string(),
-        span: Some(span),
-        notes: Vec::new(),
-        help: None,
+    let mut p = P::new(&stripped);
+    match p.parse_module() {
+        Ok(m) => Ok(m),
+        Err(e) => {
+            let diag = PrettyDiagnostic {
+                phase: "parse",
+                code: "E1001",
+                severity: crate::diagnostics::Severity::Error,
+                message: e.message,
+                span: Some(DiagnosticSpan::from_offsets(&stripped, e.offset, e.offset + 1, file)),
+                notes: Vec::new(),
+                help: None,
+            };
+            Err(vec![diag])
+        }
     }
 }
