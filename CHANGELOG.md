@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-02-07
+
+### Added
+- IR-first compilation pipeline with shape ops and MIC emission
+- Remizov universal ODE solver (`std::ode` module)
+- Real tensor compute backend with benchmarks
+- Open-core reference interpreter for public compiler
+
+### Changed
+- **BREAKING**: Replaced Chumsky parser combinator with hand-written recursive descent parser (15x speedup)
+- Parser now achieves ~347,000 compilations/sec (up from ~22,700 with Chumsky)
+- Removed `chumsky` dependency entirely — zero unnecessary allocations, direct byte-level parsing
+- CI skips builds for docs-only changes
+
+### Fixed
+- Keyword argument disambiguation in `tensor.gather()` calls (positional `idx` vs `idx=` prefix)
+- Clippy lint: `map_or` → `is_some_and` for modern Rust idiom
+- Formatting consistency across parser, eval, and exec modules
+- Removed unfair NumPy comparisons from benchmarks
+
+### Documentation
+- Framework comparison and GPU projections
+- Runtime execution benchmarks for v0.1.9
+- ODE solver examples and usage guide
+
 ## [0.1.9] - 2026-02-05
 
 ### Changed
@@ -38,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 #### Core Language
-- MIND language parser with Logos lexer and Chumsky parser combinator
+- MIND language parser with Logos lexer (originally Chumsky, replaced by recursive descent in v0.2.0)
 - Static type system with rank/shape polymorphism
 - Tensor type annotations: `Tensor[dtype, shape]` syntax
 - Shape inference engine with broadcasting support
@@ -103,7 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: https://github.com/star-ga/mind/tree/main/docs
 - Issues: https://github.com/star-ga/mind/issues
 
-[Unreleased]: https://github.com/star-ga/mind/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/star-ga/mind/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/star-ga/mind/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
 [0.1.8]: https://github.com/star-ga/mind/releases/tag/v0.1.8
 [0.1.0]: https://github.com/star-ga/mind/releases/tag/v0.1.0
