@@ -542,6 +542,15 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                        let new_shape = stdlib::tensor::dims_from_strings_usize(dims);
+                        if let Some(new_shape) = new_shape {
+                            if let Ok(result) = exec::cpu::exec_reshape(&t, new_shape) {
+                                return Ok(Value::Tensor(result));
+                            }
+                        }
+                    }
                     let result = stdlib::tensor::reshape_tensor_preview(&t, dims)?;
                     Ok(Value::Tensor(result))
                 }
@@ -552,6 +561,16 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                        let rank = t.shape.len();
+                        let a = stdlib::tensor::normalize_expand_axis_usize(*axis, rank);
+                        if let Some(a) = a {
+                            if let Ok(result) = exec::cpu::exec_expand_dims(&t, a) {
+                                return Ok(Value::Tensor(result));
+                            }
+                        }
+                    }
                     let result = stdlib::tensor::expand_dims_tensor_preview(&t, *axis)?;
                     Ok(Value::Tensor(result))
                 }
@@ -562,6 +581,15 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                        let norm = stdlib::tensor::normalize_squeeze_axes_usize(&t.shape, axes);
+                        if let Some(norm) = norm {
+                            if let Ok(result) = exec::cpu::exec_squeeze(&t, &norm) {
+                                return Ok(Value::Tensor(result));
+                            }
+                        }
+                    }
                     let result = stdlib::tensor::squeeze_tensor_preview(&t, axes)?;
                     Ok(Value::Tensor(result))
                 }
@@ -572,6 +600,16 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                        let axes_ref = axes.as_ref().map(|v| v.as_slice());
+                        let perm = stdlib::tensor::compute_transpose_perm(&t.shape, axes_ref);
+                        if let Some(perm) = perm {
+                            if let Ok(result) = exec::cpu::exec_transpose(&t, &perm) {
+                                return Ok(Value::Tensor(result));
+                            }
+                        }
+                    }
                     let axes_ref = axes.as_ref().map(|v| v.as_slice());
                     let (result, _) = stdlib::tensor::transpose_tensor_preview(&t, axes_ref)?;
                     Ok(Value::Tensor(result))
@@ -583,6 +621,26 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                        let rank = t.shape.len();
+                        let axis_n = stdlib::tensor::normalize_axis_usize(*axis, rank);
+                        if let Some(axis_n) = axis_n {
+                            let idx = if *i < 0 {
+                                match t.shape.get(axis_n) {
+                                    Some(ShapeDim::Known(n)) => Some((*n as i32 + *i) as usize),
+                                    _ => None,
+                                }
+                            } else {
+                                Some(*i as usize)
+                            };
+                            if let Some(idx) = idx {
+                                if let Ok(result) = exec::cpu::exec_index(&t, axis_n, idx) {
+                                    return Ok(Value::Tensor(result));
+                                }
+                            }
+                        }
+                    }
                     let result = stdlib::tensor::index_tensor_preview(&t, *axis, *i)?;
                     Ok(Value::Tensor(result))
                 }

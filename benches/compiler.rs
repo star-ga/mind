@@ -20,7 +20,7 @@ const MEDIUM_MLP: &str = r#"
     let weight: Tensor[f32,(256,128)] = 1;
     let bias: Tensor[f32,(128)] = 0;
     let matmul_out = tensor.matmul(input, weight);
-    let biased = add(matmul_out, bias);
+    let biased = matmul_out + bias;
     tensor.relu(biased)
 "#;
 
@@ -35,15 +35,13 @@ const LARGE_NETWORK: &str = r#"
     let b3: Tensor[f32,(10)] = 0;
 
     let matmul1 = tensor.matmul(input, w1);
-    let add1 = add(matmul1, b1);
-    let h1 = tensor.relu(add1);
+    let h1 = tensor.relu(matmul1 + b1);
 
     let matmul2 = tensor.matmul(h1, w2);
-    let add2 = add(matmul2, b2);
-    let h2 = tensor.relu(add2);
+    let h2 = tensor.relu(matmul2 + b2);
 
     let matmul3 = tensor.matmul(h2, w3);
-    add(matmul3, b3)
+    matmul3 + b3
 "#;
 
 /// Complex autodiff target: Nested operations
@@ -53,12 +51,12 @@ const AUTODIFF_TARGET: &str = r#"
     let target: Tensor[f32,(128,10)] = 1;
     let weights: Tensor[f32,(784,512)] = 0;
 
-    let diff = sub(pred, target);
-    let squared = mul(diff, diff);
+    let diff = pred - target;
+    let squared = diff * diff;
     let loss = tensor.mean(squared);
-    let reg = tensor.mean(mul(weights, weights));
-    let scaled_reg = mul(reg, 0.01);
-    add(loss, scaled_reg)
+    let reg = tensor.mean(weights * weights);
+    let scaled_reg = reg * 0.01;
+    loss + scaled_reg
 "#;
 
 fn bench_compilation_pipeline(c: &mut Criterion) {

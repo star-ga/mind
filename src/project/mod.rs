@@ -387,29 +387,67 @@ fn compile_single_source(
     }
 }
 
-/// Compile source by embedding it for runtime JIT
+/// Compile source by embedding IR (preferred) or source (fallback) for runtime JIT.
+///
+/// When IR lowering succeeds, the generated wrapper includes:
+///   1. `MIND_IR_<module>` - Pre-compiled MIC IR (tried first via `mind_main_ir`)
+///   2. `MIND_SOURCE_<module>` - Raw source fallback (for older runtimes via `mind_main`)
 fn compile_embedded_source(
     source: &Path,
     source_code: &str,
     output: &Path,
     backend: &str,
     _opts: &BuildOptions,
-    is_entry: bool, // true if this is the main entry point
+    is_entry: bool,
 ) -> Result<()> {
-    // Create a C file that embeds the MIND source
-    let escaped_source = source_code
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n");
-
     let module_name = source
         .file_stem()
         .unwrap_or_default()
         .to_string_lossy()
         .replace('-', "_");
 
+    // Try to produce MIC IR (preferred: smaller, pre-parsed, no source exposure)
+    let mic_ir = try_emit_mic(source_code);
+    let escaped_ir = mic_ir.as_ref().map(|ir| {
+        ir.replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+    });
+
+    // Always produce escaped source as fallback for older runtimes
+    let escaped_source = source_code
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+
     let c_code = if is_entry {
-        // Entry point: include main() that calls mind_main
+        let ir_const = if let Some(ref ir) = escaped_ir {
+            format!(
+                "static const char MIND_IR_{module}[] = \"{ir}\";\n",
+                module = module_name,
+                ir = ir,
+            )
+        } else {
+            String::new()
+        };
+        let ir_dispatch = if escaped_ir.is_some() {
+            format!(
+                r#"
+    /* Try IR-aware entry point first (v0.2.0+ runtime) */
+    typedef int (*mind_main_ir_fn)(int argc, char** argv, const char* ir, const char* backend);
+    mind_main_ir_fn mind_ir_ptr = (mind_main_ir_fn)dlsym(lib, "mind_main_ir");
+    if (mind_ir_ptr) {{
+        int result = mind_ir_ptr(argc, argv, MIND_IR_{module}, MIND_BACKEND);
+        dlclose(lib);
+        return result;
+    }}
+"#,
+                module = module_name,
+            )
+        } else {
+            String::new()
+        };
+
         format!(
             r#"
 /* Auto-generated MIND entry point wrapper */
@@ -418,11 +456,8 @@ fn compile_embedded_source(
 #include <dlfcn.h>
 
 static const char MIND_SOURCE_{module}[] = "{source}";
-static const char MIND_BACKEND[] = "{backend}";
+{ir_const}static const char MIND_BACKEND[] = "{backend}";
 static const char MIND_FILE[] = "{file}";
-
-/* Forward declarations for other modules */
-extern const char* mind_get_module_source(const char* name);
 
 typedef int (*mind_main_fn)(int argc, char** argv, const char* source, const char* backend);
 
@@ -436,7 +471,8 @@ int main(int argc, char** argv) {{
         fprintf(stderr, "See https://mindlang.dev/enterprise for licensing.\\n");
         return 1;
     }}
-
+{ir_dispatch}
+    /* Fall back to source-based entry */
     mind_main_fn mind_main_ptr = (mind_main_fn)dlsym(lib, "mind_main");
     if (!mind_main_ptr) {{
         fprintf(stderr, "Error: mind_main not found in runtime\\n");
@@ -451,11 +487,29 @@ int main(int argc, char** argv) {{
 "#,
             module = module_name,
             source = escaped_source,
+            ir_const = ir_const,
+            ir_dispatch = ir_dispatch,
             backend = backend,
             file = source.file_name().unwrap_or_default().to_string_lossy(),
         )
     } else {
-        // Non-entry module: just export the source
+        // Non-entry module: export both IR and source
+        let ir_export = if let Some(ref ir) = escaped_ir {
+            format!(
+                r#"
+static const char MIND_MODULE_{module}_IR[] = "{ir}";
+
+const char* mind_module_{module}_get_ir(void) {{
+    return MIND_MODULE_{module}_IR;
+}}
+"#,
+                module = module_name,
+                ir = ir,
+            )
+        } else {
+            String::new()
+        };
+
         format!(
             r#"
 /* Auto-generated MIND module: {file} */
@@ -464,10 +518,11 @@ static const char MIND_MODULE_{module}_SOURCE[] = "{source}";
 const char* mind_module_{module}_get_source(void) {{
     return MIND_MODULE_{module}_SOURCE;
 }}
-"#,
+{ir_export}"#,
             module = module_name,
             source = escaped_source,
             file = source.file_name().unwrap_or_default().to_string_lossy(),
+            ir_export = ir_export,
         )
     };
 
@@ -491,6 +546,18 @@ const char* mind_module_{module}_get_source(void) {{
     let _ = fs::remove_file(&c_path);
 
     Ok(())
+}
+
+/// Try to produce MIC IR from source. Returns None if parsing/lowering fails.
+fn try_emit_mic(source_code: &str) -> Option<String> {
+    use crate::eval;
+    use crate::ir;
+    use crate::parser;
+
+    let module = parser::parse_with_diagnostics(source_code).ok()?;
+    let mut ir_module = eval::lower_to_ir(&module);
+    ir::prepare_ir_for_backend(&mut ir_module).ok()?;
+    Some(ir::compact::emit_mic(&ir_module))
 }
 
 /// Get the LLVM target triple for a backend
@@ -601,12 +668,12 @@ elif [ -f "$MIND_LIB_DIR/{runtime}" ]; then
     exec /lib/ld-linux-x86-64.so.2 --library-path "$MIND_LIB_DIR" "$MIND_LIB_DIR/{runtime}" --entry "$MIND_ENTRY" "$@" 2>/dev/null || \
     {{
         echo "Error: MIND runtime not executable"
-        echo "Run: curl -fsSL https://nikolachess.com/install.sh | bash"
+        echo "See https://mindlang.dev/enterprise for licensing."
         exit 1
     }}
 else
     echo "Error: MIND runtime not found at $MIND_LIB_DIR/{runtime}"
-    echo "Run: curl -fsSL https://nikolachess.com/install.sh | bash"
+    echo "See https://mindlang.dev/enterprise for licensing."
     exit 1
 fi
 "#,
