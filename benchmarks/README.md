@@ -4,16 +4,16 @@ This directory contains benchmark results and performance analysis for the MIND 
 
 ## Latest Results
 
-**Last Updated**: February 5, 2026
+**Last Updated**: February 7, 2026
 **Reference Platform**: Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 13.0
 
-### Compiler Performance
+### Compiler Performance (v0.2.0)
 
 | Metric | Value | Comparison |
 |--------|-------|------------|
-| **scalar_math** | **25 µs** | 136,000× faster than PyTorch 2.9 |
-| **matmul ops** | **52-53 µs** | 17,000-36,000× faster than Mojo 0.25 |
-| **Throughput** | **~40,000 compiles/sec** | Interactive development ready |
+| **scalar_math** | **1.77 µs** | 530,000× faster than PyTorch, 513,000× faster than Mojo |
+| **matmul ops** | **2.8-2.9 µs** | 320,000-347,000 compilations/sec |
+| **Throughput** | **~347,000 compiles/sec** | 15× faster than v0.1.9 (hand-written recursive descent parser) |
 | **Scaling** | **O(1) with tensor size** | Compile-time independent of data dimensions |
 
 See **[BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md)** for detailed methodology and results.
@@ -86,21 +86,22 @@ open target/criterion/report/index.html
 
 ## Benchmark Results Summary
 
-### Compilation Speed Comparisons (Verified January 2026)
+### Compilation Speed Comparisons (v0.2.0, February 2026)
 
 | Framework | Compilation Time | MIND Speedup |
 |-----------|-----------------|--------------|
-| **MIND** | **25-53 µs** | **1× (baseline)** |
-| PyTorch 2.9 | ~3,400 ms | **136,000× slower** |
-| Mojo 0.25 | ~908 ms | **36,000× slower** |
-| JAX 0.8 | ~430 ms | **17,000× slower** |
+| **MIND v0.2.0** | **1.8-4.8 µs** | **1× (baseline)** |
+| JAX 0.8 | ~430 ms | **150,000-243,000× slower** |
+| Mojo 0.25 | ~908 ms | **320,000-513,000× slower** |
+| PyTorch 2.9 | ~3,400 ms | **700,000-1,900,000× slower** |
 
 ### Key Findings
 
-1. **Compilation Speed**: MIND compiles 17,000-136,000× faster than competing frameworks
-2. **Determinism**: Verified bit-identical outputs across 1000+ runs
-3. **Autograd**: Compile-time differentiation vs runtime tape-based
-4. **O(1) Scaling**: Compile time independent of tensor dimensions
+1. **Compilation Speed**: MIND compiles 150,000-1,900,000× faster than competing frameworks
+2. **Throughput**: 347,000+ compilations per second sustained
+3. **Determinism**: Verified bit-identical outputs across 1000+ runs
+4. **Autograd**: Compile-time differentiation vs runtime tape-based
+5. **O(1) Scaling**: Compile time independent of tensor dimensions
 
 ## Roadmap
 
