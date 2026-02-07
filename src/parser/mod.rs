@@ -99,7 +99,8 @@ impl<'a> P<'a> {
         if self.eat(ch) {
             Ok(())
         } else {
-            Err(self.err(format!("expected '{}', found {:?}",
+            Err(self.err(format!(
+                "expected '{}', found {:?}",
                 ch as char,
                 self.peek().map(|c| c as char),
             )))
@@ -107,7 +108,10 @@ impl<'a> P<'a> {
     }
 
     fn err(&self, message: String) -> ParseError {
-        ParseError { offset: self.pos, message }
+        ParseError {
+            offset: self.pos,
+            message,
+        }
     }
 
     fn starts_with(&self, s: &[u8]) -> bool {
@@ -164,7 +168,11 @@ impl<'a> P<'a> {
         if self.pos == start {
             return None;
         }
-        Some(std::str::from_utf8(&self.b[start..self.pos]).unwrap().to_string())
+        Some(
+            std::str::from_utf8(&self.b[start..self.pos])
+                .unwrap()
+                .to_string(),
+        )
     }
 
     /// Check if keyword `kw` is at current position followed by non-ident char.
@@ -190,9 +198,13 @@ impl<'a> P<'a> {
         self.skip_ws();
         let neg = self.eat(b'-');
         self.skip_ws();
-        let d = self.digits().ok_or_else(|| self.err("expected integer".into()))?;
+        let d = self
+            .digits()
+            .ok_or_else(|| self.err("expected integer".into()))?;
         let mut v: i32 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
-        if neg { v = -v; }
+        if neg {
+            v = -v;
+        }
         Ok(v)
     }
 
@@ -205,9 +217,13 @@ impl<'a> P<'a> {
             axes.push(self.signed_int()?);
             loop {
                 self.skip_ws();
-                if !self.eat(b',') { break; }
+                if !self.eat(b',') {
+                    break;
+                }
                 self.skip_ws();
-                if self.at(b']') { break; } // trailing comma
+                if self.at(b']') {
+                    break;
+                } // trailing comma
                 axes.push(self.signed_int()?);
             }
         }
@@ -225,9 +241,13 @@ impl<'a> P<'a> {
             dims.push(self.dim_value()?);
             loop {
                 self.skip_ws();
-                if !self.eat(b',') { break; }
+                if !self.eat(b',') {
+                    break;
+                }
                 self.skip_ws();
-                if self.at(b')') { break; }
+                if self.at(b')') {
+                    break;
+                }
                 dims.push(self.dim_value()?);
             }
         }
@@ -256,9 +276,13 @@ impl<'a> P<'a> {
             dims.push(self.dim_value()?);
             loop {
                 self.skip_ws();
-                if !self.eat(b',') { break; }
+                if !self.eat(b',') {
+                    break;
+                }
                 self.skip_ws();
-                if self.at(b']') { break; }
+                if self.at(b']') {
+                    break;
+                }
                 dims.push(self.dim_value()?);
             }
         }
@@ -322,11 +346,26 @@ impl<'a> P<'a> {
             return Ok(TypeAnn::Tensor { dtype: dt, dims });
         }
         // Scalar types
-        if self.at_keyword(b"i32") { self.pos += 3; return Ok(TypeAnn::ScalarI32); }
-        if self.at_keyword(b"i64") { self.pos += 3; return Ok(TypeAnn::ScalarI64); }
-        if self.at_keyword(b"f32") { self.pos += 3; return Ok(TypeAnn::ScalarF32); }
-        if self.at_keyword(b"f64") { self.pos += 3; return Ok(TypeAnn::ScalarF64); }
-        if self.at_keyword(b"bool") { self.pos += 4; return Ok(TypeAnn::ScalarBool); }
+        if self.at_keyword(b"i32") {
+            self.pos += 3;
+            return Ok(TypeAnn::ScalarI32);
+        }
+        if self.at_keyword(b"i64") {
+            self.pos += 3;
+            return Ok(TypeAnn::ScalarI64);
+        }
+        if self.at_keyword(b"f32") {
+            self.pos += 3;
+            return Ok(TypeAnn::ScalarF32);
+        }
+        if self.at_keyword(b"f64") {
+            self.pos += 3;
+            return Ok(TypeAnn::ScalarF64);
+        }
+        if self.at_keyword(b"bool") {
+            self.pos += 4;
+            return Ok(TypeAnn::ScalarBool);
+        }
         Err(self.err("expected type annotation".into()))
     }
 
@@ -337,7 +376,8 @@ impl<'a> P<'a> {
             items.push(self.parse_stmt()?);
             // Skip statement separators
             self.skip_ws();
-            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n') {
+            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n')
+            {
                 self.pos += 1;
                 self.skip_ws();
             }
@@ -351,7 +391,8 @@ impl<'a> P<'a> {
         while !self.at_end() && !self.at(b'}') {
             stmts.push(self.parse_stmt()?);
             self.skip_ws();
-            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n') {
+            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n')
+            {
                 self.pos += 1;
                 self.skip_ws();
             }
@@ -361,10 +402,18 @@ impl<'a> P<'a> {
 
     fn parse_stmt(&mut self) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
-        if self.at_keyword(b"import") { return self.parse_import(); }
-        if self.at_keyword(b"fn") { return self.parse_fn_def(); }
-        if self.at_keyword(b"return") { return self.parse_return(); }
-        if self.at_keyword(b"let") { return self.parse_let(); }
+        if self.at_keyword(b"import") {
+            return self.parse_import();
+        }
+        if self.at_keyword(b"fn") {
+            return self.parse_fn_def();
+        }
+        if self.at_keyword(b"return") {
+            return self.parse_return();
+        }
+        if self.at_keyword(b"let") {
+            return self.parse_let();
+        }
         // Expression or assignment
         let start = self.pos;
         let expr = self.parse_expr()?;
@@ -377,7 +426,11 @@ impl<'a> P<'a> {
                 self.skip_ws_and_newlines();
                 let value = self.parse_expr()?;
                 let span = Span::new(start, self.pos);
-                return Ok(Node::Assign { name, value: Box::new(value), span });
+                return Ok(Node::Assign {
+                    name,
+                    value: Box::new(value),
+                    span,
+                });
             }
         }
         Ok(expr)
@@ -388,10 +441,14 @@ impl<'a> P<'a> {
         self.pos += 6; // "import"
         self.skip_ws();
         let mut path = Vec::new();
-        let first = self.word().ok_or_else(|| self.err("expected module name".into()))?;
+        let first = self
+            .word()
+            .ok_or_else(|| self.err("expected module name".into()))?;
         path.push(first.to_string());
         while self.eat(b'.') {
-            let part = self.word().ok_or_else(|| self.err("expected module name after '.'".into()))?;
+            let part = self
+                .word()
+                .ok_or_else(|| self.err("expected module name after '.'".into()))?;
             path.push(part.to_string());
         }
         self.skip_ws();
@@ -404,7 +461,10 @@ impl<'a> P<'a> {
         let start = self.pos;
         self.pos += 2; // "fn"
         self.skip_ws_and_newlines();
-        let name = self.word().ok_or_else(|| self.err("expected function name".into()))?.to_string();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected function name".into()))?
+            .to_string();
         self.skip_ws_and_newlines();
         // Parameter list
         self.expect(b'(')?;
@@ -414,9 +474,13 @@ impl<'a> P<'a> {
             params.push(self.parse_param()?);
             loop {
                 self.skip_ws_and_newlines();
-                if !self.eat(b',') { break; }
+                if !self.eat(b',') {
+                    break;
+                }
                 self.skip_ws_and_newlines();
-                if self.at(b')') { break; }
+                if self.at(b')') {
+                    break;
+                }
                 params.push(self.parse_param()?);
             }
         }
@@ -438,13 +502,22 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b'}')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::FnDef { name, params, ret_type, body, span })
+        Ok(Node::FnDef {
+            name,
+            params,
+            ret_type,
+            body,
+            span,
+        })
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
         self.skip_ws_and_newlines();
         let start = self.pos;
-        let name = self.word().ok_or_else(|| self.err("expected parameter name".into()))?.to_string();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected parameter name".into()))?
+            .to_string();
         self.skip_ws();
         self.expect(b':')?;
         self.skip_ws_and_newlines();
@@ -471,7 +544,10 @@ impl<'a> P<'a> {
         let start = self.pos;
         self.pos += 3; // "let"
         self.skip_ws_and_newlines();
-        let name = self.word().ok_or_else(|| self.err("expected variable name".into()))?.to_string();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected variable name".into()))?
+            .to_string();
         self.skip_ws_and_newlines();
         // Optional type annotation
         let ann = if self.eat(b':') {
@@ -485,7 +561,12 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         let value = self.parse_expr()?;
         let span = Span::new(start, self.pos);
-        Ok(Node::Let { name, ann, value: Box::new(value), span })
+        Ok(Node::Let {
+            name,
+            ann,
+            value: Box::new(value),
+            span,
+        })
     }
 
     fn parse_expr(&mut self) -> Result<Node, ParseError> {
@@ -556,12 +637,13 @@ impl<'a> P<'a> {
             return self.parse_tuple_or_paren();
         }
         // Integer literal
-        if self.peek().map_or(false, |c| c.is_ascii_digit()) {
+        if self.peek().is_some_and(|c| c.is_ascii_digit()) {
             return self.parse_int_lit();
         }
         // Must be identifier-based
         let start = self.pos;
-        let ident = self.dotted_ident()
+        let ident = self
+            .dotted_ident()
             .ok_or_else(|| self.err("expected expression".into()))?;
         self.skip_ws();
         match ident.as_str() {
@@ -593,7 +675,9 @@ impl<'a> P<'a> {
 
     fn parse_int_lit(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
-        let d = self.digits().ok_or_else(|| self.err("expected integer".into()))?;
+        let d = self
+            .digits()
+            .ok_or_else(|| self.err("expected integer".into()))?;
         let val: i64 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Int(val), span))
@@ -608,9 +692,13 @@ impl<'a> P<'a> {
             items.push(self.parse_expr()?);
             loop {
                 self.skip_ws_and_newlines();
-                if !self.eat(b',') { break; }
+                if !self.eat(b',') {
+                    break;
+                }
                 self.skip_ws_and_newlines();
-                if self.at(b')') { break; }
+                if self.at(b')') {
+                    break;
+                }
                 items.push(self.parse_expr()?);
             }
         }
@@ -618,9 +706,15 @@ impl<'a> P<'a> {
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
         if items.len() == 1 {
-            Ok(Node::Paren(Box::new(items.into_iter().next().unwrap()), span))
+            Ok(Node::Paren(
+                Box::new(items.into_iter().next().unwrap()),
+                span,
+            ))
         } else {
-            Ok(Node::Tuple { elements: items, span })
+            Ok(Node::Tuple {
+                elements: items,
+                span,
+            })
         }
     }
 
@@ -632,9 +726,13 @@ impl<'a> P<'a> {
             args.push(self.parse_expr()?);
             loop {
                 self.skip_ws_and_newlines();
-                if !self.eat(b',') { break; }
+                if !self.eat(b',') {
+                    break;
+                }
                 self.skip_ws_and_newlines();
-                if self.at(b')') { break; }
+                if self.at(b')') {
+                    break;
+                }
                 args.push(self.parse_expr()?);
             }
         }
@@ -660,14 +758,22 @@ impl<'a> P<'a> {
                 let mut vars = Vec::new();
                 self.skip_ws();
                 if !self.at(b']') {
-                    let w = self.word().ok_or_else(|| self.err("expected variable name".into()))?;
+                    let w = self
+                        .word()
+                        .ok_or_else(|| self.err("expected variable name".into()))?;
                     vars.push(w.to_string());
                     loop {
                         self.skip_ws();
-                        if !self.eat(b',') { break; }
+                        if !self.eat(b',') {
+                            break;
+                        }
                         self.skip_ws();
-                        if self.at(b']') { break; }
-                        let w = self.word().ok_or_else(|| self.err("expected variable name".into()))?;
+                        if self.at(b']') {
+                            break;
+                        }
+                        let w = self
+                            .word()
+                            .ok_or_else(|| self.err("expected variable name".into()))?;
                         vars.push(w.to_string());
                     }
                 }
@@ -683,7 +789,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallGrad { loss: Box::new(loss), wrt, span })
+        Ok(Node::CallGrad {
+            loss: Box::new(loss),
+            wrt,
+            span,
+        })
     }
 
     fn parse_reduce_args(&mut self) -> Result<(Vec<i32>, bool), ParseError> {
@@ -726,7 +836,12 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallTensorSum { x: Box::new(x), axes, keepdims, span })
+        Ok(Node::CallTensorSum {
+            x: Box::new(x),
+            axes,
+            keepdims,
+            span,
+        })
     }
 
     fn parse_tensor_mean(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -738,7 +853,12 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallTensorMean { x: Box::new(x), axes, keepdims, span })
+        Ok(Node::CallTensorMean {
+            x: Box::new(x),
+            axes,
+            keepdims,
+            span,
+        })
     }
 
     fn parse_tensor_reshape(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -752,7 +872,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallReshape { x: Box::new(x), dims, span })
+        Ok(Node::CallReshape {
+            x: Box::new(x),
+            dims,
+            span,
+        })
     }
 
     fn parse_tensor_expand_dims(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -771,7 +895,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallExpandDims { x: Box::new(x), axis, span })
+        Ok(Node::CallExpandDims {
+            x: Box::new(x),
+            axis,
+            span,
+        })
     }
 
     fn parse_tensor_squeeze(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -795,7 +923,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallSqueeze { x: Box::new(x), axes, span })
+        Ok(Node::CallSqueeze {
+            x: Box::new(x),
+            axes,
+            span,
+        })
     }
 
     fn parse_tensor_transpose(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -819,7 +951,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallTranspose { x: Box::new(x), axes, span })
+        Ok(Node::CallTranspose {
+            x: Box::new(x),
+            axes,
+            span,
+        })
     }
 
     fn parse_tensor_index(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -847,7 +983,12 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallIndex { x: Box::new(x), axis, i, span })
+        Ok(Node::CallIndex {
+            x: Box::new(x),
+            axis,
+            i,
+            span,
+        })
     }
 
     fn parse_tensor_slice(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -884,7 +1025,13 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallSlice { x: Box::new(x), axis, start: s, end: e, span })
+        Ok(Node::CallSlice {
+            x: Box::new(x),
+            axis,
+            start: s,
+            end: e,
+            span,
+        })
     }
 
     fn parse_tensor_slice_stride(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -930,7 +1077,14 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallSliceStride { x: Box::new(x), axis, start: s, end: e, step, span })
+        Ok(Node::CallSliceStride {
+            x: Box::new(x),
+            axis,
+            start: s,
+            end: e,
+            step,
+            span,
+        })
     }
 
     fn parse_tensor_gather(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -964,7 +1118,12 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallGather { x: Box::new(x), axis, idx: Box::new(idx), span })
+        Ok(Node::CallGather {
+            x: Box::new(x),
+            axis,
+            idx: Box::new(idx),
+            span,
+        })
     }
 
     fn parse_tensor_dot(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -978,7 +1137,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallDot { a: Box::new(a), b: Box::new(b), span })
+        Ok(Node::CallDot {
+            a: Box::new(a),
+            b: Box::new(b),
+            span,
+        })
     }
 
     fn parse_tensor_matmul(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -992,7 +1155,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallMatMul { a: Box::new(a), b: Box::new(b), span })
+        Ok(Node::CallMatMul {
+            a: Box::new(a),
+            b: Box::new(b),
+            span,
+        })
     }
 
     fn parse_tensor_relu(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -1002,7 +1169,10 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallTensorRelu { x: Box::new(x), span })
+        Ok(Node::CallTensorRelu {
+            x: Box::new(x),
+            span,
+        })
     }
 
     fn parse_tensor_conv2d(&mut self, start: usize) -> Result<Node, ParseError> {
@@ -1025,14 +1195,18 @@ impl<'a> P<'a> {
                 self.expect(b'=')?;
                 self.skip_ws();
                 let v = self.signed_int()?;
-                if v <= 0 { return Err(self.err("stride must be positive".into())); }
+                if v <= 0 {
+                    return Err(self.err("stride must be positive".into()));
+                }
                 stride_h = v as usize;
             } else if self.eat_keyword("stride_w") {
                 self.skip_ws();
                 self.expect(b'=')?;
                 self.skip_ws();
                 let v = self.signed_int()?;
-                if v <= 0 { return Err(self.err("stride must be positive".into())); }
+                if v <= 0 {
+                    return Err(self.err("stride must be positive".into()));
+                }
                 stride_w = v as usize;
             } else if self.eat_keyword("padding") {
                 self.skip_ws();
@@ -1055,7 +1229,14 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::CallTensorConv2d { x: Box::new(x), w: Box::new(w), stride_h, stride_w, padding, span })
+        Ok(Node::CallTensorConv2d {
+            x: Box::new(x),
+            w: Box::new(w),
+            stride_h,
+            stride_w,
+            padding,
+            span,
+        })
     }
 }
 
@@ -1103,7 +1284,12 @@ pub fn parse_with_diagnostics_in_file(
                 code: "E1001",
                 severity: crate::diagnostics::Severity::Error,
                 message: e.message,
-                span: Some(DiagnosticSpan::from_offsets(&stripped, e.offset, e.offset + 1, file)),
+                span: Some(DiagnosticSpan::from_offsets(
+                    &stripped,
+                    e.offset,
+                    e.offset + 1,
+                    file,
+                )),
                 notes: Vec::new(),
                 help: None,
             };
