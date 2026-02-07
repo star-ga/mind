@@ -166,7 +166,7 @@ pub(crate) fn num_elems(shape: &[ShapeDim]) -> Option<usize> {
 }
 
 #[cfg(feature = "cpu-buffers")]
-pub(crate) const MATERIALIZE_MAX: usize = 1_024;
+pub(crate) const MATERIALIZE_MAX: usize = 1_048_576;
 
 #[cfg(feature = "cpu-buffers")]
 pub(crate) fn materialize_filled(t: &mut TensorVal) {
@@ -508,6 +508,12 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if t.buf.is_some() && axes.is_empty() {
+                        if let Ok(result) = crate::exec::cpu::exec_sum_all(&t) {
+                            return Ok(Value::Tensor(result));
+                        }
+                    }
                     let result = stdlib::tensor::sum_tensor_preview(&t, axes, *keepdims)?;
                     Ok(Value::Tensor(result))
                 }
@@ -520,6 +526,12 @@ pub(crate) fn eval_value_expr_mode(
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;
             match value {
                 Value::Tensor(t) => {
+                    #[cfg(feature = "cpu-exec")]
+                    if t.buf.is_some() && axes.is_empty() {
+                        if let Ok(result) = crate::exec::cpu::exec_mean_all(&t) {
+                            return Ok(Value::Tensor(result));
+                        }
+                    }
                     let result = stdlib::tensor::mean_tensor_preview(&t, axes, *keepdims)?;
                     Ok(Value::Tensor(result))
                 }

@@ -75,7 +75,8 @@ When a regression exceeds thresholds:
 
 ## MIND vs Python Ecosystem
 
-All numbers measured on the same machine. NumPy 1.26.4, SciPy 1.11.4, MIND v0.1.9.
+All numbers measured on the same machine. NumPy 1.26.4, MIND v0.1.9.
+Criterion.rs 0.5.1 for MIND (in-process, 100 samples). Python `time.perf_counter_ns` for NumPy (in-process, 100 runs).
 
 ### Startup: 105x Faster to First Result
 
@@ -95,13 +96,57 @@ Time to compile a tensor program from source to executable IR.
 | **MIND v0.1.9** | **45 µs** | **46 µs** |
 | PyTorch 2.0 | ~500 ms – 2s | ~2s – 10s |
 
-See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md) for detailed methodology.
+### Runtime Tensor Compute
+
+MIND numbers include the **full pipeline** (parse + compile + compute).
+NumPy numbers are **compute-only** (pre-imported, no parse or compile overhead).
+Despite this disadvantage, MIND is faster at medium-to-large tensor sizes.
+
+#### Element-wise Operations
+
+| Operation | MIND (full pipeline) | NumPy (compute only) | MIND Speedup |
+|-----------|---------------------|---------------------|--------------|
+| add 100K f32 | **220 µs** | 327 µs | **1.5x** |
+
+#### Matrix Multiplication
+
+| Dimensions | MIND (full pipeline) | NumPy (compute only) | MIND Speedup |
+|------------|---------------------|---------------------|--------------|
+| (64,128) × (128,64) | **194 µs** | 308 µs | **1.6x** |
+| (128,256) × (256,128) | **913 µs** | 2,254 µs | **2.5x** |
+
+#### Full Pipeline Breakdown (Criterion, in-process)
+
+| Operation | MIND Time | Notes |
+|-----------|----------|-------|
+| Parse + eval overhead (baseline) | 33 µs | Empty program parse + eval |
+| add 4 elements (materialized) | 33 µs | Dominated by parse overhead |
+| add 10K elements | 54 µs | ~21 µs actual compute |
+| add 100K elements | 220 µs | ~187 µs actual compute |
+| sum 10K elements | 65 µs | add + reduce |
+| mean 10K elements | 67 µs | add + reduce + divide |
+| relu 10K elements | 62 µs | subtract + clamp |
+| matmul (10,20)×(20,30) | 45 µs | 6K multiply-accumulate |
+| matmul (32,64)×(64,32) | 70 µs | 65K multiply-accumulate |
+| matmul (64,128)×(128,64) | 194 µs | 1M multiply-accumulate |
+| matmul (128,256)×(256,128) | 913 µs | 8.4M multiply-accumulate |
+
+See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md) for detailed compilation methodology.
+
+## Methodology
+
+All benchmarks use:
+- **Criterion.rs 0.5.1** for MIND (in-process, eliminates subprocess overhead)
+- **time.perf_counter_ns** for NumPy (in-process, after import)
+- 100 samples minimum, median reported
+- Same machine for all comparisons
+- MIND measurements include full parse → compile → compute pipeline
 
 ## Future Work
 
 - GPU runtime benchmarks on CUDA hardware
+- BLAS-accelerated matmul backend
 - Full Remizov solver end-to-end benchmarks (CPU and GPU)
-- Direct comparison with Julia DifferentialEquations.jl
 - Automated comparison against PyTorch/XLA baselines
 - Visualization dashboards for long-term trends
 
