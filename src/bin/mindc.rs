@@ -107,6 +107,9 @@ struct CompileArgs {
     /// Emit canonical IR for the module.
     #[arg(long)]
     emit_ir: bool,
+    /// Emit MIC (compact serializable IR) for the module.
+    #[arg(long)]
+    emit_mic: bool,
     /// Emit gradient IR for the selected function (requires --autodiff).
     #[arg(long)]
     emit_grad_ir: bool,
@@ -231,9 +234,15 @@ fn main() {
         return;
     }
 
-    let emit_ir = cli.compile.emit_ir || (!cli.compile.emit_grad_ir && !cli.compile.emit_mlir);
+    let emit_ir = cli.compile.emit_ir
+        || (!cli.compile.emit_grad_ir && !cli.compile.emit_mlir && !cli.compile.emit_mic);
     if emit_ir {
         println!("{}", products.ir);
+    }
+
+    if cli.compile.emit_mic {
+        let mic = libmind::ir::compact::emit_mic(&products.ir);
+        println!("{}", mic);
     }
 
     #[cfg(feature = "autodiff")]

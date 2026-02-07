@@ -1040,3 +1040,56 @@ pub(crate) fn dot_tensor_preview_with_info(
 pub(crate) fn dot_tensor_preview(a: &TensorVal, b: &TensorVal) -> Result<TensorVal, EvalError> {
     dot_tensor_preview_with_info(a, b).map(|(t, _)| t)
 }
+
+// ---------------------------------------------------------------------------
+// Helpers for CpuExec dispatch (Option-returning wrappers)
+// ---------------------------------------------------------------------------
+
+/// Convert dim strings to usize, returning None if any dim is symbolic.
+#[cfg(feature = "cpu-exec")]
+pub(crate) fn dims_from_strings_usize(dims: &[String]) -> Option<Vec<usize>> {
+    let mut out = Vec::with_capacity(dims.len());
+    for d in dims {
+        match d.parse::<usize>() {
+            Ok(n) => out.push(n),
+            Err(_) => return None,
+        }
+    }
+    Some(out)
+}
+
+/// Normalize expand_dims axis, returning None on error.
+#[cfg(feature = "cpu-exec")]
+pub(crate) fn normalize_expand_axis_usize(axis: i32, rank: usize) -> Option<usize> {
+    normalize_expand_axis(axis, rank).ok()
+}
+
+/// Normalize axis for indexing, returning None on error.
+#[cfg(feature = "cpu-exec")]
+pub(crate) fn normalize_axis_usize(axis: i32, rank: usize) -> Option<usize> {
+    normalize_axis(axis, rank).ok()
+}
+
+/// Compute squeeze axes as usize, returning None on error.
+#[cfg(feature = "cpu-exec")]
+pub(crate) fn normalize_squeeze_axes_usize(
+    shape: &[ShapeDim],
+    axes: &[i32],
+) -> Option<Vec<usize>> {
+    compute_squeeze_axes(shape, axes).ok()
+}
+
+/// Compute transpose permutation as usize vec, returning None on error.
+#[cfg(feature = "cpu-exec")]
+pub(crate) fn compute_transpose_perm(
+    shape: &[ShapeDim],
+    axes: Option<&[i32]>,
+) -> Option<Vec<usize>> {
+    let rank = shape.len();
+    let perm = if let Some(spec) = axes {
+        crate::linalg::normalize_permutation(spec, rank).ok()?
+    } else {
+        crate::linalg::default_transpose(rank)
+    };
+    Some(perm)
+}

@@ -223,6 +223,181 @@ pub fn exec_matmul(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
 }
 
 // ---------------------------------------------------------------------------
+// Shape ops — metadata-only (buffer unchanged)
+// ---------------------------------------------------------------------------
+
+/// Reshape: same data, new shape metadata.
+pub fn exec_reshape(t: &TensorVal, new_shape: Vec<usize>) -> R<TensorVal> {
+    let data = get_f32(t).ok_or_else(|| ExecError::Unsupported("not materialized".into()))?;
+    let new_numel: usize = new_shape.iter().product();
+    if data.len() != new_numel {
+        return Err(ExecError::Shape(format!(
+            "reshape: element count mismatch {} vs {}",
+            data.len(),
+            new_numel
+        )));
+    }
+    Ok(TensorVal::from_materialized_f32(new_shape, data.to_vec()))
+}
+
+/// Expand dims: insert a size-1 dimension.
+pub fn exec_expand_dims(t: &TensorVal, axis: usize) -> R<TensorVal> {
+    let data = get_f32(t).ok_or_else(|| ExecError::Unsupported("not materialized".into()))?;
+    let mut shape = t
+        .shape_as_usize()
+        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    if axis > shape.len() {
+        return Err(ExecError::Shape(format!(
+            "expand_dims: axis {} out of bounds for rank {}",
+            axis,
+            shape.len()
+        )));
+    }
+    shape.insert(axis, 1);
+    Ok(TensorVal::from_materialized_f32(shape, data.to_vec()))
+}
+
+/// Squeeze: remove size-1 dimensions.
+pub fn exec_squeeze(t: &TensorVal, axes: &[usize]) -> R<TensorVal> {
+    let data = get_f32(t).ok_or_else(|| ExecError::Unsupported("not materialized".into()))?;
+    let old_shape = t
+        .shape_as_usize()
+        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    let mut shape = Vec::new();
+    for (i, &dim) in old_shape.iter().enumerate() {
+        if axes.is_empty() {
+            // Squeeze all size-1 dims
+            if dim != 1 {
+                shape.push(dim);
+            }
+        } else if !axes.contains(&i) {
+            shape.push(dim);
+        }
+    }
+    Ok(TensorVal::from_materialized_f32(shape, data.to_vec()))
+}
+
+// ---------------------------------------------------------------------------
+// Shape ops — data-moving
+// ---------------------------------------------------------------------------
+
+/// Transpose: permute buffer data according to axes.
+pub fn exec_transpose(t: &TensorVal, perm: &[usize]) -> R<TensorVal> {
+    let data = get_f32(t).ok_or_else(|| ExecError::Unsupported("not materialized".into()))?;
+    let old_shape = t
+        .shape_as_usize()
+        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    let rank = old_shape.len();
+    if perm.len() != rank {
+        return Err(ExecError::Shape(format!(
+            "transpose: perm length {} != rank {}",
+            perm.len(),
+            rank
+        )));
+    }
+
+    // Compute new shape
+    let new_shape: Vec<usize> = perm.iter().map(|&p| old_shape[p]).collect();
+    let numel: usize = old_shape.iter().product();
+    let mut out = vec![0.0f32; numel];
+
+    // Compute strides for old shape
+    let mut old_strides = vec![1usize; rank];
+    for i in (0..rank - 1).rev() {
+        old_strides[i] = old_strides[i + 1] * old_shape[i + 1];
+    }
+
+    // Compute strides for new shape
+    let mut new_strides = vec![1usize; rank];
+    for i in (0..rank - 1).rev() {
+        new_strides[i] = new_strides[i + 1] * new_shape[i + 1];
+    }
+
+    // Permute each element
+    for flat_idx in 0..numel {
+        // Convert flat index to multi-dimensional index in old shape
+        let mut remaining = flat_idx;
+        let mut old_idx = vec![0usize; rank];
+        for d in 0..rank {
+            old_idx[d] = remaining / old_strides[d];
+            remaining %= old_strides[d];
+        }
+
+        // Permuted index in new shape
+        let mut new_flat = 0;
+        for d in 0..rank {
+            new_flat += old_idx[perm[d]] * new_strides[d];
+        }
+
+        out[new_flat] = data[flat_idx];
+    }
+
+    Ok(TensorVal::from_materialized_f32(new_shape, out))
+}
+
+/// Index: extract a subtensor by removing one axis at a fixed index.
+pub fn exec_index(t: &TensorVal, axis: usize, i: usize) -> R<TensorVal> {
+    let data = get_f32(t).ok_or_else(|| ExecError::Unsupported("not materialized".into()))?;
+    let shape = t
+        .shape_as_usize()
+        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    if axis >= shape.len() {
+        return Err(ExecError::Shape("index: axis out of bounds".into()));
+    }
+    if i >= shape[axis] {
+        return Err(ExecError::Shape("index: index out of bounds".into()));
+    }
+
+    // Compute stride for the axis
+    let inner: usize = shape[axis + 1..].iter().product();
+    let outer: usize = shape[..axis].iter().product();
+    let axis_size = shape[axis];
+
+    let mut out = Vec::with_capacity(outer * inner);
+    for o in 0..outer {
+        let base = o * axis_size * inner + i * inner;
+        out.extend_from_slice(&data[base..base + inner]);
+    }
+
+    let mut new_shape = shape;
+    new_shape.remove(axis);
+    Ok(TensorVal::from_materialized_f32(new_shape, out))
+}
+
+/// Slice: extract a range along one axis.
+pub fn exec_slice(t: &TensorVal, axis: usize, start: usize, end: usize) -> R<TensorVal> {
+    let data = get_f32(t).ok_or_else(|| ExecError::Unsupported("not materialized".into()))?;
+    let shape = t
+        .shape_as_usize()
+        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    if axis >= shape.len() {
+        return Err(ExecError::Shape("slice: axis out of bounds".into()));
+    }
+    let dim = shape[axis];
+    let end = end.min(dim);
+    if start > end {
+        return Err(ExecError::Shape("slice: start > end".into()));
+    }
+
+    let slice_len = end - start;
+    let inner: usize = shape[axis + 1..].iter().product();
+    let outer: usize = shape[..axis].iter().product();
+    let axis_size = shape[axis];
+
+    let mut out = Vec::with_capacity(outer * slice_len * inner);
+    for o in 0..outer {
+        for s in start..end {
+            let base = o * axis_size * inner + s * inner;
+            out.extend_from_slice(&data[base..base + inner]);
+        }
+    }
+
+    let mut new_shape = shape;
+    new_shape[axis] = slice_len;
+    Ok(TensorVal::from_materialized_f32(new_shape, out))
+}
+
+// ---------------------------------------------------------------------------
 // Dot product
 // ---------------------------------------------------------------------------
 
