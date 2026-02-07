@@ -1,0 +1,336 @@
+// Copyright 2025-2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0
+//
+// Remizov ODE Solver — Feynman Path Integral Version (Theorem 5)
+//
+// Solves: a(x)f''(x) + b(x)f'(x) + (c(x) - lambda)f(x) = -g(x)
+//
+// Uses Monte Carlo sampling of the n-fold Feynman integral:
+//
+//   f(x_0) = lim_{n->inf} integral_0^inf e^{-lambda*t} *
+//     [ prod_{j=1}^n integral_R dx_j
+//       * exp((t/n) sum c(x_{j-1}) - b(x_{j-1})^2/(4a(x_{j-1})))
+//       * exp(sum b(x_{j-1})(x_j - x_{j-1}) / (2a(x_{j-1})))
+//       * (sqrt(n)/sqrt(4*pi*t))^n * (prod a(x_j))^{-1/2}
+//       * exp(-(n/(4t)) sum (x_j - x_{j+1})^2 / a(x_j))
+//       * g(x_n) ] dt
+//
+// Monte Carlo interpretation:
+//   Sample n-step random walks from x_0 where each step
+//   x_{j+1} ~ Normal(x_j, 2*a(x_j)*t/n), then weight by
+//   drift, reaction, and source terms.
+//
+// Convergence: O(1/sqrt(N_samples)) independent of path length n
+//
+// This is the FIRST representation of an ODE solution as a Feynman formula.
+
+import std.math;
+import std.tensor;
+
+// ============================================================================
+// Pseudo-random number generator (xoshiro256**)
+// ============================================================================
+//
+// MIND does not yet have a standard random module, so we implement a
+// simple but high-quality PRNG for Monte Carlo sampling.
+
+let rng_state: tensor<i64[4]> = [
+    0x243F6A8885A308D3,  // pi digits
+    0x13198A2E03707344,
+    0xA4093822299F31D0,
+    0x082EFA98EC4E6C89
+];
+
+fn rotl(x: i64, k: i32) -> i64 {
+    return (x << k) | (x >> (64 - k));
+}
+
+fn xoshiro_next() -> i64 {
+    let result = rotl(rng_state[1] * 5, 7) * 9;
+    let t = rng_state[1] << 17;
+
+    rng_state[2] = rng_state[2] ^ rng_state[0];
+    rng_state[3] = rng_state[3] ^ rng_state[1];
+    rng_state[1] = rng_state[1] ^ rng_state[2];
+    rng_state[0] = rng_state[0] ^ rng_state[3];
+    rng_state[2] = rng_state[2] ^ t;
+    rng_state[3] = rotl(rng_state[3], 45);
+
+    return result;
+}
+
+// Uniform random in [0, 1)
+fn rand_uniform() -> f64 {
+    let bits = xoshiro_next();
+    // Use upper 53 bits for double precision
+    return ((bits >> 11) as f64) * 1.1102230246251565e-16;
+}
+
+// Standard normal via Box-Muller transform
+fn rand_normal() -> f64 {
+    let u1 = rand_uniform();
+    let u2 = rand_uniform();
+    // Avoid log(0)
+    let u1_safe = if u1 < 1e-15 { 1e-15 } else { u1 };
+    return sqrt(-2.0 * log(u1_safe)) * cos(2.0 * math.PI * u2);
+}
+
+// Normal with specified mean and standard deviation
+fn rand_normal_mv(mean: f64, stddev: f64) -> f64 {
+    return mean + stddev * rand_normal();
+}
+
+// Seed the PRNG
+fn seed_rng(s: i64) {
+    rng_state[0] = s;
+    rng_state[1] = s ^ 0x6A09E667F3BCC908;
+    rng_state[2] = s ^ 0xBB67AE8584CAA73B;
+    rng_state[3] = s ^ 0x3C6EF372FE94F82B;
+    // Warm up
+    for i in 0..20 { xoshiro_next(); }
+}
+
+// ============================================================================
+// Gauss-Laguerre Quadrature (16-point, for outer Laplace integral)
+// ============================================================================
+
+fn gauss_laguerre_nodes_16() -> (tensor<f64[16]>, tensor<f64[16]>) {
+    let nodes: tensor<f64[16]> = [
+        0.08764941047892,  0.46269632891508,  1.14105777483088,  2.12928364509838,
+        3.43708663389320,  5.07801861543098,  7.07033853504824,  9.43831433639190,
+       12.21422336552206, 15.44152736113498, 19.18015685652091, 23.51590569396477,
+       28.57872974053178, 34.58339875396774, 41.94045264756756, 51.70116033954869
+    ];
+    let weights: tensor<f64[16]> = [
+        0.20615171495780,  0.33105785495577,  0.26579577764422,  0.13629693429638,
+        0.04731182739822,  0.01129222337849,  0.00184010567660,  0.00020037746836,
+        0.00001400994281,  0.00000060058480,  0.00000001484697,  0.00000000019190,
+        0.00000000000112,  0.00000000000000,  0.00000000000000,  0.00000000000000
+    ];
+    return (nodes, weights);
+}
+
+// ============================================================================
+// Single-Path Monte Carlo Evaluation
+// ============================================================================
+//
+// For a given starting point x_0 and time t, sample one random walk
+// of n steps and compute the weighted contribution to f(x_0).
+//
+// Path: x_0 -> x_1 -> ... -> x_n
+// Each step: x_{j+1} ~ Normal(x_j, sqrt(2 * a(x_j) * t/n))
+//
+// The weight includes:
+//   - Gaussian normalization (absorbed into sampling)
+//   - Drift correction: exp(sum b(x_j)(x_{j+1}-x_j) / (2*a(x_j)))
+//   - Reaction term: exp((t/n) * sum (c(x_j) - b(x_j)^2/(4*a(x_j))))
+//   - Source evaluation: g(x_n)
+
+fn sample_feynman_path(
+    x0: f64,
+    t: f64,
+    n_steps: i32,
+    a: fn(f64) -> f64,
+    b: fn(f64) -> f64,
+    c: fn(f64) -> f64,
+    g: fn(f64) -> f64
+) -> f64 {
+    let dt = t / (n_steps as f64);
+    let x_curr = x0;
+
+    let log_drift_weight = 0.0;
+    let log_reaction_weight = 0.0;
+
+    for j in 0..n_steps {
+        let aj = a(x_curr);
+        let bj = b(x_curr);
+        let cj = c(x_curr);
+
+        // Sample next position from Gaussian centered at x_curr
+        let sigma = sqrt(2.0 * aj * dt);
+        let x_next = rand_normal_mv(x_curr, sigma);
+
+        // Drift weight: exp(b(x_j) * (x_{j+1} - x_j) / (2*a(x_j)))
+        let dx = x_next - x_curr;
+        log_drift_weight = log_drift_weight + bj * dx / (2.0 * aj);
+
+        // Reaction weight: exp(dt * (c(x_j) - b(x_j)^2 / (4*a(x_j))))
+        log_reaction_weight = log_reaction_weight + dt * (cj - bj * bj / (4.0 * aj));
+
+        x_curr = x_next;
+    }
+
+    // Total path weight * source at endpoint
+    let total_log_weight = log_drift_weight + log_reaction_weight;
+    let path_value = exp(total_log_weight) * g(x_curr);
+
+    return path_value;
+}
+
+// ============================================================================
+// Feynman Monte Carlo Solver
+// ============================================================================
+//
+// For each grid point x_i:
+//   f(x_i) ≈ (1/lambda) * sum_k w_k * (1/N_samples) * sum_{paths} path_value(x_i, t_k)
+//
+// where t_k, w_k are Gauss-Laguerre nodes/weights for the Laplace integral.
+
+fn remizov_feynman(
+    a: fn(f64) -> f64,
+    b: fn(f64) -> f64,
+    c: fn(f64) -> f64,
+    g: fn(f64) -> f64,
+    lambda: f64,
+    x_min: f64,
+    x_max: f64,
+    n_grid: i32,
+    n_steps: i32,        // Path discretization (Chernoff parameter)
+    n_samples: i32,      // Monte Carlo samples per (x, t) pair
+    n_quad: i32           // Quadrature nodes for Laplace integral
+) -> (tensor<f64[N]>, tensor<f64[N]>) {
+    let step = (x_max - x_min) / (n_grid - 1) as f64;
+    let x_grid: tensor<f64[N]> = tensor.zeros[f64, (n_grid,)];
+    for i in 0..n_grid {
+        x_grid[i] = x_min + (i as f64) * step;
+    }
+
+    let (nodes, weights) = gauss_laguerre_nodes_16();
+    let f_solution: tensor<f64[N]> = tensor.zeros[f64, (n_grid,)];
+    let n_eff = if n_quad > 16 { 16 } else { n_quad };
+
+    for i in 0..n_grid {
+        let xi = x_grid[i];
+
+        for k in 0..n_eff {
+            let w_k = weights[k];
+            if w_k < 1e-12 { continue; }
+
+            let t_k = nodes[k] / lambda;
+
+            // Monte Carlo average at this (x, t) point
+            let mc_sum = 0.0;
+            for s in 0..n_samples {
+                mc_sum = mc_sum + sample_feynman_path(xi, t_k, n_steps, a, b, c, g);
+            }
+            let mc_avg = mc_sum / (n_samples as f64);
+
+            // Accumulate into Laplace integral
+            f_solution[i] = f_solution[i] + (w_k / lambda) * mc_avg;
+        }
+    }
+
+    return (x_grid, f_solution);
+}
+
+// ============================================================================
+// GPU-Parallel Feynman Solver
+// ============================================================================
+//
+// Parallelizes both across grid points AND Monte Carlo samples.
+// Each GPU thread handles one (grid_point, sample) pair.
+
+fn remizov_feynman_gpu(
+    a: fn(f64) -> f64,
+    b: fn(f64) -> f64,
+    c: fn(f64) -> f64,
+    g: fn(f64) -> f64,
+    lambda: f64,
+    x_min: f64,
+    x_max: f64,
+    n_grid: i32,
+    n_steps: i32,
+    n_samples: i32,
+    n_quad: i32
+) -> (tensor<f64[N]>, tensor<f64[N]>) {
+    let step = (x_max - x_min) / (n_grid - 1) as f64;
+    let x_grid: tensor<f64[N]> = tensor.zeros[f64, (n_grid,)];
+    for i in 0..n_grid {
+        x_grid[i] = x_min + (i as f64) * step;
+    }
+
+    let (nodes, weights) = gauss_laguerre_nodes_16();
+    let f_solution: tensor<f64[N]> = tensor.zeros[f64, (n_grid,)];
+    let n_eff = if n_quad > 16 { 16 } else { n_quad };
+
+    for k in 0..n_eff {
+        let w_k = weights[k];
+        if w_k < 1e-12 { continue; }
+        let t_k = nodes[k] / lambda;
+
+        // Collect MC samples in parallel across grid x samples
+        let mc_results: tensor<f64[N]> = tensor.zeros[f64, (n_grid,)];
+
+        on(gpu0) {
+            parallel for i in 0..n_grid {
+                let xi = x_grid[i];
+                let mc_sum = 0.0;
+                for s in 0..n_samples {
+                    mc_sum = mc_sum + sample_feynman_path(xi, t_k, n_steps, a, b, c, g);
+                }
+                mc_results[i] = mc_sum / (n_samples as f64);
+            }
+        }
+
+        // Accumulate
+        for i in 0..n_grid {
+            f_solution[i] = f_solution[i] + (w_k / lambda) * mc_results[i];
+        }
+    }
+
+    return (x_grid, f_solution);
+}
+
+// ============================================================================
+// Example and Comparison
+// ============================================================================
+
+fn coeff_a_const(x: f64) -> f64 { return 1.0; }
+fn coeff_b_zero(x: f64) -> f64 { return 0.0; }
+fn coeff_c_zero(x: f64) -> f64 { return 0.0; }
+fn source_gaussian(x: f64) -> f64 { return exp(-x * x); }
+
+fn main() {
+    print("MIND Remizov Solver — Feynman Path Integral (Theorem 5)");
+    print("=======================================================\n");
+
+    seed_rng(42);
+
+    let lambda = 4.0;
+
+    // Feynman solver: few grid points, moderate MC samples
+    print("Running Feynman Monte Carlo solver...");
+    print("  n_grid=50, n_steps=100, n_samples=1000, n_quad=12\n");
+
+    let (x, f) = remizov_feynman(
+        coeff_a_const, coeff_b_zero, coeff_c_zero, source_gaussian,
+        lambda, -4.0, 4.0,
+        50,     // grid points
+        100,    // path steps (Chernoff n)
+        1000,   // Monte Carlo samples per point
+        12      // quadrature nodes
+    );
+
+    print("Solution at selected points:");
+    for i in [0, 12, 25, 37, 49] {
+        print("  f(", x[i], ") = ", f[i]);
+    }
+
+    // Compare with different sample counts to show convergence
+    print("\n--- Monte Carlo Convergence ---");
+    let sample_counts = [100, 500, 1000, 5000];
+
+    for ns in sample_counts {
+        seed_rng(42);  // Reset seed for reproducibility
+        let (_, f_mc) = remizov_feynman(
+            coeff_a_const, coeff_b_zero, coeff_c_zero, source_gaussian,
+            lambda, -3.0, 3.0, 20, 50, ns, 10
+        );
+        print("  n_samples=", ns, "  f(0)=", f_mc[10]);
+    }
+
+    print("\nExpected: values should converge as n_samples increases");
+    print("Monte Carlo error ∝ 1/sqrt(n_samples)");
+
+    print("\nDone.");
+}

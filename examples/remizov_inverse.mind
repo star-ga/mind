@@ -1,0 +1,276 @@
+// Copyright 2025-2026 STARGA Inc.
+// Licensed under the Apache License, Version 2.0
+//
+// Remizov Inverse ODE Solver — Coefficient Recovery via Autodiff
+//
+// Given: observed solution f(x) and known source g(x)
+// Recover: ODE coefficients a(x), b(x), c(x)
+//
+// Uses MIND's built-in reverse-mode automatic differentiation to
+// differentiate through the Remizov solver iterations.
+//
+// This is a Scientific Machine Learning (SciML) approach:
+//   1. Parameterize a(x), b(x), c(x) as learnable tensors on a grid
+//   2. Run the forward Remizov solver to get predicted f(x)
+//   3. Compute loss = ||f_predicted - f_observed||^2
+//   4. Backpropagate through the solver to get gradients
+//   5. Update coefficients via gradient descent
+//
+// Key advantage: no neural network needed — directly learns the ODE structure
+
+import std.math;
+import std.tensor;
+
+// ============================================================================
+// Utilities (reused from remizov_solver.mind)
+// ============================================================================
+
+fn linspace(start: f64, end: f64, n: i32) -> tensor<f64[N]> {
+    let step = (end - start) / (n - 1) as f64;
+    let grid: tensor<f64[N]> = tensor.zeros[f64, (n,)];
+    for i in 0..n {
+        grid[i] = start + (i as f64) * step;
+    }
+    return grid;
+}
+
+fn interp_linear(x_grid: tensor<f64[N]>, y_grid: tensor<f64[N]>,
+                 n: i32, x_query: f64) -> f64 {
+    let x_min = x_grid[0];
+    let x_max = x_grid[n - 1];
+    if x_query <= x_min { return y_grid[0]; }
+    if x_query >= x_max { return y_grid[n - 1]; }
+    let step = (x_max - x_min) / (n - 1) as f64;
+    let idx_f = (x_query - x_min) / step;
+    let idx = idx_f as i32;
+    if idx >= n - 1 { return y_grid[n - 1]; }
+    let t = idx_f - (idx as f64);
+    return y_grid[idx] * (1.0 - t) + y_grid[idx + 1] * t;
+}
+
+fn gauss_laguerre_nodes_16() -> (tensor<f64[16]>, tensor<f64[16]>) {
+    // 16-point for faster inverse iterations (less accuracy, more speed)
+    let nodes: tensor<f64[16]> = [
+        0.08764941047892,  0.46269632891508,  1.14105777483088,  2.12928364509838,
+        3.43708663389320,  5.07801861543098,  7.07033853504824,  9.43831433639190,
+       12.21422336552206, 15.44152736113498, 19.18015685652091, 23.51590569396477,
+       28.57872974053178, 34.58339875396774, 41.94045264756756, 51.70116033954869
+    ];
+    let weights: tensor<f64[16]> = [
+        0.20615171495780,  0.33105785495577,  0.26579577764422,  0.13629693429638,
+        0.04731182739822,  0.01129222337849,  0.00184010567660,  0.00020037746836,
+        0.00001400994281,  0.00000060058480,  0.00000001484697,  0.00000000019190,
+        0.00000000000112,  0.00000000000000,  0.00000000000000,  0.00000000000000
+    ];
+    return (nodes, weights);
+}
+
+// ============================================================================
+// Differentiable Shift Operator
+// ============================================================================
+//
+// Same as the standard shift operator, but operates on diff tensors so
+// gradients flow backward through all operations.
+
+fn apply_shift_operator_diff(
+    x_grid: tensor<f64[N]>,
+    h: diff tensor<f32[N]>,
+    n_grid: i32,
+    a_vals: diff tensor<f32[N]>,     // Learnable coefficients
+    b_vals: diff tensor<f32[N]>,
+    c_vals: diff tensor<f32[N]>,
+    dt: f64
+) -> diff tensor<f32[N]> {
+    let h_new: diff tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];
+
+    for i in 0..n_grid {
+        let xi = x_grid[i];
+        let ai = a_vals[i];
+        let bi = b_vals[i];
+        let ci = c_vals[i];
+
+        let shift_diff = 2.0 * sqrt(ai * (dt as f32));
+        let shift_drift = 2.0 * bi * (dt as f32);
+
+        // Interpolation produces differentiable values
+        let h_plus  = interp_linear(x_grid, h, n_grid, xi + (shift_diff as f64));
+        let h_minus = interp_linear(x_grid, h, n_grid, xi - (shift_diff as f64));
+        let h_drift = interp_linear(x_grid, h, n_grid, xi + (shift_drift as f64));
+
+        h_new[i] = 0.25 * h_plus + 0.25 * h_minus + 0.5 * h_drift
+                  + (dt as f32) * ci * h[i];
+    }
+
+    return h_new;
+}
+
+// ============================================================================
+// Differentiable Forward Solver
+// ============================================================================
+//
+// Runs the Remizov solver with learnable coefficient tensors.
+// The entire computation graph is tracked for autodiff.
+
+fn remizov_forward_diff(
+    x_grid: tensor<f64[N]>,
+    g_vals: diff tensor<f32[N]>,
+    a_vals: diff tensor<f32[N]>,
+    b_vals: diff tensor<f32[N]>,
+    c_vals: diff tensor<f32[N]>,
+    lambda: f64,
+    n_grid: i32,
+    n_iter: i32,
+    n_quad: i32
+) -> diff tensor<f32[N]> {
+    let (nodes, weights) = gauss_laguerre_nodes_16();
+    let f_solution: diff tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];
+    let n_eff = if n_quad > 16 { 16 } else { n_quad };
+
+    for k in 0..n_eff {
+        let w_k = weights[k];
+        if w_k < 1e-12 { continue; }
+
+        let t_k = nodes[k] / lambda;
+        let dt = t_k / (n_iter as f64);
+
+        let h = g_vals;
+
+        for iter in 0..n_iter {
+            h = apply_shift_operator_diff(x_grid, h, n_grid, a_vals, b_vals, c_vals, dt);
+        }
+
+        let scale = (w_k / lambda) as f32;
+        for i in 0..n_grid {
+            f_solution[i] = f_solution[i] + scale * h[i];
+        }
+    }
+
+    return f_solution;
+}
+
+// ============================================================================
+// Inverse Solver: Recover Coefficients from Data
+// ============================================================================
+
+fn remizov_inverse(
+    x_observed: tensor<f64[N]>,
+    f_observed: tensor<f32[N]>,
+    g_vals: tensor<f32[N]>,
+    lambda: f64,
+    n_grid: i32,
+    n_iter_solver: i32,      // Chernoff iterations (lower for speed during training)
+    n_quad: i32,
+    lr: f32,                  // Learning rate
+    n_steps: i32              // Gradient descent steps
+) -> (tensor<f32[N]>, tensor<f32[N]>, tensor<f32[N]>) {
+    // Initialize learnable coefficients with reasonable defaults
+    // a(x) ≈ 1.0 (must be positive, so we learn log(a) and exponentiate)
+    let log_a: diff tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];    // exp(0) = 1
+    let b_param: diff tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];  // b ≈ 0
+    let c_param: diff tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];  // c ≈ 0
+
+    let g_diff: diff tensor<f32[N]> = g_vals;
+
+    for step in 0..n_steps {
+        // Enforce a(x) > 0 via exp parameterization
+        let a_vals: diff tensor<f32[N]> = exp(log_a);
+
+        // Forward solve with current coefficient estimates
+        let f_predicted = remizov_forward_diff(
+            x_observed, g_diff, a_vals, b_param, c_param,
+            lambda, n_grid, n_iter_solver, n_quad
+        );
+
+        // MSE loss
+        let residual = f_predicted - f_observed;
+        let loss = mean(residual * residual);
+
+        // Compute gradients
+        let grad_log_a = backward(loss, log_a);
+        let grad_b = backward(loss, b_param);
+        let grad_c = backward(loss, c_param);
+
+        // Gradient descent update
+        log_a = log_a - lr * grad_log_a;
+        b_param = b_param - lr * grad_b;
+        c_param = c_param - lr * grad_c;
+
+        if step % 50 == 0 {
+            print("Step", step, "loss =", loss);
+        }
+    }
+
+    // Return recovered coefficients
+    let a_recovered = exp(log_a);
+    return (a_recovered, b_param, c_param);
+}
+
+// ============================================================================
+// Example: Recover Known Coefficients
+// ============================================================================
+//
+// Generate synthetic data from a known ODE, then recover the coefficients.
+// True ODE: f''(x) + 0.5*x*f'(x) + (0.3 - lambda)*f(x) = -exp(-x^2)
+// True coefficients: a(x)=1, b(x)=0.5*x, c(x)=0.3
+
+fn main() {
+    print("MIND Remizov Inverse Solver — Coefficient Recovery");
+    print("==================================================\n");
+
+    let n_grid = 100;
+    let lambda = 2.0;
+    let x_grid = linspace(-3.0, 3.0, n_grid);
+
+    // Generate "observed" data using the forward solver with known coefficients
+    print("Generating synthetic observed data...");
+    let a_true: tensor<f32[N]> = tensor.ones[f32, (n_grid,)];
+    let b_true: tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];
+    let c_true: tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];
+    let g_vals: tensor<f32[N]> = tensor.zeros[f32, (n_grid,)];
+
+    for i in 0..n_grid {
+        let xi = x_grid[i];
+        b_true[i] = 0.5 * (xi as f32);
+        c_true[i] = 0.3;
+        g_vals[i] = exp(-(xi * xi) as f32);
+    }
+
+    // Forward solve to get "observed" f(x)
+    let f_observed = remizov_forward_diff(
+        x_grid, g_vals, a_true, b_true, c_true,
+        lambda, n_grid, 200, 12
+    );
+
+    print("Observed data generated. f(0) =", f_observed[n_grid / 2]);
+
+    // Now try to recover coefficients from scratch
+    print("\nRecovering coefficients via gradient descent...");
+    print("True: a(x)=1.0, b(x)=0.5x, c(x)=0.3\n");
+
+    let (a_rec, b_rec, c_rec) = remizov_inverse(
+        x_grid, f_observed, g_vals,
+        lambda, n_grid,
+        100,    // n_iter_solver (lower for training speed)
+        10,     // n_quad
+        0.01,   // learning rate
+        500     // gradient descent steps
+    );
+
+    // Compare recovered vs true at selected points
+    print("\nRecovered coefficients at selected points:");
+    print("x\t\ta_true\ta_rec\tb_true\tb_rec\tc_true\tc_rec");
+    for i in [10, 25, 50, 75, 90] {
+        print(x_grid[i], "\t",
+              a_true[i], "\t", a_rec[i], "\t",
+              b_true[i], "\t", b_rec[i], "\t",
+              c_true[i], "\t", c_rec[i]);
+    }
+
+    // Compute recovery error
+    let a_err = mean((a_rec - a_true) * (a_rec - a_true));
+    let b_err = mean((b_rec - b_true) * (b_rec - b_true));
+    let c_err = mean((c_rec - c_true) * (c_rec - c_true));
+    print("\nRecovery MSE: a=", a_err, " b=", b_err, " c=", c_err);
+
+    print("\nDone.");
+}
