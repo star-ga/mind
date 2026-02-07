@@ -186,21 +186,24 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 ### Compilation Speed
 
-#### Reference Benchmarks (v0.1.9)
+#### Reference Benchmarks (v0.2.0)
 
 | vs Framework | MIND Speedup |
 |--------------|--------------|
-| PyTorch 2.0 torch.compile (inductor) | **1,000-2,400× faster** |
-| Mojo (mojo build) | **20,000-35,000× faster** |
+| PyTorch 2.0 torch.compile (inductor) | **24,000-530,000× faster** |
+| Mojo (mojo build) | **320,000-513,000× faster** |
 
-| Benchmark | PyTorch (inductor) | Mojo (build) | MIND (in-process) |
-|-----------|-------------------|--------------|-------------------|
-| scalar_math | 43 ms | 908 ms | **26 µs** |
-| small_matmul | 62 ms | 928 ms | **45 µs** |
-| medium_matmul | - | - | **46 µs** |
-| large_matmul | - | - | **45 µs** |
+| Benchmark | PyTorch (inductor) | Mojo (build) | MIND v0.2.0 | Compilations/sec |
+|-----------|-------------------|--------------|-------------|-----------------|
+| scalar_math | 43 ms | 908 ms | **1.77 µs** | **565,000/sec** |
+| small_matmul | 62 ms | 928 ms | **2.88 µs** | **347,000/sec** |
+| medium_matmul | - | - | **2.82 µs** | **355,000/sec** |
+| large_matmul | - | - | **2.84 µs** | **352,000/sec** |
+| tensor_ops | - | - | **4.75 µs** | **210,500/sec** |
+| reductions | - | - | **2.92 µs** | **342,500/sec** |
+| reshape_ops | - | - | **2.80 µs** | **357,000/sec** |
 
-*In-process compilation benchmarks. See [docs/benchmarks/compiler_performance.md](docs/benchmarks/compiler_performance.md) for methodology.*
+*v0.2.0 replaced Chumsky parser combinator with hand-written recursive descent — 15× faster parsing. Criterion benchmarks on same hardware. See [docs/benchmarks/compiler_performance.md](docs/benchmarks/compiler_performance.md) for methodology.*
 
 ### MIC/MAP Format Efficiency
 
