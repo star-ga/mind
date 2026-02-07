@@ -170,34 +170,6 @@ tensor.matmul(a, b)
 
 **Hypothesis:** MIND's Rust-native pipeline with static shape inference should be competitive with or faster than Mojo for programs with known shapes, since MIND doesn't need Python interop overhead.
 
-### vs. Python/NumPy (End-to-End Execution)
-
-Measured on the same machine. NumPy 1.26.4, SciPy 1.11.4, MIND v0.1.9.
-
-#### Startup: Time-to-First-Result
-
-| Framework | Median | Speedup |
-|-----------|--------|---------|
-| **MIND binary** | **1.1 ms** | **105x** |
-| Python + NumPy | 111 ms | 1x |
-
-Both run the same task: start a process, compute a tensor operation, print the result.
-MIND compiles and evaluates in 1.1 ms. Python takes 111 ms to import NumPy alone.
-
-#### Runtime Tensor Compute (v0.1.9)
-
-In-process benchmarks eliminating subprocess overhead. MIND numbers include the **full pipeline**
-(parse + compile + evaluate). NumPy numbers are **compute-only** (pre-imported, no parse/compile).
-
-| Operation | MIND (full pipeline) | NumPy (compute only) | MIND Speedup |
-|-----------|---------------------|---------------------|--------------|
-| add 100K f32 | **220 µs** | 327 µs | **1.5x** |
-| matmul (64,128)×(128,64) | **194 µs** | 308 µs | **1.6x** |
-| matmul (128,256)×(256,128) | **913 µs** | 2,254 µs | **2.5x** |
-
-MIND is faster than NumPy at medium-to-large tensor sizes despite including full parse + compile
-in the measurement. MIND's Rust-native compute avoids Python interpreter overhead.
-
 ---
 
 ## Methodology
