@@ -187,10 +187,8 @@ pub fn exec_matmul(lhs: &TensorVal, rhs: &TensorVal) -> R<TensorVal> {
     let a = get_f32(lhs).ok_or_else(|| ExecError::Unsupported("lhs not materialized".into()))?;
     let b = get_f32(rhs).ok_or_else(|| ExecError::Unsupported("rhs not materialized".into()))?;
 
-    let lshape = shape_usize(&lhs.shape)
-        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
-    let rshape = shape_usize(&rhs.shape)
-        .ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    let lshape = shape_usize(&lhs.shape).ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
+    let rshape = shape_usize(&rhs.shape).ok_or_else(|| ExecError::Shape("dynamic shape".into()))?;
 
     if lshape.len() != 2 || rshape.len() != 2 {
         return Err(ExecError::Shape("matmul requires 2D tensors".into()));
