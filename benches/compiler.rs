@@ -55,8 +55,7 @@ const AUTODIFF_TARGET: &str = r#"
     let squared = diff * diff;
     let loss = tensor.mean(squared);
     let reg = tensor.mean(weights * weights);
-    let scaled_reg = reg * 0.01;
-    loss + scaled_reg
+    loss + reg
 "#;
 
 fn bench_compilation_pipeline(c: &mut Criterion) {
