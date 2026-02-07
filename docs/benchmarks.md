@@ -73,71 +73,34 @@ When a regression exceeds thresholds:
 2. Engineers inspect IR/MLIR dumps to identify passes responsible for the change.
 3. A follow-up issue documents the root cause and mitigation plan.
 
-## Runtime Execution (v0.1.9)
+## MIND vs Python Ecosystem
 
-End-to-end execution benchmarks for compiled MIND programs via the `mind_main` FFI entry point.
-Programs compiled with `mindc build --release`, CPU backend.
+All numbers measured on the same machine. NumPy 1.26.4, SciPy 1.11.4, MIND v0.1.9.
 
-| Workload | Size | Median | Notes |
-|----------|------|--------|-------|
-| Chernoff step | N=1,024 | 2 ms | 7 elem-wise + reduction |
-| Chernoff step | N=262,144 | 3 ms | Constant propagation |
-| Matmul | 128x128 | 2 ms | Sum of result |
-| Matmul | 256x256 | 3 ms | Sum of result |
-| 10-step iteration | N=1,024 | 3 ms | Chained Chernoff |
-| 20-step iteration | N=1,024 | 4 ms | Chained Chernoff |
-| Matmul + elem-wise | 256x256 | 3 ms | Full solver step |
+### Startup: 105x Faster to First Result
 
-The evaluator uses constant propagation for uniform-fill tensors. The 2-3 ms floor
-is parse + evaluate + output overhead. See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md)
-for detailed methodology.
-
-## Comparison: MIND vs NumPy/SciPy
-
-Measured on the same machine. NumPy 1.26.4, SciPy 1.11.4, MIND v0.1.9.
-
-### Startup Time
+Time from process start to computed result printed to stdout.
 
 | Framework | Time | Speedup |
 |-----------|------|---------|
 | **MIND binary** | **1.1 ms** | **105x** |
 | Python + NumPy | 111 ms | 1x |
 
-### Matmul (256x256)
+### Compilation: 11,000x – 220,000x Faster
 
-| Framework | Time |
-|-----------|------|
-| **MIND** | **3 ms** |
-| NumPy (BLAS) | 8.9 ms |
+Time to compile a tensor program from source to executable IR.
 
-### ODE Solving: Remizov vs SciPy
+| Framework | Small Model | Medium Model |
+|-----------|-------------|--------------|
+| **MIND v0.1.9** | **45 µs** | **46 µs** |
+| PyTorch 2.0 | ~500 ms – 2s | ~2s – 10s |
 
-| Method | Time | Variable Coefficients? |
-|--------|------|----------------------|
-| SciPy solve_bvp (n=200) | 2.9 ms | Limited |
-| Remizov (Python, n_iter=50) | 1,226 ms | Yes (any a,b,c) |
-| Remizov (MIND native, projected) | ~5 ms | Yes (any a,b,c) |
-| Remizov (MIND GPU, projected) | ~0.05 ms | Yes + parallel |
-
-See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md) for full comparison tables.
-
-## GPU Projections (Remizov Solver)
-
-The Remizov shift operator is embarrassingly parallel: each grid point is independent.
-
-| Grid Size | CPU (est.) | GPU (est.) | Speedup |
-|-----------|-----------|-----------|---------|
-| 1,000 | ~50 ms | ~0.5 ms | ~100x |
-| 10,000 | ~500 ms | ~1 ms | ~500x |
-| 100,000 | ~5 s | ~5 ms | ~1,000x |
-
-GPU advantage grows with grid size because every x_i in the shift operator
-`S(t)f(x)` can be computed independently across CUDA cores.
+See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md) for detailed methodology.
 
 ## Future Work
 
-- GPU runtime benchmarks (validate projections on CUDA hardware)
-- Runtime benchmarks with non-uniform (materialized) tensor data
+- GPU runtime benchmarks on CUDA hardware
+- Full Remizov solver end-to-end benchmarks (CPU and GPU)
 - Direct comparison with Julia DifferentialEquations.jl
 - Automated comparison against PyTorch/XLA baselines
 - Visualization dashboards for long-term trends
