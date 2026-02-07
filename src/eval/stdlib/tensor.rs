@@ -158,12 +158,6 @@ fn tensor_sum(
     }
     let value = eval_value_expr_mode(&args[0], env, tensor_env, mode.clone())?;
     if let Value::Tensor(t) = value {
-        #[cfg(feature = "cpu-exec")]
-        if t.buf.is_some() {
-            if let Ok(result) = crate::exec::cpu::exec_sum_all(&t) {
-                return Ok(Value::Tensor(result));
-            }
-        }
         let result = sum_tensor_preview(&t, &[], false)?;
         #[cfg(feature = "cpu-buffers")]
         {
