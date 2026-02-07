@@ -1072,10 +1072,7 @@ pub(crate) fn normalize_axis_usize(axis: i32, rank: usize) -> Option<usize> {
 
 /// Compute squeeze axes as usize, returning None on error.
 #[cfg(feature = "cpu-exec")]
-pub(crate) fn normalize_squeeze_axes_usize(
-    shape: &[ShapeDim],
-    axes: &[i32],
-) -> Option<Vec<usize>> {
+pub(crate) fn normalize_squeeze_axes_usize(shape: &[ShapeDim], axes: &[i32]) -> Option<Vec<usize>> {
     compute_squeeze_axes(shape, axes).ok()
 }
 
