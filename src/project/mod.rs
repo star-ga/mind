@@ -457,9 +457,10 @@ int main(int argc, char** argv) {{
 
     if (!lib) {{
         fprintf(stderr, "Error: MIND runtime not found\\n");
-        fprintf(stderr, "Install: curl -fsSL https://mindlang.dev/install.sh | bash\\n");
+        fprintf(stderr, "The runtime library is required for compiled binaries.\\n");
+        fprintf(stderr, "See https://mindlang.dev/enterprise for licensing.\\n");
         if (home) {{
-            fprintf(stderr, "Or place libmind_cpu_linux-x64.so in %s/.mind/lib/\\n", home);
+            fprintf(stderr, "Expected: %s/.mind/lib/libmind_cpu_linux-x64.so\\n", home);
         }}
         return 1;
     }}
@@ -861,7 +862,7 @@ fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
     }
 
     Err(anyhow!(
-        "MIND runtime not found for backend '{}'. Run the install script first.",
+        "MIND runtime not found for backend '{}'. See https://mindlang.dev/enterprise for licensing.",
         backend
     ))
 }
