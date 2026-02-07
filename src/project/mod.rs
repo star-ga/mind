@@ -415,9 +415,7 @@ fn compile_embedded_source(
 /* Auto-generated MIND entry point wrapper */
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <dlfcn.h>
-#include <unistd.h>
 
 static const char MIND_SOURCE_{module}[] = "{source}";
 static const char MIND_BACKEND[] = "{backend}";
@@ -428,46 +426,20 @@ extern const char* mind_get_module_source(const char* name);
 
 typedef int (*mind_main_fn)(int argc, char** argv, const char* source, const char* backend);
 
-static void* try_load(const char* path) {{
-    return dlopen(path, RTLD_NOW);
-}}
-
 int main(int argc, char** argv) {{
-    void* lib = NULL;
-    const char* home = getenv("HOME");
-    char path[4096];
-
-    /* 1. Search ~/.mind/lib/ (standard user install) */
-    if (home) {{
-        snprintf(path, sizeof(path), "%s/.mind/lib/libmind_{backend}_linux-x64.so", home);
-        lib = try_load(path);
-        if (!lib) {{
-            snprintf(path, sizeof(path), "%s/.mind/lib/libmind_cpu_linux-x64.so", home);
-            lib = try_load(path);
-        }}
-    }}
-
-    /* 2. Search LD_LIBRARY_PATH / system paths */
+    void* lib = dlopen("libmind_{backend}_linux-x64.so", RTLD_NOW);
     if (!lib) {{
-        lib = try_load("libmind_{backend}_linux-x64.so");
+        lib = dlopen("libmind_cpu_linux-x64.so", RTLD_NOW);
     }}
-    if (!lib) {{
-        lib = try_load("libmind_cpu_linux-x64.so");
-    }}
-
     if (!lib) {{
         fprintf(stderr, "Error: MIND runtime not found\\n");
-        fprintf(stderr, "The runtime library is required for compiled binaries.\\n");
         fprintf(stderr, "See https://mindlang.dev/enterprise for licensing.\\n");
-        if (home) {{
-            fprintf(stderr, "Expected: %s/.mind/lib/libmind_cpu_linux-x64.so\\n", home);
-        }}
         return 1;
     }}
 
     mind_main_fn mind_main_ptr = (mind_main_fn)dlsym(lib, "mind_main");
     if (!mind_main_ptr) {{
-        fprintf(stderr, "Error: mind_main not found in runtime (upgrade runtime?)\\n");
+        fprintf(stderr, "Error: mind_main not found in runtime\\n");
         dlclose(lib);
         return 1;
     }}

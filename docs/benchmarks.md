@@ -73,39 +73,9 @@ When a regression exceeds thresholds:
 2. Engineers inspect IR/MLIR dumps to identify passes responsible for the change.
 3. A follow-up issue documents the root cause and mitigation plan.
 
-## Runtime Tensor Compute (Criterion, in-process)
-
-All numbers measured with Criterion.rs 0.5.1 (in-process, 100 samples).
-MIND measurements include the full parse + compile + compute pipeline.
-
-| Operation | MIND Time | Notes |
-|-----------|----------|-------|
-| Parse + eval overhead (baseline) | 33 µs | Empty program parse + eval |
-| add 4 elements (materialized) | 33 µs | Dominated by parse overhead |
-| add 10K elements | 54 µs | ~21 µs actual compute |
-| add 100K elements | 220 µs | ~187 µs actual compute |
-| sum 10K elements | 65 µs | add + reduce |
-| mean 10K elements | 67 µs | add + reduce + divide |
-| relu 10K elements | 62 µs | subtract + clamp |
-| matmul (10,20)×(20,30) | 45 µs | 6K multiply-accumulate |
-| matmul (32,64)×(64,32) | 70 µs | 65K multiply-accumulate |
-| matmul (64,128)×(128,64) | 194 µs | 1M multiply-accumulate |
-| matmul (128,256)×(256,128) | 913 µs | 8.4M multiply-accumulate |
-
-See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md) for detailed compilation methodology.
-
-## Methodology
-
-All benchmarks use:
-- **Criterion.rs 0.5.1** for MIND (in-process, eliminates subprocess overhead)
-- 100 samples minimum, median reported
-- MIND measurements include full parse + compile + compute pipeline
-
 ## Future Work
 
-- GPU runtime benchmarks on CUDA hardware
-- BLAS-accelerated matmul backend
-- Full Remizov solver end-to-end benchmarks (CPU and GPU)
+- GPU benchmark coverage for the runtime plugin API
 - Automated comparison against PyTorch/XLA baselines
 - Visualization dashboards for long-term trends
 
