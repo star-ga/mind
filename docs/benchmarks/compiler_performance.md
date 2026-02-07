@@ -170,79 +170,19 @@ tensor.matmul(a, b)
 
 **Hypothesis:** MIND's Rust-native pipeline with static shape inference should be competitive with or faster than Mojo for programs with known shapes, since MIND doesn't need Python interop overhead.
 
-### vs. NumPy/SciPy (Runtime Execution)
+### vs. Python/NumPy (End-to-End Execution)
 
-Measured on the same machine, same workloads. NumPy 1.26.4, SciPy 1.11.4.
+Measured on the same machine. NumPy 1.26.4, SciPy 1.11.4, MIND v0.1.9.
 
-#### Startup Time (Time-to-First-Result)
+#### Startup: Time-to-First-Result
 
-| Framework | Median | Description |
-|-----------|--------|-------------|
-| **MIND binary** | **1.1 ms** | Compile + evaluate + print |
-| Python + NumPy | 111 ms | Import + compute + print |
+| Framework | Median | Speedup |
+|-----------|--------|---------|
+| **MIND binary** | **1.1 ms** | **105x** |
+| Python + NumPy | 111 ms | 1x |
 
-**MIND is 105x faster** to produce a first result from cold start.
-
-#### Element-wise Operations (Chernoff Step)
-
-| Size | MIND (ms) | NumPy (ms) | Notes |
-|------|-----------|------------|-------|
-| N=256 | 2 | 0.007 | MIND includes parse overhead |
-| N=1,024 | 2 | 0.011 | |
-| N=16,384 | 3 | 0.071 | |
-| N=262,144 | 3 | 3.587 | Comparable at large N |
-
-**Note:** MIND's evaluator uses constant propagation for uniform-fill tensors,
-computing results symbolically. NumPy materializes full buffers and runs BLAS.
-At N=262K, MIND's constant overhead and NumPy's O(N) compute converge.
-
-#### Matrix Multiply
-
-| Size | MIND (ms) | NumPy (ms) | Notes |
-|------|-----------|------------|-------|
-| 16x16 | 2 | 0.007 | |
-| 64x64 | 2 | 0.154 | |
-| 128x128 | 2 | 1.118 | |
-| 256x256 | 3 | 8.915 | MIND 3x faster at 256x256 |
-
-NumPy uses OpenBLAS/MKL under the hood. MIND's constant-propagation evaluator
-avoids materializing matrices entirely for uniform data.
-
-#### ODE Solving (Remizov vs SciPy)
-
-| Method | Configuration | Median (ms) | Notes |
-|--------|--------------|-------------|-------|
-| SciPy solve_bvp | n=200 | 2.9 | Specialized FD method |
-| SciPy solve_bvp | n=500 | 2.2 | |
-| Remizov (NumPy) | n_iter=10, grid=100 | 246 | Python loop bottleneck |
-| Remizov (NumPy) | n_iter=50, grid=100 | 1,226 | |
-
-**Key insight:** The Remizov algorithm in Python is bottlenecked by Python
-for-loop overhead (246ms-1.2s). In compiled MIND with native tensor ops,
-this drops to the tensor-compute floor. SciPy's solve_bvp is fast (2-5ms)
-but uses a specialized finite-difference solver that doesn't generalize
-to arbitrary variable coefficients — Remizov handles any a(x), b(x), c(x).
-
-### GPU Projections for Remizov
-
-The Remizov shift operator is **embarrassingly parallel**: each grid point x_i
-is fully independent. This maps directly to MIND's `on(gpu0) { parallel for }`.
-
-| Grid Size | CPU (projected) | GPU (projected) | Speedup |
-|-----------|----------------|-----------------|---------|
-| 1,000 | ~50 ms | ~0.5 ms | ~100x |
-| 10,000 | ~500 ms | ~1 ms | ~500x |
-| 100,000 | ~5 s | ~5 ms | ~1,000x |
-
-Projections based on: n_iter=200, n_quad=16, GPU = modern CUDA card with
-~10K cores. Each grid point requires O(n_iter) shift operations with
-interpolation — all independent across x_i.
-
-**Why Remizov on GPU outperforms scipy:**
-1. No matrix assembly (scipy builds NxN sparse matrix)
-2. No linear solve (scipy uses LU factorization, O(N) for tridiagonal)
-3. All grid points computed in parallel (scipy is sequential)
-4. Scales to 2D/3D PDEs (Remark 8 in Remizov 2025)
+Both run the same task: start a process, compute a tensor operation, print the result.
+MIND compiles and evaluates in 1.1 ms. Python takes 111 ms to import NumPy alone.
 
 ---
 
@@ -297,92 +237,23 @@ interpolation — all independent across x_i.
 
 ---
 
-## Runtime Execution Benchmarks (v0.1.9)
-
-The following benchmarks measure **end-to-end execution time** of compiled MIND programs:
-source parsing + evaluation + output. Programs are compiled with `mindc build --release`
-and executed via the `mind_main` FFI entry point with `libmind_cpu` runtime.
-
-**System:** Linux x86-64, CPU backend, release mode
-
-### Element-wise Operations (Chernoff Step)
-
-Core operation of the Remizov ODE solver: `f*a + g*b + f*c*dt` followed by reduction.
-
-| Grid Size (N) | Median Time | Operations | Result |
-|---------------|-------------|------------|--------|
-| 256 | **2 ms** | 7 elem-wise + 1 reduction | 2,304 |
-| 1,024 | **2 ms** | 7 elem-wise + 1 reduction | 9,216 |
-| 4,096 | **2 ms** | 7 elem-wise + 1 reduction | 36,864 |
-| 16,384 | **3 ms** | 7 elem-wise + 1 reduction | 147,456 |
-| 65,536 | **3 ms** | 7 elem-wise + 1 reduction | 589,824 |
-| 262,144 | **3 ms** | 7 elem-wise + 1 reduction | 2,359,296 |
-
-### Matrix Multiply
-
-| Matrix Size | Median Time | Result (sum) |
-|-------------|-------------|--------------|
-| 16 x 16 | **2 ms** | 4,096 |
-| 32 x 32 | **2 ms** | 32,768 |
-| 64 x 64 | **2 ms** | 262,144 |
-| 128 x 128 | **2 ms** | 2,097,152 |
-| 256 x 256 | **3 ms** | 16,777,216 |
-
-### Chernoff Iteration Chains (N=1024)
-
-Simulates the core iterative structure of the Remizov solver.
-
-| Iterations | Median Time | Overhead per Step |
-|-----------|-------------|-------------------|
-| 1 | **2 ms** | — |
-| 3 | **2 ms** | ~0 ms |
-| 5 | **2 ms** | ~0 ms |
-| 10 | **3 ms** | ~0.1 ms |
-| 20 | **4 ms** | ~0.1 ms |
-
-### Combined Operations (Matmul + Element-wise)
-
-| Matrix Size | Median Time | Description |
-|-------------|-------------|-------------|
-| 32 x 32 | **2 ms** | matmul + add + mul + sum |
-| 64 x 64 | **3 ms** | matmul + add + mul + sum |
-| 128 x 128 | **2 ms** | matmul + add + mul + sum |
-| 256 x 256 | **3 ms** | matmul + add + mul + sum |
-
-### Interpretation Notes
-
-- The evaluator applies **constant propagation** for uniform-fill tensors, computing results
-  symbolically without materializing full buffers. This is a compiler optimization, not a
-  benchmark artifact.
-- The 2-3 ms floor represents parse + evaluate + output overhead, which is constant regardless
-  of tensor size for propagated constants.
-- Non-uniform data (from files or random initialization) would exercise the full buffer
-  materialization path, adding compute proportional to tensor size.
-- These numbers demonstrate that the compilation + evaluation pipeline adds negligible overhead
-  to the mathematical computation itself.
-
----
-
 ## Next Steps
 
 ### Immediate (Phase 1)
-- [x] Runtime execution benchmarks (via `mind_main` FFI entry point)
 - [ ] Add CPU information to benchmark metadata
+- [ ] Runtime tensor compute benchmarks with BLAS backend
 - [ ] Benchmark MLIR lowering phase (with `--features mlir-lowering`)
-- [ ] Measure multi-layer networks (3-5 layer MLPs)
 - [ ] Benchmark gradient generation (with `--features autodiff`)
 
 ### Near-Term (Phase 2)
+- [ ] Full Remizov solver end-to-end benchmarks (CPU and GPU)
 - [ ] Compare against PyTorch 2.0 on same hardware
 - [ ] Benchmark Mojo equivalents (if SDK available)
 - [ ] Measure memory footprint (compiler + IR size)
-- [ ] Add regression tracking to CI
-- [ ] Runtime benchmarks with non-uniform data (materialized buffers)
 
 ### Long-Term (Phase 3)
 - [ ] End-to-end model compilation (ResNet-50, GPT-2)
 - [ ] GPU runtime execution benchmarks
-- [ ] GPU compilation pipeline
 - [ ] Comparison vs TensorFlow Lite, ONNX Runtime
 
 ---
