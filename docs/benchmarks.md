@@ -73,49 +73,10 @@ When a regression exceeds thresholds:
 2. Engineers inspect IR/MLIR dumps to identify passes responsible for the change.
 3. A follow-up issue documents the root cause and mitigation plan.
 
-## MIND vs Python Ecosystem
+## Runtime Tensor Compute (Criterion, in-process)
 
-All numbers measured on the same machine. NumPy 1.26.4, MIND v0.1.9.
-Criterion.rs 0.5.1 for MIND (in-process, 100 samples). Python `time.perf_counter_ns` for NumPy (in-process, 100 runs).
-
-### Startup: 105x Faster to First Result
-
-Time from process start to computed result printed to stdout.
-
-| Framework | Time | Speedup |
-|-----------|------|---------|
-| **MIND binary** | **1.1 ms** | **105x** |
-| Python + NumPy | 111 ms | 1x |
-
-### Compilation: 11,000x – 220,000x Faster
-
-Time to compile a tensor program from source to executable IR.
-
-| Framework | Small Model | Medium Model |
-|-----------|-------------|--------------|
-| **MIND v0.1.9** | **45 µs** | **46 µs** |
-| PyTorch 2.0 | ~500 ms – 2s | ~2s – 10s |
-
-### Runtime Tensor Compute
-
-MIND numbers include the **full pipeline** (parse + compile + compute).
-NumPy numbers are **compute-only** (pre-imported, no parse or compile overhead).
-Despite this disadvantage, MIND is faster at medium-to-large tensor sizes.
-
-#### Element-wise Operations
-
-| Operation | MIND (full pipeline) | NumPy (compute only) | MIND Speedup |
-|-----------|---------------------|---------------------|--------------|
-| add 100K f32 | **220 µs** | 327 µs | **1.5x** |
-
-#### Matrix Multiplication
-
-| Dimensions | MIND (full pipeline) | NumPy (compute only) | MIND Speedup |
-|------------|---------------------|---------------------|--------------|
-| (64,128) × (128,64) | **194 µs** | 308 µs | **1.6x** |
-| (128,256) × (256,128) | **913 µs** | 2,254 µs | **2.5x** |
-
-#### Full Pipeline Breakdown (Criterion, in-process)
+All numbers measured with Criterion.rs 0.5.1 (in-process, 100 samples).
+MIND measurements include the full parse + compile + compute pipeline.
 
 | Operation | MIND Time | Notes |
 |-----------|----------|-------|
@@ -137,10 +98,8 @@ See [`benchmarks/compiler_performance.md`](benchmarks/compiler_performance.md) f
 
 All benchmarks use:
 - **Criterion.rs 0.5.1** for MIND (in-process, eliminates subprocess overhead)
-- **time.perf_counter_ns** for NumPy (in-process, after import)
 - 100 samples minimum, median reported
-- Same machine for all comparisons
-- MIND measurements include full parse → compile → compute pipeline
+- MIND measurements include full parse + compile + compute pipeline
 
 ## Future Work
 
