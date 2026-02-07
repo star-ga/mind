@@ -217,6 +217,7 @@ tensor.matmul(a, b)
 - No GC pauses or runtime variability
 
 ### 4. **What This Doesn't Prove (Yet)**
+- ❌ Execution speed (need runtime benchmarks)
 - ❌ Memory footprint comparisons
 - ❌ Full model inference (ResNet, Transformer)
 - ❌ Direct Mojo comparison (need Mojo benchmarks)
@@ -227,19 +228,20 @@ tensor.matmul(a, b)
 
 ### Immediate (Phase 1)
 - [ ] Add CPU information to benchmark metadata
-- [ ] Runtime tensor compute benchmarks with BLAS backend
 - [ ] Benchmark MLIR lowering phase (with `--features mlir-lowering`)
+- [ ] Measure multi-layer networks (3-5 layer MLPs)
 - [ ] Benchmark gradient generation (with `--features autodiff`)
 
 ### Near-Term (Phase 2)
-- [ ] Full Remizov solver end-to-end benchmarks (CPU and GPU)
 - [ ] Compare against PyTorch 2.0 on same hardware
 - [ ] Benchmark Mojo equivalents (if SDK available)
 - [ ] Measure memory footprint (compiler + IR size)
+- [ ] Add regression tracking to CI
 
 ### Long-Term (Phase 3)
 - [ ] End-to-end model compilation (ResNet-50, GPT-2)
-- [ ] GPU runtime execution benchmarks
+- [ ] Runtime execution benchmarks (requires `mind-runtime`)
+- [ ] GPU compilation pipeline
 - [ ] Comparison vs TensorFlow Lite, ONNX Runtime
 
 ---
