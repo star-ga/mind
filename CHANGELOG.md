@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-02-17
+
+### Added
+- IR verifier audit coverage: 14 new tests for conv2d stride validation,
+  reduction axis checks, FnDef body scoping, and duplicate definition detection
+- Determinism proof results for v0.2.0-hardened (4/4 DETERMINISTIC)
+- Criterion benchmark results for hardened pipeline (338K compilations/sec)
+
+### Fixed
+- **C1**: Conv2d IR verifier now rejects zero strides and negative axes
+- **C6**: FnDef body verifier enforces SSA scope (use-before-def in body blocks)
+- **C2**: String interning DoS protection (MAX_INTERNED_STRINGS = 100,000)
+- **C3**: IR printer determinism via sorted function iteration
+- **C4**: Constant folding bounds checking for division-by-zero and overflow
+- **C5**: Type checker array bounds validation
+- **C7**: Hardened eval NaN/Inf propagation
+- **A1**: Cargo Deny supply-chain audit configuration
+
+### Security
+- String interning rate limiting prevents memory exhaustion attacks
+- Constant folding rejects division by zero and integer overflow at compile time
+
 ## [0.2.0] - 2026-02-07
 
 ### Added
@@ -128,7 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: https://github.com/star-ga/mind/tree/main/docs
 - Issues: https://github.com/star-ga/mind/issues
 
-[Unreleased]: https://github.com/star-ga/mind/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/star-ga/mind/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/star-ga/mind/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/star-ga/mind/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
 [0.1.8]: https://github.com/star-ga/mind/releases/tag/v0.1.8
