@@ -1,0 +1,61 @@
+{
+  "system_info": {
+    "platform": "Linux-6.17.0-14-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3",
+    "pytorch_version": "2.10.0+cu128",
+    "cpu": "x86_64",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "gpu": "NVIDIA GeForce RTX 3080"
+  },
+  "benchmarks": {
+    "large_matmul_4096": {
+      "pytorch": {
+        "latency_mean_us": 135.3842081152834,
+        "latency_stdev_us": 42.942990440874205,
+        "latency_min_us": 120.7859895657748,
+        "latency_max_us": 364.03900594450533,
+        "throughput_samples_per_sec": 7386.385856380475,
+        "batch_size": 1
+      },
+      "mind": {
+        "latency_mean_us": 80000.0,
+        "throughput_samples_per_sec": 12.5
+      },
+      "latency_speedup": 0.0016923026014410425,
+      "throughput_advantage": 0.0016923026014410425
+    },
+    "mlp_batch32": {
+      "pytorch": {
+        "latency_mean_us": 182.9913823166862,
+        "latency_stdev_us": 42.8112071096602,
+        "latency_min_us": 161.73897893168032,
+        "latency_max_us": 362.97200131230056,
+        "throughput_samples_per_sec": 174871.62288670277,
+        "batch_size": 32
+      },
+      "mind": {
+        "latency_mean_us": 1200.0,
+        "throughput_samples_per_sec": 26666.666666666668
+      },
+      "latency_speedup": 0.1524928185972385,
+      "throughput_advantage": 0.1524928185972385
+    },
+    "conv2d_inference": {
+      "pytorch": {
+        "latency_mean_us": 333.60577013809234,
+        "latency_stdev_us": 54.44390556596796,
+        "latency_min_us": 291.6759985964745,
+        "latency_max_us": 508.2639981992543,
+        "throughput_samples_per_sec": 23980.40056887652,
+        "batch_size": 8
+      },
+      "mind": {
+        "latency_mean_us": 5000.0,
+        "throughput_samples_per_sec": 1600.0
+      },
+      "latency_speedup": 0.06672115402761847,
+      "throughput_advantage": 0.06672115402761847
+    }
+  }
+}

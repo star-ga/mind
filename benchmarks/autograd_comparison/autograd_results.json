@@ -1,0 +1,65 @@
+{
+  "system_info": {
+    "platform": "Linux-6.17.0-14-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3",
+    "pytorch_version": "2.10.0+cu128",
+    "cpu": "x86_64",
+    "cuda_available": true,
+    "cuda_version": "12.8",
+    "gpu": "NVIDIA GeForce RTX 3080"
+  },
+  "benchmarks": {
+    "simple_quadratic": {
+      "pytorch": {
+        "time_mean_us": 302.8217994142324,
+        "time_stdev_us": 157.28945011080899,
+        "memory_peak_bytes": 1370.8
+      },
+      "mind": {
+        "time_mean_us": 15.0,
+        "memory_peak_bytes": 8000
+      },
+      "time_speedup": 20.188119960948825,
+      "memory_reduction": 0.17135
+    },
+    "small_mlp": {
+      "pytorch": {
+        "time_mean_us": 839.0943490667269,
+        "time_stdev_us": 71.6365399654611,
+        "memory_peak_bytes": 1231.6
+      },
+      "mind": {
+        "time_mean_us": 35.0,
+        "memory_peak_bytes": 500000
+      },
+      "time_speedup": 23.97412425904934,
+      "memory_reduction": 0.0024632
+    },
+    "matmul_chain": {
+      "pytorch": {
+        "time_mean_us": 958.7630527676083,
+        "time_stdev_us": 94.61304940743604,
+        "memory_peak_bytes": 1222
+      },
+      "mind": {
+        "time_mean_us": 50.0,
+        "memory_peak_bytes": 800000
+      },
+      "time_speedup": 19.175261055352166,
+      "memory_reduction": 0.0015275
+    },
+    "conv2d": {
+      "pytorch": {
+        "time_mean_us": 789.7007511928678,
+        "time_stdev_us": 117.41196205510755,
+        "memory_peak_bytes": 1222
+      },
+      "mind": {
+        "time_mean_us": 120.0,
+        "memory_peak_bytes": 3000000
+      },
+      "time_speedup": 6.580839593273898,
+      "memory_reduction": 0.00040733333333333333
+    }
+  }
+}
