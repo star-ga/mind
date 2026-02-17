@@ -193,17 +193,17 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 | PyTorch 2.0 torch.compile (inductor) | **24,000-530,000× faster** |
 | Mojo (mojo build) | **320,000-513,000× faster** |
 
-| Benchmark | PyTorch (inductor) | Mojo (build) | MIND v0.2.0 | Compilations/sec |
-|-----------|-------------------|--------------|-------------|-----------------|
-| scalar_math | 43 ms | 908 ms | **1.77 µs** | **565,000/sec** |
-| small_matmul | 62 ms | 928 ms | **2.88 µs** | **347,000/sec** |
-| medium_matmul | - | - | **2.82 µs** | **355,000/sec** |
-| large_matmul | - | - | **2.84 µs** | **352,000/sec** |
-| tensor_ops | - | - | **4.75 µs** | **210,500/sec** |
-| reductions | - | - | **2.92 µs** | **342,500/sec** |
-| reshape_ops | - | - | **2.80 µs** | **357,000/sec** |
+| Benchmark | PyTorch (inductor) | Mojo (build) | MIND v0.2.0 (Feb 7) | v0.2.0-hardened (Feb 17) | Delta |
+|-----------|-------------------|--------------|---------------------|--------------------------|-------|
+| scalar_math | 43 ms | 908 ms | **1.77 µs** (565K cps) | **1.80 µs** (556K cps) | +1.7% |
+| small_matmul | 62 ms | 928 ms | **2.88 µs** (347K cps) | **2.86 µs** (350K cps) | -0.7% |
+| medium_matmul | - | - | **2.82 µs** (355K cps) | **3.26 µs** (307K cps) | +15.6% |
+| large_matmul | - | - | **2.84 µs** (352K cps) | **2.96 µs** (338K cps) | +4.2% |
+| tensor_ops | - | - | **4.75 µs** (211K cps) | **5.05 µs** (198K cps) | +6.3% |
+| reductions | - | - | **2.92 µs** (342K cps) | **3.21 µs** (312K cps) | +9.9% |
+| reshape_ops | - | - | **2.80 µs** (357K cps) | **2.80 µs** (357K cps) | 0% |
 
-*v0.2.0 replaced Chumsky parser combinator with hand-written recursive descent — 15× faster parsing. Criterion benchmarks on same hardware. See [docs/benchmarks/compiler_performance.md](docs/benchmarks/compiler_performance.md) for methodology.*
+*Geometric-mean: 2.865 µs → 3.013 µs (+5.16% time, -4.91% throughput). Regressions from intern_str dedup replacing Box::leak for memory safety. See [docs/benchmarks/compiler_performance.md](docs/benchmarks/compiler_performance.md) for methodology.*
 
 ### MIC/MAP Format Efficiency
 
