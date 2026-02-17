@@ -186,24 +186,30 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 ### Compilation Speed
 
-#### Reference Benchmarks (v0.2.0)
+#### Verified Benchmarks (v0.2.1, February 2026)
 
-| vs Framework | MIND Speedup |
-|--------------|--------------|
-| PyTorch 2.0 torch.compile (inductor) | **24,000-530,000× faster** |
-| Mojo (mojo build) | **320,000-513,000× faster** |
+| vs Framework | Compilation Time | MIND Ratio |
+|--------------|-----------------|------------|
+| **MIND v0.2.1** | **1.8-15.5 µs** | **1× (baseline)** |
+| PyTorch 2.10 GPU torch.compile | 99-878 ms | **35,000-176,000× faster** |
+| JAX 0.9 cold-start XLA (jax.jit) | 37.5-360.5 ms | **21,200-95,100× faster** |
+| Mojo 0.26.1 (mojo build) | 810-829 ms | **135,000-458,000× faster** |
 
-| Benchmark | PyTorch (inductor) | Mojo (build) | MIND v0.2.0 (Feb 7) | v0.2.0-hardened (Feb 17) | Delta |
-|-----------|-------------------|--------------|---------------------|--------------------------|-------|
-| scalar_math | 43 ms | 908 ms | **1.77 µs** (565K cps) | **1.80 µs** (556K cps) | +1.7% |
-| small_matmul | 62 ms | 928 ms | **2.88 µs** (347K cps) | **2.86 µs** (350K cps) | -0.7% |
-| medium_matmul | - | - | **2.82 µs** (355K cps) | **3.26 µs** (307K cps) | +15.6% |
-| large_matmul | - | - | **2.84 µs** (352K cps) | **2.96 µs** (338K cps) | +4.2% |
-| tensor_ops | - | - | **4.75 µs** (211K cps) | **5.05 µs** (198K cps) | +6.3% |
-| reductions | - | - | **2.92 µs** (342K cps) | **3.21 µs** (312K cps) | +9.9% |
-| reshape_ops | - | - | **2.80 µs** (357K cps) | **2.80 µs** (357K cps) | 0% |
+**Scope note:** MIND measures **frontend only** (parse + typecheck + IR). Other frameworks measure full compilation pipelines (code generation, optimization, linking). Ratios reflect this scope difference.
 
-*Geometric-mean: 2.865 µs → 3.013 µs (+5.16% time, -4.91% throughput). Regressions from intern_str dedup replacing Box::leak for memory safety. See [docs/benchmarks/compiler_performance.md](docs/benchmarks/compiler_performance.md) for methodology.*
+| Benchmark | MIND v0.2.1 | Compilations/sec |
+|-----------|-------------|------------------|
+| scalar_math | **1.77 µs** | 565K cps |
+| small_matmul | **2.95 µs** | 339K cps |
+| medium_matmul | **2.95 µs** | 339K cps |
+| large_matmul | **2.95 µs** | 339K cps |
+| tensor_ops | **4.87 µs** | 205K cps |
+| reductions | **3.17 µs** | 315K cps |
+| reshape_ops | **2.83 µs** | 353K cps |
+| medium_mlp | **6.15 µs** | 163K cps |
+| large_network | **15.49 µs** | 65K cps |
+
+*Measured via Rust Criterion (100 samples, 95% CI). Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8. See [benchmarks/FINAL_PATENT_RESULTS.md](benchmarks/FINAL_PATENT_RESULTS.md) for full methodology.*
 
 ### MIC/MAP Format Efficiency
 

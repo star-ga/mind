@@ -194,37 +194,47 @@ tensor.matmul(a, b)
 
 ## Competitive Positioning
 
-### vs. PyTorch 2.0 (AOT Compilation)
+### vs. PyTorch 2.10 GPU (torch.compile)
 
 | Framework | Scalar Compile | MatMul Compile | MLP Compile | Notes |
 |-----------|---------------|----------------|-------------|-------|
-| **MIND v0.2.0-hardened** | **1.80 µs** | **2.96 µs** | **5.98 µs** | Full pipeline: parse → IR → verify |
-| PyTorch 2.0 | ~500 ms - 2s | ~2s - 10s | ~5s - 30s | `torch.compile()` first call |
-| TorchScript | ~100 ms - 1s | ~1s - 5s | ~2s - 10s | `torch.jit.script()` |
+| **MIND v0.2.1** | **1.77 µs** | **2.95 µs** | **6.15 µs** | Frontend: parse → typecheck → IR |
+| PyTorch 2.10 GPU | 99 ms | 105-162 ms | 752 ms | `torch.compile()` cold-start (caches cleared) |
 
-**Speed advantage: MIND is ~280,000x - 530,000x faster** than PyTorch 2.0 AOT compilation for typical programs.
+**Speed advantage: MIND frontend is 35,000-176,000× faster** than PyTorch 2.10 GPU torch.compile() full pipeline.
 
-**Caveat:** This compares MIND's open-core compiler (source → IR) against PyTorch's full compilation stack (Python → TorchScript → optimizations → backend). PyTorch includes graph optimization passes that MIND's open-core doesn't expose. However, the order-of-magnitude difference demonstrates MIND's architectural advantage for deterministic, typed tensor programs.
+**Scope note:** MIND measures frontend only (parse + typecheck + IR lowering). PyTorch measures the full compilation pipeline (FX capture + Inductor + Triton/cuBLAS codegen). Different amounts of work — the comparison demonstrates architectural advantage for the frontend stage.
 
-### vs. Mojo
+### vs. Mojo 0.26.1
 
-| Framework | Compilation Model | Scalar | MatMul |
-|-----------|------------------|--------|--------|
-| **MIND v0.2.0-hardened** | **AOT (Rust, hand-written parser)** | **1.80 µs** | **2.96 µs** |
-| Mojo 0.25 | JIT + AOT (LLVM) | ~908 ms | ~928 ms |
+| Framework | Compilation Model | Scalar | MatMul | MLP |
+|-----------|------------------|--------|--------|-----|
+| **MIND v0.2.1** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.95 µs** | **6.15 µs** |
+| Mojo 0.26.1 | JIT + AOT (LLVM) | 810 ms | 827 ms | 829 ms |
 
-**Speed advantage: MIND is ~320,000-513,000× faster** than Mojo build compilation.
+**Speed advantage: MIND frontend is 135,000-458,000× faster** than Mojo 0.26.1 full build compilation.
 
-MIND's Rust-native pipeline with static shape inference and zero-allocation parsing eliminates all overhead from parser combinators, Python interop, and LLVM frontend passes.
+### vs. JAX 0.9 (Cold-Start XLA)
+
+| Framework | Compilation Model | Scalar | MatMul | MLP |
+|-----------|------------------|--------|--------|-----|
+| **MIND v0.2.1** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.95 µs** | **6.15 µs** |
+| JAX 0.9 | JIT (XLA/LLVM) | 37.5 ms | 127.2-280.6 ms | 360.5 ms |
+
+**Speed advantage: MIND frontend is 21,200-95,100× faster** than JAX 0.9 cold-start XLA compilation (cache disabled).
+
+**Scope note:** MIND measures frontend only. Mojo/JAX measure full compilation pipelines. MIND's Rust-native pipeline with static shape inference and zero-allocation parsing eliminates all overhead from parser combinators, Python interop, and LLVM frontend passes.
 
 ---
 
 ## Methodology
 
 ### Hardware
-- **OS**: Linux 4.4.0
-- **Architecture**: x86_64 (assumed)
-- **CPU**: (not logged - recommend adding to future benchmarks)
+- **OS**: Ubuntu 24.04 (Linux 6.17)
+- **Architecture**: x86_64
+- **CPU**: Intel Core i7-5930K @ 3.50GHz
+- **GPU**: NVIDIA RTX 3080 10GB, CUDA 12.8
+- **RAM**: 64 GB DDR4
 
 ### Benchmark Configuration
 - **Tool**: Criterion.rs 0.5.1
@@ -250,7 +260,7 @@ MIND's Rust-native pipeline with static shape inference and zero-allocation pars
 
 ### 1. **Compilation Speed is a Core Strength**
 - MIND compiles typical ML operations in **<5 microseconds**
-- **280,000x - 530,000x faster** than PyTorch 2.0 for equivalent programs
+- **35,000-176,000× faster** than PyTorch 2.10 GPU full pipeline (frontend vs full pipeline)
 - **338,000+ compilations per second** sustained throughput
 - Enables **interactive development** and **rapid iteration**
 

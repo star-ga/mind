@@ -32,16 +32,18 @@ python benchmark_jax_compile.py
 | `simple_mlp` | 784 → 256 → 10 MLP | Multi-layer network | Batch of 32 |
 | `conv2d` | `jax.lax.conv()` | Conv2D layer | 64×56×56 feature maps |
 
-## Expected Results
+## Verified Results (February 2026)
 
-MIND typically compiles in **~40 microseconds** regardless of model size.
+MIND v0.2.1 frontend compiles in **1.8-6.1 µs** (Criterion in-process, scales with program complexity).
 
-JAX's `jax.jit()` has higher overhead due to:
+JAX 0.9 `jax.jit()` cold-start XLA compilation takes **37.5-360.5 ms** (compilation cache disabled) due to:
 - Python function tracing
-- XLA HLO generation
+- XLA HLO generation and optimization
 - LLVM/PTX compilation
 
-Expected speedup: **1,000× to 10,000×** faster compilation with MIND.
+**Verified ratio: 21,200-95,100× faster** MIND frontend compilation.
+
+**Scope note:** MIND measures frontend only (parse + typecheck + IR). JAX measures full XLA compilation pipeline. Different amounts of work.
 
 ## Output Format
 
@@ -85,7 +87,7 @@ Both are measuring **compilation time**, not execution time.
 | **Compilation** | Ahead-of-time (AOT) | Just-in-time (JIT) |
 | **Tracing** | No | Yes (traces Python) |
 | **Backend** | IR (optional MLIR) | XLA → LLVM/PTX |
-| **Speed** | ~40 µs | ~100 ms to 10 s |
+| **Speed** | 1.8-15.5 µs | 37.5-360.5 ms |
 
 ## Why MIND is Faster
 
@@ -133,9 +135,9 @@ This benchmark supports MIND patent claims about compilation speed:
 **Comparison with JAX**:
 - JAX is Google's high-performance ML framework
 - Uses XLA for compilation
-- Still 1,000× to 10,000× slower than MIND
+- JAX 0.9 cold-start XLA is 21,200-95,100× slower than MIND frontend
 
-**Goal**: Demonstrate that even state-of-the-art JIT compilers (XLA) are orders of magnitude slower than MIND's static compilation.
+**Goal**: Demonstrate that even state-of-the-art JIT compilers (XLA) are orders of magnitude slower than MIND's frontend compilation.
 
 ## References
 

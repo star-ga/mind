@@ -45,17 +45,17 @@ All programs are equivalent to MIND's `benches/simple_benchmarks.rs`:
 | `medium_matmul.mojo` | `medium_matmul` | Matrix mult: `[128,256] × [256,512]` |
 | `large_matmul.mojo` | `large_matmul` | Matrix mult: `[512,1024] × [1024,512]` |
 
-## Expected MIND Results (Baseline)
+## MIND v0.2.1 Results (Baseline)
 
-From `docs/benchmarks/compiler_performance.md`:
+From Criterion in-process benchmarks (February 2026):
 
 ```
 Benchmark         MIND Compilation Time
 ─────────────────────────────────────────
-scalar_math       17.9 µs
-small_matmul      29.1 µs
-medium_matmul     29.4 µs
-large_matmul      30.1 µs
+scalar_math       1.77 µs
+small_matmul      2.95 µs
+medium_matmul     2.95 µs
+large_matmul      2.95 µs
 ```
 
 ## Interpreting Results
@@ -71,18 +71,17 @@ The benchmark script (`benchmark_mojo_compilation.py`) will:
    - Speedup > 1.0: Mojo is faster
    - Speedup = 1.0: Equal performance
 
-### Example Output
+### Verified Output (February 2026)
 
 ```
-COMPILATION TIME COMPARISON: MIND vs Mojo
+COMPILATION TIME COMPARISON: MIND v0.2.1 vs Mojo 0.26.1
 ================================================================================
 
-Benchmark            MIND (µs)       Mojo (µs)       Speedup
+Benchmark            MIND (µs)       Mojo (ms)       Ratio
 --------------------------------------------------------------------------------
-scalar_math          17.893          [TBD]           [TBD]x
-small_matmul         29.111          [TBD]           [TBD]x
-medium_matmul        29.384          [TBD]           [TBD]x
-large_matmul         30.143          [TBD]           [TBD]x
+scalar_math          1.77            810             458,000×
+matmul               2.95            827             280,000×
+mlp                  6.15            829             135,000×
 ================================================================================
 ```
 
@@ -179,18 +178,15 @@ Share results by:
 
 ## Context: Why This Matters
 
-From the MIND benchmarks, we claim:
-> "MIND is 17,000x - 345,000x faster than PyTorch 2.0"
+Verified February 2026 results:
+> "MIND frontend is 135,000-458,000× faster than Mojo 0.26.1 full compilation"
 
-This Mojo comparison helps answer:
-- Is MIND faster than Mojo? (Chris Lattner's ML language)
-- By how much?
-- Is the PyTorch comparison valid or cherry-picked?
+**Scope note**: MIND measures frontend only (parse + typecheck + IR). Mojo `mojo build` performs full LLVM compilation to native binary. Different scopes of work.
 
 **Goal**: Honest, reproducible comparison to inform technical due diligence.
 
 ---
 
-**Status**: Ready to run (Mojo SDK required)
+**Status**: Verified (Mojo 0.26.1, February 2026)
 **Maintained by**: MIND benchmarking team
-**Last updated**: 2025-12-21
+**Last updated**: 2026-02-17

@@ -47,7 +47,7 @@ conv2d_inference          1.6K samples/sec     XXX samples/sec      X.XX×
 
 ### Compilation Benchmarks (PyTorch, JAX, Mojo)
 - Measure time to **compile** code
-- MIND is 10,000× to 340,000× faster
+- MIND frontend is 21,200-458,000× faster
 - One-time cost
 
 ### Inference Benchmarks (This)
@@ -64,18 +64,18 @@ conv2d_inference          1.6K samples/sec     XXX samples/sec      X.XX×
 
 ### MIND Advantage
 Even if inference speeds are equal:
-- MIND compiles in **40 µs**
-- PyTorch compiles in **10 seconds**
+- MIND compiles in **1.8-15.5 µs** (frontend)
+- PyTorch compiles in **99-878 ms** (GPU cold-start)
 - Break-even after just **a few runs**
 
 Example:
 ```
 Model compilation + 1000 inferences:
 
-PyTorch:  10s + (1000 × 1ms) = 11s
-MIND:     40µs + (1000 × 1ms) = 1.04s
+PyTorch:  878ms + (1000 × 1ms) = 1.878s
+MIND:     15.5µs + (1000 × 1ms) = 1.016s
 
-MIND is 10× faster total time!
+MIND is ~1.8× faster total time (dominated by inference)!
 ```
 
 ## Technical Details
@@ -108,9 +108,9 @@ MIND is 10× faster total time!
 
 | Metric | MIND | PyTorch |
 |--------|------|---------|
-| **Compilation** | 40 µs | 10 seconds |
+| **Compilation** | 1.8-15.5 µs (frontend) | 99-878 ms (GPU cold-start) |
 | **Inference** | ~Equal | ~Equal |
-| **Total (1000 runs)** | 1.04 s | 11 s |
+| **Total (1000 runs)** | ~1 s | ~1.9 s |
 
 **Conclusion**: MIND wins on total time due to near-instant compilation.
 
@@ -136,7 +136,7 @@ After running, results are saved to:
 
 This benchmark complements the compilation benchmarks:
 
-**Compilation Benchmarks**: MIND is 10,000× to 340,000× faster
+**Compilation Benchmarks**: MIND frontend is 21,200-458,000× faster than competing pipelines
 **Inference Benchmarks**: MIND and PyTorch are similar (both use LLVM/BLAS)
 
 **Overall**: MIND provides massive time savings in real-world workflows where compilation happens frequently (development, experimentation, hyperparameter tuning).

@@ -251,7 +251,7 @@ These results provide **strong empirical evidence** for all patent claims 1-20.
 
 ---
 
-**Generated**: December 23, 2025
+**Generated**: February 17, 2026
 **Updated**: February 17, 2026 (v0.2.1 numbers, PyTorch 2.10 GPU + JAX 0.9 + Mojo 0.26.1 verified benchmarks, scope disclaimers added)
 **Verified By**: Rust Criterion benchmarks + same-machine GPU measurements
 **Scientific Rigor**: Same-machine measurements, statistical analysis, cache-cleared cold-start, scope-labeled comparisons
