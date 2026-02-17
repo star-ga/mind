@@ -1,7 +1,7 @@
 {
   "system_info": {
-    "platform": "Linux-4.4.0-x86_64-with-glibc2.39",
-    "python_version": "3.11.14",
+    "platform": "Linux-6.17.0-14-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3",
     "machine": "x86_64",
     "processor": "x86_64"
   },
@@ -25,7 +25,7 @@
         "d5b1d6f8b5b362c2175cfe2c085012942d21abffd9edddbdd8f55735d3819b91"
       ],
       "reference_hash": "d5b1d6f8b5b362c2175cfe2c085012942d21abffd9edddbdd8f55735d3819b91",
-      "avg_compile_time_us": 6518.980900091265
+      "avg_compile_time_us": 889.5157050574198
     },
     {
       "name": "small_matmul",
@@ -45,7 +45,7 @@
         "89eb85864fb6d568ecf18b07d8f25e0b5fd9c1cbc3ef8592d3d11572bd9abae5"
       ],
       "reference_hash": "89eb85864fb6d568ecf18b07d8f25e0b5fd9c1cbc3ef8592d3d11572bd9abae5",
-      "avg_compile_time_us": 5981.450399985988
+      "avg_compile_time_us": 873.5469018574804
     },
     {
       "name": "medium_matmul",
@@ -65,7 +65,7 @@
         "c7908ca8ec76a8f761ebc0ed3a87f1a972f7052877e5bd4a395445b9c8faf604"
       ],
       "reference_hash": "c7908ca8ec76a8f761ebc0ed3a87f1a972f7052877e5bd4a395445b9c8faf604",
-      "avg_compile_time_us": 5590.190800012351
+      "avg_compile_time_us": 902.6906976941973
     },
     {
       "name": "mlp",
@@ -85,7 +85,7 @@
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       ],
       "reference_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "avg_compile_time_us": 6165.497899928596
+      "avg_compile_time_us": 934.7348037408665
     }
   ],
   "all_deterministic": true
