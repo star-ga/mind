@@ -135,6 +135,31 @@ If hashes don't match, investigate:
 
 ## Results
 
+### v0.2.0-hardened (February 17, 2026)
+
+**Platform**: Linux 6.17.0-14-generic, x86_64, Python 3.12.3
+
+| Test | SHA-256 | Runs | Avg Time | Status |
+|------|---------|------|----------|--------|
+| scalar_math | `d5b1d6f8b5b362c2...` | 10/10 | 889.5 µs | DETERMINISTIC |
+| small_matmul | `89eb85864fb6d568...` | 10/10 | 873.5 µs | DETERMINISTIC |
+| medium_matmul | `c7908ca8ec76a8f7...` | 10/10 | 902.7 µs | DETERMINISTIC |
+| mlp | `e3b0c44298fc1c14...` | 10/10 | 934.7 µs | DETERMINISTIC |
+
+**Summary**: 4/4 tests DETERMINISTIC. All outputs bit-identical across 40 total runs.
+Audit hardening (intern_str, IR verifier, diagnostic preservation) preserved perfect determinism.
+
+### v0.2.0 (February 7, 2026)
+
+| Test | SHA-256 | Runs | Status |
+|------|---------|------|--------|
+| scalar_math | `d5b1d6f8b5b362c2...` | 10/10 | DETERMINISTIC |
+| small_matmul | `89eb85864fb6d568...` | 10/10 | DETERMINISTIC |
+| medium_matmul | `c7908ca8ec76a8f7...` | 10/10 | DETERMINISTIC |
+| mlp | `e3b0c44298fc1c14...` | 10/10 | DETERMINISTIC |
+
+**Summary**: 4/4 tests DETERMINISTIC. Identical hashes across v0.2.0 and v0.2.0-hardened confirm zero hash drift after audit hardening.
+
 After running, results are saved to:
 - `determinism_results.json` - Detailed hash data
 
