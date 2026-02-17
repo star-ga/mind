@@ -85,7 +85,7 @@ fn matmul_batched(
 "#;
 
 /// Conv2D with various kernel sizes and strides
-const CONV_3x3: &str = r#"
+const CONV_3X3: &str = r#"
 fn conv_3x3(
     input: Tensor<F32, [1, 3, 224, 224]>,
     kernel: Tensor<F32, [64, 3, 3, 3]>
@@ -94,7 +94,7 @@ fn conv_3x3(
 }
 "#;
 
-const CONV_5x5: &str = r#"
+const CONV_5X5: &str = r#"
 fn conv_5x5_stride2(
     input: Tensor<F32, [1, 64, 56, 56]>,
     kernel: Tensor<F32, [128, 64, 5, 5]>
@@ -160,7 +160,7 @@ fn bench_shape_inference_matmul(c: &mut Criterion) {
 fn bench_shape_inference_conv(c: &mut Criterion) {
     let mut group = c.benchmark_group("shape_inference_conv");
 
-    for (name, source) in [("3x3_stride1", CONV_3x3), ("5x5_stride2", CONV_5x5)] {
+    for (name, source) in [("3x3_stride1", CONV_3X3), ("5x5_stride2", CONV_5X5)] {
         group.bench_with_input(BenchmarkId::new("conv2d", name), source, |b, src| {
             b.iter(|| {
                 compile_source(black_box(src), &CompileOptions::default())
