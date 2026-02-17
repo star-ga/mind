@@ -95,6 +95,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             id
         }
         ast::Node::Lit(Literal::Ident(name), _) => env.get(name).copied().unwrap_or_else(|| {
+            eprintln!("[WARN] lower_expr: undefined identifier `{name}`, defaulting to 0");
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
@@ -382,6 +383,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             })
         }
         _ => {
+            eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
@@ -402,7 +404,6 @@ fn parse_dim(dim: &str) -> ShapeDim {
     if let Ok(n) = dim.parse::<usize>() {
         ShapeDim::Known(n)
     } else {
-        let leaked: &'static str = Box::leak(dim.to_owned().into_boxed_str());
-        ShapeDim::Sym(leaked)
+        ShapeDim::Sym(crate::types::intern::intern_str(dim))
     }
 }

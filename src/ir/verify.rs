@@ -178,7 +178,47 @@ fn validate_operands(
         Instr::Output(id) => {
             check_defined(*id)?;
         }
-        _ => {}
+        Instr::FnDef { body, .. } => {
+            // FnDef bodies contain their own scope; params are defined within.
+            // Verify body instructions have internally consistent definitions.
+            let mut body_defined: BTreeSet<ValueId> = BTreeSet::new();
+            for (body_idx, body_instr) in body.iter().enumerate() {
+                if let Some(dst) = crate::ir::instruction_dst(body_instr) {
+                    body_defined.insert(dst);
+                }
+                // Check operand references within body scope
+                match body_instr {
+                    Instr::BinOp { lhs, rhs, .. } => {
+                        if !body_defined.contains(lhs) {
+                            return Err(IrVerifyError::UseBeforeDefinition {
+                                value: *lhs,
+                                instr_index: body_idx,
+                            });
+                        }
+                        if !body_defined.contains(rhs) {
+                            return Err(IrVerifyError::UseBeforeDefinition {
+                                value: *rhs,
+                                instr_index: body_idx,
+                            });
+                        }
+                    }
+                    _ => {} // Body instructions validated at their own level
+                }
+            }
+        }
+        Instr::Call { args, .. } => {
+            for arg in args {
+                check_defined(*arg)?;
+            }
+        }
+        Instr::Return { value } => {
+            if let Some(id) = value {
+                check_defined(*id)?;
+            }
+        }
+        Instr::Param { .. } => {
+            // Parameters define values; no operands to check.
+        }
     }
 
     Ok(())

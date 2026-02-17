@@ -1242,15 +1242,33 @@ impl<'a> P<'a> {
 
 /// Strip single-line comments (`// ...`) from source code.
 /// Preserves line structure for accurate error reporting.
+/// Correctly handles `//` inside string literals.
 fn strip_comments(input: &str) -> String {
     input
         .lines()
         .map(|line| {
-            if let Some(idx) = line.find("//") {
-                &line[..idx]
-            } else {
-                line
+            let bytes = line.as_bytes();
+            let mut in_string = false;
+            let mut i = 0;
+            while i < bytes.len() {
+                if in_string {
+                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                        i += 2; // skip escaped character
+                        continue;
+                    }
+                    if bytes[i] == b'"' {
+                        in_string = false;
+                    }
+                } else {
+                    if bytes[i] == b'"' {
+                        in_string = true;
+                    } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                        return &line[..i];
+                    }
+                }
+                i += 1;
             }
+            line
         })
         .collect::<Vec<_>>()
         .join("\n")

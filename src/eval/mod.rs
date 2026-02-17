@@ -99,11 +99,11 @@ mod tensor_tests {
             device: Some(DeviceKind::Cpu),
         };
 
-        let handle = eval.runtime.allocate(&desc);
+        let handle = eval.runtime.allocate(&desc).unwrap();
         assert_eq!(handle, 0);
 
-        eval.runtime.run_op("noop", &[], &[]);
-        eval.runtime.synchronize();
+        eval.runtime.run_op("noop", &[], &[]).unwrap();
+        eval.runtime.synchronize().unwrap();
     }
 }
 
@@ -245,8 +245,11 @@ pub enum EvalError {
     DivZero,
     #[error("unknown variable: {0}")]
     UnknownVar(String),
-    #[error("type error: {0}")]
-    TypeError(String),
+    #[error("type error: {msg}")]
+    TypeError {
+        msg: String,
+        diagnostics: Vec<crate::diagnostics::Diagnostic>,
+    },
     #[error("out of bounds")]
     OutOfBounds,
 }
@@ -265,11 +268,14 @@ pub fn eval_module_value_with_env_mode(
         let diags = crate::type_checker::check_module_types(m, src, &tenv);
         if !diags.is_empty() {
             let msg = diags
-                .into_iter()
-                .map(|diag| diag.message)
+                .iter()
+                .map(|diag| format!("[{}] {}", diag.code, diag.message))
                 .collect::<Vec<_>>()
                 .join("; ");
-            return Err(EvalError::TypeError(msg));
+            return Err(EvalError::TypeError {
+                msg,
+                diagnostics: diags,
+            });
         }
     }
 
@@ -1288,8 +1294,7 @@ fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Result<(DType, Vec<ShapeDim
         if let Ok(n) = dim.parse::<usize>() {
             shape.push(ShapeDim::Known(n));
         } else {
-            let leaked: &'static str = Box::leak(dim.clone().into_boxed_str());
-            shape.push(ShapeDim::Sym(leaked));
+            shape.push(ShapeDim::Sym(crate::types::intern::intern_str(dim)));
         }
     }
     Ok((dtype, shape))

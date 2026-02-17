@@ -552,7 +552,15 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let (ty, _) = infer_expr(inner, env)?;
             Ok((ty, *span))
         }
-        Node::Tuple { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        Node::Tuple { elements, span } => {
+            // Infer type from the last element (matches lowering semantics).
+            if let Some(last) = elements.last() {
+                let (ty, _) = infer_expr(last, env)?;
+                Ok((ty, *span))
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
         Node::Call { callee, args, span } => infer_call(callee, args, *span, env),
         Node::CallGrad { loss, wrt, span } => infer_grad(loss, wrt, *span, env),
         Node::CallTensorSum {
@@ -1454,13 +1462,13 @@ fn infer_shape_node(node: &Node) -> Result<Vec<ShapeDim>, TypeErrSpan> {
 }
 
 fn leak_symbol(name: &str) -> &'static str {
-    Box::leak(name.to_string().into_boxed_str())
+    crate::types::intern::intern_str(name)
 }
 
 fn fresh_symbol(prefix: &str) -> &'static str {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    Box::leak(format!("{prefix}{id}").into_boxed_str())
+    crate::types::intern::intern_str(&format!("{prefix}{id}"))
 }
 
 fn dtype_from_str(s: &str) -> Option<DType> {
