@@ -103,6 +103,7 @@ open target/criterion/report/index.html
 | **MIND v0.2.1** | **1.8-15.5 µs** | Frontend only | **1× (baseline)** |
 | PyTorch 2.10 GPU | 99-878 ms | Full pipeline (Inductor + Triton/cuBLAS) | 35,000-176,000× |
 | Mojo 0.26.1 | 810-829 ms | Full LLVM compilation (`mojo build`) | 135,000-458,000× |
+| JAX 0.9 | 37.5-360.5 ms | Cold-start XLA compilation (`jax.jit()`) | 21,200-95,100× |
 
 **Important**: These frameworks perform different amounts of work. Ratios reflect frontend vs full pipeline/compilation comparison.
 

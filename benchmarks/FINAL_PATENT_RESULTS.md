@@ -113,6 +113,25 @@ mlp                829 ms            6.15 µs           135,000× ✅
 
 **Patent Impact**: MIND frontend is **135,000-458,000× faster** than Mojo 0.26.1 full compilation.
 
+#### Comparison: JAX 0.9 Cold-Start XLA Compilation (February 2026 — VERIFIED)
+
+**Method**: `jax.jit()` cold-start XLA compilation with compilation cache disabled (`JAX_ENABLE_COMPILATION_CACHE=0`, `jax.clear_caches()` before each run)
+**Environment**: JAX 0.9.0.1 with CUDA 12.8, RTX 3080
+
+```
+Benchmark         JAX 0.9 Cold-Start     MIND v0.2.1       Ratio (frontend vs full XLA)
+------------------------------------------------------------------------------------------
+scalar_math         37.5 ms              1.77 µs           21,200× ✅
+small_matmul       127.2 ms              2.95 µs           43,100× ✅
+medium_matmul      139.7 ms              2.95 µs           47,400× ✅
+large_matmul       280.6 ms              2.95 µs           95,100× ✅
+simple_mlp         360.5 ms              6.15 µs           58,600× ✅
+```
+
+**Scope Note**: JAX `jax.jit()` performs full XLA compilation (HLO lowering + optimization + code generation). MIND measures frontend only (parse + typecheck + IR). Same scope caveat as PyTorch/Mojo comparisons.
+
+**Patent Impact**: MIND frontend is **21,200-95,100× faster** than JAX 0.9 cold-start XLA compilation.
+
 ---
 
 ### 3. Compile-Time Autodiff (Claims 6-10)
@@ -155,7 +174,7 @@ matmul_chain         428.8 µs   ±18.7 µs
 
 | Claim Set | Metric | Result | Status |
 |-----------|--------|--------|--------|
-| **Claims 1-5** | Compilation Speed | 1.8-15.5 µs frontend (35,000-176,000× faster than PyTorch 2.10 GPU full pipeline) | ✅ PROVEN |
+| **Claims 1-5** | Compilation Speed | 1.8-15.5 µs frontend (21,200-176,000× faster than PyTorch/JAX/Mojo full pipelines) | ✅ PROVEN |
 | **Claims 6-10** | Compile-time Autodiff | ~6 µs once vs ~50-500 µs per iter (PyTorch) | ✅ PROVEN (theoretical) |
 | **Claims 11-15** | Performance Advantages | Significant speedups demonstrated | ✅ PROVEN |
 | **Claims 16-20** | Deterministic Compilation | 100% bit-level reproducibility | ✅ PROVEN |
@@ -222,6 +241,8 @@ Within the same program complexity, increasing tensor dimensions does NOT affect
 
 **MIND v0.2.1 achieves** (February 2026, verified on same machine):
 - ✅ **35,000-176,000× faster frontend compilation** than PyTorch 2.10 GPU torch.compile full pipeline
+- ✅ **21,200-95,100× faster frontend compilation** than JAX 0.9 cold-start XLA compilation
+- ✅ **135,000-458,000× faster frontend compilation** than Mojo 0.26.1 full LLVM compilation
 - ✅ **8,000-83,000× more efficient gradients** (amortized over training)
 - ✅ **100% deterministic** bit-level reproducibility
 - ✅ **1.8-15.5 µs frontend compilation time** (scientifically measured via Criterion)
@@ -231,6 +252,6 @@ These results provide **strong empirical evidence** for all patent claims 1-20.
 ---
 
 **Generated**: December 23, 2025
-**Updated**: February 17, 2026 (v0.2.1 numbers, PyTorch 2.10 GPU verified benchmarks, scope disclaimers added)
+**Updated**: February 17, 2026 (v0.2.1 numbers, PyTorch 2.10 GPU + JAX 0.9 + Mojo 0.26.1 verified benchmarks, scope disclaimers added)
 **Verified By**: Rust Criterion benchmarks + same-machine GPU measurements
 **Scientific Rigor**: Same-machine measurements, statistical analysis, cache-cleared cold-start, scope-labeled comparisons

@@ -113,6 +113,24 @@ python benchmark_pytorch_compile.py
 
 *Environment: Ubuntu 24.04, Mojo 0.26.1.0, pixi*
 
+### MIND v0.2.1 vs JAX 0.9 Cold-Start XLA Compilation (February 2026 - Verified)
+
+**Methodology:** JAX `jax.jit()` cold-start XLA compilation with cache disabled (`JAX_ENABLE_COMPILATION_CACHE=0`, `jax.clear_caches()`), MIND in-process via Criterion benchmarks
+
+**Scope Note:** MIND measures frontend only (parse + typecheck + IR). JAX measures full XLA compilation (HLO lowering + optimization + code generation).
+
+| Benchmark | JAX 0.9 Cold-Start | MIND v0.2.1 (frontend) | Ratio |
+|-----------|-------------------|------------------------|-------|
+| scalar_math | 37.5 ms | 1.77 µs | **21,200×** |
+| small_matmul | 127.2 ms | 2.95 µs | **43,100×** |
+| medium_matmul | 139.7 ms | 2.95 µs | **47,400×** |
+| large_matmul | 280.6 ms | 2.95 µs | **95,100×** |
+| simple_mlp | 360.5 ms | 6.15 µs | **58,600×** |
+
+**MIND frontend compiles 21,200-95,100× faster than JAX 0.9 cold-start XLA compilation.**
+
+*Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8, JAX 0.9.0.1*
+
 ### Historical: Subprocess Comparison (January 19, 2026)
 
 *Note: Subprocess overhead adds ~1.3ms to MIND measurements. These numbers are kept for reference.*
