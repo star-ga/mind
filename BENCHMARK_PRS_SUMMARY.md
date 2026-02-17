@@ -169,16 +169,19 @@ cd ../determinism && python benchmark_determinism.py
 
 ## 📊 **What You'll Get (Real Numbers)**
 
-### Compilation Benchmarks (PR #2)
+### Compilation Benchmarks (Verified February 2026)
 ```
-COMPILATION TIME COMPARISON: MIND vs PyTorch 2.0
-(Both measured on the SAME machine for fair comparison)
+COMPILATION TIME COMPARISON: MIND v0.2.1 vs PyTorch 2.10 GPU
+(Both measured on the SAME machine, RTX 3080, CUDA 12.8)
 
-Benchmark            MIND            PyTorch 2.0     MIND Speedup
+Benchmark            MIND v0.2.1     PyTorch 2.10 GPU    Ratio
 ------------------------------------------------------------------------
-scalar_math          42.3 µs         8.5 s           201,000×
-small_matmul         45.1 µs         12.3 s          272,000×
-large_matmul         46.2 µs         98.2 s          2,125,000×
+scalar_math          1.77 µs         99 ms               56,000×
+small_matmul         2.95 µs         162 ms              55,000×
+simple_mlp           6.15 µs         752 ms              122,000×
+conv2d               ~5 µs           878 ms              176,000×
+
+Note: MIND = frontend only. PyTorch = full pipeline (Inductor + Triton/cuBLAS).
 ```
 
 ### Autograd Benchmark (PR #3)
