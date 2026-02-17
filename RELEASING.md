@@ -1,4 +1,4 @@
-# Release checklist (as of v0.9.0)
+# Release checklist (as of v0.2.1)
 - [x] CI green on all repos
 - [x] Tags pushed for mind, mind-runtime, mind-spec
 - [x] Docs published via GitHub Pages
