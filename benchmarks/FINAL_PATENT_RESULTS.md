@@ -96,6 +96,23 @@ large_matmul      3,422 ms            52.2 µs            66,000×
 
 The improvement in both MIND (v0.1.0 → v0.2.1: parser rewrite, ~15× faster) and PyTorch (2.9 → 2.10: Inductor optimizations, ~30× faster compilation) changed the absolute ratios but MIND remains orders of magnitude faster.
 
+#### Comparison: Mojo 0.26.1 (February 2026 — VERIFIED)
+
+**Method**: `mojo build` (full LLVM compilation to native binary)
+**Environment**: Mojo 0.26.1.0, pixi, Ubuntu 24.04
+
+```
+Benchmark         Mojo 0.26.1        MIND v0.2.1       Ratio (frontend vs full build)
+------------------------------------------------------------------------------------------
+scalar_math        810 ms            1.77 µs           458,000× ✅
+matmul             827 ms            2.95 µs           280,000× ✅
+mlp                829 ms            6.15 µs           135,000× ✅
+```
+
+**Scope Note**: `mojo build` performs full LLVM compilation to a native binary. MIND measures frontend only (parse + typecheck + IR). Same scope caveat as PyTorch comparison.
+
+**Patent Impact**: MIND frontend is **135,000-458,000× faster** than Mojo 0.26.1 full compilation.
+
 ---
 
 ### 3. Compile-Time Autodiff (Claims 6-10)
