@@ -1,7 +1,7 @@
 # MIND Compiler Status
 
-> **Last Updated:** 2025-12-19
-> **Version:** 0.1.0
+> **Last Updated:** 2026-02-17
+> **Version:** 0.2.1
 
 ## Overview
 

@@ -1,7 +1,7 @@
 # MIND Benchmark Results
 
-**Last Updated:** February 5, 2026
-**Reference Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 13.0
+**Last Updated:** February 17, 2026
+**Reference Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 12.8
 
 ---
 

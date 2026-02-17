@@ -11,7 +11,7 @@ This document summarizes the benchmarking approach for the MIND compiler and run
 
 ## Performance Baselines
 
-The following baselines were collected on reference hardware (AMD Ryzen 9 5900X, 64 GB DDR4-3600, Ubuntu 22.04 LTS) using Rust 1.82 stable.
+The following baselines were collected on reference hardware (Intel Core i7-5930K @ 3.50GHz, 64 GB DDR4, RTX 3080 10GB, Ubuntu 24.04 LTS) using Rust 1.84 stable.
 
 ### Compiler Performance
 
