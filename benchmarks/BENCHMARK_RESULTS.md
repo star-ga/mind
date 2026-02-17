@@ -78,35 +78,24 @@ python benchmark_pytorch_compile.py
 
 ## Compilation Speed
 
-### MIND vs PyTorch 2.9 GPU torch.compile (January 2026 - Verified)
+### MIND v0.2.1 vs PyTorch 2.10 GPU torch.compile (February 2026 - Verified)
 
-**Methodology:** PyTorch using GPU `torch.compile` cold-start, MIND in-process via Criterion benchmarks
+**Methodology:** PyTorch using GPU `torch.compile` full cold-start (Triton/Inductor caches cleared), MIND in-process via Criterion benchmarks
 
-| Benchmark | PyTorch 2.9 (GPU) | MIND (in-process) | Speedup |
-|-----------|-------------------|-------------------|---------|
-| scalar_math | ~3,400 ms | 25 µs | **136,000× faster** |
-| small_matmul | ~3,500 ms | 53 µs | **66,000× faster** |
-| medium_matmul | ~3,600 ms | 53 µs | **68,000× faster** |
-| large_matmul | ~3,400 ms | 52 µs | **65,000× faster** |
+**Scope Note:** MIND measures frontend only (parse + typecheck + IR). PyTorch measures full compilation pipeline (FX graph + Inductor + Triton/cuBLAS kernel generation).
 
-**MIND compiles 65,000-136,000× faster than PyTorch 2.9 GPU torch.compile (cold-start).**
+| Benchmark | PyTorch 2.10 GPU | MIND v0.2.1 (frontend) | Ratio |
+|-----------|-----------------|------------------------|-------|
+| scalar_math | 99 ms | 1.77 µs | **56,000×** |
+| small_matmul | 162 ms | 2.95 µs | **55,000×** |
+| medium_matmul | 109 ms | 2.95 µs | **37,000×** |
+| large_matmul | 105 ms | 2.95 µs | **36,000×** |
+| simple_mlp | 752 ms | 6.15 µs | **122,000×** |
+| conv2d | 878 ms | ~5 µs | **176,000×** |
 
-*Environment: Ubuntu 24.04, RTX 3080, CUDA 13.0, PyTorch 2.9.1+cu126*
+**MIND frontend compiles 35,000-176,000× faster than PyTorch 2.10 GPU torch.compile full pipeline.**
 
-### MIND vs Mojo 0.25.7 (January 2026 - Verified)
-
-**Methodology:** Mojo using `mojo build` (compilation only), MIND in-process via Criterion benchmarks
-
-| Benchmark | Mojo 0.25.7 | MIND (in-process) | Speedup |
-|-----------|-------------|-------------------|---------|
-| scalar_math | ~908 ms | 25 µs | **36,000× faster** |
-| small_matmul | ~928 ms | 53 µs | **17,500× faster** |
-| medium_matmul | ~915 ms | 53 µs | **17,300× faster** |
-| large_matmul | ~913 ms | 52 µs | **17,500× faster** |
-
-**MIND compiles 17,000-36,000× faster than Mojo 0.25.7.**
-
-*Environment: Ubuntu 24.04, Mojo 0.25.7*
+*Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8, PyTorch 2.10.0+cu128*
 
 ### Historical: Subprocess Comparison (January 19, 2026)
 
@@ -119,25 +108,29 @@ python benchmark_pytorch_compile.py
 | medium_matmul | 48.4 ms | 1.3 ms | **37× faster** |
 | large_matmul | 52.4 ms | 1.4 ms | **39× faster** |
 
-### Reference Criterion Benchmarks - Linux (Jan 19, 2026)
+### Reference Criterion Benchmarks - Linux (February 17, 2026)
 
-**Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, NVIDIA RTX 3080 10GB, CUDA 13.0
+**Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, NVIDIA RTX 3080 10GB
 
+**simple_benchmarks** (equivalent-complexity programs):
 ```
-compile_small/parse_check_lower/scalar_math
-                        time:   [24.971 µs 25.278 µs 25.604 µs]
-
-compile_small/parse_check_lower/small_matmul
-                        time:   [52.158 µs 53.502 µs 55.179 µs]
-
-compile_small/parse_check_lower/medium_matmul
-                        time:   [51.571 µs 52.823 µs 54.439 µs]
-
-compile_medium/parse_check_lower/large_matmul
-                        time:   [51.330 µs 52.176 µs 53.157 µs]
+scalar_math:      time:   [1.75 µs 1.77 µs 1.79 µs]
+small_matmul:     time:   [2.93 µs 2.95 µs 2.97 µs]
+medium_matmul:    time:   [2.93 µs 2.95 µs 2.97 µs]
+large_matmul:     time:   [2.93 µs 2.95 µs 2.97 µs]
+tensor_ops:       time:   [4.84 µs 4.87 µs 4.91 µs]
+reductions:       time:   [3.15 µs 3.17 µs 3.20 µs]
+reshape_ops:      time:   [2.81 µs 2.83 µs 2.86 µs]
 ```
 
-**Key Insight:** O(1) compilation confirmed - large_matmul compiles at same speed as scalar_math (~50µs) despite 1000x more elements.
+**compiler pipeline** (scaling with program complexity):
+```
+small_matmul:     time:   [2.58 µs 2.60 µs 2.62 µs]
+medium_mlp:       time:   [6.10 µs 6.15 µs 6.20 µs]
+large_network:    time:   [15.30 µs 15.49 µs 15.70 µs]
+```
+
+**Key Insight:** Compilation time scales with **program complexity** (number of operations), not tensor dimensions. Within the same program, increasing tensor sizes does not affect compile time.
 
 ### Determinism Verification (Dec 27, 2025)
 
