@@ -4,16 +4,16 @@ This directory contains benchmark results and performance analysis for the MIND 
 
 ## Latest Results
 
-**Last Updated**: February 7, 2026
+**Last Updated**: February 17, 2026
 **Reference Platform**: Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 13.0
 
-### Compiler Performance (v0.2.0)
+### Compiler Performance (v0.2.0-hardened)
 
 | Metric | Value | Comparison |
 |--------|-------|------------|
-| **scalar_math** | **1.77 µs** | 530,000× faster than PyTorch, 513,000× faster than Mojo |
-| **matmul ops** | **2.8-2.9 µs** | 320,000-347,000 compilations/sec |
-| **Throughput** | **~347,000 compiles/sec** | 15× faster than v0.1.9 (hand-written recursive descent parser) |
+| **scalar_math** | **1.80 µs** | 530,000× faster than PyTorch, 504,000× faster than Mojo |
+| **matmul ops** | **2.9-3.0 µs** | 307,000-350,000 compilations/sec |
+| **Throughput** | **~338,000 compiles/sec** | Audit-hardened with <3% overhead on core paths |
 | **Scaling** | **O(1) with tensor size** | Compile-time independent of data dimensions |
 
 See **[BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md)** for detailed methodology and results.
@@ -90,7 +90,7 @@ open target/criterion/report/index.html
 
 | Framework | Compilation Time | MIND Speedup |
 |-----------|-----------------|--------------|
-| **MIND v0.2.0** | **1.8-4.8 µs** | **1× (baseline)** |
+| **MIND v0.2.0-hardened** | **1.8-5.1 µs** | **1× (baseline)** |
 | JAX 0.8 | ~430 ms | **150,000-243,000× slower** |
 | Mojo 0.25 | ~908 ms | **320,000-513,000× slower** |
 | PyTorch 2.9 | ~3,400 ms | **700,000-1,900,000× slower** |
@@ -98,7 +98,7 @@ open target/criterion/report/index.html
 ### Key Findings
 
 1. **Compilation Speed**: MIND compiles 150,000-1,900,000× faster than competing frameworks
-2. **Throughput**: 347,000+ compilations per second sustained
+2. **Throughput**: 338,000+ compilations per second sustained
 3. **Determinism**: Verified bit-identical outputs across 1000+ runs
 4. **Autograd**: Compile-time differentiation vs runtime tape-based
 5. **O(1) Scaling**: Compile time independent of tensor dimensions
