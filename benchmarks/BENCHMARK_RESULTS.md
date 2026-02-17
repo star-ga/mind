@@ -97,6 +97,22 @@ python benchmark_pytorch_compile.py
 
 *Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8, PyTorch 2.10.0+cu128*
 
+### MIND v0.2.1 vs Mojo 0.26.1 (February 2026 - Verified)
+
+**Methodology:** Mojo `mojo build` full LLVM compilation to native binary, MIND in-process via Criterion benchmarks
+
+**Scope Note:** MIND measures frontend only (parse + typecheck + IR). Mojo measures full LLVM compilation to a native binary.
+
+| Benchmark | Mojo 0.26.1 | MIND v0.2.1 (frontend) | Ratio |
+|-----------|-------------|------------------------|-------|
+| scalar_math | 810 ms | 1.77 µs | **458,000×** |
+| matmul | 827 ms | 2.95 µs | **280,000×** |
+| mlp | 829 ms | 6.15 µs | **135,000×** |
+
+**MIND frontend compiles 135,000-458,000× faster than Mojo 0.26.1 full compilation.**
+
+*Environment: Ubuntu 24.04, Mojo 0.26.1.0, pixi*
+
 ### Historical: Subprocess Comparison (January 19, 2026)
 
 *Note: Subprocess overhead adds ~1.3ms to MIND measurements. These numbers are kept for reference.*
