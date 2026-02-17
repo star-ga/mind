@@ -187,22 +187,19 @@ fn validate_operands(
                     body_defined.insert(dst);
                 }
                 // Check operand references within body scope
-                match body_instr {
-                    Instr::BinOp { lhs, rhs, .. } => {
-                        if !body_defined.contains(lhs) {
-                            return Err(IrVerifyError::UseBeforeDefinition {
-                                value: *lhs,
-                                instr_index: body_idx,
-                            });
-                        }
-                        if !body_defined.contains(rhs) {
-                            return Err(IrVerifyError::UseBeforeDefinition {
-                                value: *rhs,
-                                instr_index: body_idx,
-                            });
-                        }
+                if let Instr::BinOp { lhs, rhs, .. } = body_instr {
+                    if !body_defined.contains(lhs) {
+                        return Err(IrVerifyError::UseBeforeDefinition {
+                            value: *lhs,
+                            instr_index: body_idx,
+                        });
                     }
-                    _ => {} // Body instructions validated at their own level
+                    if !body_defined.contains(rhs) {
+                        return Err(IrVerifyError::UseBeforeDefinition {
+                            value: *rhs,
+                            instr_index: body_idx,
+                        });
+                    }
                 }
             }
         }

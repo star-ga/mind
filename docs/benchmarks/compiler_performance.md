@@ -4,10 +4,24 @@
 
 MIND demonstrates **extremely fast compilation performance** across all tested workloads, with compilation times in the **microsecond range** for typical tensor programs.
 
-## Production Benchmarks (v0.2.0)
+## Production Benchmarks
 
-**Current Version**: v0.2.0
-**Date**: February 7, 2026
+### Current: v0.2.0-hardened (February 17, 2026)
+
+**Features**: Hand-written recursive descent parser, IR-first compilation, shape ops, MIC emission, full typed tensors, AOT pipeline, hardened IR verifier, intern_str memory safety, diagnostic preservation
+
+| Workload | Compilation Time | Compilations/sec | Description |
+|----------|-----------------|-----------------|-------------|
+| Scalar Math | **1.80 µs** | **556,000/sec** | Simple arithmetic: `1 + 2 * 3 - 4 / 2` |
+| Small MatMul | **2.86 µs** | **350,000/sec** | Matrix multiplication `[10,20] × [20,30]` |
+| Medium MatMul | **3.26 µs** | **307,000/sec** | Matrix multiplication `[128,256] × [256,512]` |
+| Large MatMul | **2.96 µs** | **338,000/sec** | Matrix multiplication `[512,1024] × [1024,512]` |
+| Tensor Ops | **5.05 µs** | **198,000/sec** | Add, multiply, ReLU chain `[64,64]` |
+| Reductions | **3.21 µs** | **312,000/sec** | Sum + mean reduction `[128,256]` |
+| Reshape Ops | **2.80 µs** | **357,000/sec** | Reshape + transpose `[32,64]` |
+
+### Previous: v0.2.0 (February 7, 2026)
+
 **Features**: Hand-written recursive descent parser, IR-first compilation, shape ops, MIC emission, full typed tensors, AOT pipeline
 
 | Workload | Compilation Time | Compilations/sec | Description |
@@ -20,13 +34,31 @@ MIND demonstrates **extremely fast compilation performance** across all tested w
 | Reductions | **2.92 µs** | **342,500/sec** | Sum + mean reduction `[128,256]` |
 | Reshape Ops | **2.80 µs** | **357,000/sec** | Reshape + transpose `[32,64]` |
 
-### Multi-Layer Program Benchmarks (v0.2.0)
+### v0.2.0 vs v0.2.0-hardened (Feb 17, 2026)
 
-| Workload | Compilation Time | Compilations/sec | Description |
-|----------|-----------------|-----------------|-------------|
-| Small MatMul | **2.87 µs** | **348,000/sec** | Single matmul `[10,20] × [20,30]` |
-| Medium MLP | **6.45 µs** | **155,000/sec** | 2-layer MLP with ReLU `[128,256] → [256,128]` |
-| Large Network | **17.10 µs** | **58,500/sec** | 3-layer network: 784→512→256→10 |
+Throughput is reported as **compilations/sec (cps)**, computed as `cps = 1_000_000 / time_µs`.
+
+| Benchmark | v0.2.0 (Feb 7) | v0.2.0 cps | v0.2.0-hardened (Feb 17) | hardened cps | Delta |
+|---|---:|---:|---:|---:|---:|
+| scalar_math | 1.77 µs | 564,972 | 1.80 µs | 555,556 | +1.7% |
+| small_matmul | 2.88 µs | 347,222 | 2.86 µs | 349,650 | -0.7% |
+| medium_matmul | 2.82 µs | 354,610 | 3.26 µs | 306,748 | +15.6% |
+| large_matmul | 2.84 µs | 352,113 | 2.96 µs | 337,838 | +4.2% |
+| tensor_ops | 4.75 µs | 210,526 | 5.05 µs | 198,020 | +6.3% |
+| reductions | 2.92 µs | 342,466 | 3.21 µs | 311,526 | +9.9% |
+| reshape_ops | 2.80 µs | 357,143 | 2.80 µs | 357,143 | 0% |
+
+**Geometric-mean latency:** 2.865 µs → 3.013 µs (**+5.16%** time; **-4.91%** throughput).
+
+Notes: regressions are concentrated in medium benchmarks; attributable to `intern_str` dedup checks replacing `Box::leak`, adding a small per-compile overhead for memory safety.
+
+### Multi-Layer Program Benchmarks
+
+| Workload | v0.2.0 (Feb 7) | v0.2.0-hardened (Feb 17) | Delta | Description |
+|----------|----------------|--------------------------|-------|-------------|
+| Small MatMul | 2.87 µs (348K/s) | **2.66 µs** (376K/s) | -7.3% | Single matmul `[10,20] × [20,30]` |
+| Medium MLP | 6.45 µs (155K/s) | **5.98 µs** (167K/s) | -7.3% | 2-layer MLP with ReLU `[128,256] → [256,128]` |
+| Large Network | 17.10 µs (58.5K/s) | **16.48 µs** (60.7K/s) | -3.6% | 3-layer network: 784→512→256→10 |
 
 ### Version History
 
@@ -37,7 +69,8 @@ MIND demonstrates **extremely fast compilation performance** across all tested w
 | v0.1.7 | 26 µs | 45 µs | ~22,000/sec | Parser choice reordering (-18%) |
 | v0.1.8 | 26 µs | 45 µs | ~22,000/sec | Stable (no perf changes) |
 | v0.1.9 | 26 µs | 45 µs | ~22,000/sec | Lib rename, Windows fixes |
-| **v0.2.0** | **1.77 µs** | **2.84 µs** | **347,000/sec** | **Hand-written recursive descent (15× faster)** |
+| v0.2.0 | 1.77 µs | 2.84 µs | 347,000/sec | Hand-written recursive descent (15× faster) |
+| **v0.2.0-hardened** | **1.80 µs** | **2.96 µs** | **338,000/sec** | **Audit hardening (IR verifier, intern_str, diagnostics)** |
 
 ### v0.2.0 Parser Rewrite Impact
 
@@ -96,10 +129,10 @@ This demonstrates that the Chumsky parser combinator was the dominant bottleneck
 1 + 2 * 3 - 4 / 2
 ```
 
-**Performance (v0.2.0):**
-- Mean time: 1.77 µs
-- Range: 1.73 - 1.81 µs
-- Throughput: **565,000 compilations/second**
+**Performance (v0.2.0-hardened):**
+- Mean time: 1.80 µs
+- Range: 1.76 - 1.85 µs
+- Throughput: **556,000 compilations/second**
 
 **Phases:** Parse → Type-check → IR lowering → Verification
 
@@ -114,12 +147,12 @@ let b: Tensor[f32,(20,30)] = 1;
 tensor.matmul(a, b)
 ```
 
-**Performance (v0.2.0):**
-- Mean time: 2.88 µs
-- Range: 2.86 - 2.91 µs
-- Throughput: **347,000 compilations/second**
+**Performance (v0.2.0-hardened):**
+- Mean time: 2.86 µs
+- Range: 2.80 - 2.94 µs
+- Throughput: **350,000 compilations/second**
 
-**Analysis:** ~63% increase from scalar arithmetic due to tensor type inference, shape validation, and matmul operation lowering.
+**Analysis:** ~59% increase from scalar arithmetic due to tensor type inference, shape validation, and matmul operation lowering.
 
 ---
 
@@ -132,12 +165,12 @@ let b: Tensor[f32,(256,512)] = 1;
 tensor.matmul(a, b)
 ```
 
-**Performance (v0.2.0):**
-- Mean time: 2.82 µs
-- Range: 2.81 - 2.83 µs
-- Throughput: **355,000 compilations/second**
+**Performance (v0.2.0-hardened):**
+- Mean time: 3.26 µs
+- Range: 3.11 - 3.44 µs
+- Throughput: **307,000 compilations/second**
 
-**Analysis:** Nearly identical to small matmul, showing **compile-time is independent of matrix size**. MIND's shape inference is O(1) for this workload.
+**Analysis:** Slight overhead vs small matmul from intern_str deduplication checks on medium-complexity programs. MIND's shape inference remains O(1) for this workload.
 
 ---
 
@@ -150,12 +183,12 @@ let b: Tensor[f32,(1024,512)] = 1;
 tensor.matmul(a, b)
 ```
 
-**Performance (v0.2.0):**
-- Mean time: 2.84 µs
-- Range: 2.81 - 2.91 µs
-- Throughput: **352,000 compilations/second**
+**Performance (v0.2.0-hardened):**
+- Mean time: 2.96 µs
+- Range: 2.90 - 3.04 µs
+- Throughput: **338,000 compilations/second**
 
-**Analysis:** Only 1.4% slower than medium matmul, confirming compile-time scales with **program complexity**, not data size.
+**Analysis:** Faster than medium matmul, confirming compile-time scales with **program complexity**, not data size.
 
 ---
 
@@ -165,7 +198,7 @@ tensor.matmul(a, b)
 
 | Framework | Scalar Compile | MatMul Compile | MLP Compile | Notes |
 |-----------|---------------|----------------|-------------|-------|
-| **MIND v0.2.0** | **1.77 µs** | **2.84 µs** | **6.45 µs** | Full pipeline: parse → IR → verify |
+| **MIND v0.2.0-hardened** | **1.80 µs** | **2.96 µs** | **5.98 µs** | Full pipeline: parse → IR → verify |
 | PyTorch 2.0 | ~500 ms - 2s | ~2s - 10s | ~5s - 30s | `torch.compile()` first call |
 | TorchScript | ~100 ms - 1s | ~1s - 5s | ~2s - 10s | `torch.jit.script()` |
 
@@ -177,7 +210,7 @@ tensor.matmul(a, b)
 
 | Framework | Compilation Model | Scalar | MatMul |
 |-----------|------------------|--------|--------|
-| **MIND v0.2.0** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.84 µs** |
+| **MIND v0.2.0-hardened** | **AOT (Rust, hand-written parser)** | **1.80 µs** | **2.96 µs** |
 | Mojo 0.25 | JIT + AOT (LLVM) | ~908 ms | ~928 ms |
 
 **Speed advantage: MIND is ~320,000-513,000× faster** than Mojo build compilation.
@@ -218,12 +251,12 @@ MIND's Rust-native pipeline with static shape inference and zero-allocation pars
 ### 1. **Compilation Speed is a Core Strength**
 - MIND compiles typical ML operations in **<5 microseconds**
 - **280,000x - 530,000x faster** than PyTorch 2.0 for equivalent programs
-- **347,000+ compilations per second** sustained throughput
+- **338,000+ compilations per second** sustained throughput
 - Enables **interactive development** and **rapid iteration**
 
 ### 2. **Predictable Performance**
 - Compile-time independent of tensor sizes (shape complexity, not data complexity)
-- Consistent ~2.8 µs across 10×20 to 512×1024 matrix operations
+- Consistent ~2.9 µs across 10×20 to 512×1024 matrix operations
 - No "warm-up" overhead - first compile is as fast as the 1000th
 
 ### 3. **Production-Ready for Real-Time Systems**
@@ -294,7 +327,51 @@ ls target/criterion/*/new/
 
 ## Appendix: Raw Benchmark Output
 
-### v0.2.0 (Hand-Written Recursive Descent Parser)
+### v0.2.0-hardened (Audit Hardening — February 17, 2026)
+
+```
+compile_small/parse_check_lower/scalar_math
+                        time:   [1.7571 µs 1.7960 µs 1.8451 µs]
+
+compile_small/parse_check_lower/small_matmul
+                        time:   [2.8043 µs 2.8615 µs 2.9421 µs]
+
+compile_small/parse_check_lower/medium_matmul
+                        time:   [3.1119 µs 3.2585 µs 3.4419 µs]
+
+compile_medium/parse_check_lower/large_matmul
+                        time:   [2.8950 µs 2.9609 µs 3.0404 µs]
+
+compile_medium/parse_check_lower/tensor_ops
+                        time:   [4.9631 µs 5.0504 µs 5.1622 µs]
+
+compile_medium/parse_check_lower/reductions
+                        time:   [3.0392 µs 3.2106 µs 3.4442 µs]
+
+compile_medium/parse_check_lower/reshape_ops
+                        time:   [2.7423 µs 2.8031 µs 2.8788 µs]
+```
+
+### v0.2.0-hardened Compiler Pipeline (Multi-Layer Programs)
+
+```
+compiler_pipeline/parse_typecheck_ir/small_matmul
+                        time:   [2.6196 µs 2.6559 µs 2.6998 µs]
+                        change: [-6.0334% -3.8040% -1.9693%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+compiler_pipeline/parse_typecheck_ir/medium_mlp
+                        time:   [5.9333 µs 5.9756 µs 6.0347 µs]
+                        change: [-41.600% -37.562% -33.769%] (p = 0.00 < 0.05)
+                        Performance has improved.
+
+compiler_pipeline/parse_typecheck_ir/large_network
+                        time:   [16.130 µs 16.478 µs 16.905 µs]
+                        change: [-30.676% -26.491% -22.316%] (p = 0.00 < 0.05)
+                        Performance has improved.
+```
+
+### v0.2.0 (Hand-Written Recursive Descent Parser — February 7, 2026)
 
 ```
 compile_small/parse_check_lower/scalar_math

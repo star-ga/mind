@@ -1259,12 +1259,10 @@ fn strip_comments(input: &str) -> String {
                     if bytes[i] == b'"' {
                         in_string = false;
                     }
-                } else {
-                    if bytes[i] == b'"' {
-                        in_string = true;
-                    } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                        return &line[..i];
-                    }
+                } else if bytes[i] == b'"' {
+                    in_string = true;
+                } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
+                    return &line[..i];
                 }
                 i += 1;
             }

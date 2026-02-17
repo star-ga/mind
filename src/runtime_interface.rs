@@ -62,12 +62,7 @@ impl MindRuntime for NoOpRuntime {
         Ok(0)
     }
 
-    fn run_op(
-        &self,
-        _op: &str,
-        _inputs: &[usize],
-        _outputs: &[usize],
-    ) -> Result<(), RuntimeError> {
+    fn run_op(&self, _op: &str, _inputs: &[usize], _outputs: &[usize]) -> Result<(), RuntimeError> {
         Ok(())
     }
 }
