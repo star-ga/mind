@@ -1,0 +1,63 @@
+{
+  "system_info": {
+    "platform": "Linux-6.17.0-14-generic-x86_64-with-glibc2.39",
+    "python_version": "3.12.3",
+    "jax_version": "0.9.0.1",
+    "cpu": "x86_64",
+    "devices": [
+      "cuda:0"
+    ]
+  },
+  "benchmarks": {
+    "scalar_math": {
+      "jax_mean_us": 159.7740047145635,
+      "jax_median_us": 160.5040015419945,
+      "jax_stdev_us": 4.4969696735959985,
+      "jax_min_us": 153.8560027256608,
+      "jax_max_us": 166.7540054768324,
+      "jax_samples": 10,
+      "mind_mean_us": 1038.2493492215872,
+      "speedup": 0.15388789295591834
+    },
+    "small_matmul": {
+      "jax_mean_us": 210.5419000145048,
+      "jax_median_us": 207.9819969367236,
+      "jax_stdev_us": 6.848645010519472,
+      "jax_min_us": 202.2499975282699,
+      "jax_max_us": 219.74300034344196,
+      "jax_samples": 10,
+      "mind_mean_us": 919.8448475217447,
+      "speedup": 0.22888849199052308
+    },
+    "medium_matmul": {
+      "jax_mean_us": 207.01259782072157,
+      "jax_median_us": 181.73751595895737,
+      "jax_stdev_us": 65.64356046913893,
+      "jax_min_us": 166.09500744380057,
+      "jax_max_us": 374.3459819816053,
+      "jax_samples": 10,
+      "mind_mean_us": 1102.4211504263803,
+      "speedup": 0.1877799584493239
+    },
+    "large_matmul": {
+      "jax_mean_us": 266.06069586705416,
+      "jax_median_us": 279.98849691357464,
+      "jax_stdev_us": 60.73745344780174,
+      "jax_min_us": 193.11101641505957,
+      "jax_max_us": 374.93399577215314,
+      "jax_samples": 10,
+      "mind_mean_us": 1066.8748509488069,
+      "speedup": 0.24938322956102832
+    },
+    "simple_mlp": {
+      "jax_mean_us": 175.06550066173077,
+      "jax_median_us": 175.87249749340117,
+      "jax_stdev_us": 6.825468767460921,
+      "jax_min_us": 166.41500405967236,
+      "jax_max_us": 190.18599414266646,
+      "jax_samples": 10,
+      "mind_mean_us": 1084.988955699373,
+      "speedup": 0.16135233427227405
+    }
+  }
+}
