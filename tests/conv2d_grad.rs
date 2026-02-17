@@ -86,8 +86,8 @@ fn compute_padding(
     match padding {
         ConvPadding::Valid => (0, 0),
         ConvPadding::Same => {
-            let oh = (h + sh - 1) / sh;
-            let ow = (w + sw - 1) / sw;
+            let oh = h.div_ceil(sh);
+            let ow = w.div_ceil(sw);
             let pad_h = (oh.saturating_sub(1)) * sh + kh;
             let pad_h = pad_h.saturating_sub(h);
             let pad_w = (ow.saturating_sub(1)) * sw + kw;
@@ -108,6 +108,7 @@ fn idx_hwio(kh: usize, kw: usize, c: usize, o: usize, kww: usize, cc: usize, oo:
 }
 
 /// Compute loss = sum(conv2d(x, w) * r) where r is a fixed upstream tensor.
+#[allow(clippy::too_many_arguments)]
 fn compute_loss(
     x: &[f32],
     x_shape: [usize; 4],
@@ -123,6 +124,7 @@ fn compute_loss(
 }
 
 /// Compute numerical gradient using finite differences.
+#[allow(clippy::too_many_arguments)]
 fn numerical_gradient_x(
     x: &[f32],
     x_shape: [usize; 4],
@@ -153,6 +155,7 @@ fn numerical_gradient_x(
     grad
 }
 
+#[allow(clippy::too_many_arguments)]
 fn numerical_gradient_w(
     x: &[f32],
     x_shape: [usize; 4],
