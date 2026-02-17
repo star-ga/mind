@@ -45,7 +45,8 @@ pub mod diagnostics;
 pub mod eval;
 pub mod exec;
 pub mod ir;
-pub mod lexer;
+// Note: the logos-based lexer module was removed as dead code.
+// The parser (parser/mod.rs) implements its own hand-rolled lexer.
 pub(crate) mod linalg;
 #[cfg(feature = "mlir-lowering")]
 pub mod mlir;

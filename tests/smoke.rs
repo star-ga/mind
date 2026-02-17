@@ -12,15 +12,12 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use libmind::lexer;
 use libmind::parser;
 use libmind::type_checker;
 use libmind::types::ValueType;
 
 #[test]
-fn lex_parse_check_minimal() {
-    let toks = lexer::lex("x 123");
-    assert!(toks.len() >= 2);
+fn parse_check_minimal() {
     let m = parser::parse("x 123").expect("parse");
     let mut env = std::collections::HashMap::new();
     env.insert("x".to_string(), ValueType::ScalarI32);

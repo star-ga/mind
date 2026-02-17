@@ -722,14 +722,13 @@ fn run_repl() {
     }
 }
 
-fn report_eval_error(err: eval::EvalError, src: &str, module: &libmind::ast::Module) {
+fn report_eval_error(err: eval::EvalError, src: &str, _module: &libmind::ast::Module) {
     match err {
-        eval::EvalError::TypeError(rendered) => {
+        eval::EvalError::TypeError { msg, diagnostics } => {
             eprintln!("Evaluation error: type error");
-            eprintln!("{rendered}");
-            let diags = libmind::type_checker::check_module_types(module, src, &HashMap::new());
-            for d in diags {
-                eprintln!("{}", libmind::diagnostics::render(src, &d));
+            eprintln!("{msg}");
+            for d in &diagnostics {
+                eprintln!("{}", libmind::diagnostics::render(src, d));
             }
         }
         other => {

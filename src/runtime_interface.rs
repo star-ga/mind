@@ -1,5 +1,5 @@
 pub use crate::runtime::types::DeviceKind;
-use crate::runtime::types::TensorHandle;
+use crate::runtime::types::{RuntimeError, TensorHandle};
 use crate::types::{DType, ShapeDim};
 
 /// Describes a tensor visible to the runtime.
@@ -21,20 +21,34 @@ pub struct TensorDesc {
 /// interface; production backends live in the private `mind-runtime`
 /// repository.
 ///
-/// Error handling: for now, implementations may panic or log on
-/// irrecoverable failures. The interface may be extended to return
-/// `Result` in a future revision once error taxonomy is stabilized.
+/// All fallible operations return `Result<T, RuntimeError>` for
+/// structured error propagation aligned with the mind-runtime crate.
 pub trait MindRuntime {
     /// Allocate storage for a tensor with the given descriptor.
     ///
     /// Returns an opaque handle that can later be passed to `run_op`.
-    fn allocate(&self, desc: &TensorDesc) -> TensorHandle;
+    fn allocate(&self, desc: &TensorDesc) -> Result<TensorHandle, RuntimeError>;
 
     /// Execute an operation identified by `op` over the input and output handles.
-    fn run_op(&self, op: &str, inputs: &[TensorHandle], outputs: &[TensorHandle]);
+    fn run_op(
+        &self,
+        op: &str,
+        inputs: &[TensorHandle],
+        outputs: &[TensorHandle],
+    ) -> Result<(), RuntimeError>;
 
     /// Ensure that all enqueued operations are visible to the host.
-    fn synchronize(&self) {}
+    fn synchronize(&self) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    /// Deallocate a previously allocated tensor handle.
+    ///
+    /// Implementations should release the underlying storage.
+    /// The default implementation is a no-op for backwards compatibility.
+    fn deallocate(&self, _handle: TensorHandle) -> Result<(), RuntimeError> {
+        Ok(())
+    }
 }
 
 /// Default no-op runtime used in the open-core build.
@@ -44,11 +58,16 @@ pub trait MindRuntime {
 pub struct NoOpRuntime;
 
 impl MindRuntime for NoOpRuntime {
-    fn allocate(&self, _desc: &TensorDesc) -> usize {
-        0
+    fn allocate(&self, _desc: &TensorDesc) -> Result<usize, RuntimeError> {
+        Ok(0)
     }
 
-    fn run_op(&self, _op: &str, _inputs: &[usize], _outputs: &[usize]) {
-        // no-op
+    fn run_op(
+        &self,
+        _op: &str,
+        _inputs: &[usize],
+        _outputs: &[usize],
+    ) -> Result<(), RuntimeError> {
+        Ok(())
     }
 }

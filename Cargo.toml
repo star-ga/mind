@@ -16,7 +16,6 @@ categories = ["compilers", "science"]
 exclude = ["assets/", "benchmarks/", "examples/"]
 
 [dependencies]
-logos = "0.13"
 melior = { version = "0.21", optional = true }
 inkwell = { version = "0.8.0", features = ["llvm21-1"], optional = true }
 clap = { version = "4.4", features = ["derive"] }
