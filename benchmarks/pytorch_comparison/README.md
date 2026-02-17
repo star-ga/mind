@@ -1,10 +1,10 @@
-# PyTorch 2.0 Compilation Benchmark
+# PyTorch Compilation Benchmark
 
-This benchmark compares **MIND compilation time** vs **PyTorch 2.0 torch.compile()** compilation time.
+This benchmark compares **MIND compilation time** vs **PyTorch torch.compile()** compilation time.
 
 ## What We Measure
 
-- **PyTorch 2.0**: `torch.compile()` compilation overhead (first call)
+- **PyTorch 2.10+**: `torch.compile()` compilation overhead (GPU cold-start, caches cleared)
 - **MIND**: `compile_source()` time (parse → type-check → IR lowering)
 
 ## Quick Start
@@ -32,16 +32,18 @@ python benchmark_pytorch_compile.py
 | `simple_mlp` | 784 → 256 → 10 MLP | Multi-layer network | `(1, 784)` |
 | `conv2d` | ResNet-50 style Conv2D | Conv2D layer | `(1, 64, 56, 56)` |
 
-## Expected Results
+## Verified Results (February 2026)
 
-MIND typically compiles in **~40 microseconds** regardless of model size.
+MIND v0.2.1 frontend compiles in **1.8-15.5 µs** (Criterion in-process, scales with program complexity).
 
-PyTorch 2.0's `torch.compile()` has higher overhead due to:
-- Graph capture
-- TorchDynamo tracing
-- TorchInductor code generation
+PyTorch 2.10 GPU `torch.compile()` takes **99-878 ms** (cold-start, caches cleared) due to:
+- FX graph capture
+- Inductor optimization
+- Triton/cuBLAS kernel generation + C++ compilation
 
-Expected speedup: **10,000× to 100,000×** faster compilation with MIND.
+**Verified ratio: 35,000-176,000× faster** MIND frontend compilation.
+
+**Scope note:** MIND measures frontend only (parse + typecheck + IR). PyTorch measures full compilation pipeline. Different amounts of work.
 
 ## Output Format
 
@@ -104,4 +106,4 @@ This benchmark supports MIND patent claims about compilation speed advantages:
 - **Claims 1-5**: Core compilation system
 - **Claims 11-15**: Fast compilation compared to prior art
 
-**Goal**: Demonstrate that MIND achieves orders-of-magnitude faster compilation than PyTorch 2.0.
+**Goal**: Demonstrate that MIND achieves orders-of-magnitude faster frontend compilation than PyTorch 2.10 GPU full pipeline.
