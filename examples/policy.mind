@@ -1,0 +1,195 @@
+// policy.mind — v0.1 Execution Boundary Kernel
+// Pure Mind Lang
+// Deterministic, zero-alloc, fail-closed
+// Single compiled function. No negotiation at the boundary.
+
+enum Action {
+  Read,
+  Write,
+  Delete,
+  Execute,
+  TransferAsset,
+  ChangePermissions,
+  SendMessage,
+}
+
+enum Resource {
+  Repo,
+  Database,
+  Filesystem,
+}
+
+enum Env {
+  Prod,
+  Staging,
+  Dev,
+}
+
+enum EffectTag {
+  Allow,
+  Deny,
+  RequireConfirmation,
+}
+
+enum DenyCode {
+  InvalidInput = 1,
+  SuspiciousJustification = 2,
+  SensitivePath = 3,
+  InfraModification = 4,
+  IncompatibleAction = 5,
+  DefaultDeny = 255,
+}
+
+enum ConfirmCode {
+  HumanUI = 1,
+  HumanSigned = 2,
+}
+
+const TIMEOUT_SHIFT: u32 = 8
+
+struct Effect {
+  tag: EffectTag,
+  code: u32,   // DenyCode OR packed confirmation
+}
+
+struct Target {
+  path: &[u8],
+}
+
+struct Request {
+  env: Env,
+  action: Action,
+  resource: Resource,
+  target: Target,
+  justification: &[u8],
+}
+
+// ---------- Helpers ----------
+
+fn starts_with(slice: &[u8], prefix: &[u8]) -> bool {
+  if prefix.len() > slice.len() { return false }
+  let mut i = 0
+  while i < prefix.len() {
+    if slice[i] != prefix[i] { return false }
+    i += 1
+  }
+  true
+}
+
+fn contains_ascii_ci(slice: &[u8], needle: &[u8]) -> bool {
+  if needle.len() == 0 || needle.len() > slice.len() { return false }
+  let n = needle.len()
+  let mut i = 0
+  while i + n <= slice.len() {
+    let mut j = 0
+    while j < n {
+      let a = slice[i + j]
+      let b = needle[j]
+      let al = if a >= 65 && a <= 90 { a + 32 } else { a }
+      let bl = if b >= 65 && b <= 90 { b + 32 } else { b }
+      if al != bl { break }
+      j += 1
+    }
+    if j == n { return true }
+    i += 1
+  }
+  false
+}
+
+fn validate(req: &Request) -> bool {
+  if req.justification.len() < 12 { return false }
+
+  if contains_ascii_ci(req.justification, b"ignore previous") ||
+     contains_ascii_ci(req.justification, b"bypass") ||
+     contains_ascii_ci(req.justification, b"no logs") ||
+     contains_ascii_ci(req.justification, b"silent") ||
+     contains_ascii_ci(req.justification, b"don't tell") {
+    return false
+  }
+
+  true
+}
+
+fn pack_confirm(code: ConfirmCode, timeout: u32) -> u32 {
+  (code as u32) | (timeout << TIMEOUT_SHIFT)
+}
+
+// ---------- Execution Boundary ----------
+
+fn evaluate(req: &Request) -> Effect {
+
+  // 1. Hard normalization
+  if !validate(req) {
+    return Effect { tag: EffectTag::Deny, code: DenyCode::SuspiciousJustification as u32 }
+  }
+
+  // 2. Exhaustive env validation (guards deserialization corruption)
+  if req.env != Env::Prod &&
+     req.env != Env::Staging &&
+     req.env != Env::Dev {
+    return Effect { tag: EffectTag::Deny, code: DenyCode::InvalidInput as u32 }
+  }
+
+  // 3. Action ↔ Resource compatibility
+  if (req.action == Action::TransferAsset && req.resource != Resource::Database) ||
+     (req.action == Action::Execute && req.resource != Resource::Database) ||
+     (req.action == Action::ChangePermissions && req.resource == Resource::Filesystem) {
+    return Effect { tag: EffectTag::Deny, code: DenyCode::IncompatibleAction as u32 }
+  }
+
+  // 4. Read-only fast path
+  if req.action == Action::Read {
+    return Effect { tag: EffectTag::Allow, code: 0 }
+  }
+
+  // 5. Filesystem sensitive paths
+  if req.resource == Resource::Filesystem {
+    let p = req.target.path
+    if starts_with(p, b"/secrets/") ||
+       starts_with(p, b"/etc/") ||
+       contains_ascii_ci(p, b"/.ssh/") {
+      return Effect { tag: EffectTag::Deny, code: DenyCode::SensitivePath as u32 }
+    }
+  }
+
+  // 6. High-risk confirmations
+  if req.env == Env::Prod && req.action == Action::ChangePermissions {
+    return Effect { tag: EffectTag::RequireConfirmation,
+                    code: pack_confirm(ConfirmCode::HumanSigned, 900) }
+  }
+
+  if req.action == Action::Delete {
+    return Effect { tag: EffectTag::RequireConfirmation,
+                    code: pack_confirm(ConfirmCode::HumanUI, 600) }
+  }
+
+  if req.action == Action::TransferAsset {
+    return Effect { tag: EffectTag::RequireConfirmation,
+                    code: pack_confirm(ConfirmCode::HumanSigned, 600) }
+  }
+
+  // 7. Repo rules (common-case-first)
+  if req.resource == Resource::Repo && req.action == Action::Write {
+    let p = req.target.path
+
+    if starts_with(p, b"src/") || starts_with(p, b"docs/") {
+      return Effect { tag: EffectTag::Allow, code: 0 }
+    }
+
+    if starts_with(p, b".github/") ||
+       starts_with(p, b"infra/") ||
+       starts_with(p, b"secrets/") {
+      return Effect { tag: EffectTag::Deny,
+                      code: DenyCode::InfraModification as u32 }
+    }
+  }
+
+  // 8. Default deny (fail-closed)
+  Effect { tag: EffectTag::Deny,
+           code: DenyCode::DefaultDeny as u32 }
+}
+
+// Gate entry points
+fn evaluate_fleet(req: &Request) -> Effect { evaluate(req) }
+fn evaluate_memory(req: &Request) -> Effect { evaluate(req) }
+fn evaluate_git(req: &Request) -> Effect { evaluate(req) }
