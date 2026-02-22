@@ -155,12 +155,18 @@ Includes a complete finite-difference tridiagonal solver as a comparison baselin
 ### 12. policy.mind
 **Topics**: Enums, structs, byte slicing, deterministic access control, fail-closed design
 **Lines**: ~200
+**Status**: Targets upcoming systems programming features (`enum`, `struct`, `if/else`, `while`, `const`, `&[u8]`). Not compilable with mindc 0.2.x which currently supports tensor operations only. Included as a design reference for the planned systems programming extension.
 
 Execution boundary kernel for AI agent governance. Demonstrates MIND's systems programming capabilities beyond tensor computation: enum-based action/resource/environment typing, byte-level string matching (case-insensitive without allocations), packed confirmation codes with bit shifting, and exhaustive match-style control flow. The kernel enforces fail-closed access control with prompt injection detection, sensitive path blocking, human confirmation requirements for high-risk actions, and default-deny semantics. Three gate entry points (`evaluate_fleet`, `evaluate_memory`, `evaluate_git`) route through a single `evaluate` function.
 
-```bash
-mindc examples/policy.mind --verify-only
-```
+**Language features used** (pending compiler support):
+- `enum` with explicit discriminants — ADTs for action, resource, environment, effect types
+- `struct` with typed fields — zero-copy request/effect structs
+- `if/else` branching — exhaustive match-style control flow
+- `while` loops — byte-level iteration without allocation
+- `const` — compile-time constants
+- `&[u8]` byte slices — raw byte access for path and justification validation
+- Bitwise operations — packed confirmation codes with shift encoding
 
 ---
 
