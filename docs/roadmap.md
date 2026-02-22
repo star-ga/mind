@@ -2,25 +2,28 @@
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
 
-## Near Term (0–3 months)
+## Completed
 
-- **v1.0 Stabilization** – Lock core syntax and IR semantics, add conformance tests.
-- **Package Registry Preview** – Publish early `mindpkg` registry with curated models.
-- **Improved Diagnostics** – Structured error messages with fix-it hints in the CLI.
-- **Link-Check Automation** – Enforce documentation link health in CI (see `.github/workflows/link-check.yml`).
+- ✅ **v1.0 Stabilization** – Core syntax and IR semantics locked, conformance tests passing.
+- ✅ **GPU Backends** – CUDA (16K LOC), Metal (2.9K), ROCm (3.8K), WebGPU (5.1K) all complete.
+- ✅ **Autodiff Engine** – Reverse-mode AD for all Core v1 ops.
+- ✅ **FFI Stabilization** – ABI frozen, C header generation.
+- ✅ **Distributed Runtime** – NCCL/Gloo collectives, RingAllReduce, pipeline parallelism (3.3K LOC).
+- ✅ **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, Prometheus metrics (4.7K LOC).
+- ✅ **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry (9.5K LOC).
+- ✅ **Docs Migration** – Documentation published to `mindlang.dev/docs/*`.
+- ✅ **Link-Check Automation** – CI enforces documentation link health.
 
-## Mid Term (3–6 months)
+## In Progress
 
-- **GPU Backend GA** – Graduate MLIR CUDA backend with memory residency analysis.
-- **Autodiff Optimizations** – Integrate checkpointing heuristics and sparse gradients.
-- **FFI Stabilization** – Freeze ABI for embedding and release C++ helpers.
-- **Docs Migration** – Publish documentation to `mindlang.dev/docs/*` via Eleventy.
+- 🚧 **Phase 10.5: Governance Logic** – enum, struct, if/else, while, const, bitwise ops for policy kernels.
+- 🚧 **Improved Diagnostics** – Structured error messages with fix-it hints.
 
-## Long Term (6–12 months)
+## Planned
 
-- **Distributed Runtime** – Add multi-node execution with NCCL-style collectives.
-- **Formal Verification** – Explore proof-carrying IR passes for safety-critical deployments.
+- **Formal Verification** – Proof-carrying IR passes for safety-critical deployments.
 - **Ecosystem Integrations** – Official bindings for Python, Swift, and WebAssembly targets.
+- **Package Registry** – Public `mindpkg` registry with curated models.
 
 ## Contributing
 
