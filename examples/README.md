@@ -17,6 +17,7 @@ Comprehensive examples demonstrating MIND's capabilities for tensor computation,
 | `remizov_verify.mind` | ODE solver verification suite (5 tests) | Intermediate |
 | `remizov_feynman.mind` | Monte Carlo Feynman path integral ODE solver | Advanced |
 | `remizov_benchmark.mind` | 6-benchmark ODE solver performance suite | Advanced |
+| `policy.mind` | Execution boundary kernel — fail-closed access control | Intermediate |
 
 ## Example Descriptions
 
@@ -151,6 +152,18 @@ Includes a complete finite-difference tridiagonal solver as a comparison baselin
 
 ---
 
+### 12. policy.mind
+**Topics**: Enums, structs, byte slicing, deterministic access control, fail-closed design
+**Lines**: ~200
+
+Execution boundary kernel for AI agent governance. Demonstrates MIND's systems programming capabilities beyond tensor computation: enum-based action/resource/environment typing, byte-level string matching (case-insensitive without allocations), packed confirmation codes with bit shifting, and exhaustive match-style control flow. The kernel enforces fail-closed access control with prompt injection detection, sensitive path blocking, human confirmation requirements for high-risk actions, and default-deny semantics. Three gate entry points (`evaluate_fleet`, `evaluate_memory`, `evaluate_git`) route through a single `evaluate` function.
+
+```bash
+mindc examples/policy.mind --verify-only
+```
+
+---
+
 ## Building and Running
 
 ```bash
@@ -177,6 +190,6 @@ mind build --features=mlir-lowering examples/cnn_classifier.mind -o cnn_binary
 
 ---
 
-**Last Updated**: 2026-02-06
-**Total Examples**: 11
-**Coverage**: Basics, Autodiff, CNNs, Edge deployment, MLIR pipeline, ODE solving, GPU parallelism, Scientific ML, Monte Carlo methods, Benchmarking
+**Last Updated**: 2026-02-22
+**Total Examples**: 12
+**Coverage**: Basics, Autodiff, CNNs, Edge deployment, MLIR pipeline, ODE solving, GPU parallelism, Scientific ML, Monte Carlo methods, Benchmarking, Systems/Policy
