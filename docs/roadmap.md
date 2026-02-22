@@ -52,6 +52,47 @@ Establish a developer-friendly ecosystem that showcases real-world usage of MIND
 
 ---
 
+## Phase 10.5 — Systems Programming Foundation
+
+### Goals
+Extend the MIND compiler beyond tensor-only operations to support general systems programming constructs. These features enable execution boundary kernels, access control policies, and deterministic governance logic — all compiled with the same safety guarantees as tensor programs.
+
+### Motivation
+The `policy.mind` execution boundary kernel (see `examples/policy.mind`) demonstrates a concrete use case: fail-closed access control with enum-based typing, byte-level string matching, and bitwise operations. All features listed here are required to compile that kernel.
+
+### Deliverables
+
+**Tier 1 — Control Flow & Constants (2–3 days):**
+- `if` / `else` expressions (already in EBNF grammar, not yet in parser)
+- `while` loops (already in EBNF grammar, not yet in parser)
+- `const` declarations (compile-time constants)
+- Comparison operators in non-tensor context (`==`, `!=`, `<`, `>`, `<=`, `>=`)
+- Bitwise operators (`|`, `&`, `<<`, `>>`, `^`)
+- Boolean operators (`||`, `&&`, `!`)
+
+**Tier 2 — Algebraic Data Types (3–5 days):**
+- `struct` with typed fields (already in EBNF grammar, not yet in parser)
+- `enum` with unit variants and explicit discriminants
+- Struct literal construction (`Effect { tag: ..., code: ... }`)
+- Field access (`req.target.path`)
+- Enum-to-integer casting (`code as u32`)
+
+**Tier 3 — Byte Slices & Advanced Features (5–7 days):**
+- `&[u8]` byte slice type (fat pointer: data + length)
+- Byte string literals (`b"hello"`)
+- Slice indexing (`slice[i]`) and `.len()` method
+- `mut` bindings (`let mut i = 0`)
+- Integer types: `u8`, `u32` (in addition to existing `i32`, `i64`)
+
+### Benchmark Impact
+All new features are gated behind new keyword/token checks that fail immediately for existing tensor programs. Estimated regression on existing Criterion benchmarks: **<1%**. New parser arms compile to jump tables (O(1) dispatch).
+
+### Spec Status
+- `if`, `while`, `struct`, `match`, `for` are already defined in the EBNF grammar (`grammar-syntax.ebnf`)
+- `enum`, `const`, `&[u8]` byte slices require grammar additions (see `mind-spec` future-extensions)
+
+---
+
 ## Phase 11 — Benchmarks & Cloud Compiler Prototype
 
 ### Goals
@@ -276,6 +317,7 @@ MIND is evolving from a single-stack language focused on AI computation into a c
 
 These extended phases (10–14) guide MIND into the next major development era:
 - richer SDK and examples,
+- systems programming foundation (enum, struct, control flow, byte slices),
 - formal benchmarks,
 - early cloud compiler,
 - enterprise-grade runtime,
