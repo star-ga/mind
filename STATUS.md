@@ -42,6 +42,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Phase 8 | MLIR optimization | ✅ Complete |
 | Phase 9 | CPU runtime integration | ✅ Complete |
 | Phase 10 | Developer SDK & Examples | 🚧 In Progress |
+| Phase 10.5 | Systems Programming Foundation | 📋 Planned |
 | Phase 11 | Benchmarks & Cloud Compiler | 📋 Planned |
 | Phase 12 | Enterprise Runtime & Edge | 📋 Planned |
 | Phase 13 | BCI/Neuroscience | 📋 Roadmap Added |
