@@ -55,10 +55,13 @@ Establish a developer-friendly ecosystem that showcases real-world usage of MIND
 ## Phase 10.5 — Systems Programming Foundation
 
 ### Goals
-Extend the MIND compiler beyond tensor-only operations to support general systems programming constructs. These features enable execution boundary kernels, access control policies, and deterministic governance logic — all compiled with the same safety guarantees as tensor programs.
+Extend the MIND compiler to support governance logic alongside tensor computation. These features enable execution boundary kernels, access control policies, and deterministic decision logic — all compiled with the same verification guarantees as tensor programs.
 
 ### Motivation
-The `policy.mind` execution boundary kernel (see `examples/policy.mind`) demonstrates a concrete use case: fail-closed access control with enum-based typing, byte-level string matching, and bitwise operations. All features listed here are required to compile that kernel.
+The `policy.mind` execution boundary kernel (see `examples/policy.mind`) demonstrates the use case: fail-closed access control with enum-based typing, struct-based requests, and bitwise-packed confirmation codes. MIND becomes a *verifiable behavior language* — expressing certified decisions alongside tensor computation.
+
+### Design Decision
+**Tiers 1–2 ship. Tier 3 deferred to Rust FFI.** MIND owns governance logic (typed decisions, policy rules). Rust owns byte-level implementation (string matching, memory) via FFI. This preserves MIND's identity as a certified tensor + governance language without scope-creeping into general systems programming. (5-model LLM consensus: unanimous Option A.)
 
 ### Deliverables
 
@@ -76,20 +79,19 @@ The `policy.mind` execution boundary kernel (see `examples/policy.mind`) demonst
 - Struct literal construction (`Effect { tag: ..., code: ... }`)
 - Field access (`req.target.path`)
 - Enum-to-integer casting (`code as u32`)
+- `u32` integer type (for packed codes and bitfields)
 
-**Tier 3 — Byte Slices & Advanced Features (5–7 days):**
-- `&[u8]` byte slice type (fat pointer: data + length)
-- Byte string literals (`b"hello"`)
-- Slice indexing (`slice[i]`) and `.len()` method
-- `mut` bindings (`let mut i = 0`)
-- Integer types: `u8`, `u32` (in addition to existing `i32`, `i64`)
+**Deferred — Byte-Level Operations (use Rust FFI):**
+- `&[u8]` byte slices, `b"..."` literals, `u8` type, `mut` bindings
+- Byte-level string matching (`starts_with`, `contains_ascii_ci`) implemented as Rust FFI helpers
+- Rationale: low-level memory types are redundant with Rust and would blur MIND's certified-AI niche
 
 ### Benchmark Impact
 All new features are gated behind new keyword/token checks that fail immediately for existing tensor programs. Estimated regression on existing Criterion benchmarks: **<1%**. New parser arms compile to jump tables (O(1) dispatch).
 
 ### Spec Status
 - `if`, `while`, `struct`, `match`, `for` are already defined in the EBNF grammar (`grammar-syntax.ebnf`)
-- `enum`, `const`, `&[u8]` byte slices require grammar additions (see `mind-spec` future-extensions)
+- `enum`, `const` require grammar additions (see `mind-spec` future-extensions)
 
 ---
 
