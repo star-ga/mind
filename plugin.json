@@ -1,7 +1,0 @@
-{
-  "name": "mind",
-  "description": "MIND language skill — write .mind files with full grammar, type system, and standard library reference",
-  "version": "1.0.0",
-  "skills": ["skills/write-mind"],
-  "agents": ["agents/mind-developer.md"]
-}
