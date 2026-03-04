@@ -241,6 +241,26 @@ MIND powers real-world applications demonstrating its capabilities:
 
 Upcoming milestones and release planning live in [`/docs/roadmap.md`](docs/roadmap.md).
 
+## Claude Code Plugin
+
+This repo is a [Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/plugins). Install it to give Claude the ability to write correct `.mind` files:
+
+```bash
+# From ClawHub
+clawhub install mind
+
+# Or directly from this repo (add to .claude/settings.json)
+```
+
+**Included:**
+
+| Component | Path | Description |
+|-----------|------|-------------|
+| `write-mind` skill | `skills/write-mind/SKILL.md` | Full language reference: keywords, types, operators, EBNF grammars, std library, 4 annotated examples |
+| `mind-developer` agent | `agents/mind-developer.md` | Expert agent for writing `.mind` code — knows tensor syntax, autodiff, policy kernels |
+
+The skill contains only public Apache 2.0 content from `star-ga/mind` and `star-ga/mind-spec`. No proprietary runtime content.
+
 ## Links
 
 * [Architecture diagram](assets/diagrams/architecture.svg)
