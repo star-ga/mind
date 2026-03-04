@@ -1,0 +1,56 @@
+// FFT Signal Processing Example for MIND
+// Demonstrates spectral operations: fft, ifft, frequency-domain filtering
+// Compiled via MLIR → native. O(N log N) at compile time, zero overhead at runtime.
+
+import std.tensor;
+
+fn main() {
+    // Generate a noisy signal: clean 440Hz sine + random noise
+    let sample_rate = 44100;
+    let duration = 1.0;
+    let n = (sample_rate as f64 * duration) as i64;
+
+    let t = tensor.linspace[f32](0.0, duration, n);
+    let clean_signal = tensor.sin(2.0 * 3.14159 * 440.0 * t);
+    let noise = tensor.randn[f32, (n,)] * 0.5;
+    let noisy_signal = clean_signal + noise;
+
+    // Forward FFT: time domain → frequency domain
+    let spectrum = tensor.fft(noisy_signal);
+    print("Spectrum shape: ", spectrum.shape());  // [n/2+1, 2]
+
+    // Build a low-pass filter mask (keep frequencies below 500Hz)
+    let cutoff_bin = (500 * n / sample_rate) as i64;
+    let mask = tensor.zeros(spectrum.shape());
+    mask[0..cutoff_bin] = tensor.ones([cutoff_bin, 2]);
+
+    // Apply filter in frequency domain (element-wise multiply)
+    let filtered_spectrum = spectrum * mask;
+
+    // Inverse FFT: frequency domain → time domain
+    let filtered_signal = tensor.ifft(filtered_spectrum);
+    print("Filtered signal shape: ", filtered_signal.shape());
+
+    // The 440Hz component survives, noise above 500Hz is removed
+    print("Original RMS: ", noisy_signal.pow(2.0).mean().sqrt());
+    print("Filtered RMS: ", filtered_signal.pow(2.0).mean().sqrt());
+}
+
+// 2D FFT example: image sharpening via frequency boost
+fn sharpen_image(image: tensor.Tensor) -> tensor.Tensor {
+    let spectrum = tensor.fft2d(image);
+
+    // Boost high frequencies (edges)
+    let h = spectrum.shape()[0];
+    let w = spectrum.shape()[1];
+    let center_h = h / 2;
+    let center_w = w / 2;
+
+    // High-pass emphasis filter: 1.0 + alpha * HPF
+    let alpha = 2.0;
+    let boost = tensor.ones(spectrum.shape());
+    boost[center_h-10..center_h+10, center_w-10..center_w+10] =
+        tensor.full(boost[center_h-10..center_h+10, center_w-10..center_w+10].shape(), 1.0 - alpha);
+
+    return tensor.ifft(spectrum * boost);
+}
