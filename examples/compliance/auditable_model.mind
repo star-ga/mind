@@ -1,0 +1,188 @@
+// auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
+// Demonstrates how MIND source code carries full audit trail from source to binary.
+//
+// Provenance Chain:
+//   source.mind  -->  mindc (IR)  -->  binary (.bin)  -->  SHA256 attestation
+//
+// @provenance: Every compiled artifact records its lineage:
+//   - Source hash:      SHA256 of this file at compile time
+//   - Compiler version: mindc version that produced the IR
+//   - Build timestamp:  ISO 8601 UTC timestamp of compilation
+//   - IR hash:          SHA256 of the intermediate representation
+//   - Binary hash:      SHA256 of the final linked binary
+//
+// @deterministic: Given identical source + compiler + flags, the binary
+//   is bit-for-bit reproducible. No timestamp embedding in the binary
+//   itself; timestamps live in the detached provenance attestation.
+//
+// Build:
+//   mindc build auditable_model.mind --target cpu --provenance=full
+//
+// Verify:
+//   mind_audit verify auditable_model.bin --attestation=auditable_model.att
+//
+// Provenance attestation file (auditable_model.att) contains:
+//   {
+//     "source_sha256":   "<SHA256_OF_THIS_FILE>",
+//     "compiler":        "mindc 0.2.1 (STARGA toolchain)",
+//     "build_timestamp": "<ISO8601_UTC>",
+//     "ir_sha256":       "<SHA256_OF_IR>",
+//     "binary_sha256":   "<SHA256_OF_BINARY>",
+//     "flags":           "--target cpu --provenance=full",
+//     "slsa_level":      3
+//   }
+
+import std.tensor;
+
+// ============================================================================
+// Model: Two-Layer MLP for Binary Classification
+// Suitable for regulated domains (medical screening, credit scoring)
+// ============================================================================
+
+// Layer 1: Input(8) -> Hidden(16) with ReLU
+// 8 features typical of tabular medical/financial data
+fn hidden_layer(x: diff tensor<f32[8]>,
+                w1: diff tensor<f32[8, 16]>,
+                b1: diff tensor<f32[16]>) -> diff tensor<f32[16]> {
+    let z = matmul(reshape(x, [1, 8]), w1);   // [1,8] @ [8,16] = [1,16]
+    let h = reshape(z, [16]) + b1;             // Add bias
+    return relu(h);                            // ReLU activation
+}
+
+// Layer 2: Hidden(16) -> Output(1) with Sigmoid
+fn output_layer(h: diff tensor<f32[16]>,
+                w2: diff tensor<f32[16, 1]>,
+                b2: diff tensor<f32[1]>) -> diff tensor<f32> {
+    let z = matmul(reshape(h, [1, 16]), w2);   // [1,16] @ [16,1] = [1,1]
+    let logit = reshape(z, []) + reshape(b2, []);
+    return sigmoid(logit);                     // Probability in [0,1]
+}
+
+// Full forward pass
+fn predict(x: diff tensor<f32[8]>,
+           w1: diff tensor<f32[8, 16]>,
+           b1: diff tensor<f32[16]>,
+           w2: diff tensor<f32[16, 1]>,
+           b2: diff tensor<f32[1]>) -> diff tensor<f32> {
+    let h = hidden_layer(x, w1, b1);
+    return output_layer(h, w2, b2);
+}
+
+// ============================================================================
+// Loss and Training
+// ============================================================================
+
+// Binary cross-entropy with numerical stability
+fn bce_loss(pred: diff tensor<f32>, label: tensor<f32>) -> diff tensor<f32> {
+    let eps = 1e-7;
+    let loss = -(label * log(pred + eps) + (1.0 - label) * log(1.0 - pred + eps));
+    return loss;
+}
+
+// Single SGD training step with gradient computation
+fn train_step(x: diff tensor<f32[8]>,
+              label: tensor<f32>,
+              w1: diff tensor<f32[8, 16]>,
+              b1: diff tensor<f32[16]>,
+              w2: diff tensor<f32[16, 1]>,
+              b2: diff tensor<f32[1]>,
+              lr: f32) -> (diff tensor<f32[8, 16]>,
+                           diff tensor<f32[16]>,
+                           diff tensor<f32[16, 1]>,
+                           diff tensor<f32[1]>) {
+    // Forward
+    let pred = predict(x, w1, b1, w2, b2);
+    let loss = bce_loss(pred, label);
+
+    // Backward -- reverse-mode autodiff
+    let grad_w1 = backward(loss, w1);
+    let grad_b1 = backward(loss, b1);
+    let grad_w2 = backward(loss, w2);
+    let grad_b2 = backward(loss, b2);
+
+    // SGD update (immutable -- returns new tensors)
+    let w1_new = w1 - lr * grad_w1;
+    let b1_new = b1 - lr * grad_b1;
+    let w2_new = w2 - lr * grad_w2;
+    let b2_new = b2 - lr * grad_b2;
+
+    return (w1_new, b1_new, w2_new, b2_new);
+}
+
+// ============================================================================
+// Main: Train and Demonstrate Provenance Chain
+// ============================================================================
+
+fn main() {
+    print("=== Auditable MLP -- Compliance Example ===\n");
+
+    // Initialize weights (Xavier-style)
+    let w1: diff tensor<f32[8, 16]> = random_normal([8, 16], stddev=0.35);
+    let b1: diff tensor<f32[16]> = tensor.zeros[f32, (16,)];
+    let w2: diff tensor<f32[16, 1]> = random_normal([16, 1], stddev=0.25);
+    let b2: diff tensor<f32[1]> = tensor.zeros[f32, (1,)];
+
+    // Example input: 8-feature patient record (normalized)
+    let x: tensor<f32[8]> = [0.45, 0.67, 0.12, 0.89, 0.34, 0.56, 0.78, 0.23];
+    let label: tensor<f32> = 1.0;  // Positive class
+
+    // Training loop (abbreviated for demonstration)
+    let lr = 0.01;
+    let (w1, b1, w2, b2) = train_step(x, label, w1, b1, w2, b2, lr);
+    let (w1, b1, w2, b2) = train_step(x, label, w1, b1, w2, b2, lr);
+    let (w1, b1, w2, b2) = train_step(x, label, w1, b1, w2, b2, lr);
+
+    // Inference
+    let prob = predict(x, w1, b1, w2, b2);
+    print("Prediction probability:", prob);
+    print("Classification:", if prob > 0.5 { "positive" } else { "negative" });
+
+    // Parameter count for audit report
+    //   w1: 8x16  = 128 parameters
+    //   b1: 16    = 16 parameters
+    //   w2: 16x1  = 16 parameters
+    //   b2: 1     = 1 parameter
+    //   Total:    = 161 parameters (644 bytes in f32)
+    print("\nTotal parameters: 161");
+    print("Model size (f32): 644 bytes");
+
+    // Provenance chain (printed by runtime when --provenance=full):
+    //
+    // PROVENANCE CHAIN
+    // ================
+    // Source:    auditable_model.mind
+    // Source SHA256: e3b0c44298fc1c14...  (computed at build time)
+    // Compiler:  mindc 0.2.1 (STARGA toolchain)
+    // IR SHA256: a7ffc6f8bf1ed766...     (computed after lowering)
+    // Binary:    auditable_model.bin
+    // Bin SHA256: 2c26b46b68ffc68f...    (computed after linking)
+    // Build:     2026-03-06T12:00:00Z
+    // Flags:     --target cpu --provenance=full
+    // SLSA:      Level 3
+    //
+    // This chain is also written to auditable_model.att (JSON attestation)
+    // and can be verified offline by regulators using:
+    //   mind_audit verify auditable_model.bin --attestation=auditable_model.att
+}
+
+// ============================================================================
+// Compliance Notes
+// ============================================================================
+//
+// FDA (21 CFR Part 11):
+//   - Source code is version-controlled with signed commits
+//   - Binary is reproducible from source + compiler version
+//   - Provenance attestation provides tamper-evident audit trail
+//   - Model parameters are frozen after training (no runtime mutation)
+//
+// EU AI Act (Article 17 -- Quality Management):
+//   - Training data lineage tracked via dataset SHA256 (external)
+//   - Model architecture documented in source (this file)
+//   - Performance metrics logged per training run
+//   - Bias testing results attached to attestation
+//
+// SLSA Level 3:
+//   - Source integrity: signed commits in version control
+//   - Build integrity: hermetic build via mindc
+//   - Provenance: non-falsifiable attestation generated by builder
+//   - Isolation: build runs in ephemeral, sandboxed environment

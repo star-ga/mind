@@ -31,6 +31,7 @@ See **[FINAL_PATENT_RESULTS.md](FINAL_PATENT_RESULTS.md)** for patent benchmark 
 | small_matmul | 2.95 µs | 162 ms | 55,000× |
 | simple_mlp | 6.15 µs | 752 ms | 122,000× |
 | conv2d | ~5 µs | 878 ms | 176,000× |
+| large_network | 15.49 µs | 752 ms | 48,500× |
 
 **Note**: Different scopes of work. MIND measures frontend compilation. PyTorch measures full torch.compile() pipeline including Triton/cuBLAS kernel generation. Mojo measures full LLVM compilation to native binary.
 

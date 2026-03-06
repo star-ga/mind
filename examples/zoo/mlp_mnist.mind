@@ -1,0 +1,213 @@
+// MLP MNIST Classifier — MIND Model Zoo
+// 3-layer Multi-Layer Perceptron for handwritten digit classification
+//
+// Architecture:
+//   Input:  784 (28x28 flattened grayscale pixels)
+//   Layer 1: Linear(784 -> 256) + ReLU
+//   Layer 2: Linear(256 -> 128) + ReLU
+//   Layer 3: Linear(128 -> 10)  + log_softmax (output logits for 10 classes)
+//
+// Loss:  Negative Log-Likelihood (cross-entropy via log_softmax + gather)
+// Update: SGD with reverse-mode autodiff
+//
+// Shapes at each layer:
+//   x:      [batch, 784]  — flattened input images
+//   h1:     [batch, 256]  — first hidden activations
+//   h2:     [batch, 128]  — second hidden activations
+//   logits: [batch, 10]   — class logits
+//   labels: [batch]       — integer class labels (0-9)
+//
+// Total parameters: 784*256 + 256 + 256*128 + 128 + 128*10 + 10
+//                 = 200,704 + 256 + 32,768 + 128 + 1,280 + 10
+//                 = 235,146 parameters
+//
+// SHA-256 Deterministic Verification:
+//   When compiled with --deterministic flag, identical inputs produce
+//   bit-identical outputs. Verify via: mindc --emit-hash mlp_mnist.mind
+
+import std.tensor;
+
+// ============================================================================
+// Layer 1: Input(784) -> Hidden(256) + ReLU
+// ============================================================================
+
+// Linear transform + ReLU activation
+// x: [batch, 784] @ W1: [784, 256] -> [batch, 256], then add b1 and ReLU
+fn layer1(x: diff tensor<f32[batch, 784]>,
+          W1: diff tensor<f32[784, 256]>,
+          b1: diff tensor<f32[256]>) -> diff tensor<f32[batch, 256]> {
+    let z1 = matmul(x, W1) + b1;    // [batch, 784] @ [784, 256] + [256] -> [batch, 256]
+    let h1 = relu(z1);               // [batch, 256] ReLU activation
+    return h1;
+}
+
+// ============================================================================
+// Layer 2: Hidden(256) -> Hidden(128) + ReLU
+// ============================================================================
+
+// Linear transform + ReLU activation
+// h1: [batch, 256] @ W2: [256, 128] -> [batch, 128], then add b2 and ReLU
+fn layer2(h1: diff tensor<f32[batch, 256]>,
+          W2: diff tensor<f32[256, 128]>,
+          b2: diff tensor<f32[128]>) -> diff tensor<f32[batch, 128]> {
+    let z2 = matmul(h1, W2) + b2;   // [batch, 256] @ [256, 128] + [128] -> [batch, 128]
+    let h2 = relu(z2);               // [batch, 128] ReLU activation
+    return h2;
+}
+
+// ============================================================================
+// Layer 3: Hidden(128) -> Output(10) (logits)
+// ============================================================================
+
+// Linear output layer producing raw logits (no activation — softmax in loss)
+// h2: [batch, 128] @ W3: [128, 10] -> [batch, 10]
+fn layer3(h2: diff tensor<f32[batch, 128]>,
+          W3: diff tensor<f32[128, 10]>,
+          b3: diff tensor<f32[10]>) -> diff tensor<f32[batch, 10]> {
+    let logits = matmul(h2, W3) + b3;  // [batch, 128] @ [128, 10] + [10] -> [batch, 10]
+    return logits;
+}
+
+// ============================================================================
+// Full Forward Pass
+// ============================================================================
+
+// Compose all three layers: x -> h1 -> h2 -> logits
+fn forward(x: diff tensor<f32[batch, 784]>,
+           W1: diff tensor<f32[784, 256]>,
+           b1: diff tensor<f32[256]>,
+           W2: diff tensor<f32[256, 128]>,
+           b2: diff tensor<f32[128]>,
+           W3: diff tensor<f32[128, 10]>,
+           b3: diff tensor<f32[10]>) -> diff tensor<f32[batch, 10]> {
+    let h1 = layer1(x, W1, b1);      // [batch, 256]
+    let h2 = layer2(h1, W2, b2);     // [batch, 128]
+    let logits = layer3(h2, W3, b3); // [batch, 10]
+    return logits;
+}
+
+// ============================================================================
+// Cross-Entropy Loss
+// ============================================================================
+
+// NLL loss via log_softmax + gather
+// logits: [batch, 10], labels: [batch] (integer class indices 0-9)
+// Returns scalar loss averaged over the batch
+fn cross_entropy(logits: diff tensor<f32[batch, 10]>,
+                 labels: tensor<i32[batch]>) -> diff tensor<f32> {
+    let log_probs = log_softmax(logits, axis=1);          // [batch, 10] log probabilities
+    let nll = -gather(log_probs, labels, axis=1);         // [batch] negative log-likelihood
+    return mean(nll);                                      // scalar: average over batch
+}
+
+// ============================================================================
+// Training Step (SGD)
+// ============================================================================
+
+// Single SGD training step: forward -> loss -> backward -> update
+// Returns all 6 updated parameter tensors
+fn train_step(x: diff tensor<f32[batch, 784]>,
+              labels: tensor<i32[batch]>,
+              W1: diff tensor<f32[784, 256]>,
+              b1: diff tensor<f32[256]>,
+              W2: diff tensor<f32[256, 128]>,
+              b2: diff tensor<f32[128]>,
+              W3: diff tensor<f32[128, 10]>,
+              b3: diff tensor<f32[10]>,
+              lr: f32) -> (diff tensor<f32[784, 256]>,
+                           diff tensor<f32[256]>,
+                           diff tensor<f32[256, 128]>,
+                           diff tensor<f32[128]>,
+                           diff tensor<f32[128, 10]>,
+                           diff tensor<f32[10]>) {
+    // Forward pass
+    let logits = forward(x, W1, b1, W2, b2, W3, b3);   // [batch, 10]
+    let loss = cross_entropy(logits, labels);             // scalar
+
+    // Backward pass — compute all gradients via reverse-mode autodiff
+    let grad_W1 = backward(loss, W1);   // [784, 256]
+    let grad_b1 = backward(loss, b1);   // [256]
+    let grad_W2 = backward(loss, W2);   // [256, 128]
+    let grad_b2 = backward(loss, b2);   // [128]
+    let grad_W3 = backward(loss, W3);   // [128, 10]
+    let grad_b3 = backward(loss, b3);   // [10]
+
+    // SGD update: param := param - lr * grad
+    let W1_new = W1 - lr * grad_W1;
+    let b1_new = b1 - lr * grad_b1;
+    let W2_new = W2 - lr * grad_W2;
+    let b2_new = b2 - lr * grad_b2;
+    let W3_new = W3 - lr * grad_W3;
+    let b3_new = b3 - lr * grad_b3;
+
+    return (W1_new, b1_new, W2_new, b2_new, W3_new, b3_new);
+}
+
+// ============================================================================
+// Inference / Prediction
+// ============================================================================
+
+// Predict digit class (0-9) for a batch of images
+// Returns integer class labels via argmax over logits
+fn predict(x: diff tensor<f32[batch, 784]>,
+           W1: diff tensor<f32[784, 256]>,
+           b1: diff tensor<f32[256]>,
+           W2: diff tensor<f32[256, 128]>,
+           b2: diff tensor<f32[128]>,
+           W3: diff tensor<f32[128, 10]>,
+           b3: diff tensor<f32[10]>) -> tensor<i32[batch]> {
+    let logits = forward(x, W1, b1, W2, b2, W3, b3);  // [batch, 10]
+    return argmax(logits, axis=1);                       // [batch] predicted class
+}
+
+// Predict class probabilities (useful for confidence scores)
+fn predict_proba(x: diff tensor<f32[batch, 784]>,
+                 W1: diff tensor<f32[784, 256]>,
+                 b1: diff tensor<f32[256]>,
+                 W2: diff tensor<f32[256, 128]>,
+                 b2: diff tensor<f32[128]>,
+                 W3: diff tensor<f32[128, 10]>,
+                 b3: diff tensor<f32[10]>) -> tensor<f32[batch, 10]> {
+    let logits = forward(x, W1, b1, W2, b2, W3, b3);  // [batch, 10]
+    return softmax(logits, axis=1);                      // [batch, 10] probabilities
+}
+
+// ============================================================================
+// Example Usage
+// ============================================================================
+
+fn main() {
+    // Initialize weights with He initialization (scaled random normal)
+    let W1: diff tensor<f32[784, 256]> = random_normal([784, 256], stddev=0.056);  // sqrt(2/784)
+    let b1: diff tensor<f32[256]> = zeros([256]);
+    let W2: diff tensor<f32[256, 128]> = random_normal([256, 128], stddev=0.088);  // sqrt(2/256)
+    let b2: diff tensor<f32[128]> = zeros([128]);
+    let W3: diff tensor<f32[128, 10]> = random_normal([128, 10], stddev=0.125);    // sqrt(2/128)
+    let b3: diff tensor<f32[10]> = zeros([10]);
+
+    // Example: single batch of 32 images (would come from MNIST data loader)
+    let x: diff tensor<f32[32, 784]> = random_normal([32, 784], stddev=1.0);
+    let labels: tensor<i32[32]> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                                    0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+                                    0, 1];
+
+    // Training loop
+    let lr = 0.01;
+    for epoch in 0..10 {
+        let (W1, b1, W2, b2, W3, b3) = train_step(x, labels, W1, b1, W2, b2, W3, b3, lr);
+    }
+
+    // Inference
+    let predictions = predict(x, W1, b1, W2, b2, W3, b3);
+    let probs = predict_proba(x, W1, b1, W2, b2, W3, b3);
+    print("Predicted classes:", predictions);
+    print("Class probabilities (first sample):", probs[0]);
+}
+
+// Training recipe:
+// 1. Initialize weights with He initialization (stddev = sqrt(2 / fan_in))
+// 2. Load MNIST data: 60,000 train / 10,000 test, batch_size = 64
+// 3. Train for 10-20 epochs with lr = 0.01
+// 4. Expected accuracy: ~97% on test set
+// 5. Compile: mindc mlp_mnist.mind -o mlp_mnist

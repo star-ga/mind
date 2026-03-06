@@ -1,0 +1,130 @@
+// Linear Regression — MIND Model Zoo
+// Simple linear regression with MSE loss and gradient descent
+//
+// Model: y_hat = X @ W + b
+// Loss:  MSE = mean((y_hat - y)^2)
+// Update: SGD with reverse-mode autodiff
+//
+// Shapes:
+//   X: [batch, features] — input feature matrix
+//   W: [features, 1]     — weight vector
+//   b: [1]               — bias scalar (broadcast over batch)
+//   y: [batch, 1]        — target values
+//
+// SHA-256 Deterministic Verification:
+//   When compiled with --deterministic flag, identical inputs produce
+//   bit-identical outputs. Verify via: mindc --emit-hash linear_regression.mind
+
+import std.tensor;
+
+// ============================================================================
+// Forward Pass
+// ============================================================================
+
+// Linear projection: y_hat = X @ W + b
+// X: [batch, features] -> matmul with W: [features, 1] -> [batch, 1]
+// Bias b: [1] broadcasts over batch dimension
+fn forward(X: diff tensor<f32[batch, features]>,
+           W: diff tensor<f32[features, 1]>,
+           b: diff tensor<f32[1]>) -> diff tensor<f32[batch, 1]> {
+    let logits = matmul(X, W);  // [batch, features] @ [features, 1] -> [batch, 1]
+    let y_hat = logits + b;     // [batch, 1] + [1] -> [batch, 1] (broadcast)
+    return y_hat;
+}
+
+// ============================================================================
+// Loss Function
+// ============================================================================
+
+// Mean Squared Error: MSE = mean((y_hat - y)^2)
+// Reduces over both batch and output dimensions to produce a scalar loss
+fn mse_loss(y_hat: diff tensor<f32[batch, 1]>,
+            y: diff tensor<f32[batch, 1]>) -> diff tensor<f32> {
+    let residual = y_hat - y;          // [batch, 1] element-wise difference
+    let squared = residual * residual; // [batch, 1] squared residuals
+    return mean(squared);              // scalar: average over all elements
+}
+
+// ============================================================================
+// Training Step
+// ============================================================================
+
+// Single SGD training step with autodiff
+// Returns updated (W, b) after one gradient descent step
+fn train_step(X: diff tensor<f32[batch, features]>,
+              y: diff tensor<f32[batch, 1]>,
+              W: diff tensor<f32[features, 1]>,
+              b: diff tensor<f32[1]>,
+              lr: f32) -> (diff tensor<f32[features, 1]>,
+                           diff tensor<f32[1]>) {
+    // Forward pass
+    let y_hat = forward(X, W, b);          // [batch, 1]
+    let loss = mse_loss(y_hat, y);         // scalar
+
+    // Backward pass — reverse-mode autodiff
+    let grad_W = backward(loss, W);        // [features, 1] gradient of loss w.r.t. W
+    let grad_b = backward(loss, b);        // [1] gradient of loss w.r.t. b
+
+    // SGD update: param := param - lr * grad
+    let W_new = W - lr * grad_W;           // [features, 1]
+    let b_new = b - lr * grad_b;           // [1]
+
+    return (W_new, b_new);
+}
+
+// ============================================================================
+// Inference / Prediction
+// ============================================================================
+
+// Predict outputs for new inputs (no gradient tracking needed)
+fn predict(X: diff tensor<f32[batch, features]>,
+           W: diff tensor<f32[features, 1]>,
+           b: diff tensor<f32[1]>) -> tensor<f32[batch, 1]> {
+    let y_hat = forward(X, W, b);   // [batch, 1]
+    return y_hat;                     // Return prediction without diff tracking
+}
+
+// ============================================================================
+// R-squared Metric
+// ============================================================================
+
+// Coefficient of determination: R^2 = 1 - SS_res / SS_tot
+// SS_res = sum((y - y_hat)^2), SS_tot = sum((y - mean(y))^2)
+fn r_squared(y_hat: diff tensor<f32[batch, 1]>,
+             y: diff tensor<f32[batch, 1]>) -> f32 {
+    let y_mean = mean(y);                              // scalar: mean of targets
+    let ss_res = sum((y - y_hat) * (y - y_hat));       // sum of squared residuals
+    let ss_tot = sum((y - y_mean) * (y - y_mean));     // total sum of squares
+    return 1.0 - ss_res / ss_tot;
+}
+
+// ============================================================================
+// Example Usage
+// ============================================================================
+
+fn main() {
+    // Initialize weights (small random values in practice)
+    let W: diff tensor<f32[4, 1]> = [[0.1], [0.2], [-0.1], [0.3]];
+    let b: diff tensor<f32[1]> = [0.0];
+
+    // Example batch: 3 samples, 4 features each
+    let X: diff tensor<f32[3, 4]> = [[1.0, 2.0, 3.0, 4.0],
+                                      [5.0, 6.0, 7.0, 8.0],
+                                      [9.0, 10.0, 11.0, 12.0]];
+    let y: diff tensor<f32[3, 1]> = [[2.0], [6.0], [10.0]];
+
+    // Training loop
+    let lr = 0.01;
+    let w_cur = W;
+    let b_cur = b;
+
+    for epoch in 0..100 {
+        let (w_cur, b_cur) = train_step(X, y, w_cur, b_cur, lr);
+    }
+
+    // Evaluate
+    let y_pred = predict(X, w_cur, b_cur);
+    let r2 = r_squared(y_pred, y);
+    print("Final predictions:", y_pred);
+    print("R-squared:", r2);
+}
