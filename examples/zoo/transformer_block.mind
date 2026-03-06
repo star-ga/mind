@@ -1,0 +1,358 @@
+// Transformer Block — MIND Model Zoo
+// Single-head self-attention + feed-forward network with layer normalization
+//
+// Architecture:
+//   LayerNorm -> Self-Attention -> Residual Add
+//   LayerNorm -> Feed-Forward Network -> Residual Add
+//
+// Self-Attention (single-head scaled dot-product):
+//   Q = X @ W_Q,  K = X @ W_K,  V = X @ W_V
+//   Attention(Q, K, V) = softmax(Q @ K^T / sqrt(d_model)) @ V
+//
+// Feed-Forward Network:
+//   FFN(x) = ReLU(x @ W1 + b1) @ W2 + b2
+//   Hidden dim: 4 * d_model (standard transformer expansion ratio)
+//
+// Shapes:
+//   x:       [batch, seq_len, d_model] — input token embeddings
+//   Q, K, V: [batch, seq_len, d_model] — query, key, value projections
+//   attn:    [batch, seq_len, seq_len]  — attention weight matrix
+//   out:     [batch, seq_len, d_model]  — output embeddings
+//
+// Total parameters (per block, d_model=64):
+//   Attention: 3 * (64*64) = 12,288
+//   FFN:       64*256 + 256 + 256*64 + 64 = 33,088
+//   LayerNorm: 2 * (64 + 64) = 256
+//   Total:     45,632 parameters
+//
+// SHA-256 Deterministic Verification:
+//   When compiled with --deterministic flag, identical inputs produce
+//   bit-identical outputs. Verify via: mindc --emit-hash transformer_block.mind
+
+import std.tensor;
+
+// ============================================================================
+// Layer Normalization
+// ============================================================================
+
+// Normalize each token embedding independently across the d_model dimension
+// x: [batch, seq_len, d_model] -> normalized to zero mean, unit variance per token
+// gamma: [d_model] learnable scale, beta: [d_model] learnable shift
+fn layer_norm(x: diff tensor<f32[batch, seq_len, d_model]>,
+              gamma: diff tensor<f32[d_model]>,
+              beta: diff tensor<f32[d_model]>) -> diff tensor<f32[batch, seq_len, d_model]> {
+    let eps = 1e-5;
+    let mu = mean(x, axis=2);                         // [batch, seq_len] mean per token
+    let diff = x - mu;                                 // [batch, seq_len, d_model] centered
+    let var = mean(diff * diff, axis=2);               // [batch, seq_len] variance per token
+    let inv_std = 1.0 / (var + eps);                   // [batch, seq_len] inverse std (approx)
+    let x_norm = diff * inv_std;                       // [batch, seq_len, d_model] normalized
+    return x_norm * gamma + beta;                      // [batch, seq_len, d_model] scale + shift
+}
+
+// ============================================================================
+// Scaled Dot-Product Attention
+// ============================================================================
+
+// Attention(Q, K, V) = softmax(Q @ K^T / sqrt(d_k)) @ V
+//
+// Q: [batch, seq_len, d_model] — queries
+// K: [batch, seq_len, d_model] — keys
+// V: [batch, seq_len, d_model] — values
+//
+// Step 1: scores = Q @ K^T -> [batch, seq_len, seq_len]
+// Step 2: scaled_scores = scores / sqrt(d_model) (prevents softmax saturation)
+// Step 3: weights = softmax(scaled_scores, axis=-1) -> [batch, seq_len, seq_len]
+// Step 4: output = weights @ V -> [batch, seq_len, d_model]
+fn scaled_dot_product_attention(
+    Q: diff tensor<f32[batch, seq_len, d_model]>,
+    K: diff tensor<f32[batch, seq_len, d_model]>,
+    V: diff tensor<f32[batch, seq_len, d_model]>,
+    d_k: f32
+) -> diff tensor<f32[batch, seq_len, d_model]> {
+    // Compute attention scores: Q @ K^T
+    // For batched matmul: [batch, seq_len, d_model] @ [batch, d_model, seq_len]
+    let K_T = transpose(K, [0, 2, 1]);                // [batch, d_model, seq_len]
+    let scores = matmul(Q, K_T);                       // [batch, seq_len, seq_len]
+
+    // Scale by 1/sqrt(d_k) for stable gradients
+    let scale = 1.0 / sqrt(d_k);
+    let scaled_scores = scores * scale;                // [batch, seq_len, seq_len]
+
+    // Softmax over key dimension (last axis) to get attention weights
+    let weights = softmax(scaled_scores, axis=2);      // [batch, seq_len, seq_len]
+
+    // Weighted sum of values
+    let output = matmul(weights, V);                   // [batch, seq_len, d_model]
+    return output;
+}
+
+// ============================================================================
+// Self-Attention Layer
+// ============================================================================
+
+// Projects input into Q, K, V then applies scaled dot-product attention
+// x: [batch, seq_len, d_model] input token embeddings
+// W_Q, W_K, W_V: [d_model, d_model] projection matrices
+fn self_attention(
+    x: diff tensor<f32[batch, seq_len, d_model]>,
+    W_Q: diff tensor<f32[d_model, d_model]>,
+    W_K: diff tensor<f32[d_model, d_model]>,
+    W_V: diff tensor<f32[d_model, d_model]>,
+    d_k: f32
+) -> diff tensor<f32[batch, seq_len, d_model]> {
+    // Linear projections: [batch, seq_len, d_model] @ [d_model, d_model]
+    let Q = matmul(x, W_Q);  // [batch, seq_len, d_model] queries
+    let K = matmul(x, W_K);  // [batch, seq_len, d_model] keys
+    let V = matmul(x, W_V);  // [batch, seq_len, d_model] values
+
+    // Apply scaled dot-product attention
+    return scaled_dot_product_attention(Q, K, V, d_k);  // [batch, seq_len, d_model]
+}
+
+// ============================================================================
+// Feed-Forward Network
+// ============================================================================
+
+// Two-layer MLP with ReLU: FFN(x) = ReLU(x @ W1 + b1) @ W2 + b2
+// x: [batch, seq_len, d_model] -> expand to d_ff -> contract back to d_model
+// Standard expansion ratio: d_ff = 4 * d_model
+fn feed_forward(
+    x: diff tensor<f32[batch, seq_len, d_model]>,
+    W1: diff tensor<f32[d_model, d_ff]>,
+    b1: diff tensor<f32[d_ff]>,
+    W2: diff tensor<f32[d_ff, d_model]>,
+    b2: diff tensor<f32[d_model]>
+) -> diff tensor<f32[batch, seq_len, d_model]> {
+    let hidden = matmul(x, W1) + b1;     // [batch, seq_len, d_ff] expand
+    let activated = relu(hidden);          // [batch, seq_len, d_ff] nonlinearity
+    let output = matmul(activated, W2) + b2;  // [batch, seq_len, d_model] contract
+    return output;
+}
+
+// ============================================================================
+// Full Transformer Block
+// ============================================================================
+
+// Pre-norm transformer block with residual connections:
+//   h = x + self_attention(layer_norm_1(x))
+//   out = h + feed_forward(layer_norm_2(h))
+fn transformer_block(
+    x: diff tensor<f32[batch, seq_len, d_model]>,
+    // Layer norm 1 parameters
+    gamma1: diff tensor<f32[d_model]>,
+    beta1: diff tensor<f32[d_model]>,
+    // Self-attention parameters
+    W_Q: diff tensor<f32[d_model, d_model]>,
+    W_K: diff tensor<f32[d_model, d_model]>,
+    W_V: diff tensor<f32[d_model, d_model]>,
+    d_k: f32,
+    // Layer norm 2 parameters
+    gamma2: diff tensor<f32[d_model]>,
+    beta2: diff tensor<f32[d_model]>,
+    // FFN parameters
+    W_ff1: diff tensor<f32[d_model, d_ff]>,
+    b_ff1: diff tensor<f32[d_ff]>,
+    W_ff2: diff tensor<f32[d_ff, d_model]>,
+    b_ff2: diff tensor<f32[d_model]>
+) -> diff tensor<f32[batch, seq_len, d_model]> {
+    // Sub-layer 1: pre-norm self-attention + residual
+    let x_norm1 = layer_norm(x, gamma1, beta1);                       // [batch, seq_len, d_model]
+    let attn_out = self_attention(x_norm1, W_Q, W_K, W_V, d_k);      // [batch, seq_len, d_model]
+    let h = x + attn_out;                                              // [batch, seq_len, d_model] residual
+
+    // Sub-layer 2: pre-norm FFN + residual
+    let h_norm2 = layer_norm(h, gamma2, beta2);                        // [batch, seq_len, d_model]
+    let ffn_out = feed_forward(h_norm2, W_ff1, b_ff1, W_ff2, b_ff2); // [batch, seq_len, d_model]
+    let out = h + ffn_out;                                             // [batch, seq_len, d_model] residual
+
+    return out;
+}
+
+// ============================================================================
+// Loss Function (for sequence classification using [CLS] token)
+// ============================================================================
+
+// Cross-entropy loss using the first token ([CLS]) for classification
+// out: [batch, seq_len, d_model], W_cls: [d_model, n_classes], labels: [batch]
+fn cls_cross_entropy(
+    out: diff tensor<f32[batch, seq_len, d_model]>,
+    W_cls: diff tensor<f32[d_model, n_classes]>,
+    b_cls: diff tensor<f32[n_classes]>,
+    labels: tensor<i32[batch]>
+) -> diff tensor<f32> {
+    // Extract [CLS] token (position 0) from each sequence
+    let cls_token = gather(out, 0, axis=1);              // [batch, d_model]
+    let logits = matmul(cls_token, W_cls) + b_cls;       // [batch, n_classes]
+    let log_probs = log_softmax(logits, axis=1);          // [batch, n_classes]
+    let nll = -gather(log_probs, labels, axis=1);         // [batch] per-sample NLL
+    return mean(nll);                                      // scalar
+}
+
+// ============================================================================
+// Training Step
+// ============================================================================
+
+// Single SGD training step for the transformer block
+// Updates all learnable parameters via reverse-mode autodiff
+fn train_step(
+    x: diff tensor<f32[batch, seq_len, d_model]>,
+    labels: tensor<i32[batch]>,
+    // Layer norm 1
+    gamma1: diff tensor<f32[d_model]>,
+    beta1: diff tensor<f32[d_model]>,
+    // Attention
+    W_Q: diff tensor<f32[d_model, d_model]>,
+    W_K: diff tensor<f32[d_model, d_model]>,
+    W_V: diff tensor<f32[d_model, d_model]>,
+    d_k: f32,
+    // Layer norm 2
+    gamma2: diff tensor<f32[d_model]>,
+    beta2: diff tensor<f32[d_model]>,
+    // FFN
+    W_ff1: diff tensor<f32[d_model, d_ff]>,
+    b_ff1: diff tensor<f32[d_ff]>,
+    W_ff2: diff tensor<f32[d_ff, d_model]>,
+    b_ff2: diff tensor<f32[d_model]>,
+    // Classification head
+    W_cls: diff tensor<f32[d_model, n_classes]>,
+    b_cls: diff tensor<f32[n_classes]>,
+    lr: f32
+) -> (diff tensor<f32[d_model]>,          // gamma1
+      diff tensor<f32[d_model]>,          // beta1
+      diff tensor<f32[d_model, d_model]>, // W_Q
+      diff tensor<f32[d_model, d_model]>, // W_K
+      diff tensor<f32[d_model, d_model]>, // W_V
+      diff tensor<f32[d_model]>,          // gamma2
+      diff tensor<f32[d_model]>,          // beta2
+      diff tensor<f32[d_model, d_ff]>,    // W_ff1
+      diff tensor<f32[d_ff]>,             // b_ff1
+      diff tensor<f32[d_ff, d_model]>,    // W_ff2
+      diff tensor<f32[d_model]>,          // b_ff2
+      diff tensor<f32[d_model, n_classes]>, // W_cls
+      diff tensor<f32[n_classes]>) {       // b_cls
+    // Forward pass through transformer block
+    let out = transformer_block(x, gamma1, beta1, W_Q, W_K, W_V, d_k,
+                                 gamma2, beta2, W_ff1, b_ff1, W_ff2, b_ff2);
+    // Compute loss
+    let loss = cls_cross_entropy(out, W_cls, b_cls, labels);
+
+    // Backward pass — compute all gradients
+    let g_gamma1 = backward(loss, gamma1);
+    let g_beta1 = backward(loss, beta1);
+    let g_W_Q = backward(loss, W_Q);
+    let g_W_K = backward(loss, W_K);
+    let g_W_V = backward(loss, W_V);
+    let g_gamma2 = backward(loss, gamma2);
+    let g_beta2 = backward(loss, beta2);
+    let g_W_ff1 = backward(loss, W_ff1);
+    let g_b_ff1 = backward(loss, b_ff1);
+    let g_W_ff2 = backward(loss, W_ff2);
+    let g_b_ff2 = backward(loss, b_ff2);
+    let g_W_cls = backward(loss, W_cls);
+    let g_b_cls = backward(loss, b_cls);
+
+    // SGD update: param := param - lr * grad
+    return (gamma1 - lr * g_gamma1,
+            beta1 - lr * g_beta1,
+            W_Q - lr * g_W_Q,
+            W_K - lr * g_W_K,
+            W_V - lr * g_W_V,
+            gamma2 - lr * g_gamma2,
+            beta2 - lr * g_beta2,
+            W_ff1 - lr * g_W_ff1,
+            b_ff1 - lr * g_b_ff1,
+            W_ff2 - lr * g_W_ff2,
+            b_ff2 - lr * g_b_ff2,
+            W_cls - lr * g_W_cls,
+            b_cls - lr * g_b_cls);
+}
+
+// ============================================================================
+// Inference / Prediction
+// ============================================================================
+
+// Predict class labels for input sequences using the [CLS] token
+fn predict(
+    x: diff tensor<f32[batch, seq_len, d_model]>,
+    gamma1: diff tensor<f32[d_model]>,
+    beta1: diff tensor<f32[d_model]>,
+    W_Q: diff tensor<f32[d_model, d_model]>,
+    W_K: diff tensor<f32[d_model, d_model]>,
+    W_V: diff tensor<f32[d_model, d_model]>,
+    d_k: f32,
+    gamma2: diff tensor<f32[d_model]>,
+    beta2: diff tensor<f32[d_model]>,
+    W_ff1: diff tensor<f32[d_model, d_ff]>,
+    b_ff1: diff tensor<f32[d_ff]>,
+    W_ff2: diff tensor<f32[d_ff, d_model]>,
+    b_ff2: diff tensor<f32[d_model]>,
+    W_cls: diff tensor<f32[d_model, n_classes]>,
+    b_cls: diff tensor<f32[n_classes]>
+) -> tensor<i32[batch]> {
+    let out = transformer_block(x, gamma1, beta1, W_Q, W_K, W_V, d_k,
+                                 gamma2, beta2, W_ff1, b_ff1, W_ff2, b_ff2);
+    let cls_token = gather(out, 0, axis=1);              // [batch, d_model]
+    let logits = matmul(cls_token, W_cls) + b_cls;       // [batch, n_classes]
+    return argmax(logits, axis=1);                        // [batch] predicted class
+}
+
+// ============================================================================
+// Example Usage (d_model=64, d_ff=256, seq_len=16, n_classes=4)
+// ============================================================================
+
+fn main() {
+    let d_k = 64.0;  // d_model as float for scaling
+
+    // Layer norm 1 parameters
+    let gamma1: diff tensor<f32[64]> = ones([64]);
+    let beta1: diff tensor<f32[64]> = zeros([64]);
+
+    // Attention projection matrices (Xavier init)
+    let W_Q: diff tensor<f32[64, 64]> = random_normal([64, 64], stddev=0.125);
+    let W_K: diff tensor<f32[64, 64]> = random_normal([64, 64], stddev=0.125);
+    let W_V: diff tensor<f32[64, 64]> = random_normal([64, 64], stddev=0.125);
+
+    // Layer norm 2 parameters
+    let gamma2: diff tensor<f32[64]> = ones([64]);
+    let beta2: diff tensor<f32[64]> = zeros([64]);
+
+    // FFN parameters (d_model=64, d_ff=256)
+    let W_ff1: diff tensor<f32[64, 256]> = random_normal([64, 256], stddev=0.125);
+    let b_ff1: diff tensor<f32[256]> = zeros([256]);
+    let W_ff2: diff tensor<f32[256, 64]> = random_normal([256, 64], stddev=0.063);
+    let b_ff2: diff tensor<f32[64]> = zeros([64]);
+
+    // Classification head (4 classes)
+    let W_cls: diff tensor<f32[64, 4]> = random_normal([64, 4], stddev=0.125);
+    let b_cls: diff tensor<f32[4]> = zeros([4]);
+
+    // Example input: batch=8, seq_len=16, d_model=64
+    let x: diff tensor<f32[8, 16, 64]> = random_normal([8, 16, 64], stddev=1.0);
+    let labels: tensor<i32[8]> = [0, 1, 2, 3, 0, 1, 2, 3];
+
+    // Training loop
+    let lr = 0.001;
+    for step in 0..20 {
+        let (gamma1, beta1, W_Q, W_K, W_V, gamma2, beta2,
+             W_ff1, b_ff1, W_ff2, b_ff2, W_cls, b_cls) =
+            train_step(x, labels, gamma1, beta1, W_Q, W_K, W_V, d_k,
+                       gamma2, beta2, W_ff1, b_ff1, W_ff2, b_ff2,
+                       W_cls, b_cls, lr);
+    }
+
+    // Inference
+    let predictions = predict(x, gamma1, beta1, W_Q, W_K, W_V, d_k,
+                               gamma2, beta2, W_ff1, b_ff1, W_ff2, b_ff2,
+                               W_cls, b_cls);
+    print("Predicted classes:", predictions);
+}
+
+// Design notes:
+// 1. This implements pre-norm (LN before sublayer) per GPT-2/modern convention
+// 2. Single-head attention for clarity; multi-head extends by splitting d_model
+// 3. d_ff = 4 * d_model is the standard transformer expansion ratio
+// 4. Positional encoding should be added to x before passing to the block
+// 5. For causal (decoder) attention, apply a mask before softmax:
+//    masked_scores = scores + mask  (where mask has -inf for future positions)
+// 6. Compile: mindc transformer_block.mind -o transformer

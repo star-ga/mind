@@ -1,0 +1,146 @@
+// Logistic Classifier — MIND Model Zoo
+// Binary classification with sigmoid activation and BCE loss
+//
+// Model: p = sigmoid(X @ W + b)
+// Loss:  BCE = -mean(y * log(p) + (1 - y) * log(1 - p))
+// Update: SGD with reverse-mode autodiff
+//
+// Shapes:
+//   X: [batch, features] — input feature matrix
+//   W: [features, 1]     — weight vector
+//   b: [1]               — bias (broadcast over batch)
+//   y: [batch, 1]        — binary labels (0.0 or 1.0)
+//   p: [batch, 1]        — predicted probabilities in (0, 1)
+//
+// SHA-256 Deterministic Verification:
+//   When compiled with --deterministic flag, identical inputs produce
+//   bit-identical outputs. Verify via: mindc --emit-hash logistic_classifier.mind
+
+import std.tensor;
+
+// ============================================================================
+// Forward Pass
+// ============================================================================
+
+// Compute predicted probability: p = sigmoid(X @ W + b)
+// X: [batch, features] @ W: [features, 1] -> [batch, 1] logits
+// sigmoid maps logits to probability range (0, 1)
+fn forward(X: diff tensor<f32[batch, features]>,
+           W: diff tensor<f32[features, 1]>,
+           b: diff tensor<f32[1]>) -> diff tensor<f32[batch, 1]> {
+    let logits = matmul(X, W) + b;   // [batch, 1] linear combination
+    let prob = sigmoid(logits);       // [batch, 1] probability in (0, 1)
+    return prob;
+}
+
+// ============================================================================
+// Loss Function
+// ============================================================================
+
+// Binary Cross-Entropy: BCE = -mean(y * log(p) + (1 - y) * log(1 - p))
+// Numerically stabilized with epsilon = 1e-7 to avoid log(0)
+fn bce_loss(prob: diff tensor<f32[batch, 1]>,
+            y: diff tensor<f32[batch, 1]>) -> diff tensor<f32> {
+    let eps = 1e-7;
+    let log_p = log(prob + eps);               // [batch, 1] log of predicted prob
+    let log_1mp = log(1.0 - prob + eps);       // [batch, 1] log of (1 - predicted prob)
+    let per_sample = -(y * log_p + (1.0 - y) * log_1mp);  // [batch, 1] per-sample BCE
+    return mean(per_sample);                   // scalar: average over batch
+}
+
+// ============================================================================
+// Training Step
+// ============================================================================
+
+// Single SGD training step with autodiff
+// Returns updated (W, b) after one gradient descent step
+fn train_step(X: diff tensor<f32[batch, features]>,
+              y: diff tensor<f32[batch, 1]>,
+              W: diff tensor<f32[features, 1]>,
+              b: diff tensor<f32[1]>,
+              lr: f32) -> (diff tensor<f32[features, 1]>,
+                           diff tensor<f32[1]>) {
+    // Forward pass
+    let prob = forward(X, W, b);          // [batch, 1] predicted probabilities
+    let loss = bce_loss(prob, y);         // scalar BCE loss
+
+    // Backward pass — reverse-mode autodiff
+    let grad_W = backward(loss, W);       // [features, 1] gradient w.r.t. weights
+    let grad_b = backward(loss, b);       // [1] gradient w.r.t. bias
+
+    // SGD update: param := param - lr * grad
+    let W_new = W - lr * grad_W;          // [features, 1]
+    let b_new = b - lr * grad_b;          // [1]
+
+    return (W_new, b_new);
+}
+
+// ============================================================================
+// Inference / Prediction
+// ============================================================================
+
+// Predict binary class labels (0 or 1) by thresholding at 0.5
+fn predict(X: diff tensor<f32[batch, features]>,
+           W: diff tensor<f32[features, 1]>,
+           b: diff tensor<f32[1]>) -> tensor<i32[batch]> {
+    let prob = forward(X, W, b);          // [batch, 1] probabilities
+    let prob_flat = reshape(prob, [batch]);  // [batch] flatten for comparison
+    // Threshold: class 1 if prob >= 0.5, else class 0
+    let predictions = prob_flat >= 0.5;   // [batch] boolean mask
+    return predictions;
+}
+
+// Predict raw probabilities (useful for ROC/AUC analysis)
+fn predict_proba(X: diff tensor<f32[batch, features]>,
+                 W: diff tensor<f32[features, 1]>,
+                 b: diff tensor<f32[1]>) -> tensor<f32[batch, 1]> {
+    let prob = forward(X, W, b);          // [batch, 1]
+    return prob;
+}
+
+// ============================================================================
+// Accuracy Metric
+// ============================================================================
+
+// Classification accuracy: fraction of correct predictions
+fn accuracy(X: diff tensor<f32[batch, features]>,
+            y: diff tensor<f32[batch, 1]>,
+            W: diff tensor<f32[features, 1]>,
+            b: diff tensor<f32[1]>) -> f32 {
+    let prob = forward(X, W, b);                       // [batch, 1]
+    let pred = reshape(prob >= 0.5, [batch, 1]);       // [batch, 1] thresholded
+    let correct = sum(pred == y);                      // count correct
+    return correct / batch;                            // fraction correct
+}
+
+// ============================================================================
+// Example Usage
+// ============================================================================
+
+fn main() {
+    // Initialize weights
+    let W: diff tensor<f32[3, 1]> = [[0.01], [-0.02], [0.03]];
+    let b: diff tensor<f32[1]> = [0.0];
+
+    // Example data: 4 samples, 3 features, binary labels
+    let X: diff tensor<f32[4, 3]> = [[1.0, 0.5, -0.3],
+                                      [-0.5, 1.2, 0.8],
+                                      [0.3, -0.7, 1.5],
+                                      [-1.0, -0.3, -0.5]];
+    let y: diff tensor<f32[4, 1]> = [[1.0], [1.0], [0.0], [0.0]];
+
+    // Training loop
+    let lr = 0.1;
+    let w_cur = W;
+    let b_cur = b;
+
+    for epoch in 0..200 {
+        let (w_cur, b_cur) = train_step(X, y, w_cur, b_cur, lr);
+    }
+
+    // Evaluate
+    let probs = predict_proba(X, w_cur, b_cur);
+    let acc = accuracy(X, y, w_cur, b_cur);
+    print("Predicted probabilities:", probs);
+    print("Accuracy:", acc);
+}

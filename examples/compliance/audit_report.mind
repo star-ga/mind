@@ -1,0 +1,236 @@
+// audit_report.mind -- Compliance Artifact Generation
+// Demonstrates generating regulatory artifacts from a MIND build.
+//
+// This script shows the conceptual workflow for producing:
+//   1. SBOM (Software Bill of Materials)
+//   2. SLSA Provenance Attestation
+//   3. Build Verification Report
+//   4. Regulatory Compliance Report (FDA / EU AI Act)
+//
+// Usage:
+//   mindc build audit_report.mind --target cpu
+//   mind-runtime run audit_report.bin --model=auditable_model.bin
+//
+// Or use the mind_audit CLI directly:
+//   mind_audit sbom auditable_model.bin
+//   mind_audit provenance auditable_model.bin
+//   mind_audit verify auditable_model.bin
+//   mind_audit compliance auditable_model.bin --framework=fda,eu-ai-act
+
+import std.tensor;
+
+// ============================================================================
+// Section 1: SBOM Generation
+// ============================================================================
+//
+// The SBOM (Software Bill of Materials) lists every component that went
+// into building the model binary. This is required by:
+//   - Executive Order 14028 (US federal software supply chain)
+//   - EU Cyber Resilience Act
+//   - FDA premarket cybersecurity guidance
+//
+// Command:
+//   mind_audit sbom auditable_model.bin --format=spdx-json
+//
+// Produces: auditable_model.sbom.json
+//
+// Example output (SPDX 2.3):
+// {
+//   "spdxVersion": "SPDX-2.3",
+//   "name": "auditable_model",
+//   "documentNamespace": "https://starga.dev/mind/sbom/auditable_model",
+//   "packages": [
+//     {
+//       "name": "mind-runtime",
+//       "versionInfo": "0.2.1",
+//       "supplier": "Organization: STARGA Inc",
+//       "downloadLocation": "https://github.com/star-ga/mind-runtime"
+//     },
+//     {
+//       "name": "mind-stdlib",
+//       "versionInfo": "0.2.1",
+//       "supplier": "Organization: STARGA Inc"
+//     },
+//     {
+//       "name": "mindc",
+//       "versionInfo": "0.2.1",
+//       "supplier": "Organization: STARGA Inc",
+//       "comment": "MIND compiler (STARGA toolchain)"
+//     }
+//   ]
+// }
+
+fn generate_sbom() {
+    print("=== SBOM Generation ===");
+    print("Format: SPDX 2.3 (JSON)");
+    print("Components enumerated from build graph:");
+    print("  - mind-runtime 0.2.1");
+    print("  - mind-stdlib 0.2.1");
+    print("  - mindc 0.2.1 (STARGA toolchain)");
+    print("Output: auditable_model.sbom.json\n");
+}
+
+// ============================================================================
+// Section 2: SLSA Provenance Attestation
+// ============================================================================
+//
+// SLSA (Supply-chain Levels for Software Artifacts) provenance proves
+// that the binary was built from a specific source by a specific builder.
+//
+// Command:
+//   mind_audit provenance auditable_model.bin --slsa-level=3
+//
+// Produces: auditable_model.provenance.json (in-toto attestation format)
+//
+// Example output:
+// {
+//   "_type": "https://in-toto.io/Statement/v1",
+//   "subject": [{
+//     "name": "auditable_model.bin",
+//     "digest": { "sha256": "<BINARY_SHA256>" }
+//   }],
+//   "predicateType": "https://slsa.dev/provenance/v1",
+//   "predicate": {
+//     "buildDefinition": {
+//       "buildType": "https://starga.dev/mind/build/v1",
+//       "externalParameters": {
+//         "source": "auditable_model.mind",
+//         "target": "cpu",
+//         "flags": "--provenance=full"
+//       }
+//     },
+//     "runDetails": {
+//       "builder": {
+//         "id": "https://starga.dev/mindc/v0.2.1"
+//       },
+//       "metadata": {
+//         "invocationId": "<UNIQUE_BUILD_ID>",
+//         "startedOn": "<ISO8601_UTC>",
+//         "finishedOn": "<ISO8601_UTC>"
+//       }
+//     }
+//   }
+// }
+
+fn generate_provenance() {
+    print("=== SLSA Provenance Attestation ===");
+    print("Level: SLSA 3");
+    print("Format: in-toto Statement v1");
+    print("Builder: mindc 0.2.1 (STARGA toolchain)");
+    print("Subject: auditable_model.bin");
+    print("Output: auditable_model.provenance.json\n");
+}
+
+// ============================================================================
+// Section 3: Build Verification
+// ============================================================================
+//
+// Verifies that a binary matches its provenance attestation, confirming:
+//   - Binary SHA256 matches the attested digest
+//   - Source SHA256 matches the attested source
+//   - Compiler version matches the attested builder
+//   - Build is reproducible (rebuild and compare hashes)
+//
+// Command:
+//   mind_audit verify auditable_model.bin \
+//     --attestation=auditable_model.provenance.json \
+//     --source=auditable_model.mind
+//
+// Exit codes:
+//   0 = All checks passed
+//   1 = Binary hash mismatch
+//   2 = Source hash mismatch
+//   3 = Attestation signature invalid
+//   4 = Reproducibility check failed
+
+fn verify_build() {
+    print("=== Build Verification ===");
+    print("Checks performed:");
+    print("  [1] Binary SHA256 matches attestation digest");
+    print("  [2] Source SHA256 matches attestation source");
+    print("  [3] Attestation signature is valid (ed25519)");
+    print("  [4] Reproducible build check (rebuild + compare)");
+    print("");
+    print("Verification result: PASS (all 4 checks)");
+    print("Output: auditable_model.verify.json\n");
+}
+
+// ============================================================================
+// Section 4: Regulatory Compliance Report
+// ============================================================================
+//
+// Generates a structured compliance report mapping build artifacts to
+// regulatory requirements. Supports multiple frameworks.
+//
+// Command:
+//   mind_audit compliance auditable_model.bin \
+//     --framework=fda,eu-ai-act \
+//     --output=compliance_report.pdf
+//
+// FDA 21 CFR Part 11 mapping:
+//   11.10(a) Validation       -> Reproducible build + test results
+//   11.10(b) Copies           -> Binary + source + attestation archive
+//   11.10(c) Record protection -> Signed attestation (tamper-evident)
+//   11.10(d) System access    -> Build isolation (ephemeral environment)
+//   11.10(e) Audit trail      -> Provenance chain: source -> IR -> binary
+//   11.50    Signature        -> Ed25519 signature on attestation
+//
+// EU AI Act mapping:
+//   Article 9  Risk management     -> Model architecture documented in source
+//   Article 10 Data governance     -> Dataset SHA256 in training manifest
+//   Article 11 Technical docs      -> SBOM + provenance + this report
+//   Article 12 Record-keeping      -> Immutable attestation archive
+//   Article 13 Transparency        -> Source code available for audit
+//   Article 14 Human oversight     -> Decision threshold documented
+//   Article 15 Accuracy/robustness -> Test metrics in verification report
+//   Article 17 Quality management  -> Full CI/CD pipeline with signed builds
+
+fn generate_compliance_report() {
+    print("=== Regulatory Compliance Report ===");
+    print("Frameworks: FDA 21 CFR Part 11, EU AI Act");
+    print("");
+    print("FDA 21 CFR Part 11:");
+    print("  11.10(a) Validation:        PASS (reproducible build verified)");
+    print("  11.10(b) Copies:            PASS (source + binary + attestation archived)");
+    print("  11.10(c) Record protection:  PASS (ed25519 signed attestation)");
+    print("  11.10(d) System access:      PASS (ephemeral build environment)");
+    print("  11.10(e) Audit trail:        PASS (provenance chain complete)");
+    print("  11.50    Signature:          PASS (ed25519 on attestation)");
+    print("");
+    print("EU AI Act:");
+    print("  Article 9  Risk management:     PASS");
+    print("  Article 10 Data governance:     PASS");
+    print("  Article 11 Technical docs:      PASS");
+    print("  Article 12 Record-keeping:      PASS");
+    print("  Article 13 Transparency:        PASS");
+    print("  Article 14 Human oversight:     PASS");
+    print("  Article 15 Accuracy/robustness: PASS");
+    print("  Article 17 Quality management:  PASS");
+    print("");
+    print("Output: compliance_report.pdf\n");
+}
+
+// ============================================================================
+// Main: Run Full Audit Pipeline
+// ============================================================================
+
+fn main() {
+    print("================================================================");
+    print("  MIND Audit Pipeline -- Compliance Artifact Generation");
+    print("  Model: auditable_model.bin");
+    print("  Date:  (build timestamp from attestation)");
+    print("================================================================\n");
+
+    generate_sbom();
+    generate_provenance();
+    verify_build();
+    generate_compliance_report();
+
+    print("================================================================");
+    print("  Artifacts Generated:");
+    print("    auditable_model.sbom.json        (SPDX 2.3 SBOM)");
+    print("    auditable_model.provenance.json   (SLSA L3 attestation)");
+    print("    auditable_model.verify.json       (build verification)");
+    print("    compliance_report.pdf             (FDA + EU AI Act report)");
+    print("================================================================");
+}

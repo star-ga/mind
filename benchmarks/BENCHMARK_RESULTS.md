@@ -92,6 +92,7 @@ python benchmark_pytorch_compile.py
 | large_matmul | 105 ms | 2.95 µs | **36,000×** |
 | simple_mlp | 752 ms | 6.15 µs | **122,000×** |
 | conv2d | 878 ms | ~5 µs | **176,000×** |
+| large_network | 752 ms | 15.49 µs | **48,500×** |
 
 **MIND frontend compiles 35,000-176,000× faster than PyTorch 2.10 GPU torch.compile full pipeline.**
 

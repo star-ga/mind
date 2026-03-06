@@ -1,0 +1,216 @@
+// CNN Classifier — MIND Model Zoo
+// Convolutional Neural Network for MNIST digit classification
+//
+// Architecture:
+//   Conv2d(1 -> 16, 3x3) + ReLU + MaxPool(2x2)    => [batch, 16, 13, 13]
+//   Conv2d(16 -> 32, 3x3) + ReLU + MaxPool(2x2)   => [batch, 32, 5, 5]
+//   Flatten(32*5*5=800) + Linear(800 -> 10)        => [batch, 10]
+//
+// Loss:  Cross-entropy via log_softmax + gather
+// Update: SGD with reverse-mode autodiff
+//
+// Spatial dimension progression:
+//   Input:  28x28
+//   Conv1:  28 - 3 + 1 = 26x26 (valid padding, stride 1)
+//   Pool1:  26 / 2 = 13x13
+//   Conv2:  13 - 3 + 1 = 11x11 (valid padding, stride 1)
+//   Pool2:  11 / 2 = 5x5 (floor division)
+//
+// Total parameters:
+//   Conv1: 16*1*3*3 + 16           = 160
+//   Conv2: 32*16*3*3 + 32          = 4,640
+//   FC:    800*10 + 10             = 8,010
+//   Total:                         = 12,810 parameters
+//
+// SHA-256 Deterministic Verification:
+//   When compiled with --deterministic flag, identical inputs produce
+//   bit-identical outputs. Verify via: mindc --emit-hash conv_classifier.mind
+
+import std.tensor;
+
+// ============================================================================
+// Block 1: Conv2d(1->16, 3x3) + ReLU + MaxPool(2x2)
+// ============================================================================
+
+// Input:  [batch, 1, 28, 28]  — single-channel grayscale images
+// Conv:   [batch, 16, 26, 26] — 16 filters, valid padding removes 2 pixels per side
+// ReLU:   [batch, 16, 26, 26] — element-wise nonlinearity
+// Pool:   [batch, 16, 13, 13] — 2x2 max pooling halves spatial dims
+fn conv_block1(x: diff tensor<f32[batch, 1, 28, 28]>,
+               w1: diff tensor<f32[16, 1, 3, 3]>,
+               b1: diff tensor<f32[16]>) -> diff tensor<f32[batch, 16, 13, 13]> {
+    let conv = conv2d(x, w1, stride=[1,1], padding="valid");  // [batch, 16, 26, 26]
+    let biased = conv + b1;                                     // broadcast bias over spatial dims
+    let activated = relu(biased);                               // [batch, 16, 26, 26]
+    return maxpool2d(activated, kernel=[2,2], stride=[2,2]);    // [batch, 16, 13, 13]
+}
+
+// ============================================================================
+// Block 2: Conv2d(16->32, 3x3) + ReLU + MaxPool(2x2)
+// ============================================================================
+
+// Input:  [batch, 16, 13, 13] — output of block 1
+// Conv:   [batch, 32, 11, 11] — 32 filters, valid padding
+// ReLU:   [batch, 32, 11, 11] — element-wise nonlinearity
+// Pool:   [batch, 32, 5, 5]   — 2x2 max pooling (11 -> floor(11/2) = 5)
+fn conv_block2(x: diff tensor<f32[batch, 16, 13, 13]>,
+               w2: diff tensor<f32[32, 16, 3, 3]>,
+               b2: diff tensor<f32[32]>) -> diff tensor<f32[batch, 32, 5, 5]> {
+    let conv = conv2d(x, w2, stride=[1,1], padding="valid");  // [batch, 32, 11, 11]
+    let biased = conv + b2;                                     // broadcast bias
+    let activated = relu(biased);                               // [batch, 32, 11, 11]
+    return maxpool2d(activated, kernel=[2,2], stride=[2,2]);    // [batch, 32, 5, 5]
+}
+
+// ============================================================================
+// Fully Connected Head: Flatten + Linear(800 -> 10)
+// ============================================================================
+
+// Input:  [batch, 32, 5, 5] — spatial features from conv blocks
+// Flatten: [batch, 800]     — 32 * 5 * 5 = 800
+// Linear:  [batch, 10]      — 10 class logits
+fn fc_head(x: diff tensor<f32[batch, 32, 5, 5]>,
+           w3: diff tensor<f32[800, 10]>,
+           b3: diff tensor<f32[10]>) -> diff tensor<f32[batch, 10]> {
+    let flat = reshape(x, [batch, 800]);      // [batch, 800] flatten spatial dims
+    let logits = matmul(flat, w3) + b3;       // [batch, 800] @ [800, 10] + [10] -> [batch, 10]
+    return logits;
+}
+
+// ============================================================================
+// Full Forward Pass
+// ============================================================================
+
+// Compose: input -> conv_block1 -> conv_block2 -> fc_head -> logits
+fn forward(x: diff tensor<f32[batch, 1, 28, 28]>,
+           w1: diff tensor<f32[16, 1, 3, 3]>,
+           b1: diff tensor<f32[16]>,
+           w2: diff tensor<f32[32, 16, 3, 3]>,
+           b2: diff tensor<f32[32]>,
+           w3: diff tensor<f32[800, 10]>,
+           b3: diff tensor<f32[10]>) -> diff tensor<f32[batch, 10]> {
+    let h1 = conv_block1(x, w1, b1);         // [batch, 16, 13, 13]
+    let h2 = conv_block2(h1, w2, b2);        // [batch, 32, 5, 5]
+    let logits = fc_head(h2, w3, b3);        // [batch, 10]
+    return logits;
+}
+
+// ============================================================================
+// Cross-Entropy Loss
+// ============================================================================
+
+// NLL loss via log_softmax + gather
+// logits: [batch, 10], labels: [batch] integer class labels (0-9)
+fn cross_entropy(logits: diff tensor<f32[batch, 10]>,
+                 labels: tensor<i32[batch]>) -> diff tensor<f32> {
+    let log_probs = log_softmax(logits, axis=1);     // [batch, 10] log probabilities
+    let nll = -gather(log_probs, labels, axis=1);    // [batch] per-sample NLL
+    return mean(nll);                                 // scalar: average over batch
+}
+
+// ============================================================================
+// Training Step (SGD)
+// ============================================================================
+
+// Single SGD training step: forward -> loss -> backward -> update
+// Returns all 6 updated parameter tensors (3 weight matrices + 3 bias vectors)
+fn train_step(x: diff tensor<f32[batch, 1, 28, 28]>,
+              labels: tensor<i32[batch]>,
+              w1: diff tensor<f32[16, 1, 3, 3]>,
+              b1: diff tensor<f32[16]>,
+              w2: diff tensor<f32[32, 16, 3, 3]>,
+              b2: diff tensor<f32[32]>,
+              w3: diff tensor<f32[800, 10]>,
+              b3: diff tensor<f32[10]>,
+              lr: f32) -> (diff tensor<f32[16, 1, 3, 3]>,
+                           diff tensor<f32[16]>,
+                           diff tensor<f32[32, 16, 3, 3]>,
+                           diff tensor<f32[32]>,
+                           diff tensor<f32[800, 10]>,
+                           diff tensor<f32[10]>) {
+    // Forward pass
+    let logits = forward(x, w1, b1, w2, b2, w3, b3);   // [batch, 10]
+    let loss = cross_entropy(logits, labels);             // scalar
+
+    // Backward pass — reverse-mode autodiff computes all gradients
+    let grad_w1 = backward(loss, w1);   // [16, 1, 3, 3]
+    let grad_b1 = backward(loss, b1);   // [16]
+    let grad_w2 = backward(loss, w2);   // [32, 16, 3, 3]
+    let grad_b2 = backward(loss, b2);   // [32]
+    let grad_w3 = backward(loss, w3);   // [800, 10]
+    let grad_b3 = backward(loss, b3);   // [10]
+
+    // SGD update: param := param - lr * grad
+    let w1_new = w1 - lr * grad_w1;
+    let b1_new = b1 - lr * grad_b1;
+    let w2_new = w2 - lr * grad_w2;
+    let b2_new = b2 - lr * grad_b2;
+    let w3_new = w3 - lr * grad_w3;
+    let b3_new = b3 - lr * grad_b3;
+
+    return (w1_new, b1_new, w2_new, b2_new, w3_new, b3_new);
+}
+
+// ============================================================================
+// Inference / Prediction
+// ============================================================================
+
+// Predict digit class (0-9) for a batch of images
+fn predict(x: diff tensor<f32[batch, 1, 28, 28]>,
+           w1: diff tensor<f32[16, 1, 3, 3]>,
+           b1: diff tensor<f32[16]>,
+           w2: diff tensor<f32[32, 16, 3, 3]>,
+           b2: diff tensor<f32[32]>,
+           w3: diff tensor<f32[800, 10]>,
+           b3: diff tensor<f32[10]>) -> tensor<i32[batch]> {
+    let logits = forward(x, w1, b1, w2, b2, w3, b3);   // [batch, 10]
+    return argmax(logits, axis=1);                        // [batch] predicted class
+}
+
+// Predict class probabilities
+fn predict_proba(x: diff tensor<f32[batch, 1, 28, 28]>,
+                 w1: diff tensor<f32[16, 1, 3, 3]>,
+                 b1: diff tensor<f32[16]>,
+                 w2: diff tensor<f32[32, 16, 3, 3]>,
+                 b2: diff tensor<f32[32]>,
+                 w3: diff tensor<f32[800, 10]>,
+                 b3: diff tensor<f32[10]>) -> tensor<f32[batch, 10]> {
+    let logits = forward(x, w1, b1, w2, b2, w3, b3);   // [batch, 10]
+    return softmax(logits, axis=1);                       // [batch, 10] probabilities
+}
+
+// ============================================================================
+// Example Usage
+// ============================================================================
+
+fn main() {
+    // Initialize weights with He initialization
+    let w1: diff tensor<f32[16, 1, 3, 3]> = random_normal([16, 1, 3, 3], stddev=0.471);   // sqrt(2/9)
+    let b1: diff tensor<f32[16]> = zeros([16]);
+    let w2: diff tensor<f32[32, 16, 3, 3]> = random_normal([32, 16, 3, 3], stddev=0.118); // sqrt(2/144)
+    let b2: diff tensor<f32[32]> = zeros([32]);
+    let w3: diff tensor<f32[800, 10]> = random_normal([800, 10], stddev=0.050);            // sqrt(2/800)
+    let b3: diff tensor<f32[10]> = zeros([10]);
+
+    // Example batch: 16 grayscale 28x28 images
+    let x: diff tensor<f32[16, 1, 28, 28]> = random_normal([16, 1, 28, 28], stddev=1.0);
+    let labels: tensor<i32[16]> = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5];
+
+    // Train for a few steps
+    let lr = 0.01;
+    for step in 0..5 {
+        let (w1, b1, w2, b2, w3, b3) = train_step(x, labels, w1, b1, w2, b2, w3, b3, lr);
+    }
+
+    // Inference
+    let predictions = predict(x, w1, b1, w2, b2, w3, b3);
+    print("Predicted classes:", predictions);
+}
+
+// Training recipe:
+// 1. Initialize with He initialization (stddev = sqrt(2 / fan_in))
+// 2. Load MNIST: 60,000 train / 10,000 test, batch_size = 64
+// 3. Train for 5-10 epochs with lr = 0.01
+// 4. Expected accuracy: ~99% on test set
+// 5. Compile: mindc conv_classifier.mind -o conv_classifier
+// 6. For GPU: mindc conv_classifier.mind --target=cuda -o conv_classifier_gpu
