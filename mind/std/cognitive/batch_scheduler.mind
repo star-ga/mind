@@ -1,0 +1,96 @@
+// Batch scheduling for inference workloads
+// Compiled: mindc mind/std/cognitive/batch_scheduler.mind --emit=shared -o lib/libbatch_scheduler.so
+//
+// Greedy bin-packing to schedule inference requests into batches
+// that fit within ASIC SRAM / GPU VRAM constraints.
+//
+// Scoring-based scheduling: each request gets a priority score,
+// batches are filled by descending score until budget is exhausted.
+
+import std.tensor;
+
+// --- Compute scheduling scores for all requests ---
+// Higher score = scheduled first.
+// Combines priority weight with sequence length penalty (shorter = easier to pack).
+//
+// priorities:   [N] — request urgency (higher = more urgent)
+// seq_lens:     [N] — sequence length per request
+// max_seq_len:  f32 — maximum possible sequence length (for normalization)
+// priority_weight: f32 — how much priority matters vs packing efficiency
+fn schedule_scores(
+    priorities: tensor<f32[N]>,
+    seq_lens: tensor<f32[N]>,
+    max_seq_len: f32,
+    priority_weight: f32
+) -> tensor<f32[N]> {
+    // Normalize priorities to [0, 1]
+    let max_prio = max_all(priorities);
+    let safe_max = max(max_prio, 1.0);
+    let norm_prio = priorities / safe_max;
+
+    // Shorter sequences are easier to pack — bonus for short seqs
+    let len_bonus = 1.0 - (seq_lens / max_seq_len);
+
+    return priority_weight * norm_prio + (1.0 - priority_weight) * len_bonus;
+}
+
+// --- Check which requests fit in remaining memory budget ---
+// Returns a mask: 1.0 = fits, 0.0 = doesn't fit.
+// Greedy: marks requests individually without considering combinations.
+//
+// memory_reqs: [N] — memory bytes per request
+// budget:      f32 — remaining memory budget
+fn fits_budget_mask(
+    memory_reqs: tensor<f32[N]>,
+    budget: f32
+) -> tensor<f32[N]> {
+    return select(memory_reqs <= budget, 1.0, 0.0);
+}
+
+// --- Compute batch utilization ---
+// utilization = sum(selected_memory) / budget
+fn batch_utilization(
+    memory_reqs: tensor<f32[N]>,
+    selection_mask: tensor<f32[N]>,
+    budget: f32
+) -> tensor<f32> {
+    let selected_mem = memory_reqs * selection_mask;
+    let total_used = sum_all(selected_mem);
+    return total_used / max(budget, 1.0);
+}
+
+// --- Compute maximum sequence length in a batch ---
+// Determines padding width for the batch.
+fn batch_max_seq_len(
+    seq_lens: tensor<f32[N]>,
+    selection_mask: tensor<f32[N]>
+) -> tensor<f32> {
+    // Zero out unselected, take max of remainder
+    let selected_lens = seq_lens * selection_mask;
+    return max_all(selected_lens);
+}
+
+// --- Compute padding waste for a batch ---
+// waste = sum((max_seq_len - actual_seq_len) * selected) / (max_seq_len * count)
+// Lower is better. Batches with similar-length sequences waste less.
+fn padding_waste(
+    seq_lens: tensor<f32[N]>,
+    selection_mask: tensor<f32[N]>
+) -> tensor<f32> {
+    let max_len = batch_max_seq_len(seq_lens, selection_mask);
+    let count = sum_all(selection_mask);
+    let safe_count = max(count, 1.0);
+    let safe_max = max(max_len, 1.0);
+    let gaps = (safe_max - seq_lens) * selection_mask;
+    let total_gap = sum_all(gaps);
+    return total_gap / (safe_max * safe_count);
+}
+
+// --- Batch memory estimate for a set of requests ---
+// Total memory = sum(per_request_memory * selected)
+fn batch_memory(
+    memory_reqs: tensor<f32[N]>,
+    selection_mask: tensor<f32[N]>
+) -> tensor<f32> {
+    return sum_all(memory_reqs * selection_mask);
+}

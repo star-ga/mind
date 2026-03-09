@@ -14,3 +14,4 @@
 
 pub mod fold;
 pub mod ir_canonical;
+pub mod memory_layout;
