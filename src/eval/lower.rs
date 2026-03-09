@@ -75,6 +75,12 @@ fn lower_tensor_binding(
                     .push(Instr::ConstTensor(id, dtype, shape, Some(*n as f64)));
                 return id;
             }
+            ast::Node::Lit(Literal::Float(f), _) => {
+                let id = ir.fresh();
+                ir.instrs
+                    .push(Instr::ConstTensor(id, dtype, shape, Some(*f)));
+                return id;
+            }
             ast::Node::Lit(Literal::Ident(name), _) => {
                 if let Some(id) = env.get(name) {
                     return *id;
@@ -92,6 +98,17 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::Lit(Literal::Int(n), _) => {
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, *n));
+            id
+        }
+        ast::Node::Lit(Literal::Float(f), _) => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstF64(id, *f));
+            id
+        }
+        ast::Node::Lit(Literal::Str(_), _) => {
+            // Strings don't have IR representation yet; emit placeholder
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
         ast::Node::Lit(Literal::Ident(name), _) => env.get(name).copied().unwrap_or_else(|| {
@@ -112,6 +129,12 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 ast::BinOp::Sub => BinOp::Sub,
                 ast::BinOp::Mul => BinOp::Mul,
                 ast::BinOp::Div => BinOp::Div,
+                ast::BinOp::Lt => BinOp::Lt,
+                ast::BinOp::Le => BinOp::Le,
+                ast::BinOp::Gt => BinOp::Gt,
+                ast::BinOp::Ge => BinOp::Ge,
+                ast::BinOp::Eq => BinOp::Eq,
+                ast::BinOp::Ne => BinOp::Ne,
             };
             ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
             dst

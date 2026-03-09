@@ -44,8 +44,30 @@ pub fn fold(node: &Node) -> Node {
                             a / b
                         }
                     }
+                    BinOp::Lt => (a < b) as i64,
+                    BinOp::Le => (a <= b) as i64,
+                    BinOp::Gt => (a > b) as i64,
+                    BinOp::Ge => (a >= b) as i64,
+                    BinOp::Eq => (a == b) as i64,
+                    BinOp::Ne => (a != b) as i64,
                 };
                 Node::Lit(Literal::Int(v), *span)
+            } else if let (Node::Lit(Literal::Float(a), _), Node::Lit(Literal::Float(b), _)) =
+                (&l, &r)
+            {
+                let v = match op {
+                    BinOp::Add => a + b,
+                    BinOp::Sub => a - b,
+                    BinOp::Mul => a * b,
+                    BinOp::Div => a / b,
+                    BinOp::Lt => if a < b { 1.0 } else { 0.0 },
+                    BinOp::Le => if a <= b { 1.0 } else { 0.0 },
+                    BinOp::Gt => if a > b { 1.0 } else { 0.0 },
+                    BinOp::Ge => if a >= b { 1.0 } else { 0.0 },
+                    BinOp::Eq => if a == b { 1.0 } else { 0.0 },
+                    BinOp::Ne => if a != b { 1.0 } else { 0.0 },
+                };
+                Node::Lit(Literal::Float(v), *span)
             } else {
                 Node::Binary {
                     op: *op,

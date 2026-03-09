@@ -101,6 +101,12 @@ fn constant_fold(instrs: &mut [Instr]) {
                             }
                             l / r
                         }
+                        BinOp::Lt => (l < r) as i64,
+                        BinOp::Le => (l <= r) as i64,
+                        BinOp::Gt => (l > r) as i64,
+                        BinOp::Ge => (l >= r) as i64,
+                        BinOp::Eq => (l == r) as i64,
+                        BinOp::Ne => (l != r) as i64,
                     };
                     *instr = Instr::ConstI64(dst_id, folded);
                     constants.insert(dst_id, folded);

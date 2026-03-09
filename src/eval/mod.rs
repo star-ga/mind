@@ -493,6 +493,8 @@ pub(crate) fn eval_value_expr_mode(
 ) -> Result<Value, EvalError> {
     match node {
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
+        Node::Lit(Literal::Float(f), _) => Ok(Value::Float(*f)),
+        Node::Lit(Literal::Str(s), _) => Ok(Value::Str(s.clone())),
         Node::Lit(Literal::Ident(name), _) => env
             .get(name)
             .cloned()
@@ -862,6 +864,48 @@ pub(crate) fn eval_value_expr_mode(
         }
         // Import statements are module-level declarations, no runtime value
         Node::Import { .. } => Ok(Value::Int(0)),
+        Node::ArrayLit { elements, .. } => {
+            let mut vals = Vec::with_capacity(elements.len());
+            for el in elements {
+                vals.push(eval_value_expr_mode(el, env, tensor_env, mode.clone())?);
+            }
+            Ok(Value::Tuple(vals))
+        }
+        Node::For { var, start, end, body, .. } => {
+            let s = match eval_value_expr_mode(start, env, tensor_env, mode.clone())? {
+                Value::Int(n) => n,
+                _ => return Err(EvalError::UnsupportedMsg("for-loop start must be int".into())),
+            };
+            let e = match eval_value_expr_mode(end, env, tensor_env, mode.clone())? {
+                Value::Int(n) => n,
+                _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
+            };
+            let mut env = env.clone();
+            let mut result = Value::Int(0);
+            for i in s..e {
+                env.insert(var.clone(), Value::Int(i));
+                for stmt in body {
+                    result = eval_value_expr_mode(stmt, &env, tensor_env, mode.clone())?;
+                }
+            }
+            Ok(result)
+        }
+        Node::Print { args, .. } => {
+            let mut parts = Vec::new();
+            for arg in args {
+                let v = eval_value_expr_mode(arg, env, tensor_env, mode.clone())?;
+                parts.push(format!("{:?}", v));
+            }
+            eprintln!("{}", parts.join(" "));
+            Ok(Value::Int(0))
+        }
+        Node::Neg { operand, .. } => {
+            match eval_value_expr_mode(operand, env, tensor_env, mode)? {
+                Value::Int(n) => Ok(Value::Int(-n)),
+                Value::Float(f) => Ok(Value::Float(-f)),
+                other => Err(EvalError::UnsupportedMsg(format!("cannot negate {:?}", other))),
+            }
+        }
     }
 }
 
@@ -940,6 +984,12 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
             }
             left / right
         }
+        BinOp::Lt => (left < right) as i64,
+        BinOp::Le => (left <= right) as i64,
+        BinOp::Gt => (left > right) as i64,
+        BinOp::Ge => (left >= right) as i64,
+        BinOp::Eq => (left == right) as i64,
+        BinOp::Ne => (left != right) as i64,
     })
 }
 
@@ -1024,6 +1074,12 @@ fn apply_tensor_scalar(
                         scalar / f
                     }
                 }
+                BinOp::Lt => if (tensor_on_left && f < scalar) || (!tensor_on_left && scalar < f) { 1.0 } else { 0.0 },
+                BinOp::Le => if (tensor_on_left && f <= scalar) || (!tensor_on_left && scalar <= f) { 1.0 } else { 0.0 },
+                BinOp::Gt => if (tensor_on_left && f > scalar) || (!tensor_on_left && scalar > f) { 1.0 } else { 0.0 },
+                BinOp::Ge => if (tensor_on_left && f >= scalar) || (!tensor_on_left && scalar >= f) { 1.0 } else { 0.0 },
+                BinOp::Eq => if f == scalar { 1.0 } else { 0.0 },
+                BinOp::Ne => if f != scalar { 1.0 } else { 0.0 },
             })
         }
         None => None,
@@ -1199,6 +1255,12 @@ fn apply_tensor_tensor(
             BinOp::Sub => a - b,
             BinOp::Mul => a * b,
             BinOp::Div => a / b,
+            BinOp::Lt => if a < b { 1.0 } else { 0.0 },
+            BinOp::Le => if a <= b { 1.0 } else { 0.0 },
+            BinOp::Gt => if a > b { 1.0 } else { 0.0 },
+            BinOp::Ge => if a >= b { 1.0 } else { 0.0 },
+            BinOp::Eq => if a == b { 1.0 } else { 0.0 },
+            BinOp::Ne => if a != b { 1.0 } else { 0.0 },
         }),
         _ => None,
     };
