@@ -20,6 +20,8 @@ pub enum BackendTarget {
     Cpu,
     /// Experimental GPU target (interface only in this crate).
     Gpu,
+    /// ASIC target for XRM-SSD hardware (direct SSA IR execution).
+    Asic,
 }
 
 impl fmt::Display for BackendTarget {
@@ -27,6 +29,7 @@ impl fmt::Display for BackendTarget {
         match self {
             BackendTarget::Cpu => write!(f, "cpu"),
             BackendTarget::Gpu => write!(f, "gpu"),
+            BackendTarget::Asic => write!(f, "asic"),
         }
     }
 }
