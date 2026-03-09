@@ -1,0 +1,90 @@
+// KV-Cache for transformer inference
+// Compiled: mindc mind/std/cognitive/kv_cache.mind --emit=shared -o lib/libkv_cache.so
+//
+// Ring-buffer KV-cache for ASIC SRAM / GPU VRAM.
+// O(1) append, O(1) evict, zero-copy attention window slicing.
+//
+// Compiles to ring-buffer access patterns for ASIC SRAM banks.
+// Supports GQA (grouped query attention) via num_kv_heads < num_heads.
+
+import std.tensor;
+
+// --- Append a single key-value pair at position `pos` ---
+// Writes into ring buffer at (pos % capacity).
+// key, value: [num_kv_heads, head_dim]
+// keys_buf, values_buf: [capacity, num_kv_heads, head_dim]
+fn kv_append(
+    keys_buf: tensor<f32[C, H, D]>,
+    values_buf: tensor<f32[C, H, D]>,
+    key: tensor<f32[H, D]>,
+    value: tensor<f32[H, D]>,
+    pos: i64,
+    capacity: i64
+) -> (tensor<f32[C, H, D]>, tensor<f32[C, H, D]>) {
+    let write_idx = pos % capacity;
+    let key_row = reshape(key, [1, H, D]);
+    let val_row = reshape(value, [1, H, D]);
+    let new_keys = scatter(keys_buf, write_idx, key_row, axis=0);
+    let new_values = scatter(values_buf, write_idx, val_row, axis=0);
+    return (new_keys, new_values);
+}
+
+// --- Slice the attention window from the ring buffer ---
+// Returns the last `len` entries in sequence order, handling wraparound.
+// When len < capacity, entries are contiguous from index 0.
+// When len == capacity, oldest entry is at write_pos (next overwrite target).
+fn kv_window(
+    buf: tensor<f32[C, H, D]>,
+    write_pos: i64,
+    len: i64,
+    capacity: i64
+) -> tensor<f32[L, H, D]> {
+    // Start index: 0 if not full, write_pos if full (ring wrapped)
+    let start = select(len < capacity, 0, write_pos);
+    // Gather `len` contiguous entries with modular indexing
+    let indices = arange(0, len);
+    let ring_indices = (indices + start) % capacity;
+    return gather(buf, ring_indices, axis=0);
+}
+
+// --- Compute attention scores against cached keys ---
+// query: [num_heads, head_dim] — single query vector
+// keys:  [seq_len, num_kv_heads, head_dim] — cached keys from kv_window
+// GQA: each group of (num_heads / num_kv_heads) query heads shares one KV head.
+fn attention_scores(
+    query: tensor<f32[NH, D]>,
+    keys: tensor<f32[S, NKV, D]>,
+    scale: f32
+) -> tensor<f32[NH, S]> {
+    // Expand keys for GQA: [S, NKV, D] -> broadcast to match query heads
+    let K_T = transpose(keys, [1, 2, 0]);   // [NKV, D, S]
+    let scores = matmul(query, K_T) * scale;  // [NH, S] via GQA broadcast
+    return scores;
+}
+
+// --- Full attention step: query against KV-cache ---
+// Computes softmax(Q @ K^T / sqrt(d_k)) @ V
+fn cached_attention(
+    query: tensor<f32[NH, D]>,
+    cached_keys: tensor<f32[S, NKV, D]>,
+    cached_values: tensor<f32[S, NKV, D]>,
+    d_k: f32
+) -> tensor<f32[NH, D]> {
+    let scale = 1.0 / sqrt(d_k);
+    let scores = attention_scores(query, cached_keys, scale);
+    let weights = softmax(scores, axis=1);  // [NH, S]
+    // Weighted sum of values
+    let V = transpose(cached_values, [1, 0, 2]);  // [NKV, S, D]
+    let output = matmul(weights, V);  // [NH, D] via GQA broadcast
+    return output;
+}
+
+// --- Memory budget: total bytes for a KV-cache instance ---
+fn cache_bytes(
+    capacity: i64,
+    num_kv_heads: i64,
+    head_dim: i64
+) -> i64 {
+    // K + V, each [capacity, num_kv_heads, head_dim] in f32
+    return 2 * capacity * num_kv_heads * head_dim * 4;
+}

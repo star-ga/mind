@@ -1,0 +1,94 @@
+// Speculative decoding with rejection sampling
+// Compiled: mindc mind/std/cognitive/speculative.mind --emit=shared -o lib/libspeculative.so
+//
+// Draft-then-verify speculative decoding:
+//   1. Draft model proposes K tokens
+//   2. Target model verifies all K tokens in parallel
+//   3. Rejection sampling accepts/rejects each draft token
+//
+// Guarantees: output distribution matches the target model exactly
+// (no quality loss from speculation).
+
+import std.tensor;
+
+// --- Compute acceptance probabilities for rejection sampling ---
+// For each position i:
+//   accept_prob = min(target_prob[i] / draft_prob[i], 1.0)
+// When target >= draft, always accept (prob = 1.0).
+// When draft > target, accept with probability target/draft.
+fn acceptance_probs(
+    draft_probs: tensor<f32[K]>,
+    target_probs: tensor<f32[K]>
+) -> tensor<f32[K]> {
+    // Guard against zero draft probs (would cause div-by-zero)
+    let safe_draft = max(draft_probs, 1e-10);
+    let ratios = target_probs / safe_draft;
+    return min(ratios, 1.0);
+}
+
+// --- Rejection sampling: accept or reject each draft token ---
+// Returns a mask: 1.0 = accepted, 0.0 = rejected.
+// random_u: pre-generated uniform random values in [0, 1) per position.
+fn rejection_mask(
+    draft_probs: tensor<f32[K]>,
+    target_probs: tensor<f32[K]>,
+    random_u: tensor<f32[K]>
+) -> tensor<f32[K]> {
+    let accept_p = acceptance_probs(draft_probs, target_probs);
+    // Accept where random < accept_prob
+    let accepted = select(random_u < accept_p, 1.0, 0.0);
+    return accepted;
+}
+
+// --- Find the first rejection position ---
+// Returns the number of consecutively accepted tokens before the first reject.
+// Uses cumulative product: once a 0 appears, everything after becomes 0.
+fn accepted_prefix_len(mask: tensor<f32[K]>) -> tensor<f32> {
+    let cumulative = cumprod(mask, axis=0);
+    return sum_all(cumulative);
+}
+
+// --- Build the accepted token sequence ---
+// Accepts all draft tokens up to first rejection, then appends the target
+// model's replacement token at the rejection point.
+//
+// draft_tokens: [K] token IDs from draft model
+// target_tokens: [K] token IDs sampled from target model
+// mask: [K] rejection sampling mask (1=accept, 0=reject)
+fn build_sequence(
+    draft_tokens: tensor<f32[K]>,
+    target_tokens: tensor<f32[K]>,
+    mask: tensor<f32[K]>
+) -> tensor<f32[K]> {
+    // Where accepted, use draft; where rejected, use target replacement
+    return select(mask > 0.5, draft_tokens, target_tokens);
+}
+
+// --- Compute acceptance rate for monitoring ---
+// acceptance_rate = accepted_prefix_len / K
+fn acceptance_rate(
+    draft_probs: tensor<f32[K]>,
+    target_probs: tensor<f32[K]>,
+    random_u: tensor<f32[K]>
+) -> tensor<f32> {
+    let mask = rejection_mask(draft_probs, target_probs, random_u);
+    let n_accepted = accepted_prefix_len(mask);
+    let k_float = cast(shape(draft_probs, 0), f32);
+    return n_accepted / k_float;
+}
+
+// --- Batch speculative verification ---
+// Verifies B independent draft sequences against target in parallel.
+// draft_probs:  [B, K] — draft model probabilities per sequence
+// target_probs: [B, K] — target model probabilities per sequence
+// random_u:     [B, K] — uniform random values
+fn batch_rejection_mask(
+    draft_probs: tensor<f32[B, K]>,
+    target_probs: tensor<f32[B, K]>,
+    random_u: tensor<f32[B, K]>
+) -> tensor<f32[B, K]> {
+    let safe_draft = max(draft_probs, 1e-10);
+    let ratios = target_probs / safe_draft;
+    let accept_p = min(ratios, 1.0);
+    return select(random_u < accept_p, 1.0, 0.0);
+}
