@@ -380,6 +380,12 @@ fn emit_int_binop(emitter: &mut MlirEmitter, dst: ValueId, op: BinOp, lhs: Value
         BinOp::Sub => "arith.subi",
         BinOp::Mul => "arith.muli",
         BinOp::Div => "arith.divsi",
+        BinOp::Lt => "arith.cmpi slt,",
+        BinOp::Le => "arith.cmpi sle,",
+        BinOp::Gt => "arith.cmpi sgt,",
+        BinOp::Ge => "arith.cmpi sge,",
+        BinOp::Eq => "arith.cmpi eq,",
+        BinOp::Ne => "arith.cmpi ne,",
     };
     emitter.write_fmt(format_args!(
         "    %{} = {} %{}, %{} : i64\n",

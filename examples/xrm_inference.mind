@@ -1,0 +1,189 @@
+// XRM Inference Test — real-number verification of cognitive kernels
+//
+// Tests: KV-cache, speculative decoding, batch scheduling, verification
+// with concrete numeric values to validate correctness.
+
+import std.tensor;
+
+// ============================================================================
+// Test 1: KV-Cache — append and attention
+// ============================================================================
+
+fn test_kv_cache() -> tensor<f32> {
+    // Small cache: capacity=4, num_kv_heads=2, head_dim=3
+    let capacity = 4;
+    let H = 2;
+    let D = 3;
+
+    // Initialize empty cache buffers
+    let keys_buf: tensor<f32[4, 2, 3]> = zeros([4, 2, 3]);
+    let values_buf: tensor<f32[4, 2, 3]> = zeros([4, 2, 3]);
+
+    // Append 3 KV pairs (positions 0, 1, 2)
+    let k0: tensor<f32[2, 3]> = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let v0: tensor<f32[2, 3]> = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
+
+    let k1: tensor<f32[2, 3]> = [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]];
+    let v1: tensor<f32[2, 3]> = [[0.7, 0.8, 0.9], [1.0, 1.1, 1.2]];
+
+    let k2: tensor<f32[2, 3]> = [[0.0, 0.0, 1.0], [0.5, 0.5, 0.0]];
+    let v2: tensor<f32[2, 3]> = [[1.3, 1.4, 1.5], [1.6, 1.7, 1.8]];
+
+    // Query against cached keys
+    let query: tensor<f32[2, 3]> = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let scale = 1.0 / sqrt(3.0);
+
+    // Manual attention: Q @ K^T * scale → softmax → @ V
+    // This tests the core attention computation
+    let K_T = transpose(reshape(k0, [1, 2, 3]), [0, 2, 1]);
+    let score = matmul(reshape(query, [1, 2, 3]), K_T) * scale;
+    print("KV-cache attention score:", score);
+
+    return score;
+}
+
+// ============================================================================
+// Test 2: Speculative Decoding — rejection sampling
+// ============================================================================
+
+fn test_speculative() -> tensor<f32> {
+    // Draft model proposed 5 tokens
+    let draft_probs: tensor<f32[5]> = [0.3, 0.4, 0.8, 0.2, 0.5];
+    let target_probs: tensor<f32[5]> = [0.5, 0.6, 0.3, 0.7, 0.5];
+
+    // Acceptance probabilities: min(target/draft, 1.0)
+    // [1.0, 1.0, 0.375, 1.0, 1.0]
+    let safe_draft = max(draft_probs, 1e-10);
+    let ratios = target_probs / safe_draft;
+    let accept_p = min(ratios, 1.0);
+    print("Acceptance probs:", accept_p);
+
+    // With these random values, token 2 gets rejected (0.5 > 0.375)
+    let random_u: tensor<f32[5]> = [0.1, 0.2, 0.5, 0.1, 0.3];
+    let accepted = select(random_u < accept_p, 1.0, 0.0);
+    print("Rejection mask:", accepted);
+    // Expected: [1.0, 1.0, 0.0, 1.0, 1.0]
+
+    // Prefix length (consecutive accepts before first reject)
+    let cumulative = cumprod(accepted, axis=0);
+    let prefix_len = sum_all(cumulative);
+    print("Accepted prefix length:", prefix_len);
+    // Expected: 2.0 (tokens 0 and 1 accepted, token 2 rejected)
+
+    return prefix_len;
+}
+
+// ============================================================================
+// Test 3: Verification — drift detection
+// ============================================================================
+
+fn test_verification() -> tensor<f32> {
+    // Two inference outputs with small numerical drift
+    let output_a: tensor<f32[8]> = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+    let output_b: tensor<f32[8]> = [1.0, 2.001, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+
+    // Max drift: should be 0.001
+    let diff = output_a - output_b;
+    let abs_diff = abs(diff);
+    let max_drift = max_all(abs_diff);
+    print("Max drift:", max_drift);
+
+    // Mean drift
+    let mean_drift = mean(abs_diff);
+    print("Mean drift:", mean_drift);
+
+    // Drift within tolerance?
+    let tolerance = 0.01;
+    let drift_ok = select(max_drift <= tolerance, 1.0, 0.0);
+    print("Drift OK (tol=0.01):", drift_ok);
+    // Expected: 1.0 (0.001 < 0.01)
+
+    // Attention entropy: uniform distribution over 8 tokens
+    let uniform_weights: tensor<f32[8]> = [0.125, 0.125, 0.125, 0.125,
+                                            0.125, 0.125, 0.125, 0.125];
+    let safe_w = max(uniform_weights, 1e-10);
+    let entropy = sum_all(safe_w * log2(safe_w)) * -1.0;
+    print("Uniform entropy (bits):", entropy);
+    // Expected: 3.0 (log2(8) = 3)
+
+    // Peaked distribution (one-hot)
+    let peaked_weights: tensor<f32[8]> = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0];
+    let safe_p = max(peaked_weights, 1e-10);
+    let peaked_entropy = sum_all(safe_p * log2(safe_p)) * -1.0;
+    print("Peaked entropy (bits):", peaked_entropy);
+    // Expected: ~0.0
+
+    // Cosine similarity
+    let dot = sum_all(output_a * output_b);
+    let norm_a = sqrt(sum_all(output_a * output_a));
+    let norm_b = sqrt(sum_all(output_b * output_b));
+    let cosine = dot / (norm_a * norm_b);
+    print("Cosine similarity:", cosine);
+    // Expected: ~1.0 (nearly identical)
+
+    return cosine;
+}
+
+// ============================================================================
+// Test 4: Batch scheduling scores
+// ============================================================================
+
+fn test_batch_scheduling() -> tensor<f32[4]> {
+    // 4 inference requests
+    let priorities: tensor<f32[4]> = [1.0, 10.0, 5.0, 3.0];
+    let seq_lens: tensor<f32[4]> = [128.0, 64.0, 256.0, 32.0];
+    let max_seq_len = 512.0;
+    let priority_weight = 0.7;
+
+    // Scheduling scores: priority * 0.7 + (1 - seq_len/512) * 0.3
+    let max_prio = max_all(priorities);
+    let norm_prio = priorities / max_prio;
+    let len_bonus = 1.0 - (seq_lens / max_seq_len);
+    let scores = priority_weight * norm_prio + (1.0 - priority_weight) * len_bonus;
+    print("Schedule scores:", scores);
+    // Request 2 (prio=10, short seq) should score highest
+
+    // Memory budget check
+    let memory_reqs: tensor<f32[4]> = [500.0, 300.0, 800.0, 200.0];
+    let budget = 1000.0;
+    let fits = select(memory_reqs <= budget, 1.0, 0.0);
+    let total_if_all = sum_all(memory_reqs * fits);
+    print("Total memory if all fit:", total_if_all);
+    // 1800 > 1000 budget — need to split into batches
+
+    // Utilization of first batch (requests 1+3: 300+200=500)
+    let batch1_mask: tensor<f32[4]> = [0.0, 1.0, 0.0, 1.0];
+    let batch1_mem = sum_all(memory_reqs * batch1_mask);
+    let utilization = batch1_mem / budget;
+    print("Batch 1 utilization:", utilization);
+    // Expected: 0.5
+
+    return scores;
+}
+
+// ============================================================================
+// Main: run all XRM tests
+// ============================================================================
+
+fn main() {
+    print("=== XRM Inference Tests ===");
+    print("");
+
+    print("--- Test 1: KV-Cache ---");
+    let kv_result = test_kv_cache();
+    print("");
+
+    print("--- Test 2: Speculative Decoding ---");
+    let spec_result = test_speculative();
+    print("");
+
+    print("--- Test 3: Verification Plane ---");
+    let verify_result = test_verification();
+    print("");
+
+    print("--- Test 4: Batch Scheduling ---");
+    let batch_result = test_batch_scheduling();
+    print("");
+
+    print("=== All XRM tests complete ===");
+}

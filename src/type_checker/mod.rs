@@ -115,6 +115,12 @@ fn binop_display(op: &BinOp) -> &'static str {
         BinOp::Sub => "-",
         BinOp::Mul => "*",
         BinOp::Div => "/",
+        BinOp::Lt => "<",
+        BinOp::Le => "<=",
+        BinOp::Gt => ">",
+        BinOp::Ge => ">=",
+        BinOp::Eq => "==",
+        BinOp::Ne => "!=",
     }
 }
 
@@ -124,6 +130,12 @@ fn shape_op_for_binop(op: &BinOp) -> &'static str {
         BinOp::Sub => "tensor.sub",
         BinOp::Mul => "tensor.mul",
         BinOp::Div => "tensor.div",
+        BinOp::Lt => "tensor.lt",
+        BinOp::Le => "tensor.le",
+        BinOp::Gt => "tensor.gt",
+        BinOp::Ge => "tensor.ge",
+        BinOp::Eq => "tensor.eq",
+        BinOp::Ne => "tensor.ne",
     }
 }
 
@@ -540,6 +552,8 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
 fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
     match node {
         Node::Lit(Literal::Int(_), span) => Ok((ValueType::ScalarI32, *span)),
+        Node::Lit(Literal::Float(_), span) => Ok((ValueType::ScalarF64, *span)),
+        Node::Lit(Literal::Str(_), span) => Ok((ValueType::ScalarI32, *span)), // strings treated as opaque
         Node::Lit(Literal::Ident(name), span) => env
             .get(name)
             .cloned()
@@ -1208,6 +1222,22 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         // Import statements don't have a value type; they're module-level declarations
         Node::Import { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        Node::ArrayLit { elements, span } => {
+            if let Some(first) = elements.first() {
+                infer_expr(first, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
+        Node::For { body, span, .. } => {
+            if let Some(last) = body.last() {
+                infer_expr(last, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
+        Node::Print { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        Node::Neg { operand, .. } => infer_expr(operand, env),
     }
 }
 
