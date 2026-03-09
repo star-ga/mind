@@ -46,9 +46,11 @@ impl<T> Spanned<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Int(i64),
+    Float(f64),
+    Str(String),
     Ident(String),
 }
 
@@ -58,6 +60,12 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,14 +87,14 @@ pub enum TypeAnn {
 }
 
 /// Function parameter: `name: type`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub ty: TypeAnn,
     pub span: Span,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Lit(Literal, Span),
     Binary {
@@ -232,6 +240,29 @@ pub enum Node {
         path: Vec<String>,
         span: Span,
     },
+    /// Array literal: `[1.0, 2.0, 3.0]`
+    ArrayLit {
+        elements: Vec<Node>,
+        span: Span,
+    },
+    /// For loop: `for i in 0..N { body }`
+    For {
+        var: String,
+        start: Box<Node>,
+        end: Box<Node>,
+        body: Vec<Node>,
+        span: Span,
+    },
+    /// Print statement: `print("msg", expr)`
+    Print {
+        args: Vec<Node>,
+        span: Span,
+    },
+    /// Unary negation: `-expr`
+    Neg {
+        operand: Box<Node>,
+        span: Span,
+    },
 }
 
 impl Node {
@@ -263,7 +294,11 @@ impl Node {
             | Node::Return { span, .. }
             | Node::Block { span, .. }
             | Node::If { span, .. }
-            | Node::Import { span, .. } => *span,
+            | Node::Import { span, .. }
+            | Node::ArrayLit { span, .. }
+            | Node::For { span, .. }
+            | Node::Print { span, .. }
+            | Node::Neg { span, .. } => *span,
         }
     }
 
@@ -276,7 +311,7 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Module {
     pub items: Vec<Node>,
 }
