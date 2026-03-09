@@ -19,6 +19,8 @@
 //! pulling in private runtime crates. The entry points are
 //! [`lower_ir_to_mlir`] and [`compile_ir_to_mlir_text`].
 
+pub mod asic_target;
 mod lowering;
 
+pub use asic_target::{specialize_for_asic, AsicOp, TileConfig};
 pub use lowering::{compile_ir_to_mlir_text, lower_ir_to_mlir, MlirLowerError, MlirModule};
