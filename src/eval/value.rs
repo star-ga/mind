@@ -108,6 +108,7 @@ impl TensorVal {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
     Int(i64),
+    Float(f64),
     Str(String),
     Tuple(Vec<Value>),
     Tensor(TensorVal),
@@ -131,6 +132,7 @@ impl Value {
 pub fn format_value_human(v: &Value) -> String {
     match v {
         Value::Int(n) => format!("{n}"),
+        Value::Float(f) => trim_float(*f),
         Value::Str(s) => s.clone(),
         Value::Tuple(items) => {
             let mut out = String::from("(");

@@ -420,6 +420,12 @@ fn binop_str(op: BinOp) -> &'static str {
         BinOp::Sub => "sub",
         BinOp::Mul => "mul",
         BinOp::Div => "div",
+        BinOp::Lt => "lt",
+        BinOp::Le => "le",
+        BinOp::Gt => "gt",
+        BinOp::Ge => "ge",
+        BinOp::Eq => "eq",
+        BinOp::Ne => "ne",
     }
 }
 
