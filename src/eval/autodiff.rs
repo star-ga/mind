@@ -465,6 +465,15 @@ pub fn build_graph_loss(
                 shape: Vec::new(),
                 fill: Some(*k as f64),
             })),
+            ast::Node::Lit(Literal::Float(f), _) => Ok(tape.push(NodeInfo {
+                op: Op::ConstInt,
+                dtype: DType::F32,
+                shape: Vec::new(),
+                fill: Some(*f),
+            })),
+            ast::Node::Lit(Literal::Str(_), _) => {
+                Err("string literals not supported in autodiff".to_string())
+            }
             ast::Node::Lit(Literal::Ident(name), _) => {
                 if let Some(existing) = var_nodes.get(name) {
                     vars.entry(name.clone()).or_insert(*existing);
@@ -546,6 +555,18 @@ pub fn build_graph_loss(
                         dtype: lhs.dtype.clone(),
                         shape,
                         fill,
+                    },
+                    // Comparison ops produce scalar results, not differentiable
+                    ast::BinOp::Lt
+                    | ast::BinOp::Le
+                    | ast::BinOp::Gt
+                    | ast::BinOp::Ge
+                    | ast::BinOp::Eq
+                    | ast::BinOp::Ne => NodeInfo {
+                        op: Op::Sub(l, r), // placeholder — comparisons aren't differentiable
+                        dtype: lhs.dtype.clone(),
+                        shape,
+                        fill: Some(0.0),
                     },
                 };
                 Ok(tape.push(info))

@@ -52,6 +52,7 @@ pub struct IndexSpec {
 #[derive(Debug, Clone)]
 pub enum Instr {
     ConstI64(ValueId, i64),
+    ConstF64(ValueId, f64),
     ConstTensor(ValueId, DType, Vec<ShapeDim>, Option<f64>),
     BinOp {
         dst: ValueId,
@@ -176,6 +177,7 @@ pub enum Instr {
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
     match instr {
         Instr::ConstI64(dst, ..)
+        | Instr::ConstF64(dst, ..)
         | Instr::ConstTensor(dst, ..)
         | Instr::BinOp { dst, .. }
         | Instr::Sum { dst, .. }
@@ -204,6 +206,12 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
 }
 
 #[derive(Debug, Clone)]
