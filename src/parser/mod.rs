@@ -78,11 +78,21 @@ impl<'a> P<'a> {
     }
 
     fn skip_ws_and_newlines(&mut self) {
-        while self.pos < self.b.len() {
-            match self.b[self.pos] {
-                b' ' | b'\t' | b'\r' | b'\n' => self.pos += 1,
-                _ => break,
+        loop {
+            while self.pos < self.b.len() {
+                match self.b[self.pos] {
+                    b' ' | b'\t' | b'\r' | b'\n' => self.pos += 1,
+                    _ => break,
+                }
             }
+            // Skip line comments
+            if self.pos + 1 < self.b.len() && self.b[self.pos] == b'/' && self.b[self.pos + 1] == b'/' {
+                while self.pos < self.b.len() && self.b[self.pos] != b'\n' {
+                    self.pos += 1;
+                }
+                continue;
+            }
+            break;
         }
     }
 
@@ -293,15 +303,24 @@ impl<'a> P<'a> {
 
     fn dtype(&mut self) -> Result<String, ParseError> {
         self.skip_ws();
-        if self.at_keyword(b"f32") {
-            self.pos += 3;
-            return Ok("f32".into());
+        for (kw, name) in [
+            (&b"bf16"[..], "bf16"),
+            (b"BF16", "bf16"),
+            (b"f16", "f16"),
+            (b"F16", "f16"),
+            (b"f32", "f32"),
+            (b"F32", "f32"),
+            (b"f64", "f64"),
+            (b"F64", "f64"),
+            (b"i32", "i32"),
+            (b"I32", "i32"),
+        ] {
+            if self.at_keyword(kw) {
+                self.pos += kw.len();
+                return Ok(name.into());
+            }
         }
-        if self.at_keyword(b"i32") {
-            self.pos += 3;
-            return Ok("i32".into());
-        }
-        Err(self.err("expected dtype (f32 or i32)".into()))
+        Err(self.err("expected dtype".into()))
     }
 
     fn type_ann(&mut self) -> Result<TypeAnn, ParseError> {
@@ -310,6 +329,23 @@ impl<'a> P<'a> {
         if self.at_keyword(b"Tensor") {
             self.pos += 6; // "Tensor"
             self.skip_ws();
+            if self.at(b'<') {
+                // Tensor<F32, [dims]> syntax (angle bracket)
+                self.pos += 1;
+                self.skip_ws();
+                let dt = self.dtype()?;
+                self.skip_ws();
+                let dims = if self.eat(b',') {
+                    self.skip_ws();
+                    let d = self.dim_list_brackets()?;
+                    self.skip_ws();
+                    d
+                } else {
+                    Vec::new()
+                };
+                self.expect(b'>')?;
+                return Ok(TypeAnn::Tensor { dtype: dt, dims });
+            }
             self.expect(b'[')?;
             let dt = self.dtype()?;
             self.skip_ws();
@@ -319,7 +355,7 @@ impl<'a> P<'a> {
             self.expect(b']')?;
             return Ok(TypeAnn::Tensor { dtype: dt, dims });
         }
-        // diff tensor<f32[dims]>
+        // diff tensor<f32[dims]> or diff tensor<f32>
         if self.at_keyword(b"diff") {
             self.pos += 4;
             self.skip_ws_and_newlines();
@@ -329,18 +365,28 @@ impl<'a> P<'a> {
             self.skip_ws();
             self.expect(b'<')?;
             let dt = self.dtype()?;
-            let dims = self.dim_list_brackets()?;
+            self.skip_ws();
+            let dims = if self.at(b'[') {
+                self.dim_list_brackets()?
+            } else {
+                Vec::new()
+            };
             self.skip_ws();
             self.expect(b'>')?;
             return Ok(TypeAnn::DiffTensor { dtype: dt, dims });
         }
-        // tensor<f32[dims]>
+        // tensor<f32[dims]> or tensor<f32> (no dims = unspecified shape)
         if self.at_keyword(b"tensor") {
             self.pos += 6;
             self.skip_ws();
             self.expect(b'<')?;
             let dt = self.dtype()?;
-            let dims = self.dim_list_brackets()?;
+            self.skip_ws();
+            let dims = if self.at(b'[') {
+                self.dim_list_brackets()?
+            } else {
+                Vec::new()
+            };
             self.skip_ws();
             self.expect(b'>')?;
             return Ok(TypeAnn::Tensor { dtype: dt, dims });
@@ -402,6 +448,13 @@ impl<'a> P<'a> {
 
     fn parse_stmt(&mut self) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
+        // Skip line comments
+        while self.pos + 1 < self.b.len() && self.b[self.pos] == b'/' && self.b[self.pos + 1] == b'/' {
+            while self.pos < self.b.len() && self.b[self.pos] != b'\n' {
+                self.pos += 1;
+            }
+            self.skip_ws_and_newlines();
+        }
         if self.at_keyword(b"import") {
             return self.parse_import();
         }
@@ -410,6 +463,12 @@ impl<'a> P<'a> {
         }
         if self.at_keyword(b"return") {
             return self.parse_return();
+        }
+        if self.at_keyword(b"for") {
+            return self.parse_for();
+        }
+        if self.at_keyword(b"print") {
+            return self.parse_print();
         }
         if self.at_keyword(b"let") {
             return self.parse_let();
@@ -569,8 +628,110 @@ impl<'a> P<'a> {
         })
     }
 
+    fn parse_for(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 3; // "for"
+        self.skip_ws_and_newlines();
+        let var = self
+            .word()
+            .ok_or_else(|| self.err("expected loop variable name".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        if !self.eat_keyword("in") {
+            return Err(self.err("expected 'in' after loop variable".into()));
+        }
+        self.skip_ws_and_newlines();
+        let start_expr = self.parse_atom()?;
+        self.skip_ws();
+        // Expect '..'
+        if !(self.pos + 1 < self.b.len() && self.b[self.pos] == b'.' && self.b[self.pos + 1] == b'.') {
+            return Err(self.err("expected '..' in range".into()));
+        }
+        self.pos += 2;
+        self.skip_ws_and_newlines();
+        let end_expr = self.parse_atom()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let body = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::For {
+            var,
+            start: Box::new(start_expr),
+            end: Box::new(end_expr),
+            body,
+            span,
+        })
+    }
+
+    fn parse_print(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 5; // "print"
+        self.skip_ws();
+        self.expect(b'(')?;
+        let mut args = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b')') {
+            args.push(self.parse_expr()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+                if self.at(b')') {
+                    break;
+                }
+                args.push(self.parse_expr()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Print { args, span })
+    }
+
     fn parse_expr(&mut self) -> Result<Node, ParseError> {
-        self.parse_additive()
+        self.parse_comparison()
+    }
+
+    fn parse_comparison(&mut self) -> Result<Node, ParseError> {
+        let mut left = self.parse_additive()?;
+        loop {
+            self.skip_ws();
+            let op = if self.starts_with(b"<=") {
+                self.pos += 2;
+                BinOp::Le
+            } else if self.starts_with(b">=") {
+                self.pos += 2;
+                BinOp::Ge
+            } else if self.starts_with(b"!=") {
+                self.pos += 2;
+                BinOp::Ne
+            } else if self.starts_with(b"==") {
+                self.pos += 2;
+                BinOp::Eq
+            } else if self.at(b'<') {
+                self.advance();
+                BinOp::Lt
+            } else if self.at(b'>') {
+                self.advance();
+                BinOp::Gt
+            } else {
+                break;
+            };
+            self.skip_ws_and_newlines();
+            let right = self.parse_additive()?;
+            let span = Span::new(left.span_start(), right.span_end());
+            left = Node::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
     }
 
     fn parse_additive(&mut self) -> Result<Node, ParseError> {
@@ -627,6 +788,46 @@ impl<'a> P<'a> {
         Ok(left)
     }
 
+    fn parse_string_lit(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.expect(b'"')?;
+        let str_start = self.pos;
+        while self.pos < self.b.len() && self.b[self.pos] != b'"' {
+            self.pos += 1;
+        }
+        let s = std::str::from_utf8(&self.b[str_start..self.pos])
+            .unwrap()
+            .to_string();
+        self.expect(b'"')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Lit(Literal::Str(s), span))
+    }
+
+    fn parse_array_lit(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.expect(b'[')?;
+        let mut elements = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b']') {
+            elements.push(self.parse_expr()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+                if self.at(b']') {
+                    break;
+                }
+                elements.push(self.parse_expr()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b']')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::ArrayLit { elements, span })
+    }
+
     fn parse_atom(&mut self) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
         if self.at_end() {
@@ -636,9 +837,29 @@ impl<'a> P<'a> {
         if self.at(b'(') {
             return self.parse_tuple_or_paren();
         }
-        // Integer literal
+        // Array literal
+        if self.at(b'[') {
+            return self.parse_array_lit();
+        }
+        // String literal
+        if self.at(b'"') {
+            return self.parse_string_lit();
+        }
+        // Unary minus for negative float/int: -1.0, -x
+        if self.at(b'-') {
+            let start = self.pos;
+            self.advance();
+            self.skip_ws();
+            let operand = self.parse_atom()?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Neg {
+                operand: Box::new(operand),
+                span,
+            });
+        }
+        // Number literal (int or float)
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
-            return self.parse_int_lit();
+            return self.parse_number_lit();
         }
         // Must be identifier-based
         let start = self.pos;
@@ -648,20 +869,86 @@ impl<'a> P<'a> {
         self.skip_ws();
         match ident.as_str() {
             "grad" if self.at(b'(') => self.parse_grad_call(start),
-            "tensor.sum" if self.at(b'(') => self.parse_tensor_sum(start),
-            "tensor.mean" if self.at(b'(') => self.parse_tensor_mean(start),
-            "tensor.reshape" if self.at(b'(') => self.parse_tensor_reshape(start),
-            "tensor.expand_dims" if self.at(b'(') => self.parse_tensor_expand_dims(start),
-            "tensor.squeeze" if self.at(b'(') => self.parse_tensor_squeeze(start),
-            "tensor.transpose" if self.at(b'(') => self.parse_tensor_transpose(start),
-            "tensor.index" if self.at(b'(') => self.parse_tensor_index(start),
-            "tensor.slice_stride" if self.at(b'(') => self.parse_tensor_slice_stride(start),
-            "tensor.slice" if self.at(b'(') => self.parse_tensor_slice(start),
-            "tensor.gather" if self.at(b'(') => self.parse_tensor_gather(start),
+            "tensor.sum" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_sum(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.sum".into(), start) }
+                }
+            }
+            "tensor.mean" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_mean(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.mean".into(), start) }
+                }
+            }
+            "tensor.reshape" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_reshape(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.reshape".into(), start) }
+                }
+            }
+            "tensor.expand_dims" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_expand_dims(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.expand_dims".into(), start) }
+                }
+            }
+            "tensor.squeeze" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_squeeze(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.squeeze".into(), start) }
+                }
+            }
+            "tensor.transpose" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_transpose(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.transpose".into(), start) }
+                }
+            }
+            "tensor.index" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_index(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.index".into(), start) }
+                }
+            }
+            "tensor.slice_stride" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_slice_stride(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.slice_stride".into(), start) }
+                }
+            }
+            "tensor.slice" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_slice(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.slice".into(), start) }
+                }
+            }
+            "tensor.gather" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_gather(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.gather".into(), start) }
+                }
+            }
             "tensor.dot" if self.at(b'(') => self.parse_tensor_dot(start),
             "tensor.matmul" if self.at(b'(') => self.parse_tensor_matmul(start),
             "tensor.relu" if self.at(b'(') => self.parse_tensor_relu(start),
-            "tensor.conv2d" if self.at(b'(') => self.parse_tensor_conv2d(start),
+            "tensor.conv2d" if self.at(b'(') => {
+                let saved = self.pos;
+                match self.parse_tensor_conv2d(start) {
+                    Ok(n) => Ok(n),
+                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.conv2d".into(), start) }
+                }
+            }
             _ => {
                 if self.at(b'(') {
                     self.parse_generic_call(ident, start)
@@ -673,11 +960,55 @@ impl<'a> P<'a> {
         }
     }
 
-    fn parse_int_lit(&mut self) -> Result<Node, ParseError> {
+    fn parse_number_lit(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         let d = self
             .digits()
-            .ok_or_else(|| self.err("expected integer".into()))?;
+            .ok_or_else(|| self.err("expected number".into()))?;
+        // Check for decimal point → float literal
+        if self.pos < self.b.len() && self.b[self.pos] == b'.' {
+            // Disambiguate: `1.0` is float, `1..10` is range
+            if self.pos + 1 < self.b.len() && self.b[self.pos + 1] == b'.' {
+                // Range syntax `N..M` — return integer
+                let val: i64 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
+                let span = Span::new(start, self.pos);
+                return Ok(Node::Lit(Literal::Int(val), span));
+            }
+            self.pos += 1; // skip '.'
+            let frac = self.digits().unwrap_or_default();
+            let mut num_str = d;
+            num_str.push('.');
+            num_str.push_str(&frac);
+            // Optional exponent: 1.0e-5
+            if self.pos < self.b.len() && (self.b[self.pos] == b'e' || self.b[self.pos] == b'E') {
+                num_str.push('e');
+                self.pos += 1;
+                if self.pos < self.b.len() && (self.b[self.pos] == b'-' || self.b[self.pos] == b'+') {
+                    num_str.push(self.b[self.pos] as char);
+                    self.pos += 1;
+                }
+                let exp = self.digits().ok_or_else(|| self.err("expected exponent digits".into()))?;
+                num_str.push_str(&exp);
+            }
+            let val: f64 = num_str.parse().map_err(|_| self.err("invalid float".into()))?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Lit(Literal::Float(val), span));
+        }
+        // Optional exponent without decimal: 1e5
+        if self.pos < self.b.len() && (self.b[self.pos] == b'e' || self.b[self.pos] == b'E') {
+            let mut num_str = d;
+            num_str.push('e');
+            self.pos += 1;
+            if self.pos < self.b.len() && (self.b[self.pos] == b'-' || self.b[self.pos] == b'+') {
+                num_str.push(self.b[self.pos] as char);
+                self.pos += 1;
+            }
+            let exp = self.digits().ok_or_else(|| self.err("expected exponent digits".into()))?;
+            num_str.push_str(&exp);
+            let val: f64 = num_str.parse().map_err(|_| self.err("invalid float".into()))?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Lit(Literal::Float(val), span));
+        }
         let val: i64 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Int(val), span))
@@ -723,7 +1054,7 @@ impl<'a> P<'a> {
         let mut args = Vec::new();
         self.skip_ws_and_newlines();
         if !self.at(b')') {
-            args.push(self.parse_expr()?);
+            args.push(self.parse_call_arg()?);
             loop {
                 self.skip_ws_and_newlines();
                 if !self.eat(b',') {
@@ -733,13 +1064,45 @@ impl<'a> P<'a> {
                 if self.at(b')') {
                     break;
                 }
-                args.push(self.parse_expr()?);
+                args.push(self.parse_call_arg()?);
             }
         }
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
         Ok(Node::Call { callee, args, span })
+    }
+
+    /// Parse a call argument, handling `name=expr` keyword syntax by skipping the name.
+    fn parse_call_arg(&mut self) -> Result<Node, ParseError> {
+        // Try to detect keyword arg: ident followed by '=' (but not '==')
+        let saved = self.pos;
+        if let Some(name) = self.try_ident() {
+            self.skip_ws();
+            if self.at(b'=') && !(self.pos + 1 < self.b.len() && self.b[self.pos + 1] == b'=') {
+                // keyword arg — skip name=, parse the value
+                self.pos += 1; // skip '='
+                self.skip_ws();
+                let _ = name; // drop the keyword name
+                return self.parse_expr();
+            }
+            // Not a keyword arg — restore position
+            self.pos = saved;
+        }
+        self.parse_expr()
+    }
+
+    fn try_ident(&mut self) -> Option<String> {
+        let start = self.pos;
+        if self.pos >= self.b.len() || !(self.b[self.pos].is_ascii_alphabetic() || self.b[self.pos] == b'_') {
+            return None;
+        }
+        while self.pos < self.b.len()
+            && (self.b[self.pos].is_ascii_alphanumeric() || self.b[self.pos] == b'_')
+        {
+            self.pos += 1;
+        }
+        Some(String::from_utf8_lossy(&self.b[start..self.pos]).to_string())
     }
 
     fn parse_grad_call(&mut self, start: usize) -> Result<Node, ParseError> {

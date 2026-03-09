@@ -400,6 +400,7 @@ fn shape_dim_from_value(value: &Value) -> Result<ShapeDim, EvalError> {
                 Err(EvalError::Unsupported)
             }
         }
+        Value::Float(_) => Err(EvalError::Unsupported),
         Value::Tuple(_) => Err(EvalError::Unsupported),
         Value::GradMap(_) => Err(EvalError::Unsupported),
     }
