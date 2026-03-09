@@ -206,6 +206,12 @@ fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
             BinOp::Sub => a - b,
             BinOp::Mul => a * b,
             BinOp::Div => a / b,
+            BinOp::Lt => (a < b) as i64,
+            BinOp::Le => (a <= b) as i64,
+            BinOp::Gt => (a > b) as i64,
+            BinOp::Ge => (a >= b) as i64,
+            BinOp::Eq => (a == b) as i64,
+            BinOp::Ne => (a != b) as i64,
         }),
         (Value::Tensor(t), Value::Int(s)) => tensor_scalar(op, t, s as f64, true),
         (Value::Int(s), Value::Tensor(t)) => tensor_scalar(op, t, s as f64, false),
@@ -234,6 +240,12 @@ fn tensor_scalar(op: BinOp, tensor: TensorVal, scalar: f64, tensor_left: bool) -
                 scalar / f
             }
         }
+        BinOp::Lt => if (tensor_left && f < scalar) || (!tensor_left && scalar < f) { 1.0 } else { 0.0 },
+        BinOp::Le => if (tensor_left && f <= scalar) || (!tensor_left && scalar <= f) { 1.0 } else { 0.0 },
+        BinOp::Gt => if (tensor_left && f > scalar) || (!tensor_left && scalar > f) { 1.0 } else { 0.0 },
+        BinOp::Ge => if (tensor_left && f >= scalar) || (!tensor_left && scalar >= f) { 1.0 } else { 0.0 },
+        BinOp::Eq => if f == scalar { 1.0 } else { 0.0 },
+        BinOp::Ne => if f != scalar { 1.0 } else { 0.0 },
     });
     Value::Tensor(TensorVal::new(dtype, shape, fill))
 }
@@ -247,6 +259,12 @@ fn tensor_tensor(op: BinOp, a: TensorVal, b: TensorVal) -> Value {
             BinOp::Sub => x - y,
             BinOp::Mul => x * y,
             BinOp::Div => x / y,
+            BinOp::Lt => if x < y { 1.0 } else { 0.0 },
+            BinOp::Le => if x <= y { 1.0 } else { 0.0 },
+            BinOp::Gt => if x > y { 1.0 } else { 0.0 },
+            BinOp::Ge => if x >= y { 1.0 } else { 0.0 },
+            BinOp::Eq => if x == y { 1.0 } else { 0.0 },
+            BinOp::Ne => if x != y { 1.0 } else { 0.0 },
         }),
         _ => None,
     };

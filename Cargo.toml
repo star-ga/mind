@@ -68,6 +68,7 @@ harness = false
 [[bench]]
 name = "autodiff"
 harness = false
+required-features = ["autodiff"]
 
 [[bench]]
 name = "simple_benchmarks"
