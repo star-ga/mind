@@ -78,9 +78,22 @@ cargo run --features aot --bin mindc -- examples/hello_tensor.mind --emit-obj ou
 ```bash
 # Build a MIND project (reads Mind.toml)
 mindc build
+mindc build --release                # optimized (-O3 -flto)
+mindc build --release --target cuda  # CUDA backend
 
-# Build and run a MIND project
+# Build and run
 mindc run
+mindc run --target cuda              # run with CUDA backend
+
+# Test (discovers tests/*.mind, builds each, reports pass/fail)
+mindc test
+mindc test --filter kv_cache         # run matching suites
+mindc test --target cuda             # GPU tests
+
+# Benchmark (discovers bench/*.mind, builds with --release)
+mindc bench
+mindc bench --target cuda            # GPU benchmarks
+mindc bench --filter throughput      # specific benchmark
 ```
 
 ### Feature Flags
