@@ -23,7 +23,10 @@ use clap::{ArgAction, Parser, Subcommand};
 use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{compile_source_with_name, CompileOptions};
-use libmind::project::{build_project, run_project, BuildOptions};
+use libmind::project::{
+    bench_project, build_project, run_project, test_project, BenchOptions, BuildOptions,
+    TestOptions,
+};
 use libmind::BackendTarget;
 use libmind::{conformance, ConformanceOptions, ConformanceProfile};
 
@@ -78,6 +81,36 @@ enum Command {
         /// Arguments to pass to the program (after --).
         #[arg(last = true)]
         args: Vec<String>,
+    },
+    /// Run project tests (tests/*.mind).
+    Test {
+        /// Target backend (cpu, cuda, etc.).
+        #[arg(long, value_name = "TARGET")]
+        target: Option<String>,
+        /// Show verbose test output.
+        #[arg(short, long)]
+        verbose: bool,
+        /// Filter test suites by name.
+        #[arg(long, value_name = "PATTERN")]
+        filter: Option<String>,
+    },
+    /// Run project benchmarks (bench/*.mind).
+    Bench {
+        /// Target backend (cpu, cuda, etc.).
+        #[arg(long, value_name = "TARGET")]
+        target: Option<String>,
+        /// Show verbose output.
+        #[arg(short, long)]
+        verbose: bool,
+        /// Filter benchmarks by name.
+        #[arg(long, value_name = "PATTERN")]
+        filter: Option<String>,
+        /// Number of iterations.
+        #[arg(long, value_name = "N")]
+        iterations: Option<u32>,
+        /// Output results as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Run the Core v1 conformance suite.
     Conformance {
@@ -159,6 +192,46 @@ fn main() {
         }) => {
             run_run_command(*release, target.clone(), *verbose, args.clone());
             return;
+        }
+        Some(Command::Test {
+            target,
+            verbose,
+            filter,
+        }) => {
+            let opts = TestOptions {
+                target: target.clone(),
+                verbose: *verbose,
+                filter: filter.clone(),
+            };
+            match test_project(&opts) {
+                Ok(code) => process::exit(code),
+                Err(err) => {
+                    eprintln!("error: {}", err);
+                    process::exit(1);
+                }
+            }
+        }
+        Some(Command::Bench {
+            target,
+            verbose,
+            filter,
+            iterations,
+            json,
+        }) => {
+            let opts = BenchOptions {
+                target: target.clone(),
+                verbose: *verbose,
+                filter: filter.clone(),
+                iterations: *iterations,
+                json: *json,
+            };
+            match bench_project(&opts) {
+                Ok(code) => process::exit(code),
+                Err(err) => {
+                    eprintln!("error: {}", err);
+                    process::exit(1);
+                }
+            }
         }
         Some(Command::Conformance { profile }) => {
             run_conformance(profile);
