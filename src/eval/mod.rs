@@ -1030,6 +1030,9 @@ fn apply_tensor_scalar(
                         BinOp::Div => {
                             exec::cpu::exec_div_scalar(&tensor_exec, scalar as f32, tensor_on_left)
                         }
+                        _ => {
+                            return Ok(Value::Tensor(TensorVal::new(tensor.dtype.clone(), tensor.shape.clone(), Some(0.0))));
+                        }
                     };
                     match exec_res {
                         Ok(t) => return Ok(Value::Tensor(t)),
@@ -1116,6 +1119,7 @@ fn apply_tensor_scalar(
                                     scalar_i32 / v
                                 }
                             }
+                            _ => 0, // comparison ops
                         };
                         out.push(computed);
                     }
@@ -1145,6 +1149,7 @@ fn apply_tensor_scalar(
                                     scalar_f32 / v
                                 }
                             }
+                            _ => 0.0, // comparison ops
                         };
                         out.push(computed);
                     }
@@ -1196,6 +1201,7 @@ fn apply_tensor_tensor(
                         BinOp::Sub => exec::cpu::exec_sub(&left_exec, &right_exec),
                         BinOp::Mul => exec::cpu::exec_mul(&left_exec, &right_exec),
                         BinOp::Div => exec::cpu::exec_div(&left_exec, &right_exec),
+                        _ => Err(exec::cpu::ExecError::Unsupported("comparison op on tensors".to_string())),
                     };
                     match exec_res {
                         Ok(t) => return Ok(Value::Tensor(t)),
@@ -1281,6 +1287,7 @@ fn apply_tensor_tensor(
                                 BinOp::Sub => lv[i] - rv[i],
                                 BinOp::Mul => lv[i] * rv[i],
                                 BinOp::Div => lv[i] / rv[i],
+                                _ => 0, // comparison ops not supported in element-wise
                             };
                             out.push(computed);
                         }
@@ -1294,6 +1301,7 @@ fn apply_tensor_tensor(
                                 BinOp::Sub => lv[i] - rv[i],
                                 BinOp::Mul => lv[i] * rv[i],
                                 BinOp::Div => lv[i] / rv[i],
+                                _ => 0.0, // comparison ops not supported in element-wise
                             };
                             out.push(computed);
                         }
