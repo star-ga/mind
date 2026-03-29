@@ -942,6 +942,7 @@ impl<'a> P<'a> {
             "tensor.dot" if self.at(b'(') => self.parse_tensor_dot(start),
             "tensor.matmul" if self.at(b'(') => self.parse_tensor_matmul(start),
             "tensor.relu" if self.at(b'(') => self.parse_tensor_relu(start),
+            "tensor.rand" if self.at(b'(') => self.parse_tensor_rand(start),
             "tensor.conv2d" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_conv2d(start) {
@@ -1505,6 +1506,27 @@ impl<'a> P<'a> {
             b: Box::new(b),
             span,
         })
+    }
+
+    fn parse_tensor_rand(&mut self, start: usize) -> Result<Node, ParseError> {
+        // tensor.rand(d0, d1, ...) → random-filled f32 tensor
+        self.expect(b'(')?;
+        let mut dims = Vec::new();
+        self.skip_ws_and_newlines();
+        let d = self.digits().ok_or_else(|| self.err("expected dimension".into()))?;
+        dims.push(d.parse::<usize>().map_err(|_| self.err("invalid dimension".into()))?);
+        loop {
+            self.skip_ws_and_newlines();
+            if !self.at(b',') { break; }
+            self.advance(); // consume the comma
+            self.skip_ws_and_newlines();
+            let d = self.digits().ok_or_else(|| self.err("expected dimension".into()))?;
+            dims.push(d.parse::<usize>().map_err(|_| self.err("invalid dimension".into()))?);
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::CallTensorRand { shape: dims, span })
     }
 
     fn parse_tensor_matmul(&mut self, start: usize) -> Result<Node, ParseError> {

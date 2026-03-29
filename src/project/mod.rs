@@ -870,8 +870,8 @@ fn native_link(
 /// Find the MIND runtime library for a backend
 fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Cannot determine home directory"))?;
-    let nikolachess_lib = home.join(".nikolachess").join("lib");
     let mind_lib = home.join(".mind").join("lib");
+    let nikolachess_lib = home.join(".nikolachess").join("lib");
 
     // Map backend to library name
     let lib_name = match backend {
@@ -884,20 +884,28 @@ fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
         _ => "libmind_cpu_linux-x64.so",
     };
 
-    // Search in known locations
-    for lib_dir in [&nikolachess_lib, &mind_lib] {
+    // 1. MIND_LIB_DIR environment override (highest priority)
+    if let Ok(env_dir) = std::env::var("MIND_LIB_DIR") {
+        let env_path = PathBuf::from(&env_dir);
+        if env_path.join(lib_name).exists() {
+            return Ok(env_path);
+        }
+    }
+
+    // 2. Search in standard locations (~/.mind/lib first, then ~/.nikolachess/lib)
+    for lib_dir in [&mind_lib, &nikolachess_lib] {
         let lib_path = lib_dir.join(lib_name);
         if lib_path.exists() {
             return Ok(lib_dir.clone());
         }
     }
 
-    // Fallback: check if any lib exists
-    if nikolachess_lib.exists() {
-        return Ok(nikolachess_lib);
-    }
+    // 3. Fallback: check if any lib dir exists
     if mind_lib.exists() {
         return Ok(mind_lib);
+    }
+    if nikolachess_lib.exists() {
+        return Ok(nikolachess_lib);
     }
 
     Err(anyhow!(
