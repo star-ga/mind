@@ -191,6 +191,10 @@ pub enum Node {
         x: Box<Node>,
         span: Span,
     },
+    CallTensorRand {
+        shape: Vec<usize>,
+        span: Span,
+    },
     CallTensorConv2d {
         x: Box<Node>,
         w: Box<Node>,
@@ -287,6 +291,7 @@ impl Node {
             | Node::CallDot { span, .. }
             | Node::CallMatMul { span, .. }
             | Node::CallTensorRelu { span, .. }
+            | Node::CallTensorRand { span, .. }
             | Node::CallTensorConv2d { span, .. }
             | Node::Let { span, .. }
             | Node::Assign { span, .. }

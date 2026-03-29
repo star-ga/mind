@@ -116,6 +116,13 @@ Demonstrate performance, determinism, and flexibility. Introduce cloud-assisted 
   - `mind build --remote`
   - REST API for compilation requests
 - Regression suite to ensure deterministic builds and MLIR→LLVM stability
+- TurboQuant benchmark module (`bench/turboquant.mind`):
+  - Validate that PolarQuant rotation + Lloyd-Max codebook + QJL residual correction
+    can be expressed and compiled as pure MIND (requires Phase 10.5 struct/enum)
+  - Benchmark: quantize/dequantize 1M KV vectors at 3-bit, measure throughput vs Python
+  - This is the first real-world mind-inference kernel that exercises struct, enum,
+    const, bitwise ops, and tensor ops together — ideal Phase 10.5 integration test
+  - Ref: arXiv:2504.19874 (TurboQuant, ICLR 2026)
 
 ---
 

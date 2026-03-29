@@ -226,6 +226,17 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             });
             dst
         }
+        ast::Node::CallTensorRand { shape, .. } => {
+            let dst = ir.fresh();
+            let dims: Vec<String> = shape.iter().map(|d| d.to_string()).collect();
+            ir.instrs.push(Instr::ConstTensor(
+                dst,
+                crate::types::DType::F32,
+                dims.iter().map(|s| crate::types::ShapeDim::Known(s.parse().unwrap())).collect(),
+                None, // None = random fill, forces GPU materialization
+            ));
+            dst
+        }
         ast::Node::CallDot { a, b, .. } => {
             let lhs = lower_expr(a, ir, env);
             let rhs = lower_expr(b, ir, env);

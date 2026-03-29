@@ -785,6 +785,11 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Err(EvalError::Unsupported),
             }
         }
+        Node::CallTensorRand { shape, .. } => {
+            // Random tensor — forces GPU materialization (no constant-fold)
+            let dims: Vec<ShapeDim> = shape.iter().map(|&d| ShapeDim::Known(d)).collect();
+            Ok(Value::Tensor(TensorVal::new(DType::F32, dims, None)))
+        }
         Node::CallTensorConv2d {
             x,
             w,
