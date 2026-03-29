@@ -980,6 +980,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
+        Node::CallTensorRand { shape, span } => {
+            let dims: Vec<ShapeDim> = shape.iter().map(|&d| ShapeDim::Known(d)).collect();
+            Ok((ValueType::Tensor(TensorType { dtype: DType::F32, shape: dims }), *span))
+        }
         Node::CallTensorConv2d {
             x,
             w,
