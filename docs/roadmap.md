@@ -337,3 +337,12 @@ These extended phases (10–14) guide MIND into the next major development era:
 - and comprehensive full-stack AI framework capabilities.
 
 Together they represent the roadmap toward **MIND v1.0** and production-ready adoption across multiple industries, enabling end-to-end machine learning from research to deployment.
+
+---
+
+## AGI Integration
+
+This repo is part of the STARGA AGI stack. See `naestro-bot/specs/AGI-ROADMAP.md` for:
+- Gap 3: Rule induction → .mind programs (compile + verify)
+- Gap 8: Reasoning primitives (hypothesis, evidence, inference_step)
+- Phase 10.5 is prerequisite for all AGI .mind modules
