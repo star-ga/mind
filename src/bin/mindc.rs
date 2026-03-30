@@ -501,8 +501,16 @@ fn emit_mlir_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::Comp
 fn parse_target(raw: &str) -> Result<BackendTarget, String> {
     match raw.to_ascii_lowercase().as_str() {
         "cpu" => Ok(BackendTarget::Cpu),
-        "gpu" => Ok(BackendTarget::Gpu),
-        other => Err(format!("unknown target '{other}' (expected cpu|gpu)")),
+        "gpu" | "cuda" | "rocm" | "metal" | "webgpu" => Ok(BackendTarget::Gpu),
+        "asic" | "xrm" => Ok(BackendTarget::Asic),
+        "tpu" => Ok(BackendTarget::Tpu),
+        "npu" | "ane" | "hexagon" => Ok(BackendTarget::Npu),
+        "lpu" | "groq" => Ok(BackendTarget::Lpu),
+        "dpu" | "smartnic" | "bluefield" => Ok(BackendTarget::Dpu),
+        "fpga" | "hls" => Ok(BackendTarget::Fpga),
+        other => Err(format!(
+            "unknown target '{other}' (expected cpu|gpu|asic|tpu|npu|lpu|dpu|fpga)"
+        )),
     }
 }
 

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 328 | **Est. tokens:** ~428,393
-**Generated:** 2026-03-29 11:51 UTC
+**Files:** 330 | **Est. tokens:** ~431,092
+**Generated:** 2026-03-30 06:25 UTC
 
 ## Token Budget Guide
 
@@ -33,7 +33,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 19 | ~15,806 |
+| `docs/` | 19 | ~15,881 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 3 | ~659 |
@@ -46,11 +46,12 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 5 | ~3,471 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
+| `scripts/` | 2 | ~2,268 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~14,732 |
 | `src/ast/` | 1 | ~1,784 |
 | `src/autodiff/` | 3 | ~4,159 |
-| `src/bin/` | 2 | ~10,368 |
+| `src/bin/` | 2 | ~10,471 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/eval/` | 12 | ~51,907 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
@@ -65,7 +66,7 @@
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~13,957 |
 | `src/project/` | 1 | ~9,268 |
-| `src/runtime/` | 3 | ~748 |
+| `src/runtime/` | 3 | ~1,001 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/type_checker/` | 1 | ~14,918 |
@@ -235,7 +236,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~3746 tok, huge) — Roadmap
+- `roadmap.md` (~3821 tok, huge) — Roadmap
 - `security.md` (~753 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 ### `docs/specs/`
@@ -310,6 +311,10 @@
 - `kv_cache.mind` (~840 tok, large) — KV-Cache for transformer inference
 - `speculative.mind` (~891 tok, large) — Speculative decoding with rejection sampling
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
+### `scripts/`
+
+- `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
+- `anatomy.sh` (~2010 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 ### `skills/write-mind/`
 
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
@@ -324,7 +329,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6045 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~4323 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~4426 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `conformance.rs` (~1871 tok, huge)
@@ -424,7 +429,7 @@
 ### `src/runtime/`
 
 - `mod.rs` (~92 tok, small) — Runtime abstractions for execution backends.
-- `types.rs` (~368 tok, medium) — Shared runtime surface types for execution backends.
+- `types.rs` (~621 tok, large) — Shared runtime surface types for execution backends.
 ### `src/shapes/`
 
 - `engine.rs` (~1882 tok, huge) — A rank-N tensor shape represented as a list of extents.
