@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 330 | **Est. tokens:** ~431,092
-**Generated:** 2026-03-30 06:25 UTC
+**Files:** 331 | **Est. tokens:** ~431,327
+**Generated:** 2026-04-01 10:51 UTC
 
 ## Token Budget Guide
 
@@ -24,6 +24,7 @@
 |-----------|-------|-------------|
 | `./` | 28 | ~27,558 |
 | `agents/` | 1 | ~436 |
+| `.agents/skills/mindc-development/` | 1 | ~235 |
 | `benches/` | 5 | ~6,036 |
 | `benchmarks/` | 13 | ~24,973 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -120,6 +121,9 @@
 ### `agents/`
 
 - `mind-developer.md` (~436 tok, medium) — MIND Developer Agent
+### `.agents/skills/mindc-development/`
+
+- `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
 ### `benches/`
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
