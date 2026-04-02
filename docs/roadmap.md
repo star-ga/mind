@@ -202,6 +202,40 @@ Establish MIND as the premier language for real-time neural signal processing an
 
 ---
 
+## Phase 13.5 — Observer-Dependent Cognition (ODC) Language Primitives
+
+### Goals
+Introduce language-level support for observation-dependent computation. MIND already has `axis` for tensor operations — extend this to cognitive/governance contexts where the result of a computation depends on which observation basis is chosen.
+
+**Spec:** `specs/observer-dependent-cognition.md`
+
+### Deliverables
+- **`@axis` annotation** — declare which observation basis a function/block operates in
+  ```mind
+  @axis("semantic")
+  fn recall(query: Tensor[1, 768]) -> Tensor[K, 768] { ... }
+  
+  @axis("governance", invariants=[1,2,5,7])
+  fn verify(txn: Transaction) -> Evidence { ... }
+  ```
+- **Axis contracts** — compile-time verification that composed computations use compatible observation bases
+- **Determinism certificates** — compiler emits proof that a code path is:
+  - `axis_independent` — fully deterministic, same result regardless of observation basis
+  - `axis_dependent` — result varies with declared axis (must be explicitly declared)
+- **`observe` keyword** — explicit measurement operator for superposition states
+  ```mind
+  let candidates = speculate(draft_model, context)  // superposition
+  let result = observe(candidates, axis="verifier_a")  // collapse
+  ```
+- **Multi-axis composition** — compose results from different observation bases with explicit fusion strategy (RRF, voting, weighted)
+
+### Integration
+- MIND compiler validates `@axis` annotations at type-check time
+- MLIR lowering preserves axis metadata for runtime evidence chain
+- 512-mind governance modules use `@axis` to declare invariant coverage
+
+---
+
 ## Phase 14 — Full-Stack AI Framework
 
 ### Vision
