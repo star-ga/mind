@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 331 | **Est. tokens:** ~431,740
-**Generated:** 2026-04-02 04:23 UTC
+**Files:** 332 | **Est. tokens:** ~432,162
+**Generated:** 2026-04-02 04:39 UTC
 
 ## Token Budget Guide
 
@@ -37,7 +37,7 @@
 | `docs/` | 19 | ~16,294 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 3 | ~659 |
+| `docs/rfcs/` | 4 | ~1,081 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~33,738 |
 | `examples/c/` | 2 | ~400 |
@@ -237,6 +237,7 @@
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
 - `000-template.md` (~1 tok, tiny)
+- `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
