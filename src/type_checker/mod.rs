@@ -230,6 +230,10 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
         }
         (ValueType::ScalarI32, ValueType::ScalarI32) => None,
         (ValueType::ScalarF32, ValueType::ScalarF32) => Some(DType::F32),
+        (ValueType::ScalarF64, ValueType::ScalarF64) => Some(DType::F32),
+        (ValueType::ScalarI64, ValueType::ScalarI64) => None,
+        (ValueType::ScalarF64, ValueType::ScalarI64) | (ValueType::ScalarI64, ValueType::ScalarF64) => Some(DType::F32),
+        (ValueType::ScalarF32, ValueType::ScalarI32) | (ValueType::ScalarI32, ValueType::ScalarF32) => Some(DType::F32),
         (ValueType::ScalarBool, ValueType::ScalarBool) => None,
         (ValueType::GradMap(_), _) | (_, ValueType::GradMap(_)) => None,
         _ => None, // Other scalar combinations
@@ -1233,7 +1237,21 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 Ok((ValueType::ScalarI32, *span))
             }
         }
-        Node::For { body, span, .. } => {
+        Node::For { var, body, span, .. } => {
+            let env = &mut env.clone();
+            // Register loop variable
+            env.insert(var.clone(), ValueType::ScalarI32);
+            // Register let-bindings inside body
+            for stmt in body {
+                if let Node::Let { name, .. } = stmt {
+                    env.insert(name.clone(), ValueType::ScalarI32);
+                }
+                if let Node::Assign { name, .. } = stmt {
+                    if !env.contains_key(name) {
+                        env.insert(name.clone(), ValueType::ScalarI32);
+                    }
+                }
+            }
             if let Some(last) = body.last() {
                 infer_expr(last, env)
             } else {
