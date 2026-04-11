@@ -225,6 +225,18 @@ tensor.matmul(a, b)
 
 **Scope note:** MIND measures frontend only. Mojo/JAX measure full compilation pipelines. MIND's Rust-native pipeline with static shape inference and zero-allocation parsing eliminates all overhead from parser combinators, Python interop, and LLVM frontend passes.
 
+### End-to-End: FIM-Onsager Experiment (H200 SXM)
+
+Self-prediction training (w → 1.0, 50K iterations). NVIDIA H200 SXM 141GB, CUDA 12.4, Driver 570.211.
+
+| Runtime | Time | Speedup |
+|---------|------|---------|
+| PyTorch (CUDA, 5-layer NN, 296K params) | 137.1s | 1x |
+| **MIND (CPU, scalar loop)** | **32.6ms** | **~4,200x** |
+| **MIND (CUDA, cuBLAS active)** | **31.5ms** | **~4,350x** |
+
+Source: [star-ga/fim-onsager-experiment](https://github.com/star-ga/fim-onsager-experiment)
+
 ---
 
 ## Methodology
