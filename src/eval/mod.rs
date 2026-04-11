@@ -896,11 +896,26 @@ pub(crate) fn eval_value_expr_mode(
             Ok(result)
         }
         Node::Print { args, .. } => {
-            let mut parts = Vec::new();
+            let mut values = Vec::new();
             for arg in args {
-                let v = eval_value_expr_mode(arg, env, tensor_env, mode.clone())?;
-                parts.push(format!("{:?}", v));
+                values.push(eval_value_expr_mode(arg, env, tensor_env, mode.clone())?);
             }
+            // Format string mode: first arg is a string containing "{}" placeholders
+            if let Some(Value::Str(fmt)) = values.first() {
+                if fmt.contains("{}") && values.len() > 1 {
+                    let mut result = fmt.clone();
+                    for val in &values[1..] {
+                        if let Some(pos) = result.find("{}") {
+                            let formatted = format_value_human(val);
+                            result.replace_range(pos..pos + 2, &formatted);
+                        }
+                    }
+                    eprintln!("{}", result);
+                    return Ok(Value::Int(0));
+                }
+            }
+            // Plain mode: print all args space-separated using human-readable format
+            let parts: Vec<String> = values.iter().map(format_value_human).collect();
             eprintln!("{}", parts.join(" "));
             Ok(Value::Int(0))
         }
@@ -911,6 +926,84 @@ pub(crate) fn eval_value_expr_mode(
                 other => Err(EvalError::UnsupportedMsg(format!("cannot negate {:?}", other))),
             }
         }
+        Node::MethodCall { receiver, method, args, .. } => {
+            let recv = eval_value_expr_mode(receiver, env, tensor_env, mode.clone())?;
+            let mut eval_args = Vec::with_capacity(args.len());
+            for arg in args {
+                eval_args.push(eval_value_expr_mode(arg, env, tensor_env, mode.clone())?);
+            }
+            eval_method_call(recv, method, &eval_args)
+        }
+        Node::FieldAccess { receiver, field, .. } => {
+            let recv = eval_value_expr_mode(receiver, env, tensor_env, mode)?;
+            eval_field_access(recv, field)
+        }
+    }
+}
+
+fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Value, EvalError> {
+    match method {
+        "len" => match &receiver {
+            Value::Tuple(items) => Ok(Value::Int(items.len() as i64)),
+            Value::Str(s) => Ok(Value::Int(s.len() as i64)),
+            Value::Tensor(t) => {
+                let mut total: i64 = 1;
+                for d in &t.shape {
+                    match d {
+                        ShapeDim::Known(n) => total *= *n as i64,
+                        ShapeDim::Sym(_) => return Err(EvalError::UnsupportedMsg(
+                            "cannot compute .len() on tensor with symbolic dimensions".into())),
+                    }
+                }
+                Ok(Value::Int(total))
+            }
+            other => Err(EvalError::UnsupportedMsg(format!("no method .len() for {:?}", other))),
+        },
+        "last" => match &receiver {
+            Value::Tuple(items) => {
+                if items.is_empty() { Err(EvalError::OutOfBounds) }
+                else { Ok(items.last().unwrap().clone()) }
+            }
+            other => Err(EvalError::UnsupportedMsg(format!("no method .last() for {:?}", other))),
+        },
+        "clone" => Ok(receiver),
+        "item" => match &receiver {
+            Value::Tensor(t) => {
+                let total = t.shape.iter().try_fold(1usize, |acc, d| match d {
+                    ShapeDim::Known(n) => Some(acc * n), ShapeDim::Sym(_) => None,
+                });
+                match total {
+                    Some(1) => {
+                        if let Some(fill) = t.fill { Ok(Value::Float(fill)) }
+                        else {
+                            #[cfg(feature = "cpu-buffers")]
+                            { match &t.buf {
+                                Some(value::Buffer::F32(data)) if data.len() == 1 => Ok(Value::Float(data[0] as f64)),
+                                Some(value::Buffer::I32(data)) if data.len() == 1 => Ok(Value::Int(data[0] as i64)),
+                                _ => Err(EvalError::UnsupportedMsg(".item() requires a materialized single-element tensor".into())),
+                            } }
+                            #[cfg(not(feature = "cpu-buffers"))]
+                            Err(EvalError::UnsupportedMsg(".item() requires a tensor with a known fill value".into()))
+                        }
+                    }
+                    Some(n) => Err(EvalError::UnsupportedMsg(format!(".item() requires a scalar tensor, got {} elements", n))),
+                    None => Err(EvalError::UnsupportedMsg(".item() cannot be called on tensor with symbolic dims".into())),
+                }
+            }
+            other => Err(EvalError::UnsupportedMsg(format!("no method .item() for {:?}", other))),
+        },
+        _ => Err(EvalError::UnsupportedMsg(format!("unknown method .{}()", method))),
+    }
+}
+
+fn eval_field_access(receiver: Value, field: &str) -> Result<Value, EvalError> {
+    match field {
+        "len" => match &receiver {
+            Value::Tuple(items) => Ok(Value::Int(items.len() as i64)),
+            Value::Str(s) => Ok(Value::Int(s.len() as i64)),
+            _ => Err(EvalError::UnsupportedMsg(format!("no field .len for {:?}", receiver))),
+        },
+        _ => Err(EvalError::UnsupportedMsg(format!("unknown field .{}", field))),
     }
 }
 

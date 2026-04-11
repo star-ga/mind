@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 330 | **Est. tokens:** ~427,489
-**Generated:** 2026-04-11 04:12 UTC
+**Files:** 332 | **Est. tokens:** ~430,651
+**Generated:** 2026-04-11 05:08 UTC
 
 ## Token Budget Guide
 
@@ -50,11 +50,11 @@
 | `scripts/` | 2 | ~2,268 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~14,732 |
-| `src/ast/` | 1 | ~1,784 |
+| `src/ast/` | 1 | ~1,871 |
 | `src/autodiff/` | 3 | ~4,159 |
 | `src/bin/` | 2 | ~10,458 |
 | `src/diagnostics/` | 1 | ~2,230 |
-| `src/eval/` | 12 | ~51,907 |
+| `src/eval/` | 12 | ~53,095 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -65,14 +65,14 @@
 | `src/ops/` | 2 | ~2,047 |
 | `src/opt/` | 4 | ~6,469 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~14,135 |
+| `src/parser/` | 1 | ~15,118 |
 | `src/project/` | 1 | ~9,268 |
 | `src/runtime/` | 3 | ~968 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~14,918 |
+| `src/type_checker/` | 1 | ~14,996 |
 | `src/types/` | 4 | ~3,179 |
-| `tests/` | 72 | ~40,092 |
+| `tests/` | 74 | ~40,918 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~123 |
@@ -324,7 +324,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~1784 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1871 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -352,7 +352,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~902 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~13260 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~14448 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -413,7 +413,7 @@
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `mod.rs` (~14135 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~15118 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `pipeline.rs` (~1853 tok, huge) — Copyright 2025 STARGA Inc.
@@ -443,7 +443,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~14918 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~14996 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -509,6 +509,7 @@
 ### `tests/`
 
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
+- `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
@@ -528,6 +529,7 @@
 
 - `linalg_grad.rs` (~315 tok, medium) — Copyright 2025 STARGA Inc.
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
+- `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mindc.rs` (~1949 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1272 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
