@@ -267,6 +267,19 @@ pub enum Node {
         operand: Box<Node>,
         span: Span,
     },
+    /// Method call
+    MethodCall {
+        receiver: Box<Node>,
+        method: String,
+        args: Vec<Node>,
+        span: Span,
+    },
+    /// Field access
+    FieldAccess {
+        receiver: Box<Node>,
+        field: String,
+        span: Span,
+    },
 }
 
 impl Node {
@@ -303,7 +316,9 @@ impl Node {
             | Node::ArrayLit { span, .. }
             | Node::For { span, .. }
             | Node::Print { span, .. }
-            | Node::Neg { span, .. } => *span,
+            | Node::Neg { span, .. }
+            | Node::MethodCall { span, .. }
+            | Node::FieldAccess { span, .. } => *span,
         }
     }
 

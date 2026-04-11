@@ -473,6 +473,9 @@ impl<'a> P<'a> {
         if self.at_keyword(b"let") {
             return self.parse_let();
         }
+        if self.at_keyword(b"if") {
+            return self.parse_if_expr();
+        }
         // Expression or assignment
         let start = self.pos;
         let expr = self.parse_expr()?;
@@ -713,6 +716,41 @@ impl<'a> P<'a> {
         Ok(Node::Print { args, span })
     }
 
+    fn parse_if_expr(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 2; // "if"
+        self.skip_ws_and_newlines();
+        let cond = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let then_branch = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        self.skip_ws_and_newlines();
+        let else_branch = if self.eat_keyword("else") {
+            self.skip_ws_and_newlines();
+            if self.at_keyword(b"if") {
+                let nested = self.parse_if_expr()?;
+                Some(vec![nested])
+            } else {
+                self.expect(b'{')?;
+                let stmts = self.parse_fn_body_stmts()?;
+                self.skip_ws_and_newlines();
+                self.expect(b'}')?;
+                Some(stmts)
+            }
+        } else {
+            None
+        };
+        let span = Span::new(start, self.pos);
+        Ok(Node::If {
+            cond: Box::new(cond),
+            then_branch,
+            else_branch,
+            span,
+        })
+    }
+
     fn parse_expr(&mut self) -> Result<Node, ParseError> {
         self.parse_comparison()
     }
@@ -850,39 +888,78 @@ impl<'a> P<'a> {
     }
 
     fn parse_atom(&mut self) -> Result<Node, ParseError> {
+        let mut node = self.parse_primary()?;
+        loop {
+            self.skip_ws();
+            if self.at(b'.') {
+                let dot_pos = self.pos;
+                if dot_pos + 1 < self.b.len() && Self::is_ident_start(self.b[dot_pos + 1]) {
+                    self.pos = dot_pos + 1;
+                    let method = self.word().unwrap().to_string();
+                    self.skip_ws();
+                    if self.at(b'(') {
+                        self.expect(b'(')?;
+                        let mut args = Vec::new();
+                        self.skip_ws_and_newlines();
+                        if !self.at(b')') {
+                            args.push(self.parse_call_arg()?);
+                            loop {
+                                self.skip_ws_and_newlines();
+                                if !self.eat(b',') { break; }
+                                self.skip_ws_and_newlines();
+                                if self.at(b')') { break; }
+                                args.push(self.parse_call_arg()?);
+                            }
+                        }
+                        self.skip_ws_and_newlines();
+                        self.expect(b')')?;
+                        let span = Span::new(node.span_start(), self.pos);
+                        node = Node::MethodCall {
+                            receiver: Box::new(node),
+                            method,
+                            args,
+                            span,
+                        };
+                        continue;
+                    } else {
+                        let span = Span::new(node.span_start(), self.pos);
+                        node = Node::FieldAccess {
+                            receiver: Box::new(node),
+                            field: method,
+                            span,
+                        };
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+        Ok(node)
+    }
+
+    fn parse_primary(&mut self) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
         if self.at_end() {
             return Err(self.err("unexpected end of input".into()));
         }
-        // Parenthesized expression or tuple
-        if self.at(b'(') {
-            return self.parse_tuple_or_paren();
-        }
-        // Array literal
-        if self.at(b'[') {
-            return self.parse_array_lit();
-        }
-        // String literal
-        if self.at(b'"') {
-            return self.parse_string_lit();
-        }
-        // Unary minus for negative float/int: -1.0, -x
+        if self.at(b'(') { return self.parse_tuple_or_paren(); }
+        if self.at(b'[') { return self.parse_array_lit(); }
+        if self.at(b'"') { return self.parse_string_lit(); }
         if self.at(b'-') {
             let start = self.pos;
             self.advance();
             self.skip_ws();
             let operand = self.parse_atom()?;
             let span = Span::new(start, self.pos);
-            return Ok(Node::Neg {
-                operand: Box::new(operand),
-                span,
-            });
+            return Ok(Node::Neg { operand: Box::new(operand), span });
         }
-        // Number literal (int or float)
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
             return self.parse_number_lit();
         }
-        // Must be identifier-based
+        // If expression in expression position
+        if self.at_keyword(b"if") {
+            return self.parse_if_expr();
+        }
         let start = self.pos;
         let ident = self
             .dotted_ident()
@@ -972,6 +1049,22 @@ impl<'a> P<'a> {
                 }
             }
             _ => {
+                // If the ident contains a dot and the first segment is not a known
+                // namespace like "tensor", backtrack to the first segment so
+                // parse_atom's dot-loop can handle method calls.
+                if let Some(dot_idx) = ident.find('.') {
+                    let first = &ident[..dot_idx];
+                    if first != "tensor" {
+                        self.pos = start + first.len();
+                        self.skip_ws();
+                        if self.at(b'(') {
+                            return self.parse_generic_call(first.to_string(), start);
+                        } else {
+                            let span = Span::new(start, start + first.len());
+                            return Ok(Node::Lit(Literal::Ident(first.to_string()), span));
+                        }
+                    }
+                }
                 if self.at(b'(') {
                     self.parse_generic_call(ident, start)
                 } else {

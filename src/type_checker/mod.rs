@@ -1242,6 +1242,14 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         Node::Print { span, .. } => Ok((ValueType::ScalarI32, *span)),
         Node::Neg { operand, .. } => infer_expr(operand, env),
+        Node::MethodCall { receiver, span, .. } => {
+            let (recv_ty, _) = infer_expr(receiver, env)?;
+            Ok((recv_ty, *span))
+        }
+        Node::FieldAccess { receiver, span, .. } => {
+            let _ = infer_expr(receiver, env)?;
+            Ok((ValueType::ScalarI32, *span))
+        }
     }
 }
 
