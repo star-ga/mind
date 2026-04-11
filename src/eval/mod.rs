@@ -200,6 +200,8 @@ mod stdlib;
 pub enum ExecMode {
     Preview,
     CpuExec,
+    /// GPU execution mode
+    Cuda,
     #[cfg(feature = "mlir-exec")]
     MlirExternal(MlirExecConfig),
     #[cfg(feature = "mlir-jit")]
@@ -427,7 +429,7 @@ pub fn eval_module_value_with_env_mode(
 
     #[allow(unused_variables)]
     match mode {
-        ExecMode::Preview | ExecMode::CpuExec => Ok(last),
+        ExecMode::Preview | ExecMode::CpuExec | ExecMode::Cuda => Ok(last),
         #[cfg(feature = "mlir-exec")]
         ExecMode::MlirExternal(cfg) => {
             let ir = lower_to_ir(m);
@@ -608,7 +610,7 @@ pub(crate) fn eval_value_expr_mode(
             match value {
                 Value::Tensor(t) => {
                     #[cfg(feature = "cpu-exec")]
-                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                    if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) && t.buf.is_some() {
                         let new_shape = stdlib::tensor::dims_from_strings_usize(dims);
                         if let Some(new_shape) = new_shape {
                             if let Ok(result) = exec::cpu::exec_reshape(&t, new_shape) {
@@ -627,7 +629,7 @@ pub(crate) fn eval_value_expr_mode(
             match value {
                 Value::Tensor(t) => {
                     #[cfg(feature = "cpu-exec")]
-                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                    if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) && t.buf.is_some() {
                         let rank = t.shape.len();
                         let a = stdlib::tensor::normalize_expand_axis_usize(*axis, rank);
                         if let Some(a) = a {
@@ -647,7 +649,7 @@ pub(crate) fn eval_value_expr_mode(
             match value {
                 Value::Tensor(t) => {
                     #[cfg(feature = "cpu-exec")]
-                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                    if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) && t.buf.is_some() {
                         let norm = stdlib::tensor::normalize_squeeze_axes_usize(&t.shape, axes);
                         if let Some(norm) = norm {
                             if let Ok(result) = exec::cpu::exec_squeeze(&t, &norm) {
@@ -666,7 +668,7 @@ pub(crate) fn eval_value_expr_mode(
             match value {
                 Value::Tensor(t) => {
                     #[cfg(feature = "cpu-exec")]
-                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                    if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) && t.buf.is_some() {
                         let axes_ref = axes.as_ref().map(|v| v.as_slice());
                         let perm = stdlib::tensor::compute_transpose_perm(&t.shape, axes_ref);
                         if let Some(perm) = perm {
@@ -687,7 +689,7 @@ pub(crate) fn eval_value_expr_mode(
             match value {
                 Value::Tensor(t) => {
                     #[cfg(feature = "cpu-exec")]
-                    if matches!(mode, ExecMode::CpuExec) && t.buf.is_some() {
+                    if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) && t.buf.is_some() {
                         let rank = t.shape.len();
                         let axis_n = stdlib::tensor::normalize_axis_usize(*axis, rank);
                         if let Some(axis_n) = axis_n {
@@ -765,7 +767,7 @@ pub(crate) fn eval_value_expr_mode(
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
                     #[cfg(feature = "cpu-buffers")]
                     {
-                        if matches!(mode, ExecMode::CpuExec) {
+                        if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) {
                             let mut tl_exec = tl.clone();
                             let mut tr_exec = tr.clone();
                             materialize_filled(&mut tl_exec);
@@ -802,7 +804,7 @@ pub(crate) fn eval_value_expr_mode(
                 (Value::Tensor(tl), Value::Tensor(tr)) => {
                     #[cfg(feature = "cpu-buffers")]
                     {
-                        if matches!(mode, ExecMode::CpuExec) {
+                        if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) {
                             let mut tl_exec = tl.clone();
                             let mut tr_exec = tr.clone();
                             materialize_filled(&mut tl_exec);
@@ -1179,7 +1181,7 @@ fn apply_tensor_scalar(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if matches!(mode, ExecMode::CpuExec) {
+        if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) {
             let mut tensor_exec = tensor.clone();
             materialize_filled(&mut tensor_exec);
             #[cfg(feature = "cpu-exec")]
@@ -1358,7 +1360,7 @@ fn apply_tensor_tensor(
 
     #[cfg(feature = "cpu-buffers")]
     {
-        if matches!(mode, ExecMode::CpuExec) {
+        if matches!(mode, ExecMode::CpuExec | ExecMode::Cuda) {
             let mut left_exec = left.clone();
             let mut right_exec = right.clone();
             materialize_filled(&mut left_exec);

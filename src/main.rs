@@ -399,7 +399,7 @@ fn run_eval_once(src: &str, emit_opts: EmitOpts, exec_mode: eval::ExecMode) {
                 Ok(value) => {
                     println!("{}", eval::format_value_human(&value));
                     match &exec_mode {
-                        eval::ExecMode::CpuExec => return,
+                        eval::ExecMode::CpuExec | eval::ExecMode::Cuda => return,
                         #[cfg(feature = "mlir-exec")]
                         eval::ExecMode::MlirExternal(_) => return,
                         #[cfg(feature = "mlir-jit")]
