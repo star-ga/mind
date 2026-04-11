@@ -25,8 +25,6 @@ pub enum BackendTarget {
     Cpu,
     /// GPU target — CUDA, ROCm, Metal, WebGPU backends (CUDA is production-ready).
     Gpu,
-    /// ASIC target for XRM-SSD hardware (direct SSA IR execution).
-    Asic,
     /// TPU target — Google Tensor Processing Units (systolic array, XLA HLO lowering).
     /// Planned: Q3–Q4 2026.
     Tpu,
@@ -49,7 +47,6 @@ impl fmt::Display for BackendTarget {
         match self {
             BackendTarget::Cpu => write!(f, "cpu"),
             BackendTarget::Gpu => write!(f, "gpu"),
-            BackendTarget::Asic => write!(f, "asic"),
             BackendTarget::Tpu => write!(f, "tpu"),
             BackendTarget::Npu => write!(f, "npu"),
             BackendTarget::Lpu => write!(f, "lpu"),
