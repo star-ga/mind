@@ -42,3 +42,9 @@ Cargo.lock
 
 # Examples output
 /examples/output/
+
+# Never commit patent/IP documents to public repos
+*PATENT*
+*patent*
+*.patent.*
+*_PATENT_*
