@@ -45,6 +45,10 @@ pub(super) fn apply_rule(
                 BinOp::Div => {
                     return Err(AutodiffError::UnsupportedOp { op: "div" });
                 }
+                // Comparison ops are non-differentiable (gradient is zero)
+                BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => {
+                    // No gradient contribution from comparison operations
+                }
             }
             Ok(())
         }
