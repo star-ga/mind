@@ -148,6 +148,12 @@ impl LoweringContext {
                             BinOp::Sub => "arith.subi",
                             BinOp::Mul => "arith.muli",
                             BinOp::Div => "arith.divsi",
+                            BinOp::Lt => "arith.cmpi \"slt\",",
+                            BinOp::Le => "arith.cmpi \"sle\",",
+                            BinOp::Gt => "arith.cmpi \"sgt\",",
+                            BinOp::Ge => "arith.cmpi \"sge\",",
+                            BinOp::Eq => "arith.cmpi \"eq\",",
+                            BinOp::Ne => "arith.cmpi \"ne\",",
                         };
                         (ValueKind::ScalarI64, "i64".to_string(), mlir_op)
                     }
@@ -339,12 +345,24 @@ fn select_arith_op(op: BinOp, dtype: &DType) -> &'static str {
             BinOp::Sub => "arith.subf",
             BinOp::Mul => "arith.mulf",
             BinOp::Div => "arith.divf",
+            BinOp::Lt => "arith.cmpf \"olt\",",
+            BinOp::Le => "arith.cmpf \"ole\",",
+            BinOp::Gt => "arith.cmpf \"ogt\",",
+            BinOp::Ge => "arith.cmpf \"oge\",",
+            BinOp::Eq => "arith.cmpf \"oeq\",",
+            BinOp::Ne => "arith.cmpf \"one\",",
         },
         _ => match op {
             BinOp::Add => "arith.addi",
             BinOp::Sub => "arith.subi",
             BinOp::Mul => "arith.muli",
             BinOp::Div => "arith.divsi",
+            BinOp::Lt => "arith.cmpi \"slt\",",
+            BinOp::Le => "arith.cmpi \"sle\",",
+            BinOp::Gt => "arith.cmpi \"sgt\",",
+            BinOp::Ge => "arith.cmpi \"sge\",",
+            BinOp::Eq => "arith.cmpi \"eq\",",
+            BinOp::Ne => "arith.cmpi \"ne\",",
         },
     }
 }

@@ -265,16 +265,36 @@ pub fn eval_module_value_with_env_mode(
         for (name, _value) in env.iter() {
             tenv.insert(name.clone(), ValueType::ScalarI32);
         }
+        // Pre-register for-loop variables in the type environment
+        for item in &m.items {
+            if let Node::For { var, .. } = item {
+                tenv.insert(var.clone(), ValueType::ScalarI32);
+            }
+        }
         let diags = crate::type_checker::check_module_types(m, src, &tenv);
-        if !diags.is_empty() {
-            let msg = diags
+        // Filter out unknown-identifier errors for loop variables
+        let real_diags: Vec<_> = diags.into_iter().filter(|d| {
+            // Keep all non-E2001 errors; for E2001, check if it's about a for-loop var
+            if d.code != "E2001" { return true; }
+            // Check if any for-loop declares this variable
+            !m.items.iter().any(|item| {
+                if let Node::For { var, body, .. } = item {
+                    d.message.contains(var) ||
+                    body.iter().any(|s| {
+                        if let Node::For { var: inner_var, .. } = s { d.message.contains(inner_var) } else { false }
+                    })
+                } else { false }
+            })
+        }).collect();
+        if !real_diags.is_empty() {
+            let msg = real_diags
                 .iter()
                 .map(|diag| format!("[{}] {}", diag.code, diag.message))
                 .collect::<Vec<_>>()
                 .join("; ");
             return Err(EvalError::TypeError {
                 msg,
-                diagnostics: diags,
+                diagnostics: real_diags,
             });
         }
     }
@@ -359,6 +379,43 @@ pub fn eval_module_value_with_env_mode(
                     }
                     _ => {
                         tensor_env.remove(name);
+                    }
+                }
+            }
+            Node::For { var, start, end, body, .. } => {
+                // Module-level for-loop with mutable environment propagation
+                let s = match eval_value_expr_mode(start, &venv, &tensor_env, mode.clone())? {
+                    Value::Int(n) => n,
+                    _ => return Err(EvalError::UnsupportedMsg("for-loop start must be int".into())),
+                };
+                let e = match eval_value_expr_mode(end, &venv, &tensor_env, mode.clone())? {
+                    Value::Int(n) => n,
+                    _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
+                };
+                for i in s..e {
+                    venv.insert(var.clone(), Value::Int(i));
+                    for stmt in body {
+                        match stmt {
+                            Node::Assign { name, value, .. } => {
+                                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
+                                if let Value::Int(n) = &rhs {
+                                    env.insert(name.clone(), *n);
+                                }
+                                venv.insert(name.clone(), rhs.clone());
+                                last = rhs;
+                            }
+                            Node::Let { name, value, .. } => {
+                                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
+                                if let Value::Int(n) = &rhs {
+                                    env.insert(name.clone(), *n);
+                                }
+                                venv.insert(name.clone(), rhs.clone());
+                                last = rhs;
+                            }
+                            _ => {
+                                last = eval_value_expr_mode(stmt, &venv, &tensor_env, mode.clone())?;
+                            }
+                        }
                     }
                 }
             }
@@ -885,12 +942,27 @@ pub(crate) fn eval_value_expr_mode(
                 Value::Int(n) => n,
                 _ => return Err(EvalError::UnsupportedMsg("for-loop end must be int".into())),
             };
-            let mut env = env.clone();
+            let mut loop_env = env.clone();
             let mut result = Value::Int(0);
             for i in s..e {
-                env.insert(var.clone(), Value::Int(i));
+                loop_env.insert(var.clone(), Value::Int(i));
                 for stmt in body {
-                    result = eval_value_expr_mode(stmt, &env, tensor_env, mode.clone())?;
+                    // Handle assignments: propagate back to loop_env
+                    match stmt {
+                        Node::Assign { name, value, .. } => {
+                            let val = eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            loop_env.insert(name.clone(), val.clone());
+                            result = val;
+                        }
+                        Node::Let { name, value, .. } => {
+                            let val = eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            loop_env.insert(name.clone(), val.clone());
+                            result = val;
+                        }
+                        _ => {
+                            result = eval_value_expr_mode(stmt, &loop_env, tensor_env, mode.clone())?;
+                        }
+                    }
                 }
             }
             Ok(result)

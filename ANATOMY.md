@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 332 | **Est. tokens:** ~430,651
-**Generated:** 2026-04-11 05:08 UTC
+**Files:** 332 | **Est. tokens:** ~431,907
+**Generated:** 2026-04-11 05:39 UTC
 
 ## Token Budget Guide
 
@@ -51,17 +51,17 @@
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~14,732 |
 | `src/ast/` | 1 | ~1,871 |
-| `src/autodiff/` | 3 | ~4,159 |
+| `src/autodiff/` | 3 | ~4,224 |
 | `src/bin/` | 2 | ~10,458 |
 | `src/diagnostics/` | 1 | ~2,230 |
-| `src/eval/` | 12 | ~53,095 |
+| `src/eval/` | 12 | ~54,047 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
 | `src/ir/` | 3 | ~5,639 |
 | `src/ir/compact/` | 3 | ~13,890 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 2 | ~4,330 |
+| `src/mlir/` | 2 | ~4,569 |
 | `src/ops/` | 2 | ~2,047 |
 | `src/opt/` | 4 | ~6,469 |
 | `src/package/` | 2 | ~1,668 |
@@ -329,7 +329,7 @@
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~342 tok, medium) — Copyright 2025 STARGA Inc.
-- `rules.rs` (~1133 tok, large) — Copyright 2025 STARGA Inc.
+- `rules.rs` (~1198 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
 
 - `mind-ai.rs` (~6045 tok, huge) — Copyright 2025 STARGA Inc.
@@ -352,7 +352,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~902 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~14448 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~15400 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -395,7 +395,7 @@
 - `main.rs` (~6501 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `lowering.rs` (~4060 tok, huge) — Copyright 2025 STARGA Inc.
+- `lowering.rs` (~4299 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~270 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
