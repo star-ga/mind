@@ -1135,11 +1135,35 @@ pub fn eval_grad_map(
     Ok(Value::GradMap(out))
 }
 
+fn apply_float_op(op: BinOp, l: f64, r: f64) -> Result<f64, EvalError> {
+    Ok(match op {
+        BinOp::Add => l + r,
+        BinOp::Sub => l - r,
+        BinOp::Mul => l * r,
+        BinOp::Div => { if r == 0.0 { return Err(EvalError::DivZero); } l / r }
+        BinOp::Lt => if l < r { 1.0 } else { 0.0 },
+        BinOp::Le => if l <= r { 1.0 } else { 0.0 },
+        BinOp::Gt => if l > r { 1.0 } else { 0.0 },
+        BinOp::Ge => if l >= r { 1.0 } else { 0.0 },
+        BinOp::Eq => if l == r { 1.0 } else { 0.0 },
+        BinOp::Ne => if l != r { 1.0 } else { 0.0 },
+    })
+}
+
 fn apply_binary(op: BinOp, left: Value, right: Value, mode: ExecMode) -> Result<Value, EvalError> {
     match (left, right) {
         (Value::Int(l), Value::Int(r)) => apply_int_op(op, l, r).map(Value::Int),
+        (Value::Float(l), Value::Float(r)) => apply_float_op(op, l, r).map(Value::Float),
+        (Value::Float(l), Value::Int(r)) => apply_float_op(op, l, r as f64).map(Value::Float),
+        (Value::Int(l), Value::Float(r)) => apply_float_op(op, l as f64, r).map(Value::Float),
+        (Value::Str(s), Value::Int(n)) => match op {
+            BinOp::Mul => Ok(Value::Str(s.repeat(n.max(0) as usize))),
+            _ => Err(EvalError::Unsupported),
+        },
         (Value::Tensor(t), Value::Int(s)) => apply_tensor_scalar(op, t, s as f64, true, mode),
         (Value::Int(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s as f64, false, mode),
+        (Value::Tensor(t), Value::Float(s)) => apply_tensor_scalar(op, t, s, true, mode),
+        (Value::Float(s), Value::Tensor(t)) => apply_tensor_scalar(op, t, s, false, mode),
         (Value::Tensor(a), Value::Tensor(b)) => apply_tensor_tensor(op, a, b, mode),
         _ => Err(EvalError::Unsupported),
     }

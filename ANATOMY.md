@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 326 | **Est. tokens:** ~415,321
-**Generated:** 2026-04-11 06:01 UTC
+**Files:** 326 | **Est. tokens:** ~415,870
+**Generated:** 2026-04-11 07:02 UTC
 
 ## Token Budget Guide
 
@@ -54,7 +54,7 @@
 | `src/autodiff/` | 3 | ~4,224 |
 | `src/bin/` | 2 | ~10,458 |
 | `src/diagnostics/` | 1 | ~2,230 |
-| `src/eval/` | 12 | ~54,099 |
+| `src/eval/` | 12 | ~54,405 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -70,7 +70,7 @@
 | `src/runtime/` | 3 | ~968 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~14,996 |
+| `src/type_checker/` | 1 | ~15,239 |
 | `src/types/` | 4 | ~3,179 |
 | `tests/` | 74 | ~40,918 |
 | `tests/autodiff/` | 2 | ~247 |
@@ -344,7 +344,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~902 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~15452 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~15758 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -435,7 +435,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~14996 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~15239 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
