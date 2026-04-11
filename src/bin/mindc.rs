@@ -502,7 +502,6 @@ fn parse_target(raw: &str) -> Result<BackendTarget, String> {
     match raw.to_ascii_lowercase().as_str() {
         "cpu" => Ok(BackendTarget::Cpu),
         "gpu" | "cuda" | "rocm" | "metal" | "webgpu" => Ok(BackendTarget::Gpu),
-        "asic" | "xrm" => Ok(BackendTarget::Asic),
         "tpu" => Ok(BackendTarget::Tpu),
         "npu" | "ane" | "hexagon" => Ok(BackendTarget::Npu),
         "lpu" | "groq" => Ok(BackendTarget::Lpu),

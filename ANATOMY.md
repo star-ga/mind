@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 332 | **Est. tokens:** ~432,162
-**Generated:** 2026-04-02 04:39 UTC
+**Files:** 330 | **Est. tokens:** ~427,489
+**Generated:** 2026-04-11 04:00 UTC
 
 ## Token Budget Guide
 
@@ -39,7 +39,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 4 | ~1,081 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 15 | ~33,738 |
+| `examples/` | 14 | ~31,974 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -52,7 +52,7 @@
 | `src/` | 7 | ~14,732 |
 | `src/ast/` | 1 | ~1,784 |
 | `src/autodiff/` | 3 | ~4,159 |
-| `src/bin/` | 2 | ~10,471 |
+| `src/bin/` | 2 | ~10,458 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/eval/` | 12 | ~51,907 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
@@ -61,13 +61,13 @@
 | `src/ir/` | 3 | ~5,639 |
 | `src/ir/compact/` | 3 | ~13,890 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 3 | ~7,361 |
+| `src/mlir/` | 2 | ~4,330 |
 | `src/ops/` | 2 | ~2,047 |
-| `src/opt/` | 4 | ~6,479 |
+| `src/opt/` | 4 | ~6,469 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~13,957 |
+| `src/parser/` | 1 | ~14,135 |
 | `src/project/` | 1 | ~9,268 |
-| `src/runtime/` | 3 | ~1,001 |
+| `src/runtime/` | 3 | ~968 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/type_checker/` | 1 | ~14,918 |
@@ -282,7 +282,6 @@
 - `remizov_solver.mind` (~3699 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `remizov_verify.mind` (~3618 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `tiny_edge_model.mind` (~1900 tok, huge) — Tiny Edge Model Example
-- `xrm_inference.mind` (~1764 tok, huge) — XRM Inference Test — real-number verification of cognitive kernels
 ### `examples/zoo/`
 
 - `conv_classifier.mind` (~2518 tok, huge) — CNN Classifier — MIND Model Zoo
@@ -334,7 +333,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6045 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~4426 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~4413 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `conformance.rs` (~1871 tok, huge)
@@ -396,9 +395,8 @@
 - `main.rs` (~6501 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `asic_target.rs` (~3010 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `lowering.rs` (~4060 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~270 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
 - `core_v1.rs` (~1823 tok, huge) — Copyright 2025 STARGA Inc.
@@ -407,7 +405,7 @@
 
 - `fold.rs` (~824 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~1415 tok, large) — Copyright 2025 STARGA Inc.
-- `memory_layout.rs` (~4060 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `memory_layout.rs` (~4050 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
@@ -415,7 +413,7 @@
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `mod.rs` (~13957 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~14135 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `pipeline.rs` (~1853 tok, huge) — Copyright 2025 STARGA Inc.
@@ -434,7 +432,7 @@
 ### `src/runtime/`
 
 - `mod.rs` (~92 tok, small) — Runtime abstractions for execution backends.
-- `types.rs` (~621 tok, large) — Shared runtime surface types for execution backends.
+- `types.rs` (~588 tok, large) — Shared runtime surface types for execution backends.
 ### `src/shapes/`
 
 - `engine.rs` (~1882 tok, huge) — A rank-N tensor shape represented as a list of extents.

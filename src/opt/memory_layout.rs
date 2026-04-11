@@ -106,7 +106,6 @@ pub struct MapAnalysis {
     pub patterns: Vec<AccessPattern>,
     /// Layout decisions.
     pub layouts: BTreeMap<ValueId, LayoutDecision>,
-    /// Bank assignments for ASIC SRAM.
     pub bank_assignments: BTreeMap<ValueId, usize>,
     /// Tensor coloring result.
     pub coloring: ColorAssignment,
