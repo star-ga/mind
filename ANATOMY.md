@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 326 | **Est. tokens:** ~416,603
-**Generated:** 2026-04-11 08:14 UTC
+**Files:** 326 | **Est. tokens:** ~416,481
+**Generated:** 2026-04-11 08:58 UTC
 
 ## Token Budget Guide
 
@@ -35,7 +35,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `docs/` | 19 | ~16,294 |
-| `docs/benchmarks/` | 2 | ~7,149 |
+| `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 4 | ~1,081 |
 | `docs/specs/` | 2 | ~976 |
@@ -200,7 +200,7 @@
 - `autodiff.md` (~467 tok, medium) — Static autodiff (public)
 ### `docs/benchmarks/`
 
-- `compiler_performance.md` (~4729 tok, huge) — MIND Compiler Performance Benchmarks
+- `compiler_performance.md` (~4607 tok, huge) — MIND Compiler Performance Benchmarks
 ### `docs/`
 
 - `benchmarks.md` (~807 tok, large) — Benchmarks

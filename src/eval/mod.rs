@@ -811,9 +811,22 @@ pub(crate) fn eval_value_expr_mode(
                             materialize_filled(&mut tr_exec);
                             #[cfg(feature = "cpu-exec")]
                             {
-                                // TODO(runtime): dispatch through `Evaluator::runtime` once the
-                                // runtime plumbing is threaded into evaluation.
                                 if tl_exec.dtype == DType::F32 && tr_exec.dtype == DType::F32 {
+                                    // Try GPU matmul dispatch if available
+                                    if matches!(mode, ExecMode::Cuda) {
+                                        let gpu_result = GPU_MATMUL_FN.with(|f| {
+                                            let func = f.borrow();
+                                            if let Some(ref matmul_fn) = *func {
+                                                Some(matmul_fn(&tl_exec, &tr_exec))
+                                            } else {
+                                                None
+                                            }
+                                        });
+                                        if let Some(Ok(result)) = gpu_result {
+                                            return Ok(Value::Tensor(result));
+                                        }
+                                    }
+                                    // CPU fallback
                                     let exec_res = exec::cpu::exec_matmul(&tl_exec, &tr_exec);
                                     match exec_res {
                                         Ok(t) => return Ok(Value::Tensor(t)),
@@ -845,9 +858,24 @@ pub(crate) fn eval_value_expr_mode(
             }
         }
         Node::CallTensorRand { shape, .. } => {
-            // Random tensor — forces GPU materialization (no constant-fold)
             let dims: Vec<ShapeDim> = shape.iter().map(|&d| ShapeDim::Known(d)).collect();
-            Ok(Value::Tensor(TensorVal::new(DType::F32, dims, None)))
+            let n = shape.iter().product::<usize>();
+            // Actually fill with random data so GPU dispatch gets real values
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            std::time::SystemTime::now().hash(&mut hasher);
+            let mut seed = hasher.finish();
+            let data: Vec<f32> = (0..n).map(|_| {
+                // xorshift64
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed as f32 / u64::MAX as f32) * 2.0 - 1.0
+            }).collect();
+            let mut t = TensorVal::new(DType::F32, dims, None);
+            t.buf = Some(Buffer::F32(data));
+            Ok(Value::Tensor(t))
         }
         Node::CallTensorConv2d {
             x,
@@ -1586,4 +1614,34 @@ mod tests {
             _ => panic!("expected tensor"),
         }
     }
+}
+
+// GPU runtime dispatch — set by the runtime before eval
+use std::cell::RefCell;
+
+thread_local! {
+    static GPU_RUNTIME: RefCell<Option<Box<dyn crate::runtime_interface::MindRuntime>>> = RefCell::new(None);
+}
+
+/// Set the GPU runtime for tensor dispatch during eval.
+/// Called by mind-runtime before eval_module_value_with_env_mode.
+pub fn set_gpu_runtime(rt: Box<dyn crate::runtime_interface::MindRuntime>) {
+    GPU_RUNTIME.with(|r| *r.borrow_mut() = Some(rt));
+}
+
+/// Clear the GPU runtime after eval completes.
+pub fn clear_gpu_runtime() {
+    GPU_RUNTIME.with(|r| *r.borrow_mut() = None);
+}
+
+// GPU matmul dispatch function — set by runtime with CUDA backend
+pub type GpuMatmulFn = Box<dyn Fn(&TensorVal, &TensorVal) -> Result<TensorVal, EvalError> + Send>;
+
+thread_local! {
+    pub static GPU_MATMUL_FN: RefCell<Option<GpuMatmulFn>> = RefCell::new(None);
+}
+
+/// Set the GPU matmul function for CUDA dispatch.
+pub fn set_gpu_matmul(f: GpuMatmulFn) {
+    GPU_MATMUL_FN.with(|r| *r.borrow_mut() = Some(f));
 }
