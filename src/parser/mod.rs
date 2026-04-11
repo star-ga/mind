@@ -516,6 +516,27 @@ impl<'a> P<'a> {
         Ok(Node::Import { path, span })
     }
 
+    fn parse_use(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 3; // "use"
+        self.skip_ws();
+        let mut path = Vec::new();
+        let first = self
+            .word()
+            .ok_or_else(|| self.err("expected module name".into()))?;
+        path.push(first.to_string());
+        while self.eat(b'.') {
+            let part = self
+                .word()
+                .ok_or_else(|| self.err("expected module name after '.'".into()))?;
+            path.push(part.to_string());
+        }
+        self.skip_ws();
+        self.eat(b';'); // optional semicolon
+        let span = Span::new(start, self.pos);
+        Ok(Node::Import { path, span })
+    }
+
     fn parse_fn_def(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 2; // "fn"
