@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 326 | **Est. tokens:** ~415,870
-**Generated:** 2026-04-11 07:02 UTC
+**Files:** 326 | **Est. tokens:** ~416,603
+**Generated:** 2026-04-11 08:14 UTC
 
 ## Token Budget Guide
 
@@ -35,7 +35,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `docs/` | 19 | ~16,294 |
-| `docs/benchmarks/` | 2 | ~7,027 |
+| `docs/benchmarks/` | 2 | ~7,149 |
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 4 | ~1,081 |
 | `docs/specs/` | 2 | ~976 |
@@ -54,7 +54,7 @@
 | `src/autodiff/` | 3 | ~4,224 |
 | `src/bin/` | 2 | ~10,458 |
 | `src/diagnostics/` | 1 | ~2,230 |
-| `src/eval/` | 12 | ~54,405 |
+| `src/eval/` | 12 | ~55,016 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -200,7 +200,7 @@
 - `autodiff.md` (~467 tok, medium) — Static autodiff (public)
 ### `docs/benchmarks/`
 
-- `compiler_performance.md` (~4607 tok, huge) — MIND Compiler Performance Benchmarks
+- `compiler_performance.md` (~4729 tok, huge) — MIND Compiler Performance Benchmarks
 ### `docs/`
 
 - `benchmarks.md` (~807 tok, large) — Benchmarks
@@ -344,7 +344,7 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~902 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~15758 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~16369 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
