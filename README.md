@@ -201,18 +201,18 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 ### Compilation Speed
 
-#### Verified Benchmarks (v0.2.1, February 2026)
+#### Verified Benchmarks (v0.2.3, February 2026)
 
 | vs Framework | Compilation Time | MIND Ratio |
 |--------------|-----------------|------------|
-| **MIND v0.2.1** | **1.8-15.5 µs** | **1× (baseline)** |
+| **MIND v0.2.3** | **1.8-15.5 µs** | **1× (baseline)** |
 | PyTorch 2.10 GPU torch.compile | 99-878 ms | **35,000-176,000× faster** |
 | JAX 0.9 cold-start XLA (jax.jit) | 37.5-360.5 ms | **21,200-95,100× faster** |
 | Mojo 0.26.1 (mojo build) | 810-829 ms | **135,000-458,000× faster** |
 
 **Scope note:** MIND measures **frontend only** (parse + typecheck + IR). Other frameworks measure full compilation pipelines (code generation, optimization, linking). Ratios reflect this scope difference.
 
-| Benchmark | MIND v0.2.1 | Compilations/sec |
+| Benchmark | MIND v0.2.3 | Compilations/sec |
 |-----------|-------------|------------------|
 | scalar_math | **1.77 µs** | 565K cps |
 | small_matmul | **2.95 µs** | 339K cps |
