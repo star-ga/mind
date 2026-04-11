@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 332 | **Est. tokens:** ~431,907
-**Generated:** 2026-04-11 05:39 UTC
+**Files:** 326 | **Est. tokens:** ~415,263
+**Generated:** 2026-04-11 05:55 UTC
 
 ## Token Budget Guide
 
@@ -22,11 +22,11 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 28 | ~27,558 |
+| `./` | 24 | ~15,969 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `benches/` | 5 | ~6,036 |
-| `benchmarks/` | 13 | ~24,973 |
+| `benchmarks/` | 11 | ~19,918 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
@@ -92,7 +92,6 @@
 
 - `ARCHITECTURE.md` (~182 tok, small) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
-- `BENCHMARK_PRS_SUMMARY.md` (~2398 tok, huge) — Benchmark PRs Summary - Addressing All Copilot Issues
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~695 tok, large) — [package]
@@ -104,12 +103,9 @@
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~87 tok, small) — # Rust
+- `.gitignore` (~110 tok, small) — # Rust
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
-- `MIND_PATENT_TECHNICAL_DOCUMENTATION.txt` (~7136 tok, huge) — # MIND PATENT APPLICATION - TECHNICAL BENCHMARKS & PRIOR ART ANALYSIS
-- `MIND_SPEC_PERFORMANCE_DOCUMENTATION.txt` (~775 tok, large) — # MIND PERFORMANCE SPECIFICATION
-- `PATENT_SUMMARY_FOR_OTHER_CHAT.txt` (~1303 tok, large) — # MIND PATENT BENCHMARK RESULTS - VERIFIED FEBRUARY 17, 2026
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
 - `README.md` (~3203 tok, huge) — MIND — Machine Intelligence Native Design
@@ -152,7 +148,6 @@
 - `README.md` (~1311 tok, large) — MIND Determinism Proof Benchmark
 ### `benchmarks/`
 
-- `FINAL_PATENT_RESULTS.md` (~2745 tok, huge) — Final Patent Benchmark Results
 - `format_benchmark.py` (~2617 tok, huge)
 ### `benchmarks/inference/`
 
@@ -180,9 +175,6 @@
 - `run_benchmarks.sh` (~581 tok, large) — Mojo Compilation Benchmark Runner
 - `scalar_math.mojo` (~58 tok, small) — """
 - `small_matmul.mojo` (~207 tok, medium) — """
-### `benchmarks/`
-
-- `PATENT_BENCHMARKS.md` (~2310 tok, huge) — MIND Patent Benchmarks - Quick Start Guide
 ### `benchmarks/pytorch_comparison/`
 
 - `=2.0` (~0 tok, tiny)
