@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 326 | **Est. tokens:** ~416,562
-**Generated:** 2026-04-23 05:51 UTC
+**Files:** 329 | **Est. tokens:** ~420,904
+**Generated:** 2026-04-24 16:20 UTC
 
 ## Token Budget Guide
 
@@ -26,7 +26,7 @@
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `benches/` | 5 | ~6,036 |
-| `benchmarks/` | 11 | ~19,918 |
+| `benchmarks/` | 14 | ~24,260 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
@@ -165,6 +165,9 @@
 ### `benchmarks/`
 
 - `mic_benchmark.py` (~1473 tok, large)
+- `MIC_MAP_BENCHMARK_README.md` (~340 tok, medium) — MIC/MAP Patent Reference Benchmark
+- `mic_map_benchmark_results.json` (~851 tok, large) — Keys: metadata, measurements, paper_figures_verified, claim_checks, all_claims_verified
+- `mic_map_benchmark_v2.py` (~3151 tok, huge)
 ### `benchmarks/mojo/`
 
 - `benchmark_mojo_compilation.py` (~1534 tok, huge)
