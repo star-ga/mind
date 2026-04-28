@@ -1268,6 +1268,17 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let _ = infer_expr(receiver, env)?;
             Ok((ValueType::ScalarI32, *span))
         }
+        // Phase 10.5 declarations are statement-level, not expression-level.
+        // The module walker handles them; infer_expr is unreachable for them
+        // but a clear error here keeps any internal misuse from compiling.
+        Node::Const { span, .. }
+        | Node::TypeAlias { span, .. }
+        | Node::Export { span, .. }
+        | Node::StructDef { span, .. }
+        | Node::EnumDef { span, .. } => Err(TypeErrSpan {
+            msg: "declaration cannot be used as an expression".to_string(),
+            span: *span,
+        }),
     }
 }
 
@@ -1564,6 +1575,13 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
             let shape = shape_from_dims(dims);
             Some(ValueType::Tensor(TensorType::new(dt, shape)))
         }
+        // Phase 10.5 Tier-1: user-defined type names resolve via the env at
+        // typecheck time; structural lookup returns None and lets the caller
+        // perform alias resolution.
+        crate::ast::TypeAnn::Named(_) => None,
+        // Phase 10.5 Tier-2: u32 maps to i32 in v1 (no separate unsigned
+        // ValueType yet); sign correctness is enforced at use sites.
+        crate::ast::TypeAnn::ScalarU32 => Some(ValueType::ScalarI32),
     }
 }
 
@@ -1658,6 +1676,61 @@ pub fn check_module_types_in_file(
             }
             // Import statements are handled at module level; skip type checking
             Node::Import { .. } => {}
+            // Phase 10.5 Tier-1: const introduces a name into the type env.
+            // Phase 10.5 Tier-1: type aliases, exports — recorded but not
+            // type-checked at v1; type-alias resolution is a v1.1 follow-up.
+            // Phase 10.5 Tier-2: struct, enum — recorded; v1 typechecker
+            // does not yet resolve named types in field positions, so we
+            // intentionally skip rather than error.
+            Node::Const { name, ty, value, .. } => {
+                let rhs = infer_expr(value, &tenv);
+                match rhs {
+                    Ok((vt_rhs, _)) => {
+                        if let Some(ann) = ty {
+                            if let Some(vt_ann) = valuetype_from_ann(ann) {
+                                if vt_ann != vt_rhs {
+                                    errs.push(diag_from_span(
+                                        src,
+                                        file,
+                                        format!(
+                                            "const `{}`: expected {} but found {}",
+                                            name,
+                                            describe_value_type(&vt_ann),
+                                            describe_value_type(&vt_rhs)
+                                        ),
+                                        value.span(),
+                                        TYPE_ERR_CODE,
+                                    ));
+                                    continue;
+                                }
+                                tenv.insert(name.clone(), vt_ann);
+                            } else {
+                                // Named/Aliased type: skip ann check, record rhs
+                                tenv.insert(name.clone(), vt_rhs);
+                            }
+                        } else {
+                            tenv.insert(name.clone(), vt_rhs);
+                        }
+                    }
+                    Err(e) => errs.push(diag_from_type_err(src, file, e)),
+                }
+            }
+            Node::TypeAlias { .. }
+            | Node::Export { .. }
+            | Node::StructDef { .. }
+            | Node::EnumDef { .. } => {
+                // Record-only at v1: parser shipped, typechecker hooks deferred.
+            }
+            // A Node::Block at module level is the unwrapped body of a
+            // `module NAME { ... }` declaration (Phase 10.5). Walk its
+            // statements as if they were at top level.
+            Node::Block { stmts, .. } => {
+                for inner in stmts {
+                    let inner_module = Module { items: vec![inner.clone()] };
+                    let inner_errs = check_module_types_in_file(&inner_module, src, file, env);
+                    errs.extend(inner_errs);
+                }
+            }
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
                     errs.push(diag_from_type_err(src, file, e));

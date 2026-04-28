@@ -412,6 +412,24 @@ impl<'a> P<'a> {
             self.pos += 4;
             return Ok(TypeAnn::ScalarBool);
         }
+        if self.at_keyword(b"u32") {
+            self.pos += 3;
+            return Ok(TypeAnn::ScalarU32);
+        }
+        // Phase 10.5 Tier-1: user-defined type names (aliases, structs, enums).
+        // Falls through to here only if no built-in scalar/tensor matched.
+        // Recognized as a bare identifier at type position.
+        let pre_pos = self.pos;
+        if let Some(name) = self.word() {
+            // Reject keywords reused at type position to avoid odd matches.
+            if matches!(name, "fn" | "let" | "if" | "else" | "for" | "in" | "return"
+                | "module" | "const" | "type" | "struct" | "enum" | "use" | "export"
+                | "import" | "print" | "diff") {
+                self.pos = pre_pos;
+                return Err(self.err(format!("expected type annotation, found keyword `{}`", name)));
+            }
+            return Ok(TypeAnn::Named(name.to_string()));
+        }
         Err(self.err("expected type annotation".into()))
     }
 
@@ -455,8 +473,36 @@ impl<'a> P<'a> {
             }
             self.skip_ws_and_newlines();
         }
+        // Phase 10.5 Tier-1: collect [attribute] lines before the dispatched item.
+        // Attributes are parsed and (per architect review) recorded but not
+        // interpreted by public mindc.
+        let attrs = self.parse_attribute_list()?;
+        if !attrs.is_empty() {
+            return self.parse_attributed_item(attrs);
+        }
         if self.at_keyword(b"import") {
             return self.parse_import();
+        }
+        if self.at_keyword(b"use") {
+            return self.parse_use();
+        }
+        if self.at_keyword(b"const") {
+            return self.parse_const(Vec::new());
+        }
+        if self.at_keyword(b"type") {
+            return self.parse_type_alias(Vec::new());
+        }
+        if self.at_keyword(b"module") {
+            return self.parse_module_block(Vec::new());
+        }
+        if self.at_keyword(b"export") {
+            return self.parse_export_block();
+        }
+        if self.at_keyword(b"struct") {
+            return self.parse_struct(Vec::new());
+        }
+        if self.at_keyword(b"enum") {
+            return self.parse_enum(Vec::new());
         }
         if self.at_keyword(b"fn") {
             return self.parse_fn_def();
@@ -538,6 +584,357 @@ impl<'a> P<'a> {
         self.eat(b';'); // optional semicolon
         let span = Span::new(start, self.pos);
         Ok(Node::Import { path, span })
+    }
+
+    // ── Phase 10.5 Tier-1 / Tier-2 declarations ──────────────────────
+
+    /// Collect zero or more `[attribute]` lines preceding an item.
+    /// Each attribute is a single bracketed identifier optionally followed by
+    /// a parenthesized argument list of identifiers/strings.
+    fn parse_attribute_list(&mut self) -> Result<Vec<crate::ast::Attribute>, ParseError> {
+        let mut attrs = Vec::new();
+        loop {
+            self.skip_ws_and_newlines();
+            if !self.at(b'[') {
+                break;
+            }
+            // Lookahead: the bracketed content must be a single ident
+            // optionally followed by `(...)` and a closing `]`. If the
+            // bracketed expression looks like an array literal (numbers,
+            // commas, etc.), back out and let the expression path consume.
+            let save = self.pos;
+            self.pos += 1; // consume '['
+            self.skip_ws();
+            let name_pos = self.pos;
+            let name = match self.word() {
+                Some(n) => n.to_string(),
+                None => {
+                    self.pos = save;
+                    break;
+                }
+            };
+            // Reject if the next non-ident char isn't ']' or '(' — that
+            // indicates an array literal like [1, 2, 3] or [foo, bar].
+            self.skip_ws();
+            let mut args = Vec::new();
+            if self.at(b'(') {
+                self.pos += 1;
+                self.skip_ws();
+                while !self.at(b')') && !self.at_end() {
+                    if let Some(w) = self.word() {
+                        args.push(w.to_string());
+                    } else {
+                        // Not an attribute — back out
+                        self.pos = save;
+                        return Ok(attrs);
+                    }
+                    self.skip_ws();
+                    if self.at(b',') {
+                        self.pos += 1;
+                        self.skip_ws();
+                    } else {
+                        break;
+                    }
+                }
+                if !self.eat(b')') {
+                    self.pos = save;
+                    return Ok(attrs);
+                }
+                self.skip_ws();
+            }
+            if !self.eat(b']') {
+                self.pos = save;
+                return Ok(attrs);
+            }
+            // Successful attribute parse
+            let span = Span::new(name_pos, self.pos);
+            attrs.push(crate::ast::Attribute { name, args, span });
+        }
+        Ok(attrs)
+    }
+
+    /// Dispatch on the attributed item that follows a `[...]` attribute list.
+    fn parse_attributed_item(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+        self.skip_ws_and_newlines();
+        if self.at_keyword(b"module") {
+            return self.parse_module_block(attrs);
+        }
+        if self.at_keyword(b"const") {
+            return self.parse_const(attrs);
+        }
+        if self.at_keyword(b"type") {
+            return self.parse_type_alias(attrs);
+        }
+        if self.at_keyword(b"struct") {
+            return self.parse_struct(attrs);
+        }
+        if self.at_keyword(b"enum") {
+            return self.parse_enum(attrs);
+        }
+        if self.at_keyword(b"fn") {
+            // Attributes on `fn` are recorded but not yet stored in FnDef
+            // node (FnDef has no attrs field today). Drop silently — public
+            // mindc semantics ignore attributes anyway.
+            let _ = attrs;
+            return self.parse_fn_def();
+        }
+        Err(self.err("expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into()))
+    }
+
+    /// Parse `const NAME[: type] = expr[;]`.
+    fn parse_const(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 5; // "const"
+        self.skip_ws();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected const name".into()))?
+            .to_string();
+        self.skip_ws();
+        let ty = if self.eat(b':') {
+            self.skip_ws();
+            Some(self.type_ann()?)
+        } else {
+            None
+        };
+        self.skip_ws();
+        if !self.eat(b'=') {
+            return Err(self.err("expected `=` in const declaration".into()));
+        }
+        self.skip_ws_and_newlines();
+        let value = self.parse_expr()?;
+        self.skip_ws();
+        self.eat(b';'); // optional trailing semicolon
+        let span = Span::new(start, self.pos);
+        Ok(Node::Const {
+            name,
+            ty,
+            value: Box::new(value),
+            attrs,
+            span,
+        })
+    }
+
+    /// Parse `type X = Y[;]`.
+    fn parse_type_alias(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 4; // "type"
+        self.skip_ws();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected type alias name".into()))?
+            .to_string();
+        self.skip_ws();
+        if !self.eat(b'=') {
+            return Err(self.err("expected `=` in type alias".into()));
+        }
+        self.skip_ws();
+        let target = self.type_ann()?;
+        self.skip_ws();
+        self.eat(b';');
+        let span = Span::new(start, self.pos);
+        Ok(Node::TypeAlias {
+            name,
+            target,
+            attrs,
+            span,
+        })
+    }
+
+    /// Parse `module NAME { items }` and unwrap the inner items into a
+    /// surrounding `Block` so the module walker sees them at flat depth.
+    /// Per architect review: no AST module-decl node; pure unwrap.
+    fn parse_module_block(&mut self, _attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "module"
+        self.skip_ws();
+        let _name = self
+            .word()
+            .ok_or_else(|| self.err("expected module name".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        if !self.eat(b'{') {
+            return Err(self.err("expected `{` after module name".into()));
+        }
+        let mut stmts = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at_end() && !self.at(b'}') {
+            stmts.push(self.parse_stmt()?);
+            self.skip_ws();
+            while self.pos < self.b.len()
+                && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n')
+            {
+                self.pos += 1;
+                self.skip_ws();
+            }
+        }
+        if !self.eat(b'}') {
+            return Err(self.err("expected `}` to close module".into()));
+        }
+        let span = Span::new(start, self.pos);
+        // Wrap the items in a Block node; downstream module walker treats
+        // a top-level Block as transparent (a do-nothing item list).
+        Ok(Node::Block { stmts, span })
+    }
+
+    /// Parse `export { name1, name2 }` — a simple export list.
+    fn parse_export_block(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "export"
+        self.skip_ws();
+        let mut names = Vec::new();
+        if self.eat(b'{') {
+            self.skip_ws_and_newlines();
+            while !self.at(b'}') && !self.at_end() {
+                if let Some(n) = self.word() {
+                    names.push(n.to_string());
+                } else {
+                    return Err(self.err("expected export name".into()));
+                }
+                self.skip_ws();
+                if self.eat(b',') {
+                    self.skip_ws_and_newlines();
+                } else {
+                    break;
+                }
+            }
+            self.skip_ws_and_newlines();
+            if !self.eat(b'}') {
+                return Err(self.err("expected `}` to close export list".into()));
+            }
+        } else {
+            // Bare: `export name;`
+            if let Some(n) = self.word() {
+                names.push(n.to_string());
+            }
+        }
+        self.skip_ws();
+        self.eat(b';');
+        let span = Span::new(start, self.pos);
+        Ok(Node::Export { names, span })
+    }
+
+    /// Parse `struct NAME { field: T, field: T }`.
+    fn parse_struct(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "struct"
+        self.skip_ws();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected struct name".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        if !self.eat(b'{') {
+            return Err(self.err("expected `{` after struct name".into()));
+        }
+        let mut fields = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at(b'}') && !self.at_end() {
+            let f_start = self.pos;
+            let f_name = self
+                .word()
+                .ok_or_else(|| self.err("expected field name".into()))?
+                .to_string();
+            self.skip_ws();
+            if !self.eat(b':') {
+                return Err(self.err("expected `:` after field name".into()));
+            }
+            self.skip_ws();
+            let ty = self.type_ann()?;
+            let f_span = Span::new(f_start, self.pos);
+            fields.push(crate::ast::Field {
+                name: f_name,
+                ty,
+                span: f_span,
+            });
+            self.skip_ws();
+            if self.eat(b',') {
+                self.skip_ws_and_newlines();
+            } else {
+                break;
+            }
+        }
+        self.skip_ws_and_newlines();
+        if !self.eat(b'}') {
+            return Err(self.err("expected `}` to close struct".into()));
+        }
+        let span = Span::new(start, self.pos);
+        Ok(Node::StructDef {
+            name,
+            fields,
+            attrs,
+            span,
+        })
+    }
+
+    /// Parse `enum NAME { Variant, Variant(T), ... }`.
+    fn parse_enum(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 4; // "enum"
+        self.skip_ws();
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected enum name".into()))?
+            .to_string();
+        self.skip_ws_and_newlines();
+        if !self.eat(b'{') {
+            return Err(self.err("expected `{` after enum name".into()));
+        }
+        let mut variants = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at(b'}') && !self.at_end() {
+            let v_start = self.pos;
+            let v_name = self
+                .word()
+                .ok_or_else(|| self.err("expected variant name".into()))?
+                .to_string();
+            self.skip_ws();
+            let mut payload = Vec::new();
+            if self.eat(b'(') {
+                self.skip_ws();
+                while !self.at(b')') && !self.at_end() {
+                    payload.push(self.type_ann()?);
+                    self.skip_ws();
+                    if self.eat(b',') {
+                        self.skip_ws();
+                    } else {
+                        break;
+                    }
+                }
+                if !self.eat(b')') {
+                    return Err(self.err("expected `)` to close variant payload".into()));
+                }
+                self.skip_ws();
+            }
+            // Optional `= discriminant` — ignore the value but consume it
+            if self.eat(b'=') {
+                self.skip_ws();
+                let _ = self.parse_expr();
+                self.skip_ws();
+            }
+            let v_span = Span::new(v_start, self.pos);
+            variants.push(crate::ast::EnumVariant {
+                name: v_name,
+                payload,
+                span: v_span,
+            });
+            if self.eat(b',') {
+                self.skip_ws_and_newlines();
+            } else {
+                break;
+            }
+        }
+        self.skip_ws_and_newlines();
+        if !self.eat(b'}') {
+            return Err(self.err("expected `}` to close enum".into()));
+        }
+        let span = Span::new(start, self.pos);
+        Ok(Node::EnumDef {
+            name,
+            variants,
+            attrs,
+            span,
+        })
     }
 
     fn parse_fn_def(&mut self) -> Result<Node, ParseError> {
