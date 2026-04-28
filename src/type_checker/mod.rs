@@ -1279,6 +1279,36 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             msg: "declaration cannot be used as an expression".to_string(),
             span: *span,
         }),
+        // Phase 10.5 stretch: `assert cond[, "msg"]` — statement-level only.
+        Node::Assert { span, .. } => Err(TypeErrSpan {
+            msg: "`assert` is a statement, not an expression".to_string(),
+            span: *span,
+        }),
+        // `expr as type` — the cast carries the annotation forward.
+        Node::As { expr, ty, span } => {
+            let _ = infer_expr(expr, env)?;
+            // Use the annotated type as the cast result; if it's a Named
+            // alias we don't yet have it resolved (v1 limitation), fall
+            // back to the source expression's type.
+            if let Some(vt) = valuetype_from_ann(ty) {
+                Ok((vt, *span))
+            } else {
+                let (vt, _) = infer_expr(expr, env)?;
+                Ok((vt, *span))
+            }
+        }
+        // `a && b`, `a || b` — boolean. Both sides must be inferable.
+        Node::Logical { left, right, span, .. } => {
+            let _ = infer_expr(left, env)?;
+            let _ = infer_expr(right, env)?;
+            Ok((ValueType::ScalarBool, *span))
+        }
+        // Bitwise: integer-typed; result type matches the left operand's type.
+        Node::Bitwise { left, right, span, .. } => {
+            let (lt, _) = infer_expr(left, env)?;
+            let _ = infer_expr(right, env)?;
+            Ok((lt, *span))
+        }
     }
 }
 
@@ -1720,6 +1750,12 @@ pub fn check_module_types_in_file(
             | Node::StructDef { .. }
             | Node::EnumDef { .. } => {
                 // Record-only at v1: parser shipped, typechecker hooks deferred.
+            }
+            // `assert <cond>` at module-level: typecheck the condition.
+            Node::Assert { cond, .. } => {
+                if let Err(e) = infer_expr(cond, &tenv) {
+                    errs.push(diag_from_type_err(src, file, e));
+                }
             }
             // A Node::Block at module level is the unwrapped body of a
             // `module NAME { ... }` declaration (Phase 10.5). Walk its
