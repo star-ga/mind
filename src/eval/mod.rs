@@ -1059,6 +1059,49 @@ pub(crate) fn eval_value_expr_mode(
         | Node::Export { .. }
         | Node::StructDef { .. }
         | Node::EnumDef { .. } => Ok(Value::Int(0)),
+        // Phase 10.5 stretch: assert is a no-op at eval-time in the
+        // preview path; runtime checking is a future-extension item.
+        Node::Assert { .. } => Ok(Value::Int(0)),
+        // `expr as type` — evaluate the expression, ignore the cast at
+        // preview level (the type checker performs the cast checks).
+        Node::As { expr, .. } => eval_value_expr_mode(expr, env, tensor_env, mode),
+        // `a && b`, `a || b` — short-circuit boolean evaluation in i32.
+        Node::Logical { op, left, right, .. } => {
+            let l = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
+            let l_truthy = matches!(l, Value::Int(n) if n != 0);
+            match op {
+                crate::ast::LogicalOp::And => {
+                    if !l_truthy {
+                        return Ok(Value::Int(0));
+                    }
+                }
+                crate::ast::LogicalOp::Or => {
+                    if l_truthy {
+                        return Ok(Value::Int(1));
+                    }
+                }
+            }
+            let r = eval_value_expr_mode(right, env, tensor_env, mode)?;
+            Ok(Value::Int(matches!(r, Value::Int(n) if n != 0) as i64))
+        }
+        // Bitwise: integer-only at preview level.
+        Node::Bitwise { op, left, right, .. } => {
+            let l = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
+            let r = eval_value_expr_mode(right, env, tensor_env, mode)?;
+            match (l, r) {
+                (Value::Int(a), Value::Int(b)) => {
+                    let result = match op {
+                        crate::ast::BitOp::Or => a | b,
+                        crate::ast::BitOp::And => a & b,
+                        crate::ast::BitOp::Xor => a ^ b,
+                        crate::ast::BitOp::Shl => a.wrapping_shl(b as u32),
+                        crate::ast::BitOp::Shr => a.wrapping_shr(b as u32),
+                    };
+                    Ok(Value::Int(result))
+                }
+                _ => Ok(Value::Int(0)),
+            }
+        }
     }
 }
 

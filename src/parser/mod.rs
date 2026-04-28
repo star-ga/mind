@@ -77,6 +77,22 @@ impl<'a> P<'a> {
         }
     }
 
+    /// Phase 10.5 fast-path: peek the next non-whitespace byte without
+    /// mutating `self.pos`. Returns 0 at end-of-input.
+    /// Skips spaces / tabs / carriage returns only (no newlines, no comments)
+    /// to match `skip_ws`'s scope.
+    #[inline(always)]
+    fn peek_skip_ws(&self) -> u8 {
+        let mut i = self.pos;
+        while i < self.b.len() {
+            match self.b[i] {
+                b' ' | b'\t' | b'\r' => i += 1,
+                c => return c,
+            }
+        }
+        0
+    }
+
     fn skip_ws_and_newlines(&mut self) {
         loop {
             while self.pos < self.b.len() {
@@ -507,6 +523,9 @@ impl<'a> P<'a> {
         if self.at_keyword(b"fn") {
             return self.parse_fn_def();
         }
+        if self.at_keyword(b"assert") {
+            return self.parse_assert();
+        }
         if self.at_keyword(b"return") {
             return self.parse_return();
         }
@@ -777,7 +796,12 @@ impl<'a> P<'a> {
         Ok(Node::Block { stmts, span })
     }
 
-    /// Parse `export { name1, name2 }` — a simple export list.
+    /// Parse export forms:
+    ///   - `export { name1, name2 }` (block list)
+    ///   - `export name1, name2` (bare list)
+    ///   - `export const NAME1, NAME2, ...` (category + names)
+    ///   - `export fn f1, f2`, `export type T1`, `export struct S`,
+    ///     `export enum E` (category + names)
     fn parse_export_block(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "export"
@@ -803,9 +827,28 @@ impl<'a> P<'a> {
                 return Err(self.err("expected `}` to close export list".into()));
             }
         } else {
-            // Bare: `export name;`
-            if let Some(n) = self.word() {
-                names.push(n.to_string());
+            // Optional category keyword: const | type | fn | struct | enum
+            // The category is recorded as a synthetic prefix (currently dropped).
+            for kw in ["const", "type", "fn", "struct", "enum"] {
+                if self.at_keyword(kw.as_bytes()) {
+                    self.pos += kw.len();
+                    self.skip_ws();
+                    break;
+                }
+            }
+            // Comma-separated bare list
+            loop {
+                if let Some(n) = self.word() {
+                    names.push(n.to_string());
+                } else {
+                    break;
+                }
+                self.skip_ws();
+                if self.eat(b',') {
+                    self.skip_ws_and_newlines();
+                } else {
+                    break;
+                }
             }
         }
         self.skip_ws();
@@ -1020,6 +1063,50 @@ impl<'a> P<'a> {
         Ok(Node::Return { value, span })
     }
 
+    /// Parse `assert <expr>[, "message"]`.
+    /// Phase 10.5 stretch.
+    fn parse_assert(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // "assert"
+        self.skip_ws();
+        let cond = self.parse_expr()?;
+        self.skip_ws();
+        let msg = if self.eat(b',') {
+            self.skip_ws_and_newlines();
+            // Expect a string literal
+            if self.at(b'"') {
+                self.pos += 1;
+                let m_start = self.pos;
+                while self.pos < self.b.len() && self.b[self.pos] != b'"' {
+                    if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                        self.pos += 2;
+                    } else {
+                        self.pos += 1;
+                    }
+                }
+                let s = std::str::from_utf8(&self.b[m_start..self.pos])
+                    .unwrap_or("")
+                    .to_string();
+                if !self.eat(b'"') {
+                    return Err(self.err("unterminated assert message string".into()));
+                }
+                Some(s)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        self.skip_ws();
+        self.eat(b';');
+        let span = Span::new(start, self.pos);
+        Ok(Node::Assert {
+            cond: Box::new(cond),
+            msg,
+            span,
+        })
+    }
+
     fn parse_let(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 3; // "let"
@@ -1148,12 +1235,99 @@ impl<'a> P<'a> {
         })
     }
 
+    /// Top-level expression entry. Combines the logical-OR/AND fast-paths
+    /// into one peek so programs without boolean operators (the common
+    /// case in tensor code) bypass both new layers in one byte test.
+    #[inline]
     fn parse_expr(&mut self) -> Result<Node, ParseError> {
-        self.parse_comparison()
+        let left = self.parse_comparison()?;
+        match self.peek_skip_ws() {
+            b'&' => self.parse_logical_and_tail(left).and_then(|l| {
+                if self.peek_skip_ws() == b'|' {
+                    self.parse_logical_or_tail(l)
+                } else {
+                    Ok(l)
+                }
+            }),
+            b'|' => self.parse_logical_or_tail(left),
+            _ => Ok(left),
+        }
+    }
+
+    /// Kept for callers that explicitly want the logical-or layer.
+    #[inline]
+    fn parse_logical_or(&mut self) -> Result<Node, ParseError> {
+        self.parse_expr()
+    }
+
+    fn parse_logical_or_tail(&mut self, mut left: Node) -> Result<Node, ParseError> {
+        loop {
+            self.skip_ws();
+            if !self.starts_with(b"||") {
+                break;
+            }
+            self.pos += 2;
+            self.skip_ws_and_newlines();
+            let right = self.parse_logical_and()?;
+            let span = Span::new(left.span_start(), right.span_end());
+            left = Node::Logical {
+                op: crate::ast::LogicalOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    /// Phase 10.5 Tier-1: logical AND (`&&`) — tighter than `||`, looser than comparison.
+    #[inline]
+    fn parse_logical_and(&mut self) -> Result<Node, ParseError> {
+        let left = self.parse_comparison()?;
+        if self.peek_skip_ws() != b'&' {
+            return Ok(left);
+        }
+        self.parse_logical_and_tail(left)
+    }
+
+    fn parse_logical_and_tail(&mut self, mut left: Node) -> Result<Node, ParseError> {
+        loop {
+            self.skip_ws();
+            if !self.starts_with(b"&&") {
+                break;
+            }
+            self.pos += 2;
+            self.skip_ws_and_newlines();
+            let right = self.parse_comparison()?;
+            let span = Span::new(left.span_start(), right.span_end());
+            left = Node::Logical {
+                op: crate::ast::LogicalOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
     }
 
     fn parse_comparison(&mut self) -> Result<Node, ParseError> {
         let mut left = self.parse_additive()?;
+        // Phase 10.5 stretch: `expr as type` cast — fast-path on `a` peek.
+        while self.peek_skip_ws() == b'a' {
+            self.skip_ws();
+            if !self.at_keyword(b"as") {
+                break;
+            }
+            self.pos += 2; // "as"
+            self.skip_ws();
+            let ty = self.type_ann()?;
+            let span = Span::new(left.span_start(), self.pos);
+            left = Node::As {
+                expr: Box::new(left),
+                ty,
+                span,
+            };
+        }
         loop {
             self.skip_ws();
             let op = if self.starts_with(b"<=") {
@@ -1191,7 +1365,7 @@ impl<'a> P<'a> {
     }
 
     fn parse_additive(&mut self) -> Result<Node, ParseError> {
-        let mut left = self.parse_multiplicative()?;
+        let mut left = self.parse_bitwise()?;
         loop {
             self.skip_ws();
             let op = if self.at(b'+') {
@@ -1206,9 +1380,56 @@ impl<'a> P<'a> {
                 break;
             };
             self.skip_ws_and_newlines();
-            let right = self.parse_multiplicative()?;
+            let right = self.parse_bitwise()?;
             let span = Span::new(left.span_start(), right.span_end());
             left = Node::Binary {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+                span,
+            };
+        }
+        Ok(left)
+    }
+
+    /// Phase 10.5 Tier-1: bitwise ops `|`, `&`, `^`, `<<`, `>>`.
+    /// Tighter than additive, looser than multiplicative. Fast-path peeks
+    /// the next non-ws byte and skips the whole layer when no plausible
+    /// bitwise operator is present (the common case in tensor programs).
+    #[inline]
+    fn parse_bitwise(&mut self) -> Result<Node, ParseError> {
+        let left = self.parse_multiplicative()?;
+        if !matches!(self.peek_skip_ws(), b'|' | b'&' | b'^' | b'<' | b'>') {
+            return Ok(left);
+        }
+        self.parse_bitwise_tail(left)
+    }
+
+    fn parse_bitwise_tail(&mut self, mut left: Node) -> Result<Node, ParseError> {
+        loop {
+            self.skip_ws();
+            let op = if self.starts_with(b"<<") {
+                self.pos += 2;
+                crate::ast::BitOp::Shl
+            } else if self.starts_with(b">>") {
+                self.pos += 2;
+                crate::ast::BitOp::Shr
+            } else if self.at(b'|') && !self.starts_with(b"||") {
+                self.advance();
+                crate::ast::BitOp::Or
+            } else if self.at(b'&') && !self.starts_with(b"&&") {
+                self.advance();
+                crate::ast::BitOp::And
+            } else if self.at(b'^') {
+                self.advance();
+                crate::ast::BitOp::Xor
+            } else {
+                break;
+            };
+            self.skip_ws_and_newlines();
+            let right = self.parse_multiplicative()?;
+            let span = Span::new(left.span_start(), right.span_end());
+            left = Node::Bitwise {
                 op,
                 left: Box::new(left),
                 right: Box::new(right),
