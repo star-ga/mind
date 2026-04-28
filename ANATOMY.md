@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 341 | **Est. tokens:** ~435,975
-**Generated:** 2026-04-28 08:23 UTC
+**Files:** 342 | **Est. tokens:** ~439,166
+**Generated:** 2026-04-28 11:03 UTC
 
 ## Token Budget Guide
 
@@ -37,7 +37,7 @@
 | `docs/` | 20 | ~17,253 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 4 | ~1,081 |
+| `docs/rfcs/` | 5 | ~4,272 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 14 | ~31,974 |
 | `examples/c/` | 2 | ~400 |
@@ -235,6 +235,7 @@
 ### `docs/rfcs/`
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
+- `0001-bitnet-native-support.md` (~3191 tok, huge) — RFC 0001: Native BitNet Support — `tri` and `q16_16` Types
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
