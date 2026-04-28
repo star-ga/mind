@@ -1,0 +1,7 @@
+fn main() {
+    let a = 3
+    let b = 5
+    let r = (a > 0) && (b > 0) || (a == b)
+    assert r, "logical chain"
+    return 0
+}

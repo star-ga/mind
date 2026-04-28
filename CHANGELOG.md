@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-04-28
+
+### Added
+- **Pratt operator-precedence parser** for the expression layer. Replaces
+  the recursive-descent chain `parse_logical_or → parse_logical_and →
+  parse_comparison → parse_additive → parse_bitwise → parse_multiplicative`
+  with a single dispatch function driven by a binding-power table. Phase 10.5
+  operators (`||`, `&&`, `|`, `&`, `^`, `<<`, `>>`, `as`) become table
+  entries, and future operators (Phase 11/12) become O(1) inserts.
+- **Stable IR public API**: `libmind::ir::load(bytes) -> IRModule` and
+  `libmind::ir::save(module) -> String` for the `mic@1` textual format.
+  Plus `libmind::compile_to_mic_text(src, opts)` as the AOT pipeline.
+- `docs/ir-stability.md` — formalises the IR contract used by
+  `mind-runtime` and other downstream backends to consume pre-compiled IR
+  instead of re-running the surface parser per inference.
+- `.github/workflows/bench-gate.yml` + `tools/bench_gate.py` — CI gate that
+  fails on >2% mean regression on `small_matmul`, `medium_mlp`, or
+  `large_network` vs the frozen baseline at
+  `.bench-baseline-2026-04-28-pratt.txt`.
+- Phase 10.5 conformance programs in `tests/conformance/cpu_baseline/`
+  (`phase_10_5_const.mind`, `..._logical.mind`, `..._struct.mind`,
+  `..._module.mind`).
+- `tests/ir_load_save.rs` — pins the round-trip and determinism contract
+  for the new IR API.
+
+### Changed
+- **Parser is faster than the pre-Phase-10.5 baseline** on `medium_mlp`
+  (-9.0%) and `large_network` (-4.6%); within +3.9% on `small_matmul`.
+  The Pratt rewrite recovered the +9% regression introduced when Phase 10.5
+  dispatch arms were added in 0.2.4.
+- Removed the `peek_skip_ws` helper (only used by the recursive-descent
+  fast-paths it was added to support; Pratt makes it unnecessary).
+- Removed dead `parse_logical_or` forwarder (deprecated since Phase 10.5
+  inlined logical-or into `parse_expr`).
+
+### Architecture
+- mindc's parser is no longer a runtime dependency for `mind-runtime`
+  consumers. The supported pattern is to AOT-compile to `mic@1` once at
+  build time and call `ir::load` at runtime. This decouples parser
+  performance from per-inference latency across all 12+ planned backends
+  (CPU, CUDA, Metal, ROCm, WebGPU, WebNN, ARM, TPU, NPU, LPU, DPU, FPGA,
+  Quantum).
+
 ## [0.2.1] - 2026-02-17
 
 ### Added

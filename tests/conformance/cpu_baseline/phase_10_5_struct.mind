@@ -1,0 +1,13 @@
+struct Effect {
+    tag: i32,
+    code: i32,
+}
+
+enum Decision {
+    Allow,
+    Deny,
+}
+
+fn main() {
+    return 0
+}

@@ -1,0 +1,4 @@
+=== captured pre-Pratt baseline (Phase 10.5 in main) ===
+small_matmul: 3.04 µs
+medium_mlp:   6.74 µs
+large_network: 18.29 µs

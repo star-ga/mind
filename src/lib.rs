@@ -72,7 +72,8 @@ pub use conformance::{
     run_conformance, ConformanceFailure, ConformanceOptions, ConformanceProfile,
 };
 pub use pipeline::{
-    compile_source, compile_source_with_name, CompileError, CompileOptions, CompileProducts,
+    compile_source, compile_source_with_name, compile_to_mic_text, CompileError, CompileOptions,
+    CompileProducts,
 };
 #[cfg(feature = "mlir-lowering")]
 pub use pipeline::{lower_to_mlir, MlirProducts};

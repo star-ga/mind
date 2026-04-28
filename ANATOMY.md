@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 331 | **Est. tokens:** ~431,211
-**Generated:** 2026-04-28 07:18 UTC
+**Files:** 341 | **Est. tokens:** ~435,975
+**Generated:** 2026-04-28 08:23 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 25 | ~16,584 |
+| `./` | 27 | ~17,372 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `benches/` | 5 | ~6,036 |
@@ -34,7 +34,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 19 | ~16,294 |
+| `docs/` | 20 | ~17,253 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 4 | ~1,081 |
@@ -45,11 +45,11 @@
 | `examples/zoo/` | 6 | ~12,885 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 5 | ~3,471 |
+| `.github/workflows/` | 6 | ~3,978 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `scripts/` | 2 | ~2,268 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~14,738 |
+| `src/` | 7 | ~14,922 |
 | `src/ast/` | 1 | ~2,780 |
 | `src/autodiff/` | 3 | ~4,224 |
 | `src/bin/` | 2 | ~10,458 |
@@ -58,24 +58,24 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/ir/` | 3 | ~5,639 |
+| `src/ir/` | 3 | ~6,322 |
 | `src/ir/compact/` | 3 | ~13,890 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
 | `src/mlir/` | 2 | ~4,569 |
 | `src/ops/` | 2 | ~2,047 |
 | `src/opt/` | 4 | ~6,469 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~20,625 |
+| `src/parser/` | 1 | ~20,169 |
 | `src/project/` | 1 | ~9,268 |
 | `src/runtime/` | 3 | ~968 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/type_checker/` | 1 | ~16,610 |
 | `src/types/` | 4 | ~3,179 |
-| `tests/` | 75 | ~42,167 |
+| `tests/` | 76 | ~42,877 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/conformance/cpu_baseline/` | 9 | ~123 |
+| `tests/conformance/cpu_baseline/` | 13 | ~248 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/fixtures/` | 4 | ~44 |
 | `tests/ir_verification/` | 2 | ~108 |
@@ -83,7 +83,7 @@
 | `tests/runtime/` | 2 | ~135 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tools/` | 2 | ~1,704 |
+| `tools/` | 3 | ~2,968 |
 | `.wrangler/cache/` | 1 | ~21 |
 
 ## Files
@@ -93,10 +93,12 @@
 - `ARCHITECTURE.md` (~182 tok, small) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~534 tok, large) —    Compiling mind v0.2.3 (/home/n/mind)
+- `.bench-baseline-2026-04-28-pratt.txt` (~185 tok, small) — === Pratt parser baseline (mindc 0.2.5, 2026-04-28) ===
+- `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~695 tok, large) — [package]
-- `CHANGELOG.md` (~1485 tok, large) — Changelog
+- `CHANGELOG.md` (~2056 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -225,6 +227,7 @@
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
+- `ir-stability.md` (~959 tok, large) — IR stability contract
 - `mlir-lowering.md` (~210 tok, medium) — MLIR lowering pipeline (public)
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `performance.md` (~742 tok, large) — Performance Guide
@@ -300,6 +303,7 @@
 - `release-drafter.yml` (~85 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
 ### `.github/workflows/`
 
+- `bench-gate.yml` (~507 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
 - `ci.yml` (~1358 tok, large) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
@@ -381,12 +385,12 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `mod.rs` (~1670 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2353 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~1947 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~872 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~878 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
@@ -409,10 +413,10 @@
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `mod.rs` (~20625 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~20169 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~1853 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~2031 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
 - `mod.rs` (~9268 tok, huge) — Copyright 2025 STARGA Inc.
@@ -474,6 +478,10 @@
 - `autodiff_pairwise.mind` (~18 tok, tiny)
 - `autodiff_pairwise.mlir` (~25 tok, tiny) — module {
 - `autodiff_pairwise.runtime` (~1 tok, tiny) — 0
+- `phase_10_5_const.mind` (~34 tok, tiny) — fn main() {
+- `phase_10_5_logical.mind` (~32 tok, tiny) — fn main() {
+- `phase_10_5_module.mind` (~30 tok, tiny) — module governance {
+- `phase_10_5_struct.mind` (~29 tok, tiny) — fn main() {
 - `simple_arith.ir` (~15 tok, tiny) — module {
 - `simple_arith.mind` (~3 tok, tiny)
 - `simple_arith.mlir` (~25 tok, tiny) — module {
@@ -510,6 +518,7 @@
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
 - `ir_core.rs` (~847 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
+- `ir_load_save.rs` (~710 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 - `ir_stub.rs` (~219 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/ir_verification/`
@@ -597,6 +606,7 @@
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~1264 tok, large) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `.wrangler/cache/`
 
