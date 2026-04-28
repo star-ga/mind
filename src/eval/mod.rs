@@ -330,6 +330,8 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::ScalarF32)
                     | Some(TypeAnn::ScalarF64)
                     | Some(TypeAnn::ScalarBool)
+                    | Some(TypeAnn::ScalarU32)
+                    | Some(TypeAnn::Named(_))
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {
@@ -873,8 +875,16 @@ pub(crate) fn eval_value_expr_mode(
                 seed ^= seed << 17;
                 (seed as f32 / u64::MAX as f32) * 2.0 - 1.0
             }).collect();
+            #[cfg(feature = "cpu-buffers")]
             let mut t = TensorVal::new(DType::F32, dims, None);
-            t.buf = Some(Buffer::F32(data));
+            #[cfg(not(feature = "cpu-buffers"))]
+            let t = TensorVal::new(DType::F32, dims, None);
+            #[cfg(feature = "cpu-buffers")]
+            {
+                t.buf = Some(crate::eval::value::Buffer::F32(data));
+            }
+            #[cfg(not(feature = "cpu-buffers"))]
+            let _ = data;
             Ok(Value::Tensor(t))
         }
         Node::CallTensorConv2d {
@@ -1040,6 +1050,15 @@ pub(crate) fn eval_value_expr_mode(
             let recv = eval_value_expr_mode(receiver, env, tensor_env, mode)?;
             eval_field_access(recv, field)
         }
+        // Phase 10.5 declarations are statement-level, not expression-level.
+        // Top-level walkers handle them; reaching this arm in expression
+        // evaluation means a misuse — return a zero so we don't crash, the
+        // type checker catches the actual misuse.
+        Node::Const { .. }
+        | Node::TypeAlias { .. }
+        | Node::Export { .. }
+        | Node::StructDef { .. }
+        | Node::EnumDef { .. } => Ok(Value::Int(0)),
     }
 }
 
