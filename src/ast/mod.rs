@@ -68,6 +68,31 @@ pub enum BinOp {
     Ne,
 }
 
+/// Logical binary operator (Phase 10.5 Tier-1).
+/// Kept separate from `BinOp` so the existing arithmetic/comparison
+/// match arms across the compiler stay closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicalOp {
+    And,
+    Or,
+}
+
+/// Bitwise binary operator (Phase 10.5 Tier-1).
+/// Held separate from `BinOp` for the same matching-stability reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOp {
+    /// `|` bitwise or
+    Or,
+    /// `&` bitwise and
+    And,
+    /// `^` xor
+    Xor,
+    /// `<<` shift left
+    Shl,
+    /// `>>` shift right
+    Shr,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeAnn {
     ScalarI32,
@@ -324,6 +349,37 @@ pub enum Node {
         attrs: Vec<Attribute>,
         span: Span,
     },
+    /// `assert cond[, "msg"]` — runtime check, no return value.
+    /// Phase 10.5 stretch.
+    Assert {
+        cond: Box<Node>,
+        msg: Option<String>,
+        span: Span,
+    },
+    /// `expr as type` — explicit cast.
+    /// Phase 10.5 stretch.
+    As {
+        expr: Box<Node>,
+        ty: TypeAnn,
+        span: Span,
+    },
+    /// Logical binary expression: `a && b`, `a || b`.
+    /// Phase 10.5 Tier-1. Held separate from `Node::Binary` so existing
+    /// numeric/tensor binop matches remain exhaustive without churn.
+    Logical {
+        op: LogicalOp,
+        left: Box<Node>,
+        right: Box<Node>,
+        span: Span,
+    },
+    /// Bitwise binary expression: `a | b`, `a & b`, `a ^ b`, `a << b`, `a >> b`.
+    /// Phase 10.5 Tier-1.
+    Bitwise {
+        op: BitOp,
+        left: Box<Node>,
+        right: Box<Node>,
+        span: Span,
+    },
 }
 
 /// Attribute metadata, e.g. `[protection]`, `[test]`, `[bench]`.
@@ -392,7 +448,11 @@ impl Node {
             | Node::TypeAlias { span, .. }
             | Node::Export { span, .. }
             | Node::StructDef { span, .. }
-            | Node::EnumDef { span, .. } => *span,
+            | Node::EnumDef { span, .. }
+            | Node::Assert { span, .. }
+            | Node::As { span, .. }
+            | Node::Logical { span, .. }
+            | Node::Bitwise { span, .. } => *span,
         }
     }
 

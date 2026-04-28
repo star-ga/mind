@@ -1,0 +1,39 @@
+   Compiling mind v0.2.3 (/home/n/mind)
+warning: method `parse_use` is never used
+   --> src/parser/mod.rs:522:8
+    |
+ 43 | impl<'a> P<'a> {
+    | -------------- method in this implementation
+...
+522 |     fn parse_use(&mut self) -> Result<Node, ParseError> {
+    |        ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `mind` (lib) generated 1 warning
+    Finished `bench` profile [optimized] target(s) in 43.90s
+     Running benches/compiler.rs (target/release/deps/compiler-2f7b1e6da115c7ae)
+Gnuplot not found, using plotters backend
+Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul
+Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul: Warming up for 1.0000 s
+Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul: Collecting 10 samples in estimated 3.0001 s (1.0M iterations)
+Benchmarking compiler_pipeline/parse_typecheck_ir/small_matmul: Analyzing
+compiler_pipeline/parse_typecheck_ir/small_matmul
+                        time:   [2.8593 µs 2.8867 µs 2.9185 µs]
+Found 1 outliers among 10 measurements (10.00%)
+  1 (10.00%) high mild
+Benchmarking compiler_pipeline/parse_typecheck_ir/medium_mlp
+Benchmarking compiler_pipeline/parse_typecheck_ir/medium_mlp: Warming up for 1.0000 s
+Benchmarking compiler_pipeline/parse_typecheck_ir/medium_mlp: Collecting 10 samples in estimated 3.0001 s (432k iterations)
+Benchmarking compiler_pipeline/parse_typecheck_ir/medium_mlp: Analyzing
+compiler_pipeline/parse_typecheck_ir/medium_mlp
+                        time:   [6.6749 µs 6.7401 µs 6.8171 µs]
+Benchmarking compiler_pipeline/parse_typecheck_ir/large_network
+Benchmarking compiler_pipeline/parse_typecheck_ir/large_network: Warming up for 1.0000 s
+Benchmarking compiler_pipeline/parse_typecheck_ir/large_network: Collecting 10 samples in estimated 3.0000 s (170k iterations)
+Benchmarking compiler_pipeline/parse_typecheck_ir/large_network: Analyzing
+compiler_pipeline/parse_typecheck_ir/large_network
+                        time:   [17.421 µs 17.632 µs 17.957 µs]
+Found 2 outliers among 10 measurements (20.00%)
+  2 (20.00%) high mild
+
