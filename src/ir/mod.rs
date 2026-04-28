@@ -26,6 +26,71 @@ pub use crate::opt::ir_canonical::canonicalize_module;
 pub use print::format_ir_module;
 pub use verify::{verify_module, IrVerifyError};
 
+/// Errors surfaced by [`load`].
+#[derive(Debug)]
+pub enum LoadError {
+    /// Input bytes are not valid UTF-8 (mic@1/mic@2 are text formats).
+    InvalidUtf8(std::str::Utf8Error),
+    /// Input did not match a recognised MIC format header.
+    UnknownFormat,
+    /// mic@1 parser failed.
+    Mic1(compact::MicParseError),
+    /// mic@2 was detected; use `compact::v2::parse_mic2` directly — that
+    /// format produces `Graph`, not [`IRModule`].
+    Mic2NotSupportedByLoad,
+    /// Binary MIC-B was detected; use `compact::v2::parse_micb` directly.
+    MicBNotSupportedByLoad,
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadError::InvalidUtf8(e) => write!(f, "invalid UTF-8: {}", e),
+            LoadError::UnknownFormat => f.write_str("unrecognised MIC format header"),
+            LoadError::Mic1(e) => write!(f, "mic@1 parse error: {}", e.message),
+            LoadError::Mic2NotSupportedByLoad => {
+                f.write_str("mic@2 detected — use compact::v2::parse_mic2 directly")
+            }
+            LoadError::MicBNotSupportedByLoad => {
+                f.write_str("MIC-B detected — use compact::v2::parse_micb directly")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoadError {}
+
+/// Load an [`IRModule`] from MIC text bytes.
+///
+/// This is the stable runtime-facing entry point used by `mind-runtime` and
+/// other backends to consume pre-compiled IR without re-running the surface
+/// parser. The accepted format is **mic@1** (textual IR with explicit node IDs).
+///
+/// `mic@2` and `MIC-B` are also detected, but those formats produce a
+/// different [`Graph`](compact::v2::Graph) type and must be loaded through
+/// [`compact::v2::parse_mic2`] / [`compact::v2::parse_micb`] directly.
+///
+/// # Stability
+/// The mic@1 textual form is part of the v0.2.x stability surface — see
+/// `docs/versioning.md` and `docs/ir-stability.md`.
+pub fn load(data: &[u8]) -> Result<IRModule, LoadError> {
+    let text = std::str::from_utf8(data).map_err(LoadError::InvalidUtf8)?;
+    match compact::detect_format(data) {
+        compact::MicFormat::Mic1 => compact::parse_mic(text).map_err(LoadError::Mic1),
+        compact::MicFormat::Mic2 => Err(LoadError::Mic2NotSupportedByLoad),
+        compact::MicFormat::MicB => Err(LoadError::MicBNotSupportedByLoad),
+        compact::MicFormat::Unknown => Err(LoadError::UnknownFormat),
+    }
+}
+
+/// Serialize an [`IRModule`] to mic@1 text.
+///
+/// This is the stable counterpart to [`load`]. Output is deterministic
+/// (RFC-0001): the same module always produces byte-identical text.
+pub fn save(module: &IRModule) -> String {
+    compact::emit_mic(module)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValueId(pub usize);
 

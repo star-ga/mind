@@ -1,0 +1,77 @@
+name: Bench gate
+
+# Enforces the parser/typecheck/IR pipeline regression rule for mindc.
+#
+# The threshold is documented at docs/versioning.md (and pinned in
+# .bench-baseline-2026-04-28-pratt.txt). Going above it on any of the
+# canonical bench programs fails the job.
+#
+# Threshold: <= 2% mean regression on any of the three pipeline benches
+# (small_matmul / medium_mlp / large_network). This codifies the principle
+# that `mindc`'s parser is the runtime contract for `mind-runtime` (which
+# re-evaluates IR per inference) — letting the parser drift compounds
+# downstream.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/parser/**'
+      - 'src/type_checker/**'
+      - 'src/ir/**'
+      - 'src/ast/**'
+      - 'src/eval/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+  pull_request:
+    paths:
+      - 'src/parser/**'
+      - 'src/type_checker/**'
+      - 'src/ir/**'
+      - 'src/ast/**'
+      - 'src/eval/**'
+      - 'benches/**'
+      - 'Cargo.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench-gate:
+    name: Pipeline regression gate (<=2%)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-gate-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run criterion bench (compiler pipeline)
+        run: |
+          cargo bench --bench compiler -- \
+            --warm-up-time 2 \
+            --measurement-time 5 \
+            --output-format bencher \
+            | tee bench.out
+
+      - name: Enforce <=2% regression vs frozen baseline
+        run: |
+          python3 tools/bench_gate.py \
+            --baseline .bench-baseline-2026-04-28-pratt.txt \
+            --current bench.out \
+            --threshold 0.02
