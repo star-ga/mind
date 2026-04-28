@@ -1,0 +1,10 @@
+module governance {
+    const VERSION: i32 = 1
+}
+
+[protection]
+fn checked() -> i32 {
+    return 1
+}
+
+export { checked }

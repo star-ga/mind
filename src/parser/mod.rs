@@ -40,6 +40,21 @@ struct P<'a> {
     pos: usize,
 }
 
+/// Operator-token kind used by the Pratt expression parser
+/// (`P::parse_pratt`). Held separate from the AST `BinOp`/`BitOp`/`LogicalOp`
+/// enums so the dispatch table stays a single, pointer-free value.
+#[derive(Debug, Clone, Copy)]
+enum PrattOp {
+    LogicalOr,
+    LogicalAnd,
+    Cmp(BinOp),
+    Arith(BinOp),
+    Bit(crate::ast::BitOp),
+    /// `expr as type` postfix cast (right operand is a `TypeAnn`,
+    /// not an expression).
+    AsCast,
+}
+
 impl<'a> P<'a> {
     fn new(src: &'a str) -> Self {
         Self {
@@ -75,22 +90,6 @@ impl<'a> P<'a> {
                 _ => break,
             }
         }
-    }
-
-    /// Phase 10.5 fast-path: peek the next non-whitespace byte without
-    /// mutating `self.pos`. Returns 0 at end-of-input.
-    /// Skips spaces / tabs / carriage returns only (no newlines, no comments)
-    /// to match `skip_ws`'s scope.
-    #[inline(always)]
-    fn peek_skip_ws(&self) -> u8 {
-        let mut i = self.pos;
-        while i < self.b.len() {
-            match self.b[i] {
-                b' ' | b'\t' | b'\r' => i += 1,
-                c => return c,
-            }
-        }
-        0
     }
 
     fn skip_ws_and_newlines(&mut self) {
@@ -1235,234 +1234,146 @@ impl<'a> P<'a> {
         })
     }
 
-    /// Top-level expression entry. Combines the logical-OR/AND fast-paths
-    /// into one peek so programs without boolean operators (the common
-    /// case in tensor code) bypass both new layers in one byte test.
+    /// Pratt operator-precedence parser for expressions (mindc 0.2.5).
+    ///
+    /// Replaces the recursive-descent chain
+    /// (`parse_logical_or` → `parse_logical_and` → `parse_comparison`
+    /// → `parse_additive` → `parse_bitwise` → `parse_multiplicative`)
+    /// with a single dispatch loop driven by a binding-power table.
+    ///
+    /// Precedence (higher binds tighter; left-associative throughout):
+    ///
+    /// | level | operators                | (lbp, rbp) |
+    /// |-------|--------------------------|------------|
+    /// | 1     | `\|\|`                   | (1, 2)     |
+    /// | 2     | `&&`                     | (3, 4)     |
+    /// | 3     | `==` `!=` `<` `<=` `>` `>=` | (5, 6) |
+    /// | 4     | `as` (postfix cast)      | (7, _)     |
+    /// | 5     | `+` `-`                  | (9, 10)    |
+    /// | 6     | `\|` `&` `^` `<<` `>>`   | (11, 12)   |
+    /// | 7     | `*` `/`                  | (13, 14)   |
+    /// | leaf  | `parse_atom`             | —          |
+    ///
+    /// The chain is preserved exactly: ordering matches the prior recursive
+    /// descent, so AST output is byte-for-byte identical for all valid
+    /// programs.
     #[inline]
     fn parse_expr(&mut self) -> Result<Node, ParseError> {
-        let left = self.parse_comparison()?;
-        match self.peek_skip_ws() {
-            b'&' => self.parse_logical_and_tail(left).and_then(|l| {
-                if self.peek_skip_ws() == b'|' {
-                    self.parse_logical_or_tail(l)
-                } else {
-                    Ok(l)
-                }
-            }),
-            b'|' => self.parse_logical_or_tail(left),
-            _ => Ok(left),
-        }
+        self.parse_pratt(0)
     }
 
-    /// Kept for callers that explicitly want the logical-or layer.
-    #[inline]
-    fn parse_logical_or(&mut self) -> Result<Node, ParseError> {
-        self.parse_expr()
-    }
-
-    fn parse_logical_or_tail(&mut self, mut left: Node) -> Result<Node, ParseError> {
-        loop {
-            self.skip_ws();
-            if !self.starts_with(b"||") {
-                break;
-            }
-            self.pos += 2;
-            self.skip_ws_and_newlines();
-            let right = self.parse_logical_and()?;
-            let span = Span::new(left.span_start(), right.span_end());
-            left = Node::Logical {
-                op: crate::ast::LogicalOp::Or,
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    /// Phase 10.5 Tier-1: logical AND (`&&`) — tighter than `||`, looser than comparison.
-    #[inline]
-    fn parse_logical_and(&mut self) -> Result<Node, ParseError> {
-        let left = self.parse_comparison()?;
-        if self.peek_skip_ws() != b'&' {
-            return Ok(left);
-        }
-        self.parse_logical_and_tail(left)
-    }
-
-    fn parse_logical_and_tail(&mut self, mut left: Node) -> Result<Node, ParseError> {
-        loop {
-            self.skip_ws();
-            if !self.starts_with(b"&&") {
-                break;
-            }
-            self.pos += 2;
-            self.skip_ws_and_newlines();
-            let right = self.parse_comparison()?;
-            let span = Span::new(left.span_start(), right.span_end());
-            left = Node::Logical {
-                op: crate::ast::LogicalOp::And,
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    fn parse_comparison(&mut self) -> Result<Node, ParseError> {
-        let mut left = self.parse_additive()?;
-        // Phase 10.5 stretch: `expr as type` cast — fast-path on `a` peek.
-        while self.peek_skip_ws() == b'a' {
-            self.skip_ws();
-            if !self.at_keyword(b"as") {
-                break;
-            }
-            self.pos += 2; // "as"
-            self.skip_ws();
-            let ty = self.type_ann()?;
-            let span = Span::new(left.span_start(), self.pos);
-            left = Node::As {
-                expr: Box::new(left),
-                ty,
-                span,
-            };
-        }
-        loop {
-            self.skip_ws();
-            let op = if self.starts_with(b"<=") {
-                self.pos += 2;
-                BinOp::Le
-            } else if self.starts_with(b">=") {
-                self.pos += 2;
-                BinOp::Ge
-            } else if self.starts_with(b"!=") {
-                self.pos += 2;
-                BinOp::Ne
-            } else if self.starts_with(b"==") {
-                self.pos += 2;
-                BinOp::Eq
-            } else if self.at(b'<') {
-                self.advance();
-                BinOp::Lt
-            } else if self.at(b'>') {
-                self.advance();
-                BinOp::Gt
-            } else {
-                break;
-            };
-            self.skip_ws_and_newlines();
-            let right = self.parse_additive()?;
-            let span = Span::new(left.span_start(), right.span_end());
-            left = Node::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    fn parse_additive(&mut self) -> Result<Node, ParseError> {
-        let mut left = self.parse_bitwise()?;
-        loop {
-            self.skip_ws();
-            let op = if self.at(b'+') {
-                self.advance();
-                BinOp::Add
-            } else if self.at(b'-') {
-                // Distinguish subtraction from negative number by context:
-                // After a complete expression, '-' is always subtraction.
-                self.advance();
-                BinOp::Sub
-            } else {
-                break;
-            };
-            self.skip_ws_and_newlines();
-            let right = self.parse_bitwise()?;
-            let span = Span::new(left.span_start(), right.span_end());
-            left = Node::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    /// Phase 10.5 Tier-1: bitwise ops `|`, `&`, `^`, `<<`, `>>`.
-    /// Tighter than additive, looser than multiplicative. Fast-path peeks
-    /// the next non-ws byte and skips the whole layer when no plausible
-    /// bitwise operator is present (the common case in tensor programs).
-    #[inline]
-    fn parse_bitwise(&mut self) -> Result<Node, ParseError> {
-        let left = self.parse_multiplicative()?;
-        if !matches!(self.peek_skip_ws(), b'|' | b'&' | b'^' | b'<' | b'>') {
-            return Ok(left);
-        }
-        self.parse_bitwise_tail(left)
-    }
-
-    fn parse_bitwise_tail(&mut self, mut left: Node) -> Result<Node, ParseError> {
-        loop {
-            self.skip_ws();
-            let op = if self.starts_with(b"<<") {
-                self.pos += 2;
-                crate::ast::BitOp::Shl
-            } else if self.starts_with(b">>") {
-                self.pos += 2;
-                crate::ast::BitOp::Shr
-            } else if self.at(b'|') && !self.starts_with(b"||") {
-                self.advance();
-                crate::ast::BitOp::Or
-            } else if self.at(b'&') && !self.starts_with(b"&&") {
-                self.advance();
-                crate::ast::BitOp::And
-            } else if self.at(b'^') {
-                self.advance();
-                crate::ast::BitOp::Xor
-            } else {
-                break;
-            };
-            self.skip_ws_and_newlines();
-            let right = self.parse_multiplicative()?;
-            let span = Span::new(left.span_start(), right.span_end());
-            left = Node::Bitwise {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
-            };
-        }
-        Ok(left)
-    }
-
-    fn parse_multiplicative(&mut self) -> Result<Node, ParseError> {
+    fn parse_pratt(&mut self, min_bp: u8) -> Result<Node, ParseError> {
         let mut left = self.parse_atom()?;
         loop {
             self.skip_ws();
-            let op = if self.at(b'*') {
-                self.advance();
-                BinOp::Mul
-            } else if self.at(b'/') {
-                self.advance();
-                BinOp::Div
-            } else {
-                break;
+            let (op, lbp, rbp, advance) = match self.peek_binop() {
+                Some(o) => o,
+                None => break,
             };
+            if lbp < min_bp {
+                break;
+            }
+            self.pos += advance;
+            // Postfix `as` cast — RHS is a TypeAnn, not an expression.
+            if matches!(op, PrattOp::AsCast) {
+                self.skip_ws();
+                let ty = self.type_ann()?;
+                let span = Span::new(left.span_start(), self.pos);
+                left = Node::As {
+                    expr: Box::new(left),
+                    ty,
+                    span,
+                };
+                continue;
+            }
             self.skip_ws_and_newlines();
-            let right = self.parse_atom()?;
+            let right = self.parse_pratt(rbp)?;
             let span = Span::new(left.span_start(), right.span_end());
-            left = Node::Binary {
-                op,
-                left: Box::new(left),
-                right: Box::new(right),
-                span,
+            left = match op {
+                PrattOp::LogicalOr => Node::Logical {
+                    op: crate::ast::LogicalOp::Or,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    span,
+                },
+                PrattOp::LogicalAnd => Node::Logical {
+                    op: crate::ast::LogicalOp::And,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    span,
+                },
+                PrattOp::Cmp(b) => Node::Binary {
+                    op: b,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    span,
+                },
+                PrattOp::Arith(b) => Node::Binary {
+                    op: b,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    span,
+                },
+                PrattOp::Bit(b) => Node::Bitwise {
+                    op: b,
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    span,
+                },
+                PrattOp::AsCast => unreachable!(),
             };
         }
         Ok(left)
+    }
+
+    /// Peek the next binary operator at `self.pos` without advancing.
+    /// Caller MUST have already invoked `skip_ws()`. Returns
+    /// `(op, left_bp, right_bp, byte_advance)` or `None` if the next token
+    /// is not a recognised binary operator.
+    #[inline]
+    fn peek_binop(&self) -> Option<(PrattOp, u8, u8, usize)> {
+        let p = self.pos;
+        if p >= self.b.len() {
+            return None;
+        }
+        let b0 = self.b[p];
+        let b1 = self.b.get(p + 1).copied().unwrap_or(0);
+
+        // Two-char operators take priority over their one-char prefixes.
+        match (b0, b1) {
+            (b'|', b'|') => return Some((PrattOp::LogicalOr, 1, 2, 2)),
+            (b'&', b'&') => return Some((PrattOp::LogicalAnd, 3, 4, 2)),
+            (b'=', b'=') => return Some((PrattOp::Cmp(BinOp::Eq), 5, 6, 2)),
+            (b'!', b'=') => return Some((PrattOp::Cmp(BinOp::Ne), 5, 6, 2)),
+            (b'<', b'=') => return Some((PrattOp::Cmp(BinOp::Le), 5, 6, 2)),
+            (b'>', b'=') => return Some((PrattOp::Cmp(BinOp::Ge), 5, 6, 2)),
+            (b'<', b'<') => return Some((PrattOp::Bit(crate::ast::BitOp::Shl), 11, 12, 2)),
+            (b'>', b'>') => return Some((PrattOp::Bit(crate::ast::BitOp::Shr), 11, 12, 2)),
+            _ => {}
+        }
+
+        // `as` keyword (postfix cast). Requires a word-boundary on the right
+        // so identifiers like `assert` and `ascii` are not misparsed.
+        if b0 == b'a' && b1 == b's' {
+            let nb = self.b.get(p + 2).copied().unwrap_or(0);
+            if !Self::is_ident_cont(nb) {
+                return Some((PrattOp::AsCast, 7, 0, 2));
+            }
+        }
+
+        // One-char operators.
+        match b0 {
+            b'<' => Some((PrattOp::Cmp(BinOp::Lt), 5, 6, 1)),
+            b'>' => Some((PrattOp::Cmp(BinOp::Gt), 5, 6, 1)),
+            b'+' => Some((PrattOp::Arith(BinOp::Add), 9, 10, 1)),
+            b'-' => Some((PrattOp::Arith(BinOp::Sub), 9, 10, 1)),
+            b'|' => Some((PrattOp::Bit(crate::ast::BitOp::Or), 11, 12, 1)),
+            b'&' => Some((PrattOp::Bit(crate::ast::BitOp::And), 11, 12, 1)),
+            b'^' => Some((PrattOp::Bit(crate::ast::BitOp::Xor), 11, 12, 1)),
+            b'*' => Some((PrattOp::Arith(BinOp::Mul), 13, 14, 1)),
+            b'/' => Some((PrattOp::Arith(BinOp::Div), 13, 14, 1)),
+            _ => None,
+        }
     }
 
     fn parse_string_lit(&mut self) -> Result<Node, ParseError> {

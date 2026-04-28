@@ -1,0 +1,16 @@
+=== Pratt parser baseline (mindc 0.2.5, 2026-04-28) ===
+
+Pratt operator-precedence parser replaces recursive-descent
+chain (parse_logical_or → parse_logical_and → parse_comparison
+→ parse_additive → parse_bitwise → parse_multiplicative).
+
+Bench: cargo bench --bench compiler -- --quick
+
+  small_matmul:   3.00 µs   (pre-Pratt 3.04, pre-10.5 2.887 → +3.9% vs original)
+  medium_mlp:     6.13 µs   (pre-Pratt 6.74, pre-10.5 6.740 → -9.0% vs original)
+  large_network: 16.82 µs   (pre-Pratt 18.29, pre-10.5 17.632 → -4.6% vs original)
+
+Net: parser is faster than the original pre-Phase-10.5 baseline on
+medium_mlp and large_network, and only +3.9% on small_matmul.
+
+All 133 tests across 30 suites pass after the rewrite.
