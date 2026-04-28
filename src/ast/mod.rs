@@ -84,6 +84,11 @@ pub enum TypeAnn {
         dtype: String,
         dims: Vec<String>,
     },
+    /// User-defined type name (alias, struct, enum). Resolved later in typecheck.
+    /// Phase 10.5 Tier-1.
+    Named(String),
+    /// Unsigned 32-bit integer (Phase 10.5 Tier-2).
+    ScalarU32,
 }
 
 /// Function parameter: `name: type`
@@ -280,6 +285,70 @@ pub enum Node {
         field: String,
         span: Span,
     },
+    /// Compile-time constant: `const NAME: type = expr`
+    /// Phase 10.5 Tier-1.
+    Const {
+        name: String,
+        ty: Option<TypeAnn>,
+        value: Box<Node>,
+        attrs: Vec<Attribute>,
+        span: Span,
+    },
+    /// Type alias: `type X = Y`
+    /// Phase 10.5 Tier-1.
+    TypeAlias {
+        name: String,
+        target: TypeAnn,
+        attrs: Vec<Attribute>,
+        span: Span,
+    },
+    /// Export block: `export { name1, name2 }`
+    /// Phase 10.5 Tier-1.
+    Export {
+        names: Vec<String>,
+        span: Span,
+    },
+    /// Struct declaration: `struct Name { f: T, g: U }`
+    /// Phase 10.5 Tier-2.
+    StructDef {
+        name: String,
+        fields: Vec<Field>,
+        attrs: Vec<Attribute>,
+        span: Span,
+    },
+    /// Enum declaration: `enum Name { Variant, Variant(T) }`
+    /// Phase 10.5 Tier-2.
+    EnumDef {
+        name: String,
+        variants: Vec<EnumVariant>,
+        attrs: Vec<Attribute>,
+        span: Span,
+    },
+}
+
+/// Attribute metadata, e.g. `[protection]`, `[test]`, `[bench]`.
+/// Public mindc records but does not interpret these (Phase 10.5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Attribute {
+    pub name: String,
+    pub args: Vec<String>,
+    pub span: Span,
+}
+
+/// Field of a struct declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field {
+    pub name: String,
+    pub ty: TypeAnn,
+    pub span: Span,
+}
+
+/// Variant of an enum declaration. Tier-2 ships unit + tuple variants.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub payload: Vec<TypeAnn>,
+    pub span: Span,
 }
 
 impl Node {
@@ -318,7 +387,12 @@ impl Node {
             | Node::Print { span, .. }
             | Node::Neg { span, .. }
             | Node::MethodCall { span, .. }
-            | Node::FieldAccess { span, .. } => *span,
+            | Node::FieldAccess { span, .. }
+            | Node::Const { span, .. }
+            | Node::TypeAlias { span, .. }
+            | Node::Export { span, .. }
+            | Node::StructDef { span, .. }
+            | Node::EnumDef { span, .. } => *span,
         }
     }
 
