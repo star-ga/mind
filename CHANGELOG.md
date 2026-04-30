@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `libmind::cache` — content-addressed compilation cache with
+  `CompilationCache`, `CacheKey`, `CacheEntry`, `CacheStats`,
+  `ProfileTag`, and an in-memory `MemoryStore` backend. Cache key
+  includes compiler version + profile tag + source hash + imports
+  hash so cross-mode rebuilds never hit a stale entry. Foundation
+  for sub-µs warm-start frontend latency. 17 unit tests, all passing.
+- `tools/pytorch_bridge/` — PyTorch/JAX → MIND transpiler tooling.
+  ONNX-driven PyTorch path, XLA-HLO-driven JAX path, and a
+  deterministic prompt builder for AI-assisted UNSAT proof
+  resolution. Pure Python, no torch / jax import at module load.
+  11 unit tests, all passing.
+- `libmind::distributed` — IR-layer primitives for tensor and pipeline
+  parallelism: `ShardSpec` / `ShardLayout` (replicated / split /
+  split-2D), `AllReduceOp` with lexicographic / tree / arrival
+  reduction orders, `AllGatherOp` with lexicographic / arrival gather
+  orders, `PipelineGraph` / `PipelineStage` / `StageBoundary`, and
+  `DistributedInvariant` enforcement (`deterministic_all_reduce`,
+  `reduction_order_lexicographic`, `gather_order_lexicographic`,
+  `evidence_chain_continuous`). 31 unit tests, all passing.
+  See `docs/roadmap.md` Phase 13.6 for the design rationale and the
+  speed-preservation discipline that keeps the 1.8–15.5 µs frontend
+  baseline locked when these primitives are not imported.
+
 ## [0.2.5] - 2026-04-28
 
 ### Added

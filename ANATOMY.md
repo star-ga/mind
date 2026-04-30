@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 342 | **Est. tokens:** ~439,166
-**Generated:** 2026-04-28 11:03 UTC
+**Files:** 360 | **Est. tokens:** ~457,904
+**Generated:** 2026-04-30 06:12 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 27 | ~17,372 |
+| `./` | 27 | ~18,071 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `benches/` | 5 | ~6,036 |
@@ -34,7 +34,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 20 | ~17,253 |
+| `docs/` | 20 | ~18,810 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 5 | ~4,272 |
@@ -49,11 +49,13 @@
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `scripts/` | 2 | ~2,268 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~14,922 |
+| `src/` | 7 | ~14,931 |
 | `src/ast/` | 1 | ~2,780 |
 | `src/autodiff/` | 3 | ~4,224 |
 | `src/bin/` | 2 | ~10,458 |
+| `src/cache/` | 4 | ~3,437 |
 | `src/diagnostics/` | 1 | ~2,230 |
+| `src/distributed/` | 6 | ~7,114 |
 | `src/eval/` | 12 | ~55,753 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
@@ -84,6 +86,8 @@
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~2,968 |
+| `tools/pytorch_bridge/` | 6 | ~4,678 |
+| `tools/pytorch_bridge/tests/` | 2 | ~1,244 |
 | `.wrangler/cache/` | 1 | ~21 |
 
 ## Files
@@ -98,7 +102,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~695 tok, large) — [package]
-- `CHANGELOG.md` (~2056 tok, huge) — Changelog
+- `CHANGELOG.md` (~2410 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -111,7 +115,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~3284 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~3629 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -241,7 +245,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~4234 tok, huge) — Roadmap
+- `roadmap.md` (~5791 tok, huge) — Roadmap
 - `security.md` (~753 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 ### `docs/specs/`
@@ -335,12 +339,26 @@
 
 - `mind-ai.rs` (~6045 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc.rs` (~4413 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/cache/`
+
+- `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `fingerprint.rs` (~526 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `mod.rs` (~979 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/`
 
 - `conformance.rs` (~1871 tok, huge)
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/distributed/`
+
+- `allgather.rs` (~784 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `allreduce.rs` (~1011 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `invariants.rs` (~1416 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `mod.rs` (~580 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `pipeline.rs` (~1891 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `shard.rs` (~1432 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/eval/`
 
 - `autodiff.rs` (~13879 tok, huge) — Copyright 2025 STARGA Inc.
@@ -391,7 +409,7 @@
 - `verify.rs` (~1947 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~878 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~887 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
@@ -609,6 +627,18 @@
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
 - `bench_gate.py` (~1264 tok, large) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
+### `tools/pytorch_bridge/`
+
+- `ai_proof.py` (~645 tok, large) — # Copyright 2025-2026 STARGA Inc.
+- `.gitignore` (~4 tok, tiny) — __pycache__/
+- `__init__.py` (~384 tok, medium) — # Copyright 2025-2026 STARGA Inc.
+- `ir.py` (~920 tok, large) — # Copyright 2025-2026 STARGA Inc.
+- `jax.py` (~1007 tok, large) — # Copyright 2025-2026 STARGA Inc.
+- `pytorch.py` (~1718 tok, huge) — # Copyright 2025-2026 STARGA Inc.
+### `tools/pytorch_bridge/tests/`
+
+- `__init__.py` (~0 tok, tiny)
+- `test_bridge.py` (~1244 tok, large) — # Copyright 2025-2026 STARGA Inc.
 ### `.wrangler/cache/`
 
 - `wrangler-account.json` (~21 tok, tiny) — Keys: account
