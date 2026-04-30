@@ -236,6 +236,129 @@ Introduce language-level support for observation-dependent computation. MIND alr
 
 ---
 
+## Phase 13.6 — Deterministic Distributed Primitives
+
+### Goals
+
+Today the runtime ships TCP transport, NCCL/Gloo backends, RingAllReduce,
+pipeline parallelism, and fault tolerance — production-grade but
+**non-deterministic by reduction order**. Different runs of the same
+sharded model produce slightly different logits because IEEE-754
+floating-point reductions are not associative under parallel scheduling.
+
+For audit, regulatory, and replay-required workloads this is a blocker.
+Phase 13.6 closes the gap with **language-level primitives** that emit a
+deterministic TP+PP plan from a single `.mind` source — sharding stays,
+the reduction race goes away.
+
+The driving use case is the BitNet b1.58 ternary-weight LLM described in
+[`bitnet-mind-governance/docs/parallel_pipeline.md`](https://github.com/star-ga/bitnet-mind-governance/blob/main/docs/parallel_pipeline.md):
+3-way TP+PP across consumer GPUs with bit-identical replay across runs
+*and* across hardware vendors (verified by per-stage merkle roots).
+
+### Surface (proposed in `.mind`)
+
+```mind
+use mind.distributed.shard
+use mind.distributed.allreduce
+use mind.distributed.allgather
+use mind.distributed.pipeline
+```
+
+### New invariants enforced by `mindc`
+
+| Invariant | Effect |
+|-----------|--------|
+| `deterministic_all_reduce` | refuses to emit if any cross-shard reduction is not lexicographic-order |
+| `reduction_order_lexicographic` | extends the existing local-matmul reduction-order rule to cross-device gathers |
+| `gather_order_lexicographic` | shard contributions concatenate in fixed shard-id order, never timestamp-arrival order |
+| `evidence_chain_continuous` | every pipeline stage must verify the previous stage's evidence emit before processing — bypassing the chain refuses to compile |
+
+### Compiler-side IR (✅ scaffolded in `mindc` — Apr 2026)
+
+The [`mind/src/distributed/`](../src/distributed/) module ships the
+IR-layer primitives now. 31 unit tests pass on `cargo test --lib distributed::`.
+Exposed types:
+
+* `ShardSpec` / `ShardLayout` — tensor sharding spec with replicated /
+  split / split-2D variants and an even-divisibility check at typecheck
+  time.
+* `AllReduceOp` / `ReductionOrder::Lexicographic` — lexicographic
+  shard-ID schedule baked into the op at compile time.
+* `AllGatherOp` / `GatherOrder` — same discipline applied to all-gather.
+* `PipelineGraph` / `PipelineStage` / `StageBoundary` — `[pipeline_stage(N)]`
+  attribute lowering, with the evidence-chain-continuous invariant
+  attached to every transition.
+* `DistributedInvariant` / `InvariantViolation` — typed enforcement of
+  the four invariants above.
+
+### Engineering scope to reach proof-of-concept
+
+Six to eight weeks of focused work, scoped for paper-validation:
+
+1. **`mind.distributed.shard` + `allreduce` + `allgather`** (~3 weeks)
+   - Direct CUDA P2P for proof-of-concept (no NCCL needed initially)
+   - Or shared-memory IPC for single-machine multi-process validation
+   - Lexicographic-order all-reduce + all-gather primitives
+2. **`mind.distributed.pipeline` with `[pipeline_stage(N)]`** (~2 weeks)
+   - Send/recv between stages; evidence-chain continuity verification
+3. **Port `bitnet.mind` to use the new primitives** (~1 week)
+   - Re-shard along attention heads (TP), split layer groups (PP),
+     combine for 3-way memory split
+4. **Cross-shard determinism harness** (~1 week)
+   - Capture per-stage merkle roots, compare to single-device run
+   - Validate across (x86 + 3× consumer GPU) and (ARM + 3× different
+     GPU) for cross-hardware bit-identicality
+
+### Hypothesis the work proves
+
+> **H4**: Cross-shard determinism is achievable on TP+PP at the cost of
+> < 5% throughput overhead vs. non-deterministic FP16 baseline.
+
+Two measurable claims (governance overhead < 1% on local BitNet from
+H1, and cross-shard determinism overhead < 5% from H4) — together this
+is the shape of an MLSys / OSDI methods paper.
+
+### Speed-preservation discipline
+
+The 1.8–15.5 µs frontend latency is the IP moat. Distributed primitives
+must **never** widen it. Same rules as the language-profiles plan:
+
+| Risk | What it looks like | Forbidden in mindc |
+|------|--------------------|--------------------|
+| Tax non-distributed code | Single-device compiles pay an analysis pass for collectives that aren't there | Distributed analysis only runs if at least one `mind.distributed.*` symbol is imported. Zero-import cost stays at 0 ns. |
+| Linear shard-count blowup | Adding shards reruns shape inference per shard | `ShardSpec` is one struct attached to an SSA value; per-shard shape is computed once via `local_shape()`. World size doesn't enter typecheck cost. |
+| Runtime collective dispatch in the binary | Binary contains a switch over collective backend / order | Reduction order is **compile-time-fixed** to lexicographic. The dispatch table never exists. |
+| Per-statement invariant evaluation | Every op gets re-checked for `deterministic_all_reduce` | Invariant is a single flag on the op; verifier reads it in O(1). |
+
+**Expected per-profile latency under Phase 13.6:**
+
+| Profile + scenario | Expected frontend latency | vs. baseline |
+|--------------------|---------------------------|--------------|
+| `default`, no `mind.distributed.*` import | 1.8 – 15.5 µs | identical |
+| `default`, with TP+PP collectives | ≤ 1.10 × baseline | bounded by O(num_collectives) shard-spec checks |
+| `systems`, with TP collectives | ~0.9 – 3.3 µs | still faster than `default` baseline |
+
+**Hard refuses (these stay out permanently):**
+
+- Statement-level `#[cfg(distributed)]`. Module-level imports only.
+- Runtime collective-order detection. Order is compile-time constant.
+- Cross-profile distributed linking. A `default` shard cannot be linked
+  into a `systems`-built peer (their stdlibs differ). Linker enforces
+  via the MIC binary header.
+
+The cache key in [`mind/src/cache/`](../src/cache/) already incorporates
+`ProfileTag`; Phase 13.6 extends it with `WorldSize` so cross-shard
+re-compilation never hits a stale entry.
+
+### Dependencies
+
+- mindc 0.3 primitives (`Vec`, struct fields, recursive functions)
+  needed for the example modules to compile. Same blocker as the
+  Language Profiles roadmap entry.
+
+---
+
 ## Phase 14 — Full-Stack AI Framework
 
 ### Vision

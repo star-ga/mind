@@ -110,6 +110,44 @@ cargo build --features full       # All features
 MLIR emission requires the `mlir-lowering` feature. Autodiff support is
 experimental and currently focused on single-output entry points.
 
+## Compilation cache (`libmind::cache`)
+
+Content-addressed caching layer in `src/cache/` keyed by compiler version,
+profile tag, source SHA-256, and imports SHA-256. Re-invocations on the
+same input bypass parse + typecheck + IR build and return the cached IR
+directly. Foundation for the sub-µs warm-start frontend latency target.
+
+```rust
+use libmind::cache::{CompilationCache, CacheKey, ProfileTag};
+
+let mut cache = CompilationCache::in_memory();
+let key = CacheKey::new("0.2.6", ProfileTag::Default, source_hash, imports_hash);
+if let Some(entry) = cache.lookup(&key) {
+    return entry.ir_bytes;
+}
+```
+
+See [`tests/cache_smoke.rs`](tests/) and the 17 unit tests under
+`src/cache/`.
+
+## Python bridge tooling (`tools/pytorch_bridge/`)
+
+Pure-Python transpiler that lowers PyTorch (via ONNX) and JAX (via XLA
+HLO) graphs into MIND source. Pure-Python — no torch / jax import at
+module load — so it runs on a CI machine that doesn't have either
+framework installed.
+
+```python
+from pytorch_bridge import pytorch_to_mind, jax_to_mind
+
+result = pytorch_to_mind("model.onnx", module_name="net")
+print(result.module.emit())          # canonical .mind text
+print(result.unsupported)             # ops routed to AI-assist proof pass
+```
+
+Includes `build_unsat_prompt()` for AI-assisted resolution of UNSAT
+typecheck failures. 11 unit tests under `tools/pytorch_bridge/tests/`.
+
 ## GPU backend profile
 
 The crate exposes the Core v1 GPU profile and a `--target=gpu` flag in `mindc`.

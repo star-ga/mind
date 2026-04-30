@@ -40,7 +40,9 @@
 //!
 //! See `docs/versioning.md` for the full policy and surface definitions.
 pub mod ast;
+pub mod cache;
 pub mod conformance;
+pub mod distributed;
 pub mod diagnostics;
 pub mod eval;
 pub mod exec;
