@@ -116,7 +116,10 @@ impl fmt::Display for MapAnalysis {
         writeln!(f, "=== Memory Access Pattern (MAP) Analysis ===")?;
         writeln!(f)?;
         for pat in &self.patterns {
-            let layout = self.layouts.get(&pat.tensor_id).unwrap_or(&LayoutDecision::RowMajor);
+            let layout = self
+                .layouts
+                .get(&pat.tensor_id)
+                .unwrap_or(&LayoutDecision::RowMajor);
             let bank = self.bank_assignments.get(&pat.tensor_id).unwrap_or(&0);
             let color = self.coloring.colors.get(&pat.tensor_id).unwrap_or(&0);
             writeln!(
@@ -183,7 +186,9 @@ pub fn analyze_access_patterns(module: &IRModule) -> Vec<AccessPattern> {
                 // RHS of matmul is accessed column-major
                 col_major.insert(*b);
             }
-            Instr::Conv2d { dst, input, filter, .. } => {
+            Instr::Conv2d {
+                dst, input, filter, ..
+            } => {
                 defs.insert(*dst, idx);
                 is_tensor.insert(*dst);
                 uses.entry(*input).or_default().push(idx);
@@ -215,7 +220,11 @@ pub fn analyze_access_patterns(module: &IRModule) -> Vec<AccessPattern> {
             let first_use = use_indices.iter().copied().min().unwrap_or(def_idx);
             let last_use = use_indices.iter().copied().max().unwrap_or(def_idx);
             let reuse_distance = if use_indices.len() > 1 {
-                use_indices.windows(2).map(|w| w[1] - w[0]).min().unwrap_or(0)
+                use_indices
+                    .windows(2)
+                    .map(|w| w[1] - w[0])
+                    .min()
+                    .unwrap_or(0)
             } else {
                 0
             };
@@ -472,7 +481,10 @@ mod tests {
 
     #[test]
     fn test_empty_module() {
-        let module = IRModule { instrs: vec![], next_id: 0 };
+        let module = IRModule {
+            instrs: vec![],
+            next_id: 0,
+        };
         let analysis = optimize_layout(&module);
         assert!(analysis.patterns.is_empty());
         assert_eq!(analysis.coloring.num_colors, 0);

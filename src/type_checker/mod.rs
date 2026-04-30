@@ -232,8 +232,10 @@ fn combine_dtypes(lhs: &ValueType, rhs: &ValueType) -> Option<DType> {
         (ValueType::ScalarF32, ValueType::ScalarF32) => Some(DType::F32),
         (ValueType::ScalarF64, ValueType::ScalarF64) => Some(DType::F32),
         (ValueType::ScalarI64, ValueType::ScalarI64) => None,
-        (ValueType::ScalarF64, ValueType::ScalarI64) | (ValueType::ScalarI64, ValueType::ScalarF64) => Some(DType::F32),
-        (ValueType::ScalarF32, ValueType::ScalarI32) | (ValueType::ScalarI32, ValueType::ScalarF32) => Some(DType::F32),
+        (ValueType::ScalarF64, ValueType::ScalarI64)
+        | (ValueType::ScalarI64, ValueType::ScalarF64) => Some(DType::F32),
+        (ValueType::ScalarF32, ValueType::ScalarI32)
+        | (ValueType::ScalarI32, ValueType::ScalarF32) => Some(DType::F32),
         (ValueType::ScalarBool, ValueType::ScalarBool) => None,
         (ValueType::GradMap(_), _) | (_, ValueType::GradMap(_)) => None,
         _ => None, // Other scalar combinations
@@ -986,7 +988,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         Node::CallTensorRand { shape, span } => {
             let dims: Vec<ShapeDim> = shape.iter().map(|&d| ShapeDim::Known(d)).collect();
-            Ok((ValueType::Tensor(TensorType { dtype: DType::F32, shape: dims }), *span))
+            Ok((
+                ValueType::Tensor(TensorType {
+                    dtype: DType::F32,
+                    shape: dims,
+                }),
+                *span,
+            ))
         }
         Node::CallTensorConv2d {
             x,
@@ -1237,7 +1245,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 Ok((ValueType::ScalarI32, *span))
             }
         }
-        Node::For { var, body, span, .. } => {
+        Node::For {
+            var, body, span, ..
+        } => {
             let env = &mut env.clone();
             // Register loop variable
             env.insert(var.clone(), ValueType::ScalarI32);
@@ -1298,13 +1308,17 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             }
         }
         // `a && b`, `a || b` — boolean. Both sides must be inferable.
-        Node::Logical { left, right, span, .. } => {
+        Node::Logical {
+            left, right, span, ..
+        } => {
             let _ = infer_expr(left, env)?;
             let _ = infer_expr(right, env)?;
             Ok((ValueType::ScalarBool, *span))
         }
         // Bitwise: integer-typed; result type matches the left operand's type.
-        Node::Bitwise { left, right, span, .. } => {
+        Node::Bitwise {
+            left, right, span, ..
+        } => {
             let (lt, _) = infer_expr(left, env)?;
             let _ = infer_expr(right, env)?;
             Ok((lt, *span))
@@ -1712,7 +1726,9 @@ pub fn check_module_types_in_file(
             // Phase 10.5 Tier-2: struct, enum — recorded; v1 typechecker
             // does not yet resolve named types in field positions, so we
             // intentionally skip rather than error.
-            Node::Const { name, ty, value, .. } => {
+            Node::Const {
+                name, ty, value, ..
+            } => {
                 let rhs = infer_expr(value, &tenv);
                 match rhs {
                     Ok((vt_rhs, _)) => {
@@ -1762,7 +1778,9 @@ pub fn check_module_types_in_file(
             // statements as if they were at top level.
             Node::Block { stmts, .. } => {
                 for inner in stmts {
-                    let inner_module = Module { items: vec![inner.clone()] };
+                    let inner_module = Module {
+                        items: vec![inner.clone()],
+                    };
                     let inner_errs = check_module_types_in_file(&inner_module, src, file, env);
                     errs.extend(inner_errs);
                 }
