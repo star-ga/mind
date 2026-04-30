@@ -5,7 +5,8 @@
 //! Cross-device all-gather — every shard contributes its slice and the
 //! concatenation order is fixed at compile time.
 
-use std::fmt;
+// no `std::fmt` import needed — this module's `Display` lives on
+// `GatherOrder`-internal helpers tested via `Debug` rendering.
 
 /// Order in which shards' contributions are concatenated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
