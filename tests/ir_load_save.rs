@@ -52,7 +52,10 @@ fn compile_to_mic_text_matches_save() {
     let direct = compile_to_mic_text(SAMPLE_PROGRAM, &opts).expect("compile");
     let products = compile_source(SAMPLE_PROGRAM, &opts).expect("compile");
     let via_save = ir::save(&products.ir);
-    assert_eq!(direct, via_save, "compile_to_mic_text == save(compile_source.ir)");
+    assert_eq!(
+        direct, via_save,
+        "compile_to_mic_text == save(compile_source.ir)"
+    );
 }
 
 #[test]

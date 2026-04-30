@@ -42,8 +42,8 @@
 pub mod ast;
 pub mod cache;
 pub mod conformance;
-pub mod distributed;
 pub mod diagnostics;
+pub mod distributed;
 pub mod eval;
 pub mod exec;
 pub mod ir;

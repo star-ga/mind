@@ -73,16 +73,16 @@ impl CacheStore for MemoryStore {
     }
 
     fn len(&self) -> usize {
-        self.inner.lock().expect("memory cache poisoned").entries.len()
+        self.inner
+            .lock()
+            .expect("memory cache poisoned")
+            .entries
+            .len()
     }
 
     fn stats(&self) -> CacheStats {
         let inner = self.inner.lock().expect("memory cache poisoned");
-        let total_bytes: u64 = inner
-            .entries
-            .values()
-            .map(|e| e.size_bytes() as u64)
-            .sum();
+        let total_bytes: u64 = inner.entries.values().map(|e| e.size_bytes() as u64).sum();
         CacheStats {
             hits: inner.hits,
             misses: inner.misses,

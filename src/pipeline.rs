@@ -187,10 +187,7 @@ pub fn compile_source_with_name(
 /// # Stability
 /// The mic@1 textual form is part of the v0.2.x stability surface — see
 /// `docs/versioning.md` and `docs/ir-stability.md`.
-pub fn compile_to_mic_text(
-    source: &str,
-    opts: &CompileOptions,
-) -> Result<String, CompileError> {
+pub fn compile_to_mic_text(source: &str, opts: &CompileOptions) -> Result<String, CompileError> {
     let products = compile_source(source, opts)?;
     Ok(crate::ir::save(&products.ir))
 }

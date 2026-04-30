@@ -21,7 +21,12 @@ pub struct PipelineStage {
 }
 
 impl PipelineStage {
-    pub fn new(stage_id: u32, name: impl Into<String>, layers_first: u32, layers_last: u32) -> Self {
+    pub fn new(
+        stage_id: u32,
+        name: impl Into<String>,
+        layers_first: u32,
+        layers_last: u32,
+    ) -> Self {
         Self {
             stage_id,
             name: name.into(),
@@ -47,7 +52,11 @@ pub struct StageBoundary {
 
 impl StageBoundary {
     pub fn new(from: u32, to: u32, digest: impl Into<String>) -> Self {
-        Self { from, to, digest: digest.into() }
+        Self {
+            from,
+            to,
+            digest: digest.into(),
+        }
     }
 }
 
@@ -66,7 +75,10 @@ impl Default for PipelineGraph {
 
 impl PipelineGraph {
     pub fn new() -> Self {
-        Self { stages: Vec::new(), boundaries: Vec::new() }
+        Self {
+            stages: Vec::new(),
+            boundaries: Vec::new(),
+        }
     }
 
     /// Append a stage. Stages must be added in monotonic stage-id order.
@@ -79,11 +91,8 @@ impl PipelineGraph {
                 });
             }
             // Auto-insert the boundary between the previous and the new stage.
-            self.boundaries.push(StageBoundary::new(
-                last.stage_id,
-                stage.stage_id,
-                "sha256",
-            ));
+            self.boundaries
+                .push(StageBoundary::new(last.stage_id, stage.stage_id, "sha256"));
         }
         self.stages.push(stage);
         Ok(())
@@ -104,7 +113,10 @@ impl PipelineGraph {
         }
         for (i, b) in self.boundaries.iter().enumerate() {
             if b.from >= b.to {
-                return Err(PipelineError::CyclicBoundary { from: b.from, to: b.to });
+                return Err(PipelineError::CyclicBoundary {
+                    from: b.from,
+                    to: b.to,
+                });
             }
             let expected_from = self.stages[i].stage_id;
             let expected_to = self.stages[i + 1].stage_id;
@@ -127,10 +139,23 @@ impl PipelineGraph {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineError {
     Empty,
-    NonMonotonicStageId { last: u32, next: u32 },
-    CyclicBoundary { from: u32, to: u32 },
-    BrokenChain { boundary_index: usize, expected_from: u32, expected_to: u32 },
-    BoundaryCountMismatch { stages: usize, boundaries: usize },
+    NonMonotonicStageId {
+        last: u32,
+        next: u32,
+    },
+    CyclicBoundary {
+        from: u32,
+        to: u32,
+    },
+    BrokenChain {
+        boundary_index: usize,
+        expected_from: u32,
+        expected_to: u32,
+    },
+    BoundaryCountMismatch {
+        stages: usize,
+        boundaries: usize,
+    },
 }
 
 impl fmt::Display for PipelineError {
@@ -143,7 +168,11 @@ impl fmt::Display for PipelineError {
             PipelineError::CyclicBoundary { from, to } => {
                 write!(f, "boundary {}->{} is cyclic or self-referencing", from, to)
             }
-            PipelineError::BrokenChain { boundary_index, expected_from, expected_to } => {
+            PipelineError::BrokenChain {
+                boundary_index,
+                expected_from,
+                expected_to,
+            } => {
                 write!(
                     f,
                     "boundary at index {} should connect stage {} -> {}",
@@ -169,7 +198,10 @@ mod tests {
 
     #[test]
     fn empty_pipeline_fails_validation() {
-        assert!(matches!(PipelineGraph::new().validate_chain_continuous(), Err(PipelineError::Empty)));
+        assert!(matches!(
+            PipelineGraph::new().validate_chain_continuous(),
+            Err(PipelineError::Empty)
+        ));
     }
 
     #[test]
@@ -177,7 +209,8 @@ mod tests {
         let mut g = PipelineGraph::new();
         g.add_stage(PipelineStage::new(0, "stage0", 0, 8)).unwrap();
         g.add_stage(PipelineStage::new(1, "stage1", 8, 16)).unwrap();
-        g.add_stage(PipelineStage::new(2, "stage2", 16, 24)).unwrap();
+        g.add_stage(PipelineStage::new(2, "stage2", 16, 24))
+            .unwrap();
         g.validate_chain_continuous().unwrap();
         assert_eq!(g.total_layers(), 24);
         assert_eq!(g.boundaries.len(), 2);

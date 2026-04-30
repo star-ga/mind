@@ -965,11 +965,7 @@ pub fn test_project(opts: &TestOptions) -> Result<i32> {
     let test_files: Vec<PathBuf> = fs::read_dir(&tests_dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .map(|ext| ext == "mind")
-                .unwrap_or(false)
-        })
+        .filter(|p| p.extension().map(|ext| ext == "mind").unwrap_or(false))
         .filter(|p| {
             if let Some(ref filter) = opts.filter {
                 p.file_stem()
@@ -1000,10 +996,7 @@ pub fn test_project(opts: &TestOptions) -> Result<i32> {
     let start = std::time::Instant::now();
 
     for test_file in &test_files {
-        let name = test_file
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
+        let name = test_file.file_stem().unwrap_or_default().to_string_lossy();
         print!("  {}:", name);
 
         // Build the test file as a standalone binary
@@ -1018,10 +1011,7 @@ pub fn test_project(opts: &TestOptions) -> Result<i32> {
         let orig_manifest = fs::read_to_string(&test_manifest_path)?;
 
         // Temporarily patch entry to test file
-        let test_entry = format!(
-            "tests/{}",
-            test_file.file_name().unwrap().to_string_lossy()
-        );
+        let test_entry = format!("tests/{}", test_file.file_name().unwrap().to_string_lossy());
         let patched = orig_manifest.replace(
             &format!("entry = \"{}\"", manifest.build.entry),
             &format!("entry = \"{}\"", test_entry),
@@ -1100,11 +1090,7 @@ pub fn bench_project(opts: &BenchOptions) -> Result<i32> {
     let bench_files: Vec<PathBuf> = fs::read_dir(&bench_dir)?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .map(|ext| ext == "mind")
-                .unwrap_or(false)
-        })
+        .filter(|p| p.extension().map(|ext| ext == "mind").unwrap_or(false))
         .filter(|p| {
             if let Some(ref filter) = opts.filter {
                 p.file_stem()
@@ -1129,19 +1115,13 @@ pub fn bench_project(opts: &BenchOptions) -> Result<i32> {
     );
     println!("================================================================================");
     println!("Target: {}", target);
-    println!(
-        "Bench files: {}",
-        bench_files.len(),
-    );
+    println!("Bench files: {}", bench_files.len(),);
     println!("================================================================================\n");
 
     let mut any_fail = false;
 
     for bench_file in &bench_files {
-        let name = bench_file
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy();
+        let name = bench_file.file_stem().unwrap_or_default().to_string_lossy();
         println!("Benchmark: {}", name);
 
         // Build with release optimizations

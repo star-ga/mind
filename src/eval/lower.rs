@@ -232,7 +232,9 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             ir.instrs.push(Instr::ConstTensor(
                 dst,
                 crate::types::DType::F32,
-                dims.iter().map(|s| crate::types::ShapeDim::Known(s.parse().unwrap())).collect(),
+                dims.iter()
+                    .map(|s| crate::types::ShapeDim::Known(s.parse().unwrap()))
+                    .collect(),
                 None, // None = random fill, forces GPU materialization
             ));
             dst

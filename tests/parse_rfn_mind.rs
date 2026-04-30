@@ -54,10 +54,7 @@ fn parses_const_no_semicolon() {
 // Step 3 — type aliases
 #[test]
 fn parses_type_alias() {
-    assert!(
-        parses("type Q16_16 = i32\n"),
-        "type alias must parse"
-    );
+    assert!(parses("type Q16_16 = i32\n"), "type alias must parse");
 }
 
 #[test]
@@ -109,10 +106,7 @@ fn parses_attribute_on_fn() {
 // Step 6 — export blocks
 #[test]
 fn parses_export_block() {
-    assert!(
-        parses("export { foo, bar }\n"),
-        "export block must parse"
-    );
+    assert!(parses("export { foo, bar }\n"), "export block must parse");
 }
 
 // Step 7 — struct
@@ -133,9 +127,8 @@ fn parses_enum_decl() {
 #[test]
 #[ignore = "milestone — enable after step 5 (attributes) lands"]
 fn parses_fixed_point_mind_end_to_end() {
-    let src =
-        std::fs::read_to_string("/home/n/rfn-mind/src/fixed_point.mind")
-            .expect("fixed_point.mind must exist");
+    let src = std::fs::read_to_string("/home/n/rfn-mind/src/fixed_point.mind")
+        .expect("fixed_point.mind must exist");
     assert!(parses(&src), "fixed_point.mind must parse end-to-end");
 }
 

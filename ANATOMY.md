@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 360 | **Est. tokens:** ~457,933
-**Generated:** 2026-04-30 06:22 UTC
+**Files:** 362 | **Est. tokens:** ~460,527
+**Generated:** 2026-04-30 07:42 UTC
 
 ## Token Budget Guide
 
@@ -25,6 +25,7 @@
 | `./` | 27 | ~18,071 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
+| `.arch-mind/` | 2 | ~249 |
 | `benches/` | 5 | ~6,036 |
 | `benchmarks/` | 14 | ~24,260 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -49,14 +50,14 @@
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `scripts/` | 2 | ~2,268 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~14,931 |
+| `src/` | 7 | ~14,928 |
 | `src/ast/` | 1 | ~2,780 |
 | `src/autodiff/` | 3 | ~4,224 |
 | `src/bin/` | 2 | ~10,458 |
-| `src/cache/` | 4 | ~3,437 |
+| `src/cache/` | 4 | ~3,422 |
 | `src/diagnostics/` | 1 | ~2,230 |
-| `src/distributed/` | 6 | ~7,143 |
-| `src/eval/` | 12 | ~55,753 |
+| `src/distributed/` | 6 | ~7,453 |
+| `src/eval/` | 12 | ~57,067 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -65,16 +66,16 @@
 | `src/ir/compact/v2/` | 6 | ~15,796 |
 | `src/mlir/` | 2 | ~4,569 |
 | `src/ops/` | 2 | ~2,047 |
-| `src/opt/` | 4 | ~6,469 |
+| `src/opt/` | 4 | ~6,745 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~20,169 |
-| `src/project/` | 1 | ~9,268 |
+| `src/parser/` | 1 | ~20,640 |
+| `src/project/` | 1 | ~9,206 |
 | `src/runtime/` | 3 | ~968 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~16,610 |
+| `src/type_checker/` | 1 | ~16,673 |
 | `src/types/` | 4 | ~3,179 |
-| `tests/` | 76 | ~42,877 |
+| `tests/` | 76 | ~42,868 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -127,6 +128,10 @@
 ### `.agents/skills/mindc-development/`
 
 - `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
+### `.arch-mind/`
+
+- `last_summary.json` (~159 tok, small) — Keys: _aggregated_for_phase_a, _comment, _languages, _repo_root, edges
+- `scan.json` (~90 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `benches/`
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
@@ -343,7 +348,7 @@
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `fingerprint.rs` (~526 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `mod.rs` (~979 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `mod.rs` (~964 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/`
 
@@ -357,21 +362,21 @@
 - `allreduce.rs` (~1011 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `invariants.rs` (~1416 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~580 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `pipeline.rs` (~1891 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `shard.rs` (~1432 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `pipeline.rs` (~1973 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `shard.rs` (~1660 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/eval/`
 
 - `autodiff.rs` (~13879 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
-- `ir_interp.rs` (~2823 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~3782 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_interp.rs` (~3096 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~3792 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~2563 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8194 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~902 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~17106 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~18137 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -422,9 +427,9 @@
 - `mod.rs` (~224 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
-- `fold.rs` (~824 tok, large) — Copyright 2025 STARGA Inc.
+- `fold.rs` (~1051 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_canonical.rs` (~1415 tok, large) — Copyright 2025 STARGA Inc.
-- `memory_layout.rs` (~4050 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `memory_layout.rs` (~4099 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
@@ -432,13 +437,13 @@
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `mod.rs` (~20169 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~20640 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~2031 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~2028 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~9268 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9206 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -462,7 +467,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~16610 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~16673 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -537,7 +542,7 @@
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
 - `ir_core.rs` (~847 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
-- `ir_load_save.rs` (~710 tok, large) — Copyright 2025 STARGA Inc.
+- `ir_load_save.rs` (~715 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 - `ir_stub.rs` (~219 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/ir_verification/`
@@ -569,7 +574,7 @@
 - `mlir_opt.rs` (~424 tok, medium) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
-- `parse_rfn_mind.rs` (~1249 tok, large) — Parse-target tests for rfn-mind syntax acceptance (Phase 10.5).
+- `parse_rfn_mind.rs` (~1235 tok, large) — Parse-target tests for rfn-mind syntax acceptance (Phase 10.5).
 - `pipeline.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.

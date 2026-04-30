@@ -275,19 +275,30 @@ pub fn eval_module_value_with_env_mode(
         }
         let diags = crate::type_checker::check_module_types(m, src, &tenv);
         // Filter out unknown-identifier errors for loop variables
-        let real_diags: Vec<_> = diags.into_iter().filter(|d| {
-            // Keep all non-E2001 errors; for E2001, check if it's about a for-loop var
-            if d.code != "E2001" { return true; }
-            // Check if any for-loop declares this variable
-            !m.items.iter().any(|item| {
-                if let Node::For { var, body, .. } = item {
-                    d.message.contains(var) ||
-                    body.iter().any(|s| {
-                        if let Node::For { var: inner_var, .. } = s { d.message.contains(inner_var) } else { false }
-                    })
-                } else { false }
+        let real_diags: Vec<_> = diags
+            .into_iter()
+            .filter(|d| {
+                // Keep all non-E2001 errors; for E2001, check if it's about a for-loop var
+                if d.code != "E2001" {
+                    return true;
+                }
+                // Check if any for-loop declares this variable
+                !m.items.iter().any(|item| {
+                    if let Node::For { var, body, .. } = item {
+                        d.message.contains(var)
+                            || body.iter().any(|s| {
+                                if let Node::For { var: inner_var, .. } = s {
+                                    d.message.contains(inner_var)
+                                } else {
+                                    false
+                                }
+                            })
+                    } else {
+                        false
+                    }
+                })
             })
-        }).collect();
+            .collect();
         if !real_diags.is_empty() {
             let msg = real_diags
                 .iter()
@@ -386,11 +397,21 @@ pub fn eval_module_value_with_env_mode(
                     }
                 }
             }
-            Node::For { var, start, end, body, .. } => {
+            Node::For {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
                 // Module-level for-loop with mutable environment propagation
                 let s = match eval_value_expr_mode(start, &venv, &tensor_env, mode.clone())? {
                     Value::Int(n) => n,
-                    _ => return Err(EvalError::UnsupportedMsg("for-loop start must be int".into())),
+                    _ => {
+                        return Err(EvalError::UnsupportedMsg(
+                            "for-loop start must be int".into(),
+                        ))
+                    }
                 };
                 let e = match eval_value_expr_mode(end, &venv, &tensor_env, mode.clone())? {
                     Value::Int(n) => n,
@@ -401,7 +422,8 @@ pub fn eval_module_value_with_env_mode(
                     for stmt in body {
                         match stmt {
                             Node::Assign { name, value, .. } => {
-                                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
+                                let rhs =
+                                    eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                                 if let Value::Int(n) = &rhs {
                                     env.insert(name.clone(), *n);
                                 }
@@ -409,7 +431,8 @@ pub fn eval_module_value_with_env_mode(
                                 last = rhs;
                             }
                             Node::Let { name, value, .. } => {
-                                let rhs = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
+                                let rhs =
+                                    eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                                 if let Value::Int(n) = &rhs {
                                     env.insert(name.clone(), *n);
                                 }
@@ -417,7 +440,8 @@ pub fn eval_module_value_with_env_mode(
                                 last = rhs;
                             }
                             _ => {
-                                last = eval_value_expr_mode(stmt, &venv, &tensor_env, mode.clone())?;
+                                last =
+                                    eval_value_expr_mode(stmt, &venv, &tensor_env, mode.clone())?;
                             }
                         }
                     }
@@ -868,13 +892,15 @@ pub(crate) fn eval_value_expr_mode(
             let mut hasher = DefaultHasher::new();
             std::time::SystemTime::now().hash(&mut hasher);
             let mut seed = hasher.finish();
-            let data: Vec<f32> = (0..n).map(|_| {
-                // xorshift64
-                seed ^= seed << 13;
-                seed ^= seed >> 7;
-                seed ^= seed << 17;
-                (seed as f32 / u64::MAX as f32) * 2.0 - 1.0
-            }).collect();
+            let data: Vec<f32> = (0..n)
+                .map(|_| {
+                    // xorshift64
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    (seed as f32 / u64::MAX as f32) * 2.0 - 1.0
+                })
+                .collect();
             #[cfg(feature = "cpu-buffers")]
             let mut t = TensorVal::new(DType::F32, dims, None);
             #[cfg(not(feature = "cpu-buffers"))]
@@ -973,10 +999,20 @@ pub(crate) fn eval_value_expr_mode(
             }
             Ok(Value::Tuple(vals))
         }
-        Node::For { var, start, end, body, .. } => {
+        Node::For {
+            var,
+            start,
+            end,
+            body,
+            ..
+        } => {
             let s = match eval_value_expr_mode(start, env, tensor_env, mode.clone())? {
                 Value::Int(n) => n,
-                _ => return Err(EvalError::UnsupportedMsg("for-loop start must be int".into())),
+                _ => {
+                    return Err(EvalError::UnsupportedMsg(
+                        "for-loop start must be int".into(),
+                    ))
+                }
             };
             let e = match eval_value_expr_mode(end, env, tensor_env, mode.clone())? {
                 Value::Int(n) => n,
@@ -990,17 +1026,20 @@ pub(crate) fn eval_value_expr_mode(
                     // Handle assignments: propagate back to loop_env
                     match stmt {
                         Node::Assign { name, value, .. } => {
-                            let val = eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            let val =
+                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
                         Node::Let { name, value, .. } => {
-                            let val = eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            let val =
+                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
                         _ => {
-                            result = eval_value_expr_mode(stmt, &loop_env, tensor_env, mode.clone())?;
+                            result =
+                                eval_value_expr_mode(stmt, &loop_env, tensor_env, mode.clone())?;
                         }
                     }
                 }
@@ -1031,14 +1070,20 @@ pub(crate) fn eval_value_expr_mode(
             eprintln!("{}", parts.join(" "));
             Ok(Value::Int(0))
         }
-        Node::Neg { operand, .. } => {
-            match eval_value_expr_mode(operand, env, tensor_env, mode)? {
-                Value::Int(n) => Ok(Value::Int(-n)),
-                Value::Float(f) => Ok(Value::Float(-f)),
-                other => Err(EvalError::UnsupportedMsg(format!("cannot negate {:?}", other))),
-            }
-        }
-        Node::MethodCall { receiver, method, args, .. } => {
+        Node::Neg { operand, .. } => match eval_value_expr_mode(operand, env, tensor_env, mode)? {
+            Value::Int(n) => Ok(Value::Int(-n)),
+            Value::Float(f) => Ok(Value::Float(-f)),
+            other => Err(EvalError::UnsupportedMsg(format!(
+                "cannot negate {:?}",
+                other
+            ))),
+        },
+        Node::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
             let recv = eval_value_expr_mode(receiver, env, tensor_env, mode.clone())?;
             let mut eval_args = Vec::with_capacity(args.len());
             for arg in args {
@@ -1046,7 +1091,9 @@ pub(crate) fn eval_value_expr_mode(
             }
             eval_method_call(recv, method, &eval_args)
         }
-        Node::FieldAccess { receiver, field, .. } => {
+        Node::FieldAccess {
+            receiver, field, ..
+        } => {
             let recv = eval_value_expr_mode(receiver, env, tensor_env, mode)?;
             eval_field_access(recv, field)
         }
@@ -1066,7 +1113,9 @@ pub(crate) fn eval_value_expr_mode(
         // preview level (the type checker performs the cast checks).
         Node::As { expr, .. } => eval_value_expr_mode(expr, env, tensor_env, mode),
         // `a && b`, `a || b` — short-circuit boolean evaluation in i32.
-        Node::Logical { op, left, right, .. } => {
+        Node::Logical {
+            op, left, right, ..
+        } => {
             let l = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
             let l_truthy = matches!(l, Value::Int(n) if n != 0);
             match op {
@@ -1085,7 +1134,9 @@ pub(crate) fn eval_value_expr_mode(
             Ok(Value::Int(matches!(r, Value::Int(n) if n != 0) as i64))
         }
         // Bitwise: integer-only at preview level.
-        Node::Bitwise { op, left, right, .. } => {
+        Node::Bitwise {
+            op, left, right, ..
+        } => {
             let l = eval_value_expr_mode(left, env, tensor_env, mode.clone())?;
             let r = eval_value_expr_mode(right, env, tensor_env, mode)?;
             match (l, r) {
@@ -1115,48 +1166,84 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
                 for d in &t.shape {
                     match d {
                         ShapeDim::Known(n) => total *= *n as i64,
-                        ShapeDim::Sym(_) => return Err(EvalError::UnsupportedMsg(
-                            "cannot compute .len() on tensor with symbolic dimensions".into())),
+                        ShapeDim::Sym(_) => {
+                            return Err(EvalError::UnsupportedMsg(
+                                "cannot compute .len() on tensor with symbolic dimensions".into(),
+                            ))
+                        }
                     }
                 }
                 Ok(Value::Int(total))
             }
-            other => Err(EvalError::UnsupportedMsg(format!("no method .len() for {:?}", other))),
+            other => Err(EvalError::UnsupportedMsg(format!(
+                "no method .len() for {:?}",
+                other
+            ))),
         },
         "last" => match &receiver {
             Value::Tuple(items) => {
-                if items.is_empty() { Err(EvalError::OutOfBounds) }
-                else { Ok(items.last().unwrap().clone()) }
+                if items.is_empty() {
+                    Err(EvalError::OutOfBounds)
+                } else {
+                    Ok(items.last().unwrap().clone())
+                }
             }
-            other => Err(EvalError::UnsupportedMsg(format!("no method .last() for {:?}", other))),
+            other => Err(EvalError::UnsupportedMsg(format!(
+                "no method .last() for {:?}",
+                other
+            ))),
         },
         "clone" => Ok(receiver),
         "item" => match &receiver {
             Value::Tensor(t) => {
                 let total = t.shape.iter().try_fold(1usize, |acc, d| match d {
-                    ShapeDim::Known(n) => Some(acc * n), ShapeDim::Sym(_) => None,
+                    ShapeDim::Known(n) => Some(acc * n),
+                    ShapeDim::Sym(_) => None,
                 });
                 match total {
                     Some(1) => {
-                        if let Some(fill) = t.fill { Ok(Value::Float(fill)) }
-                        else {
+                        if let Some(fill) = t.fill {
+                            Ok(Value::Float(fill))
+                        } else {
                             #[cfg(feature = "cpu-buffers")]
-                            { match &t.buf {
-                                Some(value::Buffer::F32(data)) if data.len() == 1 => Ok(Value::Float(data[0] as f64)),
-                                Some(value::Buffer::I32(data)) if data.len() == 1 => Ok(Value::Int(data[0] as i64)),
-                                _ => Err(EvalError::UnsupportedMsg(".item() requires a materialized single-element tensor".into())),
-                            } }
+                            {
+                                match &t.buf {
+                                    Some(value::Buffer::F32(data)) if data.len() == 1 => {
+                                        Ok(Value::Float(data[0] as f64))
+                                    }
+                                    Some(value::Buffer::I32(data)) if data.len() == 1 => {
+                                        Ok(Value::Int(data[0] as i64))
+                                    }
+                                    _ => Err(EvalError::UnsupportedMsg(
+                                        ".item() requires a materialized single-element tensor"
+                                            .into(),
+                                    )),
+                                }
+                            }
                             #[cfg(not(feature = "cpu-buffers"))]
-                            Err(EvalError::UnsupportedMsg(".item() requires a tensor with a known fill value".into()))
+                            Err(EvalError::UnsupportedMsg(
+                                ".item() requires a tensor with a known fill value".into(),
+                            ))
                         }
                     }
-                    Some(n) => Err(EvalError::UnsupportedMsg(format!(".item() requires a scalar tensor, got {} elements", n))),
-                    None => Err(EvalError::UnsupportedMsg(".item() cannot be called on tensor with symbolic dims".into())),
+                    Some(n) => Err(EvalError::UnsupportedMsg(format!(
+                        ".item() requires a scalar tensor, got {} elements",
+                        n
+                    ))),
+                    None => Err(EvalError::UnsupportedMsg(
+                        ".item() cannot be called on tensor with symbolic dims".into(),
+                    )),
                 }
             }
-            other => Err(EvalError::UnsupportedMsg(format!("no method .item() for {:?}", other))),
+            other => Err(EvalError::UnsupportedMsg(format!(
+                "no method .item() for {:?}",
+                other
+            ))),
         },
-        _ => Err(EvalError::UnsupportedMsg(format!("unknown method .{}()", method))),
+        _ => Err(EvalError::UnsupportedMsg(format!(
+            "unknown method .{}()",
+            method
+        ))),
     }
 }
 
@@ -1165,9 +1252,15 @@ fn eval_field_access(receiver: Value, field: &str) -> Result<Value, EvalError> {
         "len" => match &receiver {
             Value::Tuple(items) => Ok(Value::Int(items.len() as i64)),
             Value::Str(s) => Ok(Value::Int(s.len() as i64)),
-            _ => Err(EvalError::UnsupportedMsg(format!("no field .len for {:?}", receiver))),
+            _ => Err(EvalError::UnsupportedMsg(format!(
+                "no field .len for {:?}",
+                receiver
+            ))),
         },
-        _ => Err(EvalError::UnsupportedMsg(format!("unknown field .{}", field))),
+        _ => Err(EvalError::UnsupportedMsg(format!(
+            "unknown field .{}",
+            field
+        ))),
     }
 }
 
@@ -1230,13 +1323,54 @@ fn apply_float_op(op: BinOp, l: f64, r: f64) -> Result<f64, EvalError> {
         BinOp::Add => l + r,
         BinOp::Sub => l - r,
         BinOp::Mul => l * r,
-        BinOp::Div => { if r == 0.0 { return Err(EvalError::DivZero); } l / r }
-        BinOp::Lt => if l < r { 1.0 } else { 0.0 },
-        BinOp::Le => if l <= r { 1.0 } else { 0.0 },
-        BinOp::Gt => if l > r { 1.0 } else { 0.0 },
-        BinOp::Ge => if l >= r { 1.0 } else { 0.0 },
-        BinOp::Eq => if l == r { 1.0 } else { 0.0 },
-        BinOp::Ne => if l != r { 1.0 } else { 0.0 },
+        BinOp::Div => {
+            if r == 0.0 {
+                return Err(EvalError::DivZero);
+            }
+            l / r
+        }
+        BinOp::Lt => {
+            if l < r {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Le => {
+            if l <= r {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Gt => {
+            if l > r {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Ge => {
+            if l >= r {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Eq => {
+            if l == r {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Ne => {
+            if l != r {
+                1.0
+            } else {
+                0.0
+            }
+        }
     })
 }
 
@@ -1317,7 +1451,11 @@ fn apply_tensor_scalar(
                             exec::cpu::exec_div_scalar(&tensor_exec, scalar as f32, tensor_on_left)
                         }
                         _ => {
-                            return Ok(Value::Tensor(TensorVal::new(tensor.dtype.clone(), tensor.shape.clone(), Some(0.0))));
+                            return Ok(Value::Tensor(TensorVal::new(
+                                tensor.dtype.clone(),
+                                tensor.shape.clone(),
+                                Some(0.0),
+                            )));
                         }
                     };
                     match exec_res {
@@ -1363,12 +1501,48 @@ fn apply_tensor_scalar(
                         scalar / f
                     }
                 }
-                BinOp::Lt => if (tensor_on_left && f < scalar) || (!tensor_on_left && scalar < f) { 1.0 } else { 0.0 },
-                BinOp::Le => if (tensor_on_left && f <= scalar) || (!tensor_on_left && scalar <= f) { 1.0 } else { 0.0 },
-                BinOp::Gt => if (tensor_on_left && f > scalar) || (!tensor_on_left && scalar > f) { 1.0 } else { 0.0 },
-                BinOp::Ge => if (tensor_on_left && f >= scalar) || (!tensor_on_left && scalar >= f) { 1.0 } else { 0.0 },
-                BinOp::Eq => if f == scalar { 1.0 } else { 0.0 },
-                BinOp::Ne => if f != scalar { 1.0 } else { 0.0 },
+                BinOp::Lt => {
+                    if (tensor_on_left && f < scalar) || (!tensor_on_left && scalar < f) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinOp::Le => {
+                    if (tensor_on_left && f <= scalar) || (!tensor_on_left && scalar <= f) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinOp::Gt => {
+                    if (tensor_on_left && f > scalar) || (!tensor_on_left && scalar > f) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinOp::Ge => {
+                    if (tensor_on_left && f >= scalar) || (!tensor_on_left && scalar >= f) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinOp::Eq => {
+                    if f == scalar {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
+                BinOp::Ne => {
+                    if f != scalar {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                }
             })
         }
         None => None,
@@ -1487,7 +1661,9 @@ fn apply_tensor_tensor(
                         BinOp::Sub => exec::cpu::exec_sub(&left_exec, &right_exec),
                         BinOp::Mul => exec::cpu::exec_mul(&left_exec, &right_exec),
                         BinOp::Div => exec::cpu::exec_div(&left_exec, &right_exec),
-                        _ => Err(exec::cpu::ExecError::Unsupported("comparison op on tensors".to_string())),
+                        _ => Err(exec::cpu::ExecError::Unsupported(
+                            "comparison op on tensors".to_string(),
+                        )),
                     };
                     match exec_res {
                         Ok(t) => return Ok(Value::Tensor(t)),
@@ -1547,12 +1723,48 @@ fn apply_tensor_tensor(
             BinOp::Sub => a - b,
             BinOp::Mul => a * b,
             BinOp::Div => a / b,
-            BinOp::Lt => if a < b { 1.0 } else { 0.0 },
-            BinOp::Le => if a <= b { 1.0 } else { 0.0 },
-            BinOp::Gt => if a > b { 1.0 } else { 0.0 },
-            BinOp::Ge => if a >= b { 1.0 } else { 0.0 },
-            BinOp::Eq => if a == b { 1.0 } else { 0.0 },
-            BinOp::Ne => if a != b { 1.0 } else { 0.0 },
+            BinOp::Lt => {
+                if a < b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Le => {
+                if a <= b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Gt => {
+                if a > b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Ge => {
+                if a >= b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Eq => {
+                if a == b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Ne => {
+                if a != b {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }),
         _ => None,
     };
