@@ -84,9 +84,9 @@ pub fn check_gather_order_lexicographic(op: &AllGatherOp) -> Result<(), Invarian
 
 /// Verify `evidence_chain_continuous` against a pipeline graph.
 pub fn check_evidence_chain_continuous(graph: &PipelineGraph) -> Result<(), InvariantViolation> {
-    graph.validate_chain_continuous().map_err(|e: PipelineError| {
-        InvariantViolation::BrokenEvidenceChain(e.to_string())
-    })
+    graph
+        .validate_chain_continuous()
+        .map_err(|e: PipelineError| InvariantViolation::BrokenEvidenceChain(e.to_string()))
 }
 
 #[cfg(test)]

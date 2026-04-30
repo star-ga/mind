@@ -86,12 +86,7 @@ mod tests {
     #[test]
     fn round_trip_through_in_memory_cache() {
         let mut c = CompilationCache::in_memory();
-        let key = CacheKey::new(
-            "0.2.6",
-            ProfileTag::Default,
-            "deadbeef",
-            "cafebabe",
-        );
+        let key = CacheKey::new("0.2.6", ProfileTag::Default, "deadbeef", "cafebabe");
         let entry = CacheEntry::new(b"<ir bytes>".to_vec(), 1234);
         c.insert(key.clone(), entry.clone());
         let got = c.lookup(&key).expect("must hit cache");

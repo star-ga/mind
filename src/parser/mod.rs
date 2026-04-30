@@ -101,7 +101,10 @@ impl<'a> P<'a> {
                 }
             }
             // Skip line comments
-            if self.pos + 1 < self.b.len() && self.b[self.pos] == b'/' && self.b[self.pos + 1] == b'/' {
+            if self.pos + 1 < self.b.len()
+                && self.b[self.pos] == b'/'
+                && self.b[self.pos + 1] == b'/'
+            {
                 while self.pos < self.b.len() && self.b[self.pos] != b'\n' {
                     self.pos += 1;
                 }
@@ -437,11 +440,30 @@ impl<'a> P<'a> {
         let pre_pos = self.pos;
         if let Some(name) = self.word() {
             // Reject keywords reused at type position to avoid odd matches.
-            if matches!(name, "fn" | "let" | "if" | "else" | "for" | "in" | "return"
-                | "module" | "const" | "type" | "struct" | "enum" | "use" | "export"
-                | "import" | "print" | "diff") {
+            if matches!(
+                name,
+                "fn" | "let"
+                    | "if"
+                    | "else"
+                    | "for"
+                    | "in"
+                    | "return"
+                    | "module"
+                    | "const"
+                    | "type"
+                    | "struct"
+                    | "enum"
+                    | "use"
+                    | "export"
+                    | "import"
+                    | "print"
+                    | "diff"
+            ) {
                 self.pos = pre_pos;
-                return Err(self.err(format!("expected type annotation, found keyword `{}`", name)));
+                return Err(self.err(format!(
+                    "expected type annotation, found keyword `{}`",
+                    name
+                )));
             }
             return Ok(TypeAnn::Named(name.to_string()));
         }
@@ -482,7 +504,10 @@ impl<'a> P<'a> {
     fn parse_stmt(&mut self) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
         // Skip line comments
-        while self.pos + 1 < self.b.len() && self.b[self.pos] == b'/' && self.b[self.pos + 1] == b'/' {
+        while self.pos + 1 < self.b.len()
+            && self.b[self.pos] == b'/'
+            && self.b[self.pos + 1] == b'/'
+        {
             while self.pos < self.b.len() && self.b[self.pos] != b'\n' {
                 self.pos += 1;
             }
@@ -672,7 +697,10 @@ impl<'a> P<'a> {
     }
 
     /// Dispatch on the attributed item that follows a `[...]` attribute list.
-    fn parse_attributed_item(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+    fn parse_attributed_item(
+        &mut self,
+        attrs: Vec<crate::ast::Attribute>,
+    ) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
         if self.at_keyword(b"module") {
             return self.parse_module_block(attrs);
@@ -696,7 +724,9 @@ impl<'a> P<'a> {
             let _ = attrs;
             return self.parse_fn_def();
         }
-        Err(self.err("expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into()))
+        Err(self.err(
+            "expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into(),
+        ))
     }
 
     /// Parse `const NAME[: type] = expr[;]`.
@@ -762,7 +792,10 @@ impl<'a> P<'a> {
     /// Parse `module NAME { items }` and unwrap the inner items into a
     /// surrounding `Block` so the module walker sees them at flat depth.
     /// Per architect review: no AST module-decl node; pure unwrap.
-    fn parse_module_block(&mut self, _attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+    fn parse_module_block(
+        &mut self,
+        _attrs: Vec<crate::ast::Attribute>,
+    ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "module"
         self.skip_ws();
@@ -779,8 +812,7 @@ impl<'a> P<'a> {
         while !self.at_end() && !self.at(b'}') {
             stmts.push(self.parse_stmt()?);
             self.skip_ws();
-            while self.pos < self.b.len()
-                && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n')
+            while self.pos < self.b.len() && (self.b[self.pos] == b';' || self.b[self.pos] == b'\n')
             {
                 self.pos += 1;
                 self.skip_ws();
@@ -1151,7 +1183,10 @@ impl<'a> P<'a> {
         let start_expr = self.parse_atom()?;
         self.skip_ws();
         // Expect '..'
-        if !(self.pos + 1 < self.b.len() && self.b[self.pos] == b'.' && self.b[self.pos + 1] == b'.') {
+        if !(self.pos + 1 < self.b.len()
+            && self.b[self.pos] == b'.'
+            && self.b[self.pos + 1] == b'.')
+        {
             return Err(self.err("expected '..' in range".into()));
         }
         self.pos += 2;
@@ -1434,9 +1469,13 @@ impl<'a> P<'a> {
                             args.push(self.parse_call_arg()?);
                             loop {
                                 self.skip_ws_and_newlines();
-                                if !self.eat(b',') { break; }
+                                if !self.eat(b',') {
+                                    break;
+                                }
                                 self.skip_ws_and_newlines();
-                                if self.at(b')') { break; }
+                                if self.at(b')') {
+                                    break;
+                                }
                                 args.push(self.parse_call_arg()?);
                             }
                         }
@@ -1471,16 +1510,25 @@ impl<'a> P<'a> {
         if self.at_end() {
             return Err(self.err("unexpected end of input".into()));
         }
-        if self.at(b'(') { return self.parse_tuple_or_paren(); }
-        if self.at(b'[') { return self.parse_array_lit(); }
-        if self.at(b'"') { return self.parse_string_lit(); }
+        if self.at(b'(') {
+            return self.parse_tuple_or_paren();
+        }
+        if self.at(b'[') {
+            return self.parse_array_lit();
+        }
+        if self.at(b'"') {
+            return self.parse_string_lit();
+        }
         if self.at(b'-') {
             let start = self.pos;
             self.advance();
             self.skip_ws();
             let operand = self.parse_atom()?;
             let span = Span::new(start, self.pos);
-            return Ok(Node::Neg { operand: Box::new(operand), span });
+            return Ok(Node::Neg {
+                operand: Box::new(operand),
+                span,
+            });
         }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
             return self.parse_number_lit();
@@ -1500,70 +1548,100 @@ impl<'a> P<'a> {
                 let saved = self.pos;
                 match self.parse_tensor_sum(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.sum".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.sum".into(), start)
+                    }
                 }
             }
             "tensor.mean" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_mean(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.mean".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.mean".into(), start)
+                    }
                 }
             }
             "tensor.reshape" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_reshape(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.reshape".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.reshape".into(), start)
+                    }
                 }
             }
             "tensor.expand_dims" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_expand_dims(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.expand_dims".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.expand_dims".into(), start)
+                    }
                 }
             }
             "tensor.squeeze" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_squeeze(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.squeeze".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.squeeze".into(), start)
+                    }
                 }
             }
             "tensor.transpose" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_transpose(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.transpose".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.transpose".into(), start)
+                    }
                 }
             }
             "tensor.index" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_index(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.index".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.index".into(), start)
+                    }
                 }
             }
             "tensor.slice_stride" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_slice_stride(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.slice_stride".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.slice_stride".into(), start)
+                    }
                 }
             }
             "tensor.slice" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_slice(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.slice".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.slice".into(), start)
+                    }
                 }
             }
             "tensor.gather" if self.at(b'(') => {
                 let saved = self.pos;
                 match self.parse_tensor_gather(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.gather".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.gather".into(), start)
+                    }
                 }
             }
             "tensor.dot" if self.at(b'(') => self.parse_tensor_dot(start),
@@ -1574,7 +1652,10 @@ impl<'a> P<'a> {
                 let saved = self.pos;
                 match self.parse_tensor_conv2d(start) {
                     Ok(n) => Ok(n),
-                    Err(_) => { self.pos = saved; self.parse_generic_call("tensor.conv2d".into(), start) }
+                    Err(_) => {
+                        self.pos = saved;
+                        self.parse_generic_call("tensor.conv2d".into(), start)
+                    }
                 }
             }
             _ => {
@@ -1627,14 +1708,19 @@ impl<'a> P<'a> {
             if self.pos < self.b.len() && (self.b[self.pos] == b'e' || self.b[self.pos] == b'E') {
                 num_str.push('e');
                 self.pos += 1;
-                if self.pos < self.b.len() && (self.b[self.pos] == b'-' || self.b[self.pos] == b'+') {
+                if self.pos < self.b.len() && (self.b[self.pos] == b'-' || self.b[self.pos] == b'+')
+                {
                     num_str.push(self.b[self.pos] as char);
                     self.pos += 1;
                 }
-                let exp = self.digits().ok_or_else(|| self.err("expected exponent digits".into()))?;
+                let exp = self
+                    .digits()
+                    .ok_or_else(|| self.err("expected exponent digits".into()))?;
                 num_str.push_str(&exp);
             }
-            let val: f64 = num_str.parse().map_err(|_| self.err("invalid float".into()))?;
+            let val: f64 = num_str
+                .parse()
+                .map_err(|_| self.err("invalid float".into()))?;
             let span = Span::new(start, self.pos);
             return Ok(Node::Lit(Literal::Float(val), span));
         }
@@ -1647,9 +1733,13 @@ impl<'a> P<'a> {
                 num_str.push(self.b[self.pos] as char);
                 self.pos += 1;
             }
-            let exp = self.digits().ok_or_else(|| self.err("expected exponent digits".into()))?;
+            let exp = self
+                .digits()
+                .ok_or_else(|| self.err("expected exponent digits".into()))?;
             num_str.push_str(&exp);
-            let val: f64 = num_str.parse().map_err(|_| self.err("invalid float".into()))?;
+            let val: f64 = num_str
+                .parse()
+                .map_err(|_| self.err("invalid float".into()))?;
             let span = Span::new(start, self.pos);
             return Ok(Node::Lit(Literal::Float(val), span));
         }
@@ -1738,7 +1828,9 @@ impl<'a> P<'a> {
 
     fn try_ident(&mut self) -> Option<String> {
         let start = self.pos;
-        if self.pos >= self.b.len() || !(self.b[self.pos].is_ascii_alphabetic() || self.b[self.pos] == b'_') {
+        if self.pos >= self.b.len()
+            || !(self.b[self.pos].is_ascii_alphabetic() || self.b[self.pos] == b'_')
+        {
             return None;
         }
         while self.pos < self.b.len()
@@ -2156,15 +2248,27 @@ impl<'a> P<'a> {
         self.expect(b'(')?;
         let mut dims = Vec::new();
         self.skip_ws_and_newlines();
-        let d = self.digits().ok_or_else(|| self.err("expected dimension".into()))?;
-        dims.push(d.parse::<usize>().map_err(|_| self.err("invalid dimension".into()))?);
+        let d = self
+            .digits()
+            .ok_or_else(|| self.err("expected dimension".into()))?;
+        dims.push(
+            d.parse::<usize>()
+                .map_err(|_| self.err("invalid dimension".into()))?,
+        );
         loop {
             self.skip_ws_and_newlines();
-            if !self.at(b',') { break; }
+            if !self.at(b',') {
+                break;
+            }
             self.advance(); // consume the comma
             self.skip_ws_and_newlines();
-            let d = self.digits().ok_or_else(|| self.err("expected dimension".into()))?;
-            dims.push(d.parse::<usize>().map_err(|_| self.err("invalid dimension".into()))?);
+            let d = self
+                .digits()
+                .ok_or_else(|| self.err("expected dimension".into()))?;
+            dims.push(
+                d.parse::<usize>()
+                    .map_err(|_| self.err("invalid dimension".into()))?,
+            );
         }
         self.skip_ws_and_newlines();
         self.expect(b')')?;

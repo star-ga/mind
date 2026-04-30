@@ -240,12 +240,48 @@ fn tensor_scalar(op: BinOp, tensor: TensorVal, scalar: f64, tensor_left: bool) -
                 scalar / f
             }
         }
-        BinOp::Lt => if (tensor_left && f < scalar) || (!tensor_left && scalar < f) { 1.0 } else { 0.0 },
-        BinOp::Le => if (tensor_left && f <= scalar) || (!tensor_left && scalar <= f) { 1.0 } else { 0.0 },
-        BinOp::Gt => if (tensor_left && f > scalar) || (!tensor_left && scalar > f) { 1.0 } else { 0.0 },
-        BinOp::Ge => if (tensor_left && f >= scalar) || (!tensor_left && scalar >= f) { 1.0 } else { 0.0 },
-        BinOp::Eq => if f == scalar { 1.0 } else { 0.0 },
-        BinOp::Ne => if f != scalar { 1.0 } else { 0.0 },
+        BinOp::Lt => {
+            if (tensor_left && f < scalar) || (!tensor_left && scalar < f) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Le => {
+            if (tensor_left && f <= scalar) || (!tensor_left && scalar <= f) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Gt => {
+            if (tensor_left && f > scalar) || (!tensor_left && scalar > f) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Ge => {
+            if (tensor_left && f >= scalar) || (!tensor_left && scalar >= f) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Eq => {
+            if f == scalar {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        BinOp::Ne => {
+            if f != scalar {
+                1.0
+            } else {
+                0.0
+            }
+        }
     });
     Value::Tensor(TensorVal::new(dtype, shape, fill))
 }
@@ -259,12 +295,48 @@ fn tensor_tensor(op: BinOp, a: TensorVal, b: TensorVal) -> Value {
             BinOp::Sub => x - y,
             BinOp::Mul => x * y,
             BinOp::Div => x / y,
-            BinOp::Lt => if x < y { 1.0 } else { 0.0 },
-            BinOp::Le => if x <= y { 1.0 } else { 0.0 },
-            BinOp::Gt => if x > y { 1.0 } else { 0.0 },
-            BinOp::Ge => if x >= y { 1.0 } else { 0.0 },
-            BinOp::Eq => if x == y { 1.0 } else { 0.0 },
-            BinOp::Ne => if x != y { 1.0 } else { 0.0 },
+            BinOp::Lt => {
+                if x < y {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Le => {
+                if x <= y {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Gt => {
+                if x > y {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Ge => {
+                if x >= y {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Eq => {
+                if x == y {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            BinOp::Ne => {
+                if x != y {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }),
         _ => None,
     };
