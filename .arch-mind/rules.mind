@@ -1,0 +1,54 @@
+// mind (language compiler / runtime root) architectural-governance rules
+//
+// Enforced via:
+//   arch-mind check-rules --repo . --fixture .arch-mind/last_summary.json \
+//                         --rules .arch-mind/rules.mind --mode enforce
+//
+// mind is the language repo (compiler + runtime root). Big surface
+// area (210 modules). Many modules legitimately touch f32/f64 because
+// the language describes them as types — purity is correspondingly
+// modest. Rules pin the present state and catch regressions.
+//
+// Copyright 2026 STARGA, Inc. — Apache-2.0.
+
+[protection]
+module mind_root_rules {
+
+    [arch_rule(acyclicity_q16, eq)]
+    const NO_CYCLES: i32 = 10000
+
+    [arch_rule(mcp_tool_isolation, eq)]
+    const MCP_ISOLATION: i32 = 10000
+
+    // Currently 9817.
+    [arch_rule(redundancy_q16, ge)]
+    const REDUNDANCY_FLOOR: i32 = 9500
+
+    // Currently 4736 (110/210 modules touch f32/f64 — language has
+    // float types, expected). Floor catches a 2-pp drop.
+    [arch_rule(q16_determinism_purity, ge)]
+    const PURITY_FLOOR: i32 = 4500
+
+    // Currently 4177.
+    [arch_rule(equality_q16, ge)]
+    const EQUALITY_FLOOR: i32 = 3700
+
+    // Currently 8000.
+    [arch_rule(depth_q16, ge)]
+    const DEPTH_FLOOR: i32 = 7000
+
+    // Currently 625 — heavy fanout to std/external crates. Real
+    // architectural signal; floor pinned conservatively at 500 so
+    // CI fires on regression but doesn't fight the present state.
+    [arch_rule(modularity_q16, ge)]
+    const MODULARITY_FLOOR: i32 = 500
+
+    // Currently 15 (2 of 1278 declarations protected). Floor 0 — when
+    // the kernel side adds [protection] coverage, lift accordingly.
+    [arch_rule(governance_kernel_coverage, ge)]
+    const GOVERNANCE_FLOOR: i32 = 0
+
+    // Currently 1.
+    [arch_rule(evidence_chain_density, ge)]
+    const EVIDENCE_FLOOR: i32 = 0
+}

@@ -1,0 +1,12 @@
+{
+  "_fixture": "/home/n/mind/.arch-mind/last_summary.json",
+  "acyclicity_q16": 655360000,
+  "depth_q16": 524288000,
+  "equality_q16": 309327835,
+  "evidence_chain_density": 108306,
+  "governance_kernel_coverage": 7038472,
+  "mcp_tool_isolation": 655360000,
+  "modularity_q16": 40960000,
+  "q16_determinism_purity": 393216000,
+  "redundancy_q16": 646381568
+}
