@@ -497,6 +497,47 @@ Together they represent the roadmap toward **MIND v1.0** and production-ready ad
 
 ---
 
+## TRIZ-Driven Direction
+
+This section captures the *criterion* against which roadmap items are evaluated, separate from the items themselves. It is direction-setting, not feature-generating. Every entry above is auditable against the Ideal Final Result below; every future entry should be too.
+
+### Ideal Final Result (IFR)
+
+> A developer writes governance and tensor logic at its natural level of abstraction. The compiler produces code that is provably safe under declared invariants, runs at the speed of unverified code, and requires no runtime checks the developer did not declare.
+
+The IFR is *unreachable*. That is the point. It defines the gradient along which every roadmap decision should move, and it makes regression visible: any change that pushes the system away from this state is structurally suspect, regardless of how attractive it looks in isolation.
+
+### Laws of System Development Applied to MIND
+
+Five trajectories that govern how engineered systems evolve. Each suggests where to invest and where *not* to.
+
+| Law | What it means for MIND | Status |
+|---|---|---|
+| **Uneven subsystem development** | One subsystem lags and gates the others | Frontend is fast (≤15.5 µs frontend stages). Tooling, IDE integration, diagnostics lag. Investing further compiler optimization yields less than investing tooling. |
+| **Mono → bi → poly system** | Single → multi → many, with shared semantics | MIND is bi-system today (multiple targets via `mindc`). Poly-system goal: unified invariant semantics across MIND-language consumers, with cross-project contract verification. |
+| **Increasing controllability** | Rigid → parameterized → automatic | `[invariant]` annotations are parameterization. Next stage: invariant *inference* under bounded conditions, not only assertion. |
+| **Transition to micro-level** | Coarse mechanisms → fine-grained mechanisms | **Anti-pattern for MIND.** Statement-level configuration or runtime dispatch would break the compile-speed property. The micro-level transition is forbidden at the language frontend; if forced, it migrates to the runtime layer instead. |
+| **Rhythm coordination** | Synchronization across subsystems | Q16.16 fixed-point already coordinates numerical rhythm across backends. Next stage: coordinating compile-time invariants with runtime evidence chains so consumers receive matched compile-time and runtime guarantees. |
+
+### Separation Principles for Conflict Resolution
+
+When two desirable properties conflict (e.g. *more invariants* vs *no compile-speed regression*), the design discipline is to separate the conflict rather than compromise:
+
+- **Separation in time** — the property holds at one phase of the pipeline, not another (e.g. invariant verified at compile time, not re-checked at runtime).
+- **Separation in space** — the property holds in one module or scope, not another (e.g. governance invariants on `governance/` paths, not on tensor kernels).
+- **Separation in condition** — the property holds under one configuration, not another (e.g. debug-mode trace, release-mode silent).
+- **Separation in scale** — the property holds at one granularity, not another (e.g. module-level feature gates, never statement-level).
+
+This is the same separation discipline used by `[invariant]` conflict resolution in MIND-language consumers (see consumer-side governance roadmaps). It is *not* a 40-principles invocation. It is the small subset of TRIZ that has direct mechanical use here; the rest is left as catalog reference, not method.
+
+### Anti-Patterns Made Explicit
+
+- **Statement-level `cfg` or runtime dispatch in the frontend.** Violates compile-speed preservation. Any feature requiring it is rejected at design time, not after benchmarking.
+- **Adding invariants without a separation strategy.** New invariants must declare *which separation principle* makes them coexist with existing ones. If none applies, the conflict is real and a redesign is required.
+- **Driving design from the analogy.** TRIZ is a checklist for direction, not a generator. Features come from product needs and consumer pull; TRIZ filters them, it does not invent them.
+
+---
+
 ## AGI Integration
 
 This repo is part of the STARGA AGI stack. See `naestro-bot/specs/AGI-ROADMAP.md` for:
