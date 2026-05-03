@@ -536,6 +536,36 @@ This is the same separation discipline used by `[invariant]` conflict resolution
 - **Adding invariants without a separation strategy.** New invariants must declare *which separation principle* makes them coexist with existing ones. If none applies, the conflict is real and a redesign is required.
 - **Driving design from the analogy.** TRIZ is a checklist for direction, not a generator. Features come from product needs and consumer pull; TRIZ filters them, it does not invent them.
 
+### Runtime Layer (Mind-Runtime)
+
+The frontend IFR above governs the compiler. The runtime layer has a *different* IFR with different optima — including one law that is explicitly inverted from the frontend rule. Both layers live in this repository and must stay coherent under both criteria.
+
+**Runtime IFR.** Compiled MIND programs execute with bit-exact determinism across backends, record verifiable evidence of every governance-relevant decision, and enforce declared invariants at zero overhead on the legitimate execution path. Failures degrade into sealed evidence rather than silent corruption.
+
+**Laws applied at the runtime layer.**
+
+| Law | Runtime application | Status |
+|---|---|---|
+| Uneven subsystem development | Runtime backends evolve unevenly (CPU, GPU, accelerator). Slowest backend gates portability claims. | Invest in the slowest backend, not the fastest. |
+| Mono → bi → poly | Runtime is poly today (multiple backends). | Next stage: unified evidence chain across backends so a program's evidence trail is backend-independent. |
+| Increasing controllability | Runtime policy is largely compile-time-fixed. | Next stage: runtime-tunable severity tiers within a compile-time-bounded envelope (the envelope is immutable; the position inside it is configurable). |
+| Transition to micro-level | **Inverted from frontend.** At runtime, instruction-level scheduling, branch hints, vectorization are appropriate and often required. The forbidden boundary is *crossing* a compile-time invariant, not *implementing* it efficiently. | Pursue micro-level wherever the legitimate path demands it; never let it weaken an invariant. |
+| Rhythm coordination | Runtime emits evidence; compile-time consumers verify invariants against it. | The cycle closes only when both timescales agree on the schema and meaning of each evidence record. |
+
+**Separation principles at runtime.**
+
+- **Time** — compile-time verification vs runtime check vs runtime evidence record. Three phases, three different cost/value trade-offs. A property proven at compile time is *not* re-verified at runtime; that path has been replaced with evidence emission, not redundancy.
+- **Space** — hot path vs cold path vs governance audit path. Hot path admits no overhead beyond the IFR; cold path admits diagnostic instrumentation; audit path admits full evidence-chain materialisation.
+- **Condition** — release vs debug vs forensic mode. The same program produces different evidence detail under different modes; the compile-time invariants are unchanged.
+- **Scale** — per-instruction, per-basic-block, per-module, per-program. Each scale has its own legitimate optimisation surface; mixing scales is a code smell.
+
+**Runtime anti-patterns.**
+
+- **Re-verifying at runtime what was proven at compile time.** Wasted overhead, no added safety, violates the IFR.
+- **Silent failure paths.** Any failure that does not produce a sealed evidence record breaks the chain and the contract with governance consumers.
+- **Backend-specific semantics leaking into program behaviour.** Determinism is a per-program property; backend differences must be invisible above the FFI boundary.
+- **Performance regressions justified by future features.** The IFR demands zero overhead on the legitimate path *now*; deferred-cost arguments are rejected at design time.
+
 ---
 
 ## AGI Integration
