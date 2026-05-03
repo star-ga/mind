@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 363 | **Est. tokens:** ~460,984
-**Generated:** 2026-05-02 00:38 UTC
+**Files:** 367 | **Est. tokens:** ~462,149
+**Generated:** 2026-05-03 13:15 UTC
 
 ## Token Budget Guide
 
@@ -25,7 +25,7 @@
 | `./` | 27 | ~18,071 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 3 | ~706 |
+| `.arch-mind/` | 7 | ~831 |
 | `benches/` | 5 | ~6,036 |
 | `benchmarks/` | 14 | ~24,260 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -35,7 +35,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 20 | ~18,810 |
+| `docs/` | 20 | ~19,850 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/rfcs/` | 5 | ~4,272 |
@@ -131,7 +131,11 @@
 ### `.arch-mind/`
 
 - `last_summary.json` (~153 tok, small) — Keys: _aggregated_for_phase_a, _comment, _languages, _repo_root, edges
+- `_log_rules.txt` (~13 tok, tiny) — rules: 9  scan_metrics: 9
+- `_log_scan.txt` (~10 tok, tiny) — wrote /home/n/mind/.arch-mind/scan.json
+- `_log_sidecar.txt` (~12 tok, tiny) — wrote /home/n/mind/.arch-mind/last_summary.json
 - `rules.mind` (~463 tok, medium) — mind (language compiler / runtime root) architectural-governance rules
+- `scan_before.json` (~90 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 - `scan.json` (~90 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `benches/`
 
@@ -251,7 +255,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~5791 tok, huge) — Roadmap
+- `roadmap.md` (~6831 tok, huge) — Roadmap
 - `security.md` (~753 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 ### `docs/specs/`
