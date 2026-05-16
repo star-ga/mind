@@ -48,6 +48,11 @@ pub struct CompileOptions {
     /// after AST → IR lowering, alongside any in-source `export { ... }`
     /// block. Default empty; only the build pipeline populates this.
     pub manifest_exports: Vec<String>,
+    /// RFC 0002 deliverable 5 — language profile (`default` /
+    /// `systems` / `embedded`). Reaches the cache-key fingerprint so
+    /// the same `Mind.toml` produces a distinct artifact per profile.
+    /// Default = `ProfileTag::Default`.
+    pub profile: crate::cache::ProfileTag,
 }
 
 /// Artifacts produced by [`compile_source`].
