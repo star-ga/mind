@@ -48,3 +48,8 @@ Cargo.lock
 *patent*
 *.patent.*
 *_PATENT_*
+
+# arch-mind transient state (Tranche 5)
+.arch-mind/store/
+.arch-mind/_log_*
+.arch-mind/scan_before.json
