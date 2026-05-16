@@ -83,13 +83,37 @@ def parse_baseline(path: Path) -> dict[str, float]:
     return out
 
 
-def parse_current(path: Path) -> dict[str, float]:
-    """Read default criterion bench output into microseconds.
+# Bencher-style one-line output (criterion --output-format bencher):
+#   test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench:  2773 ns/iter (+/- 76)
+BENCHER_LINE = re.compile(
+    r"test\s+compiler_pipeline/parse_typecheck_ir/(?P<name>\S+)\s+\.\.\.\s+"
+    r"bench:\s+(?P<value>[0-9.]+)\s+(?P<unit>ns|us|µs|ms)/iter"
+)
 
-    Uses the mean (middle) of the [low mid high] confidence interval.
+
+def parse_current(path: Path) -> dict[str, float]:
+    """Read criterion bench output into microseconds.
+
+    Handles both criterion's default format (`Benchmarking ... time: [..]`)
+    and `--output-format bencher` (`test ... bench: N ns/iter (+/- ..)`).
+    The CI workflow uses bencher format.
+
+    For default format, uses the mean (middle) of `[low mid high]`.
+    For bencher format, the single value is the median.
     """
     text = path.read_text()
     out: dict[str, float] = {}
+
+    # Pass 1: bencher format (one-liner; preferred — matches CI invocation).
+    for raw in text.splitlines():
+        m = BENCHER_LINE.search(raw)
+        if m and m.group("name") not in out:
+            value = float(m.group("value"))
+            out[m.group("name")] = _to_us(value, m.group("unit"))
+
+    # Pass 2: default criterion format (two-line "Benchmarking ... time:").
+    # Skipped if pass 1 already populated the bench (bencher numbers are
+    # canonical for the gate).
     pending: str | None = None
     for raw in text.splitlines():
         m = BENCHMARKING_LINE.search(raw)
@@ -98,11 +122,11 @@ def parse_current(path: Path) -> dict[str, float]:
             continue
         if pending is not None:
             t = TIME_PATTERN.search(raw)
-            if t:
+            if t and pending not in out:
                 mid_value = float(t.group(3))
                 mid_unit = t.group(4)
                 out[pending] = _to_us(mid_value, mid_unit)
-                pending = None
+            pending = None
     return out
 
 
