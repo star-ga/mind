@@ -34,6 +34,34 @@ use crate::autodiff;
 #[cfg(feature = "mlir-lowering")]
 use crate::mlir;
 
+/// RFC 0002 D3 guard — cap the number of manifest-declared exports to a
+/// generous-but-bounded value. Larger lists are rejected as `Mind.toml`
+/// content is user-controlled (and on CI may be PR-controlled). The cap
+/// is well above any realistic project's public surface; pick a higher
+/// value if a legitimate use case appears.
+const MAX_MANIFEST_EXPORTS: usize = 1024;
+
+/// RFC 0002 D3 guard — validate a manifest export name is a C-style
+/// identifier (`[A-Za-z_][A-Za-z0-9_]*`). Names land directly in the
+/// C ABI wrapper symbol once D2 lands, so anything outside that grammar
+/// is a future symbol-injection vector.
+fn validate_manifest_export_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("empty export name");
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap();
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return Err("export name must start with a letter or underscore");
+    }
+    for c in chars {
+        if !(c.is_ascii_alphanumeric() || c == '_') {
+            return Err("export name must be ASCII alphanumeric or underscore");
+        }
+    }
+    Ok(())
+}
+
 /// Options controlling the compiler pipeline.
 #[derive(Debug, Default, Clone)]
 pub struct CompileOptions {
@@ -83,6 +111,11 @@ pub enum CompileError {
     /// Requested backend target is not available in this build.
     #[error("backend unavailable: {target}")]
     BackendUnavailable { target: BackendTarget },
+    /// `Mind.toml [exports] c_abi` contains an invalid entry (DoS / symbol
+    /// injection guard: bound the list to MAX_MANIFEST_EXPORTS and reject
+    /// strings that aren't C-style identifiers).
+    #[error("invalid manifest export `{name}`: {reason}")]
+    InvalidManifestExport { name: String, reason: &'static str },
     /// Autodiff failed with a structured error.
     #[cfg(feature = "autodiff")]
     #[error("autodiff failed: {0}")]
@@ -112,6 +145,11 @@ impl CompileError {
                 "backend",
                 "E5001",
                 format!("no backend available for target {target}"),
+            )],
+            CompileError::InvalidManifestExport { name, reason } => vec![Diagnostic::error(
+                "manifest",
+                "E5002",
+                format!("invalid Mind.toml [exports] c_abi entry `{name}`: {reason}"),
             )],
             #[cfg(feature = "autodiff")]
             CompileError::Autodiff(e) => {
@@ -161,8 +199,24 @@ pub fn compile_source_with_name(
     // RFC 0002 D3: merge manifest-declared exports into the IR set so
     // both `export { ... }` source blocks and `Mind.toml [exports]
     // c_abi` reach the same codegen pass. Empty in the default code
-    // path — no scan, no allocation.
+    // path — no scan, no allocation. Validated for length + identifier
+    // shape to neutralise the symbol-injection / DoS surface flagged in
+    // the v0.2.8 security audit.
     if !opts.manifest_exports.is_empty() {
+        if opts.manifest_exports.len() > MAX_MANIFEST_EXPORTS {
+            return Err(CompileError::InvalidManifestExport {
+                name: format!("(count={})", opts.manifest_exports.len()),
+                reason: "Mind.toml [exports] c_abi exceeds MAX_MANIFEST_EXPORTS",
+            });
+        }
+        for name in &opts.manifest_exports {
+            if let Err(reason) = validate_manifest_export_name(name) {
+                return Err(CompileError::InvalidManifestExport {
+                    name: name.clone(),
+                    reason,
+                });
+            }
+        }
         ir.exports.extend(opts.manifest_exports.iter().cloned());
     }
     ir::verify_module(&ir)?;

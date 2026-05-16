@@ -167,7 +167,14 @@ struct CompileArgs {
     /// Language profile (default|systems|embedded). RFC 0002 deliverable 5:
     /// the same Mind.toml produces a distinct artifact per profile via the
     /// cache fingerprint, so cross-mode rebuilds never hit a stale entry.
-    #[arg(long, value_name = "PROFILE", default_value = "default")]
+    /// Strict on the CLI surface: unknown values are rejected by clap
+    /// before reaching `ProfileTag::parse`'s permissive fallback.
+    #[arg(
+        long,
+        value_name = "PROFILE",
+        default_value = "default",
+        value_parser = ["default", "systems", "embedded"],
+    )]
     profile: String,
     /// Diagnostic output format (human|short|json).
     #[arg(long, value_name = "FORMAT", default_value = "human")]
