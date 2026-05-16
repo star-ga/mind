@@ -283,6 +283,13 @@ pub enum BinOp {
 pub struct IRModule {
     pub instrs: Vec<Instr>,
     pub next_id: usize,
+    /// Names declared in an `export { ... }` block, populated by the
+    /// AST -> IR lowering pass. Consumed by the C-ABI codegen pass under
+    /// `feature = "ffi-c-user"` (RFC 0002, deliverable 2). Empty in the
+    /// default code path; readers must never assume membership without
+    /// the feature flag enabled. Kept on `IRModule` rather than in a
+    /// side-table so mic@1 round-trip preserves the export set.
+    pub exports: std::collections::HashSet<String>,
 }
 
 impl IRModule {
@@ -290,6 +297,7 @@ impl IRModule {
         Self {
             instrs: Vec::new(),
             next_id: 0,
+            exports: std::collections::HashSet::new(),
         }
     }
 

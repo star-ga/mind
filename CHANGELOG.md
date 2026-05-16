@@ -5,6 +5,31 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] — 2026-05-16
+
+### Added
+- **RFC 0002 deliverable 1** — `IRModule.exports: HashSet<String>`
+  field populated by the AST → IR lowering pass when the parser sees an
+  `export { foo, bar }` block (`Node::Export`). Previously the export
+  block parsed but lowered to a no-op warning. The field is empty in
+  the default code path; consumers under the new `ffi-c-user` feature
+  flag (deliverables 2+) read the set to emit `mind_fn_<name>_invoke`
+  C-ABI wrappers per RFC 0002. Regression tests:
+  `tests/ir_lower.rs::lower_export_block_populates_ir_exports` and
+  `lower_no_export_keeps_exports_empty`.
+- **`ffi-c-user` Cargo feature** (currently empty gate). Reserved for
+  the RFC 0002 codegen pass landing in subsequent deliverables.
+- **`bench_c_export_lowering` sub-bench** in `benches/compiler.rs`
+  measuring 0 / 1 / 10 export names. Separate criterion group so the
+  headline `compiler_pipeline` numbers stay measurable against
+  `.bench-baseline-2026-04-28-pratt.txt`.
+
+### Compile-speed discipline
+- New IR field is `HashSet<String>::new()` at construction (zero
+  capacity, zero allocation until first insert). The default code path
+  for programs without an `export` block performs one extra branchless
+  match-arm test per top-level item, no hashset touches.
+
 ## [Unreleased]
 
 ### Added

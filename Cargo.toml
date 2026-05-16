@@ -1,6 +1,6 @@
 [package]
 name = "mind"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 rust-version = "1.82"
 authors = ["STARGA Inc."]
@@ -108,6 +108,7 @@ mlir-jit = ["libloading"]
 mlir-gpu = []
 mlir-build = ["mlir-subprocess", "tempfile"]
 ffi-c = ["libc"]
+ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
 ffi-examples = []
 pkg = ["tar", "flate2", "sha2"]
 registry = []

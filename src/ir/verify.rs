@@ -61,7 +61,11 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
         }
     }
 
-    if !saw_output {
+    // A module is well-formed if it has either at least one `Instr::Output`
+    // *or* a non-empty `IRModule.exports` set (RFC 0002 deliverable 1 —
+    // an export-only module's contract surface is the export declaration,
+    // not an SSA output).
+    if !saw_output && module.exports.is_empty() {
         return Err(IrVerifyError::MissingOutput);
     }
 

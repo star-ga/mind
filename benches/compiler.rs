@@ -156,13 +156,54 @@ fn bench_autodiff_generation(c: &mut Criterion) {
     group.finish();
 }
 
+/// RFC 0002 deliverable 1 sub-bench — exercises the new
+/// `Node::Export` -> `IRModule.exports` lowering path with 0, 1, and 10
+/// export names. Lives as its own criterion group so the headline
+/// `compiler_pipeline` numbers stay measurable against
+/// `.bench-baseline-2026-04-28-pratt.txt`.
+fn bench_c_export_lowering(c: &mut Criterion) {
+    use libmind::eval::lower_to_ir;
+    use libmind::parser::parse;
+
+    let mut group = c.benchmark_group("c_export_lowering");
+
+    for (name, source) in [
+        ("0_exports", "1 + 2 * 3".to_string()),
+        ("1_export", "export { foo }".to_string()),
+        (
+            "10_exports",
+            format!(
+                "export {{ {} }}",
+                (0..10)
+                    .map(|i| format!("name_{i}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+    ] {
+        group.bench_with_input(
+            BenchmarkId::new("parse_lower", name),
+            &source,
+            |b, src| {
+                b.iter(|| {
+                    let module = parse(black_box(src)).expect("parse failed");
+                    lower_to_ir(&module)
+                })
+            },
+        );
+    }
+
+    group.finish();
+}
+
 #[cfg(all(feature = "mlir-lowering", feature = "autodiff"))]
 criterion_group!(
     benches,
     bench_compilation_pipeline,
     bench_mlir_lowering,
     bench_end_to_end_compilation,
-    bench_autodiff_generation
+    bench_autodiff_generation,
+    bench_c_export_lowering
 );
 
 #[cfg(all(feature = "mlir-lowering", not(feature = "autodiff")))]
@@ -170,17 +211,19 @@ criterion_group!(
     benches,
     bench_compilation_pipeline,
     bench_mlir_lowering,
-    bench_end_to_end_compilation
+    bench_end_to_end_compilation,
+    bench_c_export_lowering
 );
 
 #[cfg(all(not(feature = "mlir-lowering"), feature = "autodiff"))]
 criterion_group!(
     benches,
     bench_compilation_pipeline,
-    bench_autodiff_generation
+    bench_autodiff_generation,
+    bench_c_export_lowering
 );
 
 #[cfg(all(not(feature = "mlir-lowering"), not(feature = "autodiff")))]
-criterion_group!(benches, bench_compilation_pipeline);
+criterion_group!(benches, bench_compilation_pipeline, bench_c_export_lowering);
 
 criterion_main!(benches);

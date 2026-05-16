@@ -34,3 +34,33 @@ fn lower_tensor_preview() {
     let rendered = eval::format_value_human(&value);
     assert!(rendered.contains("Tensor["), "{rendered}");
 }
+
+// RFC 0002 deliverable 1 — `Node::Export` lowers into `IRModule.exports`.
+#[test]
+fn lower_export_block_populates_ir_exports() {
+    let src = "export { foo, bar }";
+    let module = parser::parse(src).unwrap();
+    let ir = eval::lower_to_ir(&module);
+    assert_eq!(ir.exports.len(), 2);
+    assert!(ir.exports.contains("foo"));
+    assert!(ir.exports.contains("bar"));
+    // The lowering MUST NOT add an Output instruction for the export block;
+    // it's metadata, not a value.
+    assert!(
+        !ir.instrs
+            .iter()
+            .any(|i| matches!(i, libmind::ir::Instr::Output(_))),
+        "export block must not produce an Output instr"
+    );
+}
+
+#[test]
+fn lower_no_export_keeps_exports_empty() {
+    let src = "1 + 2";
+    let module = parser::parse(src).unwrap();
+    let ir = eval::lower_to_ir(&module);
+    assert!(
+        ir.exports.is_empty(),
+        "default code path must leave IRModule.exports empty"
+    );
+}
