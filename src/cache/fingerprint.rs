@@ -6,14 +6,28 @@
 
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ProfileTag {
+    #[default]
     Default,
     Systems,
     Embedded,
 }
 
 impl ProfileTag {
+    /// Parse a profile name from CLI / Mind.toml. Unknown names map to
+    /// `Default` — the strict-validation path lives at the clap layer.
+    pub fn parse(name: &str) -> Self {
+        match name.to_ascii_lowercase().as_str() {
+            "systems" => ProfileTag::Systems,
+            "embedded" => ProfileTag::Embedded,
+            _ => ProfileTag::Default,
+        }
+    }
+}
+
+impl ProfileTag {
+    /// String form used in cache-key fingerprints and Display.
     pub fn as_str(self) -> &'static str {
         match self {
             ProfileTag::Default => "default",

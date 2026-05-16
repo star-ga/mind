@@ -164,6 +164,11 @@ struct CompileArgs {
     /// Select the execution target backend (cpu|gpu).
     #[arg(long, value_name = "TARGET", default_value = "cpu")]
     target: String,
+    /// Language profile (default|systems|embedded). RFC 0002 deliverable 5:
+    /// the same Mind.toml produces a distinct artifact per profile via the
+    /// cache fingerprint, so cross-mode rebuilds never hit a stale entry.
+    #[arg(long, value_name = "PROFILE", default_value = "default")]
+    profile: String,
     /// Diagnostic output format (human|short|json).
     #[arg(long, value_name = "FORMAT", default_value = "human")]
     diagnostic_format: String,
@@ -292,6 +297,7 @@ fn main() {
         func: cli.compile.func.clone(),
         enable_autodiff: cli.compile.autodiff,
         target,
+        profile: libmind::cache::ProfileTag::parse(&cli.compile.profile),
         ..Default::default()
     };
 

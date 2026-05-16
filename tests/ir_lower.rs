@@ -79,3 +79,26 @@ fn compile_pipeline_merges_manifest_exports() {
     assert!(products.ir.exports.contains("from_manifest"));
     assert_eq!(products.ir.exports.len(), 2);
 }
+
+// RFC 0002 deliverable 5 — `ProfileTag` parses the three canonical names
+// case-insensitively; unknown names fall back to Default. The default
+// CompileOptions reports Default. The field reaches CompileOptions.
+#[test]
+fn profile_tag_parse_and_default() {
+    use libmind::cache::ProfileTag;
+    use libmind::pipeline::CompileOptions;
+
+    assert_eq!(ProfileTag::parse("default"), ProfileTag::Default);
+    assert_eq!(ProfileTag::parse("SYSTEMS"), ProfileTag::Systems);
+    assert_eq!(ProfileTag::parse("Embedded"), ProfileTag::Embedded);
+    assert_eq!(ProfileTag::parse("xyz"), ProfileTag::Default);
+
+    let opts = CompileOptions::default();
+    assert_eq!(opts.profile, ProfileTag::Default);
+
+    let with_profile = CompileOptions {
+        profile: ProfileTag::Systems,
+        ..Default::default()
+    };
+    assert_eq!(with_profile.profile, ProfileTag::Systems);
+}

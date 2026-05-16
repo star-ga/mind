@@ -5,6 +5,24 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.8] — 2026-05-16
+
+### Added
+- **RFC 0002 deliverable 5** — `--profile <default|systems|embedded>`
+  CLI flag on `mindc compile`. Defaults to `default`. Threads through
+  `CompileOptions.profile: ProfileTag` to the cache fingerprint so the
+  same `Mind.toml` produces three distinct artifacts.
+- **`ProfileTag::parse`** — case-insensitive parser; unknown names map
+  to `Default`. `ProfileTag` now derives `Default` (variant `Default`).
+- Regression test
+  `tests/ir_lower.rs::profile_tag_parse_and_default` covers parse,
+  default propagation, and explicit override.
+
+### Changed
+- `CompileOptions` gains a public `profile` field. As with D3 the
+  default is preserved via `Default`; in-tree call sites already use
+  `..Default::default()` so no migration needed.
+
 ## [0.2.7] — 2026-05-16
 
 ### Added
@@ -271,6 +289,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.1]: https://github.com/star-ga/mind/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/star-ga/mind/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
+[0.2.8]: https://github.com/star-ga/mind/releases/tag/v0.2.8
 [0.2.7]: https://github.com/star-ga/mind/releases/tag/v0.2.7
 [0.2.6]: https://github.com/star-ga/mind/releases/tag/v0.2.6
 [0.1.8]: https://github.com/star-ga/mind/releases/tag/v0.1.8
