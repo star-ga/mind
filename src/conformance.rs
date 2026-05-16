@@ -71,6 +71,7 @@ fn run_case(case: &ConformanceCase) -> Result<(), String> {
         func: case.func.map(ToOwned::to_owned),
         enable_autodiff: case.run_autodiff,
         target: case.target,
+        ..Default::default()
     };
 
     match compile_source(case.source, &compile_opts) {

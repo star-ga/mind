@@ -64,3 +64,18 @@ fn lower_no_export_keeps_exports_empty() {
         "default code path must leave IRModule.exports empty"
     );
 }
+
+// RFC 0002 deliverable 3 — `Mind.toml [exports] c_abi` reaches IR via
+// `CompileOptions.manifest_exports`, alongside any in-source `export {}`.
+#[test]
+fn compile_pipeline_merges_manifest_exports() {
+    use libmind::pipeline::{compile_source, CompileOptions};
+    let opts = CompileOptions {
+        manifest_exports: vec!["from_manifest".to_string()],
+        ..Default::default()
+    };
+    let products = compile_source("export { from_source }", &opts).unwrap();
+    assert!(products.ir.exports.contains("from_source"));
+    assert!(products.ir.exports.contains("from_manifest"));
+    assert_eq!(products.ir.exports.len(), 2);
+}

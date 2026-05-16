@@ -5,6 +5,31 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.7] — 2026-05-16
+
+### Added
+- **RFC 0002 deliverable 3** — `Mind.toml [exports]` section is now
+  honored end-to-end. `ProjectManifest.exports.c_abi: Vec<String>`
+  parses from the manifest, `BuildOptions.manifest_exports` threads it
+  through the build pipeline, and `CompileOptions.manifest_exports`
+  merges those names into `IRModule.exports` after AST → IR lowering.
+  Together with deliverable 1, both source-side `export { ... }` blocks
+  and manifest-declared exports reach the same set in IR — ready for the
+  codegen pass landing in deliverable 2.
+- Regression test
+  `tests/ir_lower.rs::compile_pipeline_merges_manifest_exports`
+  asserts the merge for the combined case.
+
+### Changed
+- `CompileOptions` and `BuildOptions` gain a `manifest_exports`
+  field. The struct still derives `Default`, so existing call sites
+  can opt in via `..Default::default()`. All in-tree call sites updated.
+
+### Compile-speed discipline
+- The merge path is `if !manifest_exports.is_empty() { ir.exports.extend(...) }`
+  — branchless in the default code path (typical `Mind.toml` has no
+  `[exports]` block).
+
 ## [0.2.6] — 2026-05-16
 
 ### Added
@@ -246,5 +271,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.1]: https://github.com/star-ga/mind/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/star-ga/mind/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
+[0.2.7]: https://github.com/star-ga/mind/releases/tag/v0.2.7
+[0.2.6]: https://github.com/star-ga/mind/releases/tag/v0.2.6
 [0.1.8]: https://github.com/star-ga/mind/releases/tag/v0.1.8
 [0.1.0]: https://github.com/star-ga/mind/releases/tag/v0.1.0

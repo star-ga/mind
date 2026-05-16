@@ -292,6 +292,7 @@ fn main() {
         func: cli.compile.func.clone(),
         enable_autodiff: cli.compile.autodiff,
         target,
+        ..Default::default()
     };
 
     let products = match compile_source_with_name(&source, Some(&input), &opts) {
@@ -344,6 +345,7 @@ fn run_build_command(release: bool, target: Option<String>, verbose: bool) {
         release,
         target,
         verbose,
+        ..Default::default()
     };
 
     match build_project(&opts) {
@@ -367,6 +369,7 @@ fn run_run_command(release: bool, target: Option<String>, verbose: bool, args: V
         release,
         target,
         verbose,
+        ..Default::default()
     };
 
     match run_project(&args, &opts) {
