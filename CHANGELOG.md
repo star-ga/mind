@@ -5,6 +5,27 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] — 2026-05-16
+
+### Security
+- **RFC 0002 hardening** — surfaced by the v0.2.8 security audit, both
+  fixed in this release before D2 (codegen pass) bakes the unvalidated
+  inputs into emitted symbols.
+  - `Mind.toml [exports] c_abi` is now bounded to
+    `MAX_MANIFEST_EXPORTS = 1024` and every entry must match the
+    C-style identifier grammar `[A-Za-z_][A-Za-z0-9_]*`. Violations
+    return the new `CompileError::InvalidManifestExport` (diagnostic
+    `E5002`). DoS / symbol-injection guard ahead of the C-ABI wrapper
+    codegen pass.
+  - `mindc compile --profile` now uses clap's
+    `value_parser = ["default", "systems", "embedded"]`. Typos like
+    `--profile sytems` are rejected at the CLI layer instead of
+    silently falling through `ProfileTag::parse`'s permissive mapping
+    to `Default` (which would have poisoned the cache fingerprint).
+- Regression tests:
+  - `tests/ir_lower.rs::manifest_exports_reject_oversized_list`
+  - `tests/ir_lower.rs::manifest_exports_reject_non_identifier`
+
 ## [0.2.8] — 2026-05-16
 
 ### Added
@@ -289,6 +310,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.1]: https://github.com/star-ga/mind/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/star-ga/mind/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
+[0.2.9]: https://github.com/star-ga/mind/releases/tag/v0.2.9
 [0.2.8]: https://github.com/star-ga/mind/releases/tag/v0.2.8
 [0.2.7]: https://github.com/star-ga/mind/releases/tag/v0.2.7
 [0.2.6]: https://github.com/star-ga/mind/releases/tag/v0.2.6
