@@ -80,6 +80,48 @@ fn compile_pipeline_merges_manifest_exports() {
     assert_eq!(products.ir.exports.len(), 2);
 }
 
+// v0.2.9 hardening — manifest exports list is bounded and identifier-checked.
+#[test]
+fn manifest_exports_reject_oversized_list() {
+    use libmind::pipeline::{compile_source, CompileError, CompileOptions};
+    let opts = CompileOptions {
+        manifest_exports: (0..2048).map(|i| format!("name_{i}")).collect(),
+        ..Default::default()
+    };
+    let err = compile_source("1 + 1", &opts).expect_err("oversized list must error");
+    assert!(matches!(err, CompileError::InvalidManifestExport { .. }));
+}
+
+#[test]
+fn manifest_exports_reject_non_identifier() {
+    use libmind::pipeline::{compile_source, CompileError, CompileOptions};
+    for bad in [
+        "",
+        "../../evil",
+        "with space",
+        "0starts_with_digit",
+        "has\0null",
+    ] {
+        let opts = CompileOptions {
+            manifest_exports: vec![bad.to_string()],
+            ..Default::default()
+        };
+        let err = compile_source("1 + 1", &opts).expect_err(&format!("expected error for `{bad}`"));
+        assert!(
+            matches!(err, CompileError::InvalidManifestExport { .. }),
+            "wrong error variant for {bad:?}: {err:?}"
+        );
+    }
+    // Make sure a valid identifier still passes through cleanly.
+    let opts = CompileOptions {
+        manifest_exports: vec!["valid_name_1".to_string()],
+        ..Default::default()
+    };
+    let products = compile_source("export { in_source }", &opts).unwrap();
+    assert!(products.ir.exports.contains("valid_name_1"));
+    assert!(products.ir.exports.contains("in_source"));
+}
+
 // RFC 0002 deliverable 5 — `ProfileTag` parses the three canonical names
 // case-insensitively; unknown names fall back to Default. The default
 // CompileOptions reports Default. The field reaches CompileOptions.
