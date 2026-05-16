@@ -191,8 +191,10 @@ FORTRESS builds without external post-processing scripts.
   runtime loads `.mic` instead of `.mind`.
 - MindLLM, rfn-mind, mind-mem repeat the same pattern.
 - Cross-arch bit-identity gate (mind-nerve task #57) unblocked by 0.3.0.
-- p95 ≤ 30 ms on 4-core CPU (mind-nerve task #59) achievable once 0.3.0
-  AOT codegen replaces the embedded-parser dlopen path.
+- p95 ≤ 30 ms on 4-core CPU — already met on the Phase 1 PyTorch path via
+  the `mind-nerve-routed` UNIX-socket daemon (23 ms p95 after warmup,
+  closed in 0.1.0-alpha.7). The 0.3.0 AOT path tightens this further by
+  replacing the embedded-parser dlopen path.
 
 ---
 

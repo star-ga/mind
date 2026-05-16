@@ -1,0 +1,8 @@
+# MAP protocol frame examples
+# Format: one frame per line (leading # lines are comments)
+@compile path=/tmp/model.mic2 flags=0
+=ok status=ready nodes=7
+=err E001 msg="type mismatch" line=3
+!progress pct=50 stage=opt
+@load path="/path/with spaces/model.mic2" verbose=true
+=ok hash=0xdeadbeef count=42
