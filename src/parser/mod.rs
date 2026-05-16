@@ -868,12 +868,8 @@ impl<'a> P<'a> {
                 }
             }
             // Comma-separated bare list
-            loop {
-                if let Some(n) = self.word() {
-                    names.push(n.to_string());
-                } else {
-                    break;
-                }
+            while let Some(n) = self.word() {
+                names.push(n.to_string());
                 self.skip_ws();
                 if self.eat(b',') {
                     self.skip_ws_and_newlines();

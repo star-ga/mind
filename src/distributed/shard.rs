@@ -80,11 +80,7 @@ impl ShardSpec {
             }
             ShardLayout::Split2D { row_axis, col_axis } => {
                 let row_world = (self.world as f32).sqrt() as u32;
-                let col_world = if row_world == 0 {
-                    0
-                } else {
-                    self.world / row_world
-                };
+                let col_world = self.world.checked_div(row_world).unwrap_or(0);
                 if row_world * col_world != self.world {
                     return Err(ShardingError::Not2DDivisible(self.world));
                 }
