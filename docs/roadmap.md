@@ -98,6 +98,104 @@ All new features are gated behind new keyword/token checks that fail immediately
 
 ---
 
+## Phase 10.6 — Library Output & C ABI (mindc 0.2.6 / 0.3.0)
+
+### Goals
+Turn `mindc` from an executable-only compiler into a library-emitting one,
+so MIND code can be consumed by C, Python, Rust, and other runtimes via a
+stable C ABI. This is the foundation Phase-2 native inference paths
+(mind-nerve, MindLLM, rfn-mind) compile against.
+
+### Motivation
+Today: `Mind.toml`'s `[exports]` section is parsed but silently dropped.
+`Node::Export` is parsed and discarded. The .so produced has no AOT
+symbols for user `pub fn` — runtimes embed source and re-parse on dlopen.
+The mind-runtime embedded parser has drifted from mindc's surface parser;
+shipping `.mic` IR instead of source is the canonical path forward.
+
+### Compile-speed invariant (non-negotiable)
+The 1.8–15.5 µs frontend latency is the IP moat. Every Phase 10.6 feature
+is gated **module-level only** — no statement-level cfg, no runtime
+dispatch. Each item below ships a dedicated sub-benchmark that does not
+move the headline numbers. CI gate: ±2% per size / ±1% mean.
+
+### Deliverables — mindc 0.2.6 (library-emit foundation)
+
+1. **`Node::Export` → IR `FnExport` variant.** Lower the parsed
+   `export { foo, bar }` into `IRModule.exports: HashSet<FnId>` and verify
+   the named functions exist. Gate: `feature = "ffi-c-user"`, parse-time
+   early-out when no `export` keyword present.
+2. **C wrapper codegen for `pub fn`.** For each `IRModule.exports` entry,
+   emit `mind_fn_{name}_invoke(inputs, in_count, outputs, out_count) -> int`
+   using the existing `MindIO` calling convention. Static FFI stubs stay
+   for backward compat.
+3. **`Mind.toml [exports]` honored end-to-end.** `ProjectManifest.exports`
+   already parses; wire the consumer in the build pipeline to prepend
+   manifest-declared symbols into the IR export list before codegen.
+4. **Document `mic@1` IR consumption pattern.** Canonical parse happens at
+   compile time; runtimes consume `.mic` via `ir::load()`. Embedded
+   runtime parser is deprecated. mind-nerve, MindLLM, rfn-mind switch from
+   shipping source to shipping `.mic` artifacts.
+5. **`--profile=<default|systems|embedded>` CLI flag.** Wire the
+   ProfileTag from `src/cache/fingerprint.rs` through the build pipeline
+   so the same `Mind.toml` produces three distinct artifacts.
+
+### Deliverables — mindc 0.3.0 (cdylib era + protection actions)
+
+6. **`mind build --lib` cdylib emit.** Output `.so`/`.dylib`/`.dll`
+   directly with symbol visibility limited to exported user wrappers +
+   standard FFI stubs. Entry point not invoked; library is dlopen'd.
+7. **AOT native codegen with symbol versioning.** LLVM lowering via
+   `inkwell`; emit object files with `mind_fn_{name}_v1` symbols.
+   Runtimes call `dlsym()` instead of embedded parser. Gates: existing
+   `mlir-build` feature + new `aot-exports` feature.
+8. **`Mind.toml [protection]` action transforms.** Three tiers documented
+   in a new RFC (`docs/rfcs/0002-protection.md`): `obfuscate_strings`
+   (compiler-side string table), `anti_debug` (runtime canary hook),
+   `anti_tamper` (binary hash check). Replaces the hand-rolled
+   `build.sh`-driven FORTRESS post-processing in mind-mem-protected /
+   mind-nerve-protected.
+9. **Cross-directory imports (`use crate::foo::bar`).** Module-qualified
+   resolver populates a module table during project load; type checker
+   resolves identifiers across module boundaries. Gate:
+   `feature = "cross-module-imports"`.
+
+### Deprecated in this phase
+
+- `Mind.toml [targets.cpu] sources / c_sources / headers` — decorative
+  fields with no consumer. MIND's compilation target is IR → MLIR →
+  LLVM IR, not mixed C+MIND. C interop comes via `[package.ffi]` in a
+  separate RFC if needed.
+
+### Sequencing
+
+Items 1–5 ship in mindc 0.2.6 (~2 weeks). Items 6–9 ship in mindc 0.3.0
+(~6 weeks). Item 8's `[protection]` action transforms unlock per-customer
+FORTRESS builds without external post-processing scripts.
+
+### Anti-regression discipline
+
+- Every PR touching parser / type_checker / lowering / codegen runs
+  `cargo bench --bench compiler` and reports baseline-vs-current.
+- New features ship as separate sub-benchmarks (e.g.,
+  `export_list_1item`), never as deltas to the headline numbers.
+- Gated features verify their cfg cost is <0.5% on headline benchmarks.
+- `CacheKey` extends for every feature that changes compilation behavior.
+
+### Acceptance gates
+
+- mind-nerve compiles with `pub fn preselect_pre_tokenized` exported and
+  callable as `mind_fn_preselect_pre_tokenized_invoke()`.
+- mind-nerve's `Mind.toml [exports] c_abi = [...]` works end-to-end.
+- mind-nerve build flow documents `mind compile --emit-ir` and the
+  runtime loads `.mic` instead of `.mind`.
+- MindLLM, rfn-mind, mind-mem repeat the same pattern.
+- Cross-arch bit-identity gate (mind-nerve task #57) unblocked by 0.3.0.
+- p95 ≤ 30 ms on 4-core CPU (mind-nerve task #59) achievable once 0.3.0
+  AOT codegen replaces the embedded-parser dlopen path.
+
+---
+
 ## Phase 11 — Benchmarks & Cloud Compiler Prototype
 
 ### Goals
