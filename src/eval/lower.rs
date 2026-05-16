@@ -50,6 +50,13 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 env.insert(name.clone(), id);
                 ir.instrs.push(Instr::Output(id));
             }
+            ast::Node::Export { names, .. } => {
+                // RFC 0002, deliverable 1: lower the parsed `export { ... }`
+                // block into `IRModule.exports`. Verification that named
+                // functions exist lands in deliverable 2 under
+                // `feature = "ffi-c-user"` together with the codegen pass.
+                ir.exports.extend(names.iter().cloned());
+            }
             other => {
                 let id = lower_expr(other, &mut ir, &env);
                 ir.instrs.push(Instr::Output(id));
