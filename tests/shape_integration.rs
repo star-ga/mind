@@ -6,6 +6,7 @@ fn compile_opts() -> CompileOptions {
         func: None,
         enable_autodiff: false,
         target: BackendTarget::Cpu,
+        ..Default::default()
     }
 }
 

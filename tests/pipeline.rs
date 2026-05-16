@@ -27,6 +27,7 @@ fn compile_source_stabilizes_ir() {
         func: None,
         enable_autodiff: false,
         target: BackendTarget::Cpu,
+        ..Default::default()
     };
 
     let first = compile_source(src, &opts).expect("first compile");
@@ -45,6 +46,7 @@ fn compile_source_runs_autodiff() {
         func: Some("main".to_string()),
         enable_autodiff: true,
         target: BackendTarget::Cpu,
+        ..Default::default()
     };
 
     let ir_only = compile_source(
@@ -53,6 +55,7 @@ fn compile_source_runs_autodiff() {
             func: Some("main".to_string()),
             enable_autodiff: false,
             target: BackendTarget::Cpu,
+            ..Default::default()
         },
     )
     .expect("compiled without autodiff");
@@ -91,6 +94,7 @@ fn pipeline_emits_grad_ir() {
         func: Some("main".to_string()),
         enable_autodiff: true,
         target: BackendTarget::Cpu,
+        ..Default::default()
     };
 
     let products = compile_source(AUTODIFF_FIXTURE, &opts)
@@ -118,6 +122,7 @@ fn lower_to_mlir_produces_stable_text() {
         func: None,
         enable_autodiff: false,
         target: BackendTarget::Cpu,
+        ..Default::default()
     };
 
     let compiled = compile_source(src, &opts).expect("compiled IR");
@@ -141,6 +146,7 @@ fn pipeline_emits_mlir() {
         func: Some("main".to_string()),
         enable_autodiff: true,
         target: BackendTarget::Cpu,
+        ..Default::default()
     };
 
     let products = compile_source(AUTODIFF_FIXTURE, &opts)
