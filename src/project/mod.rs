@@ -339,6 +339,7 @@ fn compile_single_source(
         enable_autodiff: false,
         target,
         manifest_exports: opts.manifest_exports.clone(),
+        ..Default::default()
     };
 
     // Try to compile - if parser doesn't support all syntax, fall back to embedding
