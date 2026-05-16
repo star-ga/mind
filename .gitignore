@@ -49,7 +49,11 @@ Cargo.lock
 *.patent.*
 *_PATENT_*
 
-# arch-mind transient state (Tranche 5)
+# arch-mind transient state (Tranche 5). Includes last_summary.json,
+# key.local, and store.lock because they embed absolute repo paths.
 .arch-mind/store/
 .arch-mind/_log_*
 .arch-mind/scan_before.json
+.arch-mind/last_summary.json
+.arch-mind/key.local
+.arch-mind/store.lock
