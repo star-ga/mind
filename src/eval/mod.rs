@@ -264,7 +264,7 @@ pub fn eval_module_value_with_env_mode(
 ) -> Result<Value, EvalError> {
     if let Some(src) = src_for_types {
         let mut tenv: HashMap<String, ValueType> = HashMap::new();
-        for (name, _value) in env.iter() {
+        for name in env.keys() {
             tenv.insert(name.clone(), ValueType::ScalarI32);
         }
         // Pre-register for-loop variables in the type environment

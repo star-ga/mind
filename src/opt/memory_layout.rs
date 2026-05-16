@@ -324,13 +324,11 @@ pub fn optimize_layout(module: &IRModule) -> MapAnalysis {
 
     let mut layouts = BTreeMap::new();
     let mut bank_assignments = BTreeMap::new();
-    let mut bank_counter = 0;
 
-    for pat in &patterns {
+    for (bank_counter, pat) in patterns.iter().enumerate() {
         let layout = pat.optimal_layout();
         layouts.insert(pat.tensor_id, layout);
         bank_assignments.insert(pat.tensor_id, bank_counter % 4); // 4 SRAM banks
-        bank_counter += 1;
     }
 
     let coloring = color_tensors(&patterns);
