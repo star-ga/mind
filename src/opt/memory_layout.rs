@@ -373,6 +373,7 @@ mod tests {
                 Instr::Output(ValueId(2)),
             ],
             next_id: 3,
+            ..Default::default()
         }
     }
 
@@ -484,6 +485,7 @@ mod tests {
         let module = IRModule {
             instrs: vec![],
             next_id: 0,
+            ..Default::default()
         };
         let analysis = optimize_layout(&module);
         assert!(analysis.patterns.is_empty());
