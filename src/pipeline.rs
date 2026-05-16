@@ -43,6 +43,11 @@ pub struct CompileOptions {
     pub enable_autodiff: bool,
     /// Requested execution backend (CPU is the only supported target).
     pub target: BackendTarget,
+    /// RFC 0002 deliverable 3 — extra export names from
+    /// `Mind.toml [exports] c_abi`. Merged into `IRModule.exports`
+    /// after AST → IR lowering, alongside any in-source `export { ... }`
+    /// block. Default empty; only the build pipeline populates this.
+    pub manifest_exports: Vec<String>,
 }
 
 /// Artifacts produced by [`compile_source`].
@@ -148,6 +153,13 @@ pub fn compile_source_with_name(
     }
 
     let mut ir = eval::lower_to_ir(&module);
+    // RFC 0002 D3: merge manifest-declared exports into the IR set so
+    // both `export { ... }` source blocks and `Mind.toml [exports]
+    // c_abi` reach the same codegen pass. Empty in the default code
+    // path — no scan, no allocation.
+    if !opts.manifest_exports.is_empty() {
+        ir.exports.extend(opts.manifest_exports.iter().cloned());
+    }
     ir::verify_module(&ir)?;
     opt::ir_canonical::canonicalize_module(&mut ir);
     ir::verify_module(&ir)?;

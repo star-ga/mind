@@ -28,6 +28,20 @@ pub struct ProjectManifest {
     pub dependencies: HashMap<String, DependencySpec>,
     #[serde(default)]
     pub profile: HashMap<String, ProfileConfig>,
+    /// RFC 0002 deliverable 3 — `[exports]` table in `Mind.toml`. The
+    /// `c_abi` list is merged into `IRModule.exports` by the build
+    /// pipeline before codegen, alongside any names already declared
+    /// via an `export { ... }` block in the source.
+    #[serde(default)]
+    pub exports: ExportsConfig,
+}
+
+/// `[exports]` block in `Mind.toml`. Currently only `c_abi` is defined;
+/// other ABI targets (python, wasm) are reserved for future RFCs.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ExportsConfig {
+    #[serde(default)]
+    pub c_abi: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -106,6 +120,11 @@ pub struct BuildOptions {
     pub release: bool,
     pub target: Option<String>,
     pub verbose: bool,
+    /// RFC 0002 D3 — names from `Mind.toml [exports] c_abi`. Passed
+    /// through to the compile pipeline so the AST → IR lowering pass
+    /// extends `IRModule.exports` with these alongside any in-source
+    /// `export { ... }` block.
+    pub manifest_exports: Vec<String>,
 }
 
 /// Build result
@@ -250,6 +269,15 @@ fn compile_sources(
     let entry_path = project_root.join(&manifest.build.entry);
     let entry_canonical = entry_path.canonicalize().unwrap_or(entry_path.clone());
 
+    // RFC 0002 D3: thread Mind.toml [exports] c_abi through to each
+    // per-file compile so the AST → IR lowering pass picks them up.
+    // Clones once; pulled in to inner BuildOptions via a single field.
+    let mut opts_with_exports = opts.clone();
+    if opts_with_exports.manifest_exports.is_empty() {
+        opts_with_exports.manifest_exports = manifest.exports.c_abi.clone();
+    }
+    let opts = &opts_with_exports;
+
     let mut objects = Vec::new();
 
     for source in sources {
@@ -304,10 +332,13 @@ fn compile_single_source(
         _ => BackendTarget::Cpu,
     };
 
+    // RFC 0002 D3: thread manifest-declared exports through to the
+    // compile pipeline. Empty when [exports] is absent from Mind.toml.
     let compile_opts = CompileOptions {
         func: None,
         enable_autodiff: false,
         target,
+        manifest_exports: opts.manifest_exports.clone(),
     };
 
     // Try to compile - if parser doesn't support all syntax, fall back to embedding
@@ -1004,6 +1035,7 @@ pub fn test_project(opts: &TestOptions) -> Result<i32> {
             release: false,
             target: Some(target.clone()),
             verbose: false,
+            ..Default::default()
         };
 
         // Use the test file as entry point
@@ -1129,6 +1161,7 @@ pub fn bench_project(opts: &BenchOptions) -> Result<i32> {
             release: true,
             target: Some(target.clone()),
             verbose: false,
+            ..Default::default()
         };
 
         let test_manifest_path = project_root.join("Mind.toml");
