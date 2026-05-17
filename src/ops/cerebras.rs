@@ -95,7 +95,7 @@ impl fmt::Display for StencilElemType {
 /// Validation errors produced by [`StencilTileOp::new`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum StencilTileError {
-    /// A fabric dimension was zero or exceeded [`MAX_FABRIC_DIM`].
+    /// A fabric dimension was zero or exceeded the per-tile maximum.
     FabricDimOutOfRange { dim: &'static str, value: u32 },
     /// The kernel symbol was empty or contained non-ASCII characters.
     InvalidKernelSymbol,
