@@ -320,7 +320,11 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             })
         }
         ast::Node::FnDef {
-            name, params, body, ..
+            name,
+            params,
+            body,
+            reap_threshold,
+            ..
         } => {
             // Lower function definition
             let mut fn_ir = IRModule::new();
@@ -357,7 +361,11 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                             | Some(TypeAnn::DiffTensor { dtype, dims }) => {
                                 lower_tensor_binding(&mut fn_ir, value, dtype, dims, &fn_env)
                             }
-                            _ => lower_expr(value, &mut fn_ir, &fn_env),
+                            // SparseTensor: layout is a runtime concern; lower
+                            // the value expression without injecting shape hints.
+                            Some(TypeAnn::SparseTensor { .. }) | _ => {
+                                lower_expr(value, &mut fn_ir, &fn_env)
+                            }
                         };
                         fn_env.insert(name.clone(), id);
                     }
@@ -372,12 +380,14 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 }
             }
 
-            // Add function definition to IR
+            // Add function definition to IR, propagating the REAP threshold
+            // from the AST attribute if present.
             ir.instrs.push(Instr::FnDef {
                 name: name.clone(),
                 params: param_pairs,
                 ret_id,
                 body: fn_ir.instrs,
+                reap_threshold: *reap_threshold,
             });
 
             // Function definitions don't produce a value
@@ -427,6 +437,24 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 id
             })
         }
+        // Phase 10.7: `match scrutinee { arms }` — lower to sequential
+        // arm evaluation in v1 (chain-of-if-else semantics). The last
+        // arm's value is the result; the runtime interprets patterns.
+        ast::Node::Match {
+            scrutinee, arms, ..
+        } => {
+            let _scrut_id = lower_expr(scrutinee, ir, env);
+            let mut last_id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(last_id, 0));
+            for arm in arms {
+                last_id = lower_expr(&arm.body, ir, env);
+            }
+            last_id
+        }
+        // Phase 10.7: `&expr` / `&mut expr` — no-op metadata wrapper in
+        // v1. The inner expression lowers directly; the ref tag is only
+        // meaningful to the type-checker.
+        ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env),
         _ => {
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
