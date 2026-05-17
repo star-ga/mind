@@ -186,6 +186,69 @@ fn parses_mixed_pub_fields() {
     assert!(parses(src), "mixed pub/non-pub fields must parse");
 }
 
+// Step 8d — struct literal expressions (Phase 10.6). Required by
+// rfn-mind/src/fixed_point_bwd.mind (returns PartialPair { da, db }) and
+// rfn-mind/src/field_step.mind (constructs StepBuffers, etc).
+#[test]
+fn parses_struct_literal_in_return() {
+    let src = "module m {\n\
+                 struct Pair { a: i32, b: i32 }\n\
+                 fn make() -> Pair { return Pair { a: 1, b: 2 } }\n\
+               }\n";
+    assert!(parses(src), "struct literal in return must parse");
+}
+
+#[test]
+fn parses_struct_literal_in_let() {
+    let src = "module m {\n\
+                 struct Pair { a: i32, b: i32 }\n\
+                 fn f() -> i32 { let p = Pair { a: 10, b: 20 }\n p.a + p.b }\n\
+               }\n";
+    assert!(parses(src), "struct literal in let must parse");
+}
+
+#[test]
+fn parses_empty_struct_literal() {
+    let src = "module m {\n\
+                 struct Unit {}\n\
+                 fn f() -> Unit { return Unit { } }\n\
+               }\n";
+    assert!(parses(src), "empty struct literal must parse");
+}
+
+#[test]
+fn parses_struct_literal_with_qualified_field_type() {
+    // The combined case rfn-mind uses everywhere:
+    // qualified types in the field types and struct literal in the body.
+    let src = "module foo { type Q = i32 }\n\
+               module bar {\n\
+                 use foo\n\
+                 struct Pair { a: foo.Q, b: foo.Q }\n\
+                 fn mk(x: foo.Q, y: foo.Q) -> Pair { return Pair { a: x, b: y } }\n\
+               }\n";
+    assert!(
+        parses(src),
+        "qualified field types + struct literal must parse together"
+    );
+}
+
+#[test]
+fn does_not_parse_struct_literal_for_arbitrary_block() {
+    // Lookahead must reject `IDENT { stmt }` shape (no `field: value` pair).
+    // Even though this is invalid at expression position regardless, we
+    // want the parser to NOT misparse it as a struct literal first.
+    // Here `Pair { let x = 1 }` is not a valid struct literal because
+    // the body doesn't start with `field:`.
+    let src = "module m {\n\
+                 struct Pair { a: i32 }\n\
+                 fn f() -> i32 { let p = Pair { let x = 1 }\n 0 }\n\
+               }\n";
+    assert!(
+        !parses(src),
+        "non-`field:value` body must not be accepted as struct literal"
+    );
+}
+
 // Step 9 — full rfn-mind file end-to-end (Tier-1 milestone)
 #[test]
 fn parses_fixed_point_mind_end_to_end() {
