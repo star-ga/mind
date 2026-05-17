@@ -1684,9 +1684,9 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         // Phase 10.6: borrowed slice, fixed-size array, single-value
         // reference, and generic-application types are aggregates that
         // don't have a direct ValueType today. Return None and let the
-        // caller decide (most rfn-mind sites use these in fn signatures,
+        // caller decide; most call sites use these in fn signatures,
         // where shape validation runs against the underlying element
-        // type at call sites).
+        // type at call sites.
         crate::ast::TypeAnn::Slice { .. }
         | crate::ast::TypeAnn::Array { .. }
         | crate::ast::TypeAnn::Ref { .. }

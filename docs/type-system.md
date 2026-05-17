@@ -17,6 +17,25 @@ The MIND type system models tensor programs with explicit ranks, shapes, and dat
 | Tuples/Records | `(Tensor[f32,(N)], bool)`                  | Used for multi-value returns               |
 | Functions      | `(Tensor[f32,(N)]) -> Tensor[f32,(N)]`     | Pure by default unless effects declared    |
 
+## Composite Types
+
+Phase 10.5 / 10.6 added the following composite type forms to the
+surface language. They parse, type-check, and lower to the existing
+Core IR v1 shape lattice.
+
+| Form                       | Example                          | Notes                                  |
+| -------------------------- | -------------------------------- | -------------------------------------- |
+| Reference                  | `&T`, `&mut T`                   | Single-value borrow; lifetime inferred |
+| Slice                      | `&[T]`, `&mut [T]`               | Sized contiguous run; length at runtime |
+| Fixed-size array           | `[T; N]`                         | `N` is a compile-time integer literal  |
+| Tuple                      | `(T, U)`, `(T, U, V)`            | Used in fn returns and destructuring   |
+| Qualified type path        | `module.Type`, `crate.Foo`       | Used in const decls and annotations    |
+| Generic type instantiation | `Vec<i32>`, `Result<T, E>`       | User and stdlib generics               |
+
+The visibility qualifier `pub` is accepted on `fn`, `struct`, `enum`,
+and struct fields. Its semantic effect on the emitted module ABI is
+gated by the `ffi-c-user` Cargo feature (see RFC-0002).
+
 ## Shape Variables
 
 Shapes use uppercase identifiers (`N`, `M`, `B`) scoped to the function signature. Constraints propagate through expressions via unification.

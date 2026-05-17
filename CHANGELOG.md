@@ -5,6 +5,99 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Infrastructure landed on `main` but not yet attached to a tag.
+
+### Added
+- `libmind::cache` — content-addressed compilation cache with
+  `CompilationCache`, `CacheKey`, `CacheEntry`, `CacheStats`,
+  `ProfileTag`, and an in-memory `MemoryStore` backend. Cache key
+  includes compiler version + profile tag + source hash + imports
+  hash so cross-mode rebuilds never hit a stale entry. Foundation
+  for sub-µs warm-start frontend latency. 17 unit tests.
+- `tools/pytorch_bridge/` — PyTorch / JAX → MIND transpiler tooling.
+  ONNX-driven PyTorch path, XLA-HLO-driven JAX path, and a
+  deterministic prompt builder for AI-assisted UNSAT proof resolution.
+  Pure Python, no torch / jax import at module load. 11 unit tests.
+- `libmind::distributed` — IR-layer primitives for tensor and pipeline
+  parallelism: `ShardSpec` / `ShardLayout` (replicated / split /
+  split-2D), `AllReduceOp` with lexicographic / tree / arrival
+  reduction orders, `AllGatherOp` with lexicographic / arrival gather
+  orders, `PipelineGraph` / `PipelineStage` / `StageBoundary`, and
+  `DistributedInvariant` enforcement (`deterministic_all_reduce`,
+  `reduction_order_lexicographic`, `gather_order_lexicographic`,
+  `evidence_chain_continuous`). 31 unit tests.
+  See `docs/roadmap.md` Phase 13.6 for the design rationale and the
+  speed-preservation discipline that keeps the 1.8–15.5 µs frontend
+  baseline locked when these primitives are not imported.
+
+## [0.2.10] — 2026-05-17
+
+### Added — Phase 10.6 surface syntax (parser-level)
+
+The following surface constructs now parse, type-check, lower to IR,
+and round-trip through the bench gate without moving headline numbers.
+They are additive extensions of Core IR v1 (see `docs/versioning.md`
+"Minor (0.y.z)") — no existing IR instruction or shape semantics
+change.
+
+- **Qualified type paths** in const declarations and type annotations
+  (`module.Type`, multi-segment `a.b.C`) (e85611a).
+- **`pub` visibility marker** on `fn`, `struct`, `enum`, and on struct
+  fields (dfe01ce). Parsed and propagated to AST; semantic effect lands
+  with RFC 0002 D2.
+- **Struct literal expressions** `Name { field: value, ... }` in
+  expression position (f60232c).
+- **Slice types** `&[T]` / `&mut [T]` and **fixed-size array types**
+  `[T; N]` (9f0fd57).
+- **`let mut`** mutable-binding marker accepted by the parser (12be59d).
+- **`%` modulo operator** end-to-end: parser → IR → autodiff → eval
+  → MLIR lowering (7db0bf3).
+- **Single-value reference types** `&T` and `&mut T` distinct from
+  slices (6f14a66).
+- **Generic type application** `Name<A, B, ...>` for `Vec`, `Result`,
+  `Option`, and user-defined generics (d411d53).
+- **`::` path-segment separator** for enum variant access:
+  `Result::Ok`, `module.Enum::Variant` (dc0f70c).
+- **Tuple types** `(T, U, ...)` in function return positions.
+- **Postfix index access** `xs[0]` on arrays, slices, and Vec values.
+- **Indexed assignment** `xs[i] = value` and **field assignment**
+  `obj.field = value` as statements.
+- **Multi-line arithmetic continuation** — `+`, `-`, `*`, `/`, `%` may
+  span newlines, e.g.
+
+  ```mind
+  let idx: u32 = (c as u32) * (h * w) as u32
+               + (y as u32) * (w as u32)
+               + (x as u32)
+  ```
+
+### Fixed
+- **MLIR lowering pipeline** — `--emit-mlir` now lowers to the LLVM
+  dialect before invoking `mlir-translate`, removing the
+  "unregistered dialect" failure on programs that exercise control
+  flow (99fc19f).
+
+### Changed
+- `find_runtime_lib` now searches only `MIND_LIB_DIR` and `~/.mind/lib`.
+  The previous `~/.nikolachess/lib` fallback was an internal
+  install-path leak and is removed.
+- Test target `parse_rfn_mind.rs` renamed to `parse_phase10_surface.rs`;
+  the corpus-sweep test is now driven by the `MIND_TRACKING_CORPUS_DIR`
+  environment variable rather than a hard-coded path. On CI and fresh
+  clones the sweep is a no-op; when the variable is set, the parser
+  must hold the documented high-watermark (14 files at this release).
+
+### Compile-speed discipline
+- Pratt loop adopts a **same-line fast path**: `skip_ws` + `peek_binop`
+  succeeds without saving position in the common case, and only widens
+  to `skip_ws_and_newlines` when an actual `\n` is at the cursor. Every
+  parser arm above ships behind a leading-token check and exits in
+  O(1) when the construct is absent. The headline benches
+  (`small_matmul / medium_mlp / large_network`) remain within the
+  documented threshold of `.bench-baseline-2026-04-28-pratt.txt`.
+
 ## [0.2.9] — 2026-05-16
 
 ### Security
@@ -93,32 +186,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   capacity, zero allocation until first insert). The default code path
   for programs without an `export` block performs one extra branchless
   match-arm test per top-level item, no hashset touches.
-
-## [Unreleased]
-
-### Added
-- `libmind::cache` — content-addressed compilation cache with
-  `CompilationCache`, `CacheKey`, `CacheEntry`, `CacheStats`,
-  `ProfileTag`, and an in-memory `MemoryStore` backend. Cache key
-  includes compiler version + profile tag + source hash + imports
-  hash so cross-mode rebuilds never hit a stale entry. Foundation
-  for sub-µs warm-start frontend latency. 17 unit tests, all passing.
-- `tools/pytorch_bridge/` — PyTorch/JAX → MIND transpiler tooling.
-  ONNX-driven PyTorch path, XLA-HLO-driven JAX path, and a
-  deterministic prompt builder for AI-assisted UNSAT proof
-  resolution. Pure Python, no torch / jax import at module load.
-  11 unit tests, all passing.
-- `libmind::distributed` — IR-layer primitives for tensor and pipeline
-  parallelism: `ShardSpec` / `ShardLayout` (replicated / split /
-  split-2D), `AllReduceOp` with lexicographic / tree / arrival
-  reduction orders, `AllGatherOp` with lexicographic / arrival gather
-  orders, `PipelineGraph` / `PipelineStage` / `StageBoundary`, and
-  `DistributedInvariant` enforcement (`deterministic_all_reduce`,
-  `reduction_order_lexicographic`, `gather_order_lexicographic`,
-  `evidence_chain_continuous`). 31 unit tests, all passing.
-  See `docs/roadmap.md` Phase 13.6 for the design rationale and the
-  speed-preservation discipline that keeps the 1.8–15.5 µs frontend
-  baseline locked when these primitives are not imported.
 
 ## [0.2.5] - 2026-04-28
 

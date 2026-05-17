@@ -1,11 +1,17 @@
-//! Parse-target tests for rfn-mind syntax acceptance (Phase 10.5).
+//! Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 //!
-//! Each test asserts that public `mindc` parses a rfn-mind-style construct
-//! without error. Tests are added in dependency order; failing tests at the
-//! end of the file are RED markers for parser additions still in flight.
+//! Each test asserts that public `mindc` parses a real-world MIND
+//! construct without error. Tests are added in dependency order; failing
+//! tests at the end of the file are RED markers for parser additions
+//! still in flight.
 //!
-//! Reference grammar: `/home/n/mind-spec/spec/v1.0/grammar-syntax.ebnf`.
-//! Reference rfn-mind file: `/home/n/rfn-mind/src/fixed_point.mind`.
+//! Reference grammar: `mind-spec/spec/v1.0/grammar-syntax.ebnf`.
+//!
+//! The corpus-sweep test (`parses_tracking_corpus_watermark`) is driven
+//! by the `MIND_TRACKING_CORPUS_DIR` environment variable. When unset
+//! the sweep is a no-op so CI and fresh clones stay green; on
+//! development machines where the variable points at a directory of
+//! `.mind` files, the sweep asserts the documented high-watermark.
 
 use libmind::{compile_source, CompileOptions};
 
@@ -44,7 +50,7 @@ fn parses_const_decl() {
 
 #[test]
 fn parses_const_no_semicolon() {
-    // rfn-mind style: no trailing semicolon at module scope
+    // No trailing semicolon at module scope is allowed.
     assert!(
         parses("const Q16_ONE: i32 = 65536\n"),
         "const without trailing ; must parse at module scope"
@@ -124,9 +130,8 @@ fn parses_enum_decl() {
 }
 
 // Step 8b — qualified type paths in type annotations (Phase 10.6 / RFC 0003).
-// Required for every rfn-mind source file that uses `use fixed_point`
-// followed by `fixed_point.Q16_16` in const, fn signatures, struct fields,
-// type aliases, and elsewhere.
+// Required wherever `use <module>` is followed by `<module>.Type` in
+// const, fn signatures, struct fields, type aliases, and elsewhere.
 #[test]
 fn parses_qualified_type_in_const() {
     let src = "module foo { type Q = i32 }\n\
@@ -153,8 +158,7 @@ fn parses_multi_segment_qualified_type() {
 
 // Step 8c — `pub` visibility marker (Phase 10.6). mindc treats `pub` as a
 // no-op (module-level visibility is via `export` blocks); accepting it
-// keeps rfn-mind/src/ternary.mind and src/bitlinear.mind syntax-compatible
-// without forcing a source rewrite.
+// keeps pub-prefixed source compatible without forcing a rewrite.
 #[test]
 fn parses_pub_struct_decl() {
     let src = "module m { pub struct Pair { a: i32, b: i32 } }\n";
@@ -186,9 +190,8 @@ fn parses_mixed_pub_fields() {
     assert!(parses(src), "mixed pub/non-pub fields must parse");
 }
 
-// Step 8d — struct literal expressions (Phase 10.6). Required by
-// rfn-mind/src/fixed_point_bwd.mind (returns PartialPair { da, db }) and
-// rfn-mind/src/field_step.mind (constructs StepBuffers, etc).
+// Step 8d — struct literal expressions (Phase 10.6). Required for fns
+// that return aggregate values such as `Pair { a, b }` directly.
 #[test]
 fn parses_struct_literal_in_return() {
     let src = "module m {\n\
@@ -218,8 +221,8 @@ fn parses_empty_struct_literal() {
 
 #[test]
 fn parses_struct_literal_with_qualified_field_type() {
-    // The combined case rfn-mind uses everywhere:
-    // qualified types in the field types and struct literal in the body.
+    // Combined case: qualified types in the field declarations and
+    // struct literal in the body.
     let src = "module foo { type Q = i32 }\n\
                module bar {\n\
                  use foo\n\
@@ -232,8 +235,9 @@ fn parses_struct_literal_with_qualified_field_type() {
     );
 }
 
-// Step 8e — slice and array types (Phase 10.6). Required by rfn-mind/src/
-// reduce.mind (&[T]), groupnorm.mind (&mut [T]), and lut.mind ([T; N]).
+// Step 8e — slice and array types (Phase 10.6). Used wherever fn
+// signatures pass contiguous buffers (`&[T]`, `&mut [T]`) or compile-
+// time LUT tables (`[T; N]`).
 #[test]
 fn parses_slice_type_in_param() {
     let src = "module m { fn s(xs: &[i32]) -> i32 { 0 } }\n";
@@ -259,9 +263,9 @@ fn parses_slice_of_qualified_type() {
     assert!(parses(src), "&[module.Type] must parse");
 }
 
-// Step 8f — `let mut` mutable binding (Phase 10.6). Used for accumulator
-// loops in rfn-mind/src/reduce.mind, conv.mind, groupnorm.mind. mindc
-// treats `mut` as informational; the eval env always allows reassignment.
+// Step 8f — `let mut` mutable binding (Phase 10.6). Used for
+// accumulator loops. mindc treats `mut` as informational; the eval
+// env always allows reassignment.
 #[test]
 fn parses_let_mut_binding() {
     let src = "module m { fn f() -> i32 { let mut x: i32 = 0\n x = x + 1\n x } }\n";
@@ -274,9 +278,8 @@ fn parses_let_mut_without_annotation() {
     assert!(parses(src), "`let mut x = ...` without type ann must parse");
 }
 
-// Step 8g — modulo `%` (Phase 10.6). rfn-mind/src/groupnorm.mind uses
-// `c_count % num_groups` to validate channel-group divisibility; memory.mind
-// uses it for wrap-around address arithmetic.
+// Step 8g — modulo `%` (Phase 10.6). Used for divisibility checks
+// (channel / group counts) and for wrap-around address arithmetic.
 #[test]
 fn parses_modulo_binop() {
     let src = "module m { fn f() -> i32 { 10 % 3 } }\n";
@@ -326,7 +329,7 @@ fn parses_nested_generic_with_qualified_arg() {
 }
 
 // Step 8i — `::` path-segment separator for enum variants (Phase 10.6).
-// rfn-mind uses `config.AddressingMode::Content`, `Side::Left`, etc.
+// Examples: `config.AddressingMode::Content`, `Side::Left`.
 #[test]
 fn parses_double_colon_enum_variant() {
     let src = "module m { enum Side { Left, Right }\n fn f() -> i32 { let x = Side::Left\n 0 } }\n";
@@ -359,9 +362,9 @@ fn parses_field_assign_lhs() {
     assert!(parses(src), "`s.x = 1` field assignment must parse");
 }
 
-// Step 8k — multi-line arithmetic continuation (Phase 10.6). rfn-mind
-// uses `+` and `*` on continuation lines for usize index math; the Pratt
-// parser must now skip newlines when peeking for an infix operator.
+// Step 8k — multi-line arithmetic continuation (Phase 10.6). Index
+// math that spans newlines uses `+` and `*` on continuation lines; the
+// Pratt parser must skip newlines when peeking for an infix operator.
 #[test]
 fn parses_multiline_arithmetic() {
     let src = "module m { fn f(c: u32, h: u32, w: u32, x: u32, y: u32) -> u32 {\n\
@@ -397,42 +400,52 @@ fn does_not_parse_struct_literal_for_arbitrary_block() {
     );
 }
 
-// Step 9 — full rfn-mind file end-to-end (Tier-1 milestone)
+// Step 9 — corpus-driven watermark sweep. Acts as a regression gate
+// against an external tracking corpus of `.mind` files that exercise
+// every Phase-10.5/10.6 surface. The corpus directory is opt-in via
+// the `MIND_TRACKING_CORPUS_DIR` environment variable; when unset, the
+// sweep is a no-op so CI and fresh clones stay green. When set, the
+// parser must hold the documented high-watermark count: any drop is a
+// regression in the parser, never a "spec gap" to ignore.
+//
+// Current watermark: 14 files parse cleanly. Bump in the same commit
+// that lands the next blocking feature (match expressions, reference
+// expressions, extern const, typed hex literals, Rust-style `use
+// std::x::Y` paths).
+const TRACKING_CORPUS_WATERMARK: usize = 14;
+
 #[test]
-fn parses_fixed_point_mind_end_to_end() {
-    let path = "/home/n/rfn-mind/src/fixed_point.mind";
-    let Ok(src) = std::fs::read_to_string(path) else {
-        eprintln!("{} not present; skipping milestone gate", path);
+fn parses_tracking_corpus_watermark() {
+    let Some(dir_str) = std::env::var_os("MIND_TRACKING_CORPUS_DIR") else {
+        eprintln!("MIND_TRACKING_CORPUS_DIR not set; skipping sweep");
         return;
     };
-    assert!(parses(&src), "fixed_point.mind must parse end-to-end");
-}
-
-// Step 10 — full rfn-mind src/ sweep
-#[test]
-#[ignore = "Tier-2 milestone — enable after struct + enum land"]
-fn parses_all_rfn_mind_src() {
-    let dir = std::path::Path::new("/home/n/rfn-mind/src");
+    let dir = std::path::PathBuf::from(&dir_str);
     if !dir.exists() {
-        eprintln!("/home/n/rfn-mind/src not present; skipping sweep");
+        eprintln!("{} not present; skipping sweep", dir.display());
         return;
     }
+    let mut passed = 0usize;
     let mut failed = Vec::new();
-    for entry in std::fs::read_dir(dir).expect("read_dir") {
+    for entry in std::fs::read_dir(&dir).expect("read_dir") {
         let entry = entry.expect("dir entry");
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("mind") {
             continue;
         }
         let src = std::fs::read_to_string(&path).expect("read .mind");
-        if !parses(&src) {
+        if parses(&src) {
+            passed += 1;
+        } else {
             failed.push(path.display().to_string());
         }
     }
     assert!(
-        failed.is_empty(),
-        "{} rfn-mind file(s) failed to parse: {:#?}",
-        failed.len(),
+        passed >= TRACKING_CORPUS_WATERMARK,
+        "tracking-corpus parse watermark regression: {} files parsed, expected >= {}. \
+         Failing files (informational, gated on pending language features):\n{:#?}",
+        passed,
+        TRACKING_CORPUS_WATERMARK,
         failed
     );
 }
