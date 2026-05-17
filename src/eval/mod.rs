@@ -343,6 +343,8 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::ScalarBool)
                     | Some(TypeAnn::ScalarU32)
                     | Some(TypeAnn::Named(_))
+                    | Some(TypeAnn::Slice { .. })
+                    | Some(TypeAnn::Array { .. })
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {

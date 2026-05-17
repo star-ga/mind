@@ -232,6 +232,33 @@ fn parses_struct_literal_with_qualified_field_type() {
     );
 }
 
+// Step 8e — slice and array types (Phase 10.6). Required by rfn-mind/src/
+// reduce.mind (&[T]), groupnorm.mind (&mut [T]), and lut.mind ([T; N]).
+#[test]
+fn parses_slice_type_in_param() {
+    let src = "module m { fn s(xs: &[i32]) -> i32 { 0 } }\n";
+    assert!(parses(src), "&[T] in fn param must parse");
+}
+
+#[test]
+fn parses_mut_slice_type_in_param() {
+    let src = "module m { fn s(xs: &mut [i32]) -> i32 { 0 } }\n";
+    assert!(parses(src), "&mut [T] in fn param must parse");
+}
+
+#[test]
+fn parses_array_type_in_fn_param() {
+    let src = "module m { fn lut(t: [i32; 256]) -> i32 { 0 } }\n";
+    assert!(parses(src), "[T; N] array type in fn param must parse");
+}
+
+#[test]
+fn parses_slice_of_qualified_type() {
+    let src = "module foo { type Q = i32 }\n\
+               module bar { use foo\n fn s(xs: &[foo.Q]) -> foo.Q { 0 } }\n";
+    assert!(parses(src), "&[module.Type] must parse");
+}
+
 #[test]
 fn does_not_parse_struct_literal_for_arbitrary_block() {
     // Lookahead must reject `IDENT { stmt }` shape (no `field: value` pair).

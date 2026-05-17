@@ -114,6 +114,20 @@ pub enum TypeAnn {
     Named(String),
     /// Unsigned 32-bit integer (Phase 10.5 Tier-2).
     ScalarU32,
+    /// Borrowed slice `&[T]` or `&mut [T]` (Phase 10.6). Used heavily in
+    /// rfn-mind fn signatures to pass weight buffers without copying.
+    /// The type checker treats this as a sized contiguous run of T.
+    Slice {
+        mutable: bool,
+        element: Box<TypeAnn>,
+    },
+    /// Fixed-size array `[T; N]` (Phase 10.6). Used in rfn-mind for LUT
+    /// tables (TANH_TABLE: [Q16_16; 256]) where the count is part of
+    /// the type and known at compile time.
+    Array {
+        element: Box<TypeAnn>,
+        length: u32,
+    },
 }
 
 /// Function parameter: `name: type`
