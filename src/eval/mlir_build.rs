@@ -158,10 +158,46 @@ fn combine_pipelines(preset: &str, extra: Option<&str>) -> Option<String> {
 
 #[cfg(feature = "mlir-build")]
 fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
+    // The pipelines must leave the IR entirely in the `llvm` dialect so
+    // `mlir-translate --mlir-to-llvmir` can lower it without complaining
+    // about missing dialect registrations. Stock `mlir-translate` only
+    // registers the LLVM family at link time; every other dialect MIND
+    // emits (arith, cf, scf, func, memref, tensor, linalg, …) has to be
+    // converted by `mlir-opt` first.
     match preset {
-        "core" | "arith-linalg" | "cpu-demo" | "jit-cpu" | "gpu-default" => {
-            Some("canonicalize,cse")
-        }
+        // Scalar-only pipeline. Enough for the `fn f(x, y) { x + y }`
+        // class of programs that exercise `arith` + `func` + `cf` + `scf`.
+        // `none` shares this path because `mlir-translate` cannot handle
+        // raw `arith` / `func` ops — it only registers the LLVM dialect
+        // family. Skipping the dialect conversion would force every
+        // caller of `build_mlir_artifacts(preset = "none")` to fail at
+        // the translate step.
+        "none" | "core" | "cpu-demo" | "jit-cpu" => Some(
+            "canonicalize,cse,\
+             convert-scf-to-cf,\
+             expand-strided-metadata,\
+             finalize-memref-to-llvm,\
+             convert-cf-to-llvm,\
+             convert-arith-to-llvm,\
+             convert-func-to-llvm,\
+             reconcile-unrealized-casts",
+        ),
+        // Tensor-aware pipeline. Adds bufferization + linalg lowering
+        // before the scalar leg. `convert-to-llvm` picks up any
+        // remaining vector / memref / index ops at the tail.
+        "arith-linalg" | "gpu-default" => Some(
+            "canonicalize,cse,\
+             one-shot-bufferize{bufferize-function-boundaries=true},\
+             convert-linalg-to-loops,\
+             convert-scf-to-cf,\
+             expand-strided-metadata,\
+             finalize-memref-to-llvm,\
+             convert-cf-to-llvm,\
+             convert-arith-to-llvm,\
+             convert-func-to-llvm,\
+             convert-to-llvm,\
+             reconcile-unrealized-casts",
+        ),
         _ => None,
     }
 }

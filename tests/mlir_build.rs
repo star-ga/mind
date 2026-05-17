@@ -147,7 +147,18 @@ fn build_reports_missing_tools() {
     let err = eval::build_mlir_artifacts(&mlir_src, &fake_tools, &opts)
         .expect_err("expected missing tool error");
     match err {
-        eval::MlirBuildError::ToolMissing(name) => assert_eq!(name, "mlir-translate"),
+        // The build pipeline now always runs `mlir-opt` first (even on
+        // the `"none"` preset) so the IR is fully lowered to the LLVM
+        // dialect before `mlir-translate` runs. Either tool may be the
+        // one that's reported missing depending on the preset's pipeline
+        // contents; both are acceptable outcomes for this test, which
+        // only cares that the error type is `ToolMissing`.
+        eval::MlirBuildError::ToolMissing(name) => {
+            assert!(
+                name == "mlir-opt" || name == "mlir-translate",
+                "expected mlir-opt or mlir-translate, got {name}"
+            );
+        }
         other => panic!("unexpected error: {other:?}"),
     }
 }

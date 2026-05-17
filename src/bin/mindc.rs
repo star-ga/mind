@@ -30,11 +30,8 @@ use libmind::project::{
 use libmind::BackendTarget;
 use libmind::{conformance, ConformanceOptions, ConformanceProfile};
 
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 use libmind::pipeline::{lower_to_mlir, MlirProducts};
-
-#[cfg(all(feature = "mlir-build", not(feature = "mlir-lowering")))]
-use libmind::pipeline::lower_to_mlir;
 
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
@@ -472,24 +469,13 @@ fn run_conformance(profile: &str) {
     }
 }
 
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 fn emit_mlir_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
     if !cli.emit_mlir {
         return;
     }
 
-    let grads = {
-        #[cfg(feature = "autodiff")]
-        {
-            products.grad.as_ref()
-        }
-        #[cfg(not(feature = "autodiff"))]
-        {
-            None
-        }
-    };
-
-    let mlir: MlirProducts = match lower_to_mlir(&products.ir, grads) {
+    let mlir: MlirProducts = match lower_to_mlir_compat(products) {
         Ok(mlir) => mlir,
         Err(err) => {
             eprintln!("error[mlir]: {err}");
@@ -506,10 +492,28 @@ fn emit_mlir_if_requested(cli: &CompileArgs, products: &libmind::pipeline::Compi
     }
 }
 
-#[cfg(not(feature = "mlir-lowering"))]
+/// Thin wrapper around `pipeline::lower_to_mlir` that erases the
+/// `autodiff`-feature signature difference for the `mindc` binary.
+#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), feature = "autodiff"))]
+fn lower_to_mlir_compat(
+    products: &libmind::pipeline::CompileProducts,
+) -> Result<MlirProducts, libmind::MlirLowerError> {
+    lower_to_mlir(&products.ir, products.grad.as_ref())
+}
+
+#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), not(feature = "autodiff")))]
+fn lower_to_mlir_compat(
+    products: &libmind::pipeline::CompileProducts,
+) -> Result<MlirProducts, libmind::MlirLowerError> {
+    lower_to_mlir(&products.ir)
+}
+
+#[cfg(not(any(feature = "mlir-lowering", feature = "mlir-build")))]
 fn emit_mlir_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::CompileProducts) {
     if cli.emit_mlir {
-        eprintln!("error[mlir]: MLIR emission requires building with the 'mlir-lowering' feature");
+        eprintln!(
+            "error[mlir]: MLIR emission requires building with the 'mlir-lowering' or 'mlir-build' feature"
+        );
         process::exit(1);
     }
 }
@@ -547,18 +551,7 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &libmind::pipeline::Compil
     };
 
     // First lower to MLIR
-    let grads = {
-        #[cfg(feature = "autodiff")]
-        {
-            products.grad.as_ref()
-        }
-        #[cfg(not(feature = "autodiff"))]
-        {
-            None
-        }
-    };
-
-    let mlir = match lower_to_mlir(&products.ir, grads) {
+    let mlir = match lower_to_mlir_compat(products) {
         Ok(mlir) => mlir,
         Err(err) => {
             eprintln!("error[mlir]: {err}");
