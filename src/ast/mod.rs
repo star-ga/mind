@@ -131,6 +131,14 @@ pub enum TypeAnn {
         element: Box<TypeAnn>,
         length: u32,
     },
+    /// Borrowed reference to a single value `&T` or `&mut T` (Phase 10.6).
+    /// Distinct from `Slice` (which is `&[T]`); used to pass structs by
+    /// reference without copying (e.g. `&memory.MemoryBank`,
+    /// `&ExitController`).
+    Ref {
+        mutable: bool,
+        target: Box<TypeAnn>,
+    },
 }
 
 /// Function parameter: `name: type`

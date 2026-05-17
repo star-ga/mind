@@ -345,6 +345,7 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::Named(_))
                     | Some(TypeAnn::Slice { .. })
                     | Some(TypeAnn::Array { .. })
+                    | Some(TypeAnn::Ref { .. })
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {

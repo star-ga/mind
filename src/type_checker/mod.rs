@@ -1644,12 +1644,15 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         // Phase 10.5 Tier-2: u32 maps to i32 in v1 (no separate unsigned
         // ValueType yet); sign correctness is enforced at use sites.
         crate::ast::TypeAnn::ScalarU32 => Some(ValueType::ScalarI32),
-        // Phase 10.6: borrowed slice and fixed-size array types are
-        // aggregates that don't have a direct ValueType today. Return
-        // None and let the caller decide (most rfn-mind sites use
-        // these in fn signatures, where shape validation runs against
-        // the underlying element type at call sites).
-        crate::ast::TypeAnn::Slice { .. } | crate::ast::TypeAnn::Array { .. } => None,
+        // Phase 10.6: borrowed slice, fixed-size array, and single-value
+        // reference types are aggregates that don't have a direct
+        // ValueType today. Return None and let the caller decide (most
+        // rfn-mind sites use these in fn signatures, where shape
+        // validation runs against the underlying element type at call
+        // sites).
+        crate::ast::TypeAnn::Slice { .. }
+        | crate::ast::TypeAnn::Array { .. }
+        | crate::ast::TypeAnn::Ref { .. } => None,
     }
 }
 
