@@ -15,17 +15,6 @@ fn elementwise_ops(
 }
 "#;
 
-/// Mixed precision operations
-const MIXED_PRECISION: &str = r#"
-fn mixed_precision(
-    a_f32: Tensor<F32, [256, 256]>,
-    b_bf16: Tensor<BF16, [256, 256]>
-) -> Tensor<F32, [256, 256]> {
-    // Note: This assumes type coercion is handled
-    add(a_f32, a_f32)
-}
-"#;
-
 /// Slice and gather operations
 const INDEXING_OPS: &str = r#"
 fn indexing_chain(x: Tensor<F32, [128, 256, 512]>) -> Tensor<F32, [64, 128, 256]> {

@@ -13,10 +13,16 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 - ✅ **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry (9.5K LOC).
 - ✅ **Docs Migration** – Documentation published to `mindlang.dev/docs/*`.
 - ✅ **Link-Check Automation** – CI enforces documentation link health.
+- ✅ **Phase 10.5: Governance Logic** – enum, struct, if/else, while,
+  const, bitwise/boolean ops, struct literals, enum-variant `::`
+  access shipped in v0.2.5–v0.2.10.
 
 ## In Progress
 
-- 🚧 **Phase 10.5: Governance Logic** – enum, struct, if/else, while, const, bitwise ops for policy kernels.
+- 🚧 **Phase 10.6: Surface Syntax & Library Output** – tuple types,
+  references, generics, slices, fixed-size arrays, struct literals,
+  indexed/field assignment, multi-line arithmetic, RFC 0002 C-ABI export
+  (D1/D3/D5 shipped in 0.2.6–0.2.8; D2 codegen pending).
 - 🚧 **Improved Diagnostics** – Structured error messages with fix-it hints.
 
 ## Planned

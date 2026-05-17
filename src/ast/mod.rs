@@ -60,8 +60,9 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
-    /// Modulo (remainder). Phase 10.6 — needed by rfn-mind/src/groupnorm.mind
-    /// to validate channel count is divisible by group count.
+    /// Modulo (remainder). Phase 10.6 — needed by numeric kernels that
+    /// validate divisibility (e.g. channel count vs. group count in
+    /// normalization layers).
     Mod,
     Lt,
     Le,
@@ -117,38 +118,37 @@ pub enum TypeAnn {
     Named(String),
     /// Unsigned 32-bit integer (Phase 10.5 Tier-2).
     ScalarU32,
-    /// Borrowed slice `&[T]` or `&mut [T]` (Phase 10.6). Used heavily in
-    /// rfn-mind fn signatures to pass weight buffers without copying.
-    /// The type checker treats this as a sized contiguous run of T.
+    /// Borrowed slice `&[T]` or `&mut [T]` (Phase 10.6). Used in fn
+    /// signatures to pass contiguous buffers without copying. The type
+    /// checker treats this as a sized run of T.
     Slice {
         mutable: bool,
         element: Box<TypeAnn>,
     },
-    /// Fixed-size array `[T; N]` (Phase 10.6). Used in rfn-mind for LUT
-    /// tables (TANH_TABLE: [Q16_16; 256]) where the count is part of
-    /// the type and known at compile time.
+    /// Fixed-size array `[T; N]` (Phase 10.6). Used for compile-time
+    /// LUT tables (e.g. `TANH_TABLE: [Q16_16; 256]`) where the count is
+    /// part of the type.
     Array {
         element: Box<TypeAnn>,
         length: u32,
     },
     /// Borrowed reference to a single value `&T` or `&mut T` (Phase 10.6).
     /// Distinct from `Slice` (which is `&[T]`); used to pass structs by
-    /// reference without copying (e.g. `&memory.MemoryBank`,
-    /// `&ExitController`).
+    /// reference without copying.
     Ref {
         mutable: bool,
         target: Box<TypeAnn>,
     },
-    /// Generic type application `Name<A, B, ...>` (Phase 10.6). Required
-    /// by rfn-mind for `Vec<Q16_16>`, `Result<RFNModel, BundleError>`,
-    /// `Option<u32>`. mindc records the head identifier and the type
-    /// arguments; structural resolution defers to the type checker.
+    /// Generic type application `Name<A, B, ...>` (Phase 10.6).
+    /// Examples: `Vec<i32>`, `Result<T, E>`, `Option<u32>`. mindc records
+    /// the head identifier and the type arguments; structural resolution
+    /// defers to the type checker.
     Generic {
         name: String,
         args: Vec<TypeAnn>,
     },
-    /// Tuple type `(T, U)` (Phase 10.6). Used in rfn-mind for fns
-    /// returning multiple values like `fn phase2_v1_defaults() -> (Q, Q)`.
+    /// Tuple type `(T, U)` (Phase 10.6). Used in fn signatures that
+    /// return multiple values, e.g. `fn defaults() -> (i32, u32)`.
     Tuple {
         elements: Vec<TypeAnn>,
     },
@@ -419,9 +419,8 @@ pub enum Node {
         span: Span,
     },
     /// Struct literal expression: `Name { field: value, field: value }`.
-    /// Phase 10.6 — used by rfn-mind to return aggregate values
-    /// (`PartialPair { da: dy, db: dy }` etc.). Type-checker resolves
-    /// the name against a StructDef in scope.
+    /// Phase 10.6 — used to construct aggregate values. Type-checker
+    /// resolves the name against a StructDef in scope.
     StructLit {
         name: String,
         fields: Vec<StructLitField>,
@@ -437,7 +436,8 @@ pub enum Node {
         span: Span,
     },
     /// Indexed assignment statement: `receiver[index] = value` (Phase 10.6).
-    /// Used in rfn-mind backward modules (`dx[i] = dy`, `d_in[i] = ...`).
+    /// Used in backward / gradient kernels to write through a mutable
+    /// slice receiver.
     IndexAssign {
         receiver: Box<Node>,
         index: Box<Node>,
@@ -445,7 +445,7 @@ pub enum Node {
         span: Span,
     },
     /// Field assignment statement: `receiver.field = value` (Phase 10.6).
-    /// Used in rfn-mind adaptive_depth (`ctrl.streak = ctrl.streak + 1`).
+    /// Used to mutate struct fields through a `&mut Foo` receiver.
     FieldAssign {
         receiver: Box<Node>,
         field: String,

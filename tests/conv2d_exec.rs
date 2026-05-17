@@ -12,10 +12,13 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+#[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]
 use std::path::PathBuf;
+#[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]
 use std::process::Command;
 
 /// Get the path to the mind binary from the cargo target directory
+#[cfg(all(feature = "cpu-exec", feature = "cpu-conv"))]
 fn mind_binary() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("target");

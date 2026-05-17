@@ -44,6 +44,10 @@ and will not change in incompatible ways without a major-version bump:
   `compact::v2::parse_mic2` / `compact::v2::parse_micb`.
 - New `Instr` variants may be added in minor releases; consumers should
   match exhaustively and treat unknown variants as a hard error.
+- New `BinOp` variants may be added in minor releases (e.g. `BinOp::Mod`
+  added in 0.2.10). Consumers that exhaustively match on `BinOp` will
+  refuse to compile until they handle the new variant; this is
+  intentional per the conditionally-stable contract.
 
 ## What is experimental
 
