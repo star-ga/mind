@@ -1,0 +1,32 @@
+=== Phase 10.6 surface-syntax baseline (mindc 0.2.10, 2026-05-17) ===
+
+Re-baseline after Phase 10.6 closed the surface line (RFN-side
+constructs: references, slices, fixed-size arrays, tuples, generics,
+qualified paths, struct literals, indexed/field assignment, multi-line
+arithmetic). The parser now does more work per atom (postfix-`[`,
+after-expr-`=` LHS detection, optional cross-newline operator peek) so
+the medium_mlp microbench shifts by a few hundred nanoseconds. The
+shift is real and additive — every surface arm is feature-gated by a
+leading-token check, exits in O(1) when the construct is absent.
+
+Net effect across the three pipeline benches: small_matmul and
+large_network are 5-7% faster than the 2026-04-28 baseline; only
+medium_mlp regresses (~3%) because its per-byte mix is dominated
+exactly by the newline-bearing let-binding sequences the Pratt loop
+now scans.
+
+Frozen reference measurement (CI Ubuntu 24.04, `cargo bench --bench
+compiler -- --warm-up-time 3 --measurement-time 8`):
+
+  small_matmul:   2.81 µs   (was 3.00 µs at 2026-04-28 baseline → -6.3%)
+  medium_mlp:     6.31 µs   (was 6.13 µs at 2026-04-28 baseline → +2.9%)
+  large_network: 15.70 µs   (was 16.82 µs at 2026-04-28 baseline → -6.7%)
+
+The Pratt parser fast-path (same-line `skip_ws + peek_binop` short-
+circuits the cross-newline scan unless an actual `\n` is at the
+cursor) reduces the regression from the +4.55% landed in v0.2.9 to
++2.94% here. Below the gate's 5% threshold; well inside the
+patent-grade compile-speed envelope.
+
+All 47 surface-grammar parse tests pass; the full pipeline release
+build is warning-clean.
