@@ -18,4 +18,5 @@
 //! profiles.  The first supported profile is the Core v1 surface that
 //! underpins the public compiler pipeline.
 
+pub mod cerebras;
 pub mod core_v1;
