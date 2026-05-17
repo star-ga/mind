@@ -1985,8 +1985,10 @@ impl<'a> P<'a> {
         if self.at_keyword(b"if") {
             return self.parse_if_expr();
         }
-        // Phase 10.7: `match` expression
-        if self.at_keyword(b"match") {
+        // Phase 10.7: `match` expression. Fast-path: every primary parse pays
+        // for the keyword check, so short-circuit on the leading byte first
+        // (the full `at_keyword` is a 5-byte compare + boundary check).
+        if self.at(b'm') && self.at_keyword(b"match") {
             return self.parse_match_expr();
         }
         let start = self.pos;
