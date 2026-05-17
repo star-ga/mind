@@ -1392,26 +1392,25 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let mut result_ty: Option<ValueType> = None;
             for arm in arms {
                 match &arm.pattern {
-                    crate::ast::Pattern::Literal(crate::ast::Literal::Int(_)) => {
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Int(_))
                         if !matches!(
                             scrutinee_ty,
                             ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarBool
-                        ) {
-                            return Err(TypeErrSpan {
-                                msg: "integer literal pattern does not match scrutinee type"
-                                    .to_string(),
-                                span: arm.span,
-                            });
-                        }
+                        ) =>
+                    {
+                        return Err(TypeErrSpan {
+                            msg: "integer literal pattern does not match scrutinee type"
+                                .to_string(),
+                            span: arm.span,
+                        });
                     }
-                    crate::ast::Pattern::Literal(crate::ast::Literal::Float(_)) => {
-                        if !matches!(scrutinee_ty, ValueType::ScalarF32 | ValueType::ScalarF64) {
-                            return Err(TypeErrSpan {
-                                msg: "float literal pattern does not match scrutinee type"
-                                    .to_string(),
-                                span: arm.span,
-                            });
-                        }
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Float(_))
+                        if !matches!(scrutinee_ty, ValueType::ScalarF32 | ValueType::ScalarF64) =>
+                    {
+                        return Err(TypeErrSpan {
+                            msg: "float literal pattern does not match scrutinee type".to_string(),
+                            span: arm.span,
+                        });
                     }
                     _ => {}
                 }
