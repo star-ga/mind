@@ -170,19 +170,46 @@ impl<'a> P<'a> {
     fn dotted_ident(&mut self) -> Option<String> {
         let first = self.word()?;
         let mut name = first.to_string();
-        while self.pos < self.b.len() && self.b[self.pos] == b'.' {
-            let saved = self.pos;
-            self.pos += 1; // skip '.'
-            match self.word() {
-                Some(part) => {
-                    name.push('.');
-                    name.push_str(part);
+        loop {
+            if self.pos < self.b.len() && self.b[self.pos] == b'.' {
+                let saved = self.pos;
+                self.pos += 1; // skip '.'
+                match self.word() {
+                    Some(part) => {
+                        name.push('.');
+                        name.push_str(part);
+                    }
+                    None => {
+                        self.pos = saved;
+                        break;
+                    }
                 }
-                None => {
-                    self.pos = saved;
-                    break;
-                }
+                continue;
             }
+            // Phase 10.6: accept `Type::Variant` path segments. rfn-mind
+            // uses `config.AddressingMode::Content`, `Side::Left`, etc.
+            // We accumulate the `::Variant` into the identifier so the
+            // expression node carries the full path string; the type
+            // checker resolves it later.
+            if self.pos + 1 < self.b.len()
+                && self.b[self.pos] == b':'
+                && self.b[self.pos + 1] == b':'
+            {
+                let saved = self.pos;
+                self.pos += 2;
+                match self.word() {
+                    Some(part) => {
+                        name.push_str("::");
+                        name.push_str(part);
+                    }
+                    None => {
+                        self.pos = saved;
+                        break;
+                    }
+                }
+                continue;
+            }
+            break;
         }
         Some(name)
     }
@@ -1800,6 +1827,22 @@ impl<'a> P<'a> {
                 }
             }
             _ => {
+                // Phase 10.6: identifiers that contain `::` segment
+                // separators (enum variant access — e.g.
+                // `config.AddressingMode::Content`) keep the full path
+                // as an identifier; the catch-all backtrack below
+                // would slice off everything after the first `.` which
+                // would corrupt the path.
+                if ident.contains("::") {
+                    if self.at(b'(') {
+                        return self.parse_generic_call(ident, start);
+                    } else if self.at(b'{') && self.struct_lit_body_ahead() {
+                        return self.parse_struct_literal(ident, start);
+                    } else {
+                        let span = Span::new(start, self.pos);
+                        return Ok(Node::Lit(Literal::Ident(ident), span));
+                    }
+                }
                 // If the ident contains a dot and the first segment is not a known
                 // namespace like "tensor", backtrack to the first segment so
                 // parse_atom's dot-loop can handle method calls.
