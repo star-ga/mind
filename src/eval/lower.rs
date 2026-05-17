@@ -361,11 +361,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                             | Some(TypeAnn::DiffTensor { dtype, dims }) => {
                                 lower_tensor_binding(&mut fn_ir, value, dtype, dims, &fn_env)
                             }
-                            // SparseTensor: layout is a runtime concern; lower
-                            // the value expression without injecting shape hints.
-                            Some(TypeAnn::SparseTensor { .. }) | _ => {
-                                lower_expr(value, &mut fn_ir, &fn_env)
-                            }
+                            _ => lower_expr(value, &mut fn_ir, &fn_env),
                         };
                         fn_env.insert(name.clone(), id);
                     }
@@ -436,6 +432,16 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 ir.instrs.push(Instr::ConstI64(id, 0));
                 id
             })
+        }
+        ast::Node::Call { callee, args, .. } => {
+            let arg_ids: Vec<ValueId> = args.iter().map(|a| lower_expr(a, ir, env)).collect();
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst,
+                name: callee.clone(),
+                args: arg_ids,
+            });
+            dst
         }
         // Phase 10.7: `match scrutinee { arms }` — lower to sequential
         // arm evaluation in v1 (chain-of-if-else semantics). The last

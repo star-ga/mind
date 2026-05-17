@@ -13,6 +13,26 @@
 // Part of the MIND project (Machine Intelligence Native Design).
 
 use crate::types::ConvPadding;
+use crate::types::ShapeDim;
+
+/// Storage layout for a sparse tensor.
+///
+/// v1 ships CSR as the only concrete layout; the remaining variants are
+/// syntactically accepted and round-trip through the AST but the runtime
+/// resolves them to the appropriate storage format at load time.
+///
+/// Reference: arXiv:2202.04305 (MLIR sparse_tensor dialect taxonomy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseLayout {
+    /// Compressed Sparse Row — row-major, two-array (indptr + indices).
+    Csr,
+    /// Compressed Sparse Column — column-major variant of CSR.
+    Csc,
+    /// Coordinate format — explicit (row, col, val) triples.
+    Coo,
+    /// Block Sparse Row — tiled extension of CSR for structured sparsity.
+    Bsr,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
@@ -152,6 +172,20 @@ pub enum TypeAnn {
     Tuple {
         elements: Vec<TypeAnn>,
     },
+    /// Sparse tensor type surface: `tensor<sparse[csr], q16_16>`.
+    ///
+    /// `layout` names the storage format; `element` is the scalar element
+    /// type; `shape` uses the existing `ShapeDim` encoding (symbolic or
+    /// concrete). The runtime resolves physical layout at load time —
+    /// `valuetype_from_ann` intentionally returns `None` for this variant
+    /// in v1 so callers fall through to the runtime resolver.
+    ///
+    /// Reference: arXiv:2202.04305 (MLIR sparse_tensor dialect).
+    SparseTensor {
+        layout: SparseLayout,
+        element: Box<TypeAnn>,
+        shape: Vec<ShapeDim>,
+    },
 }
 
 /// Function parameter: `name: type`
@@ -283,11 +317,18 @@ pub enum Node {
         span: Span,
     },
     /// Function definition: `fn name(params) -> ret_type { body }`
+    ///
+    /// `reap_threshold` carries the value from a preceding
+    /// `[reap_threshold(0.5)]` attribute (REAP MoE pruning, arXiv:2510.13999).
+    /// `None` means the attribute was absent; `Some(t)` means the function is
+    /// annotated for compile-time expert pruning with threshold `t ∈ [0.0, 1.0)`.
     FnDef {
         name: String,
         params: Vec<Param>,
         ret_type: Option<TypeAnn>,
         body: Vec<Node>,
+        /// `[reap_threshold(t)]` annotation — `None` when absent.
+        reap_threshold: Option<f64>,
         span: Span,
     },
     /// Return statement: `return expr`
@@ -452,6 +493,63 @@ pub enum Node {
         value: Box<Node>,
         span: Span,
     },
+    /// Match expression: `match value { Pat => body, ... }` (Phase 10.7).
+    ///
+    /// Lowered to a chain of if-else in v1 IR — no new IR opcode required.
+    /// Exhaustiveness checking is deferred; a non-blocking hint is emitted
+    /// when the scrutinee is a known-finite enum and no wildcard arm is
+    /// present.
+    Match {
+        scrutinee: Box<Node>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    /// Reference-taking expression: `&expr` or `&mut expr` (Phase 10.7).
+    ///
+    /// Symmetric with the `&T` / `&mut T` type annotations already in
+    /// `TypeAnn::Ref`. The type-checker annotates the result with `&T` /
+    /// `&mut T`. Lifetime tracking is out of scope for v1; the compiler
+    /// propagates the `&` / `&mut` tag as metadata only.
+    Ref {
+        mutable: bool,
+        inner: Box<Node>,
+        span: Span,
+    },
+}
+
+/// One arm of a `match` expression: `pattern => body`.
+/// Phase 10.7.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Node,
+    pub span: Span,
+}
+
+/// Pattern for a `match` arm (Phase 10.7).
+///
+/// v1 ships four pattern kinds:
+/// - `EnumVariant` — `Mode::On`, `Result::Ok(x)`.
+/// - `Literal`     — `0`, `true`, `"hello"`.
+/// - `Ident`       — bare binding `x` (always matches, binds the name).
+/// - `Wildcard`    — `_` (always matches, binds nothing).
+///
+/// Exhaustiveness checking is advisory only in v1.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    /// Qualified enum variant, e.g. `Mode::On` or `Result::Ok(x)`.
+    EnumVariant {
+        /// Full dotted+`::` path, e.g. `"Mode::On"` or `"config.Mode::On"`.
+        path: String,
+        /// Payload sub-patterns inside `( ... )`, if present.
+        args: Vec<Pattern>,
+    },
+    /// Literal constant: integer, float, bool, or string.
+    Literal(Literal),
+    /// Bare identifier binding — matches anything, binds the name.
+    Ident(String),
+    /// Wildcard `_` — matches anything, binds nothing.
+    Wildcard,
 }
 
 /// A `field: value` pair inside a struct literal expression.
@@ -537,7 +635,9 @@ impl Node {
             | Node::Assert { span, .. }
             | Node::As { span, .. }
             | Node::Logical { span, .. }
-            | Node::Bitwise { span, .. } => *span,
+            | Node::Bitwise { span, .. }
+            | Node::Match { span, .. }
+            | Node::Ref { span, .. } => *span,
         }
     }
 

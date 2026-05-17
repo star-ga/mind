@@ -214,12 +214,30 @@ pub enum Instr {
         axis: i64,
     },
     Output(ValueId),
+    /// Sparse-known metadata annotation on a value.
+    ///
+    /// This is a **metadata-only** instruction: it carries sparsity information
+    /// through canonicalization without changing evaluation semantics.  The
+    /// runtime ignores `SparseAttr` nodes unless the sparse execution path is
+    /// explicitly requested.  Actual sparse autodiff lowering is a follow-up.
+    ///
+    /// Reference: arXiv:2202.04305 (MLIR sparse_tensor dialect approach).
+    SparseAttr {
+        /// The value being annotated.
+        src: ValueId,
+        /// Destination SSA id that the annotation shadows.
+        dst: ValueId,
+        /// Storage layout hint (CSR for v1; others accepted but treated as CSR).
+        layout: crate::ast::SparseLayout,
+    },
     /// Function definition
     FnDef {
         name: String,
         params: Vec<(String, ValueId)>,
         ret_id: Option<ValueId>,
         body: Vec<Instr>,
+        /// Threshold from `[reap_threshold(t)]` attribute, if present.
+        reap_threshold: Option<f64>,
     },
     /// Function call
     Call {
@@ -260,7 +278,8 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. }
         | Instr::Call { dst, .. }
-        | Instr::Param { dst, .. } => Some(*dst),
+        | Instr::Param { dst, .. }
+        | Instr::SparseAttr { dst, .. } => Some(*dst),
         Instr::Output(_) | Instr::FnDef { .. } | Instr::Return { .. } => None,
     }
 }

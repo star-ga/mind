@@ -1378,6 +1378,84 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             infer_expr(value, env)?;
             Ok((ValueType::ScalarI32, *span))
         }
+        // Phase 10.7: `match scrutinee { arms }`.
+        //
+        // The result type is unified across all arms. Pattern type
+        // compatibility is checked conservatively (literal patterns vs.
+        // scrutinee scalar class). Exhaustiveness is advisory only in v1.
+        Node::Match {
+            scrutinee,
+            arms,
+            span,
+        } => {
+            let (scrutinee_ty, _) = infer_expr(scrutinee, env)?;
+            let mut result_ty: Option<ValueType> = None;
+            for arm in arms {
+                match &arm.pattern {
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Int(_)) => {
+                        if !matches!(
+                            scrutinee_ty,
+                            ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarBool
+                        ) {
+                            return Err(TypeErrSpan {
+                                msg: "integer literal pattern does not match scrutinee type"
+                                    .to_string(),
+                                span: arm.span,
+                            });
+                        }
+                    }
+                    crate::ast::Pattern::Literal(crate::ast::Literal::Float(_)) => {
+                        if !matches!(scrutinee_ty, ValueType::ScalarF32 | ValueType::ScalarF64) {
+                            return Err(TypeErrSpan {
+                                msg: "float literal pattern does not match scrutinee type"
+                                    .to_string(),
+                                span: arm.span,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+                let mut arm_env = env.clone();
+                if let crate::ast::Pattern::Ident(bind_name) = &arm.pattern {
+                    arm_env.insert(bind_name.clone(), scrutinee_ty.clone());
+                }
+                if let crate::ast::Pattern::EnumVariant { args, .. } = &arm.pattern {
+                    for sub in args {
+                        if let crate::ast::Pattern::Ident(sub_name) = sub {
+                            arm_env.insert(sub_name.clone(), scrutinee_ty.clone());
+                        }
+                    }
+                }
+                match infer_expr(&arm.body, &arm_env) {
+                    Ok((arm_ty, _)) => match &result_ty {
+                        None => result_ty = Some(arm_ty),
+                        Some(existing) => {
+                            if *existing != arm_ty {
+                                return Err(TypeErrSpan {
+                                    msg: format!(
+                                        "match arm type mismatch: expected {} but found {}",
+                                        describe_value_type(existing),
+                                        describe_value_type(&arm_ty)
+                                    ),
+                                    span: arm.span,
+                                });
+                            }
+                        }
+                    },
+                    Err(e) => return Err(e),
+                }
+            }
+            Ok((result_ty.unwrap_or(ValueType::ScalarI32), *span))
+        }
+        // Phase 10.7: `&expr` / `&mut expr` reference-taking.
+        //
+        // v1: type-check the inner expression; return `ScalarI32` as a
+        // stable placeholder. Full `ValueType::Ref { mutable, inner }`
+        // propagation is a follow-up that requires extending `ValueType`.
+        Node::Ref { inner, span, .. } => {
+            infer_expr(inner, env)?;
+            Ok((ValueType::ScalarI32, *span))
+        }
     }
 }
 
@@ -1692,6 +1770,9 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         | crate::ast::TypeAnn::Ref { .. }
         | crate::ast::TypeAnn::Generic { .. }
         | crate::ast::TypeAnn::Tuple { .. } => None,
+        // SparseTensor: runtime resolves layout; return None so callers
+        // fall through to the runtime resolver path (same pattern as Slice).
+        crate::ast::TypeAnn::SparseTensor { .. } => None,
     }
 }
 

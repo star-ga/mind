@@ -22,7 +22,18 @@ use crate::ir::{instruction_dst, BinOp, IRModule, Instr, ValueId};
 /// performs deterministic cleanups (operand ordering, trivial constant folding),
 /// and prunes provably dead instructions. Running the pass repeatedly is
 /// idempotent.
+///
+/// Feature gate for REAP MoE pruning: the dead-expert DCE sub-pass only runs
+/// when at least one function in the module carries a `reap_threshold` attribute.
+/// This keeps the headline compile-speed benches unaffected for non-MoE code.
+///
+/// Reference (REAP pruning): arXiv:2510.13999.
 pub fn canonicalize_module(module: &mut IRModule) {
+    // REAP dead-expert DCE: feature-gated on presence of `reap_threshold`.
+    if module_has_reap_threshold(module) {
+        prune_dead_experts(module);
+    }
+
     let mut instrs = prune_dead(&module.instrs);
     reorder_commutative_ops(&mut instrs);
     constant_fold(&mut instrs);
@@ -30,6 +41,107 @@ pub fn canonicalize_module(module: &mut IRModule) {
 
     module.instrs = instrs;
     module.next_id = next_sequential_id(module);
+}
+
+// ---------------------------------------------------------------------------
+// REAP dead-expert DCE
+// ---------------------------------------------------------------------------
+
+/// Returns true iff any `FnDef` in the module's top-level instruction stream
+/// carries a `reap_threshold` attribute.  O(n) scan; result cached by caller.
+fn module_has_reap_threshold(module: &IRModule) -> bool {
+    module.instrs.iter().any(|instr| {
+        matches!(
+            instr,
+            Instr::FnDef {
+                reap_threshold: Some(_),
+                ..
+            }
+        )
+    })
+}
+
+/// Dead-expert DCE pass (REAP-style).
+///
+/// For each `FnDef` with `reap_threshold = Some(t)`:
+///  1. Collect all `Instr::Call` sites that reference the function anywhere in
+///     the module (top-level and nested inside other `FnDef` bodies).
+///  2. If the function has zero `Instr::Call` references AND there are no other
+///     `FnDef` nodes in the module that could act as implicit callers (e.g.
+///     through paths the lowerer has not yet emitted `Instr::Call` for), the
+///     expert is considered dead and its body is replaced with a
+///     `ConstI64(ret_id, 0)` tombstone to preserve SSA integrity.
+///
+/// The conservative "no other FnDefs" guard prevents false positives when the
+/// IR lowering pass does not yet emit `Instr::Call` for all user-defined
+/// function invocations.  In that regime a router function is represented as a
+/// `FnDef` in the module but does not produce explicit `Instr::Call` entries
+/// for experts it dispatches to.
+///
+/// In production MoE routing, routing decisions gate expert reachability at
+/// compile time when the threshold is known statically.  This pass implements
+/// the conservative baseline; threshold-guided pruning (retaining top-k experts
+/// based on activation statistics) is a follow-up requiring routing-function
+/// analysis.
+///
+/// Reference (REAP pruning): arXiv:2510.13999.
+///
+/// The pass is idempotent and feature-gated (only runs when
+/// `module_has_reap_threshold` returns true).
+fn prune_dead_experts(module: &mut IRModule) {
+    // Collect names of all functions that are explicitly called via Instr::Call
+    // — both at top-level and inside any FnDef body.
+    let mut all_called: BTreeSet<String> = BTreeSet::new();
+    for instr in &module.instrs {
+        match instr {
+            Instr::Call { name, .. } => {
+                all_called.insert(name.clone());
+            }
+            Instr::FnDef { body, .. } => {
+                for bi in body {
+                    if let Instr::Call { name, .. } = bi {
+                        all_called.insert(name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Conservative guard: if there are any FnDef nodes WITHOUT reap_threshold
+    // in the module, they could be router/caller functions that invoke experts
+    // through code paths the lowerer has not yet represented as Instr::Call.
+    // In that case we cannot safely prune — skip the pass entirely.
+    let has_potential_callers = module.instrs.iter().any(|instr| {
+        matches!(
+            instr,
+            Instr::FnDef {
+                reap_threshold: None,
+                ..
+            }
+        )
+    });
+    if has_potential_callers {
+        return;
+    }
+
+    // Tombstone unreachable expert bodies.
+    for instr in &mut module.instrs {
+        if let Instr::FnDef {
+            name,
+            reap_threshold: Some(_),
+            body,
+            ret_id,
+            ..
+        } = instr
+        {
+            if !all_called.contains(name) {
+                // Replace body with a single tombstone instruction.
+                let tombstone_id = ret_id.unwrap_or(ValueId(usize::MAX));
+                *body = vec![Instr::ConstI64(tombstone_id, 0)];
+            }
+        }
+    }
 }
 
 fn prune_dead(instrs: &[Instr]) -> Vec<Instr> {
@@ -151,7 +263,8 @@ fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         | Instr::Squeeze { src, .. }
         | Instr::Transpose { src, .. }
         | Instr::Index { src, .. }
-        | Instr::Slice { src, .. } => vec![*src],
+        | Instr::Slice { src, .. }
+        | Instr::SparseAttr { src, .. } => vec![*src],
         Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => vec![*a, *b],
         Instr::Conv2d { input, filter, .. } => vec![*input, *filter],
         Instr::Conv2dGradInput { dy, filter, .. } => vec![*dy, *filter],
