@@ -343,6 +343,59 @@ impl<'a> P<'a> {
 
     fn type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         self.skip_ws();
+        // Phase 10.6: borrowed slice `&[T]` or `&mut [T]`. Mutable form
+        // accepted for in-place buffer rewrites (rfn-mind groupnorm,
+        // field_step, memory all need this).
+        if self.at(b'&') {
+            self.pos += 1;
+            self.skip_ws();
+            let mutable = if self.at_keyword(b"mut") {
+                self.pos += 3;
+                self.skip_ws();
+                true
+            } else {
+                false
+            };
+            if !self.eat(b'[') {
+                return Err(self.err("expected `[` after `&` or `&mut` in slice type".into()));
+            }
+            self.skip_ws();
+            let element = self.type_ann()?;
+            self.skip_ws();
+            if !self.eat(b']') {
+                return Err(self.err("expected `]` to close slice type".into()));
+            }
+            return Ok(TypeAnn::Slice {
+                mutable,
+                element: Box::new(element),
+            });
+        }
+        // Phase 10.6: fixed-size array `[T; N]`. The N is a compile-time
+        // u32. Used for LUT tables and other static buffers.
+        if self.at(b'[') {
+            self.pos += 1;
+            self.skip_ws();
+            let element = self.type_ann()?;
+            self.skip_ws();
+            if !self.eat(b';') {
+                return Err(self.err("expected `;` between array element type and length".into()));
+            }
+            self.skip_ws();
+            let length_str = self
+                .digits()
+                .ok_or_else(|| self.err("expected array length (positive integer)".into()))?;
+            let length: u32 = length_str
+                .parse()
+                .map_err(|_| self.err("array length out of u32 range".into()))?;
+            self.skip_ws();
+            if !self.eat(b']') {
+                return Err(self.err("expected `]` to close array type".into()));
+            }
+            return Ok(TypeAnn::Array {
+                element: Box::new(element),
+                length,
+            });
+        }
         // Tensor[f32,(dims)] — legacy syntax
         if self.at_keyword(b"Tensor") {
             self.pos += 6; // "Tensor"
