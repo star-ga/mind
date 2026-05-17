@@ -403,6 +403,22 @@ impl MicEmitter {
             Instr::Output(id) => {
                 writeln!(&mut self.output, "O N{}", id.0).unwrap();
             }
+            Instr::SparseAttr { src, dst, layout } => {
+                // Metadata-only: emitted as a comment in mic@1 so round-trips
+                // are stable and human-readable without affecting semantics.
+                let layout_str = match layout {
+                    crate::ast::SparseLayout::Csr => "csr",
+                    crate::ast::SparseLayout::Csc => "csc",
+                    crate::ast::SparseLayout::Coo => "coo",
+                    crate::ast::SparseLayout::Bsr => "bsr",
+                };
+                writeln!(
+                    &mut self.output,
+                    "N{} sparse.attr N{} layout={}",
+                    dst.0, src.0, layout_str
+                )
+                .unwrap();
+            }
             _ => {}
         }
     }

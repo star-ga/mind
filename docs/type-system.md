@@ -25,7 +25,8 @@ Core IR v1 shape lattice.
 
 | Form                       | Example                          | Notes                                  |
 | -------------------------- | -------------------------------- | -------------------------------------- |
-| Reference                  | `&T`, `&mut T`                   | Single-value borrow; lifetime inferred |
+| Reference (type)           | `&T`, `&mut T`                   | Single-value borrow; lifetime inferred |
+| Reference (expression)     | `&expr`, `&mut expr`             | Phase 10.7 — symmetric with `&T`/`&mut T` types; no-op in v1 IR |
 | Slice                      | `&[T]`, `&mut [T]`               | Sized contiguous run; length at runtime |
 | Fixed-size array           | `[T; N]`                         | `N` is a compile-time integer literal  |
 | Tuple                      | `(T, U)`, `(T, U, V)`            | Used in fn returns and destructuring   |

@@ -218,6 +218,7 @@ fn fndef_body_use_before_def_rejected() {
         name: "test_fn".to_string(),
         params: vec![],
         ret_id: None,
+        reap_threshold: None,
         body: vec![Instr::BinOp {
             dst: body_dst,
             op: BinOp::Add,
@@ -242,6 +243,7 @@ fn fndef_body_with_valid_defs_passes() {
         name: "valid_fn".to_string(),
         params: vec![("x".to_string(), body_a)],
         ret_id: None,
+        reap_threshold: None,
         body: vec![
             Instr::ConstI64(body_a, 1),
             Instr::ConstI64(body_b, 2),

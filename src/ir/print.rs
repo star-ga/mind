@@ -255,6 +255,27 @@ fn format_instr(instr: &Instr, out: &mut String) {
         Instr::Output(id) => {
             writeln!(out, "  output {}", value_name(*id)).unwrap();
         }
+        Instr::SparseAttr { src, dst, layout } => {
+            writeln!(
+                out,
+                "  {} = sparse.attr {} layout={:?}",
+                value_name(*dst),
+                value_name(*src),
+                layout
+            )
+            .unwrap();
+        }
+        Instr::FnDef {
+            name,
+            reap_threshold,
+            ..
+        } => {
+            if let Some(t) = reap_threshold {
+                writeln!(out, "  // fn {name} reap_threshold={t}").unwrap();
+            } else {
+                writeln!(out, "  // fn {name}").unwrap();
+            }
+        }
         _ => {}
     }
 }

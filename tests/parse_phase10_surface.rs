@@ -408,11 +408,12 @@ fn does_not_parse_struct_literal_for_arbitrary_block() {
 // parser must hold the documented high-watermark count: any drop is a
 // regression in the parser, never a "spec gap" to ignore.
 //
-// Current watermark: 14 files parse cleanly. Bump in the same commit
-// that lands the next blocking feature (match expressions, reference
-// expressions, extern const, typed hex literals, Rust-style `use
-// std::x::Y` paths).
-const TRACKING_CORPUS_WATERMARK: usize = 14;
+// Current watermark: 21 files parse cleanly. Bumped in the commit
+// that lands match expressions (Phase 10.7) and `&expr` / `&mut expr`
+// reference-taking expressions (Phase 10.7), unblocking 7 previously
+// failing corpus files (laplacian, memory, bundle for match;
+// field_step, memory_bwd, readout, rfn for &expr).
+const TRACKING_CORPUS_WATERMARK: usize = 21;
 
 #[test]
 fn parses_tracking_corpus_watermark() {

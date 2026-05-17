@@ -220,6 +220,9 @@ fn validate_operands(
         Instr::Param { .. } => {
             // Parameters define values; no operands to check.
         }
+        Instr::SparseAttr { src, .. } => {
+            check_defined(*src)?;
+        }
     }
 
     Ok(())
