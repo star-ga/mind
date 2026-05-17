@@ -151,6 +151,41 @@ fn parses_multi_segment_qualified_type() {
     assert!(parses(src), "multi-segment qualified type must parse");
 }
 
+// Step 8c — `pub` visibility marker (Phase 10.6). mindc treats `pub` as a
+// no-op (module-level visibility is via `export` blocks); accepting it
+// keeps rfn-mind/src/ternary.mind and src/bitlinear.mind syntax-compatible
+// without forcing a source rewrite.
+#[test]
+fn parses_pub_struct_decl() {
+    let src = "module m { pub struct Pair { a: i32, b: i32 } }\n";
+    assert!(parses(src), "`pub struct` at module scope must parse");
+}
+
+#[test]
+fn parses_pub_enum_decl() {
+    let src = "module m { pub enum Side { Left, Right } }\n";
+    assert!(parses(src), "`pub enum` at module scope must parse");
+}
+
+#[test]
+fn parses_pub_fn_def() {
+    let src = "module m { pub fn id(x: i32) -> i32 { x } }\n";
+    assert!(parses(src), "`pub fn` at module scope must parse");
+}
+
+#[test]
+fn parses_pub_field_in_struct() {
+    let src = "module m { struct Pair { pub a: i32, pub b: i32 } }\n";
+    assert!(parses(src), "`pub field` inside struct body must parse");
+}
+
+#[test]
+fn parses_mixed_pub_fields() {
+    // Mix of pub and non-pub fields must coexist cleanly.
+    let src = "module m { struct R { pub x: i32, y: i32, pub z: u32 } }\n";
+    assert!(parses(src), "mixed pub/non-pub fields must parse");
+}
+
 // Step 9 — full rfn-mind file end-to-end (Tier-1 milestone)
 #[test]
 fn parses_fixed_point_mind_end_to_end() {
