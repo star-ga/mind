@@ -436,12 +436,16 @@ impl<'a> P<'a> {
         }
         // Phase 10.5 Tier-1: user-defined type names (aliases, structs, enums).
         // Falls through to here only if no built-in scalar/tensor matched.
-        // Recognized as a bare identifier at type position.
+        // Recognized as a bare identifier — or a module-qualified path
+        // `module.Name` (Phase 10.6, RFC 0003) — at type position. The
+        // dotted form is collected into a single `Named` string with the
+        // separator preserved; the type checker resolves the path against
+        // the `use` scope.
         let pre_pos = self.pos;
-        if let Some(name) = self.word() {
+        if let Some(first) = self.word() {
             // Reject keywords reused at type position to avoid odd matches.
             if matches!(
-                name,
+                first,
                 "fn" | "let"
                     | "if"
                     | "else"
@@ -462,10 +466,35 @@ impl<'a> P<'a> {
                 self.pos = pre_pos;
                 return Err(self.err(format!(
                     "expected type annotation, found keyword `{}`",
-                    name
+                    first
                 )));
             }
-            return Ok(TypeAnn::Named(name.to_string()));
+            // Fast path: bare identifier with no qualifier. Keeps the
+            // no-dot case bit-identical to the pre-Phase-10.6 hot loop.
+            if self.pos >= self.b.len() || self.b[self.pos] != b'.' {
+                return Ok(TypeAnn::Named(first.to_string()));
+            }
+            // Slow path: module-qualified path `a.b.c`. Accumulate dotted
+            // segments without crossing whitespace or newlines — `a . b`
+            // is rejected; `a.b.c` becomes a single `Named("a.b.c")`. The
+            // type checker resolves the path against the `use` scope.
+            let mut name = String::with_capacity(first.len() * 2);
+            name.push_str(first);
+            while self.pos < self.b.len() && self.b[self.pos] == b'.' {
+                let dot_pos = self.pos;
+                self.pos += 1;
+                match self.word() {
+                    Some(seg) => {
+                        name.push('.');
+                        name.push_str(seg);
+                    }
+                    None => {
+                        self.pos = dot_pos;
+                        break;
+                    }
+                }
+            }
+            return Ok(TypeAnn::Named(name));
         }
         Err(self.err("expected type annotation".into()))
     }
