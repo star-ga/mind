@@ -3032,7 +3032,7 @@ impl<'a> P<'a> {
                 && self
                     .b
                     .get(self.pos + 1)
-                    .map_or(false, |c| c.is_ascii_digit())
+                    .is_some_and(|c| c.is_ascii_digit())
             {
                 self.pos += 1;
                 let frac = self.digits().unwrap_or_default();
@@ -3091,7 +3091,7 @@ fn extract_reap_threshold(attrs: &[crate::ast::Attribute]) -> Option<f64> {
         if attr.name == "reap_threshold" {
             if let Some(raw) = attr.args.first() {
                 if let Ok(v) = raw.parse::<f64>() {
-                    if v >= 0.0 && v < 1.0 {
+                    if (0.0..1.0).contains(&v) {
                         result = Some(v);
                     }
                 }
