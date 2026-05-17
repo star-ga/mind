@@ -348,6 +348,7 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::Ref { .. })
                     | Some(TypeAnn::Generic { .. })
                     | Some(TypeAnn::Tuple { .. })
+                    | Some(TypeAnn::SparseTensor { .. })
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {
@@ -1186,6 +1187,10 @@ pub(crate) fn eval_value_expr_mode(
         // Phase 10.6: field assignment is also a statement; the
         // expression-position evaluation returns the assigned value.
         Node::FieldAssign { value, .. } => eval_value_expr_mode(value, env, tensor_env, mode),
+        // Phase 10.7 constructs — not yet implemented in the evaluator.
+        Node::Match { .. } | Node::Ref { .. } => Err(EvalError::UnsupportedMsg(
+            "Phase 10.7 constructs not yet implemented".into(),
+        )),
     }
 }
 
