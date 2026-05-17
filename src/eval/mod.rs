@@ -1153,6 +1153,22 @@ pub(crate) fn eval_value_expr_mode(
                 _ => Ok(Value::Int(0)),
             }
         }
+        // Phase 10.6: struct literal preview-eval. Evaluate each field's
+        // value sub-expression and pack them into a Tuple in declared
+        // field order. Full structural eval (returning a typed aggregate
+        // tied to the struct name) lands when AOT codegen needs it.
+        Node::StructLit { fields, .. } => {
+            let mut items = Vec::with_capacity(fields.len());
+            for f in fields {
+                items.push(eval_value_expr_mode(
+                    &f.value,
+                    env,
+                    tensor_env,
+                    mode.clone(),
+                )?);
+            }
+            Ok(Value::Tuple(items))
+        }
     }
 }
 

@@ -380,6 +380,24 @@ pub enum Node {
         right: Box<Node>,
         span: Span,
     },
+    /// Struct literal expression: `Name { field: value, field: value }`.
+    /// Phase 10.6 — used by rfn-mind to return aggregate values
+    /// (`PartialPair { da: dy, db: dy }` etc.). Type-checker resolves
+    /// the name against a StructDef in scope.
+    StructLit {
+        name: String,
+        fields: Vec<StructLitField>,
+        span: Span,
+    },
+}
+
+/// A `field: value` pair inside a struct literal expression.
+/// Phase 10.6.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructLitField {
+    pub name: String,
+    pub value: Node,
+    pub span: Span,
 }
 
 /// Attribute metadata, e.g. `[protection]`, `[test]`, `[bench]`.
@@ -448,6 +466,7 @@ impl Node {
             | Node::TypeAlias { span, .. }
             | Node::Export { span, .. }
             | Node::StructDef { span, .. }
+            | Node::StructLit { span, .. }
             | Node::EnumDef { span, .. }
             | Node::Assert { span, .. }
             | Node::As { span, .. }
