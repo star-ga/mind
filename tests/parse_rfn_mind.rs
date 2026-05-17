@@ -259,6 +259,21 @@ fn parses_slice_of_qualified_type() {
     assert!(parses(src), "&[module.Type] must parse");
 }
 
+// Step 8f — `let mut` mutable binding (Phase 10.6). Used for accumulator
+// loops in rfn-mind/src/reduce.mind, conv.mind, groupnorm.mind. mindc
+// treats `mut` as informational; the eval env always allows reassignment.
+#[test]
+fn parses_let_mut_binding() {
+    let src = "module m { fn f() -> i32 { let mut x: i32 = 0\n x = x + 1\n x } }\n";
+    assert!(parses(src), "`let mut x = ...` must parse");
+}
+
+#[test]
+fn parses_let_mut_without_annotation() {
+    let src = "module m { fn f() -> i32 { let mut x = 0\n x = x + 1\n x } }\n";
+    assert!(parses(src), "`let mut x = ...` without type ann must parse");
+}
+
 #[test]
 fn does_not_parse_struct_literal_for_arbitrary_block() {
     // Lookahead must reject `IDENT { stmt }` shape (no `field: value` pair).
