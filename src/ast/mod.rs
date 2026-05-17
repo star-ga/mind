@@ -147,6 +147,11 @@ pub enum TypeAnn {
         name: String,
         args: Vec<TypeAnn>,
     },
+    /// Tuple type `(T, U)` (Phase 10.6). Used in rfn-mind for fns
+    /// returning multiple values like `fn phase2_v1_defaults() -> (Q, Q)`.
+    Tuple {
+        elements: Vec<TypeAnn>,
+    },
 }
 
 /// Function parameter: `name: type`
@@ -422,6 +427,31 @@ pub enum Node {
         fields: Vec<StructLitField>,
         span: Span,
     },
+    /// Index access expression: `receiver[index]` (Phase 10.6). Distinct
+    /// from `Node::CallIndex` (which is for `tensor.index(...)` builtin
+    /// dispatch); this is the generic indexing operator used on slices,
+    /// arrays, and Vec values.
+    IndexAccess {
+        receiver: Box<Node>,
+        index: Box<Node>,
+        span: Span,
+    },
+    /// Indexed assignment statement: `receiver[index] = value` (Phase 10.6).
+    /// Used in rfn-mind backward modules (`dx[i] = dy`, `d_in[i] = ...`).
+    IndexAssign {
+        receiver: Box<Node>,
+        index: Box<Node>,
+        value: Box<Node>,
+        span: Span,
+    },
+    /// Field assignment statement: `receiver.field = value` (Phase 10.6).
+    /// Used in rfn-mind adaptive_depth (`ctrl.streak = ctrl.streak + 1`).
+    FieldAssign {
+        receiver: Box<Node>,
+        field: String,
+        value: Box<Node>,
+        span: Span,
+    },
 }
 
 /// A `field: value` pair inside a struct literal expression.
@@ -500,6 +530,9 @@ impl Node {
             | Node::Export { span, .. }
             | Node::StructDef { span, .. }
             | Node::StructLit { span, .. }
+            | Node::IndexAccess { span, .. }
+            | Node::IndexAssign { span, .. }
+            | Node::FieldAssign { span, .. }
             | Node::EnumDef { span, .. }
             | Node::Assert { span, .. }
             | Node::As { span, .. }
