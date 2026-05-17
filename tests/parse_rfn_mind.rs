@@ -274,6 +274,24 @@ fn parses_let_mut_without_annotation() {
     assert!(parses(src), "`let mut x = ...` without type ann must parse");
 }
 
+// Step 8g — modulo `%` (Phase 10.6). rfn-mind/src/groupnorm.mind uses
+// `c_count % num_groups` to validate channel-group divisibility; memory.mind
+// uses it for wrap-around address arithmetic.
+#[test]
+fn parses_modulo_binop() {
+    let src = "module m { fn f() -> i32 { 10 % 3 } }\n";
+    assert!(parses(src), "`%` modulo must parse");
+}
+
+#[test]
+fn parses_modulo_in_assert() {
+    let src = "module m { fn f(c: u32, g: u32) -> i32 { assert c % g == 0, \"divisible\"\n 0 } }\n";
+    assert!(
+        parses(src),
+        "`%` inside assert condition must parse"
+    );
+}
+
 #[test]
 fn does_not_parse_struct_literal_for_arbitrary_block() {
     // Lookahead must reject `IDENT { stmt }` shape (no `field: value` pair).

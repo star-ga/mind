@@ -556,14 +556,17 @@ pub fn build_graph_loss(
                         shape,
                         fill,
                     },
-                    // Comparison ops produce scalar results, not differentiable
-                    ast::BinOp::Lt
+                    // Modulo + comparisons produce scalar results that are
+                    // non-differentiable. Stored as Sub placeholder so the
+                    // tape stays well-formed for downstream walkers.
+                    ast::BinOp::Mod
+                    | ast::BinOp::Lt
                     | ast::BinOp::Le
                     | ast::BinOp::Gt
                     | ast::BinOp::Ge
                     | ast::BinOp::Eq
                     | ast::BinOp::Ne => NodeInfo {
-                        op: Op::Sub(l, r), // placeholder — comparisons aren't differentiable
+                        op: Op::Sub(l, r),
                         dtype: lhs.dtype.clone(),
                         shape,
                         fill: Some(0.0),
