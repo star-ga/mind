@@ -899,11 +899,14 @@ fn native_link(
     Ok(())
 }
 
-/// Find the MIND runtime library for a backend
+/// Find the MIND runtime library for a backend.
+///
+/// Search order:
+///   1. `MIND_LIB_DIR` environment override.
+///   2. `~/.mind/lib` (canonical install path).
 fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Cannot determine home directory"))?;
     let mind_lib = home.join(".mind").join("lib");
-    let nikolachess_lib = home.join(".nikolachess").join("lib");
 
     // Map backend to library name
     let lib_name = match backend {
@@ -924,20 +927,17 @@ fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
         }
     }
 
-    // 2. Search in standard locations (~/.mind/lib first, then ~/.nikolachess/lib)
-    for lib_dir in [&mind_lib, &nikolachess_lib] {
-        let lib_path = lib_dir.join(lib_name);
-        if lib_path.exists() {
-            return Ok(lib_dir.clone());
-        }
-    }
-
-    // 3. Fallback: check if any lib dir exists
-    if mind_lib.exists() {
+    // 2. Canonical install path
+    let lib_path = mind_lib.join(lib_name);
+    if lib_path.exists() {
         return Ok(mind_lib);
     }
-    if nikolachess_lib.exists() {
-        return Ok(nikolachess_lib);
+
+    // 3. Fallback: return the canonical dir if it exists at all so the
+    //    caller can produce a precise "library file missing" error rather
+    //    than a generic "directory not found".
+    if mind_lib.exists() {
+        return Ok(mind_lib);
     }
 
     Err(anyhow!(

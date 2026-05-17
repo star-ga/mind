@@ -1,7 +1,7 @@
 # MIND Compiler Status
 
-> **Last Updated:** 2026-05-16
-> **Version:** 0.2.5
+> **Last Updated:** 2026-05-17
+> **Version:** 0.2.10
 
 ## Overview
 
@@ -42,8 +42,8 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Phase 8 | MLIR optimization | ✅ Complete |
 | Phase 9 | CPU runtime integration | ✅ Complete |
 | Phase 10 | Developer SDK & Examples | 🚧 In Progress |
-| Phase 10.5 | Systems Programming Foundation | 📋 Planned |
-| Phase 10.6 | Library Output & C ABI (mindc 0.2.6 / 0.3.0) | 📋 Planned |
+| Phase 10.5 | Systems Programming Foundation | ✅ Complete |
+| Phase 10.6 | Library Output & C ABI (mindc 0.2.6 → 0.3.0) | 🚧 In Progress |
 | Phase 11 | Benchmarks & Cloud Compiler | 📋 Planned |
 | Phase 12 | Enterprise Runtime & Edge | 📋 Planned |
 | Phase 13 | BCI/Neuroscience | 📋 Roadmap Added |

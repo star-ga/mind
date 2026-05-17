@@ -186,8 +186,8 @@ impl<'a> P<'a> {
                 }
                 continue;
             }
-            // Phase 10.6: accept `Type::Variant` path segments. rfn-mind
-            // uses `config.AddressingMode::Content`, `Side::Left`, etc.
+            // Phase 10.6: accept `Type::Variant` path segments
+            // (`config.AddressingMode::Content`, `Side::Left`, etc.).
             // We accumulate the `::Variant` into the identifier so the
             // expression node carries the full path string; the type
             // checker resolves it later.
@@ -371,9 +371,9 @@ impl<'a> P<'a> {
     fn type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         self.skip_ws();
         // Phase 10.6: borrowed reference types.
-        //   `&[T]`     -> Slice (sized buffer; rfn-mind reduce, conv inputs)
-        //   `&mut [T]` -> Slice mutable (rfn-mind groupnorm, field_step writes)
-        //   `&T`       -> Ref (struct passed by reference; e.g. &MemoryBank)
+        //   `&[T]`     -> Slice (sized buffer, e.g. reduce/conv inputs)
+        //   `&mut [T]` -> Slice mutable (e.g. in-place normalize / SGD updates)
+        //   `&T`       -> Ref (struct passed by reference)
         //   `&mut T`   -> Ref mutable
         if self.at(b'&') {
             self.pos += 1;
@@ -398,15 +398,15 @@ impl<'a> P<'a> {
                 });
             }
             // Single-value reference: `&T` / `&mut T`. Element type recurses
-            // through type_ann so qualified names (`&memory.MemoryBank`) work.
+            // through type_ann so qualified names (`&module.Type`) work.
             let target = self.type_ann()?;
             return Ok(TypeAnn::Ref {
                 mutable,
                 target: Box::new(target),
             });
         }
-        // Phase 10.6: tuple type `(T, U, ...)`. Used in rfn-mind for fns
-        // returning multiple values like `fn defaults() -> (Q, Q)`.
+        // Phase 10.6: tuple type `(T, U, ...)`. Used for fns that
+        // return multiple values, e.g. `fn defaults() -> (i32, u32)`.
         if self.at(b'(') {
             self.pos += 1;
             self.skip_ws_and_newlines();
@@ -692,8 +692,7 @@ impl<'a> P<'a> {
         // Phase 10.6: optional `pub` visibility marker before struct/enum/fn/
         // type/const. mindc treats it as a no-op — module-level visibility
         // is controlled by the `export` block. Accepting `pub` lets
-        // rfn-mind/src/bitlinear.mind and src/ternary.mind parse without
-        // forcing a source rewrite of every existing pub-prefixed item.
+        // pub-prefixed source compile without forcing a rewrite.
         if self.at_keyword(b"pub") {
             self.pos += 3;
             self.skip_ws_and_newlines();
@@ -1360,8 +1359,7 @@ impl<'a> P<'a> {
         // Phase 10.6: accept `let mut name = ...`. mindc semantics treat
         // mut as informational — the eval/codegen path mutates the binding
         // in the local env regardless of the marker; the parser accepts
-        // it for rfn-mind source-style parity (used by reduce.mind,
-        // conv.mind, groupnorm.mind for accumulators).
+        // it for surface-syntax parity with mutable-accumulator idioms.
         if self.at_keyword(b"mut") {
             self.pos += 3;
             self.skip_ws_and_newlines();
@@ -1754,13 +1752,13 @@ impl<'a> P<'a> {
                     }
                 }
             }
-            // Phase 10.6: postfix index `receiver[index]`. Used in rfn-mind
-            // reduce.mind / conv.mind / lut.mind for slice element access.
-            // The cast subtlety: `[...]` in expression position-without-
-            // receiver is still an array literal via parse_primary; this
-            // path triggers only when something else has already been
-            // parsed and `[` follows directly (no whitespace consumed
-            // crossing newlines).
+            // Phase 10.6: postfix index `receiver[index]` for slice /
+            // array / Vec element access. The cast subtlety: `[...]`
+            // in expression position without a receiver is still an
+            // array literal via parse_primary; this path triggers only
+            // when something else has already been parsed and `[`
+            // follows directly (no whitespace consumed crossing
+            // newlines).
             if self.at(b'[') {
                 self.pos += 1;
                 self.skip_ws();

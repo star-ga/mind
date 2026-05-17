@@ -43,11 +43,6 @@ fn require_mindc() -> PathBuf {
     binary
 }
 
-#[cfg(not(debug_assertions))]
-#[ignore]
-#[test]
-fn _ignore_in_release_mode() {}
-
 #[test]
 fn mindc_emits_ir() {
     let binary = require_mindc();

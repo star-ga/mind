@@ -1,10 +1,5 @@
 use libmind::conformance::{run_conformance, ConformanceOptions, ConformanceProfile};
 
-#[cfg(not(debug_assertions))]
-#[ignore]
-#[test]
-fn _ignore_in_release_mode() {}
-
 #[test]
 fn cpu_conformance_profile_passes() {
     run_conformance(ConformanceOptions {

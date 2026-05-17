@@ -121,7 +121,7 @@ directly. Foundation for the sub-µs warm-start frontend latency target.
 use libmind::cache::{CompilationCache, CacheKey, ProfileTag};
 
 let mut cache = CompilationCache::in_memory();
-let key = CacheKey::new("0.2.6", ProfileTag::Default, source_hash, imports_hash);
+let key = CacheKey::new(env!("CARGO_PKG_VERSION"), ProfileTag::Default, source_hash, imports_hash);
 if let Some(entry) = cache.lookup(&key) {
     return entry.ir_bytes;
 }
@@ -239,7 +239,12 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 ### Compilation Speed
 
-#### Verified Benchmarks (v0.2.3, February 2026)
+#### Verified Benchmarks (frozen baseline, locked since v0.2.3)
+
+*Locked as the bench-gate baseline since v0.2.5 (April 2026). Phase
+10.5 and 10.6 parser additions ship within the bench-gate threshold
+documented at [`.bench-baseline-2026-04-28-pratt.txt`](./.bench-baseline-2026-04-28-pratt.txt).*
+
 
 | vs Framework | Compilation Time | MIND Ratio |
 |--------------|-----------------|------------|

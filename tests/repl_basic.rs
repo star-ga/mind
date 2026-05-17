@@ -35,11 +35,6 @@ fn mind_binary() -> PathBuf {
     path
 }
 
-#[cfg(not(debug_assertions))]
-#[ignore]
-#[test]
-fn _ignore_in_release_mode() {}
-
 #[test]
 fn repl_accepts_statements_and_expressions() {
     let binary = mind_binary();
