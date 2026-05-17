@@ -180,7 +180,13 @@ pub fn compile_source_with_name(
     source_name: Option<&str>,
     opts: &CompileOptions,
 ) -> Result<CompileProducts, CompileError> {
-    if matches!(opts.target, BackendTarget::Gpu) {
+    // Non-CPU targets (Gpu, Cerebras, etc.) lower in this crate to the
+    // shared canonical IR, but final code emission requires the matching
+    // `mind-runtime` backend library. mindc surfaces the target as
+    // unavailable here so callers can branch on `BackendUnavailable`
+    // and route to the runtime crate instead of attempting in-tree
+    // emission.
+    if !matches!(opts.target, BackendTarget::Cpu) {
         return Err(CompileError::BackendUnavailable {
             target: opts.target,
         });
