@@ -5,6 +5,33 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.11] — 2026-05-17
+
+### Added — Phase 10.7: match expressions and reference-taking expressions
+
+The following surface constructs now parse, type-check, and lower to IR
+without new IR opcodes (conservative v1 strategy: match lowers to
+sequential arm evaluation; &expr is a no-op metadata wrapper).
+
+- **`match` expressions** (`match value { Pat => body, ... }`). Patterns
+  supported: `EnumVariant` (`Mode::On`, `Result::Ok(x)`), `Literal`
+  (integer, float, string, `true`/`false`), bare `Ident` binding, and
+  `_` wildcard. Block bodies (`=> { ... }`) also accepted. Arms
+  separated by `,`; trailing comma optional.
+- **`&expr` and `&mut expr`** reference-taking prefix expressions.
+  Symmetric with the `&T` / `&mut T` type forms already in Phase 10.6.
+  The Pratt parser disambiguates `&` prefix (ref-take) from `&` infix
+  (bitwise-AND) by position: prefix `&` fires inside `parse_primary`
+  before the infix loop can see it — no saved_pos / backtrack needed.
+- **AST additions**: `Node::Match { scrutinee, arms, span }`,
+  `Node::Ref { mutable, inner, span }`, `MatchArm`, `Pattern`
+  (`EnumVariant`, `Literal`, `Ident`, `Wildcard`).
+- **Type-checker**: arm body types unified; literal pattern vs. scrutinee
+  type checked conservatively; identifier patterns introduce bindings;
+  `&expr` / `&mut expr` accepted with `ScalarI32` placeholder type.
+- **Corpus watermark**: bumped from 14 to 21 (7 newly unblocked `.mind`
+  files in `rfn-mind/src`).
+
 ## [Unreleased]
 
 Infrastructure landed on `main` but not yet attached to a tag.

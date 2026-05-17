@@ -19,7 +19,7 @@
 //! assert_eq!(eval::eval_first_expr(&module).unwrap(), 7);
 //! ```
 
-use crate::ast::{BinOp, Literal, Module, Node, Param, Span, TypeAnn};
+use crate::ast::{BinOp, Literal, MatchArm, Module, Node, Param, Pattern, Span, TypeAnn};
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
@@ -222,6 +222,39 @@ impl<'a> P<'a> {
         }
         if self.pos == start {
             return None;
+        }
+        Some(
+            std::str::from_utf8(&self.b[start..self.pos])
+                .unwrap()
+                .to_string(),
+        )
+    }
+
+    /// Read a numeric literal token for use inside attribute argument lists.
+    /// Accepts optional leading `-`, digits, optional `.` + digits.
+    /// Returns the raw text as a string, or `None` if nothing numeric is here.
+    fn read_attr_literal(&mut self) -> Option<String> {
+        let start = self.pos;
+        // Optional leading minus
+        let neg = self.at(b'-');
+        if neg {
+            self.pos += 1;
+        }
+        // Must have at least one digit
+        let digit_start = self.pos;
+        while self.pos < self.b.len() && self.b[self.pos].is_ascii_digit() {
+            self.pos += 1;
+        }
+        if self.pos == digit_start {
+            self.pos = start;
+            return None;
+        }
+        // Optional fractional part
+        if self.pos < self.b.len() && self.b[self.pos] == b'.' {
+            self.pos += 1;
+            while self.pos < self.b.len() && self.b[self.pos].is_ascii_digit() {
+                self.pos += 1;
+            }
         }
         Some(
             std::str::from_utf8(&self.b[start..self.pos])
@@ -507,11 +540,18 @@ impl<'a> P<'a> {
             self.expect(b'>')?;
             return Ok(TypeAnn::DiffTensor { dtype: dt, dims });
         }
-        // tensor<f32[dims]> or tensor<f32> (no dims = unspecified shape)
+        // tensor<sparse[layout], element_type[shape]>   — sparse tensor
+        // tensor<f32[dims]>                             — dense tensor
+        // tensor<f32>                                   — dense, no shape
         if self.at_keyword(b"tensor") {
             self.pos += 6;
             self.skip_ws();
             self.expect(b'<')?;
+            self.skip_ws();
+            // Lookahead: is the first type argument `sparse[...]`?
+            if self.at_keyword(b"sparse") {
+                return self.parse_sparse_tensor_type();
+            }
             let dt = self.dtype()?;
             self.skip_ws();
             let dims = if self.at(b'[') {
@@ -876,6 +916,10 @@ impl<'a> P<'a> {
                 while !self.at(b')') && !self.at_end() {
                     if let Some(w) = self.word() {
                         args.push(w.to_string());
+                    } else if let Some(tok) = self.read_attr_literal() {
+                        // Accept numeric literals (e.g. `0.5` in
+                        // `[reap_threshold(0.5)]`) as raw string tokens.
+                        args.push(tok);
                     } else {
                         // Not an attribute — back out
                         self.pos = save;
@@ -928,11 +972,12 @@ impl<'a> P<'a> {
             return self.parse_enum(attrs);
         }
         if self.at_keyword(b"fn") {
-            // Attributes on `fn` are recorded but not yet stored in FnDef
-            // node (FnDef has no attrs field today). Drop silently — public
-            // mindc semantics ignore attributes anyway.
-            let _ = attrs;
-            return self.parse_fn_def();
+            // Extract `[reap_threshold(t)]` from the attribute list.
+            // Other attributes on `fn` are accepted syntactically but not
+            // stored (public mindc records them in `Node::FnDef::reap_threshold`
+            // when the name matches; all other attrs are dropped).
+            let reap = extract_reap_threshold(&attrs);
+            return self.parse_fn_def_with_reap(reap);
         }
         Err(self.err(
             "expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into(),
@@ -1225,7 +1270,107 @@ impl<'a> P<'a> {
         })
     }
 
+    /// Parse `sparse[layout], element_type[shape]>` after the cursor sits just
+    /// past the `tensor<` prefix.  The `<` has already been consumed.
+    ///
+    /// Grammar (inside the outer `< >`):
+    ///   `sparse` `[` layout_name `]` `,` type_ann ( dim_list_brackets )? `>`
+    ///
+    /// `layout_name` is one of: `csr`, `csc`, `coo`, `bsr`.
+    fn parse_sparse_tensor_type(&mut self) -> Result<TypeAnn, ParseError> {
+        // "sparse" keyword already confirmed by lookahead; consume it.
+        self.pos += 6; // "sparse"
+        self.skip_ws();
+        self.expect(b'[')?;
+        self.skip_ws();
+        let layout_name = self
+            .word()
+            .ok_or_else(|| self.err("expected sparse layout name (csr, csc, coo, bsr)".into()))?;
+        let layout = match layout_name {
+            "csr" => crate::ast::SparseLayout::Csr,
+            "csc" => crate::ast::SparseLayout::Csc,
+            "coo" => crate::ast::SparseLayout::Coo,
+            "bsr" => crate::ast::SparseLayout::Bsr,
+            other => {
+                return Err(self.err(format!(
+                    "unknown sparse layout `{other}` — expected one of: csr, csc, coo, bsr"
+                )))
+            }
+        };
+        self.skip_ws();
+        self.expect(b']')?;
+        self.skip_ws();
+        self.expect(b',')?;
+        self.skip_ws();
+        // Element type — can be any valid type annotation.
+        let element = self.type_ann()?;
+        self.skip_ws();
+        // Optional shape `[d0, d1, ...]` expressed as ShapeDim strings and
+        // then parsed into the ShapeDim vector via the existing dim_list logic.
+        let shape = if self.at(b'[') {
+            self.parse_sparse_shape()?
+        } else {
+            Vec::new()
+        };
+        self.skip_ws();
+        self.expect(b'>')?;
+        Ok(TypeAnn::SparseTensor {
+            layout,
+            element: Box::new(element),
+            shape,
+        })
+    }
+
+    /// Parse a shape list `[d0, d1, ...]` for a sparse tensor type, returning
+    /// `Vec<ShapeDim>`.  Dimension tokens are either decimal integers (Known)
+    /// or identifiers (Sym via a leaked `&'static str` — same convention as
+    /// the rest of mindc's type system).
+    fn parse_sparse_shape(&mut self) -> Result<Vec<crate::types::ShapeDim>, ParseError> {
+        self.expect(b'[')?;
+        let mut dims = Vec::new();
+        self.skip_ws();
+        if self.at(b']') {
+            self.pos += 1;
+            return Ok(dims);
+        }
+        loop {
+            self.skip_ws();
+            let dim = self.parse_one_shape_dim()?;
+            dims.push(dim);
+            self.skip_ws();
+            if !self.eat(b',') {
+                break;
+            }
+        }
+        self.skip_ws();
+        self.expect(b']')?;
+        Ok(dims)
+    }
+
+    /// Parse one shape dimension: a decimal integer → `Known(n)`, or an
+    /// identifier → `Sym` (leaked to `'static`; matches existing convention).
+    fn parse_one_shape_dim(&mut self) -> Result<crate::types::ShapeDim, ParseError> {
+        if let Some(d) = self.digits() {
+            let n: usize = d
+                .parse()
+                .map_err(|_| self.err("shape dim overflow".into()))?;
+            return Ok(crate::types::ShapeDim::Known(n));
+        }
+        if let Some(name) = self.word() {
+            // Leak to 'static — same pattern as the rest of mindc's ShapeDim::Sym usage.
+            let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+            return Ok(crate::types::ShapeDim::Sym(leaked));
+        }
+        Err(self.err("expected shape dimension (integer or identifier)".into()))
+    }
+
     fn parse_fn_def(&mut self) -> Result<Node, ParseError> {
+        self.parse_fn_def_with_reap(None)
+    }
+
+    /// Core `fn` parser.  `reap_threshold` is `Some(t)` when a preceding
+    /// `[reap_threshold(t)]` attribute was found by `parse_attributed_item`.
+    fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 2; // "fn"
         self.skip_ws_and_newlines();
@@ -1275,6 +1420,7 @@ impl<'a> P<'a> {
             params,
             ret_type,
             body,
+            reap_threshold,
             span,
         })
     }
@@ -1805,12 +1951,43 @@ impl<'a> P<'a> {
                 span,
             });
         }
+        // Phase 10.7: `&expr` and `&mut expr` reference-taking prefix.
+        //
+        // Disambiguation: `&` is also the infix bitwise-AND operator.
+        // `peek_binop` only fires when `&` appears in *infix* position
+        // (after the Pratt loop has already parsed a left operand).
+        // Here we are in *prefix* position (inside `parse_primary`, which
+        // is called by `parse_atom` before the Pratt loop), so `&` is
+        // unambiguously a ref-take. No saved_pos / backtrack needed.
+        if self.at(b'&') {
+            let start = self.pos;
+            self.pos += 1; // consume `&`
+            self.skip_ws();
+            let mutable = if self.at_keyword(b"mut") {
+                self.pos += 3;
+                self.skip_ws();
+                true
+            } else {
+                false
+            };
+            let inner = self.parse_atom()?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Ref {
+                mutable,
+                inner: Box::new(inner),
+                span,
+            });
+        }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
             return self.parse_number_lit();
         }
         // If expression in expression position
         if self.at_keyword(b"if") {
             return self.parse_if_expr();
+        }
+        // Phase 10.7: `match` expression
+        if self.at_keyword(b"match") {
+            return self.parse_match_expr();
         }
         let start = self.pos;
         let ident = self
@@ -2109,11 +2286,13 @@ impl<'a> P<'a> {
         if i == id_start {
             return false;
         }
-        // After the identifier, skip whitespace and look for `:`.
+        // After the identifier, skip whitespace and look for `:` that is NOT
+        // followed by another `:` (which would be `::`, a path separator, not
+        // a struct-field colon).
         while i < self.b.len() && (self.b[i] == b' ' || self.b[i] == b'\t') {
             i += 1;
         }
-        i < self.b.len() && self.b[i] == b':'
+        i < self.b.len() && self.b[i] == b':' && self.b.get(i + 1).copied() != Some(b':')
     }
 
     /// Phase 10.6: parse `Name { field: value, field: value, ... }` after
@@ -2742,6 +2921,184 @@ impl<'a> P<'a> {
             span,
         })
     }
+
+    // ── Phase 10.7: match expressions ─────────────────────────────────
+
+    /// Parse `match <scrutinee> { arm, ... }`.
+    ///
+    /// Arms are separated by `,` (trailing comma optional). The body of
+    /// each arm is either a bare expression or a `{ ... }` block.
+    fn parse_match_expr(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 5; // "match"
+        self.skip_ws_and_newlines();
+        let scrutinee = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let mut arms = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at(b'}') && !self.at_end() {
+            let arm_start = self.pos;
+            let pattern = self.parse_pattern()?;
+            self.skip_ws_and_newlines();
+            if !self.starts_with(b"=>") {
+                return Err(self.err("expected `=>` after match pattern".into()));
+            }
+            self.pos += 2;
+            self.skip_ws_and_newlines();
+            let body = if self.at(b'{') {
+                let blk_start = self.pos;
+                self.pos += 1;
+                let stmts = self.parse_fn_body_stmts()?;
+                self.skip_ws_and_newlines();
+                self.expect(b'}')?;
+                let blk_span = Span::new(blk_start, self.pos);
+                Node::Block {
+                    stmts,
+                    span: blk_span,
+                }
+            } else {
+                self.parse_expr()?
+            };
+            let arm_span = Span::new(arm_start, self.pos);
+            arms.push(MatchArm {
+                pattern,
+                body,
+                span: arm_span,
+            });
+            self.skip_ws_and_newlines();
+            if self.eat(b',') {
+                self.skip_ws_and_newlines();
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Match {
+            scrutinee: Box::new(scrutinee),
+            arms,
+            span,
+        })
+    }
+
+    /// Parse a single match-arm pattern.
+    ///
+    /// Patterns recognised (in order):
+    /// - `_`            — wildcard
+    /// - string literal — `"hello"`
+    /// - `-N`           — negative integer
+    /// - `N[.N]`        — positive numeric literal
+    /// - `true`/`false` — boolean literals (mapped to Int(1/0))
+    /// - `Path::Variant[(sub_patterns)]` — enum variant
+    /// - bare `ident`   — binding (matches anything)
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        self.skip_ws_and_newlines();
+        if self.at_keyword(b"_") {
+            self.pos += 1;
+            return Ok(Pattern::Wildcard);
+        }
+        if self.at(b'"') {
+            self.pos += 1;
+            let str_start = self.pos;
+            while self.pos < self.b.len() && self.b[self.pos] != b'"' {
+                if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                    self.pos += 2;
+                } else {
+                    self.pos += 1;
+                }
+            }
+            let s = std::str::from_utf8(&self.b[str_start..self.pos])
+                .unwrap()
+                .to_string();
+            if !self.eat(b'"') {
+                return Err(self.err("unterminated string pattern".into()));
+            }
+            return Ok(Pattern::Literal(Literal::Str(s)));
+        }
+        if self.at(b'-') {
+            self.pos += 1;
+            self.skip_ws();
+            let d = self
+                .digits()
+                .ok_or_else(|| self.err("expected digits after `-` in pattern".into()))?;
+            let v: i64 = d
+                .parse()
+                .map_err(|_| self.err("integer overflow in pattern".into()))?;
+            return Ok(Pattern::Literal(Literal::Int(-v)));
+        }
+        if self.peek().is_some_and(|c| c.is_ascii_digit()) {
+            let d = self.digits().unwrap();
+            if self.at(b'.')
+                && self
+                    .b
+                    .get(self.pos + 1)
+                    .map_or(false, |c| c.is_ascii_digit())
+            {
+                self.pos += 1;
+                let frac = self.digits().unwrap_or_default();
+                let s = format!("{d}.{frac}");
+                let f: f64 = s
+                    .parse()
+                    .map_err(|_| self.err("float parse error in pattern".into()))?;
+                return Ok(Pattern::Literal(Literal::Float(f)));
+            }
+            let v: i64 = d
+                .parse()
+                .map_err(|_| self.err("integer overflow in pattern".into()))?;
+            return Ok(Pattern::Literal(Literal::Int(v)));
+        }
+        let name = self
+            .dotted_ident()
+            .ok_or_else(|| self.err("expected pattern".into()))?;
+        match name.as_str() {
+            "true" => return Ok(Pattern::Literal(Literal::Int(1))),
+            "false" => return Ok(Pattern::Literal(Literal::Int(0))),
+            _ => {}
+        }
+        if name.contains("::") {
+            self.skip_ws();
+            let args = if self.at(b'(') {
+                self.pos += 1;
+                let mut sub = Vec::new();
+                self.skip_ws_and_newlines();
+                while !self.at(b')') && !self.at_end() {
+                    sub.push(self.parse_pattern()?);
+                    self.skip_ws_and_newlines();
+                    if !self.eat(b',') {
+                        break;
+                    }
+                    self.skip_ws_and_newlines();
+                }
+                self.expect(b')')?;
+                sub
+            } else {
+                Vec::new()
+            };
+            return Ok(Pattern::EnumVariant { path: name, args });
+        }
+        Ok(Pattern::Ident(name))
+    }
+}
+
+/// Scan an attribute list for `[reap_threshold(t)]` and return `Some(t)`.
+///
+/// Threshold must be a float literal in `[0.0, 1.0)`. Values outside that
+/// range or unparseable values are ignored. When multiple `reap_threshold`
+/// attributes are present, the last one wins.
+fn extract_reap_threshold(attrs: &[crate::ast::Attribute]) -> Option<f64> {
+    let mut result: Option<f64> = None;
+    for attr in attrs {
+        if attr.name == "reap_threshold" {
+            if let Some(raw) = attr.args.first() {
+                if let Ok(v) = raw.parse::<f64>() {
+                    if v >= 0.0 && v < 1.0 {
+                        result = Some(v);
+                    }
+                }
+            }
+        }
+    }
+    result
 }
 
 /// Strip single-line comments (`// ...`) from source code.
