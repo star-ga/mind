@@ -329,6 +329,10 @@ fn compile_single_source(
         | "rocm-mi300" | "metal" | "metal-m4" | "webgpu" | "directx" | "oneapi" => {
             BackendTarget::Gpu
         }
+        // Wafer-scale: WSE-2 / WSE-3 generations both route through the
+        // same logical BackendTarget; the generation is resolved in
+        // the runtime library selected by find_runtime_lib.
+        "cerebras" | "wse" | "wse2" | "wse3" | "cs2" | "cs3" => BackendTarget::Cerebras,
         _ => BackendTarget::Cpu,
     };
 
@@ -916,6 +920,12 @@ fn find_runtime_lib(backend: &str) -> Result<PathBuf> {
         "rocm" | "rocm-mi300" => "libmind_rocm_linux-x64.so",
         "metal" | "metal-m4" => "libmind_metal_macos-arm64.dylib",
         "webgpu" => "libmind_webgpu_linux-x64.so",
+        // Wafer-scale: separate library per generation because the
+        // CSL toolchain and host SDK pins differ for WSE-2 vs WSE-3.
+        // Default "cerebras" selects WSE-3 (CS-3) since that is the
+        // current shipping generation.
+        "cerebras" | "wse3" | "cs3" => "libmind_cerebras_wse3_linux-x64.so",
+        "wse2" | "cs2" => "libmind_cerebras_wse2_linux-x64.so",
         _ => "libmind_cpu_linux-x64.so",
     };
 
