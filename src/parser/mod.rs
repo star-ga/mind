@@ -1237,6 +1237,15 @@ impl<'a> P<'a> {
         let start = self.pos;
         self.pos += 3; // "let"
         self.skip_ws_and_newlines();
+        // Phase 10.6: accept `let mut name = ...`. mindc semantics treat
+        // mut as informational — the eval/codegen path mutates the binding
+        // in the local env regardless of the marker; the parser accepts
+        // it for rfn-mind source-style parity (used by reduce.mind,
+        // conv.mind, groupnorm.mind for accumulators).
+        if self.at_keyword(b"mut") {
+            self.pos += 3;
+            self.skip_ws_and_newlines();
+        }
         let name = self
             .word()
             .ok_or_else(|| self.err("expected variable name".into()))?
