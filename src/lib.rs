@@ -50,7 +50,7 @@ pub mod ir;
 // Note: the logos-based lexer module was removed as dead code.
 // The parser (parser/mod.rs) implements its own hand-rolled lexer.
 pub(crate) mod linalg;
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 pub mod mlir;
 pub mod ops;
 pub mod opt;
@@ -77,11 +77,11 @@ pub use pipeline::{
     compile_source, compile_source_with_name, compile_to_mic_text, CompileError, CompileOptions,
     CompileProducts,
 };
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 pub use pipeline::{lower_to_mlir, MlirProducts};
 pub use runtime::types::{BackendTarget, DeviceKind};
 
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 pub use mlir::{compile_ir_to_mlir_text, MlirLowerError};
 
 #[cfg(feature = "ffi-c")]

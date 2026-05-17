@@ -31,7 +31,7 @@ use crate::type_checker;
 
 #[cfg(feature = "autodiff")]
 use crate::autodiff;
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 use crate::mlir;
 
 /// RFC 0002 D3 guard — cap the number of manifest-declared exports to a
@@ -264,7 +264,7 @@ pub fn compile_to_mic_text(source: &str, opts: &CompileOptions) -> Result<String
 }
 
 /// MLIR lowering artifacts for the canonical IR (and optional gradient IR).
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 #[derive(Debug, Clone)]
 pub struct MlirProducts {
     /// Textual MLIR for the canonical IR module.
@@ -274,7 +274,12 @@ pub struct MlirProducts {
 }
 
 /// Lower canonical IR (and optional gradient IR) into MLIR text.
-#[cfg(feature = "mlir-lowering")]
+///
+/// The `grad` parameter is only meaningful when the `autodiff` feature is
+/// compiled in; in builds without `autodiff` callers must pass `None`. The
+/// concrete reference type stays internal so this function can be linked
+/// from `mlir-build`-only configurations where `autodiff` is not enabled.
+#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), feature = "autodiff"))]
 pub fn lower_to_mlir(
     ir: &ir::IRModule,
     grad: Option<&autodiff::GradientResult>,
@@ -299,5 +304,26 @@ pub fn lower_to_mlir(
     Ok(MlirProducts {
         primal_mlir,
         grad_mlir,
+    })
+}
+
+/// Lower canonical IR into MLIR text without autodiff support.
+///
+/// This is the build matrix where `mlir-lowering` (or `mlir-build`) is
+/// enabled but `autodiff` is not — the gradient leg is unreachable, so
+/// the parameter is folded out entirely and we always return
+/// `grad_mlir: None`.
+#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), not(feature = "autodiff")))]
+pub fn lower_to_mlir(ir: &ir::IRModule) -> Result<MlirProducts, mlir::MlirLowerError> {
+    let mut canonical_ir = ir.clone();
+    ir::verify_module(&canonical_ir)?;
+    opt::ir_canonical::canonicalize_module(&mut canonical_ir);
+    ir::verify_module(&canonical_ir)?;
+
+    let primal_mlir = mlir::lower_ir_to_mlir(&canonical_ir)?.text;
+
+    Ok(MlirProducts {
+        primal_mlir,
+        grad_mlir: None,
     })
 }
