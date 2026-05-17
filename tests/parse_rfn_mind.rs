@@ -292,6 +292,42 @@ fn parses_modulo_in_assert() {
     );
 }
 
+// Step 8h — single-value `&T` / `&mut T` and generic `Name<A, B>` types
+// (Phase 10.6).
+#[test]
+fn parses_single_value_reference_type() {
+    let src = "module m { struct Bank { n: u32 } fn f(b: &Bank) -> u32 { 0 } }\n";
+    assert!(parses(src), "`&Type` single-value reference must parse");
+}
+
+#[test]
+fn parses_mut_single_value_reference() {
+    let src = "module m { struct Bank { n: u32 } fn f(b: &mut Bank) { } }\n";
+    assert!(parses(src), "`&mut Type` must parse");
+}
+
+#[test]
+fn parses_generic_one_arg() {
+    let src = "module m { struct S { xs: Vec<i32> } }\n";
+    assert!(parses(src), "`Vec<i32>` in struct field must parse");
+}
+
+#[test]
+fn parses_generic_two_args() {
+    let src = "module m { fn f() -> Result<i32, u32> { 0 as i32 } }\n";
+    assert!(parses(src), "`Result<i32, u32>` in fn return must parse");
+}
+
+#[test]
+fn parses_nested_generic_with_qualified_arg() {
+    let src = "module foo { type Q = i32 }\n\
+               module m { use foo\n struct S { xs: Vec<foo.Q> } }\n";
+    assert!(
+        parses(src),
+        "`Vec<module.Type>` (nested generic + qualified arg) must parse"
+    );
+}
+
 #[test]
 fn does_not_parse_struct_literal_for_arbitrary_block() {
     // Lookahead must reject `IDENT { stmt }` shape (no `field: value` pair).
