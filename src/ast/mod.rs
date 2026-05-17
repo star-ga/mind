@@ -139,6 +139,14 @@ pub enum TypeAnn {
         mutable: bool,
         target: Box<TypeAnn>,
     },
+    /// Generic type application `Name<A, B, ...>` (Phase 10.6). Required
+    /// by rfn-mind for `Vec<Q16_16>`, `Result<RFNModel, BundleError>`,
+    /// `Option<u32>`. mindc records the head identifier and the type
+    /// arguments; structural resolution defers to the type checker.
+    Generic {
+        name: String,
+        args: Vec<TypeAnn>,
+    },
 }
 
 /// Function parameter: `name: type`

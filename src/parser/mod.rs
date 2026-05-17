@@ -530,15 +530,15 @@ impl<'a> P<'a> {
                     first
                 )));
             }
-            // Fast path: bare identifier with no qualifier. Keeps the
-            // no-dot case bit-identical to the pre-Phase-10.6 hot loop.
-            if self.pos >= self.b.len() || self.b[self.pos] != b'.' {
+            // Fast path: bare identifier, no qualifier, no generic args.
+            // Keeps the common case bit-identical to the pre-Phase-10.6
+            // hot loop.
+            if self.pos >= self.b.len()
+                || (self.b[self.pos] != b'.' && self.b[self.pos] != b'<')
+            {
                 return Ok(TypeAnn::Named(first.to_string()));
             }
-            // Slow path: module-qualified path `a.b.c`. Accumulate dotted
-            // segments without crossing whitespace or newlines — `a . b`
-            // is rejected; `a.b.c` becomes a single `Named("a.b.c")`. The
-            // type checker resolves the path against the `use` scope.
+            // Path accumulation: `a.b.c` becomes a single Named("a.b.c").
             let mut name = String::with_capacity(first.len() * 2);
             name.push_str(first);
             while self.pos < self.b.len() && self.b[self.pos] == b'.' {
@@ -554,6 +554,34 @@ impl<'a> P<'a> {
                         break;
                     }
                 }
+            }
+            // Phase 10.6 generic application: `Name<A, B, ...>`. The
+            // bare-Name fast-path above only hands us `<` here in type
+            // position, never expression position, so there's no
+            // ambiguity with the comparison operator.
+            if self.pos < self.b.len() && self.b[self.pos] == b'<' {
+                self.pos += 1;
+                self.skip_ws_and_newlines();
+                let mut args: Vec<TypeAnn> = Vec::new();
+                if self.pos < self.b.len() && self.b[self.pos] != b'>' {
+                    args.push(self.type_ann()?);
+                    loop {
+                        self.skip_ws_and_newlines();
+                        if !self.eat(b',') {
+                            break;
+                        }
+                        self.skip_ws_and_newlines();
+                        if self.pos < self.b.len() && self.b[self.pos] == b'>' {
+                            break;
+                        }
+                        args.push(self.type_ann()?);
+                    }
+                }
+                self.skip_ws_and_newlines();
+                if !self.eat(b'>') {
+                    return Err(self.err("expected `>` to close generic type arguments".into()));
+                }
+                return Ok(TypeAnn::Generic { name, args });
             }
             return Ok(TypeAnn::Named(name));
         }
