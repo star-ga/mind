@@ -533,8 +533,14 @@ fn parse_target(raw: &str) -> Result<BackendTarget, String> {
         "lpu" | "groq" => Ok(BackendTarget::Lpu),
         "dpu" | "smartnic" | "bluefield" => Ok(BackendTarget::Dpu),
         "fpga" | "hls" => Ok(BackendTarget::Fpga),
+        // Wafer-scale: distinct logical target from GPU because the
+        // runtime backend lowers to CSL and reasons about a 2-D fabric
+        // mesh rather than CUDA-style SMs. Accept all WSE generations
+        // here; the wafer generation (WSE-2 / WSE-3) is selected at
+        // runtime, not at the source-level target.
+        "cerebras" | "wse" | "wse2" | "wse3" => Ok(BackendTarget::Cerebras),
         other => Err(format!(
-            "unknown target '{other}' (expected cpu|gpu|asic|tpu|npu|lpu|dpu|fpga)"
+            "unknown target '{other}' (expected cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras)"
         )),
     }
 }
