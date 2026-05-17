@@ -328,6 +328,24 @@ fn parses_nested_generic_with_qualified_arg() {
     );
 }
 
+// Step 8i — `::` path-segment separator for enum variants (Phase 10.6).
+// rfn-mind uses `config.AddressingMode::Content`, `Side::Left`, etc.
+#[test]
+fn parses_double_colon_enum_variant() {
+    let src = "module m { enum Side { Left, Right }\n fn f() -> i32 { let x = Side::Left\n 0 } }\n";
+    assert!(parses(src), "`Side::Left` enum variant access must parse");
+}
+
+#[test]
+fn parses_qualified_double_colon_path() {
+    let src = "module config { enum Mode { On, Off } }\n\
+               module m { use config\n fn f() -> i32 { let x = config.Mode::On\n 0 } }\n";
+    assert!(
+        parses(src),
+        "`module.Enum::Variant` must parse"
+    );
+}
+
 #[test]
 fn does_not_parse_struct_literal_for_arbitrary_block() {
     // Lookahead must reject `IDENT { stmt }` shape (no `field: value` pair).
