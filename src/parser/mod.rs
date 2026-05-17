@@ -405,6 +405,32 @@ impl<'a> P<'a> {
                 target: Box::new(target),
             });
         }
+        // Phase 10.6: tuple type `(T, U, ...)`. Used in rfn-mind for fns
+        // returning multiple values like `fn defaults() -> (Q, Q)`.
+        if self.at(b'(') {
+            self.pos += 1;
+            self.skip_ws_and_newlines();
+            let mut elements: Vec<TypeAnn> = Vec::new();
+            if !self.at(b')') {
+                elements.push(self.type_ann()?);
+                loop {
+                    self.skip_ws_and_newlines();
+                    if !self.eat(b',') {
+                        break;
+                    }
+                    self.skip_ws_and_newlines();
+                    if self.at(b')') {
+                        break;
+                    }
+                    elements.push(self.type_ann()?);
+                }
+            }
+            self.skip_ws_and_newlines();
+            if !self.eat(b')') {
+                return Err(self.err("expected `)` to close tuple type".into()));
+            }
+            return Ok(TypeAnn::Tuple { elements });
+        }
         // Phase 10.6: fixed-size array `[T; N]`. The N is a compile-time
         // u32. Used for LUT tables and other static buffers.
         if self.at(b'[') {
@@ -560,9 +586,7 @@ impl<'a> P<'a> {
             // Fast path: bare identifier, no qualifier, no generic args.
             // Keeps the common case bit-identical to the pre-Phase-10.6
             // hot loop.
-            if self.pos >= self.b.len()
-                || (self.b[self.pos] != b'.' && self.b[self.pos] != b'<')
-            {
+            if self.pos >= self.b.len() || (self.b[self.pos] != b'.' && self.b[self.pos] != b'<') {
                 return Ok(TypeAnn::Named(first.to_string()));
             }
             // Path accumulation: `a.b.c` becomes a single Named("a.b.c").
@@ -723,19 +747,52 @@ impl<'a> P<'a> {
         let start = self.pos;
         let expr = self.parse_expr()?;
         self.skip_ws();
-        // Check for assignment: bare ident followed by '='
-        if let Node::Lit(Literal::Ident(ref name), _) = expr {
-            if self.at(b'=') && !self.starts_with(b"==") {
-                let name = name.clone();
-                self.advance(); // consume '='
-                self.skip_ws_and_newlines();
-                let value = self.parse_expr()?;
-                let span = Span::new(start, self.pos);
-                return Ok(Node::Assign {
-                    name,
-                    value: Box::new(value),
-                    span,
-                });
+        // Check for assignment. Three LHS shapes accepted:
+        //   1) bare ident:  `x = expr`           -> Node::Assign
+        //   2) indexed:     `xs[i] = expr`       -> Node::IndexAssign
+        //   3) field:       `obj.field = expr`   -> Node::FieldAssign
+        if self.at(b'=') && !self.starts_with(b"==") {
+            match expr {
+                Node::Lit(Literal::Ident(name), _) => {
+                    self.advance(); // consume '='
+                    self.skip_ws_and_newlines();
+                    let value = self.parse_expr()?;
+                    let span = Span::new(start, self.pos);
+                    return Ok(Node::Assign {
+                        name,
+                        value: Box::new(value),
+                        span,
+                    });
+                }
+                Node::IndexAccess {
+                    receiver, index, ..
+                } => {
+                    self.advance(); // consume '='
+                    self.skip_ws_and_newlines();
+                    let value = self.parse_expr()?;
+                    let span = Span::new(start, self.pos);
+                    return Ok(Node::IndexAssign {
+                        receiver,
+                        index,
+                        value: Box::new(value),
+                        span,
+                    });
+                }
+                Node::FieldAccess {
+                    receiver, field, ..
+                } => {
+                    self.advance(); // consume '='
+                    self.skip_ws_and_newlines();
+                    let value = self.parse_expr()?;
+                    let span = Span::new(start, self.pos);
+                    return Ok(Node::FieldAssign {
+                        receiver,
+                        field,
+                        value: Box::new(value),
+                        span,
+                    });
+                }
+                other => return Ok(other),
             }
         }
         Ok(expr)
@@ -1467,10 +1524,39 @@ impl<'a> P<'a> {
     fn parse_pratt(&mut self, min_bp: u8) -> Result<Node, ParseError> {
         let mut left = self.parse_atom()?;
         loop {
+            // Fast path: operator continues on the same line. skip_ws is
+            // a tight inner loop (whitespace bytes only) and matches the
+            // pre-Phase-10.6 behaviour exactly, so the bench-baseline
+            // numbers carry over here.
             self.skip_ws();
             let (op, lbp, rbp, advance) = match self.peek_binop() {
                 Some(o) => o,
-                None => break,
+                None => {
+                    // Slow path: maybe `\n... +` continuation. Only pay
+                    // the saved_pos / cross-newline scan when an actual
+                    // newline is at `self.pos` — otherwise the loop must
+                    // exit (atom is done) and any further work is wasted.
+                    // peek_binop only returns Some() for actual operator
+                    // bytes, and statement-level keywords (`let`, `for`,
+                    // `return`, etc.) do not start a binop, so the
+                    // widened skip cannot spill into the next statement.
+                    // skip_ws already consumed `\r`, so only `\n` matters
+                    // as the continuation trigger.
+                    if !self.at(b'\n') {
+                        break;
+                    }
+                    let saved_pos = self.pos;
+                    self.skip_ws_and_newlines();
+                    match self.peek_binop() {
+                        Some(o) => o,
+                        None => {
+                            // Restore position so the outer loop's
+                            // separator handling sees the newlines.
+                            self.pos = saved_pos;
+                            break;
+                        }
+                    }
+                }
             };
             if lbp < min_bp {
                 break;
@@ -1667,6 +1753,29 @@ impl<'a> P<'a> {
                         continue;
                     }
                 }
+            }
+            // Phase 10.6: postfix index `receiver[index]`. Used in rfn-mind
+            // reduce.mind / conv.mind / lut.mind for slice element access.
+            // The cast subtlety: `[...]` in expression position-without-
+            // receiver is still an array literal via parse_primary; this
+            // path triggers only when something else has already been
+            // parsed and `[` follows directly (no whitespace consumed
+            // crossing newlines).
+            if self.at(b'[') {
+                self.pos += 1;
+                self.skip_ws();
+                let index = self.parse_expr()?;
+                self.skip_ws();
+                if !self.eat(b']') {
+                    return Err(self.err("expected `]` to close index expression".into()));
+                }
+                let span = Span::new(node.span_start(), self.pos);
+                node = Node::IndexAccess {
+                    receiver: Box::new(node),
+                    index: Box::new(index),
+                    span,
+                };
+                continue;
             }
             break;
         }
@@ -1985,7 +2094,9 @@ impl<'a> P<'a> {
         }
         i += 1;
         // Skip whitespace and newlines.
-        while i < self.b.len() && (self.b[i] == b' ' || self.b[i] == b'\t' || self.b[i] == b'\n' || self.b[i] == b'\r') {
+        while i < self.b.len()
+            && (self.b[i] == b' ' || self.b[i] == b'\t' || self.b[i] == b'\n' || self.b[i] == b'\r')
+        {
             i += 1;
         }
         // Empty body `{ }` is a valid (zero-field) struct literal.
@@ -1994,9 +2105,7 @@ impl<'a> P<'a> {
         }
         // First non-whitespace token must be an identifier.
         let id_start = i;
-        while i < self.b.len()
-            && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_')
-        {
+        while i < self.b.len() && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_') {
             i += 1;
         }
         if i == id_start {

@@ -347,6 +347,7 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::Array { .. })
                     | Some(TypeAnn::Ref { .. })
                     | Some(TypeAnn::Generic { .. })
+                    | Some(TypeAnn::Tuple { .. })
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {
@@ -1173,6 +1174,18 @@ pub(crate) fn eval_value_expr_mode(
             }
             Ok(Value::Tuple(items))
         }
+        // Phase 10.6: index access `receiver[index]`. Preview eval
+        // returns the underlying receiver value as a placeholder; full
+        // tensor/slice indexing semantics land when the runtime
+        // handle-table is threaded through eval.
+        Node::IndexAccess { receiver, .. } => eval_value_expr_mode(receiver, env, tensor_env, mode),
+        // Phase 10.6: indexed assignment is a statement, not an
+        // expression. Evaluating it as an expression returns the
+        // assigned value (matches C-style semantics).
+        Node::IndexAssign { value, .. } => eval_value_expr_mode(value, env, tensor_env, mode),
+        // Phase 10.6: field assignment is also a statement; the
+        // expression-position evaluation returns the assigned value.
+        Node::FieldAssign { value, .. } => eval_value_expr_mode(value, env, tensor_env, mode),
     }
 }
 
