@@ -206,7 +206,13 @@ fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
             BinOp::Sub => a - b,
             BinOp::Mul => a * b,
             BinOp::Div => a / b,
-            BinOp::Mod => if b == 0 { 0 } else { a % b },
+            BinOp::Mod => {
+                if b == 0 {
+                    0
+                } else {
+                    a % b
+                }
+            }
             BinOp::Lt => (a < b) as i64,
             BinOp::Le => (a <= b) as i64,
             BinOp::Gt => (a > b) as i64,

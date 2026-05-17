@@ -1341,6 +1341,43 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let _ = name;
             Ok((ValueType::ScalarI32, *span))
         }
+        // Phase 10.6: index access `xs[i]`. Type-check the receiver +
+        // index expressions for early error surfacing; return ScalarI32
+        // as a placeholder until element-type extraction lands.
+        Node::IndexAccess {
+            receiver,
+            index,
+            span,
+        } => {
+            infer_expr(receiver, env)?;
+            infer_expr(index, env)?;
+            Ok((ValueType::ScalarI32, *span))
+        }
+        // Phase 10.6: index assignment `xs[i] = v`. Statement-style;
+        // returns ScalarI32 placeholder (the value's type) so downstream
+        // typecheck passes don't break.
+        Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            span,
+        } => {
+            infer_expr(receiver, env)?;
+            infer_expr(index, env)?;
+            infer_expr(value, env)?;
+            Ok((ValueType::ScalarI32, *span))
+        }
+        // Phase 10.6: field assignment `obj.field = v`. Same pattern.
+        Node::FieldAssign {
+            receiver,
+            field: _,
+            value,
+            span,
+        } => {
+            infer_expr(receiver, env)?;
+            infer_expr(value, env)?;
+            Ok((ValueType::ScalarI32, *span))
+        }
     }
 }
 
@@ -1653,7 +1690,8 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         crate::ast::TypeAnn::Slice { .. }
         | crate::ast::TypeAnn::Array { .. }
         | crate::ast::TypeAnn::Ref { .. }
-        | crate::ast::TypeAnn::Generic { .. } => None,
+        | crate::ast::TypeAnn::Generic { .. }
+        | crate::ast::TypeAnn::Tuple { .. } => None,
     }
 }
 

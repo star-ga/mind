@@ -494,14 +494,20 @@ fn emit_mlir_if_requested(cli: &CompileArgs, products: &libmind::pipeline::Compi
 
 /// Thin wrapper around `pipeline::lower_to_mlir` that erases the
 /// `autodiff`-feature signature difference for the `mindc` binary.
-#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), feature = "autodiff"))]
+#[cfg(all(
+    any(feature = "mlir-lowering", feature = "mlir-build"),
+    feature = "autodiff"
+))]
 fn lower_to_mlir_compat(
     products: &libmind::pipeline::CompileProducts,
 ) -> Result<MlirProducts, libmind::MlirLowerError> {
     lower_to_mlir(&products.ir, products.grad.as_ref())
 }
 
-#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), not(feature = "autodiff")))]
+#[cfg(all(
+    any(feature = "mlir-lowering", feature = "mlir-build"),
+    not(feature = "autodiff")
+))]
 fn lower_to_mlir_compat(
     products: &libmind::pipeline::CompileProducts,
 ) -> Result<MlirProducts, libmind::MlirLowerError> {

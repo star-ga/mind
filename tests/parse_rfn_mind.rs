@@ -286,10 +286,7 @@ fn parses_modulo_binop() {
 #[test]
 fn parses_modulo_in_assert() {
     let src = "module m { fn f(c: u32, g: u32) -> i32 { assert c % g == 0, \"divisible\"\n 0 } }\n";
-    assert!(
-        parses(src),
-        "`%` inside assert condition must parse"
-    );
+    assert!(parses(src), "`%` inside assert condition must parse");
 }
 
 // Step 8h — single-value `&T` / `&mut T` and generic `Name<A, B>` types
@@ -340,10 +337,47 @@ fn parses_double_colon_enum_variant() {
 fn parses_qualified_double_colon_path() {
     let src = "module config { enum Mode { On, Off } }\n\
                module m { use config\n fn f() -> i32 { let x = config.Mode::On\n 0 } }\n";
-    assert!(
-        parses(src),
-        "`module.Enum::Variant` must parse"
-    );
+    assert!(parses(src), "`module.Enum::Variant` must parse");
+}
+
+// Step 8j — postfix indexing + index-LHS + field-LHS assignment (Phase 10.6).
+#[test]
+fn parses_index_access_postfix() {
+    let src = "module m { fn f(xs: &[i32]) -> i32 { xs[0] } }\n";
+    assert!(parses(src), "`xs[0]` postfix index access must parse");
+}
+
+#[test]
+fn parses_index_assign_lhs() {
+    let src = "module m { fn f(xs: &mut [i32]) { xs[0] = 1 } }\n";
+    assert!(parses(src), "`xs[0] = 1` indexed assignment must parse");
+}
+
+#[test]
+fn parses_field_assign_lhs() {
+    let src = "module m { struct S { x: i32 } fn f(s: &mut S) { s.x = 1 } }\n";
+    assert!(parses(src), "`s.x = 1` field assignment must parse");
+}
+
+// Step 8k — multi-line arithmetic continuation (Phase 10.6). rfn-mind
+// uses `+` and `*` on continuation lines for usize index math; the Pratt
+// parser must now skip newlines when peeking for an infix operator.
+#[test]
+fn parses_multiline_arithmetic() {
+    let src = "module m { fn f(c: u32, h: u32, w: u32, x: u32, y: u32) -> u32 {\n\
+                 let idx: u32 = (c as u32) * (h * w) as u32\n\
+                              + (y as u32) * (w as u32)\n\
+                              + (x as u32)\n\
+                 idx\n\
+               } }\n";
+    assert!(parses(src), "multi-line `+` continuation must parse");
+}
+
+// Step 8l — tuple types `-> (T, U)` (Phase 10.6).
+#[test]
+fn parses_tuple_return_type() {
+    let src = "module m { fn pair() -> (i32, u32) { 0 } }\n";
+    assert!(parses(src), "`-> (T, U)` tuple return type must parse");
 }
 
 #[test]

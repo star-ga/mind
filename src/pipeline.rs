@@ -279,7 +279,10 @@ pub struct MlirProducts {
 /// compiled in; in builds without `autodiff` callers must pass `None`. The
 /// concrete reference type stays internal so this function can be linked
 /// from `mlir-build`-only configurations where `autodiff` is not enabled.
-#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), feature = "autodiff"))]
+#[cfg(all(
+    any(feature = "mlir-lowering", feature = "mlir-build"),
+    feature = "autodiff"
+))]
 pub fn lower_to_mlir(
     ir: &ir::IRModule,
     grad: Option<&autodiff::GradientResult>,
@@ -313,7 +316,10 @@ pub fn lower_to_mlir(
 /// enabled but `autodiff` is not — the gradient leg is unreachable, so
 /// the parameter is folded out entirely and we always return
 /// `grad_mlir: None`.
-#[cfg(all(any(feature = "mlir-lowering", feature = "mlir-build"), not(feature = "autodiff")))]
+#[cfg(all(
+    any(feature = "mlir-lowering", feature = "mlir-build"),
+    not(feature = "autodiff")
+))]
 pub fn lower_to_mlir(ir: &ir::IRModule) -> Result<MlirProducts, mlir::MlirLowerError> {
     let mut canonical_ir = ir.clone();
     ir::verify_module(&canonical_ir)?;
