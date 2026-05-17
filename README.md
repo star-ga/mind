@@ -243,7 +243,7 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 *Locked as the bench-gate baseline since v0.2.5 (April 2026). Phase
 10.5 and 10.6 parser additions ship within the bench-gate threshold
-documented at [`.bench-baseline-2026-04-28-pratt.txt`](./.bench-baseline-2026-04-28-pratt.txt).*
+documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](./.bench-baseline-2026-05-17-phase10-6.txt).*
 
 
 | vs Framework | Compilation Time | MIND Ratio |
