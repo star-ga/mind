@@ -549,6 +549,15 @@ impl<'a> P<'a> {
         if !attrs.is_empty() {
             return self.parse_attributed_item(attrs);
         }
+        // Phase 10.6: optional `pub` visibility marker before struct/enum/fn/
+        // type/const. mindc treats it as a no-op — module-level visibility
+        // is controlled by the `export` block. Accepting `pub` lets
+        // rfn-mind/src/bitlinear.mind and src/ternary.mind parse without
+        // forcing a source rewrite of every existing pub-prefixed item.
+        if self.at_keyword(b"pub") {
+            self.pos += 3;
+            self.skip_ws_and_newlines();
+        }
         if self.at_keyword(b"import") {
             return self.parse_import();
         }
@@ -930,6 +939,14 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         while !self.at(b'}') && !self.at_end() {
             let f_start = self.pos;
+            // Phase 10.6: optional `pub` visibility marker on the field.
+            // mindc-level visibility is controlled by the surrounding
+            // module's `export` block; `pub` on a field is accepted as a
+            // source-code annotation and ignored semantically.
+            if self.at_keyword(b"pub") {
+                self.pos += 3;
+                self.skip_ws();
+            }
             let f_name = self
                 .word()
                 .ok_or_else(|| self.err("expected field name".into()))?
