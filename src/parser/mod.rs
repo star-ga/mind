@@ -1511,6 +1511,7 @@ impl<'a> P<'a> {
             b'^' => Some((PrattOp::Bit(crate::ast::BitOp::Xor), 11, 12, 1)),
             b'*' => Some((PrattOp::Arith(BinOp::Mul), 13, 14, 1)),
             b'/' => Some((PrattOp::Arith(BinOp::Div), 13, 14, 1)),
+            b'%' => Some((PrattOp::Arith(BinOp::Mod), 13, 14, 1)),
             _ => None,
         }
     }

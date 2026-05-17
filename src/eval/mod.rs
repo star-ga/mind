@@ -1347,6 +1347,12 @@ fn apply_float_op(op: BinOp, l: f64, r: f64) -> Result<f64, EvalError> {
             }
             l / r
         }
+        BinOp::Mod => {
+            if r == 0.0 {
+                return Err(EvalError::DivZero);
+            }
+            l % r
+        }
         BinOp::Lt => {
             if l < r {
                 1.0
@@ -1421,6 +1427,12 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
                 return Err(EvalError::DivZero);
             }
             left / right
+        }
+        BinOp::Mod => {
+            if right == 0 {
+                return Err(EvalError::DivZero);
+            }
+            left % right
         }
         BinOp::Lt => (left < right) as i64,
         BinOp::Le => (left <= right) as i64,
@@ -1517,6 +1529,13 @@ fn apply_tensor_scalar(
                         f / scalar
                     } else {
                         scalar / f
+                    }
+                }
+                BinOp::Mod => {
+                    if tensor_on_left {
+                        f % scalar
+                    } else {
+                        scalar % f
                     }
                 }
                 BinOp::Lt => {
@@ -1741,6 +1760,7 @@ fn apply_tensor_tensor(
             BinOp::Sub => a - b,
             BinOp::Mul => a * b,
             BinOp::Div => a / b,
+            BinOp::Mod => a % b,
             BinOp::Lt => {
                 if a < b {
                     1.0

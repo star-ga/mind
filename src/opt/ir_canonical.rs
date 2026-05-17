@@ -101,6 +101,12 @@ fn constant_fold(instrs: &mut [Instr]) {
                             }
                             l / r
                         }
+                        BinOp::Mod => {
+                            if r == 0 || (l == i64::MIN && r == -1) {
+                                continue;
+                            }
+                            l % r
+                        }
                         BinOp::Lt => (l < r) as i64,
                         BinOp::Le => (l <= r) as i64,
                         BinOp::Gt => (l > r) as i64,

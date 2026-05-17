@@ -271,6 +271,8 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// Modulo (remainder). Phase 10.6.
+    Mod,
     Lt,
     Le,
     Gt,

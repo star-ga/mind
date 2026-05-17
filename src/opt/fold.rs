@@ -44,6 +44,18 @@ pub fn fold(node: &Node) -> Node {
                             a / b
                         }
                     }
+                    BinOp::Mod => {
+                        if *b == 0 {
+                            return Node::Binary {
+                                op: *op,
+                                left: Box::new(l),
+                                right: Box::new(r),
+                                span: *span,
+                            };
+                        } else {
+                            a % b
+                        }
+                    }
                     BinOp::Lt => (a < b) as i64,
                     BinOp::Le => (a <= b) as i64,
                     BinOp::Gt => (a > b) as i64,
@@ -60,6 +72,7 @@ pub fn fold(node: &Node) -> Node {
                     BinOp::Sub => a - b,
                     BinOp::Mul => a * b,
                     BinOp::Div => a / b,
+                    BinOp::Mod => a % b,
                     BinOp::Lt => {
                         if a < b {
                             1.0
