@@ -57,7 +57,12 @@ pub fn run_mlir_opt(
 
     let mut cmd = Command::new(bin);
     if !pipeline.is_empty() {
-        cmd.arg(format!("--pass-pipeline={pipeline}"));
+        // MLIR 18+ requires the pass pipeline to be wrapped in an anchor
+        // op (typically `builtin.module(...)`). Passing the bare pipeline
+        // produces: "expected pass pipeline to be wrapped with the
+        // anchor operation type, e.g. 'builtin.module(...)'". The
+        // wrapper is a no-op for older versions that didn't enforce it.
+        cmd.arg(format!("--pass-pipeline=builtin.module({pipeline})"));
     }
 
     let mut child = cmd

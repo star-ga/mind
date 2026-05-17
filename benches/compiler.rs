@@ -98,7 +98,13 @@ fn bench_mlir_lowering(c: &mut Criterion) {
             BenchmarkId::new("ir_to_mlir", name),
             &products.ir,
             |b, ir| {
-                b.iter(|| lower_to_mlir(black_box(ir), None).expect("MLIR lowering failed"));
+                b.iter(|| {
+                    #[cfg(feature = "autodiff")]
+                    let result = lower_to_mlir(black_box(ir), None);
+                    #[cfg(not(feature = "autodiff"))]
+                    let result = lower_to_mlir(black_box(ir));
+                    result.expect("MLIR lowering failed")
+                });
             },
         );
     }
@@ -122,7 +128,11 @@ fn bench_end_to_end_compilation(c: &mut Criterion) {
                 b.iter(|| {
                     let products = compile_source(black_box(src), &CompileOptions::default())
                         .expect("compilation failed");
-                    lower_to_mlir(&products.ir, None).expect("MLIR lowering failed")
+                    #[cfg(feature = "autodiff")]
+                    let result = lower_to_mlir(&products.ir, None);
+                    #[cfg(not(feature = "autodiff"))]
+                    let result = lower_to_mlir(&products.ir);
+                    result.expect("MLIR lowering failed")
                 });
             },
         );

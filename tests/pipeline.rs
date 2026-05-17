@@ -126,8 +126,15 @@ fn lower_to_mlir_produces_stable_text() {
     };
 
     let compiled = compile_source(src, &opts).expect("compiled IR");
+    #[cfg(feature = "autodiff")]
     let mlir = lower_to_mlir(&compiled.ir, None).expect("lowered mlir");
+    #[cfg(feature = "autodiff")]
     let mlir_again = lower_to_mlir(&compiled.ir, None).expect("second lowering");
+
+    #[cfg(not(feature = "autodiff"))]
+    let mlir = lower_to_mlir(&compiled.ir).expect("lowered mlir");
+    #[cfg(not(feature = "autodiff"))]
+    let mlir_again = lower_to_mlir(&compiled.ir).expect("second lowering");
 
     assert_eq!(mlir.primal_mlir, mlir_again.primal_mlir);
     assert!(mlir.primal_mlir.contains("func.func @main"));

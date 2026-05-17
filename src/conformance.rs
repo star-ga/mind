@@ -3,7 +3,7 @@ use crate::eval::value::Value;
 use crate::pipeline::{compile_source, CompileOptions};
 use crate::runtime::types::BackendTarget;
 
-#[cfg(feature = "mlir-lowering")]
+#[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
 use crate::pipeline::{lower_to_mlir, MlirProducts};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -120,21 +120,15 @@ fn run_case(case: &ConformanceCase) -> Result<(), String> {
                 }
             }
 
-            #[cfg(feature = "mlir-lowering")]
+            #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
             if let Some(expected_mlir) = case.expected_mlir {
-                let grads = {
-                    #[cfg(feature = "autodiff")]
-                    {
-                        products.grad.as_ref()
-                    }
-                    #[cfg(not(feature = "autodiff"))]
-                    {
-                        None
-                    }
-                };
-
-                let mlir: MlirProducts = lower_to_mlir(&products.ir, grads)
+                #[cfg(feature = "autodiff")]
+                let mlir: MlirProducts = lower_to_mlir(&products.ir, products.grad.as_ref())
                     .map_err(|err| format!("MLIR lowering failed: {err}"))?;
+                #[cfg(not(feature = "autodiff"))]
+                let mlir: MlirProducts = lower_to_mlir(&products.ir)
+                    .map_err(|err| format!("MLIR lowering failed: {err}"))?;
+
                 let rendered_mlir = normalize(&mlir.primal_mlir);
                 if rendered_mlir != normalize(expected_mlir) {
                     return Err(format!(
