@@ -1719,6 +1719,12 @@ impl<'a> P<'a> {
                 }
                 if self.at(b'(') {
                     self.parse_generic_call(ident, start)
+                } else if self.at(b'{') && self.struct_lit_body_ahead() {
+                    // Phase 10.6: struct literal `Name { field: value, ... }`.
+                    // The lookahead guard rejects any `{ ... }` that doesn't
+                    // open with `IDENT :` — protects callers that pass a
+                    // bare identifier into a control-flow `{...}` body.
+                    self.parse_struct_literal(ident, start)
                 } else {
                     let span = Span::new(start, self.pos);
                     Ok(Node::Lit(Literal::Ident(ident), span))
@@ -1823,6 +1829,81 @@ impl<'a> P<'a> {
                 span,
             })
         }
+    }
+
+    /// Phase 10.6 lookahead: from a position right at `{`, decide whether
+    /// the brace opens a struct-literal body (`{ ident : ...` or `{}`) or
+    /// some other construct that happens to follow an identifier. Pure
+    /// lookahead — does not consume input. Returns false on shapes that
+    /// look like blocks of statements rather than `field: value` pairs.
+    fn struct_lit_body_ahead(&self) -> bool {
+        let mut i = self.pos;
+        if i >= self.b.len() || self.b[i] != b'{' {
+            return false;
+        }
+        i += 1;
+        // Skip whitespace and newlines.
+        while i < self.b.len() && (self.b[i] == b' ' || self.b[i] == b'\t' || self.b[i] == b'\n' || self.b[i] == b'\r') {
+            i += 1;
+        }
+        // Empty body `{ }` is a valid (zero-field) struct literal.
+        if i < self.b.len() && self.b[i] == b'}' {
+            return true;
+        }
+        // First non-whitespace token must be an identifier.
+        let id_start = i;
+        while i < self.b.len()
+            && (self.b[i].is_ascii_alphanumeric() || self.b[i] == b'_')
+        {
+            i += 1;
+        }
+        if i == id_start {
+            return false;
+        }
+        // After the identifier, skip whitespace and look for `:`.
+        while i < self.b.len() && (self.b[i] == b' ' || self.b[i] == b'\t') {
+            i += 1;
+        }
+        i < self.b.len() && self.b[i] == b':'
+    }
+
+    /// Phase 10.6: parse `Name { field: value, field: value, ... }` after
+    /// the name identifier has already been consumed by the caller.
+    fn parse_struct_literal(&mut self, name: String, start: usize) -> Result<Node, ParseError> {
+        self.expect(b'{')?;
+        let mut fields: Vec<crate::ast::StructLitField> = Vec::new();
+        self.skip_ws_and_newlines();
+        while !self.at(b'}') && !self.at_end() {
+            let f_start = self.pos;
+            let f_name = self
+                .word()
+                .ok_or_else(|| self.err("expected struct field name".into()))?
+                .to_string();
+            self.skip_ws();
+            if !self.eat(b':') {
+                return Err(self.err("expected `:` after struct field name".into()));
+            }
+            self.skip_ws_and_newlines();
+            let value = self.parse_expr()?;
+            let f_span = Span::new(f_start, self.pos);
+            fields.push(crate::ast::StructLitField {
+                name: f_name,
+                value,
+                span: f_span,
+            });
+            self.skip_ws_and_newlines();
+            if self.eat(b',') {
+                self.skip_ws_and_newlines();
+            } else {
+                break;
+            }
+        }
+        self.skip_ws_and_newlines();
+        if !self.eat(b'}') {
+            return Err(self.err("expected `}` to close struct literal".into()));
+        }
+        let span = Span::new(start, self.pos);
+        Ok(Node::StructLit { name, fields, span })
     }
 
     fn parse_generic_call(&mut self, callee: String, start: usize) -> Result<Node, ParseError> {
