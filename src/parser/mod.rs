@@ -3028,12 +3028,7 @@ impl<'a> P<'a> {
         }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
             let d = self.digits().unwrap();
-            if self.at(b'.')
-                && self
-                    .b
-                    .get(self.pos + 1)
-                    .is_some_and(|c| c.is_ascii_digit())
-            {
+            if self.at(b'.') && self.b.get(self.pos + 1).is_some_and(|c| c.is_ascii_digit()) {
                 self.pos += 1;
                 let frac = self.digits().unwrap_or_default();
                 let s = format!("{d}.{frac}");
