@@ -60,6 +60,9 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// Modulo (remainder). Phase 10.6 — needed by rfn-mind/src/groupnorm.mind
+    /// to validate channel count is divisible by group count.
+    Mod,
     Lt,
     Le,
     Gt,

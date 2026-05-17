@@ -136,6 +136,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 ast::BinOp::Sub => BinOp::Sub,
                 ast::BinOp::Mul => BinOp::Mul,
                 ast::BinOp::Div => BinOp::Div,
+                ast::BinOp::Mod => BinOp::Mod,
                 ast::BinOp::Lt => BinOp::Lt,
                 ast::BinOp::Le => BinOp::Le,
                 ast::BinOp::Gt => BinOp::Gt,
