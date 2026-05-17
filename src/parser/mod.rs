@@ -343,9 +343,11 @@ impl<'a> P<'a> {
 
     fn type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         self.skip_ws();
-        // Phase 10.6: borrowed slice `&[T]` or `&mut [T]`. Mutable form
-        // accepted for in-place buffer rewrites (rfn-mind groupnorm,
-        // field_step, memory all need this).
+        // Phase 10.6: borrowed reference types.
+        //   `&[T]`     -> Slice (sized buffer; rfn-mind reduce, conv inputs)
+        //   `&mut [T]` -> Slice mutable (rfn-mind groupnorm, field_step writes)
+        //   `&T`       -> Ref (struct passed by reference; e.g. &MemoryBank)
+        //   `&mut T`   -> Ref mutable
         if self.at(b'&') {
             self.pos += 1;
             self.skip_ws();
@@ -356,18 +358,24 @@ impl<'a> P<'a> {
             } else {
                 false
             };
-            if !self.eat(b'[') {
-                return Err(self.err("expected `[` after `&` or `&mut` in slice type".into()));
+            if self.eat(b'[') {
+                self.skip_ws();
+                let element = self.type_ann()?;
+                self.skip_ws();
+                if !self.eat(b']') {
+                    return Err(self.err("expected `]` to close slice type".into()));
+                }
+                return Ok(TypeAnn::Slice {
+                    mutable,
+                    element: Box::new(element),
+                });
             }
-            self.skip_ws();
-            let element = self.type_ann()?;
-            self.skip_ws();
-            if !self.eat(b']') {
-                return Err(self.err("expected `]` to close slice type".into()));
-            }
-            return Ok(TypeAnn::Slice {
+            // Single-value reference: `&T` / `&mut T`. Element type recurses
+            // through type_ann so qualified names (`&memory.MemoryBank`) work.
+            let target = self.type_ann()?;
+            return Ok(TypeAnn::Ref {
                 mutable,
-                element: Box::new(element),
+                target: Box::new(target),
             });
         }
         // Phase 10.6: fixed-size array `[T; N]`. The N is a compile-time
