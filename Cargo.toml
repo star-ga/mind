@@ -76,6 +76,11 @@ harness = false
 required-features = ["cross-module-imports"]
 
 [[bench]]
+name = "std_surface"
+harness = false
+required-features = ["std-surface", "mlir-lowering"]
+
+[[bench]]
 name = "simple_benchmarks"
 harness = false
 
@@ -119,6 +124,7 @@ mlir-build = ["mlir-subprocess", "tempfile"]
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
 cross-module-imports = []  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver
+std-surface = []  # RFC 0005 Phase 0: generic Instr::Call -> MLIR func.call lowering (i64 ABI)
 ffi-examples = []
 pkg = ["tar", "flate2", "sha2"]
 registry = []
