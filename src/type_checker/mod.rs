@@ -1504,6 +1504,69 @@ fn infer_grad(
     Ok((ValueType::GradMap(entries), span))
 }
 
+// RFC 0005 Phase 1 — pure-MIND standard surface intrinsics.
+//
+// The five primitives the std surface (`Vec`, `String`, `Map`, `io`)
+// is allowed to bottom out into. All take and return `i64` only (no
+// `Ptr` type — see RFC 0005 P0a; an address is a 64-bit integer).
+// Lowered by the gated Phase-0 `Instr::Call` arm in `src/mlir/lowering.rs`
+// to `func.call @__mind_*(%a..) : (i64..) -> i64`, with a matching
+// `func.func private` declaration emitted once per distinct callee in
+// sorted order. Default builds compile out the recogniser entirely.
+#[cfg(feature = "std-surface")]
+const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
+    ("__mind_alloc", 1),
+    ("__mind_free", 1),
+    ("__mind_read", 4),
+    ("__mind_realloc", 2),
+    ("__mind_write", 4),
+];
+
+#[cfg(feature = "std-surface")]
+fn std_surface_intrinsic_arity(name: &str) -> Option<usize> {
+    STD_SURFACE_INTRINSICS
+        .iter()
+        .find_map(|(n, arity)| (*n == name).then_some(*arity))
+}
+
+#[cfg(feature = "std-surface")]
+fn check_std_surface_intrinsic(
+    callee: &str,
+    args: &[Node],
+    span: AstSpan,
+    env: &TypeEnv,
+) -> Result<(ValueType, AstSpan), TypeErrSpan> {
+    let arity = std_surface_intrinsic_arity(callee).ok_or_else(|| TypeErrSpan {
+        msg: format!("unsupported call to `{callee}`"),
+        span,
+    })?;
+    if args.len() != arity {
+        return Err(TypeErrSpan {
+            msg: format!(
+                "intrinsic `{callee}` expects {arity} i64 argument(s) (i64 ABI — RFC 0005); got {}",
+                args.len()
+            ),
+            span,
+        });
+    }
+    for (i, a) in args.iter().enumerate() {
+        let (ty, _) = infer_expr(a, env)?;
+        // Integer literals come in as `ScalarI32` (line 562) but lower
+        // to `ConstI64` in IR — accept both; reject anything else with
+        // a clear i64-ABI message that points to RFC 0005 phase 2+.
+        if !matches!(ty, ValueType::ScalarI32 | ValueType::ScalarI64) {
+            return Err(TypeErrSpan {
+                msg: format!(
+                    "argument {i} to intrinsic `{callee}` must be i64 (got {}); the std-surface intrinsics use the i64 ABI — aggregate types are RFC 0005 phase 2+",
+                    describe_value_type(&ty)
+                ),
+                span: a.span(),
+            });
+        }
+    }
+    Ok((ValueType::ScalarI64, span))
+}
+
 fn infer_call(
     callee: &str,
     args: &[Node],
@@ -1653,10 +1716,20 @@ fn infer_call(
                 }),
             }
         }
-        _ => Err(TypeErrSpan {
-            msg: format!("unsupported call to `{callee}`"),
-            span,
-        }),
+        _ => {
+            #[cfg(feature = "std-surface")]
+            {
+                check_std_surface_intrinsic(callee, args, span, env)
+            }
+            #[cfg(not(feature = "std-surface"))]
+            {
+                let _ = (args, env); // silence warnings on default build
+                Err(TypeErrSpan {
+                    msg: format!("unsupported call to `{callee}`"),
+                    span,
+                })
+            }
+        }
     }
 }
 
