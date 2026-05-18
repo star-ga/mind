@@ -110,6 +110,44 @@ cargo build --features full       # All features
 MLIR emission requires the `mlir-lowering` feature. Autodiff support is
 experimental and currently focused on single-output entry points.
 
+## Pure-MIND standard library (RFC 0005)
+
+`std/vec.mind`, `std/string.mind`, `std/map.mind`, `std/io.mind` —
+four small collections + an I/O surface, written entirely in MIND on
+top of the seven i64-ABI intrinsics
+(`__mind_alloc` / `__mind_free` / `__mind_realloc` /
+`__mind_load_i64` / `__mind_store_i64` / `__mind_read` /
+`__mind_write`). No built-in pointer type; every aggregate is an i64
+base-address into the heap.
+
+```mind
+use std.vec
+use std.io
+
+fn main() {
+    let v = vec_new()
+    let v = vec_push(v, 42)
+    let v = vec_push(v, 99)
+    let n = print_bytes(vec_addr(v), 16)
+}
+```
+
+Two feature flags gate the surface (default build is byte-identical
+without them — the parser/typecheck/IR hot path is untouched):
+
+```bash
+# Compile the std-surface intrinsics + std/*.mind modules.
+cargo build --features std-surface
+
+# Add cross-module symbol resolution for `use std.foo`.
+cargo build --features std-surface,cross-module-imports
+```
+
+Phase B (per-arg signature matching on imported `pub fn`s) validates
+arity + per-arg types against the imported declaration and returns
+the declared return type; an `export { ... }`-block donor falls back
+to Phase-A loose typing.
+
 ## Compilation cache (`libmind::cache`)
 
 Content-addressed caching layer in `src/cache/` keyed by compiler version,
