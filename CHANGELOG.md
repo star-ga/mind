@@ -5,6 +5,59 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-05-18
+
+### Added — RFC 0005 Phase C: auto-bundle `std/*.mind` into mindc
+
+v0.4.1's Phase B closed the per-arg signature matching deferred from
+v0.4.0 but still required the consumer to supply std module ASTs to
+`build_module_table` manually.  A real downstream `mind build`
+running on a project that says `use std.vec` had no way to find the
+std/*.mind files unless the user vendored them — which defeats the
+point of having a shared standard library.
+
+Phase C bundles the four pure-MIND std/*.mind files into the mindc
+binary at compile time via `include_str!` and seeds the module
+table with them in the project loader's cross-module-imports
+block.  A downstream `mind build` of a project that says
+`use std.vec` now resolves with no external file dependency.
+
+- **`src/project/stdlib.rs`** (new) — compile-time bundle:
+  - `STDLIB_MIND_SOURCES: &[(&str, &str)]` — `(module_path,
+    source_text)` for `std.io`, `std.map`, `std.string`, `std.vec`,
+    sorted alphabetically for deterministic insertion.
+  - `parsed_stdlib_modules() -> Vec<(String, Module)>` — parses
+    every bundled source and returns the `(module_path, AST)` pairs
+    the project loader's cross-module-imports block prepends to the
+    user's own modules.
+- **Project loader wiring** in `src/project/mod.rs` — the bundle is
+  prepended to `parsed` BEFORE walking the user's `src/`.  Since
+  `ModuleTable::insert` is last-write-wins, a user module that
+  happens to shadow `std.*` overrides the bundled entry — same
+  behaviour as Rust's user-crate-wins-over-stdlib semantics.
+- **CI matrix coverage** — the new gated-feature CI step (commit
+  `996553e`) runs the std-surface + cross-module-imports test
+  suites separately and combined, including Phase C's 4 new
+  integration tests + 3 new unit tests.  Total tests added in v0.4.2:
+  7.  All RFC 0005 work is now under cloud CI guard.
+
+### Performance
+
+Compile-speed gate vs `.bench-baseline-2026-05-18-rfc0005.txt`:
+
+| bench          | baseline   | v0.4.2     | delta    | gate |
+| -------------- | ---------- | ---------- | -------- | ---- |
+| small_matmul   | 2.800 µs   | 2.758 µs   | -1.50%   | OK   |
+| medium_mlp     | 6.550 µs   | 6.779 µs   | +3.50%   | OK   |
+| large_network  | 17.100 µs  | 17.627 µs  | +3.08%   | OK   |
+
+All inside the 5% CI gate.  Phase C lives entirely behind
+`feature = "cross-module-imports"`; the default-build frontend hot
+path is untouched (module-level gate, no per-statement cfg, no
+runtime dispatch).  The medium/large drift is within the ±2%
+runner-variance band documented in the baseline file (local
+replays put medium at 6.39–6.78 µs and large at 16.89–17.80 µs).
+
 ## [0.4.1] — 2026-05-18
 
 ### Added — RFC 0005 Phase B: per-arg signature matching on imported `pub fn`s
