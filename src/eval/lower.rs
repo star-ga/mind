@@ -57,6 +57,22 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 // `feature = "ffi-c-user"` together with the codegen pass.
                 ir.exports.extend(names.iter().cloned());
             }
+            // RFC 0005 P0e Step 1 — record the struct's field-name order in
+            // the schema registry so a later `StructLit` can reorder
+            // literal fields into canonical order before emitting stores.
+            // The placeholder `Output(ConstI64(0))` is preserved to keep
+            // the IR-shape contract that downstream consumers (verifier,
+            // canonicaliser, MLIR emitter) rely on for declaration-only
+            // modules — a struct declaration is still a no-op at the
+            // value level, the side-table is pure metadata.
+            #[cfg(feature = "std-surface")]
+            ast::Node::StructDef { name, fields, .. } => {
+                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                ir.struct_defs.insert(name.clone(), field_names);
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, 0));
+                ir.instrs.push(Instr::Output(id));
+            }
             other => {
                 let id = lower_expr(other, &mut ir, &env);
                 ir.instrs.push(Instr::Output(id));
@@ -461,6 +477,85 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         // v1. The inner expression lowers directly; the ref tag is only
         // meaningful to the type-checker.
         ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env),
+        // RFC 0005 P0e Step 1 — `Foo { f1: v1, f2: v2, ... }` lowers to a
+        // heap record. Layout = one `i64` slot per field, packed at
+        // 8-byte stride. The struct value is the `i64` base address from
+        // `__mind_alloc`; field reads are deferred to P0f (FieldAccess
+        // needs the receiver's struct name threaded through env first).
+        //
+        //   addr = __mind_alloc(8 * N)
+        //   __mind_store_i64(addr + 0,        v_for_field_0)
+        //   __mind_store_i64(addr + 8,        v_for_field_1)
+        //   ...
+        //   addr            ← the struct's value
+        //
+        // Field order is canonical (from `StructDef`) — literals can
+        // appear out of order and we reorder here. Unknown struct names
+        // (no matching `StructDef` was lowered) fall through to literal
+        // order so a forward-reference doesn't lose data.
+        #[cfg(feature = "std-surface")]
+        ast::Node::StructLit { name, fields, .. } => {
+            // Canonical field order, if the schema is known.
+            let canonical = ir.struct_defs.get(name).cloned();
+            let order: Vec<&ast::StructLitField> = match canonical {
+                Some(names) => names
+                    .iter()
+                    .filter_map(|fname| fields.iter().find(|f| &f.name == fname))
+                    .collect(),
+                None => fields.iter().collect(),
+            };
+            let n = order.len() as i64;
+
+            // bytes = 8 * n  — emit two consts + a Mul rather than a
+            // precomputed literal so the IR matches what a future
+            // arbitrary-N codegen path will produce.
+            let eight = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(eight, 8));
+            let count = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(count, n));
+            let bytes = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: bytes,
+                op: BinOp::Mul,
+                lhs: eight,
+                rhs: count,
+            });
+
+            // addr = __mind_alloc(bytes)
+            let addr = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: addr,
+                name: "__mind_alloc".to_string(),
+                args: vec![bytes],
+            });
+
+            // Per-field store at offset 8*i.
+            for (i, f) in order.iter().enumerate() {
+                let value = lower_expr(&f.value, ir, env);
+                let field_addr = if i == 0 {
+                    addr
+                } else {
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                    let sum = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: sum,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+                    sum
+                };
+                let store_ret = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: store_ret,
+                    name: "__mind_store_i64".to_string(),
+                    args: vec![field_addr, value],
+                });
+            }
+
+            addr
+        }
         _ => {
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
