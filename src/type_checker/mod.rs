@@ -1738,6 +1738,17 @@ fn infer_call(
             // error — moat held.
             #[cfg(feature = "cross-module-imports")]
             if env.get(callee).is_some() {
+                // RFC 0005 Phase B — try the signature-aware path
+                // first.  If the project table has a typed
+                // declaration for `callee`, validate arity + per-arg
+                // types against it and return the declared return
+                // type.  If the lookup fails (the table has the name
+                // but no signature, e.g. an `export { ... }` block
+                // surface, or the imported `pub fn` was unparsed),
+                // fall back to Phase-A loose ScalarI64 behavior.
+                if let Some(sig) = cm_lookup_fn(callee) {
+                    return check_imported_fn_call(&sig, args, span, env);
+                }
                 for a in args {
                     let _ = infer_expr(a, env)?;
                 }
@@ -1920,6 +1931,93 @@ fn cm_inject_imported_symbols(tenv: &mut TypeEnv, path: &[String]) {
 #[cfg(feature = "cross-module-imports")]
 pub fn cm_set_project_table(table: Option<crate::project::module_table::ModuleTable>) {
     CM_TABLE.with(|cell| *cell.borrow_mut() = table);
+}
+
+/// RFC 0005 Phase B — find an imported fn's signature by name across
+/// the active project table.  Returns `None` when the table is empty
+/// (default-feature build, no project context) or when the name
+/// doesn't resolve to a typed `pub fn`.  The clone is cheap: each
+/// `ExportedFn` is a name + a `Vec<TypeAnn>` + an `Option<TypeAnn>`.
+#[cfg(feature = "cross-module-imports")]
+fn cm_lookup_fn(name: &str) -> Option<crate::project::module_table::ExportedFn> {
+    CM_TABLE.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|table| table.lookup_imported_fn(name).cloned())
+    })
+}
+
+/// RFC 0005 Phase B — validate a call against an imported fn's
+/// signature.  Compares arity then per-arg types against the
+/// declared `param_types`; returns the declared `ret_type` as a
+/// `ValueType` (default i64 ABI when the declaration is a Named
+/// struct or an unsupported aggregate).
+#[cfg(feature = "cross-module-imports")]
+fn check_imported_fn_call(
+    sig: &crate::project::module_table::ExportedFn,
+    args: &[Node],
+    span: AstSpan,
+    env: &TypeEnv,
+) -> Result<(ValueType, AstSpan), TypeErrSpan> {
+    if args.len() != sig.param_types.len() {
+        return Err(TypeErrSpan {
+            msg: format!(
+                "imported `{name}` expects {expected} argument(s); got {got}",
+                name = sig.name,
+                expected = sig.param_types.len(),
+                got = args.len(),
+            ),
+            span,
+        });
+    }
+    for (i, (arg, declared)) in args.iter().zip(sig.param_types.iter()).enumerate() {
+        let (actual, arg_span) = infer_expr(arg, env)?;
+        let expected = cm_typeann_to_valuetype(declared);
+        if !cm_arg_compatible(&expected, &actual) {
+            return Err(TypeErrSpan {
+                msg: format!(
+                    "imported `{name}` argument {i} expects {exp}; got {got}",
+                    name = sig.name,
+                    i = i,
+                    exp = describe_value_type(&expected),
+                    got = describe_value_type(&actual),
+                ),
+                span: arg_span,
+            });
+        }
+    }
+    let ret = sig
+        .ret_type
+        .as_ref()
+        .map(cm_typeann_to_valuetype)
+        .unwrap_or(ValueType::ScalarI64);
+    Ok((ret, span))
+}
+
+/// RFC 0005 Phase B — map a `TypeAnn` to a `ValueType` for cross-
+/// module call-site checking.  Reuses the type-checker's existing
+/// `valuetype_from_ann`; falls back to `ScalarI64` for everything the
+/// helper can't resolve (Named struct/enum types, Slice/Array/Ref
+/// aggregates).  This matches RFC 0005's Option-C heap ABI where
+/// struct values are i64 base-addresses on the wire.
+#[cfg(feature = "cross-module-imports")]
+fn cm_typeann_to_valuetype(ann: &crate::ast::TypeAnn) -> ValueType {
+    valuetype_from_ann(ann).unwrap_or(ValueType::ScalarI64)
+}
+
+/// RFC 0005 Phase B — compatibility check for a single arg.  Accepts
+/// exact matches plus the universal i32 -> i64 widening that integer
+/// literals depend on (literals come in as `ScalarI32` from the
+/// lexer; the call ABI is i64).
+#[cfg(feature = "cross-module-imports")]
+fn cm_arg_compatible(expected: &ValueType, actual: &ValueType) -> bool {
+    if expected == actual {
+        return true;
+    }
+    matches!(
+        (expected, actual),
+        (ValueType::ScalarI64, ValueType::ScalarI32) | (ValueType::ScalarI32, ValueType::ScalarI64)
+    )
 }
 
 /// Gated entrypoint: type-check `module` with cross-module symbol
