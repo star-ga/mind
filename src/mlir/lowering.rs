@@ -37,6 +37,10 @@ pub enum MlirLowerError {
     /// IR verification failed before lowering.
     #[error("IR verification failed: {0}")]
     VerificationFailed(#[from] crate::ir::IrVerifyError),
+    /// RFC 0002 C-ABI export wrapper codegen rejected an export.
+    #[cfg(feature = "ffi-c-user")]
+    #[error("C-ABI export codegen: {0}")]
+    CExportError(String),
 }
 
 /// A lowered MLIR module in textual form.
@@ -292,6 +296,15 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     }
     out.push_str(&ctx.body);
     out.push_str("  }\n");
+
+    // RFC 0002 D2: append `mind_fn_<name>_invoke` C-ABI wrappers as
+    // sibling top-level symbols, before the module-closing brace.
+    // Module-level feature gate only — the default build never touches
+    // this path and emits byte-identical MLIR (compile-speed moat).
+    #[cfg(feature = "ffi-c-user")]
+    crate::mlir::c_export::emit_c_export_wrappers(&mut out, module)
+        .map_err(MlirLowerError::CExportError)?;
+
     out.push_str("}\n");
 
     Ok(MlirModule { text: out })
