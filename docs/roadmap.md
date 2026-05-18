@@ -715,8 +715,11 @@ in force.
    it to minimise dependencies. `IRModule` is the fixed point shared
    by both stages — it is not redesigned for self-hosting.
 3. **Pure-MIND std surface.** Growable `Vec`, `String` operations,
-   hash map, deterministic file I/O. This is the long pole: a
-   lexer/parser/symbol-table cannot be written without it.
+   order-deterministic `Map`, evidence-emitting file I/O. This is the
+   long pole: a lexer/parser/symbol-table cannot be written without
+   it. Scoped in **RFC 0005** (`docs/rfcs/0005-pure-mind-std-surface.md`)
+   — five compiler intrinsics, everything else pure MIND, six-phase
+   adoption ending in a self-hosted-lexer smoke test.
 4. **Cross-module imports** (`use crate::x::y`) — already roadmap
    item 9 of Phase 10.6; restated here as a hard self-hosting
    prerequisite (a compiler is many files).
