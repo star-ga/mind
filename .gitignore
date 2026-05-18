@@ -57,3 +57,9 @@ Cargo.lock
 .arch-mind/last_summary.json
 .arch-mind/key.local
 .arch-mind/store.lock
+
+# Private audit reports (Copilot CLI, internal review). The JSON baseline
+# arch-mind-v*.json files ARE public-safe (raw metrics, no leak quotes) and
+# are tracked individually below the wildcard.
+audits/*-audit.md
+audits/*-review.md
