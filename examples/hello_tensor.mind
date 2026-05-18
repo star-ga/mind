@@ -1,24 +1,14 @@
-// Hello World example for MIND
-// This demonstrates basic tensor operations and device placement
+// Hello, MIND — scalar smoke that flows through every stage of the
+// compiler pipeline (IR, autodiff, MLIR). The Quick Start at
+// https://mindlang.dev/docs/quick-start walks through this file.
+//
+// The name "hello_tensor" is historical; this current build of the
+// frontend lowers tensor literals to stubs, so the canonical smoke
+// stays scalar until tensor lowering re-lands. Tensor examples live
+// under examples/zoo/.
 
-import std.tensor;
-
-fn main() {
-    // Create a tensor filled with zeros
-    let x = tensor.zeros[f32, (2, 3)];
-
-    // Add 1.0 to all elements
-    let y = x + 1.0;
-
-    // Execute on GPU (if available)
-    on(gpu0) {
-        print(y.sum());  // 6.0 (2*3 elements, all = 1.0)
-    }
-
-    // Reshape and multiply
-    let z = y.reshape((3, 2));
-    let result = z * 2.0;
-
-    print("Shape: ", result.shape());  // (3, 2)
-    print("Mean: ", result.mean());    // 2.0
+fn main() -> f64 {
+    let x: f64 = 3.0;
+    let y: f64 = x * x + 2.0 * x + 1.0;  // (x+1)^2 at x=3.0 → 16.0
+    return y;
 }
