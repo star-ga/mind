@@ -674,6 +674,103 @@ The frontend IFR above governs the compiler. The runtime layer has a *different*
 
 ---
 
+## Phase 15 — Self-Hosting & AI-Era Language Efficiency
+
+The frontend moat and the invariant/evidence/determinism core only
+compound if the language can host itself and is optimised for the
+metric that actually matters now: an AI writes the code, a compiler
+must prove it, and the result must be reproducible without re-running
+it. Phase 15 makes both explicit and tracked.
+
+### Guiding principle (holds for every Phase 15+ feature)
+
+**AI-era efficiency = minimise tokens-to-a-trusted-reproducible
+artifact, never at the cost of the µs frontend.** Concretely the
+product to minimise is:
+
+```
+(tokens to express correct intent)
+  × P(the generator got it wrong)
+  × (cost to detect it is wrong)
+  × (cost to reproduce / audit the result)
+```
+
+C optimises only the first factor's runtime; dynamic languages
+optimise only token count. MIND optimises the whole product. Any
+feature that improves one factor by regressing the frontend envelope
+(`.bench-baseline` ±2% gate on the three headline benches) is
+rejected at design time — the same anti-regression discipline already
+in force.
+
+### Deliverables — self-hosting bootstrap
+
+1. **Stage-0 → Stage-1 → Stage-2 bootstrap.** Rust `mindc` (stage-0)
+   compiles a MIND-sourced `mindc.mind` (stage-1); stage-1 compiles
+   itself (stage-2). `stage1 == stage2` byte-identical is the
+   self-hosting acceptance gate. Rust leaves the build path on pass.
+2. **`IRModule → LLVM IR text` backend.** The self-hosted compiler
+   emits textual LLVM IR (`.ll`) and shells out to `llc`/`clang` —
+   the C-ABI emitted by RFC 0002/0003 is the shell-out seam. MLIR
+   stays a stage-0 / multi-backend concern; the bootstrap path skips
+   it to minimise dependencies. `IRModule` is the fixed point shared
+   by both stages — it is not redesigned for self-hosting.
+3. **Pure-MIND std surface.** Growable `Vec`, `String` operations,
+   hash map, deterministic file I/O. This is the long pole: a
+   lexer/parser/symbol-table cannot be written without it.
+4. **Cross-module imports** (`use crate::x::y`) — already roadmap
+   item 9 of Phase 10.6; restated here as a hard self-hosting
+   prerequisite (a compiler is many files).
+
+### Deliverables — AI-era efficiency surface
+
+5. **Token-efficiency as a first-class design constraint.** Every
+   surface-syntax decision is evaluated by "how many tokens does a
+   generator spend to express this *correctly*?" Terse-by-default;
+   ceremony is a regression. Tracked as a review checklist item, not
+   aesthetics.
+6. **AI-era efficiency benchmark.** A published harness measuring the
+   four-factor product above on a fixed task suite, reported per
+   release alongside the frontend µs benches. The yardstick is
+   defined by this metric, not SPECint.
+7. **Deterministic concurrency model (RFC pending).** Structured,
+   replayable, evidence-carrying parallelism. MIND today is
+   deterministic-sequential; AI systems are inherently parallel, so
+   this is the largest single gap between "efficient language" and
+   "efficient language for AI systems." Prerequisite for any
+   concurrent MIND program. Highest-priority new RFC.
+8. **Index-refinement types (RFC pending).** Presburger-decidable
+   refinements of the form `{x: T | lo <= x < hi}` over integer
+   indices — SMT-free, so frontend-safe. Encodes tensor-shape bounds
+   and governance ranges as types. (Flux-style; full SMT refinement
+   is explicitly rejected as moat-incompatible.)
+9. **Tensor layout + uniqueness annotations (RFC pending).**
+   Type-level memory-layout (row/col-major, alignment) and
+   Futhark-style uniqueness for in-place mutation proofs — the
+   missing primitives for provably-aliasing-free GPU kernels. O(1)
+   parse cost, single-bit IR flag.
+
+### Sequencing
+
+Items 3 + 4 are the long pole and gate everything else. 1 + 2 are
+mechanical once 3 + 4 land (the backend mirrors the existing
+`src/mlir/lowering.rs` structural-fold pattern). 5 is continuous
+discipline from now. 6–9 are independent RFCs; 7 (deterministic
+concurrency) is the highest priority because it gates both concurrent
+MIND programs and the AI-era efficiency claim.
+
+### Acceptance gates
+
+- `stage1 == stage2` byte-identical; Rust removed from the documented
+  build path.
+- A non-trivial MIND program (target: the lexer/parser of `mindc`
+  itself) compiles and runs through the self-hosted backend with
+  cross-arch bit-identical output.
+- The AI-era efficiency benchmark is published and tracked per
+  release; no frontend headline-bench regression beyond the ±2% gate
+  across all Phase 15 work.
+
+---
+
 ## AGI Integration
 
 This repo is part of the STARGA AGI stack. See `naestro-bot/specs/AGI-ROADMAP.md` for:
