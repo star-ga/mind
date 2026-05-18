@@ -60,6 +60,14 @@ struct LoweringContext {
     values: BTreeMap<ValueId, ValueKind>,
     outputs: Vec<ValueId>,
     body: String,
+    /// RFC 0005 Phase 0: callee name -> arity for every `Instr::Call`
+    /// lowered, so the module assembler can emit one
+    /// `func.func private @name(i64...) -> i64` declaration per
+    /// distinct callee. `BTreeSet` keeps emission deterministic
+    /// (stable MLIR text -> stable model_hash). Gated; the default
+    /// build has no `Instr::Call` arm and never touches this.
+    #[cfg(feature = "std-surface")]
+    extern_calls: std::collections::BTreeSet<(String, usize)>,
 }
 
 impl LoweringContext {
@@ -68,6 +76,8 @@ impl LoweringContext {
             values: BTreeMap::new(),
             outputs: Vec::new(),
             body: String::new(),
+            #[cfg(feature = "std-surface")]
+            extern_calls: std::collections::BTreeSet::new(),
         }
     }
 
@@ -222,6 +232,41 @@ impl LoweringContext {
             Instr::Output(id) => {
                 self.outputs.push(*id);
             }
+            // RFC 0005 Phase 0: generic call -> `func.call`. Scoped to
+            // the i64 ABI (every arg + result is i64) — exactly the
+            // five `__mind_*` intrinsic signatures. Non-i64 args are a
+            // clear error (tensor/aggregate call ABI is RFC 0005
+            // phase 2+). Default build has no this arm and the
+            // catch-all still errors `UnsupportedOp` on `Instr::Call`
+            // exactly as before — byte-identical, moat held.
+            #[cfg(feature = "std-surface")]
+            Instr::Call { dst, name, args } => {
+                for a in args {
+                    match self.values.get(a) {
+                        Some(ValueKind::ScalarI64) => {}
+                        _ => {
+                            return Err(MlirLowerError::UnsupportedOp {
+                                instr_index,
+                                op: format!(
+                                    "non-i64 argument to call `{name}` \
+                                     (RFC 0005 phase 2+ covers aggregate call ABI)"
+                                ),
+                            })
+                        }
+                    }
+                }
+                let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
+                let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
+                self.emit_line(&format!(
+                    "    %{} = func.call @{}({}) : ({}) -> i64",
+                    dst.0,
+                    name,
+                    arg_refs.join(", "),
+                    arg_tys.join(", ")
+                ));
+                self.values.insert(*dst, ValueKind::ScalarI64);
+                self.extern_calls.insert((name.clone(), args.len()));
+            }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
                     instr_index,
@@ -286,6 +331,18 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
 
     let mut out = String::new();
     out.push_str("module {\n");
+
+    // RFC 0005 Phase 0: one `func.func private @callee(i64...) -> i64`
+    // declaration per distinct callee, before `@main`, so the
+    // `func.call`s emitted above resolve. Sorted (BTreeSet) for
+    // deterministic MLIR text / model_hash. Gated; default build
+    // emits none of this.
+    #[cfg(feature = "std-surface")]
+    for (name, arity) in &ctx.extern_calls {
+        let params = vec!["i64"; *arity].join(", ");
+        out.push_str(&format!("  func.func private @{name}({params}) -> i64\n"));
+    }
+
     if ret_types.is_empty() {
         out.push_str("  func.func @main() -> () {\n");
     } else {
