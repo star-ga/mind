@@ -22,6 +22,7 @@ import torch
 import time
 import statistics
 import json
+import os
 import platform
 import subprocess
 from pathlib import Path
@@ -261,8 +262,13 @@ def main():
         "results": all_results,
     }
 
-    results_file = "/tmp/scientific_benchmark_results.json"
-    with open(results_file, "w") as f:
+    # Default under the repo's benchmarks output dir, not /tmp — a
+    # predictable /tmp path is symlink-races bait on a shared host and
+    # makes CI artefact upload awkward. Override with $BENCH_RESULTS_FILE.
+    default_results = Path(__file__).resolve().parent / "output" / "scientific_benchmark_results.json"
+    results_file = Path(os.environ.get("BENCH_RESULTS_FILE", default_results))
+    results_file.parent.mkdir(parents=True, exist_ok=True)
+    with results_file.open("w") as f:
         json.dump(output, f, indent=2)
     print(f"Results saved to: {results_file}")
 
