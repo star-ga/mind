@@ -113,6 +113,7 @@ mlir-gpu = []
 mlir-build = ["mlir-subprocess", "tempfile"]
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
+cross-module-imports = []  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver
 ffi-examples = []
 pkg = ["tar", "flate2", "sha2"]
 registry = []
