@@ -777,7 +777,8 @@ MIND programs and the AI-era efficiency claim.
 
 ## AGI Integration
 
-This repo is part of the STARGA AGI stack. See `naestro-bot/specs/AGI-ROADMAP.md` for:
+This repo is part of the broader STARGA AGI stack. The downstream
+orchestrator's roadmap pins:
 - Gap 3: Rule induction → .mind programs (compile + verify)
 - Gap 8: Reasoning primitives (hypothesis, evidence, inference_step)
 - Phase 10.5 is prerequisite for all AGI .mind modules
