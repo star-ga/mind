@@ -65,11 +65,7 @@ fn count_calls(instrs: &[Instr], name: &str) -> usize {
 }
 
 /// Helper: extract the (name, args) of the i-th `Instr::Call` to `callee`.
-fn nth_call_args<'a>(
-    instrs: &'a [Instr],
-    callee: &str,
-    nth: usize,
-) -> &'a [libmind::ir::ValueId] {
+fn nth_call_args<'a>(instrs: &'a [Instr], callee: &str, nth: usize) -> &'a [libmind::ir::ValueId] {
     instrs
         .iter()
         .filter_map(|i| match i {
