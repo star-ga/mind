@@ -311,6 +311,15 @@ pub struct IRModule {
     /// the feature flag enabled. Kept on `IRModule` rather than in a
     /// side-table so mic@1 round-trip preserves the export set.
     pub exports: std::collections::HashSet<String>,
+    /// RFC 0005 P0e Step 1 — struct schema registry. Maps a struct name
+    /// to its canonical field-name order (as declared in `Node::StructDef`).
+    /// Populated by the lowering pass when it visits a `StructDef` and
+    /// read by the `StructLit` arm to reorder literal fields into canonical
+    /// order before emitting the heap-record stores. `BTreeMap` keeps
+    /// iteration deterministic so the mic@1 round-trip + the model_hash
+    /// stay stable. Gated; the default build never populates this.
+    #[cfg(feature = "std-surface")]
+    pub struct_defs: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl IRModule {
@@ -319,6 +328,8 @@ impl IRModule {
             instrs: Vec::new(),
             next_id: 0,
             exports: std::collections::HashSet::new(),
+            #[cfg(feature = "std-surface")]
+            struct_defs: std::collections::BTreeMap::new(),
         }
     }
 
