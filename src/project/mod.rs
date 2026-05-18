@@ -21,6 +21,13 @@ use serde::Deserialize;
 #[cfg(feature = "cross-module-imports")]
 pub mod module_table;
 
+/// RFC 0005 Phase C — std/*.mind sources baked into the binary at
+/// compile time. The project loader prepends these to the module
+/// table so `use std.vec` resolves in any project, no vendoring
+/// required. Same gate as the rest of the cross-module work.
+#[cfg(feature = "cross-module-imports")]
+pub mod stdlib;
+
 /// Project manifest from Mind.toml
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProjectManifest {
@@ -294,7 +301,19 @@ fn compile_sources(
     {
         let src_root = project_root.join(&manifest.build.entry);
         let src_root = src_root.parent().unwrap_or(&project_root);
-        let mut parsed: Vec<(String, crate::ast::Module)> = Vec::new();
+        // RFC 0005 Phase C — seed the parsed-modules list with the
+        // bundled stdlib (`std.vec` / `std.string` / `std.map` /
+        // `std.io`) before walking the project's own src tree. This
+        // is what makes `use std.vec` work in a downstream `mind
+        // build` without the user vendoring std/*.mind themselves.
+        // The bundle is i64-ABI and uses only the seven `__mind_*`
+        // intrinsics, so it parses identically to a user module.
+        // User modules that happen to shadow a `std.*` name overwrite
+        // the bundled entry via the last-write-wins contract on
+        // `ModuleTable::insert` — same behaviour as Rust's
+        // user-crate-wins-over-stdlib for `std::` shadowing.
+        let mut parsed: Vec<(String, crate::ast::Module)> =
+            crate::project::stdlib::parsed_stdlib_modules();
         for source in sources.iter() {
             if let Ok(text) = fs::read_to_string(source) {
                 if let Ok(m) = crate::parser::parse(&text) {
