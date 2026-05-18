@@ -119,6 +119,68 @@ I-O intrinsics) → Phase 1.5 (2 load/store intrinsics) → Phase 2+
 (`std.vec` and up).** All three blockers are caught **before** any
 pure-MIND `Vec` code is written.
 
+### Two additional implementation blockers discovered before Phase 2
+
+A read of `src/mlir/lowering.rs`, `src/eval/lower.rs`, and the existing
+multi-fn pipeline surfaced two more facts blocking the *MLIR-text*
+emission of `std/vec.mind`:
+
+- **P0d — `Instr::FnDef` was not lowered to MLIR.** The lowerer
+  handled `Instr::Call` (Phase 0) but `Instr::FnDef` fell through to
+  the `UnsupportedOp` catch-all. User-defined functions never reached
+  MLIR as `func.func` definitions. **Resolution: shipped** in commit
+  `aacebe1` — the gated `Instr::FnDef` arm emits `func.func @name(%pN: i64,
+  ...) -> i64 { ... return %ret : i64 }` as a sibling top-level symbol
+  before `@main`. `Instr::Param` binds the param ValueId; `Instr::Return`
+  emits `return %v : i64`. The assembler filters locally defined names
+  out of the Phase-0 extern fwd-decl loop. No struct decisions in this
+  step — all params + returns are `i64` (i64-ABI rule, P0a discipline).
+
+- **P0e — no struct codegen.** `Node::StructDef`, `Node::StructLit`,
+  and `Node::FieldAccess` parse and type-check as placeholder
+  `ScalarI32`, but lower to `ConstI64(0)` in `src/eval/lower.rs:464-470`.
+  The RFC's documented `Vec<T> { addr: i64, len: i64, cap: i64 }`
+  cannot be constructed, returned from `vec_new()`, or threaded
+  through `vec_push()`. **Status: open architectural decision.**
+
+#### P0e resolution options
+
+The struct ABI is a one-way door — whatever layout lands becomes the
+public contract for every pure-MIND program. Options:
+
+- **Option A — flat SSA bundle.** Lower `struct Vec { addr, len, cap }`
+  to three independent `i64` SSA values in the calling fn's scope.
+  `StructLit` binds the three to one local name; `FieldAccess` resolves
+  to the right child id. *Pros:* zero MLIR primitives added, zero ABI
+  commitment. *Cons:* structs can't cross function boundaries — kills
+  `vec_new() -> Vec<T>` and `vec_push(&mut Vec<T>, T)`. Phase 2 doesn't
+  ship on this alone.
+
+- **Option B — multi-return tuple ABI.** Lower fn returns / args of
+  struct type to multiple `i64` values: `func.func @vec_new() -> (i64,
+  i64, i64)`. *Pros:* matches existing i64-only ABI; no memref needed;
+  Phase 2 ships on this. *Cons:* makes ABI versioning awkward (adding
+  a field changes the arity); a `&mut Vec` argument becomes three
+  inputs + three outputs.
+
+- **Option C — heap-allocated record via `__mind_alloc` + load/store.**
+  Each struct instance is an i64 address into a 3×i64 block; field
+  access is `__mind_load_i64(addr + 8*field_index)`. *Pros:* uniform
+  with how `Vec`'s own backing store works; trivially extends to any
+  field count. *Cons:* every struct construct is a heap allocation
+  (free is the caller's problem); not zero-cost; allocator hot path.
+
+- **Option D — MLIR `llvm.struct` / `memref<3xi64>`.** Use MLIR's
+  native aggregate types. *Pros:* canonical, future-proof, what LLVM
+  ultimately wants anyway. *Cons:* widens the type-system surface
+  inside MIND IR; couples to MLIR's struct dialect choices; tougher to
+  port to the IR→LLVM-text backend in Phase 15.
+
+The recommended order is **decide via the multi-LLM consensus +
+autoresearch loop** before any implementation work, per the standing
+"non-obvious architectural decisions need consensus" rule. Until then,
+Phase 2 is *blocked on a design decision, not on code*.
+
 ## Reference-level explanation
 
 ### `std.vec` — `Vec<T>`
