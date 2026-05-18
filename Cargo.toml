@@ -71,6 +71,11 @@ harness = false
 required-features = ["autodiff"]
 
 [[bench]]
+name = "cross_module"
+harness = false
+required-features = ["cross-module-imports"]
+
+[[bench]]
 name = "simple_benchmarks"
 harness = false
 

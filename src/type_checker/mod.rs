@@ -1780,6 +1780,55 @@ pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pret
     check_module_types_in_file(module, src, None, env)
 }
 
+// ── Cross-module imports (Phase 10.6 item 9 / Phase 15) — D2 ──────────
+//
+// The module table is threaded via a thread-local set by the gated
+// entrypoint below, NOT via a new parameter on the shared
+// `check_module_types*` signature. This keeps the default hot-path
+// signature byte-identical, so the µs frontend / headline criterion
+// benches are provably untouched (the moat). When the feature is off,
+// none of this compiles and the `Node::Import` arm is an inert binding.
+#[cfg(feature = "cross-module-imports")]
+thread_local! {
+    static CM_TABLE: std::cell::RefCell<Option<crate::project::module_table::ModuleTable>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Inject the exported names of the module referenced by `path` into
+/// `tenv` as opaque scalars (`ValueType::ScalarI32` — the same type a
+/// bare `Node::Import` already yields in `infer_expr`). Exact path
+/// match only; globs / re-export chains are deliverable 3+.
+#[cfg(feature = "cross-module-imports")]
+fn cm_inject_imported_symbols(tenv: &mut TypeEnv, path: &[String]) {
+    CM_TABLE.with(|cell| {
+        if let Some(table) = cell.borrow().as_ref() {
+            let key = path.join(".");
+            if let Some(exports) = table.get(&key) {
+                for sym in &exports.exported {
+                    tenv.entry(sym.clone()).or_insert(ValueType::ScalarI32);
+                }
+            }
+        }
+    });
+}
+
+/// Gated entrypoint: type-check `module` with cross-module symbol
+/// resolution against `table`. Sets the thread-local for the duration
+/// of the check and clears it afterward (no leakage across calls).
+#[cfg(feature = "cross-module-imports")]
+pub fn check_module_types_with_modules(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+    env: &TypeEnv,
+    table: &crate::project::module_table::ModuleTable,
+) -> Vec<Pretty> {
+    CM_TABLE.with(|cell| *cell.borrow_mut() = Some(table.clone()));
+    let result = check_module_types_in_file(module, src, file, env);
+    CM_TABLE.with(|cell| *cell.borrow_mut() = None);
+    result
+}
+
 pub fn check_module_types_in_file(
     module: &Module,
     src: &str,
@@ -1864,8 +1913,19 @@ pub fn check_module_types_in_file(
                     (_, Err(e)) => errs.push(diag_from_type_err(src, file, e)),
                 }
             }
-            // Import statements are handled at module level; skip type checking
-            Node::Import { .. } => {}
+            // Import statements are handled at module level. With the
+            // `cross-module-imports` feature and a populated module
+            // table, a `use crate::a.b` injects module `crate.a.b`'s
+            // exported names into the local type env so later
+            // identifier lookups resolve across the file boundary.
+            // Default build: byte-identical no-op (the arm compiles to
+            // a discarded pattern binding, zero runtime cost).
+            Node::Import { path, .. } => {
+                #[cfg(feature = "cross-module-imports")]
+                cm_inject_imported_symbols(&mut tenv, path);
+                #[cfg(not(feature = "cross-module-imports"))]
+                let _ = path;
+            }
             // Phase 10.5 Tier-1: const introduces a name into the type env.
             // Phase 10.5 Tier-1: type aliases, exports — recorded but not
             // type-checked at v1; type-alias resolution is a v1.1 follow-up.
