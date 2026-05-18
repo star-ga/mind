@@ -285,6 +285,32 @@ fn compile_sources(
     }
     let opts = &opts_with_exports;
 
+    // Cross-module imports D3: build the whole-project module table
+    // once, before the per-file compile loop, and set it at project
+    // scope so each file's existing single-file pipeline resolves
+    // symbols declared in sibling files. Gated; clears after the loop.
+    // The per-file compile signature is unchanged (moat held).
+    #[cfg(feature = "cross-module-imports")]
+    {
+        let src_root = project_root.join(&manifest.build.entry);
+        let src_root = src_root.parent().unwrap_or(&project_root);
+        let mut parsed: Vec<(String, crate::ast::Module)> = Vec::new();
+        for source in sources.iter() {
+            if let Ok(text) = fs::read_to_string(source) {
+                if let Ok(m) = crate::parser::parse(&text) {
+                    parsed.push((
+                        crate::project::module_table::module_path_of(source, src_root),
+                        m,
+                    ));
+                }
+            }
+        }
+        let refs: Vec<(String, &crate::ast::Module)> =
+            parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
+        let table = crate::project::module_table::build_module_table(&refs);
+        crate::type_checker::cm_set_project_table(Some(table));
+    }
+
     let mut objects = Vec::new();
 
     for source in sources {
@@ -308,6 +334,9 @@ fn compile_sources(
 
         objects.push(obj_path);
     }
+
+    #[cfg(feature = "cross-module-imports")]
+    crate::type_checker::cm_set_project_table(None);
 
     Ok(objects)
 }
