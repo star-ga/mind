@@ -40,6 +40,23 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // the binding under a second cfg.
     #[allow(unused_mut)]
     let mut struct_env: HashMap<String, String> = HashMap::new();
+    // RFC 0005 P0f Step 2 — module-wide side-table that maps every
+    // `FieldAccess` span to its receiver's struct-type name. Built by
+    // a single AST pre-pass so the FieldAccess arm in `lower_expr` can
+    // resolve chained access (`a.b.c`), function-return receivers
+    // (`foo().x`), and struct-typed parameters even when struct_env
+    // doesn't have a direct Ident binding for the receiver. Multi-LLM
+    // consensus on 2026-05-18 (grok-4.3 / glm-5.1 / mistral-large,
+    // 3/3 unanimous) picked this "type-checker annotation" approach
+    // over a post-lowering IR rewrite. The builder lives in
+    // src/eval/struct_resolver.rs; in non-feature builds the table is
+    // empty and never queried.
+    #[cfg(feature = "std-surface")]
+    let receiver_types_owned: HashMap<crate::ast::Span, String> =
+        crate::eval::struct_resolver::build_field_access_types(module);
+    #[cfg(not(feature = "std-surface"))]
+    let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
+    let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
 
     for item in &module.items {
         match item {
@@ -47,10 +64,16 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 name, ann, value, ..
             } => {
                 let id = match ann {
-                    Some(TypeAnn::Tensor { dtype, dims }) => {
-                        lower_tensor_binding(&mut ir, value, dtype, dims, &env, &struct_env)
-                    }
-                    _ => lower_expr(value, &mut ir, &env, &struct_env),
+                    Some(TypeAnn::Tensor { dtype, dims }) => lower_tensor_binding(
+                        &mut ir,
+                        value,
+                        dtype,
+                        dims,
+                        &env,
+                        &struct_env,
+                        receiver_types,
+                    ),
+                    _ => lower_expr(value, &mut ir, &env, &struct_env, receiver_types),
                 };
                 env.insert(name.clone(), id);
                 // P0f Step 1: if the RHS is a StructLit, record the var→type
@@ -66,7 +89,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 ir.instrs.push(Instr::Output(id));
             }
             ast::Node::Assign { name, value, .. } => {
-                let id = lower_expr(value, &mut ir, &env, &struct_env);
+                let id = lower_expr(value, &mut ir, &env, &struct_env, receiver_types);
                 env.insert(name.clone(), id);
                 ir.instrs.push(Instr::Output(id));
             }
@@ -94,7 +117,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 ir.instrs.push(Instr::Output(id));
             }
             other => {
-                let id = lower_expr(other, &mut ir, &env, &struct_env);
+                let id = lower_expr(other, &mut ir, &env, &struct_env, receiver_types);
                 ir.instrs.push(Instr::Output(id));
             }
         }
@@ -110,6 +133,7 @@ fn lower_tensor_binding(
     dims: &[String],
     env: &HashMap<String, ValueId>,
     struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
     if let Some((dtype, shape)) = parse_tensor_ann(dtype, dims) {
         match value {
@@ -134,7 +158,7 @@ fn lower_tensor_binding(
         }
     }
 
-    lower_expr(value, ir, env, struct_env)
+    lower_expr(value, ir, env, struct_env, receiver_types)
 }
 
 fn lower_expr(
@@ -147,6 +171,13 @@ fn lower_expr(
     // to look up the canonical field-name list from `ir.struct_defs`
     // and emit `__mind_load_i64` at the correct 8-byte offset.
     struct_env: &HashMap<String, String>,
+    // RFC 0005 P0f Step 2 — module-wide side-table keyed on each
+    // FieldAccess span, mapping to the receiver's struct-type name.
+    // Built once per `lower_to_ir` call by `struct_resolver`. Lets
+    // the FieldAccess arm resolve chained access (`a.b.c`), fn
+    // returns (`foo().x`), and struct-typed parameters that Step 1
+    // can't see via a direct `Ident` lookup.
+    receiver_types: &HashMap<crate::ast::Span, String>,
 ) -> ValueId {
     match node {
         ast::Node::Lit(Literal::Int(n), _) => {
@@ -175,8 +206,8 @@ fn lower_expr(
         ast::Node::Binary {
             op, left, right, ..
         } => {
-            let lhs = lower_expr(left, ir, env, struct_env);
-            let rhs = lower_expr(right, ir, env, struct_env);
+            let lhs = lower_expr(left, ir, env, struct_env, receiver_types);
+            let rhs = lower_expr(right, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let op = match op {
                 ast::BinOp::Add => BinOp::Add,
@@ -197,7 +228,7 @@ fn lower_expr(
         ast::Node::CallTensorSum {
             x, axes, keepdims, ..
         } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let axes = axes.iter().map(|a| *a as i64).collect();
             ir.instrs.push(Instr::Sum {
@@ -211,7 +242,7 @@ fn lower_expr(
         ast::Node::CallTensorMean {
             x, axes, keepdims, ..
         } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let axes = axes.iter().map(|a| *a as i64).collect();
             ir.instrs.push(Instr::Mean {
@@ -223,7 +254,7 @@ fn lower_expr(
             dst
         }
         ast::Node::CallReshape { x, dims, .. } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let new_shape = dims.iter().map(|dim| parse_dim(dim)).collect();
             ir.instrs.push(Instr::Reshape {
@@ -234,7 +265,7 @@ fn lower_expr(
             dst
         }
         ast::Node::CallExpandDims { x, axis, .. } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             ir.instrs.push(Instr::ExpandDims {
                 dst,
@@ -244,14 +275,14 @@ fn lower_expr(
             dst
         }
         ast::Node::CallSqueeze { x, axes, .. } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let axes = axes.iter().map(|a| *a as i64).collect();
             ir.instrs.push(Instr::Squeeze { dst, src, axes });
             dst
         }
         ast::Node::CallTranspose { x, axes, .. } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let perm = axes
                 .as_ref()
@@ -261,7 +292,7 @@ fn lower_expr(
             dst
         }
         ast::Node::CallIndex { x, axis, i, .. } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let indices = vec![IndexSpec {
                 axis: (*axis).max(0) as i64,
@@ -271,8 +302,8 @@ fn lower_expr(
             dst
         }
         ast::Node::CallMatMul { a, b, .. } => {
-            let lhs = lower_expr(a, ir, env, struct_env);
-            let rhs = lower_expr(b, ir, env, struct_env);
+            let lhs = lower_expr(a, ir, env, struct_env, receiver_types);
+            let rhs = lower_expr(b, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             ir.instrs.push(Instr::MatMul {
                 dst,
@@ -295,8 +326,8 @@ fn lower_expr(
             dst
         }
         ast::Node::CallDot { a, b, .. } => {
-            let lhs = lower_expr(a, ir, env, struct_env);
-            let rhs = lower_expr(b, ir, env, struct_env);
+            let lhs = lower_expr(a, ir, env, struct_env, receiver_types);
+            let rhs = lower_expr(b, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             ir.instrs.push(Instr::Dot {
                 dst,
@@ -312,7 +343,7 @@ fn lower_expr(
             end,
             ..
         } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let dims = vec![SliceSpec {
                 axis: (*axis).max(0) as i64,
@@ -331,7 +362,7 @@ fn lower_expr(
             step,
             ..
         } => {
-            let src = lower_expr(x, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             let dims = vec![SliceSpec {
                 axis: (*axis).max(0) as i64,
@@ -343,8 +374,8 @@ fn lower_expr(
             dst
         }
         ast::Node::CallGather { x, axis, idx, .. } => {
-            let src = lower_expr(x, ir, env, struct_env);
-            let indices = lower_expr(idx, ir, env, struct_env);
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
+            let indices = lower_expr(idx, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
             ir.instrs.push(Instr::Gather {
                 dst,
@@ -354,11 +385,11 @@ fn lower_expr(
             });
             dst
         }
-        ast::Node::Paren(inner, _) => lower_expr(inner, ir, env, struct_env),
+        ast::Node::Paren(inner, _) => lower_expr(inner, ir, env, struct_env, receiver_types),
         ast::Node::Tuple { elements, .. } => {
             let mut last = None;
             for element in elements {
-                last = Some(lower_expr(element, ir, env, struct_env));
+                last = Some(lower_expr(element, ir, env, struct_env, receiver_types));
             }
             last.unwrap_or_else(|| {
                 let id = ir.fresh();
@@ -415,7 +446,13 @@ fn lower_expr(
                 match stmt {
                     ast::Node::Return { value, .. } => {
                         if let Some(val) = value {
-                            ret_id = Some(lower_expr(val, &mut fn_ir, &fn_env, &fn_struct_env));
+                            ret_id = Some(lower_expr(
+                                val,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            ));
                         }
                         fn_ir.instrs.push(Instr::Return { value: ret_id });
                     }
@@ -431,8 +468,15 @@ fn lower_expr(
                                 dims,
                                 &fn_env,
                                 &fn_struct_env,
+                                receiver_types,
                             ),
-                            _ => lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env),
+                            _ => lower_expr(
+                                value,
+                                &mut fn_ir,
+                                &fn_env,
+                                &fn_struct_env,
+                                receiver_types,
+                            ),
                         };
                         fn_env.insert(name.clone(), id);
                         // P0f Step 1: track fn-scoped var→struct binding for
@@ -446,11 +490,13 @@ fn lower_expr(
                         }
                     }
                     ast::Node::Assign { name, value, .. } => {
-                        let id = lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env);
+                        let id =
+                            lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
                         fn_env.insert(name.clone(), id);
                     }
                     other => {
-                        let id = lower_expr(other, &mut fn_ir, &fn_env, &fn_struct_env);
+                        let id =
+                            lower_expr(other, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
                         ret_id = Some(id);
                     }
                 }
@@ -472,7 +518,9 @@ fn lower_expr(
             id
         }
         ast::Node::Return { value, .. } => {
-            let ret_val = value.as_ref().map(|v| lower_expr(v, ir, env, struct_env));
+            let ret_val = value
+                .as_ref()
+                .map(|v| lower_expr(v, ir, env, struct_env, receiver_types));
             ir.instrs.push(Instr::Return { value: ret_val });
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
@@ -481,7 +529,7 @@ fn lower_expr(
         ast::Node::Block { stmts, .. } => {
             let mut last_id = None;
             for stmt in stmts {
-                last_id = Some(lower_expr(stmt, ir, env, struct_env));
+                last_id = Some(lower_expr(stmt, ir, env, struct_env, receiver_types));
             }
             last_id.unwrap_or_else(|| {
                 let id = ir.fresh();
@@ -496,15 +544,15 @@ fn lower_expr(
             ..
         } => {
             // Lower condition
-            let _cond_id = lower_expr(cond, ir, env, struct_env);
+            let _cond_id = lower_expr(cond, ir, env, struct_env, receiver_types);
             // For now, just lower the then branch (control flow needs more work)
             let mut last_id = None;
             for stmt in then_branch {
-                last_id = Some(lower_expr(stmt, ir, env, struct_env));
+                last_id = Some(lower_expr(stmt, ir, env, struct_env, receiver_types));
             }
             if let Some(else_stmts) = else_branch {
                 for stmt in else_stmts {
-                    last_id = Some(lower_expr(stmt, ir, env, struct_env));
+                    last_id = Some(lower_expr(stmt, ir, env, struct_env, receiver_types));
                 }
             }
             last_id.unwrap_or_else(|| {
@@ -516,7 +564,7 @@ fn lower_expr(
         ast::Node::Call { callee, args, .. } => {
             let arg_ids: Vec<ValueId> = args
                 .iter()
-                .map(|a| lower_expr(a, ir, env, struct_env))
+                .map(|a| lower_expr(a, ir, env, struct_env, receiver_types))
                 .collect();
             let dst = ir.fresh();
             ir.instrs.push(Instr::Call {
@@ -532,18 +580,18 @@ fn lower_expr(
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
-            let _scrut_id = lower_expr(scrutinee, ir, env, struct_env);
+            let _scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
             let mut last_id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(last_id, 0));
             for arm in arms {
-                last_id = lower_expr(&arm.body, ir, env, struct_env);
+                last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
             }
             last_id
         }
         // Phase 10.7: `&expr` / `&mut expr` — no-op metadata wrapper in
         // v1. The inner expression lowers directly; the ref tag is only
         // meaningful to the type-checker.
-        ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env, struct_env),
+        ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env, struct_env, receiver_types),
         // RFC 0005 P0e Step 1 — `Foo { f1: v1, f2: v2, ... }` lowers to a
         // heap record. Layout = one `i64` slot per field, packed at
         // 8-byte stride. The struct value is the `i64` base address from
@@ -598,7 +646,7 @@ fn lower_expr(
 
             // Per-field store at offset 8*i.
             for (i, f) in order.iter().enumerate() {
-                let value = lower_expr(&f.value, ir, env, struct_env);
+                let value = lower_expr(&f.value, ir, env, struct_env, receiver_types);
                 let field_addr = if i == 0 {
                     addr
                 } else {
@@ -623,50 +671,78 @@ fn lower_expr(
 
             addr
         }
-        // RFC 0005 P0f Step 1 — `receiver.field` reads from the heap
-        // record produced by P0e StructLit lowering.
+        // RFC 0005 P0f — `receiver.field` reads from the heap record
+        // produced by P0e StructLit lowering.
         //
         //   offset      = index_of(field, struct_defs[T]) * 8
         //   field_addr  = addr + offset    (or addr itself when offset == 0)
         //   result      = __mind_load_i64(field_addr)
         //
-        // Step 1 resolves the receiver's struct type only when the
-        // receiver is a plain `Ident` bound to a `StructLit` via `Let`
-        // in this (or an enclosing) scope. Chained access (`a.b.c`),
-        // FieldAccess of a function return value, and FieldAccess on
-        // a struct-typed parameter are deferred to Step 2 — those need
-        // either type-checker annotation or a fold-through-StructLit
-        // pass on the IR. Unknown receivers fall through to the
-        // existing placeholder so older modules still compile.
+        // Step 1 — fast path: receiver is a plain `Ident` bound to a
+        // `StructLit` via `Let` in this (or an enclosing) scope. The
+        // receiver's struct name lives in `struct_env[var_name]`;
+        // we look it up without re-lowering the receiver.
+        //
+        // Step 2 — general path: receiver type is precomputed by the
+        // pre-pass in `src/eval/struct_resolver.rs` and stored in the
+        // `receiver_types` side-table keyed on this FieldAccess's
+        // span. Covers chained access (`a.b.c`), function-return
+        // receivers (`foo().x`), and struct-typed parameters. We
+        // lower the receiver expression for its base-address value
+        // and then add the field's 8-byte offset as before.
+        //
+        // Unresolved receivers fall through to a `ConstI64(0)`
+        // placeholder so the IR shape is stable and older modules
+        // still compile.
         #[cfg(feature = "std-surface")]
         ast::Node::FieldAccess {
-            receiver, field, ..
+            receiver,
+            field,
+            span,
         } => {
-            let resolved = match receiver.as_ref() {
+            // ── Step 1: cheap Ident-bound lookup ─────────────────────
+            let step1 = match receiver.as_ref() {
                 ast::Node::Lit(Literal::Ident(var_name), _) => {
                     struct_env.get(var_name).and_then(|struct_name| {
                         ir.struct_defs
                             .get(struct_name)
                             .and_then(|fields| fields.iter().position(|f| f == field))
-                            .map(|idx| (var_name.clone(), idx))
+                            .map(|idx| (Some(var_name.clone()), idx))
                     })
                 }
                 _ => None,
             };
+            // ── Step 2: side-table fallback (general path) ───────────
+            // Only consulted when Step 1 fast-path failed.
+            let step2 = if step1.is_none() {
+                receiver_types.get(span).and_then(|struct_name| {
+                    ir.struct_defs
+                        .get(struct_name)
+                        .and_then(|fields| fields.iter().position(|f| f == field))
+                        .map(|idx| (None::<String>, idx))
+                })
+            } else {
+                None
+            };
+
+            let resolved = step1.or(step2);
 
             match resolved {
-                Some((var_name, idx)) => {
-                    // addr is the receiver's ValueId from env.
-                    let addr = match env.get(&var_name) {
-                        Some(id) => *id,
-                        None => {
-                            // Bound in struct_env but not env — shouldn't
-                            // happen if Let-tracking stays paired, but
-                            // fall through defensively.
-                            let id = ir.fresh();
-                            ir.instrs.push(Instr::ConstI64(id, 0));
-                            return id;
-                        }
+                Some((var_name_opt, idx)) => {
+                    // Step 1 path can take addr from env without re-lowering.
+                    // Step 2 path must lower the receiver expression to
+                    // get its base address (it may be a Call, FieldAccess,
+                    // or anything else that evaluates to an i64 heap addr).
+                    let addr = match var_name_opt {
+                        Some(var_name) => match env.get(&var_name) {
+                            Some(id) => *id,
+                            None => {
+                                let id = ir.fresh();
+                                ir.instrs.push(Instr::ConstI64(id, 0));
+                                return id;
+                            }
+                        },
+                        None => lower_expr(receiver, ir, env, struct_env, receiver_types),
                     };
                     let field_addr = if idx == 0 {
                         addr
@@ -691,9 +767,11 @@ fn lower_expr(
                     result
                 }
                 None => {
-                    // Receiver type not statically resolvable in Step 1;
-                    // emit placeholder so the module still type-checks
-                    // and the program produces a stable IR shape.
+                    // Receiver type still unresolvable even after the
+                    // side-table — emit placeholder so the module
+                    // produces a stable IR shape. Step 3 will lift the
+                    // remaining cases (heap-allocated fields of struct
+                    // type, generics) when std.vec needs them.
                     let id = ir.fresh();
                     ir.instrs.push(Instr::ConstI64(id, 0));
                     id
