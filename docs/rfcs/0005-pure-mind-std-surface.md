@@ -63,15 +63,54 @@ Types are nominal MIND structs; operations are free functions in the
 module (consistent with MIND's existing free-function style — no
 trait/method dispatch is introduced by this RFC).
 
+## Prerequisites discovered during implementation research (2026-05-18)
+
+A pre-implementation read of `src/types/value.rs`,
+`src/type_checker/mod.rs`, `src/mlir/lowering.rs`, and
+`src/opt/ir_canonical.rs` surfaced two blocking facts this RFC must
+account for **before** any phase-1 code:
+
+- **P0a — there is no pointer type.** `ValueType` is
+  `ScalarI32 | ScalarI64 | ScalarF32 | ScalarF64 | ScalarBool |
+  Tensor | GradMap`. Adding a `Ptr` variant would ripple through the
+  entire type-checker and threaten the µs frontend moat. **Resolution:
+  the intrinsic address ABI is opaque `i64`** (a machine address is a
+  64-bit integer). `Ptr<T>` is a *pure-MIND newtype* `struct Ptr { addr: i64 }`
+  at the `std` level — zero type-system change. All five intrinsics
+  below are re-signed in terms of `i64`, never a built-in `ptr`.
+- **P0b — `Instr::Call` is not lowered to MLIR.** `emit_instr` in
+  `src/mlir/lowering.rs` handles only `ConstI64`, `ConstTensor`,
+  `BinOp`, `MatMul`, `Conv2d`, `Output`. `src/opt/ir_canonical.rs`
+  documents that the lowerer "does not yet emit `Instr::Call` for all
+  user-defined" calls. A generic call therefore never reaches LLVM.
+  This means **Phase 0 of this RFC is generic `Instr::Call` → MLIR
+  lowering** (emit `func.call` / `llvm.call`), a foundational path the
+  self-hosting IR→LLVM-text backend (Phase 15) also requires. The five
+  intrinsics are its first consumers; they cannot work before it.
+
+Revised adoption order: **Phase 0 (generic call lowering, gated)
+blocks all of Phase 1.** The phased plan at the end of this document
+is updated accordingly.
+
 ## Reference-level explanation
 
 ### `std.vec` — `Vec<T>`
 
-A `Vec<T>` is a struct `{ ptr, len, cap }`. Backing store is a
-heap allocation obtained from a single allocator primitive
-`__mind_alloc(bytes) -> ptr` / `__mind_realloc` / `__mind_free`
-(the only new compiler intrinsics this RFC requires; everything else
-is pure MIND).
+A `Vec<T>` is a struct `{ addr: i64, len: i64, cap: i64 }` where
+`addr` is the opaque machine address of the backing store (P0a — no
+built-in pointer type; an address is a 64-bit integer). Backing store
+is obtained from the allocator intrinsics, all signed in `i64`:
+
+```
+__mind_alloc(bytes: i64)              -> i64   // 0 == allocation failed
+__mind_realloc(addr: i64, n: i64)     -> i64
+__mind_free(addr: i64)                -> i64   // 0 == ok
+```
+
+`std` wraps a raw `addr` in a pure-MIND newtype
+`struct Ptr<T> { addr: i64 }` for type distinction at the library
+level; the compiler only ever sees `i64`. Everything above the five
+intrinsics is pure MIND.
 
 - `vec.new() -> Vec<T>` — zero-cap, no allocation.
 - `vec.push(&mut Vec<T>, T)` — amortised O(1); growth doubles cap.
@@ -122,11 +161,24 @@ intrinsics and a `__mind_read`/`__mind_write` syscall pair.
 
 ### New compiler intrinsics (the entire non-MIND surface)
 
-`__mind_alloc`, `__mind_realloc`, `__mind_free`, `__mind_read`,
-`__mind_write`. Five primitives. Everything else in this RFC is pure
-MIND compiled by the existing pipeline. Keeping the intrinsic set this
-small is what keeps the bootstrap honest: stage-1 only needs the Rust
-compiler to provide these five, then the std surface is MIND.
+Five primitives, all `i64`-signed (P0a — no `ptr` type):
+
+```
+__mind_alloc(bytes: i64)                         -> i64
+__mind_realloc(addr: i64, bytes: i64)            -> i64
+__mind_free(addr: i64)                           -> i64
+__mind_read(path_addr: i64, path_len: i64,
+            buf_addr: i64, buf_cap: i64)         -> i64   // bytes read, <0 = errno
+__mind_write(path_addr: i64, path_len: i64,
+             buf_addr: i64, buf_len: i64)        -> i64   // bytes written, <0 = errno
+```
+
+Everything else in this RFC is pure MIND compiled by the existing
+pipeline. Keeping the intrinsic set this small — and `i64`-only, so
+no type-system change — is what keeps the bootstrap honest and the
+moat untouched: stage-1 only needs the Rust compiler to provide these
+five (lowered via the Phase-0 generic-call path), then the std
+surface is MIND.
 
 ## Compile-speed invariant (the moat)
 
@@ -164,8 +216,18 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
 
 ## Adoption plan (phased — this is the long pole)
 
-1. **Intrinsics.** Land the five `__mind_*` intrinsics in the Rust
-   stage-0 compiler, feature-gated `std-surface`. Sub-bench added.
+0. **Generic call lowering (BLOCKING — P0b).** Emit MLIR for
+   `Instr::Call` (`func.call` / `llvm.call`) so a non-tensor function
+   call reaches LLVM at all. Feature-gated `std-surface`; default
+   build byte-identical (the lowerer's `emit_instr` gains a gated
+   `Instr::Call` arm only). This is also the path the Phase 15
+   self-hosting IR→LLVM-text backend needs — it is foundational, not
+   std-specific. Own sub-bench; headline benches untouched. **All
+   subsequent phases depend on this.**
+1. **Intrinsics.** Declare the five `i64`-signed `__mind_*` intrinsics
+   so the type-checker accepts them with fixed signatures and the
+   Phase-0 path lowers them to `llvm.call @__mind_*`. Feature-gated
+   `std-surface`. Sub-bench added.
 2. **`std.vec`.** Pure-MIND `Vec<T>` on the intrinsics. Tests +
    `std_surface` bench.
 3. **`std.string`.** `String` on `std.vec` + UTF-8 invariant; reuse
