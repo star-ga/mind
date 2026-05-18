@@ -68,6 +68,16 @@ struct LoweringContext {
     /// build has no `Instr::Call` arm and never touches this.
     #[cfg(feature = "std-surface")]
     extern_calls: std::collections::BTreeSet<(String, usize)>,
+    /// RFC 0005 P0d: pre-formatted `func.func @name(...) -> i64 { ... }`
+    /// bodies for every `Instr::FnDef` seen at module top level. The
+    /// assembler concatenates these *before* `@main` and excludes their
+    /// names from `extern_calls` so we don't emit a forward decl that
+    /// would clash with the definition.
+    #[cfg(feature = "std-surface")]
+    user_fns: String,
+    /// Names defined locally (Instr::FnDef) — filter from extern decls.
+    #[cfg(feature = "std-surface")]
+    defined_fns: std::collections::BTreeSet<String>,
 }
 
 impl LoweringContext {
@@ -78,6 +88,10 @@ impl LoweringContext {
             body: String::new(),
             #[cfg(feature = "std-surface")]
             extern_calls: std::collections::BTreeSet::new(),
+            #[cfg(feature = "std-surface")]
+            user_fns: String::new(),
+            #[cfg(feature = "std-surface")]
+            defined_fns: std::collections::BTreeSet::new(),
         }
     }
 
@@ -267,6 +281,76 @@ impl LoweringContext {
                 self.values.insert(*dst, ValueKind::ScalarI64);
                 self.extern_calls.insert((name.clone(), args.len()));
             }
+            // RFC 0005 P0d: emit `func.func @name(%pN: i64...) -> i64 { ... }`
+            // for each user-defined function. The body is lowered into a
+            // sub-context so its locals get a clean SSA namespace; the
+            // resulting text is appended to `user_fns` and emitted as a
+            // sibling top-level symbol *before* `@main`. Gated.
+            #[cfg(feature = "std-surface")]
+            Instr::FnDef {
+                name,
+                params,
+                ret_id,
+                body,
+                ..
+            } => {
+                let mut sub = LoweringContext::new();
+                for (_pname, pid) in params {
+                    sub.values.insert(*pid, ValueKind::ScalarI64);
+                }
+                for (idx, inner) in body.iter().enumerate() {
+                    sub.emit_instr(idx, inner)?;
+                }
+
+                let sig_args: Vec<String> = params
+                    .iter()
+                    .map(|(_, pid)| format!("%{}: i64", pid.0))
+                    .collect();
+                let mut fn_text = String::new();
+                fn_text.push_str(&format!(
+                    "  func.func @{}({}) -> i64 {{\n",
+                    name,
+                    sig_args.join(", ")
+                ));
+                fn_text.push_str(&sub.body);
+                // Every fn returns i64 under the std-surface ABI. If the IR
+                // body did not emit an explicit `Instr::Return`, synthesise a
+                // closing return from `ret_id` (falls back to 0 if even that
+                // is absent — verified by the IR verifier upstream).
+                if !sub.body.trim_end().ends_with("return") && !sub.body.contains("    return ") {
+                    match ret_id {
+                        Some(rid) => fn_text.push_str(&format!("    return %{} : i64\n", rid.0)),
+                        None => fn_text
+                            .push_str("    %z = arith.constant 0 : i64\n    return %z : i64\n"),
+                    }
+                }
+                fn_text.push_str("  }\n");
+
+                self.user_fns.push_str(&fn_text);
+                self.defined_fns.insert(name.clone());
+                // Bubble up any extern calls or nested definitions discovered
+                // inside the body so the module-level assembler sees them.
+                for ec in sub.extern_calls {
+                    self.extern_calls.insert(ec);
+                }
+                for df in sub.defined_fns {
+                    self.defined_fns.insert(df);
+                }
+                self.user_fns.push_str(&sub.user_fns);
+            }
+            // P0d: function parameters bind a ValueId to the i64 ABI; the
+            // value is named in the enclosing `func.func` signature so we
+            // do not emit anything for the Param itself. Gated.
+            #[cfg(feature = "std-surface")]
+            Instr::Param { dst, .. } => {
+                self.values.insert(*dst, ValueKind::ScalarI64);
+            }
+            // P0d: explicit `return %v : i64` inside a user fn body.
+            #[cfg(feature = "std-surface")]
+            Instr::Return { value } => match value {
+                Some(v) => self.emit_line(&format!("    return %{} : i64", v.0)),
+                None => self.emit_line("    return"),
+            },
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
                     instr_index,
@@ -336,12 +420,22 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     // declaration per distinct callee, before `@main`, so the
     // `func.call`s emitted above resolve. Sorted (BTreeSet) for
     // deterministic MLIR text / model_hash. Gated; default build
-    // emits none of this.
+    // emits none of this. P0d: skip names that have a local
+    // `func.func` definition emitted below — declaring a private
+    // forward decl AND a definition for the same symbol is invalid.
     #[cfg(feature = "std-surface")]
     for (name, arity) in &ctx.extern_calls {
+        if ctx.defined_fns.contains(name) {
+            continue;
+        }
         let params = vec!["i64"; *arity].join(", ");
         out.push_str(&format!("  func.func private @{name}({params}) -> i64\n"));
     }
+    // RFC 0005 P0d: user-defined `func.func @name(...) -> i64 { ... }`
+    // definitions, in source order. Emitted before `@main` so the
+    // `func.call`s inside @main resolve. Gated; default build emits none.
+    #[cfg(feature = "std-surface")]
+    out.push_str(&ctx.user_fns);
 
     if ret_types.is_empty() {
         out.push_str("  func.func @main() -> () {\n");
