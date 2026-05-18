@@ -151,6 +151,23 @@ jobs:
             cargo test --verbose --no-default-features
           fi
 
+      - name: Test (gated — RFC 0005 std-surface + cross-module-imports)
+        # The RFC 0005 Phase 2 / Phase B work (std/vec.mind, std/string.mind,
+        # std/map.mind, std/io.mind, plus the `use std.foo` resolver + the
+        # per-arg signature matching on imported `pub fn`s) lives entirely
+        # behind these two feature flags. The default-build test job above
+        # does NOT compile them, so without this explicit gated run the
+        # 45+17 gated tests are at risk of silent breakage. Both features
+        # are mutually independent + must work on their own + together.
+        shell: bash
+        run: |
+          set -e
+          # Each feature alone — proves the gate is well-bounded.
+          cargo test --verbose --no-default-features --features std-surface
+          cargo test --verbose --no-default-features --features cross-module-imports
+          # Both together — full RFC 0005 surface (Phase 2 + Phase B).
+          cargo test --verbose --no-default-features --features std-surface,cross-module-imports
+
       - name: Clippy
         shell: bash
         run: |
