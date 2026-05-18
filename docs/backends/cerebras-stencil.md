@@ -1,8 +1,9 @@
 # `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
 
 > **Status:** experimental — available in mindc v0.2.10+. Final emission to
-> Cerebras Software Language (CSL) requires
-> `mind-runtime/src/backend/cerebras/` on a CS-3 system.
+> Cerebras Software Language (CSL) is performed by the downstream MIND
+> runtime's Cerebras backend on a CS-3 system; this crate emits only the
+> public IR node consumed by that backend.
 
 ## Overview
 
@@ -69,14 +70,14 @@ wafer — a compliance primitive for regulated-AI deployments.
    grammar, element type).
 2. Emitting the `mind.cerebras.stencil_tile` IR node as opaque textual MLIR.
 
-`mind-runtime/src/backend/cerebras/` is responsible for:
+The downstream MIND runtime's Cerebras backend is responsible for:
 
 1. Consuming the opaque IR node.
 2. Generating the per-kernel CSL dispatch, region allocation, and DMA
    descriptors for the target wafer.
 
 This crate never emits CSL directly. The split exists so the public IR
-surface can evolve independently of the private backend toolchain.
+surface can evolve independently of the downstream backend.
 
 ## Compile-time performance
 
@@ -104,7 +105,7 @@ allocation proportional to `rows * cols`.
 |---------|----------|-------------------------------------------------|
 | Tiny    | 32 × 32  | Minimal tile; unit-test default.                |
 | Medium  | 128 × 128| Typical sub-region for iterative solvers.       |
-| Large   | 256 × 256| `FabricRegion::default()` in `mind-runtime`.    |
+| Large   | 256 × 256| Default tile size assumed by the runtime backend. |
 | Wafer   | 750 × 750| Approximate WSE-3 working block.                |
 
 ## Usage example
@@ -119,7 +120,7 @@ let op = StencilTileOp::new(
     "laplacian_5pt",
 )?;
 
-// Emit the IR node for mind-runtime/backend/cerebras/ to consume.
+// Emit the IR node for the downstream Cerebras backend to consume.
 let mlir_text = op.to_mlir_text();
 ```
 
@@ -133,5 +134,4 @@ backend maps that name to a concrete CSL kernel implementation.
 - `src/ops/cerebras.rs` — op definition, validation, and MLIR emission.
 - `benches/cerebras_stencil.rs` — compile-time benchmark.
 - `tests/cerebras_stencil_tile.rs` — surface tests.
-- `mind-runtime/src/backend/cerebras/` — private CSL emission backend.
 - `docs/backends/` — other backend surface documentation.
