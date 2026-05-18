@@ -30,6 +30,16 @@ use crate::types::ShapeDim;
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let mut ir = IRModule::new();
     let mut env: HashMap<String, ValueId> = HashMap::new();
+    // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
+    // `x.field` can resolve `Foo`'s canonical field-name order from
+    // `ir.struct_defs` and emit the correct heap-record load offset.
+    // Stays empty in non-std-surface builds; the FieldAccess arm and
+    // the Let-side insert below are gated identically so the
+    // side-table is dead-code-eliminated. `mut` is unused without the
+    // feature, so silence the unused-mut lint instead of duplicating
+    // the binding under a second cfg.
+    #[allow(unused_mut)]
+    let mut struct_env: HashMap<String, String> = HashMap::new();
 
     for item in &module.items {
         match item {
@@ -38,15 +48,25 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             } => {
                 let id = match ann {
                     Some(TypeAnn::Tensor { dtype, dims }) => {
-                        lower_tensor_binding(&mut ir, value, dtype, dims, &env)
+                        lower_tensor_binding(&mut ir, value, dtype, dims, &env, &struct_env)
                     }
-                    _ => lower_expr(value, &mut ir, &env),
+                    _ => lower_expr(value, &mut ir, &env, &struct_env),
                 };
                 env.insert(name.clone(), id);
+                // P0f Step 1: if the RHS is a StructLit, record the var→type
+                // binding so a later FieldAccess on this name resolves the
+                // correct offset out of `ir.struct_defs`.
+                #[cfg(feature = "std-surface")]
+                if let ast::Node::StructLit {
+                    name: struct_name, ..
+                } = value.as_ref()
+                {
+                    struct_env.insert(name.clone(), struct_name.clone());
+                }
                 ir.instrs.push(Instr::Output(id));
             }
             ast::Node::Assign { name, value, .. } => {
-                let id = lower_expr(value, &mut ir, &env);
+                let id = lower_expr(value, &mut ir, &env, &struct_env);
                 env.insert(name.clone(), id);
                 ir.instrs.push(Instr::Output(id));
             }
@@ -74,7 +94,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 ir.instrs.push(Instr::Output(id));
             }
             other => {
-                let id = lower_expr(other, &mut ir, &env);
+                let id = lower_expr(other, &mut ir, &env, &struct_env);
                 ir.instrs.push(Instr::Output(id));
             }
         }
@@ -89,6 +109,7 @@ fn lower_tensor_binding(
     dtype: &str,
     dims: &[String],
     env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
 ) -> ValueId {
     if let Some((dtype, shape)) = parse_tensor_ann(dtype, dims) {
         match value {
@@ -113,10 +134,20 @@ fn lower_tensor_binding(
         }
     }
 
-    lower_expr(value, ir, env)
+    lower_expr(value, ir, env, struct_env)
 }
 
-fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId>) -> ValueId {
+fn lower_expr(
+    node: &ast::Node,
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    // RFC 0005 P0f Step 1 — per-fn binding from variable name to its
+    // struct-type name. Populated at Let sites whose RHS is a
+    // `StructLit`; consumed by the FieldAccess read-path arm below
+    // to look up the canonical field-name list from `ir.struct_defs`
+    // and emit `__mind_load_i64` at the correct 8-byte offset.
+    struct_env: &HashMap<String, String>,
+) -> ValueId {
     match node {
         ast::Node::Lit(Literal::Int(n), _) => {
             let id = ir.fresh();
@@ -144,8 +175,8 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::Binary {
             op, left, right, ..
         } => {
-            let lhs = lower_expr(left, ir, env);
-            let rhs = lower_expr(right, ir, env);
+            let lhs = lower_expr(left, ir, env, struct_env);
+            let rhs = lower_expr(right, ir, env, struct_env);
             let dst = ir.fresh();
             let op = match op {
                 ast::BinOp::Add => BinOp::Add,
@@ -166,7 +197,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::CallTensorSum {
             x, axes, keepdims, ..
         } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let axes = axes.iter().map(|a| *a as i64).collect();
             ir.instrs.push(Instr::Sum {
@@ -180,7 +211,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::CallTensorMean {
             x, axes, keepdims, ..
         } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let axes = axes.iter().map(|a| *a as i64).collect();
             ir.instrs.push(Instr::Mean {
@@ -192,7 +223,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallReshape { x, dims, .. } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let new_shape = dims.iter().map(|dim| parse_dim(dim)).collect();
             ir.instrs.push(Instr::Reshape {
@@ -203,7 +234,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallExpandDims { x, axis, .. } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             ir.instrs.push(Instr::ExpandDims {
                 dst,
@@ -213,14 +244,14 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallSqueeze { x, axes, .. } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let axes = axes.iter().map(|a| *a as i64).collect();
             ir.instrs.push(Instr::Squeeze { dst, src, axes });
             dst
         }
         ast::Node::CallTranspose { x, axes, .. } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let perm = axes
                 .as_ref()
@@ -230,7 +261,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallIndex { x, axis, i, .. } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let indices = vec![IndexSpec {
                 axis: (*axis).max(0) as i64,
@@ -240,8 +271,8 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallMatMul { a, b, .. } => {
-            let lhs = lower_expr(a, ir, env);
-            let rhs = lower_expr(b, ir, env);
+            let lhs = lower_expr(a, ir, env, struct_env);
+            let rhs = lower_expr(b, ir, env, struct_env);
             let dst = ir.fresh();
             ir.instrs.push(Instr::MatMul {
                 dst,
@@ -264,8 +295,8 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallDot { a, b, .. } => {
-            let lhs = lower_expr(a, ir, env);
-            let rhs = lower_expr(b, ir, env);
+            let lhs = lower_expr(a, ir, env, struct_env);
+            let rhs = lower_expr(b, ir, env, struct_env);
             let dst = ir.fresh();
             ir.instrs.push(Instr::Dot {
                 dst,
@@ -281,7 +312,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             end,
             ..
         } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let dims = vec![SliceSpec {
                 axis: (*axis).max(0) as i64,
@@ -300,7 +331,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             step,
             ..
         } => {
-            let src = lower_expr(x, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
             let dst = ir.fresh();
             let dims = vec![SliceSpec {
                 axis: (*axis).max(0) as i64,
@@ -312,8 +343,8 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             dst
         }
         ast::Node::CallGather { x, axis, idx, .. } => {
-            let src = lower_expr(x, ir, env);
-            let indices = lower_expr(idx, ir, env);
+            let src = lower_expr(x, ir, env, struct_env);
+            let indices = lower_expr(idx, ir, env, struct_env);
             let dst = ir.fresh();
             ir.instrs.push(Instr::Gather {
                 dst,
@@ -323,11 +354,11 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             });
             dst
         }
-        ast::Node::Paren(inner, _) => lower_expr(inner, ir, env),
+        ast::Node::Paren(inner, _) => lower_expr(inner, ir, env, struct_env),
         ast::Node::Tuple { elements, .. } => {
             let mut last = None;
             for element in elements {
-                last = Some(lower_expr(element, ir, env));
+                last = Some(lower_expr(element, ir, env, struct_env));
             }
             last.unwrap_or_else(|| {
                 let id = ir.fresh();
@@ -344,7 +375,26 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         } => {
             // Lower function definition
             let mut fn_ir = IRModule::new();
+            // RFC 0005 P0f Step 1 — the FieldAccess read-path resolves
+            // a field offset via `fn_ir.struct_defs[T]`; without
+            // inheriting the parent module's schema registry, every
+            // struct used inside a fn body would silently fall through
+            // to the placeholder. Schema is metadata only — cloning
+            // does not duplicate any IR instructions and is gated to
+            // std-surface so non-feature builds incur zero cost.
+            #[cfg(feature = "std-surface")]
+            {
+                fn_ir.struct_defs = ir.struct_defs.clone();
+            }
             let mut fn_env = env.clone();
+            // RFC 0005 P0f Step 1 — fresh per-fn struct binding map.
+            // Inherits outer module-scope bindings (so an outer
+            // `let cfg = Config { ... }` is visible to inner field
+            // reads) but additions inside this fn body do not leak
+            // back out to siblings or to module scope. `mut` is
+            // unused without std-surface; silence the lint here too.
+            #[allow(unused_mut)]
+            let mut fn_struct_env = struct_env.clone();
 
             // Create parameters
             let mut param_pairs = Vec::new();
@@ -365,7 +415,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                 match stmt {
                     ast::Node::Return { value, .. } => {
                         if let Some(val) = value {
-                            ret_id = Some(lower_expr(val, &mut fn_ir, &fn_env));
+                            ret_id = Some(lower_expr(val, &mut fn_ir, &fn_env, &fn_struct_env));
                         }
                         fn_ir.instrs.push(Instr::Return { value: ret_id });
                     }
@@ -374,19 +424,33 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
                     } => {
                         let id = match ann {
                             Some(TypeAnn::Tensor { dtype, dims })
-                            | Some(TypeAnn::DiffTensor { dtype, dims }) => {
-                                lower_tensor_binding(&mut fn_ir, value, dtype, dims, &fn_env)
-                            }
-                            _ => lower_expr(value, &mut fn_ir, &fn_env),
+                            | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
+                                &mut fn_ir,
+                                value,
+                                dtype,
+                                dims,
+                                &fn_env,
+                                &fn_struct_env,
+                            ),
+                            _ => lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env),
                         };
                         fn_env.insert(name.clone(), id);
+                        // P0f Step 1: track fn-scoped var→struct binding for
+                        // FieldAccess inside this fn body.
+                        #[cfg(feature = "std-surface")]
+                        if let ast::Node::StructLit {
+                            name: struct_name, ..
+                        } = value.as_ref()
+                        {
+                            fn_struct_env.insert(name.clone(), struct_name.clone());
+                        }
                     }
                     ast::Node::Assign { name, value, .. } => {
-                        let id = lower_expr(value, &mut fn_ir, &fn_env);
+                        let id = lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env);
                         fn_env.insert(name.clone(), id);
                     }
                     other => {
-                        let id = lower_expr(other, &mut fn_ir, &fn_env);
+                        let id = lower_expr(other, &mut fn_ir, &fn_env, &fn_struct_env);
                         ret_id = Some(id);
                     }
                 }
@@ -408,7 +472,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             id
         }
         ast::Node::Return { value, .. } => {
-            let ret_val = value.as_ref().map(|v| lower_expr(v, ir, env));
+            let ret_val = value.as_ref().map(|v| lower_expr(v, ir, env, struct_env));
             ir.instrs.push(Instr::Return { value: ret_val });
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
@@ -417,7 +481,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::Block { stmts, .. } => {
             let mut last_id = None;
             for stmt in stmts {
-                last_id = Some(lower_expr(stmt, ir, env));
+                last_id = Some(lower_expr(stmt, ir, env, struct_env));
             }
             last_id.unwrap_or_else(|| {
                 let id = ir.fresh();
@@ -432,15 +496,15 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             ..
         } => {
             // Lower condition
-            let _cond_id = lower_expr(cond, ir, env);
+            let _cond_id = lower_expr(cond, ir, env, struct_env);
             // For now, just lower the then branch (control flow needs more work)
             let mut last_id = None;
             for stmt in then_branch {
-                last_id = Some(lower_expr(stmt, ir, env));
+                last_id = Some(lower_expr(stmt, ir, env, struct_env));
             }
             if let Some(else_stmts) = else_branch {
                 for stmt in else_stmts {
-                    last_id = Some(lower_expr(stmt, ir, env));
+                    last_id = Some(lower_expr(stmt, ir, env, struct_env));
                 }
             }
             last_id.unwrap_or_else(|| {
@@ -450,7 +514,10 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             })
         }
         ast::Node::Call { callee, args, .. } => {
-            let arg_ids: Vec<ValueId> = args.iter().map(|a| lower_expr(a, ir, env)).collect();
+            let arg_ids: Vec<ValueId> = args
+                .iter()
+                .map(|a| lower_expr(a, ir, env, struct_env))
+                .collect();
             let dst = ir.fresh();
             ir.instrs.push(Instr::Call {
                 dst,
@@ -465,18 +532,18 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
-            let _scrut_id = lower_expr(scrutinee, ir, env);
+            let _scrut_id = lower_expr(scrutinee, ir, env, struct_env);
             let mut last_id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(last_id, 0));
             for arm in arms {
-                last_id = lower_expr(&arm.body, ir, env);
+                last_id = lower_expr(&arm.body, ir, env, struct_env);
             }
             last_id
         }
         // Phase 10.7: `&expr` / `&mut expr` — no-op metadata wrapper in
         // v1. The inner expression lowers directly; the ref tag is only
         // meaningful to the type-checker.
-        ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env),
+        ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env, struct_env),
         // RFC 0005 P0e Step 1 — `Foo { f1: v1, f2: v2, ... }` lowers to a
         // heap record. Layout = one `i64` slot per field, packed at
         // 8-byte stride. The struct value is the `i64` base address from
@@ -531,7 +598,7 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
 
             // Per-field store at offset 8*i.
             for (i, f) in order.iter().enumerate() {
-                let value = lower_expr(&f.value, ir, env);
+                let value = lower_expr(&f.value, ir, env, struct_env);
                 let field_addr = if i == 0 {
                     addr
                 } else {
@@ -555,6 +622,83 @@ fn lower_expr(node: &ast::Node, ir: &mut IRModule, env: &HashMap<String, ValueId
             }
 
             addr
+        }
+        // RFC 0005 P0f Step 1 — `receiver.field` reads from the heap
+        // record produced by P0e StructLit lowering.
+        //
+        //   offset      = index_of(field, struct_defs[T]) * 8
+        //   field_addr  = addr + offset    (or addr itself when offset == 0)
+        //   result      = __mind_load_i64(field_addr)
+        //
+        // Step 1 resolves the receiver's struct type only when the
+        // receiver is a plain `Ident` bound to a `StructLit` via `Let`
+        // in this (or an enclosing) scope. Chained access (`a.b.c`),
+        // FieldAccess of a function return value, and FieldAccess on
+        // a struct-typed parameter are deferred to Step 2 — those need
+        // either type-checker annotation or a fold-through-StructLit
+        // pass on the IR. Unknown receivers fall through to the
+        // existing placeholder so older modules still compile.
+        #[cfg(feature = "std-surface")]
+        ast::Node::FieldAccess {
+            receiver, field, ..
+        } => {
+            let resolved = match receiver.as_ref() {
+                ast::Node::Lit(Literal::Ident(var_name), _) => {
+                    struct_env.get(var_name).and_then(|struct_name| {
+                        ir.struct_defs
+                            .get(struct_name)
+                            .and_then(|fields| fields.iter().position(|f| f == field))
+                            .map(|idx| (var_name.clone(), idx))
+                    })
+                }
+                _ => None,
+            };
+
+            match resolved {
+                Some((var_name, idx)) => {
+                    // addr is the receiver's ValueId from env.
+                    let addr = match env.get(&var_name) {
+                        Some(id) => *id,
+                        None => {
+                            // Bound in struct_env but not env — shouldn't
+                            // happen if Let-tracking stays paired, but
+                            // fall through defensively.
+                            let id = ir.fresh();
+                            ir.instrs.push(Instr::ConstI64(id, 0));
+                            return id;
+                        }
+                    };
+                    let field_addr = if idx == 0 {
+                        addr
+                    } else {
+                        let offset = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                        let sum = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: sum,
+                            op: BinOp::Add,
+                            lhs: addr,
+                            rhs: offset,
+                        });
+                        sum
+                    };
+                    let result = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: result,
+                        name: "__mind_load_i64".to_string(),
+                        args: vec![field_addr],
+                    });
+                    result
+                }
+                None => {
+                    // Receiver type not statically resolvable in Step 1;
+                    // emit placeholder so the module still type-checks
+                    // and the program produces a stable IR shape.
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(id, 0));
+                    id
+                }
+            }
         }
         _ => {
             #[cfg(debug_assertions)]
