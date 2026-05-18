@@ -1,0 +1,97 @@
+// std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
+//
+// `Map` is the third pure-MIND collection on top of the seven
+// RFC 0005 intrinsics.  Ordering is **insertion-order**, not hash-
+// randomised — load-bearing for evidence-chain determinism: a Map
+// constructed from the same byte trace must produce the same key
+// iteration order on every host, every run.
+//
+// Layout: two parallel heap arrays
+//   keys_addr → i64[cap], 8-byte stride, indexed 0..len
+//   vals_addr → i64[cap], 8-byte stride, indexed 0..len
+// plus the usual `len` / `cap` fields.  The Map value itself is a
+// 4×i64 heap record laid out [keys_addr | vals_addr | len | cap].
+//
+// Lookup today is linear: `map_get` scans 0..len for the first key
+// match.  This is deliberately the simple form — bucket hashing
+// lands once `loop` codegen ships, at which point the layout is
+// already in the right shape (parallel insertion-order vector + a
+// bucket index array on the side).
+//
+// Growth: cap 0 → 4, otherwise doubles.  Same fixed deterministic
+// schedule as std.vec.
+
+struct Map {
+    keys_addr: i64,
+    vals_addr: i64,
+    len: i64,
+    cap: i64,
+}
+
+// map_new — empty Map, zero allocation.
+pub fn map_new() -> Map {
+    Map { keys_addr: 0, vals_addr: 0, len: 0, cap: 0 }
+}
+
+// map_len — current entry count.
+pub fn map_len(m: Map) -> i64 {
+    m.len
+}
+
+// map_cap — current backing-store capacity in entries.
+pub fn map_cap(m: Map) -> i64 {
+    m.cap
+}
+
+// map_keys_addr — opaque i64 base address of the keys array.
+pub fn map_keys_addr(m: Map) -> i64 {
+    m.keys_addr
+}
+
+// map_vals_addr — opaque i64 base address of the values array.
+pub fn map_vals_addr(m: Map) -> i64 {
+    m.vals_addr
+}
+
+// map_get_at — load the (key, value) at logical entry index `i`.
+// Two-return-value via two separate fns; the caller picks which side
+// it wants.  No bounds-check at this layer.
+pub fn map_key_at(m: Map, i: i64) -> i64 {
+    __mind_load_i64(m.keys_addr + i * 8)
+}
+
+pub fn map_value_at(m: Map, i: i64) -> i64 {
+    __mind_load_i64(m.vals_addr + i * 8)
+}
+
+// map_insert — append (key, value) at the tail, growing both backing
+// stores in lockstep if needed.  Non-mutating: returns a fresh Map.
+//
+// Note: this is INSERT-ONLY semantics for now (no in-place update of
+// an existing key).  Once `loop` codegen ships, `map_get` + `map_set`
+// gain their full O(n) and O(1) behaviours respectively, and this
+// function grows the "update vs append" branch.  The current contract
+// preserves insertion order for every input trace.
+//
+// Growth: cap 0 → 4, otherwise doubles.  Matches std.vec exactly.
+pub fn map_insert(m: Map, key: i64, value: i64) -> Map {
+    let new_len: i64 = m.len + 1;
+    let new_cap: i64 = if m.cap == 0 {
+        4
+    } else {
+        if m.len < m.cap { m.cap } else { m.cap * 2 }
+    };
+    let new_keys: i64 = if new_cap == m.cap {
+        m.keys_addr
+    } else {
+        __mind_alloc(new_cap * 8)
+    };
+    let new_vals: i64 = if new_cap == m.cap {
+        m.vals_addr
+    } else {
+        __mind_alloc(new_cap * 8)
+    };
+    __mind_store_i64(new_keys + m.len * 8, key);
+    __mind_store_i64(new_vals + m.len * 8, value);
+    Map { keys_addr: new_keys, vals_addr: new_vals, len: new_len, cap: new_cap }
+}

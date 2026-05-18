@@ -1723,6 +1723,26 @@ fn infer_call(
             }
         }
         _ => {
+            // Cross-module imports (RFC 0005 Phase 2 ergonomics): a
+            // `use std.vec` resolver-injects the file's `pub fn`/struct
+            // names into `env` as `ScalarI32` placeholders.  Calls to
+            // those names need to type-check as i64-result intrinsic-
+            // style calls — there's no per-fn-signature lookup yet
+            // (that's Phase B), so we accept the call and return i64
+            // when the callee is present in env via the resolver path.
+            //
+            // The std-surface intrinsic check still runs *after* this
+            // for `__mind_*` callees that aren't in env (the std files
+            // themselves use them directly).  Default build (neither
+            // feature) keeps the byte-identical "unsupported call"
+            // error — moat held.
+            #[cfg(feature = "cross-module-imports")]
+            if env.get(callee).is_some() {
+                for a in args {
+                    let _ = infer_expr(a, env)?;
+                }
+                return Ok((ValueType::ScalarI64, span));
+            }
             #[cfg(feature = "std-surface")]
             {
                 check_std_surface_intrinsic(callee, args, span, env)

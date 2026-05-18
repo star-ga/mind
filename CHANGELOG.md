@@ -5,6 +5,86 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-05-18
+
+### Added — RFC 0005 Phase 2: pure-MIND standard surface (`std.vec`, `std.string`, `std.map`, `std.io`)
+
+The four pure-MIND collections + I/O surface RFC 0005 names now lower
+end-to-end on the seven `__mind_*` intrinsics shipped at Phase 1 +
+Phase 1.5 + Phase 2 (P0e + P0f).  Every operation bottoms out into
+`__mind_alloc` / `__mind_load_i64` / `__mind_store_i64` / `__mind_read`
+/ `__mind_write` — i64 ABI throughout, no built-in pointer type, no
+hidden allocator.
+
+- **`std/vec.mind`** — growable `Vec` (8-byte stride, doubling growth
+  from min-cap 4).  Surface: `vec_new`, `vec_len`, `vec_cap`,
+  `vec_addr`, `vec_get`, `vec_set`, `vec_push`.  6 module tests assert
+  the exact `__mind_alloc` / `__mind_load_i64` / `__mind_store_i64`
+  floor counts per function — `vec_new` = 1 alloc + 3 stores,
+  `vec_len/cap/addr` = 1 load each, `vec_get` = 2 loads, `vec_set` =
+  1 load + 1 store, `vec_push` ≥ 3 loads + ≥ 4 stores + ≥ 1 alloc.
+- **`std/string.mind`** — `Vec<u8>`-shaped `String` with a documented
+  UTF-8 well-formedness invariant.  Surface: `string_new`,
+  `string_len`, `string_cap`, `string_addr`, `string_get_byte`,
+  `string_validate_utf8`, `string_push_byte`, `string_eq`.  Byte-
+  stride loads/stores (not 8-byte stride like `Vec`); 16-byte initial
+  cap.  7 module tests with the same IR-shape contract.
+- **`std/map.mind`** — insertion-ordered `Map` on parallel keys / vals
+  arrays (4-field heap record).  Surface: `map_new`, `map_len`,
+  `map_cap`, `map_keys_addr`, `map_vals_addr`, `map_key_at`,
+  `map_value_at`, `map_insert`.  Ordering is deterministic (insertion
+  order, not hash-randomised) — load-bearing for evidence-chain
+  reproducibility.  5 module tests.
+- **`std/io.mind`** — `File` handle plus the four-arg `__mind_read` /
+  `__mind_write` POSIX-shaped intrinsics.  Surface: `stdin` /
+  `stdout` / `stderr` constructors, `file_fd`, `file_read`,
+  `file_write`, `print_bytes`, `eprint_bytes`, `read_stdin_bytes`.
+  8 module tests assert the I/O surface routes through the correct
+  intrinsic (no special-case lowering — the generic `Instr::Call`
+  arm from Phase 0 picks them up).
+- **`__mind_read` / `__mind_write`** declared at arity 4 in the
+  std-surface intrinsic registry (`STD_SURFACE_INTRINSICS`).  The
+  MLIR lowering's generic call arm handles them via the same path as
+  the other RFC 0005 intrinsics.
+
+### Added — `use std.foo` cross-module resolution
+
+The cross-module-imports resolver (D1 + D2 + D3, gated since v0.2.6)
+now composes with RFC 0005 Phase 2 so a consumer file can `use std.vec`
+and call `vec_new()` directly.
+
+- **Auto-export of `pub fn` + `struct`** when no `export { ... }` block
+  is present (`collect_module_exports`).  The parser already strips
+  `pub` to a no-op, so a `pub fn`-only file would otherwise have an
+  empty exported surface.  Explicit `export { ... }` blocks still win
+  when present — the RFC 0002 contract is preserved.
+- **Imported names accepted as callables** in `infer_call`'s catch-all
+  when the `cross-module-imports` feature is on (gated; default build
+  byte-identical).  Calls to resolver-injected names type-check as
+  `ScalarI64`-returning — per-arg signature matching against the
+  imported `pub fn` declarations is Phase B (deferred to v0.4.x).
+- 8 end-to-end tests in `tests/std_surface_use_import.rs` cover:
+  pub-fn auto-export, struct auto-export, `use std.vec` resolution,
+  `use std.io` resolution, unimported-module isolation, wrong-path
+  fall-through, and explicit-`export`-block precedence.
+
+### Performance
+
+Compile-speed gate (`tools/bench_gate.py` vs
+`.bench-baseline-2026-05-17-phase10-7.txt`) passes with all three
+canonical benches **improved**:
+
+| bench          | baseline   | v0.4.0     | delta    | gate |
+| -------------- | ---------- | ---------- | -------- | ---- |
+| small_matmul   | 2.810 µs   | 2.747 µs   | -2.24%   | OK   |
+| medium_mlp     | 6.560 µs   | 6.432 µs   | -1.95%   | OK   |
+| large_network  | 16.900 µs  | 16.797 µs  | -0.61%   | OK   |
+
+The RFC 0005 work lives entirely behind `feature = "std-surface"`
+and `feature = "cross-module-imports"`; the default-build frontend
+hot path is untouched (module-level gates only, no per-statement
+cfg) — the compile-speed moat is held.
+
 ## [0.2.11] — 2026-05-17
 
 ### Added — Phase 10.7: match expressions and reference-taking expressions
