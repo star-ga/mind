@@ -5,6 +5,56 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-05-18
+
+### Added — RFC 0005 Phase B: per-arg signature matching on imported `pub fn`s
+
+v0.4.0 wired `use std.vec` so calls to `vec_new()` / `vec_push(...)`
+type-check loosely as `ScalarI64`-returning, with no arg-count or
+arg-type validation. The v0.4.0 CHANGELOG flagged per-arg signature
+matching as deferred to Phase B; this release closes that gap.
+
+- **`ExportedFn { name, param_types, ret_type }`** in
+  `src/project/module_table.rs` carries the full signature of every
+  auto-exported `pub fn`. `ModuleExports` gains a parallel
+  `exported_fns: Vec<ExportedFn>` populated on the auto-export path;
+  explicit `export { ... }` block surfaces leave it empty by
+  construction (the RFC 0002 contract is preserved — those declare
+  names, not signatures, by design).
+- **`ModuleTable::lookup_imported_fn(name)`** walks every module in
+  deterministic sorted-key order and returns the first match.
+- **Type-checker side** (gated under `cross-module-imports`):
+  `cm_lookup_fn` reads the project table's typed declaration;
+  `check_imported_fn_call` validates arity then per-arg types and
+  returns the declared return type;
+  `cm_typeann_to_valuetype` reuses the existing `valuetype_from_ann`
+  helper, falling back to `ScalarI64` for Named struct/enum types
+  and unsupported aggregates — matches RFC 0005's Option-C heap ABI
+  where struct values are i64 base-addresses on the wire;
+  `cm_arg_compatible` accepts exact matches plus the universal
+  i32 ↔ i64 widening that integer literals need.
+- **Fall-back to Phase A** when no signature is available (e.g. the
+  imported module surface came from an `export { ... }` block, not
+  auto-export). Default build path is byte-identical — the moat is
+  held.
+- 3 new module_table unit tests + 6 new integration tests under
+  `tests/std_surface_use_import_phase_b.rs`. Phase A's 8 tests
+  still pass — Phase B is strictly an additive improvement.
+
+### Performance
+
+Compile-speed gate vs `.bench-baseline-2026-05-18-rfc0005.txt`:
+
+| bench          | baseline   | v0.4.1     | delta    | gate |
+| -------------- | ---------- | ---------- | -------- | ---- |
+| small_matmul   | 2.800 µs   | 2.742 µs   | -2.07%   | OK   |
+| medium_mlp     | 6.550 µs   | 6.614 µs   | +0.98%   | OK   |
+| large_network  | 17.100 µs  | 16.919 µs  | -1.06%   | OK   |
+
+All inside the 5% gate. All Phase B changes live behind
+`feature = "cross-module-imports"`; the default-build frontend hot
+path is untouched.
+
 ## [0.4.0] — 2026-05-18
 
 ### Added — RFC 0005 Phase 2: pure-MIND standard surface (`std.vec`, `std.string`, `std.map`, `std.io`)
