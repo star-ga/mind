@@ -67,8 +67,8 @@ trait/method dispatch is introduced by this RFC).
 
 A pre-implementation read of `src/types/value.rs`,
 `src/type_checker/mod.rs`, `src/mlir/lowering.rs`, and
-`src/opt/ir_canonical.rs` surfaced two blocking facts this RFC must
-account for **before** any phase-1 code:
+`src/opt/ir_canonical.rs` surfaced three blocking facts this RFC must
+account for **before** any phase-2 code:
 
 - **P0a — there is no pointer type.** `ValueType` is
   `ScalarI32 | ScalarI64 | ScalarF32 | ScalarF64 | ScalarBool |
@@ -87,10 +87,37 @@ account for **before** any phase-1 code:
   lowering** (emit `func.call` / `llvm.call`), a foundational path the
   self-hosting IR→LLVM-text backend (Phase 15) also requires. The five
   intrinsics are its first consumers; they cannot work before it.
+- **P0c — no load/store-at-address path in MIND today.** Slices
+  (`&[u8]`) read by index but can only come from a struct field or a
+  function parameter — there is no built-in `addr: i64 -> &[u8]` and
+  no scalar load/store intrinsic. Without one, `vec.push(&mut Vec<T>,
+  T)` has *no way* to write a value into the `__mind_alloc`-returned
+  backing store at offset `len * sizeof(T)`. The five intrinsics named
+  in the original draft cover allocation and *file-bulk* I/O, but the
+  middle layer — single-slot read/write at an opaque address — is
+  missing. **Resolution: expand the intrinsic set from 5 to 7**, all
+  still `i64`-signed (the P0a discipline is preserved):
 
-Revised adoption order: **Phase 0 (generic call lowering, gated)
-blocks all of Phase 1.** The phased plan at the end of this document
-is updated accordingly.
+  ```
+  __mind_load_i64(addr: i64)                  -> i64   // *(i64*)addr
+  __mind_store_i64(addr: i64, value: i64)     -> i64   // 0 == ok
+  ```
+
+  Sub-i64 widths (u8/u16/u32) are built on `__mind_load_i64` plus
+  `& 0xff` etc. — `std.string` and `std.map` are not in any hot path
+  the µs moat measures, so packing eight bytes per load is a clarity
+  win, not a perf concession. (If a perf gap shows up later, narrow
+  loads can be added as `_v1`-ABI compatible additions; the i64 pair
+  is the minimum bootstrap.)
+
+  Phase 1 (already shipped) declared the original 5 intrinsics in the
+  type-checker. Phase 1.5 — small, scoped — adds the two load/store
+  names to the same registry. Phase 2 then has a working write path.
+
+Revised adoption order: **Phase 0 (call lowering) → Phase 1 (5 alloc/
+I-O intrinsics) → Phase 1.5 (2 load/store intrinsics) → Phase 2+
+(`std.vec` and up).** All three blockers are caught **before** any
+pure-MIND `Vec` code is written.
 
 ## Reference-level explanation
 
@@ -161,12 +188,14 @@ intrinsics and a `__mind_read`/`__mind_write` syscall pair.
 
 ### New compiler intrinsics (the entire non-MIND surface)
 
-Five primitives, all `i64`-signed (P0a — no `ptr` type):
+Seven primitives, all `i64`-signed (P0a — no `ptr` type):
 
 ```
 __mind_alloc(bytes: i64)                         -> i64
 __mind_realloc(addr: i64, bytes: i64)            -> i64
 __mind_free(addr: i64)                           -> i64
+__mind_load_i64(addr: i64)                       -> i64   // *(i64*)addr  (P0c)
+__mind_store_i64(addr: i64, value: i64)          -> i64   // 0 == ok      (P0c)
 __mind_read(path_addr: i64, path_len: i64,
             buf_addr: i64, buf_cap: i64)         -> i64   // bytes read, <0 = errno
 __mind_write(path_addr: i64, path_len: i64,
@@ -177,7 +206,7 @@ Everything else in this RFC is pure MIND compiled by the existing
 pipeline. Keeping the intrinsic set this small — and `i64`-only, so
 no type-system change — is what keeps the bootstrap honest and the
 moat untouched: stage-1 only needs the Rust compiler to provide these
-five (lowered via the Phase-0 generic-call path), then the std
+seven (lowered via the Phase-0 generic-call path), then the std
 surface is MIND.
 
 ## Compile-speed invariant (the moat)
@@ -224,11 +253,18 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
    self-hosting IR→LLVM-text backend needs — it is foundational, not
    std-specific. Own sub-bench; headline benches untouched. **All
    subsequent phases depend on this.**
-1. **Intrinsics.** Declare the five `i64`-signed `__mind_*` intrinsics
-   so the type-checker accepts them with fixed signatures and the
-   Phase-0 path lowers them to `llvm.call @__mind_*`. Feature-gated
+1. **Intrinsics — allocation + bulk I/O.** Declare the five `i64`-
+   signed `__mind_*` intrinsics (`alloc`, `realloc`, `free`, `read`,
+   `write`) so the type-checker accepts them with fixed signatures and
+   the Phase-0 path lowers them to `llvm.call @__mind_*`. Feature-gated
    `std-surface`. Sub-bench added.
-2. **`std.vec`.** Pure-MIND `Vec<T>` on the intrinsics. Tests +
+1.5. **Intrinsics — load/store (BLOCKING — P0c).** Declare the two
+   scalar load/store intrinsics (`__mind_load_i64`, `__mind_store_i64`)
+   in the same gated registry. Mirrors Phase 1 exactly. Without these
+   two, `vec.push` has no path from `__mind_alloc`-returned address to
+   actually writing the value — and no Vec means no String / Map / io
+   either. Sub-bench extended.
+2. **`std.vec`.** Pure-MIND `Vec<T>` on the seven intrinsics. Tests +
    `std_surface` bench.
 3. **`std.string`.** `String` on `std.vec` + UTF-8 invariant; reuse
    the Tier-3 round-trip corpus as the conformance test.
