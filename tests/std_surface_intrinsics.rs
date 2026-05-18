@@ -111,6 +111,33 @@ fn write_four_i64_args_typechecks() {
     );
 }
 
+// ── Phase 1.5 (P0c) — scalar load/store at address ──
+
+#[test]
+fn load_i64_one_i64_arg_typechecks() {
+    let module = module_of(vec![call("__mind_load_i64", vec![lit_int(0xdead_beef)])]);
+    let env = HashMap::new();
+    let diags = check_module_types(&module, "", &env);
+    assert!(
+        diags.is_empty(),
+        "__mind_load_i64/1 must accept; got {diags:#?}"
+    );
+}
+
+#[test]
+fn store_i64_two_i64_args_typechecks() {
+    let module = module_of(vec![call(
+        "__mind_store_i64",
+        vec![lit_int(0xdead_beef), lit_int(42)],
+    )]);
+    let env = HashMap::new();
+    let diags = check_module_types(&module, "", &env);
+    assert!(
+        diags.is_empty(),
+        "__mind_store_i64/2 must accept; got {diags:#?}"
+    );
+}
+
 // ── Wrong arity is a clear error that names the i64 ABI / phase 2+ ──
 
 #[test]
@@ -197,8 +224,10 @@ fn each_intrinsic_lowers_to_func_call_with_private_decl() {
     for (name, arity) in [
         ("__mind_alloc", 1usize),
         ("__mind_free", 1),
+        ("__mind_load_i64", 1),
         ("__mind_read", 4),
         ("__mind_realloc", 2),
+        ("__mind_store_i64", 2),
         ("__mind_write", 4),
     ] {
         let mut m = IRModule::new();

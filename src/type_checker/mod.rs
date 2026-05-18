@@ -1504,21 +1504,27 @@ fn infer_grad(
     Ok((ValueType::GradMap(entries), span))
 }
 
-// RFC 0005 Phase 1 — pure-MIND standard surface intrinsics.
+// RFC 0005 Phase 1 + 1.5 — pure-MIND standard surface intrinsics.
 //
-// The five primitives the std surface (`Vec`, `String`, `Map`, `io`)
+// The seven primitives the std surface (`Vec`, `String`, `Map`, `io`)
 // is allowed to bottom out into. All take and return `i64` only (no
 // `Ptr` type — see RFC 0005 P0a; an address is a 64-bit integer).
-// Lowered by the gated Phase-0 `Instr::Call` arm in `src/mlir/lowering.rs`
-// to `func.call @__mind_*(%a..) : (i64..) -> i64`, with a matching
-// `func.func private` declaration emitted once per distinct callee in
-// sorted order. Default builds compile out the recogniser entirely.
+// The pair (`__mind_load_i64`, `__mind_store_i64`) was added at Phase
+// 1.5 to resolve P0c — without scalar load/store at address, `vec.push`
+// cannot write the new value into the `__mind_alloc`-returned backing
+// store. Lowered by the gated Phase-0 `Instr::Call` arm in
+// `src/mlir/lowering.rs` to `func.call @__mind_*(%a..) : (i64..) -> i64`,
+// with a matching `func.func private` declaration emitted once per
+// distinct callee in sorted order. Default builds compile out the
+// recogniser entirely.
 #[cfg(feature = "std-surface")]
 const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     ("__mind_alloc", 1),
     ("__mind_free", 1),
+    ("__mind_load_i64", 1),
     ("__mind_read", 4),
     ("__mind_realloc", 2),
+    ("__mind_store_i64", 2),
     ("__mind_write", 4),
 ];
 
