@@ -15,14 +15,23 @@
 //! RFC 0002 deliverable 2 — C-ABI export wrapper codegen.
 //!
 //! For every name in [`IRModule::exports`] this pass appends an
-//! `llvm.func @mind_fn_<name>_invoke` symbol to the lowered MLIR module.
-//! The signature is the stable `MindIO` calling convention from
-//! `mind-spec` RFC-0007 / `spec/v1.0/ffi.md`:
+//! `llvm.func @mind_fn_<name>_v1_invoke` symbol to the lowered MLIR
+//! module. The `_v1` token is the ABI generation (RFC 0003 §"Symbol
+//! versioning"): it increments only on a breaking change to the
+//! `MindIO` calling convention, so host code linked against `_v1` keeps
+//! working across mindc releases. The signature is the stable `MindIO`
+//! calling convention from `mind-spec` RFC-0007 / `spec/v1.0/ffi.md`:
 //!
 //! ```c
-//! int32_t mind_fn_<name>_invoke(const MindIO *inputs,  size_t in_count,
-//!                                     MindIO *outputs, size_t out_count);
+//! int32_t mind_fn_<name>_v1_invoke(const MindIO *inputs,  size_t in_count,
+//!                                        MindIO *outputs, size_t out_count);
 //! ```
+//!
+//! Locking `_v1` *before* the self-hosting stage-1 compiler exists is
+//! deliberate: the wrapper symbol is the ABI boundary the bootstrap
+//! crosses (stage-0 Rust mindc and stage-1 MIND mindc must emit the
+//! identical symbol or downstream `dlsym` consumers fork). Versioning
+//! it now makes that boundary fractal-stable by construction.
 //!
 //! A host runtime `dlopen`s the cdylib and `dlsym`s this symbol instead
 //! of embedding and re-parsing MIND source — that embedded-parser path
@@ -81,7 +90,7 @@ pub fn emit_c_export_wrappers(out: &mut String, module: &IRModule) -> Result<(),
             ));
         }
         out.push_str(&format!(
-            "  llvm.func @mind_fn_{name}_invoke(%inputs: !llvm.ptr, %in_count: i64, \
+            "  llvm.func @mind_fn_{name}_v1_invoke(%inputs: !llvm.ptr, %in_count: i64, \
              %outputs: !llvm.ptr, %out_count: i64) -> i32 {{\n"
         ));
         out.push_str("    %rc = llvm.mlir.constant(0 : i32) : i32\n");
@@ -118,7 +127,11 @@ mod tests {
         let m = module_with(&["preselect_pre_tokenized"]);
         let mut out = String::new();
         emit_c_export_wrappers(&mut out, &m).unwrap();
-        assert!(out.contains("llvm.func @mind_fn_preselect_pre_tokenized_invoke("));
+        assert!(out.contains("llvm.func @mind_fn_preselect_pre_tokenized_v1_invoke("));
+        assert!(
+            !out.contains("mind_fn_preselect_pre_tokenized_invoke("),
+            "unversioned symbol must not be emitted — ABI boundary is _v1"
+        );
         assert!(out.contains("%inputs: !llvm.ptr, %in_count: i64"));
         assert!(out.contains("-> i32"));
         assert!(out.contains("llvm.return %rc : i32"));
@@ -129,9 +142,9 @@ mod tests {
         let m = module_with(&["zeta", "alpha", "mid"]);
         let mut out = String::new();
         emit_c_export_wrappers(&mut out, &m).unwrap();
-        let a = out.find("mind_fn_alpha_invoke").unwrap();
-        let mid = out.find("mind_fn_mid_invoke").unwrap();
-        let z = out.find("mind_fn_zeta_invoke").unwrap();
+        let a = out.find("mind_fn_alpha_v1_invoke").unwrap();
+        let mid = out.find("mind_fn_mid_v1_invoke").unwrap();
+        let z = out.find("mind_fn_zeta_v1_invoke").unwrap();
         assert!(
             a < mid && mid < z,
             "wrappers must be sorted for deterministic MLIR"
