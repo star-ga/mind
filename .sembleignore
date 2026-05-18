@@ -1,0 +1,6 @@
+# semble code-search ignore list
+# semble's tree-sitter-language-pack ships a `.mojo` extension entry but
+# the actual mojo grammar is unavailable, so indexing crashes on the
+# Mojo benchmark sources. Skip them — they are timing harnesses, not
+# code worth searching.
+benchmarks/mojo/
