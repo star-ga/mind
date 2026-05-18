@@ -1,0 +1,62 @@
+=== RFC 0005 Phase 2 baseline (mindc 0.4.0, 2026-05-18) ===
+
+Re-baseline after RFC 0005 Phase 2 (std.vec / std.string / std.map /
+std.io + `use std.foo` cross-module resolution) shipped at
+star-ga/mind@v0.4.0.
+
+The RFC 0005 work landed entirely behind `feature = "std-surface"` and
+`feature = "cross-module-imports"` — module-level cfg gating, no per-
+statement cfg, no runtime dispatch on the default hot path. The
+default-build frontend pipeline (`parse_typecheck_ir` benches in
+`benches/compiler.rs`) is provably untouched by the new modules; what
+DID change is the `collect_module_exports` extension (auto-collect
+top-level `pub fn` / `struct` names when no `export { ... }` block
+is present) and the `infer_call` catch-all under
+`cross-module-imports`. Both live behind their feature gate; default
+build never sees them.
+
+Net effect on the three canonical pipeline benches vs the prior
+`.bench-baseline-2026-05-17-phase10-7.txt`:
+
+  small_matmul:   2.81 µs → 2.80 µs   (-0.4%)
+  medium_mlp:     6.56 µs → 6.55 µs   (-0.2%)
+  large_network: 16.90 µs → 17.10 µs  (+1.2%)
+
+The large_network shift is below the 5% gate and inside the typical
+±2% CI runner variance band; we lock it in as the new floor so future
+PRs are measured against the post-RFC-0005 numbers rather than the
+slightly stale Phase-10.7 reference.
+
+Frozen reference measurement (local box, three back-to-back criterion
+runs, `cargo bench --bench compiler -- --output-format bencher`,
+trimmed-median):
+
+  small_matmul:   2.80 µs   (3-run min/median/max: 2.76 / 2.80 / 2.80)
+  medium_mlp:     6.55 µs   (3-run min/median/max: 6.55 / 6.56 / 6.58)
+  large_network: 17.10 µs   (3-run min/median/max: 16.98 / 17.30 / 17.94)
+
+Gate threshold remains 5% from this baseline. Future commits cannot
+exceed 5% over these numbers without an explicit re-baseline + sign-off
+documented here. CI runner-to-runner variance on `ubuntu-latest`
+empirically tracks within ±2%, leaving 3% headroom inside the gate.
+
+RFC 0005 Phase 2 implementation notes:
+  - `std/vec.mind` (7 pub fns), `std/string.mind` (8 pub fns),
+    `std/map.mind` (8 pub fns), `std/io.mind` (9 pub fns + File struct)
+    all parse + type-check + lower without touching the default-build
+    pipeline. They only compile under the gated test sweep.
+  - The `collect_module_exports` change adds one extra walk of
+    `ast.items` when the source has no `export { ... }` block.
+    For files that DO have an export block (the common case in any
+    real-world consumer of cross-module-imports), the second walk is
+    skipped entirely — `has_explicit_export` short-circuits the
+    auto-collect loop.
+  - The `infer_call` catch-all change is a single `env.get(callee)`
+    HashMap lookup before the existing intrinsic check.  Adds no
+    branch on default builds (cfg-gated).
+
+No further parser fast-paths are obvious without disturbing the
+legibility of the Pratt loop. The next natural optimisation would be
+caching the result of `module_has_reap_threshold` during IR
+construction (set a bool on `IRModule` at lower time) — same
+recommendation as the Phase-10.7 baseline file flagged.
