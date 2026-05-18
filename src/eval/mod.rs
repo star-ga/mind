@@ -42,6 +42,9 @@ pub mod autodiff;
 pub mod conv2d_grad;
 pub mod ir_interp;
 pub mod lower;
+// RFC 0005 P0f Step 2 — pre-pass that builds a span-keyed side-table
+// of `FieldAccess` receiver struct types so lowering can resolve
+// chained access, fn returns, and struct-typed parameters.
 #[cfg(feature = "mlir-build")]
 pub mod mlir_build;
 pub mod mlir_export;
@@ -52,6 +55,8 @@ pub mod mlir_jit;
 pub mod mlir_opt;
 #[cfg(feature = "mlir-exec")]
 pub mod mlir_run;
+#[cfg(feature = "std-surface")]
+pub mod struct_resolver;
 pub mod value;
 
 /// Top-level evaluation context used by the compiler front-end.
