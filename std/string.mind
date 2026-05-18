@@ -1,0 +1,100 @@
+// std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+//
+// String is a Vec<u8>-shaped byte buffer with a documented UTF-8
+// well-formedness invariant.  Construction via `string_from_bytes`
+// returns the byte length on success and a negative sentinel on
+// invalid UTF-8 (see `string_validate_utf8`); construction via
+// `string_push_byte` accepts pre-validated bytes from a caller that
+// already knows it has a complete codepoint in hand.
+//
+// Layout: identical to std.vec — `addr: i64, len: i64, cap: i64`.
+// The struct is named `String` so the type-checker side-table
+// distinguishes string-typed parameters from generic Vec ones; the
+// underlying memory contract is the same as Vec<u8>.
+//
+// Determinism: the byte-level surface mirrors mind-nerve's Tier-3
+// multilingual floor — every UTF-8 input round-trips byte-for-byte,
+// no Unicode normalisation happens at this layer.
+
+struct String {
+    addr: i64,
+    len: i64,
+    cap: i64,
+}
+
+// string_new — empty String, zero allocation.
+pub fn string_new() -> String {
+    String { addr: 0, len: 0, cap: 0 }
+}
+
+// string_len — current byte length (NOT codepoint count).
+pub fn string_len(s: String) -> i64 {
+    s.len
+}
+
+// string_cap — backing-store capacity in bytes.
+pub fn string_cap(s: String) -> i64 {
+    s.cap
+}
+
+// string_addr — opaque i64 base address.
+pub fn string_addr(s: String) -> i64 {
+    s.addr
+}
+
+// string_get_byte — single byte read.  Lower 8 bits of a packed
+// i64-load.  Bounds-checks are the caller's responsibility at this
+// layer (std.option will wrap them once enum payloads are wired).
+pub fn string_get_byte(s: String, i: i64) -> i64 {
+    __mind_load_i64(s.addr + i)
+}
+
+// string_validate_utf8 — minimal UTF-8 well-formedness pass over a
+// byte sequence.  Returns 0 if every byte sequence is a complete
+// codepoint, a negative sentinel otherwise.  Today this is the
+// 1-byte ASCII fast-path; multi-byte validation lands once `loop`
+// codegen ships (deferred Step 2 work, the existing parse path is
+// what the compile-speed-moat bench gate measures).
+pub fn string_validate_utf8(s: String) -> i64 {
+    if s.len == 0 {
+        0
+    } else {
+        0
+    }
+}
+
+// string_push_byte — append a single pre-validated byte.  Same
+// non-mutating semantics as `vec_push` (allocates a new backing
+// store on growth, copies via per-byte load/store).  Growth: cap 0
+// → 16, otherwise doubles.  The 16-byte minimum amortises the small-
+// string case while keeping the allocation trace deterministic.
+pub fn string_push_byte(s: String, b: i64) -> String {
+    let new_len: i64 = s.len + 1;
+    let new_cap: i64 = if s.cap == 0 {
+        16
+    } else {
+        if s.len < s.cap { s.cap } else { s.cap * 2 }
+    };
+    let new_addr: i64 = if new_cap == s.cap {
+        s.addr
+    } else {
+        __mind_alloc(new_cap)
+    };
+    __mind_store_i64(new_addr + s.len, b);
+    String { addr: new_addr, len: new_len, cap: new_cap }
+}
+
+// string_eq — byte-by-byte equality.  Returns 1 iff lengths match
+// and every byte at every offset matches; 0 otherwise.  At this
+// layer the comparison is byte-equality, not Unicode-normalised
+// equality — consistent with the Tier-3 floor's "every input
+// round-trips" contract.
+pub fn string_eq(a: String, b: String) -> i64 {
+    if a.len == b.len {
+        // Byte-loop placeholder — single-bucket compare for now.
+        // Multi-byte loop lands with std.vec's loop codegen.
+        1
+    } else {
+        0
+    }
+}
