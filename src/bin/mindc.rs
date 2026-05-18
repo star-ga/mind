@@ -158,6 +158,12 @@ struct CompileArgs {
     /// Emit object file (.o) to the specified path.
     #[arg(long, value_name = "PATH")]
     emit_obj: Option<String>,
+    /// Emit a shared library (`.so` on Linux, `.dylib` on macOS) to the
+    /// specified path. Equivalent to `--emit-obj` followed by a shared-
+    /// library link. Phase 10.8 / mindc 0.3.0 cdylib-emit foundation.
+    /// Requires the `mlir-build` feature.
+    #[arg(long, value_name = "PATH")]
+    emit_shared: Option<String>,
     /// Select the execution target backend (cpu|gpu).
     #[arg(long, value_name = "TARGET", default_value = "cpu")]
     target: String,
@@ -348,6 +354,7 @@ fn main() {
 
     emit_mlir_if_requested(&cli.compile, &products);
     emit_obj_if_requested(&cli.compile, &products);
+    emit_shared_if_requested(&cli.compile, &products);
 }
 
 fn run_build_command(release: bool, target: Option<String>, verbose: bool) {
@@ -606,6 +613,58 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &libmind::pipeline::Compil
 fn emit_obj_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::CompileProducts) {
     if cli.emit_obj.is_some() {
         eprintln!("error[build]: --emit-obj requires building with the 'mlir-build' feature");
+        process::exit(1);
+    }
+}
+
+#[cfg(feature = "mlir-build")]
+fn emit_shared_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
+    let shared_path = match &cli.emit_shared {
+        Some(path) => path,
+        None => return,
+    };
+
+    let mlir = match lower_to_mlir_compat(products) {
+        Ok(mlir) => mlir,
+        Err(err) => {
+            eprintln!("error[mlir]: {err}");
+            process::exit(1);
+        }
+    };
+
+    let tools = match libmind::eval::mlir_build::resolve_tools() {
+        Ok(tools) => tools,
+        Err(err) => {
+            eprintln!("error[build]: {err}");
+            process::exit(1);
+        }
+    };
+
+    let opts = libmind::eval::mlir_build::BuildOptions {
+        preset: "core",
+        emit_mlir_file: None,
+        emit_llvm_file: None,
+        emit_obj_file: None,
+        emit_shared: Some(Path::new(shared_path)),
+        opt_pipeline: None,
+        target_triple: None,
+    };
+
+    match libmind::eval::mlir_build::build_all(&mlir.primal_mlir, &tools, &opts) {
+        Ok(_) => {
+            eprintln!("Wrote shared library: {}", shared_path);
+        }
+        Err(err) => {
+            eprintln!("error[build]: {err}");
+            process::exit(1);
+        }
+    }
+}
+
+#[cfg(not(feature = "mlir-build"))]
+fn emit_shared_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::CompileProducts) {
+    if cli.emit_shared.is_some() {
+        eprintln!("error[build]: --emit-shared requires building with the 'mlir-build' feature");
         process::exit(1);
     }
 }
