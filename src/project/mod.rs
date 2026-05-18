@@ -14,6 +14,13 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 
+/// Cross-module import resolution (Phase 10.6 item 9 / Phase 15
+/// self-hosting prerequisite). Deliverable 1: the module table.
+/// Gated; not yet wired into the type-checker (mirrors RFC 0002's
+/// land-the-field-first sequencing). Default build never compiles it.
+#[cfg(feature = "cross-module-imports")]
+pub mod module_table;
+
 /// Project manifest from Mind.toml
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProjectManifest {
