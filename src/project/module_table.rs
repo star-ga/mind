@@ -41,7 +41,25 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::ast::{Module, Node};
+use crate::ast::{Module, Node, TypeAnn};
+
+/// Per-fn signature carried alongside the exported name list — RFC
+/// 0005 Phase B.  Phase A let `use std.vec` make `vec_push` callable
+/// at the type-checker level as a `ScalarI64`-returning intrinsic-
+/// shape; Phase B carries the imported fn's full param + return
+/// types so the import site can validate arity and per-arg types
+/// against the declaration in the source module.
+///
+/// Only `Node::FnDef` populates this; struct / const / enum exports
+/// are name-only.  When the imported module has an explicit
+/// `export { ... }` block (RFC 0002 surface), `exported_fns` stays
+/// empty because the block declares names, not signatures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportedFn {
+    pub name: String,
+    pub param_types: Vec<TypeAnn>,
+    pub ret_type: Option<TypeAnn>,
+}
 
 /// The public symbols a single module exports.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -51,6 +69,11 @@ pub struct ModuleExports {
     /// Names declared in this module's `export { ... }` block(s),
     /// sorted + deduplicated for deterministic resolution.
     pub exported: Vec<String>,
+    /// RFC 0005 Phase B — full signatures for every auto-exported
+    /// `pub fn`.  Indexed by fn name; populated only on the
+    /// auto-export path (the `export { ... }` block path stays
+    /// empty by construction).
+    pub exported_fns: Vec<ExportedFn>,
 }
 
 /// Maps dotted module path -> its exported surface.
@@ -93,6 +116,28 @@ impl ModuleTable {
         self.modules
             .get(&key)
             .is_some_and(|m| m.exported.iter().any(|e| e == symbol))
+    }
+
+    /// RFC 0005 Phase B — look up an imported fn's signature by name,
+    /// searching every module in the table.  Returns the first match
+    /// in deterministic (sorted-path) iteration order; in practice
+    /// `pub fn` names are unique within a project (parser-enforced
+    /// per module; the project-loader convention prevents
+    /// cross-module shadowing).  Returns `None` if the name resolves
+    /// only to a struct / const / enum or to an `export { ... }`-
+    /// block name without a captured signature — the caller falls
+    /// back to Phase-A loose typing in that case.
+    pub fn lookup_imported_fn(&self, name: &str) -> Option<&ExportedFn> {
+        let mut keys: Vec<&String> = self.modules.keys().collect();
+        keys.sort();
+        for key in keys {
+            if let Some(m) = self.modules.get(key) {
+                if let Some(f) = m.exported_fns.iter().find(|f| f.name == name) {
+                    return Some(f);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -137,6 +182,7 @@ pub fn module_path_of(file: &Path, src_root: &Path) -> String {
 /// Deterministic (sorted, deduped) in both branches.
 pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports {
     let mut exported: Vec<String> = Vec::new();
+    let mut exported_fns: Vec<ExportedFn> = Vec::new();
     let mut has_explicit_export = false;
     for item in &ast.items {
         if let Node::Export { names, .. } = item {
@@ -147,7 +193,23 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
     if !has_explicit_export {
         for item in &ast.items {
             match item {
-                Node::FnDef { name, .. } => exported.push(name.clone()),
+                // Phase B: capture the full signature alongside the
+                // name.  `params` is `Vec<Param>` and each `Param`
+                // already carries its declared `ty: TypeAnn` (or a
+                // synthesized one for untyped params).
+                Node::FnDef {
+                    name,
+                    params,
+                    ret_type,
+                    ..
+                } => {
+                    exported.push(name.clone());
+                    exported_fns.push(ExportedFn {
+                        name: name.clone(),
+                        param_types: params.iter().map(|p| p.ty.clone()).collect(),
+                        ret_type: ret_type.clone(),
+                    });
+                }
                 Node::StructDef { name, .. } => exported.push(name.clone()),
                 _ => {}
             }
@@ -155,9 +217,15 @@ pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports 
     }
     exported.sort();
     exported.dedup();
+    // Sort exported_fns by name so resolution is deterministic across
+    // file orderings — same discipline as `exported`.  Names are
+    // unique within a single module (the parser rejects duplicates),
+    // so this is also a stable order.
+    exported_fns.sort_by(|a, b| a.name.cmp(&b.name));
     ModuleExports {
         module_path: module_path.to_string(),
         exported,
+        exported_fns,
     }
 }
 
@@ -232,15 +300,68 @@ mod tests {
     }
 
     #[test]
+    fn auto_export_path_captures_fn_signatures() {
+        // RFC 0005 Phase B — when no `export { ... }` block is present,
+        // every top-level `pub fn` is auto-exported AND its full
+        // signature lands in `exported_fns`.
+        let src = "pub fn vec_get(v: i64, i: i64) -> i64 { v }\n\
+                   pub fn vec_new() -> i64 { 0 }\n";
+        let ast = parse(src).expect("parse");
+        let ex = collect_module_exports("std.vec", &ast);
+        assert_eq!(ex.exported, vec!["vec_get", "vec_new"]);
+        assert_eq!(ex.exported_fns.len(), 2);
+        // Sorted by name.
+        assert_eq!(ex.exported_fns[0].name, "vec_get");
+        assert_eq!(ex.exported_fns[0].param_types.len(), 2);
+        assert_eq!(ex.exported_fns[1].name, "vec_new");
+        assert!(ex.exported_fns[1].param_types.is_empty());
+        assert!(ex.exported_fns[1].ret_type.is_some());
+    }
+
+    #[test]
+    fn explicit_export_block_leaves_exported_fns_empty() {
+        // The `export { ... }` block declares names only; signatures
+        // come from the source modules those names live in.  At this
+        // layer (single-AST collection), the block-bearing file's
+        // `exported_fns` stays empty by construction.
+        let src = "export { foo, bar }\nfn foo() {}\nfn bar() {}\n";
+        let ast = parse(src).expect("parse");
+        let ex = collect_module_exports("crate.x", &ast);
+        assert_eq!(ex.exported, vec!["bar", "foo"]);
+        assert!(
+            ex.exported_fns.is_empty(),
+            "explicit export-block surfaces must not auto-populate exported_fns"
+        );
+    }
+
+    #[test]
+    fn lookup_imported_fn_searches_every_module() {
+        // The cross-module Phase-B resolver needs to find `vec_new` by
+        // name from any consumer file that issued `use std.vec`.  The
+        // lookup walks every module in deterministic order.
+        let vec_ast = parse("pub fn vec_new() -> i64 { 0 }").expect("parse");
+        let io_ast = parse("pub fn stdout() -> i64 { 1 }").expect("parse");
+        let table = build_module_table(&[
+            ("std.vec".to_string(), &vec_ast),
+            ("std.io".to_string(), &io_ast),
+        ]);
+        assert!(table.lookup_imported_fn("vec_new").is_some());
+        assert!(table.lookup_imported_fn("stdout").is_some());
+        assert!(table.lookup_imported_fn("not_a_fn").is_none());
+    }
+
+    #[test]
     fn reinsert_is_last_write_wins() {
         let mut t = ModuleTable::new();
         t.insert(ModuleExports {
             module_path: "crate.a".into(),
             exported: vec!["old".into()],
+            exported_fns: vec![],
         });
         t.insert(ModuleExports {
             module_path: "crate.a".into(),
             exported: vec!["new".into()],
+            exported_fns: vec![],
         });
         assert!(t.resolves(&["crate".into(), "a".into()], "new"));
         assert!(!t.resolves(&["crate".into(), "a".into()], "old"));
