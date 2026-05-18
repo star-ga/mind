@@ -2,8 +2,14 @@
 
 - **Start Date**: 2026-05-18
 - **RFC PR**: TBD
-- **Status**: Draft
-- **Target Release**: v0.4.0 (Phase 15 self-hosting long pole)
+- **Status**: **Shipped through Phase C in v0.4.2** (2026-05-18) —
+  see "Adoption plan" below for the per-phase landing record.  The
+  document itself stays *Draft* for the future Phase D+ items
+  (cross-arg type matching across Named structs, env-var stdlib
+  root for the single-file mindc CLI, dependency-style Mind.toml
+  declaration of external modules).
+- **Target Release**: v0.4.x (Phase 2 + Phase B + Phase C all
+  landed under the same minor; future phases pin to v0.4.x+).
 - **Normative reference**: `mind-spec` v1.0 (type system, slices,
   determinism contract); RFC 0003 (cdylib/`llc` shell-out seam used by
   the I/O layer).
@@ -319,6 +325,28 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
   so `std` is usable outside the compiler too.
 
 ## Adoption plan (phased — this is the long pole)
+
+### Landing record (updated 2026-05-18)
+
+| Phase | What | Tag | Status |
+| ----- | ---- | --- | ------ |
+| 0     | Generic `Instr::Call` → MLIR lowering | mindc v0.2.11 | **shipped** |
+| 1     | `__mind_alloc/free/realloc/read/write` intrinsics declared | mindc v0.2.11 | **shipped** |
+| 1.5   | `__mind_load_i64/store_i64` declared (P0c) | mindc v0.2.11 | **shipped** |
+| P0d   | `Instr::FnDef` → MLIR `func.func` | mindc v0.3.0 | **shipped** |
+| P0e   | Struct heap-record ABI (Option C, 9-LLM consensus) | mindc v0.3.0 | **shipped** |
+| P0f   | FieldAccess read path (Step 1 + Step 2 side-table) | mindc v0.3.0 | **shipped** |
+| 2     | `std/{vec,string,map,io}.mind` lower end-to-end | mindc v0.4.0 | **shipped** |
+| 2-resolver | `use std.foo` cross-module resolver (Phase A) | mindc v0.4.0 | **shipped** |
+| B     | Per-arg signature matching on imported `pub fn`s | mindc v0.4.1 | **shipped** |
+| C     | Bundle `std/*.mind` into mindc via `include_str!` | mindc v0.4.2 | **shipped** |
+| 6     | Self-host smoke — `mindc` lexer in MIND | TBD | open |
+
+The original phases-1-through-6 sequence is preserved below for the
+RFC's historical narrative.  Future Phase D items (cross-arg type
+matching across Named structs; env-var stdlib root for the
+single-file `mindc` CLI without project context; dependency-style
+`Mind.toml` declaration of external modules) will extend the table.
 
 0. **Generic call lowering (BLOCKING — P0b).** Emit MLIR for
    `Instr::Call` (`func.call` / `llvm.call`) so a non-tensor function
