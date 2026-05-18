@@ -42,9 +42,7 @@ fn fn_body<'a>(ir: &'a libmind::ir::IRModule, name: &str) -> &'a [Instr] {
     ir.instrs
         .iter()
         .find_map(|i| match i {
-            Instr::FnDef {
-                name: n, body, ..
-            } if n == name => Some(body.as_slice()),
+            Instr::FnDef { name: n, body, .. } if n == name => Some(body.as_slice()),
             _ => None,
         })
         .unwrap_or_else(|| panic!("expected FnDef with name `{name}` in lowered IR"))
@@ -75,7 +73,11 @@ fn vec_mind_parses_and_lowers() {
     // And the Vec schema is in the registry.
     assert_eq!(
         ir.struct_defs.get("Vec"),
-        Some(&vec!["addr".to_string(), "len".to_string(), "cap".to_string()]),
+        Some(&vec![
+            "addr".to_string(),
+            "len".to_string(),
+            "cap".to_string()
+        ]),
         "Vec schema must be recorded in canonical field-name order"
     );
 }
