@@ -70,13 +70,13 @@ See [docs/roadmap.md](docs/roadmap.md) for detailed phase descriptions.
 
 ## CI Status
 
-All checks passing:
-- ✅ `cargo build`
-- ✅ `cargo test`
-- ✅ `cargo clippy`
-- ✅ `cargo fmt --check`
-- ✅ `cargo deny check`
-- ✅ Link checker
+Live status is rendered by the dynamic badges at the top of
+[`README.md`](README.md). They reflect the most recent run of `cargo
+build`, `cargo test`, `cargo clippy`, `cargo fmt --check`, `cargo deny
+check`, and the link checker against `main`.
+
+(This section deliberately does not pin a static "all green" claim;
+those go stale on the next flake.)
 
 ## Known Issues
 

@@ -158,9 +158,9 @@ move the headline numbers. CI gate: ±2% per size / ±1% mean.
 8. **`Mind.toml [protection]` action transforms.** Three tiers documented
    in a new RFC (`docs/rfcs/0002-protection.md`): `obfuscate_strings`
    (compiler-side string table), `anti_debug` (runtime canary hook),
-   `anti_tamper` (binary hash check). Replaces the hand-rolled
-   `build.sh`-driven FORTRESS post-processing in mind-mem-protected /
-   mind-nerve-protected.
+   `anti_tamper` (binary hash check). Replaces hand-rolled post-processing
+   in downstream commercial build pipelines with a first-class compiler
+   directive.
 9. **Cross-directory imports (`use crate::foo::bar`).** Module-qualified
    resolver populates a module table during project load; type checker
    resolves identifiers across module boundaries. Gate:
@@ -176,8 +176,9 @@ move the headline numbers. CI gate: ±2% per size / ±1% mean.
 ### Sequencing
 
 Items 1–5 ship in mindc 0.2.6 (~2 weeks). Items 6–9 ship in mindc 0.3.0
-(~6 weeks). Item 8's `[protection]` action transforms unlock per-customer
-FORTRESS builds without external post-processing scripts.
+(~6 weeks). Item 8's `[protection]` action transforms move build-time
+hardening into the compiler proper, replacing external post-processing
+scripts.
 
 ### Anti-regression discipline
 
