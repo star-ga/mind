@@ -1812,6 +1812,17 @@ fn cm_inject_imported_symbols(tenv: &mut TypeEnv, path: &[String]) {
     });
 }
 
+/// Project-scope setter (D3): the project builder sets the
+/// whole-project module table once before the per-file compile loop so
+/// the existing single-file pipeline (`check_module_types_in_file`)
+/// resolves cross-file symbols WITHOUT a signature change to the shared
+/// compile path. Pass `None` to clear after the loop. Keeping the
+/// default pipeline signature byte-identical is what holds the moat.
+#[cfg(feature = "cross-module-imports")]
+pub fn cm_set_project_table(table: Option<crate::project::module_table::ModuleTable>) {
+    CM_TABLE.with(|cell| *cell.borrow_mut() = table);
+}
+
 /// Gated entrypoint: type-check `module` with cross-module symbol
 /// resolution against `table`. Sets the thread-local for the duration
 /// of the check and clears it afterward (no leakage across calls).
