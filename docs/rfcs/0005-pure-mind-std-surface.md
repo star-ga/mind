@@ -136,12 +136,25 @@ emission of `std/vec.mind`:
   out of the Phase-0 extern fwd-decl loop. No struct decisions in this
   step — all params + returns are `i64` (i64-ABI rule, P0a discipline).
 
-- **P0e — no struct codegen.** `Node::StructDef`, `Node::StructLit`,
-  and `Node::FieldAccess` parse and type-check as placeholder
-  `ScalarI32`, but lower to `ConstI64(0)` in `src/eval/lower.rs:464-470`.
-  The RFC's documented `Vec<T> { addr: i64, len: i64, cap: i64 }`
-  cannot be constructed, returned from `vec_new()`, or threaded
-  through `vec_push()`. **Status: open architectural decision.**
+- **P0e — struct codegen.** `Node::StructDef`, `Node::StructLit`,
+  and `Node::FieldAccess` previously parsed and type-checked as
+  placeholder `ScalarI32`, but lowered to `ConstI64(0)`. **Status:
+  Option C (heap record) shipped as P0e Step 1 — write-path only.**
+  The Step-1 lowering populates `IRModule.struct_defs[name]` from
+  `StructDef` and emits `__mind_alloc(8*N)` + N×`__mind_store_i64`
+  for each `StructLit`. Fields are reordered into canonical
+  (declared) order before the stores so out-of-order literals still
+  match the schema. The struct value is the i64 base address from
+  `__mind_alloc`, so it threads through function boundaries just like
+  any other i64 — `vec_new() -> Vec<T>` now lowers cleanly.
+
+  **P0f follow-up — `FieldAccess` read path.** Still placeholder. The
+  AST `Node::FieldAccess { receiver, field }` doesn't carry the
+  receiver's struct name, so the lowering pass needs a `struct_env`
+  binding-table that tracks which local `let` names map to which
+  struct schemas. Once that's threaded, `obj.field` lowers to
+  `__mind_load_i64(addr + 8*field_index)`. `vec_push(&mut Vec<T>, T)`
+  ships in P0f.
 
 #### P0e resolution options
 
