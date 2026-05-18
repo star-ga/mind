@@ -1,0 +1,83 @@
+// std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
+//
+// `File` is the i64-typed handle the four intrinsics
+// `__mind_read` / `__mind_write` already speak.  Today it wraps the
+// POSIX file-descriptor space (0/1/2 for stdin/stdout/stderr), but
+// callers must not assume that — treat the inner `fd` field as
+// opaque.  Higher-level surfaces (open/close, path-based file I/O)
+// land once the seventh intrinsic `__mind_open` is wired (RFC 0005
+// Phase 3); the four-arg read/write contract here is what mind-nerve's
+// streaming-tokens path needs first, so it ships at Phase 2.
+//
+// Intrinsic contract (mirrors POSIX `pread`/`pwrite`):
+//   __mind_read(fd:  i64, buf_addr: i64, count: i64, offset: i64) -> i64
+//   __mind_write(fd: i64, buf_addr: i64, count: i64, offset: i64) -> i64
+// Returns: number of bytes read/written, or a negative error sentinel.
+// An `offset` of -1 means "use the current stream position" — same
+// convention `pread`/`pwrite` of `-1` would carry on a regular fd.
+//
+// Determinism: every input byte sequence round-trips byte-for-byte
+// (no buffering at this layer, no implicit newline conversion).
+
+struct File {
+    fd: i64,
+}
+
+// stdin / stdout / stderr — handles for the three standard streams.
+// Wrapping the literal `fd` values lets the rest of the surface stay
+// agnostic to whether the runtime layer chose POSIX or a synthetic
+// fd allocator.
+pub fn stdin() -> File {
+    File { fd: 0 }
+}
+
+pub fn stdout() -> File {
+    File { fd: 1 }
+}
+
+pub fn stderr() -> File {
+    File { fd: 2 }
+}
+
+// file_fd — opaque accessor for the underlying handle.  Same shape
+// as `vec_addr` / `string_addr` — the only reason to inspect the
+// inner field is for FFI-bridge code already in a privileged layer.
+pub fn file_fd(f: File) -> i64 {
+    f.fd
+}
+
+// file_read — read up to `count` bytes from `f` into `buf_addr`,
+// at stream offset `offset` (-1 means "current position").  Returns
+// the byte count or a negative sentinel.  Caller owns the buffer
+// lifetime — std.vec / std.string typically supplies it.
+pub fn file_read(f: File, buf_addr: i64, count: i64, offset: i64) -> i64 {
+    __mind_read(f.fd, buf_addr, count, offset)
+}
+
+// file_write — write `count` bytes from `buf_addr` into `f` at
+// stream offset `offset` (-1 means "current position").  Same
+// contract as `file_read` mirrored.
+pub fn file_write(f: File, buf_addr: i64, count: i64, offset: i64) -> i64 {
+    __mind_write(f.fd, buf_addr, count, offset)
+}
+
+// print_bytes — convenience wrapper: write `count` bytes from
+// `buf_addr` to stdout at the current position.  The deterministic
+// shape lets mind-nerve's streaming-tokens emit one syscall per
+// chunk without buffering at this layer.
+pub fn print_bytes(buf_addr: i64, count: i64) -> i64 {
+    __mind_write(1, buf_addr, count, 0 - 1)
+}
+
+// eprint_bytes — same, to stderr.  Negative offset sentinel is the
+// "use current position" convention from `pread`/`pwrite`.
+pub fn eprint_bytes(buf_addr: i64, count: i64) -> i64 {
+    __mind_write(2, buf_addr, count, 0 - 1)
+}
+
+// read_stdin_bytes — read up to `count` bytes from stdin into
+// `buf_addr` at the current position.  Returns the byte count or
+// a negative sentinel.
+pub fn read_stdin_bytes(buf_addr: i64, count: i64) -> i64 {
+    __mind_read(0, buf_addr, count, 0 - 1)
+}

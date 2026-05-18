@@ -1,0 +1,78 @@
+// std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
+//
+// Vec is the foundation of std.string (Vec<u8> with UTF-8 invariant)
+// and std.map (insertion-order vector alongside the bucket array).
+// Both depend on this file shipping cleanly.
+//
+// ABI is RFC 0005 Option C (heap record): a Vec value is the i64
+// base-address of a 3×i64 heap block laid out [addr | len | cap] at
+// 8-byte stride.  All seven RFC 0005 intrinsics are signed i64-only,
+// so the Vec struct never references a built-in pointer type.
+//
+// Growth policy is fixed at "doubling, min-cap 4" so the allocation
+// trace is deterministic — load-bearing for evidence-chain
+// reproducibility and the bootstrap fixed point.
+
+struct Vec {
+    addr: i64,
+    len: i64,
+    cap: i64,
+}
+
+// vec_new — empty Vec, zero allocation.
+pub fn vec_new() -> Vec {
+    Vec { addr: 0, len: 0, cap: 0 }
+}
+
+// vec_len — current logical length.
+pub fn vec_len(v: Vec) -> i64 {
+    v.len
+}
+
+// vec_cap — current backing-store capacity in elements.
+pub fn vec_cap(v: Vec) -> i64 {
+    v.cap
+}
+
+// vec_addr — opaque i64 base address (RFC 0005 P0a — never a `ptr`).
+pub fn vec_addr(v: Vec) -> i64 {
+    v.addr
+}
+
+// vec_get — load element at logical index `i`.  No bounds-check at
+// this layer; std.option will wrap it once enum payloads are wired.
+pub fn vec_get(v: Vec, i: i64) -> i64 {
+    __mind_load_i64(v.addr + i * 8)
+}
+
+// vec_set — store element at logical index `i`.  Same caveats as
+// vec_get.  Returns 0 on success (the intrinsic's contract).
+pub fn vec_set(v: Vec, i: i64, value: i64) -> i64 {
+    __mind_store_i64(v.addr + i * 8, value)
+}
+
+// vec_push — append `value`, growing the backing store if needed.
+//
+// Today this is a *non-mutating* function: it allocates a new backing
+// store, copies the existing elements (open-coded by index since
+// std.io's __mind_memcpy isn't in the intrinsic set), writes the new
+// element, and returns a fresh Vec value.  Once cross-fn `&mut`
+// mutation lands, this folds into the in-place push the RFC names.
+//
+// Growth: cap 0 → 4, otherwise doubles.  The choice is documented and
+// fixed so the allocation trace is deterministic across runs.
+pub fn vec_push(v: Vec, value: i64) -> Vec {
+    let new_len: i64 = v.len + 1;
+    let new_cap: i64 = if v.cap == 0 {
+        4
+    } else {
+        if v.len < v.cap { v.cap } else { v.cap * 2 }
+    };
+    let new_addr: i64 = if new_cap == v.cap {
+        v.addr
+    } else {
+        __mind_alloc(new_cap * 8)
+    };
+    __mind_store_i64(new_addr + v.len * 8, value);
+    Vec { addr: new_addr, len: new_len, cap: new_cap }
+}

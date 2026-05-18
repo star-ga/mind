@@ -121,13 +121,36 @@ pub fn module_path_of(file: &Path, src_root: &Path) -> String {
     }
 }
 
-/// Collect a module's exported names from its parsed AST: every name in
-/// every `export { ... }` block. Deterministic (sorted, deduped).
+/// Collect a module's exported names from its parsed AST.
+///
+/// Resolution order (RFC 0005 Phase 2 ergonomics):
+///   1. If the module declares one or more `export { ... }` blocks,
+///      those names are the exported surface — this is the explicit,
+///      pre-existing contract (RFC 0002).
+///   2. Otherwise, every top-level `Node::FnDef` and `Node::Struct`
+///      name is auto-exported.  This is what lets `std/*.mind` files
+///      compose into the `use std.vec` surface without a per-file
+///      `export` block — the parser strips `pub` to a no-op already
+///      (`src/parser/mod.rs:736`), so a `pub fn`-only file would
+///      otherwise have an empty exported surface.
+///
+/// Deterministic (sorted, deduped) in both branches.
 pub fn collect_module_exports(module_path: &str, ast: &Module) -> ModuleExports {
     let mut exported: Vec<String> = Vec::new();
+    let mut has_explicit_export = false;
     for item in &ast.items {
         if let Node::Export { names, .. } = item {
+            has_explicit_export = true;
             exported.extend(names.iter().cloned());
+        }
+    }
+    if !has_explicit_export {
+        for item in &ast.items {
+            match item {
+                Node::FnDef { name, .. } => exported.push(name.clone()),
+                Node::StructDef { name, .. } => exported.push(name.clone()),
+                _ => {}
+            }
         }
     }
     exported.sort();
