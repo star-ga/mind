@@ -5,6 +5,50 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — RFC 0005 Phase 6.1: pure-MIND self-host lexer seed
+
+First step of the self-host ladder. `examples/lexer/` ships a
+~290-line pure-MIND tokeniser on top of `std.vec` + the seven
+`__mind_*` intrinsics. Walks an in-memory source buffer byte-by-byte
+and emits a flat `Vec<i64>` stride-3 token stream `(kind, lo, hi)`.
+
+- **`examples/lexer/main.mind`** — the lexer (idents, integer literals,
+  single-char + `->` punctuation, `//` line comments, whitespace, the
+  four current keywords `fn`/`let`/`use`/`pub`). Parses cleanly under
+  `cargo run --features "std-surface cross-module-imports" --bin mindc
+  -- examples/lexer/main.mind --emit-ir`.
+- **`examples/lexer/fixture.mind`** — a 254-byte source file for the
+  smoke gate. Token-stream contract documented in
+  **`examples/lexer/EXPECTED.md`** (32 rows × 3 i64 = 96 entries).
+- **`examples/lexer/README.md`** — Phase 6.1 status + Phase 6.2
+  follow-up. Key documented finding: **mindc v0.4.4's parser does NOT
+  accept `while` as a statement**. The lexer expresses every loop as
+  tail recursion, which the parser does accept. Phase 6.2 either adds
+  `while`-stmt parsing or canonicalizes tail recursion as the MIND
+  loop primitive — either choice keeps this seed working unchanged.
+
+The smoke gate is currently a documented fixture; Phase 6.2 will
+promote it to a Cargo integration test that compiles `main.mind`
+to a `.so` and diffs the live token stream against mindc-Rust's
+own tokeniser output.
+
+### Changed — RFC 0005 landing table expanded for Phase 6
+
+`docs/rfcs/0005-pure-mind-std-surface.md` §"Adoption plan" landing
+table now expands the single Phase 6 row into a 5-step ladder
+(6.1 lexer / 6.2 parser / 6.3 type-checker / 6.4 MLIR text emit /
+6.5 fixed-point bootstrap). Phase 6.1 marked **shipped**; rest
+**open**. Phase D₂b row cross-linked to its design note
+(`docs/rfcs/0005-phase-d2b-design-note.md`).
+
+### Added — Phase D₂b design note
+
+`docs/rfcs/0005-phase-d2b-design-note.md` captures the cross-arg
+Named-struct identity-matching design for the next compiler tag.
+Multi-session pickup artifact; not yet implemented.
+
 ## [0.4.4] — 2026-05-19
 
 ### Added — RFC 0005 Phase D₂a: Named structs preserved in cross-module call errors
