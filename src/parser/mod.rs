@@ -247,7 +247,7 @@ impl<'a> P<'a> {
             .map_err(|_| self.err("integer overflow".into()))
     }
 
-    /// Same as [`parse_i64_literal`] but for pattern-match positions; the
+    /// Same as `parse_i64_literal` but for pattern-match positions; the
     /// error message reads "integer overflow in pattern" so diagnostics remain
     /// consistent with the pre-existing wording at those sites.
     fn parse_i64_pattern(&self, d: &str) -> Result<i64, ParseError> {
