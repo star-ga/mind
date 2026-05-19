@@ -133,6 +133,11 @@ fn negative_literal_as_argument() {
 }
 
 /// `-N` inside an array literal: `[-7, 9]`.
+///
+/// `Instr::ConstArray` is `#[cfg(feature = "std-surface")]`-gated, so this
+/// case only compiles/runs under that feature; the core negative-literal
+/// fix (the other nine cases) is exercised on the default build.
+#[cfg(feature = "std-surface")]
 #[test]
 fn negative_literal_in_array() {
     let module =
