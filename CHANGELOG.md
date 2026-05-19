@@ -5,6 +5,56 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.4] — 2026-05-19
+
+### Added — RFC 0005 Phase D₂a: Named structs preserved in cross-module call errors
+
+Phase B's call-site type-checker compares args against an imported
+fn's declared parameter types. When a mismatch fires, the error
+message currently leans on `describe_value_type` — which collapses
+Named struct types (`Vec`, `String`, `Map`, ...) to `ScalarI64`
+because that's the Option-C heap-record ABI lowering. The result is
+that a user passing the wrong type into `vec_set(my_string, 0, 99)`
+sees "expects scalar i64" with no mention of `Vec` at all.
+
+D₂a renders the *expected* side of the error message from the raw
+`TypeAnn` instead of the lowered `ValueType`, so the call-site error
+now reads `expects Vec (heap-record i64 addr)`. The compatibility
+check itself stays permissive (Phase B/C/D₁ behaviour unchanged —
+i64 values still accepted into Named struct params under Option-C);
+this is purely an error-clarity improvement.
+
+- **`src/type_checker/mod.rs`** — new gated helper
+  `describe_param_type(&TypeAnn) -> String` (~12 lines). Falls
+  through to `describe_value_type(&cm_typeann_to_valuetype(ann))`
+  for primitives + aggregates; renders Named-typed params as
+  `<name> (heap-record i64 addr)`. The single call-site swap in
+  `check_imported_fn_call` consumes it.
+- **`tests/std_surface_use_import_phase_b.rs`** — new test
+  `phase_d2_named_struct_param_named_in_arity_error` confirms the
+  emitted error contains both `expects Vec` and `heap-record i64
+  addr`. Existing 6 Phase B tests + the new one all pass.
+
+D₂b (cross-arg *identity* matching — flagging `vec_set(my_string,
+...)` as a real type error rather than a permissive accept) stays
+deferred. The right design needs the type-env to track Named
+struct names through let bindings and fn returns, which is bigger
+surgery than v0.4.4 absorbs cleanly.
+
+### Compile-speed gate
+
+Against the post-RFC-0005 baseline. The new helper is in the
+error-formatting cold path — only fires when a per-arg widening
+already failed — so the hot-path bench is byte-identical:
+
+| bench          | baseline   | v0.4.4     | delta    | gate |
+| -------------- | ---------- | ---------- | -------- | ---- |
+| small_matmul   | 2.80 µs    | 2.87 µs    | +2.4%    | ✓    |
+| medium_mlp     | 6.55 µs    | 6.61 µs    | +0.9%    | ✓    |
+| large_network  | 17.10 µs   | 17.49 µs   | +2.3%    | ✓    |
+
+All within the +7% cap.
+
 ## [0.4.3] — 2026-05-18
 
 ### Added — RFC 0005 Phase D₁: `$MIND_STDLIB_PATH` override
