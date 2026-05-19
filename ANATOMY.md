@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2510 | **Est. tokens:** ~6,193,977
-**Generated:** 2026-05-19 10:48 UTC
+**Files:** 2510 | **Est. tokens:** ~6,194,108
+**Generated:** 2026-05-19 11:18 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/type_checker/` | 1 | ~22,070 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~4,006 |
-| `tests/` | 104 | ~104,614 |
+| `tests/` | 104 | ~104,745 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -3665,7 +3665,7 @@
 - `gpu_graceful_failure.mind` (~73 tok, small) — Backend test: GPU backend graceful failure
 ### `tests/`
 
-- `blas_smoke.rs` (~5794 tok, huge) — Copyright 2025 STARGA Inc.
+- `blas_smoke.rs` (~5925 tok, huge) — Copyright 2025 STARGA Inc.
 - `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `cli_buffers.rs` (~459 tok, medium) — Copyright 2025 STARGA Inc.
 - `cli_build.rs` (~648 tok, large) — Copyright 2025 STARGA Inc.
