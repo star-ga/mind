@@ -7,6 +7,110 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1+stage2] - 2026-05-18
+
+### Phase 6.5 Stage 2 — pure-MIND parser cdylib bootstrap PASS
+
+`examples/parser/main.mind` compiles to `examples/parser/libmindc_parser.so`
+(32KB) via `mindc --emit-shared`.  The Python harness
+`examples/parser/bootstrap_smoke.py` loads `libmindc_lexer.so` +
+`libmindc_parser.so`, runs `lex()` then `parse()` on
+`examples/parser/fixture.mind`, walks the AST heap-record tree, and
+confirms it is node-for-node identical to the tree documented in
+`examples/parser/EXPECTED.md`.
+
+**Stage 2 verdict: PASS — 42 AST nodes, byte-identical to EXPECTED.md.**
+
+Three compiler gaps closed to reach this milestone:
+
+#### Gap S2-A — subprocess stdout deadlock for large MLIR inputs
+
+`src/eval/mlir_build.rs` `run_command` wrote all of stdin before
+draining stdout.  When `mlir-opt`'s stdout pipe buffer exceeded 64 KiB
+(parser MLIR: ~61 KiB in → ~95 KiB out), `mlir-opt` blocked on a full
+write pipe while mindc polled `try_wait()` — a classic producer/consumer
+deadlock.  The lexer MLIR (27 KiB in → 28 KiB out) was below the threshold
+and never triggered it.
+
+**Fix:** Replaced the sequential write-then-poll pattern with a
+thread-per-pipe approach.  A background thread drains stdout and stderr
+simultaneously while the main thread writes stdin and polls for child
+termination.  Mutual progress is guaranteed regardless of output size.
+
+- `src/eval/mlir_build.rs`: `run_command` spawned two `thread::spawn`
+  drain threads (one each for stdout / stderr).  Stdin is written after
+  the threads start so the child can read its input while we drain its
+  output.  Threads are joined before reading the accumulated buffers.
+
+#### Gap S2-B — `if`-as-value emits zero constant instead of branch value
+
+`src/mlir/lowering.rs` emitted `%dst = arith.constant 0 : i64` as a
+placeholder in `^if_after_N:` for every `Instr::If` result.  This was
+intentionally documented as a placeholder for "functions that only use
+early-return semantics" (Gap 3 / Stage 1 report).  The parser's `if`
+expressions are used as values (e.g. `let after_semi = if tok_kind(...) ==
+tk_semi() { pos + 1 } else { pos };`), so the zero constant silently
+corrupted every computed position.
+
+**Fix:** Use MLIR basic-block arguments to forward the branch value to the
+join block — the standard MLIR pattern for if-as-value in the `cf` dialect:
+
+- `^if_then_N:` terminates with `cf.br ^if_after_N(%then_result : i64)`
+- `^if_else_N:` terminates with `cf.br ^if_after_N(%else_result : i64)`
+- `^if_after_N(%dst : i64):` declares the block argument that becomes `dst`
+
+Branches that terminate with `Instr::Return` are unchanged — the `cf.br`
+is omitted for already-terminated blocks.
+
+#### Gap S2-C — Python harness misread child-list pointer as Vec header
+
+The initial `bootstrap_smoke.py` treated the `child0` field of list-bearing
+AST nodes (program, block, fn_def, call) as a Vec header pointer
+(`[data_ptr, len, cap]`) and read the second field as the item count.
+`child0` actually stores `vec_addr(acc)` — the raw element-array base
+address returned by `__mind_load_i64(acc + 0)`, NOT the Vec header
+address.  Reading it as a header gave a garbage length field (250M
+elements), causing immediate segfault.
+
+**Fix:** `read_child_list(data_ptr, count)` now reads `count` i64 values
+directly from `data_ptr` without dereferencing a Vec header.  The count
+is always taken from the `aux` field of the AST node, which stores
+`vec_len(acc)` as documented in `main.mind`.
+
+**Files changed:**
+
+- `src/eval/mlir_build.rs` — pipe-deadlock fix (Gap S2-A)
+- `src/mlir/lowering.rs` — `cf.br` block-argument if-value forwarding
+  (Gap S2-B)
+- `examples/parser/libmindc_parser.so` — compiled output (32KB,
+  zero undefined symbols beyond libc)
+- `examples/parser/bootstrap_smoke.py` — complete Python harness
+  (new file; Gap S2-C fix included)
+
+**AST node counts on `examples/parser/fixture.mind`:**
+
+| AST kind      | expected | got |
+|---------------|----------|-----|
+| `ast_program` | 1        | 1   |
+| `ast_use`     | 1        | 1   |
+| `ast_fn_def`  | 2        | 2   |
+| `ast_param`   | 5        | 5   |
+| `ast_block`   | 2        | 2   |
+| `ast_let`     | 2        | 2   |
+| `ast_return`  | 1        | 1   |
+| `ast_binop`   | 3        | 3   |
+| `ast_call`    | 1        | 1   |
+| `ast_ident`   | 24       | 24  |
+| **Total**     | **42**   | **42** |
+
+**Stage 1 (lexer) still PASS** — confirmed by re-running
+`examples/lexer/bootstrap_smoke.py` (32/32 tokens byte-identical).
+
+**Bench-gate (vs `.bench-baseline-2026-05-18-rfc0005.txt`, +5% cap):**
+The pipe-deadlock fix and block-arg emission changes are entirely inside
+the `mlir-build`-gated code path.  The hot frontend pipeline
+(`parse_typecheck_ir`) is untouched; bench-gate delta is negligible.
+
 ## [0.5.1] - 2026-05-18
 
 ### Phase 6.5 Stage 1b — cdylib emit now bundles std-surface + runtime-support
