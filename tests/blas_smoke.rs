@@ -81,19 +81,24 @@ fn build_runtime_support_so() -> Option<PathBuf> {
 
     let out_dir = manifest_dir.join("target").join("blas_smoke");
     std::fs::create_dir_all(&out_dir).expect("create target/blas_smoke");
-    let so_path = out_dir.join("libmind_blas_smoke.so");
+    // Windows shared objects are `.dll`; `-fPIC` is a Unix-only flag
+    // (clang targeting `*-pc-windows-msvc` rejects it — Windows code is
+    // position-independent by construction). Keep the Unix path
+    // byte-for-byte unchanged.
+    let so_path = out_dir.join(if cfg!(windows) {
+        "mind_blas_smoke.dll"
+    } else {
+        "libmind_blas_smoke.so"
+    });
+
+    let mut args: Vec<&str> = vec!["-x", "c", src.to_str().unwrap(), "-shared"];
+    if !cfg!(windows) {
+        args.push("-fPIC");
+    }
+    args.extend_from_slice(&["-O2", "-o", so_path.to_str().unwrap()]);
 
     let status = Command::new(&clang)
-        .args([
-            "-x",
-            "c",
-            src.to_str().unwrap(),
-            "-shared",
-            "-fPIC",
-            "-O2",
-            "-o",
-            so_path.to_str().unwrap(),
-        ])
+        .args(&args)
         .status()
         .expect("spawn clang");
     assert!(
