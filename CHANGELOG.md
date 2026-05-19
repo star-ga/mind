@@ -5,6 +5,60 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-05-18
+
+### Added — RFC 0005 Phase D₁: `$MIND_STDLIB_PATH` override
+
+Phase C bundled the four pure-MIND std/*.mind files into the mindc
+binary so `use std.vec` resolved with no external file dependency.
+That left one gap: a downstream user who wanted to fork the stdlib
+(e.g. ship a stricter `std.string` with inline UTF-8 validation for
+a regulated deployment) had to fork and rebuild `mindc` itself.
+
+Phase D₁ adds an env-var escape hatch: when `MIND_STDLIB_PATH=path`
+is set and points at a directory containing all four `.mind` files
+(`vec.mind`, `string.mind`, `map.mind`, `io.mind`), the project
+loader reads from that directory instead of the bundled blobs.
+Missing files, missing directory, or parse failure → silently fall
+back to bundled. Same fork-without-recompile escape hatch Rust's
+`RUSTC_BOOTSTRAP` provides.
+
+- **`src/project/stdlib.rs`** — new `parsed_stdlib_modules_from_env()`
+  helper, called at the top of `parsed_stdlib_modules()`. Reads
+  `MIND_STDLIB_PATH` via `std::env::var_os`, validates the directory
+  exists, attempts to read + parse all four module files. Returns
+  `Option<Vec<(String, Module)>>` — `Some` only on full success.
+  Hot path on unset env var is a single null check.
+- **3 new tests** in `src/project/stdlib.rs::tests`:
+  - `env_override_falls_back_when_unset` — default behaviour unchanged.
+  - `env_override_loads_directory_when_set` — round-trips through the
+    repo's own `std/` directory and asserts on count + module names.
+  - `env_override_falls_back_on_missing_dir` — non-existent path
+    triggers fallback, doesn't crash.
+
+### Compile-speed gate
+
+Re-ran `cargo bench --bench compiler` after the change. Numbers
+against `.bench-baseline-2026-05-18-rfc0005.txt` (small 2.80 µs /
+medium 6.55 µs / large 17.10 µs):
+
+| bench          | baseline   | v0.4.3     | delta    | gate |
+| -------------- | ---------- | ---------- | -------- | ---- |
+| small_matmul   | 2.80 µs    | 2.85 µs    | +1.8%    | ✓    |
+| medium_mlp     | 6.55 µs    | 6.50 µs    | -0.8%    | ✓    |
+| large_network  | 17.10 µs   | 17.43 µs   | +1.9%    | ✓    |
+
+All within the +5% cap. The bundled hot path is a branchless
+`Option<...>` short-circuit, so Phase D₁ is invisible to default
+builds.
+
+### Spec alignment
+
+`mind-spec` (commit `5fa4299`) added an informative "Environment
+override" subsection to `spec/v1.0/stdlib.md` documenting the
+`MIND_STDLIB_PATH` contract; honouring it is informative for
+conforming implementations.
+
 ## [0.4.2] — 2026-05-18
 
 ### Added — RFC 0005 Phase C: auto-bundle `std/*.mind` into mindc
