@@ -71,7 +71,16 @@ pub fn dotlinf(a: i64, b: i64, n: i64) -> i64 {
 }
 "#;
 
+/// Track B (increment 3b) matmul source — compiled separately so that
+/// the existing Q16/L1/L∞ `.so` is not disturbed.
+const SRC_MATMUL: &str = r#"
+pub fn matmul(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
+    __mind_blas_matmul_rmajor_f32_v(w, x, y, rows, cols)
+}
+"#;
+
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
+type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 
 /// Every RFC-mandated length for the cross-arch bit-identity gate.
 const LENGTHS: &[usize] = &[0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 1024, 4096, 65537];
@@ -127,6 +136,39 @@ fn build_vec_so() -> Option<&'static PathBuf> {
         assert!(
             status.success(),
             "mindc --emit-shared failed for the Track B increment-2 vector source"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Compile `SRC_MATMUL` to a temporary `.so`, exactly once per test run.
+fn build_matmul_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                println!("blas_vec_q16_smoke(matmul): {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+
+        let dir = std::env::temp_dir();
+        let src_path = dir.join("mind_blas_vec_matmul_smoke.mind");
+        let so_path = dir.join("mind_blas_vec_matmul_smoke.so");
+        std::fs::write(&src_path, SRC_MATMUL).expect("write matmul test .mind source");
+
+        let status = Command::new(mindc_path())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc for matmul");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the Track B matmul source"
         );
         Some(so_path)
     })
@@ -357,5 +399,77 @@ fn vec_dot_linf_f32_within_1e4_rel_of_f64_oracle() {
             "len={len}: native vector L∞ must be within 1e-4 relative of \
              the f64 oracle; rel={rel:e} got={got} truth={truth}"
         );
+    }
+}
+
+/// f64 oracle for one row of the matmul: dot(W[r,:], x) computed in f64.
+fn ref_matmul_row_f64(w_row: &[f32], x: &[f32]) -> f64 {
+    let mut acc = 0.0_f64;
+    for i in 0..w_row.len() {
+        acc += (w_row[i] as f64) * (x[i] as f64);
+    }
+    acc
+}
+
+/// RFC 0006 Track B (increment 3b) — vectorised row-major matmul must
+/// agree with an f64 oracle within 1e-4 relative for every row, at the
+/// shapes that exercise the critical boundary conditions:
+///
+/// * `(2, 17)` — the minimal shape that previously SIGSEGVed (rows≥2,
+///   non-empty scalar tail); must now pass.
+/// * `(5, 17)`, `(33, 1025)`, `(128, 384)` — additional coverage.
+/// * `(1, 8)`, `(3, 8)` — exact-multiple shapes (no scalar tail).
+/// * `(1, 1)` — degenerate single-element.
+#[test]
+fn vec_matmul_rmajor_f32_within_1e4_rel_of_f64_oracle() {
+    let Some(so) = build_matmul_so() else {
+        return;
+    };
+    let lib = unsafe { Library::new(&so).expect("dlopen matmul .so") };
+    let matmul: libloading::Symbol<MatmulFn> = unsafe {
+        lib.get(b"matmul\0")
+            .expect("symbol 'matmul' missing from matmul .so")
+    };
+
+    let shapes: &[(usize, usize)] = &[
+        (1, 1),
+        (1, 8),
+        (2, 8),
+        (3, 8),
+        (1, 9),
+        (1, 17),
+        (2, 17), // minimal previously-failing shape — MUST pass
+        (5, 17),
+        (33, 1025),
+        (128, 384),
+    ];
+
+    for &(rows, cols) in shapes {
+        let mut g = Lcg::new(0xDEAD_BEEF_0000_0000 + (rows * 65537 + cols) as u64);
+        let w: Vec<f32> = (0..rows * cols).map(|_| g.next_f32_unit()).collect();
+        let x: Vec<f32> = (0..cols).map(|_| g.next_f32_unit()).collect();
+        let mut y = vec![0.0_f32; rows];
+
+        let ret = unsafe {
+            matmul(
+                w.as_ptr() as i64,
+                x.as_ptr() as i64,
+                y.as_mut_ptr() as i64,
+                rows as i64,
+                cols as i64,
+            )
+        };
+        assert_eq!(ret, 0, "matmul({rows},{cols}) must return 0");
+
+        for r in 0..rows {
+            let truth = ref_matmul_row_f64(&w[r * cols..(r + 1) * cols], &x);
+            let got = y[r] as f64;
+            let rel = (got - truth).abs() / truth.abs().max(1e-30);
+            assert!(
+                rel < 1e-4,
+                "matmul({rows},{cols}) row {r}: got={got} truth={truth} rel={rel:e} \
+                 (must be within 1e-4 relative of f64 oracle)"
+            );
+        }
     }
 }

@@ -61,6 +61,19 @@ const VEC_DOT_L1_Q16_INTRINSIC: &str = "__mind_blas_dot_l1_q16_v";
 #[cfg(feature = "std-surface")]
 const VEC_DOT_LINF_F32_INTRINSIC: &str = "__mind_blas_dot_linf_f32_v";
 
+/// RFC 0006 Track B (increment 3b) — native MLIR vector-dialect
+/// row-major f32 matrix-vector multiply surface name.
+///
+/// Signature: `(w_addr, x_addr, y_addr, rows, cols) -> i64` (returns 0).
+/// W is a rows×cols row-major f32 matrix (pointer packed as i64),
+/// x is a cols-element f32 vector, y is a caller-allocated rows-element
+/// f32 output vector.  The kernel computes `y[r] = dot(W[r,:], x)` for
+/// each row r using the proven vectorised f32 dot structure (eight-lane
+/// FMA accumulation + scalar tail) so numerical results are within 1e-4
+/// relative of an f64 oracle, matching the `dot_f32_v` contract.
+#[cfg(feature = "std-surface")]
+const VEC_MATMUL_RMAJOR_F32_INTRINSIC: &str = "__mind_blas_matmul_rmajor_f32_v";
+
 /// RFC 0006 Track B (increment 2) — Q16.16 vector lane count. The
 /// scalar Q16.16 oracle widens each `i32` product to `i64` before the
 /// arithmetic `>> 16`; the vector path mirrors that with
@@ -414,6 +427,18 @@ impl LoweringContext {
                 }
                 if name == VEC_DOT_LINF_F32_INTRINSIC && args.len() == 3 {
                     self.emit_vec_dot_metric_f32(*dst, args[0], args[1], args[2], VecMetric::Linf);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // RFC 0006 Track B (increment 3b) — row-major f32 matmul.
+                // Lowers to a native MLIR outer `scf.for` over rows, with
+                // the proven vectorised `dot_f32_v` reduction (8-lane FMA +
+                // scalar tail) inlined per row.  Track A's scalar/AVX2
+                // `__mind_blas_matmul_rmajor_f32` extern path is untouched.
+                if name == VEC_MATMUL_RMAJOR_F32_INTRINSIC && args.len() == 5 {
+                    self.emit_vec_matmul_rmajor_f32(
+                        *dst, args[0], args[1], args[2], args[3], args[4],
+                    );
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
@@ -1633,6 +1658,214 @@ impl LoweringContext {
             "    %vm_bits_{d} = arith.bitcast %vm_ts_{d} : f32 to i32"
         ));
         self.emit_line(&format!("    %{d} = arith.extui %vm_bits_{d} : i32 to i64"));
+    }
+
+    /// RFC 0006 Track B (increment 3b) — emit a native MLIR
+    /// `vector`-dialect row-major f32 matrix-vector multiply.
+    ///
+    /// Computes `y[r] = dot(W[r,:], x)` for each row `r` in `0..rows`.
+    /// W is a rows×cols row-major f32 matrix (base address packed as i64),
+    /// x is a cols-element f32 input vector (packed i64), y is a
+    /// caller-allocated rows-element f32 output (packed i64).
+    ///
+    /// Structure:
+    ///
+    /// ```text
+    ///   outer loop : scf.for r = 0..rows step 1 (no iter_args — stores to y)
+    ///     inner main : scf.for step 8, vector.fma over W[r,:] and x
+    ///     horizontal : vector.reduction <add>
+    ///     inner tail : scf.for step 1, scalar muladd for cols % 8 remainder
+    ///     store      : llvm.store result to y[r]
+    ///   return 0
+    /// ```
+    ///
+    /// The outer `scf.for` carries **no iter_args** — each row is stored
+    /// directly to the caller-allocated output buffer.  This avoids nesting
+    /// sibling iter_args loops inside an iter_args-bearing outer loop, which
+    /// sidesteps the phi-wiring ambiguity that caused the SIGSEGV on outer
+    /// re-entry in the original design.  The final `i64` result (= 0) is
+    /// produced by `arith.constant 0` after the loop.
+    ///
+    /// Numerical contract: 1e-4 relative vs an f64 oracle, identical to
+    /// `dot_f32_v`.  The inner dot uses the same eight-lane FMA + scalar-tail
+    /// structure as `emit_vec_dot_f32`, so the rounding is identical.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_vec_matmul_rmajor_f32(
+        &mut self,
+        dst: ValueId,
+        w_addr: ValueId,
+        x_addr: ValueId,
+        y_addr: ValueId,
+        rows: ValueId,
+        cols: ValueId,
+    ) {
+        let d = dst.0;
+        let l = VEC_DOT_F32_LANES;
+        let elem_bytes = std::mem::size_of::<f32>() as i64;
+
+        // ── constants (emitted once, before the outer loop) ──────────────────
+        self.emit_line(&format!("    %vmm_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vmm_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vmm_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vmm_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+
+        // ── pointer setup ─────────────────────────────────────────────────────
+        self.emit_line(&format!(
+            "    %vmm_wp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            w_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vmm_xp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            x_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vmm_yp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            y_addr.0
+        ));
+
+        // ── loop bounds ───────────────────────────────────────────────────────
+        // rows as index for the outer loop bound
+        self.emit_line(&format!(
+            "    %vmm_rows_{d} = arith.index_cast %{} : i64 to index",
+            rows.0
+        ));
+        // byte stride per W row = cols * sizeof(f32)
+        self.emit_line(&format!(
+            "    %vmm_colsb_{d} = arith.muli %{}, %vmm_eb_{d} : i64",
+            cols.0
+        ));
+        // inner loop vector-end and length (same for every row — cols is loop-invariant)
+        self.emit_line(&format!(
+            "    %vmm_len_{d} = arith.index_cast %{} : i64 to index",
+            cols.0
+        ));
+        self.emit_line(&format!(
+            "    %vmm_nv_{d} = arith.divui %vmm_len_{d}, %vmm_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmm_ve_{d} = arith.muli %vmm_nv_{d}, %vmm_cl_{d} : index"
+        ));
+        // zero vector for inner loop accumulator initialisation
+        self.emit_line(&format!(
+            "    %vmm_zv_{d} = arith.constant dense<0.0> : vector<{l}xf32>"
+        ));
+
+        // ── outer loop over rows (no iter_args — stores directly to y) ────────
+        self.emit_line(&format!(
+            "    scf.for %vmm_r_{d} = %vmm_c0_{d} to %vmm_rows_{d} step %vmm_c1_{d} {{"
+        ));
+
+        // row index as i64 for pointer arithmetic
+        self.emit_line(&format!(
+            "      %vmm_ri_{d} = arith.index_cast %vmm_r_{d} : index to i64"
+        ));
+        // byte offset into W for row r
+        self.emit_line(&format!(
+            "      %vmm_roff_{d} = arith.muli %vmm_ri_{d}, %vmm_colsb_{d} : i64"
+        ));
+        // pointer to W[r, 0]
+        self.emit_line(&format!(
+            "      %vmm_wrow_{d} = llvm.getelementptr %vmm_wp_{d}[%vmm_roff_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+
+        // ── inner vector main loop: 8-lane FMA over W[r,:] · x ────────────
+        self.emit_line(&format!(
+            "      %vmm_vacc_{d} = scf.for %vmm_i_{d} = %vmm_c0_{d} to %vmm_ve_{d} \
+             step %vmm_cl_{d} iter_args(%vmm_acc_{d} = %vmm_zv_{d}) -> (vector<{l}xf32>) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_ii_{d} = arith.index_cast %vmm_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_bo_{d} = arith.muli %vmm_ii_{d}, %vmm_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_ai_{d} = llvm.getelementptr %vmm_wrow_{d}[%vmm_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_bi_{d} = llvm.getelementptr %vmm_xp_{d}[%vmm_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        // alignment=4: W rows are not guaranteed 32-byte aligned (only
+        // base is; row r starts at r*cols*4 bytes in, which is only
+        // 4-byte aligned in general).  Using {alignment = 4} emits
+        // vmovups instead of vmovaps, preventing GP faults on row 1+.
+        self.emit_line(&format!(
+            "        %vmm_av_{d} = llvm.load %vmm_ai_{d} {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_bv_{d} = llvm.load %vmm_bi_{d} {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_fa_{d} = vector.fma %vmm_av_{d}, %vmm_bv_{d}, %vmm_acc_{d} : \
+             vector<{l}xf32>"
+        ));
+        self.emit_line(&format!("        scf.yield %vmm_fa_{d} : vector<{l}xf32>"));
+        self.emit_line("      }");
+
+        // ── horizontal lane reduction ──────────────────────────────────────
+        self.emit_line(&format!(
+            "      %vmm_vs_{d} = vector.reduction <add>, %vmm_vacc_{d} : \
+             vector<{l}xf32> into f32"
+        ));
+
+        // ── scalar tail for cols % 8 remainder ────────────────────────────
+        self.emit_line(&format!(
+            "      %vmm_ts_{d} = scf.for %vmm_j_{d} = %vmm_ve_{d} to %vmm_len_{d} \
+             step %vmm_c1_{d} iter_args(%vmm_s_{d} = %vmm_vs_{d}) -> (f32) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_jj_{d} = arith.index_cast %vmm_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_jb_{d} = arith.muli %vmm_jj_{d}, %vmm_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_aj_{d} = llvm.getelementptr %vmm_wrow_{d}[%vmm_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_bj_{d} = llvm.getelementptr %vmm_xp_{d}[%vmm_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_as_{d} = llvm.load %vmm_aj_{d} : !llvm.ptr -> f32"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_bs_{d} = llvm.load %vmm_bj_{d} : !llvm.ptr -> f32"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_p_{d} = arith.mulf %vmm_as_{d}, %vmm_bs_{d} : f32"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_ns_{d} = arith.addf %vmm_s_{d}, %vmm_p_{d} : f32"
+        ));
+        self.emit_line(&format!("        scf.yield %vmm_ns_{d} : f32"));
+        self.emit_line("      }");
+
+        // ── store y[r] = dot result ────────────────────────────────────────
+        self.emit_line(&format!(
+            "      %vmm_yoff_{d} = arith.muli %vmm_ri_{d}, %vmm_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vmm_yel_{d} = llvm.getelementptr %vmm_yp_{d}[%vmm_yoff_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      llvm.store %vmm_ts_{d}, %vmm_yel_{d} : f32, !llvm.ptr"
+        ));
+
+        self.emit_line("    }"); // end outer scf.for
+
+        // The intrinsic returns 0 (i64) — matches the Track A C oracle.
+        self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
     }
 
     fn tensor_info(

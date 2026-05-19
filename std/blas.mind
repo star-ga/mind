@@ -103,6 +103,30 @@ pub fn matmul_rmajor_f32(
     __mind_blas_matmul_rmajor_f32(w_addr, x_addr, y_addr, rows, cols)
 }
 
+// matmul_rmajor_f32_v — RFC 0006 Track B (increment 3b): native MLIR
+// `vector`-dialect row-major y = W·x f32 matmul.  Same ABI / return
+// contract as matmul_rmajor_f32 (0 on success).  Lowers inside mindc to
+// an outer row loop, each row reusing the increment-1 fused 8-lane FMA
+// dot reduction + scalar tail, then storing y[r].  Vector loads carry an
+// explicit 4-byte alignment: row-interior W pointers (W + r·cols·4) are
+// only f32-aligned in general, so the lowering emits unaligned vector
+// moves — required for correctness on every row, not just row 0.
+//
+// Numerical contract: identical to dot_f32_v — within ~1e-4 relative of
+// an f64 oracle (f32 reduction re-association is not bit-exact; this is
+// the established f32 contract, distinct from the bit-exact Q16.16
+// paths).  Track A's matmul_rmajor_f32 is unchanged and remains the
+// scalar/AVX2 fallback.
+pub fn matmul_rmajor_f32_v(
+    w_addr: i64,
+    x_addr: i64,
+    y_addr: i64,
+    rows: i64,
+    cols: i64,
+) -> i64 {
+    __mind_blas_matmul_rmajor_f32_v(w_addr, x_addr, y_addr, rows, cols)
+}
+
 // dot_q16 — Q16.16 fixed-point dot product.
 // Returns the Q16.16 result sign-extended into i64 (low 32 bits carry
 // the value).  Bit-identical scalar-vs-AVX2 at every length.
