@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2489 | **Est. tokens:** ~6,106,846
-**Generated:** 2026-05-19 03:32 UTC
+**Files:** 2489 | **Est. tokens:** ~6,108,947
+**Generated:** 2026-05-19 03:39 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~28,025 |
+| `./` | 31 | ~29,302 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -364,7 +364,7 @@
 | `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/eval/` | 13 | ~67,646 |
+| `src/eval/` | 13 | ~68,082 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -379,7 +379,7 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~21,629 |
+| `src/type_checker/` | 1 | ~22,017 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 4 | ~3,165 |
 | `tests/` | 99 | ~89,022 |
@@ -413,7 +413,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~9820 tok, huge) — Changelog
+- `CHANGELOG.md` (~11097 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -3514,7 +3514,7 @@
 - `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3183 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~10122 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~10466 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~3012 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8203 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3614,7 +3614,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~21629 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~22017 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
