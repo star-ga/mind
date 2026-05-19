@@ -39,7 +39,7 @@ pushing a token. Trailing newline produces no token.
 |---|------|------|----|----|--------|
 | 1 | 20 | `tk_kw_use` | 177 | 180 | `use` |
 | 2 | 1  | `tk_ident` | 181 | 184 | `std` |
-| 3 | 15 | `tk_slash` | 184 | 185 | `.` — *see note* |
+| 3 | 22 | `tk_dot` | 188 | 189 | `.` |
 | 4 | 1  | `tk_ident` | 185 | 188 | `vec` |
 | 5 | 8  | `tk_semi` | 188 | 189 | `;` |
 | 6 | 21 | `tk_kw_pub` | 191 | 194 | `pub` |
