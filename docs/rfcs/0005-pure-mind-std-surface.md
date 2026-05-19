@@ -342,8 +342,12 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
 | C     | Bundle `std/*.mind` into mindc via `include_str!` | mindc v0.4.2 | **shipped** |
 | D₁    | `$MIND_STDLIB_PATH` override for the bundled stdlib | mindc v0.4.3 | **shipped** |
 | D₂a   | Named-struct param names preserved in Phase B error messages | mindc v0.4.4 | **shipped** |
-| D₂b   | Cross-arg Named-struct *identity* matching (Vec ≠ String at call site) | TBD | deferred |
-| 6     | Self-host smoke — `mindc` lexer in MIND | TBD | open |
+| D₂b   | Cross-arg Named-struct *identity* matching (Vec ≠ String at call site) | TBD | deferred (design note at `docs/rfcs/0005-phase-d2b-design-note.md`) |
+| 6.1   | Self-host smoke — pure-MIND lexer (tail-recursive) | mindc v0.4.4 | **shipped** (`examples/lexer/`) |
+| 6.2   | Pure-MIND parser on top of lexer; `while`-statement support either added to mindc or recursion canonical | TBD | open |
+| 6.3   | Pure-MIND type-checker | TBD | open |
+| 6.4   | Pure-MIND MLIR text emit | TBD | open |
+| 6.5   | Fixed-point bootstrap — mindc-in-MIND compiles itself | TBD | open (apex of thesis) |
 
 The original phases-1-through-6 sequence is preserved below for the
 RFC's historical narrative.  Future Phase D items (cross-arg type
