@@ -347,7 +347,44 @@ own tests no longer race the shared temp `.so` under parallel load.
   (the bootstrap source uses no vector ops) — bench-gate 0.0%. Smoke:
   `blas_vec_q16_smoke::vec_dot_l1_q16_byte_identical_to_scalar_oracle_all_lengths`.
 
-### 9.3b Deferred to increment 3b
+### 9.3b Increment 3b — shipped (mindc v0.6.6)
+
+- **Vectorised row-major `matmul_rmajor_f32_v` — SHIPPED.** Outer
+  `scf.for` over rows (no `iter_args` — stores directly to `y[r]`), each
+  row inlining the proven increment-1 `dot_f32` 8-lane `vector.fma` +
+  `vector.reduction <add>` reduction + scalar tail; returns `0 : i64`
+  like the Track A C oracle. Each output row equals
+  `dot_f32(W + r·cols, x, cols)` — the same per-row reduction the Track
+  A scalar oracle `__mind_blas_matmul_rmajor_f32` performs — so it holds
+  the same documented **1e-4 relative** f64-oracle contract as
+  `dot_f32_v` (f32 reduction re-association is not bit-exact; this is the
+  established f32 contract, distinct from the bit-exact Q16.16 paths).
+  Verified within 1e-4 at `(1,1) (1,8) (2,8) (3,8) (1,9) (1,17) (2,17)
+  (5,17) (33,1025) (128,384)`.
+
+  **Root-cause record (correcting an earlier mis-diagnosis):** a first
+  attempt SIGSEGV'd for *rows ≥ 2 with a non-empty tail* (e.g. `(2,17)`)
+  while `(1,17)` passed. This was **not** a triple-nested-`scf.for`
+  lowering defect (the nested sibling-`iter_args` pattern is valid MLIR
+  and lowers correctly under the pinned LLVM — independently confirmed).
+  The actual cause: `llvm.load` of `vector<8xf32>` with no alignment
+  attribute defaults to the type's natural 32-byte alignment, which
+  LLVM's x86 backend lowers to `vmovaps` (alignment-required). Row-base
+  pointers `W + r·cols·4` are only guaranteed 4-byte (f32) aligned — row
+  0 is malloc-base-aligned (works) but row ≥ 1 with `cols` not a
+  multiple of 8 is mis-aligned → general-protection fault. (`(3,8)`
+  works because every row is 32-byte aligned; `(3,7)` works because a
+  sub-lane row uses only the scalar tail, no vector load; `(1,17)` works
+  because only row 0 is touched.) **Fix:** emit `{alignment = 4 : i64}`
+  on the vector `llvm.load`s → `vmovups` (unaligned), correct for every
+  row. All `#[cfg(feature = "std-surface")]`-gated; default-feature
+  release binary byte-identical and bootstrap fixed-point byte-identical
+  (next_id 206) — bench-gate 0.0%. Smoke:
+  `blas_vec_q16_smoke::vec_matmul_rmajor_f32_within_1e4_rel_of_f64_oracle`.
+  This is the direct latency lever for the mind-nerve native-encode
+  GEMMs (the A1.5 residual / task #230).
+
+### 9.3c Deferred to a later increment
 
 - `@target("simd-x86" | "simd-arm" | "cuda" | "q16-photonic")` per-call
   substrate annotation. Still deferred. Increment 1's reasoning holds:
@@ -357,35 +394,21 @@ own tests no longer race the shared temp `.so` under parallel load.
   selection that does not yet exist. A *real* per-call selection
   requires threading an MLIR target-attribute (or per-call lane-width
   override) through the parser → AST → type-checker → `Instr::Call` →
-  lowering — genuinely increment-3 scope, not a token. Documenting it
-  precisely here is the honest status: not a no-op shipped, not
+  lowering — genuinely later-increment scope, not a token. Documenting
+  it precisely here is the honest status: not a no-op shipped, not
   silently dropped.
-- A vectorised `matmul_rmajor_f32` inner loop. `VecStore` (the
-  vectorised-output-kernel enabler) landed in increment 2. An increment-3b
-  attempt emitted it as an outer `scf.for` over rows, each row inlining
-  the proven increment-1 `dot_f32` vector reduction (8-lane `vector.fma`
-  + `vector.reduction <add>` + scalar tail) then `llvm.store`-ing `y[r]`.
-  The emitted MLIR is structurally valid and **numerically correct** —
-  verified against an f64 oracle for every shape with either no scalar
-  tail *or* a single output row (`(1,1) (1,8) (2,8) (3,7) (8,8) (1,9)
-  (1,16) (1,17)` all pass within 1e-4). It **miscompiles**, however, for
-  the combination *rows ≥ 2 AND a non-empty scalar tail* (e.g. `(2,17)`):
-  a SIGSEGV inside the kernel on the second row iteration, with all
-  memory accesses provably in-bounds and no aligned-move/alignment fault
-  in the disassembly — i.e. a code-generation defect in mindc's
-  `scf`→`cf`→LLVM lowering of a *triple-nested* loop with three different
-  iter-carry types (outer i64 → inner `vector<8xf32>` → tail f32), not a
-  logic or bounds error in the emitter. Honestly **not shipped** rather
-  than ship a kernel that faults on the dominant encode shape. Deferred
-  to a later increment; the fix is a different lowering strategy for the
-  per-row reduction (a flat single loop nest, or `memref`/`linalg`
-  lowering, avoiding the triple-nested mixed-carry `scf.for`), not a
-  patch to the current emitter. The bit-exact Q16.16 `dot_l1_q16_v`
-  (increment 3a, shipped v0.6.5) was unaffected and is unchanged.
 - Cross-module std-wrapper inlining. The `use std.blas` path still
   emits a `func.func private @<name>_v` forward decl exactly as Track A
   does; the working codegen entry point remains the direct
   `__mind_blas_*_v` intrinsic call (unchanged from increment 1).
+- Defensive: apply the same explicit `{alignment = 4}` to the vector
+  `llvm.load`s in `dot_f32_v` / `dot_q16_v` / `dot_l1_q16_v` /
+  `dot_l1_f32_v` / `dot_linf_f32_v`. They are currently only ever called
+  on allocation-base (over-aligned) pointers so they do not fault and
+  their byte-identity / 1e-4 contracts are unaffected (alignment changes
+  fault behaviour, never the loaded values), but a future caller passing
+  an interior pointer would hit the same GP-fault matmul did. Tracked as
+  hardening, not a correctness regression in current use.
 
 ## 10. References
 
