@@ -29,6 +29,27 @@ pub fn dot_f32(a_addr: i64, b_addr: i64, len: i64) -> i64 {
     __mind_blas_dot_f32(a_addr, b_addr, len)
 }
 
+// dot_f32_v — RFC 0006 Track B (increment 1): the native MLIR
+// `vector`-dialect f32 dot product.  Same i64 ABI and packed-f32 return
+// contract as `dot_f32`, but the call lowers to a `vector.load` /
+// `vector.fma` / `vector.reduction <add>` reduction loop *inside mindc*
+// rather than a `func.call` to the Track A runtime-support C bridge.
+// LLVM legalises the `vector<8xf32>` ops to the host SIMD width
+// (AVX2 / AVX-512 / NEON / SVE2 / NVPTX) with no per-target code, no
+// `-fPIC` C-shim object, and no Windows-MSVC symbol-export problem —
+// the Track B thesis-pure property.
+//
+// Track A's `dot_f32` (above) is unchanged and remains the scalar/AVX2
+// runtime-support fallback; Track B is strictly additive.
+//
+// Numerical contract: the tree-shaped pairwise `vector.reduction`
+// matches Track A's AVX2 path — within ~1e-4 relative of an f64 oracle
+// on 1M elements; byte-identical to the scalar reference only for
+// lengths below one SIMD lane group (the pure scalar-tail path).
+pub fn dot_f32_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_f32_v(a_addr, b_addr, len)
+}
+
 // dot_l1_f32 — f32 Manhattan distance (sum of |a[i] - b[i]|).
 // Sqrt-free reduction — the substrate-natural metric on photonic
 // targets and the lowest-Landauer-floor choice on conventional CPUs.

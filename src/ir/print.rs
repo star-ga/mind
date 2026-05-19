@@ -325,6 +325,54 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        // RFC 0006 Track B (increment 1) — SIMD vector primitives.
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoad {
+            dst,
+            base,
+            offset,
+            lanes,
+        } => {
+            writeln!(
+                out,
+                "  {} = vec.load {} [{}] : vector<{}xf32>",
+                value_name(*dst),
+                value_name(*base),
+                value_name(*offset),
+                lanes,
+            )
+            .unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecFma {
+            dst,
+            a,
+            b,
+            acc,
+            lanes,
+        } => {
+            writeln!(
+                out,
+                "  {} = vec.fma {}, {}, {} : vector<{}xf32>",
+                value_name(*dst),
+                value_name(*a),
+                value_name(*b),
+                value_name(*acc),
+                lanes,
+            )
+            .unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecReduceAdd { dst, src, lanes } => {
+            writeln!(
+                out,
+                "  {} = vec.reduce.add {} : vector<{}xf32> into f32",
+                value_name(*dst),
+                value_name(*src),
+                lanes,
+            )
+            .unwrap();
+        }
         _ => {}
     }
 }

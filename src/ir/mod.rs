@@ -342,6 +342,74 @@ pub enum Instr {
         /// if (Gap C: let bindings threaded back to outer fn_env).
         branch_bindings: Vec<(String, ValueId)>,
     },
+    /// RFC 0006 Track B (increment 1) — load `lanes` contiguous f32 values
+    /// from a heap address into a SIMD vector value.
+    ///
+    /// `base` is an i64 value holding the opaque base address (Option-C
+    /// ABI from RFC 0005 P0a). `offset` is an i64 value holding the byte
+    /// offset added to `base` before the load. `lanes` is the statically
+    /// known vector width (8 for the AVX2-class default).
+    ///
+    /// Lowers to MLIR `vector`-dialect memory access: an `llvm.inttoptr`
+    /// of the address plus an `llvm.getelementptr` byte offset, then a
+    /// vector-typed `llvm.load` of `vector<lanes x f32>`. LLVM's target
+    /// legalisation maps this to the host SIMD width (AVX2 / AVX-512 /
+    /// NEON / SVE2 / NVPTX) with no per-target code in mindc and no
+    /// runtime-support C shim — the Track B thesis-pure property.
+    ///
+    /// Gated to `std-surface` — default builds never construct this variant.
+    #[cfg(feature = "std-surface")]
+    VecLoad {
+        /// SSA destination: the loaded `vector<lanes x f32>` value.
+        dst: ValueId,
+        /// SSA id of the i64 base-address value.
+        base: ValueId,
+        /// SSA id of the i64 byte-offset value.
+        offset: ValueId,
+        /// Statically known SIMD lane count.
+        lanes: usize,
+    },
+    /// RFC 0006 Track B (increment 1) — fused multiply-add across lanes:
+    /// `dst = a * b + acc`, element-wise on `vector<lanes x f32>`.
+    ///
+    /// Lowers to the MLIR `vector.fma` op, which `convert-vector-to-llvm`
+    /// turns into the `llvm.intr.fmuladd` intrinsic — a single hardware
+    /// FMA per lane group on targets that have one.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    VecFma {
+        /// SSA destination: the `vector<lanes x f32>` result.
+        dst: ValueId,
+        /// SSA id of the first `vector<lanes x f32>` multiplicand.
+        a: ValueId,
+        /// SSA id of the second `vector<lanes x f32>` multiplicand.
+        b: ValueId,
+        /// SSA id of the `vector<lanes x f32>` accumulator addend.
+        acc: ValueId,
+        /// Statically known SIMD lane count (must match the operands).
+        lanes: usize,
+    },
+    /// RFC 0006 Track B (increment 1) — horizontal sum of a SIMD vector
+    /// down to a single f32 scalar.
+    ///
+    /// Lowers to MLIR `vector.reduction <add>`, which becomes the
+    /// `llvm.intr.vector.reduce.fadd` intrinsic. The reduction is the
+    /// tree-shaped pairwise sum LLVM emits for the target; it is *not*
+    /// bit-identical to a sequential scalar accumulation (documented in
+    /// the numerical contract — f32 stays within 1e-4 relative of the
+    /// f64 oracle, exactly as Track A's AVX2 path does).
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    VecReduceAdd {
+        /// SSA destination: the reduced f32 scalar (as an i64-packed value).
+        dst: ValueId,
+        /// SSA id of the `vector<lanes x f32>` source.
+        src: ValueId,
+        /// Statically known SIMD lane count of `src`.
+        lanes: usize,
+    },
 }
 
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
@@ -374,6 +442,10 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::ConstArray { dst, .. } | Instr::ArrayLoad { dst, .. } => Some(*dst),
         #[cfg(feature = "std-surface")]
         Instr::If { dst, .. } => Some(*dst),
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoad { dst, .. }
+        | Instr::VecFma { dst, .. }
+        | Instr::VecReduceAdd { dst, .. } => Some(*dst),
     }
 }
 
