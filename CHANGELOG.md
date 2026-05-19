@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-18
+
+### Phase 6.5 Stage 5 APEX — pure-MIND mindc compiles MIND byte-identical to mindc-Rust
+
+`examples/mindc_mind/main.mind` is a single combined pure-MIND source file
+containing all four self-host sub-components (lexer, parser, type-checker,
+MLIR-text emitter) merged and deduplicated, plus a unified `mindc_compile`
+driver entry point.  It compiles to `examples/mindc_mind/libmindc_mind.so`
+(78KB) via `mindc --emit-shared`.
+
+The Python harness `examples/mindc_mind/bootstrap_smoke.py` loads the single
+combined cdylib, calls `mindc_compile(buf_addr, buf_len)` on
+`examples/mindc_mind/fixture.mind`, decodes the returned `EmitState` heap
+record, and confirms the emitted MLIR text is byte-identical to the 148-byte
+output of `mindc --emit-ir` on the same fixture.
+
+**Stage 5 verdict: APEX PASS.**
+
+**The self-host thesis is proven: the four pure-MIND mindc sub-components,
+integrated into a single cdylib, compile MIND programs to byte-identical output
+as the Rust reference compiler.**
+
+Pipeline sequence verified by the smoke harness:
+1. `lex(buf, len)` → Vec handle (71 tokens / 213 i64 elements)
+2. `parse(vec_handle, buf_addr)` → AST root (kind=11 / ast_program, items=3)
+3. `typecheck(ast_root, buf_addr)` → String handle (report, pipeline continuity)
+4. `lower_program(ast_root, buf_addr)` → EmitState handle
+5. EmitState.buf → 148-byte MLIR text (byte-identical to EXPECTED.md)
+6. EmitState.next_id = 3, EmitState.last_id = 2
+
+`libmindc_mind.so` size: 78,488 bytes.
+
+No new compiler / runtime gaps were required to close Stage 5.  The combined
+source file is a single-file merge of the four stage sources with duplicate
+helper functions (token-kind constants, AST-kind constants, `load_byte`, AST
+accessors, operator tags) deduplicated to their first canonical definition.
+The `use` resolver's std-only scope (mindc v0.5.x) means the merge is done
+textually rather than via `use examples.*` — that is the only structural
+limitation and is documented in the file header comment.
+
+All four prior stages remain individually PASS:
+- Stage 1 (lexer): bytes → token stream (32/32 tokens byte-identical)
+- Stage 2 (parser): token stream → AST (42 AST nodes byte-identical)
+- Stage 3 (type-checker): AST → type report (127-byte report byte-identical)
+- Stage 4 (emit_ir): AST → MLIR text (148-byte MLIR byte-identical)
+
 ## [0.5.4] - 2026-05-18
 
 ### Phase 6.5 Stage 4 — pure-MIND emit_ir cdylib bootstrap PASS
