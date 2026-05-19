@@ -40,6 +40,7 @@ criterion = "0.5"
 proptest = "1.4"
 tempfile = "3"
 which = "6"
+libloading = "0.8"
 
 [lib]
 name = "libmind"
