@@ -163,31 +163,31 @@ pub fn bytes_eq_rest(buf: i64, lo: i64, hi: i64,
 // array-literal syntax (docs/rfcs/0005-phase-6-2-mindc-gaps.md Gap 2).
 
 pub fn make_byte_buf_3(b0: i64, b1: i64, b2: i64) -> i64 {
-    let h: i64 = __mind_alloc(24);
+    let h: i64 = __mind_alloc(16);
     __mind_store_i64(h + 0, b0);
-    __mind_store_i64(h + 8, b1);
-    __mind_store_i64(h + 16, b2);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
     h
 }
 
 pub fn make_byte_buf_4(b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
-    let h: i64 = __mind_alloc(32);
-    __mind_store_i64(h + 0,  b0);
-    __mind_store_i64(h + 8,  b1);
-    __mind_store_i64(h + 16, b2);
-    __mind_store_i64(h + 24, b3);
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    __mind_store_i64(h + 3, b3);
     h
 }
 
 pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64,
                        b3: i64, b4: i64, b5: i64) -> i64 {
-    let h: i64 = __mind_alloc(48);
-    __mind_store_i64(h + 0,  b0);
-    __mind_store_i64(h + 8,  b1);
-    __mind_store_i64(h + 16, b2);
-    __mind_store_i64(h + 24, b3);
-    __mind_store_i64(h + 32, b4);
-    __mind_store_i64(h + 40, b5);
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    __mind_store_i64(h + 3, b3);
+    __mind_store_i64(h + 4, b4);
+    __mind_store_i64(h + 5, b5);
     h
 }
 
