@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2504 | **Est. tokens:** ~6,172,847
-**Generated:** 2026-05-19 06:12 UTC
+**Files:** 2504 | **Est. tokens:** ~6,173,962
+**Generated:** 2026-05-19 06:21 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~35,439 |
+| `./` | 31 | ~35,834 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -47,7 +47,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,605 |
 | `examples/lexer/` | 6 | ~8,706 |
-| `examples/mindc_mind/` | 6 | ~22,302 |
+| `examples/mindc_mind/` | 6 | ~23,022 |
 | `examples/parser/` | 5 | ~17,813 |
 | `examples/typecheck/` | 5 | ~14,524 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -415,7 +415,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~17234 tok, huge) — Changelog
+- `CHANGELOG.md` (~17629 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -636,10 +636,10 @@
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
-- `FIXED_POINT_REPORT.md` (~1530 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
+- `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~182 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~14213 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+- `main.mind` (~14693 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
