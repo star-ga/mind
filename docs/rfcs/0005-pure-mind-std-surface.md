@@ -344,7 +344,8 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
 | D₂a   | Named-struct param names preserved in Phase B error messages | mindc v0.4.4 | **shipped** |
 | D₂b   | Cross-arg Named-struct *identity* matching (Vec ≠ String at call site) | TBD | deferred (design note at `docs/rfcs/0005-phase-d2b-design-note.md`) |
 | 6.1   | Self-host smoke — pure-MIND lexer (tail-recursive) | mindc v0.4.4 | **shipped** (`examples/lexer/`) |
-| 6.2   | Pure-MIND parser on top of lexer; `while`-statement support either added to mindc or recursion canonical | TBD | open |
+| 6.2a  | Pure-MIND Pratt parser on top of lexer (12 AST kinds, Option-C heap records) | mindc v0.4.4 | **shipped** (`examples/parser/`, 1,257 LOC) |
+| 6.2b  | mindc `while`-statement support + array literals + cdylib const-blob linkage | TBD | open (design at `docs/rfcs/0005-phase-6-2-mindc-gaps.md`) |
 | 6.3   | Pure-MIND type-checker | TBD | open |
 | 6.4   | Pure-MIND MLIR text emit | TBD | open |
 | 6.5   | Fixed-point bootstrap — mindc-in-MIND compiles itself | TBD | open (apex of thesis) |

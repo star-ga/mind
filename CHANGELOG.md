@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — RFC 0005 Phase 6.2a: pure-MIND self-host parser seed
+
+Second step of the self-host ladder. `examples/parser/` ships a
+~814-LOC pure-MIND Pratt parser that consumes the Vec<i64> stride-3
+token stream from the Phase 6.1 lexer and emits an AST as Option-C
+heap-record structs with i64-addr recursive fields.
+
+- **`examples/parser/main.mind`** (814 LOC) — Pratt operator-precedence
+  parser with 12 AST node kinds (`ast_int_lit`, `ast_ident`, `ast_binop`,
+  `ast_call`, `ast_fn_def`, `ast_let`, `ast_use`, `ast_return`,
+  `ast_param`, `ast_block`, `ast_program`, `ast_paren`) and 7 operator
+  tags (`op_add`/`sub`/`mul`/`div`/`lt`/`gt`/`eq`). Parses cleanly under
+  `cargo run --features "std-surface cross-module-imports" --bin mindc
+  -- examples/parser/main.mind --emit-ir` (`next_id = 90`).
+- **`examples/parser/fixture.mind`** (23 LOC) — small source program
+  exercising fn declarations, let bindings, binary ops, fn calls, and
+  `use` statements.
+- **`examples/parser/EXPECTED.md`** (190 LOC) — documents the expected
+  AST tree shape on the fixture.
+- **`examples/parser/README.md`** (230 LOC) — Phase 6.2 status + handoff
+  to Phase 6.3 (type-checker).
+
+Key design notes:
+
+- **`ParseResult` struct** `{ next_pos: i64, node: i64 }` threaded through
+  every parse helper — no implicit parser state, matching the
+  fixed-state-iteration discipline the lexer established.
+- **Variable-length child lists** (block stmts, fn params, call args,
+  program items) ride in `Vec<i64>` of AST addresses; the Vec base addr
+  stored in `child0` of the parent node and the count in `aux`. No AST
+  node references a non-i64 field — RFC 0005 P0a discipline end-to-end.
+- **Pratt fold** is a single 11-line tail-recursive function;
+  precedence + left-associativity fall out of `prec + 1` recursion on
+  the right operand.
+- **`return` keyword detection** uses byte-compare against the source
+  buffer because Phase 6.1's lexer hasn't promoted `return` to a
+  keyword. Phase 6.3 lexer growth will replace this with a
+  `tk_kw_return()` check trivially.
+
+No new mindc feature gaps surfaced. The two gaps already documented
+in `docs/rfcs/0005-phase-6-2-mindc-gaps.md` (Gap 1 `while`, Gap 2
+array literals) remain the canonical unblockers; the parser's
+heap-record boilerplate (~364 of the 814 LOC) is the same O(N)
+source-line tax Gap 2 fixes.
+
 ### Added — RFC 0005 Phase 6.1: pure-MIND self-host lexer seed
 
 First step of the self-host ladder. `examples/lexer/` ships a
