@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2502 | **Est. tokens:** ~6,168,042
-**Generated:** 2026-05-19 05:53 UTC
+**Files:** 2504 | **Est. tokens:** ~6,172,847
+**Generated:** 2026-05-19 06:12 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,605 |
 | `examples/lexer/` | 6 | ~8,706 |
-| `examples/mindc_mind/` | 4 | ~17,497 |
+| `examples/mindc_mind/` | 6 | ~22,302 |
 | `examples/parser/` | 5 | ~17,813 |
 | `examples/typecheck/` | 5 | ~14,524 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -636,6 +636,8 @@
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
+- `FIXED_POINT_REPORT.md` (~1530 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
+- `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~182 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `main.mind` (~14213 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
 ### `examples/`
