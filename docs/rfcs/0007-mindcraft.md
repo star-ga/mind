@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0007 |
 | Title | Mindcraft — pure-MIND format / lint / check toolchain |
-| Status | Planned (design) — implementation gated, see §9 |
+| Status | Planned (design) — sequencing gate CLEARED 2026-05-19, see §9 |
 | Authors | STARGA Inc. |
 | Created | 2026-05-19 |
 | Supersedes | — |
@@ -173,12 +173,19 @@ reproducible gate.
 
 ## 9. Sequencing
 
-Mindcraft implementation is **gated** behind the completion of the active
+Mindcraft implementation was **gated** behind the completion of the active
 mind-nerve work (native-encoder end-to-end measurement and the criterion
-benchmark publication). The spec and roadmap are published now; the
-build does not start until that gate clears.
+benchmark publication). **That gate CLEARED on 2026-05-19**: the native
+pure-MIND encoder runs end-to-end, measured and numerically validated
+against the reference encoder at cosine 0.999996 / top-5 route overlap
+0.9975 (≥0.92 gate, n=160) with the cross-arch Q16.16 bit-identity
+invariant preserved, and the criterion benchmark publication is complete.
+The spec and roadmap were published ahead of the gate; the build may now
+begin. (Further native-encoder latency optimization continues
+independently and is not a Mindcraft prerequisite — the gate is
+measurement + numerical correctness, both satisfied.)
 
-Phased delivery once the gate clears:
+Phased delivery now that the gate has cleared:
 
 1. Configuration surface in `Mind.toml` (`[mindcraft]`, severity model,
    overrides, per-target sections, `$schema`, inline-suppression syntax).
