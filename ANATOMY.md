@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2497 | **Est. tokens:** ~6,145,996
-**Generated:** 2026-05-19 05:34 UTC
+**Files:** 2498 | **Est. tokens:** ~6,149,953
+**Generated:** 2026-05-19 05:41 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~33,996 |
+| `./` | 31 | ~34,847 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -45,7 +45,7 @@
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
-| `examples/emit_ir/` | 4 | ~10,715 |
+| `examples/emit_ir/` | 5 | ~13,605 |
 | `examples/lexer/` | 6 | ~8,706 |
 | `examples/parser/` | 5 | ~17,813 |
 | `examples/typecheck/` | 5 | ~14,524 |
@@ -55,7 +55,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 6 | ~4,785 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~2,898 |
+| `runtime-support/` | 1 | ~3,114 |
 | `scripts/` | 2 | ~2,268 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
@@ -414,7 +414,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~15791 tok, huge) — Changelog
+- `CHANGELOG.md` (~16642 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -613,6 +613,7 @@
 - `README.md` (~1073 tok, large) — Compliance Example
 ### `examples/emit_ir/`
 
+- `bootstrap_smoke.py` (~2890 tok, huge)
 - `EXPECTED.md` (~1942 tok, huge) — Phase 6.4 — Expected IR Text
 - `fixture.mind` (~182 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `main.mind` (~6377 tok, huge) — examples/emit_ir/main.mind — RFC 0005 Phase 6.4 self-host MLIR text emitter.
@@ -697,7 +698,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~2898 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~3114 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md

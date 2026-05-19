@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-05-18
+
+### Phase 6.5 Stage 4 — pure-MIND emit_ir cdylib bootstrap PASS
+
+`examples/emit_ir/main.mind` compiles to
+`examples/emit_ir/libmindc_emit_ir.so` (31KB) via `mindc --emit-shared`.
+The Python harness `examples/emit_ir/bootstrap_smoke.py` loads all four
+pipeline libraries, runs `lex()` → `parse()` → `typecheck()` →
+`lower_program()` on `examples/emit_ir/fixture.mind`, and confirms the
+returned `EmitState.buf` string is byte-identical to the MLIR text
+documented in `examples/emit_ir/EXPECTED.md`.
+
+**Stage 4 verdict: PASS — 148-byte MLIR text byte-identical to EXPECTED.md.**
+**next_id = 3, last_id = 2.**
+
+One compiler / runtime gap closed to reach this milestone:
+
+#### Gap S4-A — `print_bytes` unresolved symbol in cdylib (blocking dlopen)
+
+`examples/emit_ir/main.mind` uses `use std.io;` and calls `print_bytes`
+in `flush_to_stdout`.  mindc compiles `print_bytes` as an external call
+(the MIND stdlib function body is not inlined into the cdylib at
+`--emit-shared` time — the same pattern as `vec_push`, `string_new`,
+etc.).  However `runtime-support/mind_intrinsics.c` provided no C stub
+for `print_bytes`, causing `dlopen` to fail with
+`undefined symbol: print_bytes`.
+
+Simultaneously, the existing `__mind_read` / `__mind_write` C stubs had
+the wrong signature: they accepted `(path_addr, path_len, buf_addr,
+buf_len)` (a leftover from an earlier path-based I/O prototype) instead
+of the `std/io.mind` contract `(fd, buf_addr, count, offset)` which
+mirrors POSIX `pread`/`pwrite`.
+
+**Fix (`runtime-support/mind_intrinsics.c`):**
+- Added `#include <unistd.h>` for POSIX `read`/`write`/`pread`/`pwrite`.
+- Replaced the stub `__mind_read` / `__mind_write` with correct POSIX
+  implementations: `offset < 0` branches to plain `read`/`write`, otherwise
+  `pread`/`pwrite` — matching `std/io.mind`'s `-1` sentinel convention.
+- Added `print_bytes(buf_addr, count) -> i64` C stub that delegates to
+  `__mind_write(1, buf_addr, count, -1)`, resolving the dlopen failure.
+
+**Stage 1 (lexer) still PASS** — re-confirmed (32/32 tokens byte-identical).
+**Stage 2 (parser) still PASS** — re-confirmed (42 AST nodes byte-identical).
+**Stage 3 (typecheck) still PASS** — re-confirmed (127-byte report byte-identical).
+
+**Stage 4 pipeline sequence:**
+1. `lex(buf, len)` → Vec handle (71 tokens / 213 i64 elements)
+2. `parse(vec_handle, buf_addr)` → AST root (kind=11, items=3)
+3. `typecheck(ast_root, buf_addr)` → String handle (pipeline continuity)
+4. `lower_program(ast_root, buf_addr)` → EmitState handle
+
+**EmitState heap layout (RFC 0005 Option C, 3×i64 at 8-byte stride):**
+- offset 0: `buf` — String handle pointing to 148-byte MLIR byte buffer
+- offset 8: `next_id` = 3 (3 fn-defs: implicit zero-result + add + compute)
+- offset 16: `last_id` = 2 (last SSA id allocated)
+
+**Bench-gate:** The new C stubs (`print_bytes`, corrected `__mind_write`)
+are off the hot frontend pipeline — no latency impact on
+`parse_typecheck_ir`.  Bench-gate delta is negligible.
+
+**The four sub-components of mindc are each independently proven:**
+- Stage 1 (lexer): bytes → token stream ✓
+- Stage 2 (parser): token stream → AST ✓
+- Stage 3 (type-checker): AST → type report ✓
+- Stage 4 (emit_ir): AST → MLIR text ✓
+
+**Stage 5 (apex) is the only remaining open step:** a combined cdylib
+wiring all four stages end-to-end into a single `main()` entry.
+
 ## [0.5.3] - 2026-05-18
 
 ### Phase 6.5 Stage 3 — pure-MIND type-checker cdylib bootstrap PASS
