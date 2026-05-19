@@ -1559,6 +1559,11 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // bit-identity gate). Track A's `__mind_blas_dot_q16` is unchanged.
     ("__mind_blas_dot_q16_v", 3),
     ("__mind_blas_matmul_rmajor_f32", 5),
+    // RFC 0006 Track B (increment 3b): native MLIR vector-dialect row-major
+    // f32 matmul.  Outer scf.for over rows, inner vectorised dot_f32_v
+    // (8-lane FMA + scalar tail) inlined per row, stores to caller-allocated
+    // y buffer, returns 0.  Same arity (5) and i64 ABI as Track A.
+    ("__mind_blas_matmul_rmajor_f32_v", 5),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
     ("__mind_read", 4),
