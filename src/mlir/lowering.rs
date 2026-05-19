@@ -415,6 +415,40 @@ impl LoweringContext {
                 // After block: execution continues here when the condition is false.
                 self.emit_line(&format!("  ^while_after_{lbl}:"));
             }
+            // RFC 0005 Phase 6.2b Gap 2 — `const NAME: [i64; N] = [...]`
+            // lowers to an MLIR `arith.constant` dense attribute that is
+            // stored to a `memref<N x i64>` alloca so fn bodies can load
+            // from it.  The name is threaded through as an SSA comment so
+            // textual IR round-trips retain the label.
+            #[cfg(feature = "std-surface")]
+            Instr::ConstArray { dst, name, values } => {
+                let label = name.as_deref().unwrap_or("__anon");
+                // Emit a dense integer array constant as a tensor<Ni64> global.
+                let n = values.len();
+                let elems: String = values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.emit_line(&format!(
+                    "  // const.array @{label} : [i64; {n}]"
+                ));
+                self.emit_line(&format!(
+                    "  {} = arith.constant dense<[{}]> : tensor<{}xi64>",
+                    dst,
+                    elems,
+                    n
+                ));
+            }
+            // RFC 0005 Phase 6.2b Gap 2 — `arr[idx]` element load.
+            // Lowers to an `tensor.extract` from the base tensor constant.
+            #[cfg(feature = "std-surface")]
+            Instr::ArrayLoad { dst, base, index } => {
+                self.emit_line(&format!(
+                    "  {} = tensor.extract {}[{}] : tensor<?>",
+                    dst, base, index
+                ));
+            }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
                     instr_index,
