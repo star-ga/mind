@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2495 | **Est. tokens:** ~6,132,617
-**Generated:** 2026-05-19 04:46 UTC
+**Files:** 2495 | **Est. tokens:** ~6,132,619
+**Generated:** 2026-05-19 04:50 UTC
 
 ## Token Budget Guide
 
@@ -46,7 +46,7 @@
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 4 | ~10,715 |
-| `examples/lexer/` | 6 | ~8,704 |
+| `examples/lexer/` | 6 | ~8,706 |
 | `examples/parser/` | 4 | ~12,269 |
 | `examples/typecheck/` | 4 | ~11,919 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -624,11 +624,11 @@
 - `hello_tensor.mind` (~140 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
 ### `examples/lexer/`
 
-- `bootstrap_smoke.py` (~2380 tok, huge)
+- `bootstrap_smoke.py` (~2367 tok, huge)
 - `BOOTSTRAP_SMOKE_REPORT.md` (~1931 tok, huge) — Phase 6.5 Stage 1 — Bootstrap Smoke Report
-- `EXPECTED.md` (~1098 tok, large) — Phase 6.1 — Expected Token Stream
+- `EXPECTED.md` (~1093 tok, large) — Phase 6.1 — Expected Token Stream
 - `fixture.mind` (~66 tok, small) — Phase 6.1 lexer smoke fixture.
-- `main.mind` (~2240 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
+- `main.mind` (~2260 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
 - `README.md` (~989 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
 ### `examples/`
 
