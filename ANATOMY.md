@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2489 | **Est. tokens:** ~6,106,280
-**Generated:** 2026-05-19 03:30 UTC
+**Files:** 2489 | **Est. tokens:** ~6,106,846
+**Generated:** 2026-05-19 03:32 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 11 | ~21,221 |
+| `docs/rfcs/` | 11 | ~21,424 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -364,11 +364,11 @@
 | `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/eval/` | 13 | ~67,493 |
+| `src/eval/` | 13 | ~67,646 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/ir/` | 3 | ~8,315 |
+| `src/ir/` | 3 | ~8,475 |
 | `src/ir/compact/` | 3 | ~14,082 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
 | `src/mlir/` | 3 | ~9,040 |
@@ -382,7 +382,7 @@
 | `src/type_checker/` | 1 | ~21,629 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 4 | ~3,165 |
-| `tests/` | 99 | ~88,972 |
+| `tests/` | 99 | ~89,022 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -574,7 +574,7 @@
 - `0002-pub-fn-c-exports.md` (~2091 tok, huge) — RFC 0002: `pub fn` → C ABI Symbol Export
 - `0003-cdylib-aot-emit.md` (~3195 tok, huge) — RFC 0003: cdylib AOT emit + symbol versioning
 - `0004-evidence-token-types.md` (~1907 tok, huge) — RFC 0004: Compile-Time Evidence Token Types
-- `0005-phase-6-2-mindc-gaps.md` (~3167 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
+- `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `000-template.md` (~1 tok, tiny)
@@ -3514,7 +3514,7 @@
 - `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3183 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~9877 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~10122 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~3012 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8203 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3555,7 +3555,7 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `mod.rs` (~3632 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~3792 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~2437 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~2246 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3763,7 +3763,7 @@
 - `smoke.rs` (~259 tok, medium) — Copyright 2025 STARGA Inc.
 - `sparse_tensor_types.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
-- `std_surface_array_literals.rs` (~1336 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_array_literals.rs` (~1329 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access.rs` (~2819 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3234 tok, huge) — Copyright 2025 STARGA Inc.

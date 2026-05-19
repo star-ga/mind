@@ -189,8 +189,9 @@ becomes load-bearing first):**
    `[i64::MAX+1, u64::MAX]` as `u64` and store the bit
    pattern as a signed-i64 with the same byte representation
    (i.e. `14695981039346656037` becomes the negative i64
-   `-3750762994362895579`).  ~30 LOC parser change; preserves
-   the seven-intrinsic surface.
+   `-3750763034362895579` per Rust's `u64 as i64` cast).
+   ~30 LOC parser change; preserves the seven-intrinsic
+   surface.
 2. **Introduce a `u64` literal suffix (`14695981039346656037u`).**
    Same idea but explicit at the source site; bigger grammar
    change but lets the type-checker distinguish "I want this
@@ -216,3 +217,14 @@ Authored 2026-05-18 alongside the mind-nerve Phase II Q16.16 substrate sprint.
 Pickup artifact for the next compiler session.
 
 Updated 2026-05-18 with Phase 6.3 Gap 3 (unsigned-i64 literals).
+
+## Status update — 2026-05-18 PM
+
+- **Gap 3 CLOSED** at `mind@7ff33d1` (`feat(parser): Gap 3 — unsigned-i64 literal reinterpret-cast`).
+  - +60 LOC parser, +153 LOC tests, +35 LOC CHANGELOG.
+  - 9/9 boundary tests pass (FNV-1a basis, u64::MAX, i64::MAX, i64::MAX+1, u64::MAX+1 reject, byte round-trip, fn-body context, range-syntax disambiguation).
+  - Smoke: `14695981039346656037` emits `const.i64 -3750763034362895579` in IR (byte-identical to Rust `as i64` cast).
+  - Bench-gate: small_matmul -0.4%, medium_mlp +4.6%, large_network +2.3% — all within +7% cap.
+- **Gap 1 (while-stmt)** — parallel coder agent in flight (worktree).
+- **Gap 2 (array literals)** — parallel coder agent in flight (worktree).
+- **v0.5.0 tag scheduled** after Gap 1 + Gap 2 merge to main.
