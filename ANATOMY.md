@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2511 | **Est. tokens:** ~6,225,398
-**Generated:** 2026-05-19 15:03 UTC
+**Files:** 2511 | **Est. tokens:** ~6,225,745
+**Generated:** 2026-05-19 15:27 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 13 | ~29,581 |
+| `docs/rfcs/` | 13 | ~29,868 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -373,7 +373,7 @@
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 3 | ~26,199 |
+| `src/mlir/` | 3 | ~26,259 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
@@ -579,7 +579,7 @@
 - `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
-- `0006-mind-blas.md` (~5457 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
+- `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~2700 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
@@ -3586,7 +3586,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `lowering.rs` (~24232 tok, huge) — Copyright 2025 STARGA Inc.
+- `lowering.rs` (~24292 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~282 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
