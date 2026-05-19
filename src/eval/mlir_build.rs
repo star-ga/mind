@@ -37,8 +37,7 @@ use tempfile::NamedTempFile;
 /// a temporary .o by `compile_runtime_support_obj` and statically linked into
 /// every --emit-shared output, making the .so self-contained.
 #[cfg(feature = "mlir-build")]
-const MIND_RUNTIME_SUPPORT_C: &str =
-    include_str!("../../runtime-support/mind_intrinsics.c");
+const MIND_RUNTIME_SUPPORT_C: &str = include_str!("../../runtime-support/mind_intrinsics.c");
 
 #[cfg(feature = "mlir-build")]
 #[derive(Clone, Debug)]

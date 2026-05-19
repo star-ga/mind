@@ -74,13 +74,15 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
     for item in &module.items {
         match item {
             Node::StructDef { name, .. } => struct_defs.push(name.clone()),
-            Node::FnDef { name, ret_type, .. } => {
-                if let Some(TypeAnn::Named(t)) = ret_type {
-                    // Defer "is this t a struct?" check to the second
-                    // pass, since StructDef may appear textually below
-                    // the FnDef. Just record the candidate name.
-                    fn_returns.insert(name.clone(), t.clone());
-                }
+            Node::FnDef {
+                name,
+                ret_type: Some(TypeAnn::Named(t)),
+                ..
+            } => {
+                // Defer "is this t a struct?" check to the second
+                // pass, since StructDef may appear textually below
+                // the FnDef. Just record the candidate name.
+                fn_returns.insert(name.clone(), t.clone());
             }
             _ => {}
         }

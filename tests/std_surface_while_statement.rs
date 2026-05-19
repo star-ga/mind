@@ -47,7 +47,9 @@ fn count_while_instrs(instrs: &[Instr]) -> usize {
     let mut n = 0;
     for instr in instrs {
         match instr {
-            Instr::While { body, cond_instrs, .. } => {
+            Instr::While {
+                body, cond_instrs, ..
+            } => {
                 n += 1;
                 // Recurse into the body and cond to count nested while loops.
                 n += count_while_instrs(body);
@@ -101,7 +103,10 @@ fn count_to(n: i64) -> i64 {
     let module = must_parse(src);
     // Verify at least the `while` keyword was consumed as a statement.
     assert!(
-        module.items.iter().any(|n| matches!(n, libmind::ast::Node::FnDef { .. })),
+        module
+            .items
+            .iter()
+            .any(|n| matches!(n, libmind::ast::Node::FnDef { .. })),
         "FnDef not found in module items"
     );
 
@@ -336,7 +341,9 @@ fn while_mlir_lowering_emits_basic_blocks() {
     m.instrs.push(Instr::ConstI64(c, 0));
     m.instrs.push(Instr::Output(c));
 
-    let text = lower_ir_to_mlir(&m).expect("while MLIR lowering failed").text;
+    let text = lower_ir_to_mlir(&m)
+        .expect("while MLIR lowering failed")
+        .text;
 
     assert!(
         text.contains("^while_header_"),

@@ -557,6 +557,10 @@ fn lower_expr(
                     }
                     #[cfg(not(feature = "std-surface"))]
                     {
+                        // `name` is only consulted under `std-surface`
+                        // (const-array shadowing); touch it here so the
+                        // binding isn't flagged unused in the default build.
+                        let _ = name;
                         true
                     }
                 })
@@ -730,8 +734,7 @@ fn lower_expr(
             // parameters which occupy the lowest ids).
             let mut cond_ir = sub_ir_from(ir);
             let cond_env = env.clone();
-            let cond_id =
-                lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
+            let cond_id = lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
 
             // ── 2. Lower the then-branch into a scratch sub-module ────────────
             //      Starts from cond_ir's highest id.
@@ -783,24 +786,14 @@ fn lower_expr(
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
-                        let id = lower_expr(
-                            value,
-                            &mut then_ir,
-                            &then_env,
-                            struct_env,
-                            receiver_types,
-                        );
+                        let id =
+                            lower_expr(value, &mut then_ir, &then_env, struct_env, receiver_types);
                         then_env.insert(name.clone(), id);
                         then_result = id;
                     }
                     other => {
-                        then_result = lower_expr(
-                            other,
-                            &mut then_ir,
-                            &then_env,
-                            struct_env,
-                            receiver_types,
-                        );
+                        then_result =
+                            lower_expr(other, &mut then_ir, &then_env, struct_env, receiver_types);
                     }
                 }
             }
@@ -816,13 +809,7 @@ fn lower_expr(
                     match stmt {
                         ast::Node::Return { value, .. } => {
                             let ret_val = value.as_ref().map(|v| {
-                                lower_expr(
-                                    v,
-                                    &mut else_ir,
-                                    &else_env,
-                                    struct_env,
-                                    receiver_types,
-                                )
+                                lower_expr(v, &mut else_ir, &else_env, struct_env, receiver_types)
                             });
                             else_ir.instrs.push(Instr::Return { value: ret_val });
                             if let Some(rv) = ret_val {
@@ -854,9 +841,7 @@ fn lower_expr(
                                 ),
                             };
                             else_env.insert(name.clone(), id);
-                            if let Some(pos) =
-                                branch_bindings.iter().position(|(n, _)| n == name)
-                            {
+                            if let Some(pos) = branch_bindings.iter().position(|(n, _)| n == name) {
                                 branch_bindings[pos].1 = id;
                             } else {
                                 branch_bindings.push((name.clone(), id));
@@ -998,13 +983,8 @@ fn lower_expr(
             for stmt in body {
                 match stmt {
                     ast::Node::Assign { name, value, .. } => {
-                        let new_id = lower_expr(
-                            value,
-                            &mut body_ir,
-                            &body_env,
-                            struct_env,
-                            receiver_types,
-                        );
+                        let new_id =
+                            lower_expr(value, &mut body_ir, &body_env, struct_env, receiver_types);
                         body_env.insert(name.clone(), new_id);
                         // Record the variable and its post-body value.
                         if let Some(pos) = mutated.iter().position(|(n, _)| n == name) {
