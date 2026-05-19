@@ -1,0 +1,31 @@
+// Hello, std.vec — minimal RFC 0005 cookbook example.
+//
+// Demonstrates the pure-MIND standard library landed in mindc v0.4.2.
+// Build with: cargo run --features "std-surface cross-module-imports" \
+//                 --bin mindc -- examples/hello_stdlib.mind --emit-ir
+//
+// The stdlib (std.vec, std.string, std.map, std.io) is bundled into the
+// mindc binary since 0.4.2 (Phase C, RFC 0005), so `use std.vec` resolves
+// with zero external file dependency.
+
+use std.vec;
+
+fn main() -> i64 {
+    // vec_new() allocates a fresh Vec on the heap via __mind_alloc.
+    // The Vec is a three-field heap record: { data_addr, len, cap }.
+    let v = vec_new();
+
+    // Every operation returns the (possibly reallocated) Vec handle —
+    // there is no hidden mutation. Capacity doubles on growth, starting
+    // at 16 slots.
+    let v = vec_push(v, 10);
+    let v = vec_push(v, 20);
+    let v = vec_push(v, 30);
+
+    let n = vec_len(v);       // 3
+    let x = vec_get(v, 1);    // 20
+
+    // vec_free releases the heap record via __mind_free.
+    vec_free(v);
+    return x;
+}
