@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2509 | **Est. tokens:** ~6,193,891
-**Generated:** 2026-05-19 09:01 UTC
+**Files:** 2509 | **Est. tokens:** ~6,193,954
+**Generated:** 2026-05-19 09:15 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/type_checker/` | 1 | ~22,070 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~4,006 |
-| `tests/` | 104 | ~104,415 |
+| `tests/` | 104 | ~104,478 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -3721,7 +3721,7 @@
 - `ir_core.rs` (~847 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
 - `ir_load_save.rs` (~715 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~1331 tok, large) — Copyright 2025 STARGA Inc.
-- `ir_negative_literals.rs` (~1659 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_negative_literals.rs` (~1722 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_stub.rs` (~219 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/ir_verification/`
 
