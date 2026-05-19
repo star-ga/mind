@@ -62,17 +62,11 @@ fn build_test_so() -> PathBuf {
     std::fs::write(&src_path, SRC).expect("write test .mind source");
 
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mindc = manifest_dir
-        .join("target")
-        .join("debug")
-        .join("mindc");
+    let mindc = manifest_dir.join("target").join("debug").join("mindc");
 
     if !mindc.exists() {
         // Try release build location as fallback.
-        let rel = manifest_dir
-            .join("target")
-            .join("release")
-            .join("mindc");
+        let rel = manifest_dir.join("target").join("release").join("mindc");
         if !rel.exists() {
             panic!(
                 "mindc binary not found at {mindc:?} or {rel:?}; \
@@ -82,7 +76,9 @@ fn build_test_so() -> PathBuf {
         }
     }
 
-    let mindc = if mindc.exists() { mindc } else {
+    let mindc = if mindc.exists() {
+        mindc
+    } else {
         manifest_dir.join("target").join("release").join("mindc")
     };
 
@@ -122,10 +118,7 @@ fn cdylib_has_no_undefined_mind_symbols() {
 
     let text = String::from_utf8_lossy(&nm_out.stdout);
 
-    let undefined: Vec<&str> = text
-        .lines()
-        .filter(|l| l.contains(" U "))
-        .collect();
+    let undefined: Vec<&str> = text.lines().filter(|l| l.contains(" U ")).collect();
 
     // The only undefined symbols allowed are libc symbols that the
     // runtime-support stub itself depends on.

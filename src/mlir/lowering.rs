@@ -469,14 +469,10 @@ impl LoweringContext {
                     .map(|v| v.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                self.emit_line(&format!(
-                    "  // const.array @{label} : [i64; {n}]"
-                ));
+                self.emit_line(&format!("  // const.array @{label} : [i64; {n}]"));
                 self.emit_line(&format!(
                     "  {} = arith.constant dense<[{}]> : tensor<{}xi64>",
-                    dst,
-                    elems,
-                    n
+                    dst, elems, n
                 ));
             }
             // RFC 0005 Phase 6.2b Gap 2 — `arr[idx]` element load.
@@ -558,20 +554,23 @@ impl LoweringContext {
                 // We inspect the last instruction in `cond_instrs`: if it is a
                 // comparison BinOp (Lt/Le/Gt/Ge/Eq/Ne), the result is already
                 // i1 and we use it directly.  Otherwise we emit `arith.trunci`.
-                let cond_already_i1 = cond_instrs.last().map(|last| {
-                    matches!(
-                        last,
-                        Instr::BinOp {
-                            op: BinOp::Lt
-                                | BinOp::Le
-                                | BinOp::Gt
-                                | BinOp::Ge
-                                | BinOp::Eq
-                                | BinOp::Ne,
-                            ..
-                        }
-                    )
-                }).unwrap_or(false);
+                let cond_already_i1 = cond_instrs
+                    .last()
+                    .map(|last| {
+                        matches!(
+                            last,
+                            Instr::BinOp {
+                                op: BinOp::Lt
+                                    | BinOp::Le
+                                    | BinOp::Gt
+                                    | BinOp::Ge
+                                    | BinOp::Eq
+                                    | BinOp::Ne,
+                                ..
+                            }
+                        )
+                    })
+                    .unwrap_or(false);
 
                 if cond_already_i1 {
                     // Comparison result is already i1 — use it directly.
@@ -832,9 +831,7 @@ fn select_arith_op(op: BinOp, dtype: &DType) -> &'static str {
             // emit a placeholder that mlir-opt will reject loudly rather
             // than silently producing wrong code.
             #[cfg(feature = "std-surface")]
-            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                "arith.andi"
-            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => "arith.andi",
         },
         _ => match op {
             BinOp::Add => "arith.addi",

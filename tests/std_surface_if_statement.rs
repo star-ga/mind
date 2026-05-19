@@ -53,7 +53,9 @@ fn count_if_instrs(instrs: &[Instr]) -> usize {
             Instr::FnDef { body, .. } => {
                 n += count_if_instrs(body);
             }
-            Instr::While { body, cond_instrs, .. } => {
+            Instr::While {
+                body, cond_instrs, ..
+            } => {
                 n += count_if_instrs(body);
                 n += count_if_instrs(cond_instrs);
             }
@@ -182,7 +184,10 @@ fn gap_c_demo(cond: i64) -> i64 {
     let has_binding = ir.instrs.iter().any(|i| {
         if let Instr::FnDef { body, .. } = i {
             body.iter().any(|bi| {
-                if let Instr::If { branch_bindings, .. } = bi {
+                if let Instr::If {
+                    branch_bindings, ..
+                } = bi
+                {
                     branch_bindings.iter().any(|(name, _)| name == "x")
                 } else {
                     false
