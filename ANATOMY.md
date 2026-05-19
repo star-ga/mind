@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2493 | **Est. tokens:** ~6,128,533
-**Generated:** 2026-05-19 04:33 UTC
+**Files:** 2495 | **Est. tokens:** ~6,132,617
+**Generated:** 2026-05-19 04:46 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~30,389 |
+| `./` | 31 | ~31,208 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -55,6 +55,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 6 | ~4,785 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
+| `runtime-support/` | 1 | ~1,231 |
 | `scripts/` | 2 | ~2,268 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
@@ -364,7 +365,7 @@
 | `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/eval/` | 13 | ~71,815 |
+| `src/eval/` | 13 | ~72,460 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -382,7 +383,7 @@
 | `src/type_checker/` | 1 | ~22,017 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 4 | ~3,165 |
-| `tests/` | 101 | ~95,657 |
+| `tests/` | 102 | ~97,046 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -413,7 +414,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~12184 tok, huge) — Changelog
+- `CHANGELOG.md` (~13003 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -692,6 +693,9 @@
 - `kv_cache.mind` (~840 tok, large) — KV-Cache for transformer inference
 - `speculative.mind` (~891 tok, large) — Speculative decoding with rejection sampling
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
+### `runtime-support/`
+
+- `mind_intrinsics.c` (~1231 tok, large) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3517,7 +3521,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower.rs` (~13849 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~3012 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~3657 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8312 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -3768,6 +3772,7 @@
 - `std_surface_array_literals.rs` (~1329 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_cdylib_link.rs` (~1389 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access.rs` (~2819 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3234 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.

@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-18
+
+### Phase 6.5 Stage 1b — cdylib emit now bundles std-surface + runtime-support
+
+`mindc <file> --emit-shared <path>` now produces a self-contained `.so` that
+`dlopen`s cleanly without any external runtime dependency beyond libc.
+
+**Root cause:** The `--emit-shared` path called `clang -shared -fPIC <main.ll>
+-o <out.so>` but did not link any implementations for the RFC 0005 intrinsics
+(`__mind_load_i64`, `__mind_alloc`, etc.) or the `std.vec` surface functions
+(`vec_new`, `vec_push`, `vec_get`, `vec_len`).  Every cdylib that used `std.vec`
+had three undefined symbols at `dlopen` time.
+
+**Fix — Option A (static-link everything into the cdylib):**
+
+- New file `runtime-support/mind_intrinsics.c`: C implementations of all seven
+  RFC 0005 intrinsics (`__mind_alloc`, `__mind_realloc`, `__mind_free`,
+  `__mind_load_i64`, `__mind_store_i64`, `__mind_read`, `__mind_write`) plus the
+  `std.vec` surface (`vec_new`, `vec_push`, `vec_get`, `vec_set`, `vec_len`,
+  `vec_cap`, `vec_addr`).  All functions use the i64 opaque-address ABI
+  (RFC 0005 P0a).  Growth policy matches the MIND spec: cap 0 → 4, then doubles.
+
+- `src/eval/mlir_build.rs`:
+  - New `const MIND_RUNTIME_SUPPORT_C: &str = include_str!(...)` — the C stub
+    is embedded in the binary at compile time (same pattern as Phase C stdlib).
+  - New `compile_runtime_support_obj(tools)` — writes the embedded C to a
+    `NamedTempFile`, compiles it to a `.o` via `clang -x c -c -fPIC -O2`.
+  - Updated `run_clang_codegen` — accepts `extra_objs: &[PathBuf]`; resets
+    `-x none` before appending object files so clang does not misinterpret the
+    pre-compiled `.o` as LLVM IR.
+  - Updated `build_all` — when `emit_shared` is set, calls
+    `compile_runtime_support_obj` and passes the result to `run_clang_codegen`.
+
+**Result:**
+
+```
+nm examples/lexer/libmindc_lexer.so | grep " U "
+# output: only malloc/free/memcpy/realloc@GLIBC (libc — always present)
+```
+
+```
+python3 examples/lexer/bootstrap_smoke.py
+# dlopen succeeds; lex() runs and returns 32 tokens
+```
+
+**Stage 1 verdict:** dlopen blocker RESOLVED.  Token-stream comparison runs to
+completion.  First divergence at token 3 — `(kind=1, lo=188, hi=189)` (got
+`tk_ident`) vs `(kind=15, lo=188, hi=189)` (expected `tk_slash`) for the `.`
+in `use std.vec;`.  This is a lexer semantic bug in `examples/lexer/main.mind`
+(`match_punct` fallthrough is `tk_ident()` not `tk_slash()`), not a linker bug
+— it is out of scope for Stage 1b and is the first open item for Stage 2.
+
+**Tests added:**
+
+- `tests/std_surface_cdylib_link.rs` — 3 tests:
+  - `cdylib_is_produced_and_nonzero`: verifies the `.so` is written and nonzero.
+  - `cdylib_has_no_undefined_mind_symbols`: `nm -D` confirms zero undefined
+    symbols beyond `malloc`/`free`/`memcpy`/`realloc`.
+  - `cdylib_dlopens_via_python`: `python3 -c "ctypes.CDLL(...)"` opens the `.so`
+    and calls `vec_new()`, asserting a nonzero handle.
+
+**Bench-gate (vs `.bench-baseline-2026-05-18-rfc0005.txt`, +7% cap):**
+
+  small_matmul:  2.770 µs  (baseline 2.80 µs, -1.1%) ✓
+  medium_mlp:    6.485 µs  (baseline 6.55 µs, -1.0%) ✓
+  large_network: 17.526 µs (baseline 17.10 µs, +2.5%) ✓
+
+The cdylib path is entirely off the hot frontend pipeline; impact is zero.
+
 ### Phase 6.5 Stage 1a — IR + MLIR gaps closed; lexer `.so` builds cleanly
 
 **Status: COMPLETE**
