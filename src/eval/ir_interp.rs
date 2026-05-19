@@ -219,6 +219,17 @@ fn eval_binop(op: BinOp, left: Value, right: Value) -> Value {
             BinOp::Ge => (a >= b) as i64,
             BinOp::Eq => (a == b) as i64,
             BinOp::Ne => (a != b) as i64,
+            // Phase 6.5 Stage 1a — bitwise ops interpreted on i64.
+            #[cfg(feature = "std-surface")]
+            BinOp::BitAnd => a & b,
+            #[cfg(feature = "std-surface")]
+            BinOp::BitOr => a | b,
+            #[cfg(feature = "std-surface")]
+            BinOp::BitXor => a ^ b,
+            #[cfg(feature = "std-surface")]
+            BinOp::Shl => a.wrapping_shl(b as u32),
+            #[cfg(feature = "std-surface")]
+            BinOp::Shr => a >> b,
         }),
         (Value::Tensor(t), Value::Int(s)) => tensor_scalar(op, t, s as f64, true),
         (Value::Int(s), Value::Tensor(t)) => tensor_scalar(op, t, s as f64, false),
@@ -296,6 +307,10 @@ fn tensor_scalar(op: BinOp, tensor: TensorVal, scalar: f64, tensor_left: bool) -
                 0.0
             }
         }
+        // Bitwise ops on tensors: fall through to 0.0 (not meaningful for
+        // floating-point data; gated so default build is byte-identical).
+        #[cfg(feature = "std-surface")]
+        BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => 0.0,
     });
     Value::Tensor(TensorVal::new(dtype, shape, fill))
 }
@@ -352,6 +367,9 @@ fn tensor_tensor(op: BinOp, a: TensorVal, b: TensorVal) -> Value {
                     0.0
                 }
             }
+            // Bitwise ops not meaningful on floating-point tensors.
+            #[cfg(feature = "std-surface")]
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => 0.0,
         }),
         _ => None,
     };

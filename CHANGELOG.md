@@ -7,24 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Phase 6.5 Stage 1 — pure-MIND lexer cdylib bootstrap smoke
+### Phase 6.5 Stage 1a — IR + MLIR gaps closed; lexer `.so` builds cleanly
 
-**Status: BLOCKED-BY `Instr::If` missing from mindc IR**
+**Status: COMPLETE**
 
-`examples/lexer/main.mind` compiles to MLIR but `mlir-opt` rejects the output
-because `if`/`return` bodies are lowered flat into a single basic block, placing
-`func.return` ops in the middle of the block (invalid MLIR). A secondary blocker
-is `BitOp::And` (`&`) not mapped through the IR, causing `load_byte`'s mask
-expression to silently emit zero.
+Three IR-side compiler gaps that blocked `examples/lexer/main.mind` from
+compiling to a valid shared library are now closed. The `.so` builds with no
+`mlir-opt` errors and the `lex` symbol is exported at the correct address.
 
-Added artifacts:
-- `examples/lexer/bootstrap_smoke.py` — complete ctypes harness; will execute
-  correctly once `libmindc_lexer.so` is buildable.
-- `examples/lexer/BOOTSTRAP_SMOKE_REPORT.md` — full failure analysis, three-gap
-  breakdown, Stage 2 prerequisites.
+**Gap A — `Instr::If` / proper basic-block control flow (blocking)**
 
-Next step (Stage 2): add `Instr::If` to `src/ir/mod.rs`, lower
-`ast::Node::If` into it, and emit `scf.if` in `src/mlir/lowering.rs`.
+`ast::Node::If` was previously lowered by emitting both branch bodies into the
+same flat instruction stream, producing `func.return` mid-block in the MLIR
+output — which `mlir-opt` rejects. The fix:
+
+- `src/ir/mod.rs`: new `#[cfg(feature = "std-surface")] Instr::If { cond_id,
+  cond_instrs, then_instrs, then_result, else_instrs, else_result, dst,
+  branch_bindings }` variant. `instruction_dst` updated accordingly.
+- `src/eval/lower.rs`: `ast::Node::If` now lowers into three sub-IRModules
+  (cond / then / else) with chained SSA counters to avoid ValueId collisions,
+  then packages them as a single `Instr::If`. Helper functions `sub_ir_from` and
+  `sub_ir_from_after` inherit `struct_defs` and `const_array_defs` from the
+  parent so FieldAccess works inside branch conditions.
+- `src/mlir/lowering.rs`: `Instr::If` emits `cf.cond_br` dispatch plus three
+  named basic blocks (`^if_then_N`, `^if_else_N`, `^if_after_N`) where `N =
+  dst.0` (the globally-unique SSA id). The emitter detects whether the condition
+  value is already `i1` (comparison BinOp) or needs `arith.trunci`. Branches
+  that end with `Instr::Return` skip the trailing `cf.br ^if_after_N`. The
+  `FnDef` closer now checks the last non-empty line of the emitted body for a
+  block terminator instead of scanning for any `return` anywhere — this prevents
+  the "block with no terminator" MLIR error when a function ends with a fallback
+  expression after a chain of early-return `if` checks.
+- `src/ir/verify.rs`, `src/ir/print.rs`: `Instr::If` arms added.
+
+**Gap B — bitwise BinOps (`&`, `|`, `^`, `<<`, `>>`) (secondary)**
+
+`ast::Node::Bitwise` fell through to the `_` catch-all and emitted `const.i64 0`,
+silently mis-compiling `load_byte`'s byte-mask expression. Fixed:
+
+- `src/ir/mod.rs`: `#[cfg(feature = "std-surface")] BinOp::BitAnd | BitOr |
+  BitXor | Shl | Shr` variants added.
+- `src/eval/lower.rs`: `ast::Node::Bitwise` arm maps all five ops to the
+  corresponding IR `BinOp`.
+- `src/mlir/lowering.rs`: maps `BitAnd→arith.andi`, `BitOr→arith.ori`,
+  `BitXor→arith.xori`, `Shl→arith.shli`, `Shr→arith.shrsi`.
+- `src/eval/ir_interp.rs`, `src/eval/mlir_export.rs`, `src/ir/compact/emit.rs`,
+  `src/opt/ir_canonical.rs`: non-exhaustive match arms extended; constant-folding
+  of bitwise ops added to `ir_canonical`.
+
+**Gap C — `let` bindings inside `if` branches visible in outer scope (latent)**
+
+`let` bindings introduced inside a then/else branch were discarded; the outer
+`fn_env` never learned about them. Fixed via `branch_bindings:
+Vec<(String, ValueId)>` on `Instr::If`, populated during lowering and threaded
+back to `fn_env` in the FnDef body loop.
+
+**Tests added**
+
+- `tests/std_surface_if_statement.rs` — 7 tests (4 IR-level, 1 MLIR-level,
+  1 Gap C, 1 lexer-style early-return chain).
+- `tests/std_surface_bitwise_binops.rs` — 11 tests (5 IR-level for all bitwise
+  ops, 6 MLIR-level verifying arith dialect opcode names).
+- Existing tests updated (map/string/vec/while helpers now recurse into
+  `Instr::If` branches) — all pass.
+
+**Bench-gate (vs `.bench-baseline-2026-05-18-rfc0005.txt`, +7% cap)**
+
+  small_matmul:  +1.2%  ✓
+  medium_mlp:    +0.1%  ✓
+  large_network: +4.2%  ✓
 
 ## [0.5.0] - 2026-05-18
 
