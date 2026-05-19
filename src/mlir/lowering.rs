@@ -673,7 +673,7 @@ impl LoweringContext {
                     dst.0, offset.0
                 ));
                 self.emit_line(&format!(
-                    "    %{0} = llvm.load %vptr{0} : !llvm.ptr -> vector<{1}xf32>",
+                    "    %{0} = llvm.load %vptr{0} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{1}xf32>",
                     dst.0, l
                 ));
                 self.values.insert(*dst, ValueKind::VectorF32 { lanes: l });
@@ -773,7 +773,7 @@ impl LoweringContext {
                     dst.0, offset.0
                 ));
                 self.emit_line(&format!(
-                    "    %{0} = llvm.load %viptr{0} : !llvm.ptr -> vector<{1}xi32>",
+                    "    %{0} = llvm.load %viptr{0} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{1}xi32>",
                     dst.0, l
                 ));
                 self.values.insert(*dst, ValueKind::VectorI64 { lanes: l });
@@ -1097,10 +1097,10 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         self.emit_line(&format!(
-            "      %vd_av_{d} = llvm.load %vd_ai_{d} : !llvm.ptr -> vector<{l}xf32>"
+            "      %vd_av_{d} = llvm.load %vd_ai_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xf32>"
         ));
         self.emit_line(&format!(
-            "      %vd_bv_{d} = llvm.load %vd_bi_{d} : !llvm.ptr -> vector<{l}xf32>"
+            "      %vd_bv_{d} = llvm.load %vd_bi_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xf32>"
         ));
         self.emit_line(&format!(
             "      %vd_fa_{d} = vector.fma %vd_av_{d}, %vd_bv_{d}, %vd_acc_{d} : \
@@ -1237,10 +1237,10 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         self.emit_line(&format!(
-            "      %vq_av_{d} = llvm.load %vq_ai_{d} : !llvm.ptr -> vector<{l}xi32>"
+            "      %vq_av_{d} = llvm.load %vq_ai_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xi32>"
         ));
         self.emit_line(&format!(
-            "      %vq_bv_{d} = llvm.load %vq_bi_{d} : !llvm.ptr -> vector<{l}xi32>"
+            "      %vq_bv_{d} = llvm.load %vq_bi_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xi32>"
         ));
         self.emit_line(&format!(
             "      %vq_aw_{d} = arith.extsi %vq_av_{d} : vector<{l}xi32> to vector<{l}xi64>"
@@ -1399,10 +1399,10 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         self.emit_line(&format!(
-            "      %vl_av_{d} = llvm.load %vl_ai_{d} : !llvm.ptr -> vector<{l}xi32>"
+            "      %vl_av_{d} = llvm.load %vl_ai_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xi32>"
         ));
         self.emit_line(&format!(
-            "      %vl_bv_{d} = llvm.load %vl_bi_{d} : !llvm.ptr -> vector<{l}xi32>"
+            "      %vl_bv_{d} = llvm.load %vl_bi_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xi32>"
         ));
         self.emit_line(&format!(
             "      %vl_aw_{d} = arith.extsi %vl_av_{d} : vector<{l}xi32> to vector<{l}xi64>"
@@ -1564,10 +1564,10 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         self.emit_line(&format!(
-            "      %vm_av_{d} = llvm.load %vm_ai_{d} : !llvm.ptr -> vector<{l}xf32>"
+            "      %vm_av_{d} = llvm.load %vm_ai_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xf32>"
         ));
         self.emit_line(&format!(
-            "      %vm_bv_{d} = llvm.load %vm_bi_{d} : !llvm.ptr -> vector<{l}xf32>"
+            "      %vm_bv_{d} = llvm.load %vm_bi_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xf32>"
         ));
         self.emit_line(&format!(
             "      %vm_di_{d} = arith.subf %vm_av_{d}, %vm_bv_{d} : vector<{l}xf32>"
