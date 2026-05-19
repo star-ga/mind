@@ -443,6 +443,17 @@ fn binop_str(op: BinOp) -> &'static str {
         BinOp::Ge => "ge",
         BinOp::Eq => "eq",
         BinOp::Ne => "ne",
+        // Phase 6.5 Stage 1a — bitwise ops.
+        #[cfg(feature = "std-surface")]
+        BinOp::BitAnd => "bitand",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitOr => "bitor",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitXor => "bitxor",
+        #[cfg(feature = "std-surface")]
+        BinOp::Shl => "shl",
+        #[cfg(feature = "std-surface")]
+        BinOp::Shr => "shr",
     }
 }
 

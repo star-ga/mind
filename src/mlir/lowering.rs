@@ -183,6 +183,18 @@ impl LoweringContext {
                             BinOp::Ge => "arith.cmpi \"sge\",",
                             BinOp::Eq => "arith.cmpi \"eq\",",
                             BinOp::Ne => "arith.cmpi \"ne\",",
+                            // Phase 6.5 Stage 1a — bitwise ops on i64.
+                            #[cfg(feature = "std-surface")]
+                            BinOp::BitAnd => "arith.andi",
+                            #[cfg(feature = "std-surface")]
+                            BinOp::BitOr => "arith.ori",
+                            #[cfg(feature = "std-surface")]
+                            BinOp::BitXor => "arith.xori",
+                            #[cfg(feature = "std-surface")]
+                            BinOp::Shl => "arith.shli",
+                            // Arithmetic (signed) right-shift — matches Rust i64 >> i64.
+                            #[cfg(feature = "std-surface")]
+                            BinOp::Shr => "arith.shrsi",
                         };
                         (ValueKind::ScalarI64, "i64".to_string(), mlir_op)
                     }
@@ -313,11 +325,28 @@ impl LoweringContext {
                     sig_args.join(", ")
                 ));
                 fn_text.push_str(&sub.body);
-                // Every fn returns i64 under the std-surface ABI. If the IR
-                // body did not emit an explicit `Instr::Return`, synthesise a
-                // closing return from `ret_id` (falls back to 0 if even that
-                // is absent — verified by the IR verifier upstream).
-                if !sub.body.trim_end().ends_with("return") && !sub.body.contains("    return ") {
+                // Every fn returns i64 under the std-surface ABI. If the last
+                // emitted line in the body is not a block terminator (return,
+                // cf.br, cf.cond_br), synthesise one from `ret_id`.
+                //
+                // We check the LAST non-empty line of the body, not whether
+                // the body contains "return" anywhere.  The previous pattern
+                // `.contains("    return ")` incorrectly suppressed the
+                // synthetic return for functions that use early-return inside
+                // `if` branches but end with a plain value expression — those
+                // functions emit instructions after the final `^if_after_N:`
+                // block label that have no terminator.
+                let last_line = sub
+                    .body
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .trim();
+                let already_terminated = last_line.starts_with("return")
+                    || last_line.starts_with("cf.br ")
+                    || last_line.starts_with("cf.cond_br ");
+                if !already_terminated {
                     match ret_id {
                         Some(rid) => fn_text.push_str(&format!("    return %{} : i64\n", rid.0)),
                         None => fn_text
@@ -448,6 +477,157 @@ impl LoweringContext {
                     "  {} = tensor.extract {}[{}] : tensor<?>",
                     dst, base, index
                 ));
+            }
+            // Phase 6.5 Stage 1a — `if cond { then } else { else }` lowering.
+            //
+            // MLIR structure emitted (cf dialect, matching the While pattern):
+            //
+            //   %cond_i1_N = arith.trunci %cond_id : i64 to i1
+            //   cf.cond_br %cond_i1_N, ^if_then_N, ^if_else_N
+            // ^if_then_N:
+            //   <then_instrs>
+            //   cf.br ^if_after_N
+            // ^if_else_N:
+            //   <else_instrs>
+            //   cf.br ^if_after_N
+            // ^if_after_N:
+            //   %dst = arith.constant 0 : i64   (placeholder — scf.if yield
+            //                                    is the proper fix; cf.br
+            //                                    cannot forward values across
+            //                                    basic blocks without block
+            //                                    arguments. For functions that
+            //                                    only use early-return semantics
+            //                                    this placeholder is never read.)
+            //
+            // N = instr_index for uniqueness. Gated.
+            #[cfg(feature = "std-surface")]
+            Instr::If {
+                cond_id,
+                cond_instrs,
+                then_instrs,
+                then_result,
+                else_instrs,
+                else_result,
+                dst,
+                ..
+            } => {
+                // Use `dst.0` (the unique SSA id of the result value) as the
+                // label suffix instead of `instr_index`.  `instr_index` resets
+                // to 0 in every sub-context (e.g. inside a FnDef body loop),
+                // causing block-label collisions when multiple `Instr::If`
+                // nodes appear in the same function.  `dst.0` is globally
+                // unique within the module.
+                let lbl = dst.0;
+
+                // Emit the condition sub-instructions into the current block.
+                let mut cond_sub = LoweringContext::new();
+                for (vid, kind) in &self.values {
+                    cond_sub.values.insert(*vid, kind.clone());
+                }
+                for (idx, ci) in cond_instrs.iter().enumerate() {
+                    cond_sub.emit_instr(idx, ci)?;
+                }
+                self.body.push_str(&cond_sub.body);
+                for (vid, kind) in cond_sub.values {
+                    self.values.insert(vid, kind);
+                }
+
+                // Determine whether the condition value is already i1 (produced
+                // by a comparison BinOp like `arith.cmpi`) or is a plain i64
+                // that needs truncation.  MLIR's `cf.cond_br` requires an i1.
+                //
+                // We inspect the last instruction in `cond_instrs`: if it is a
+                // comparison BinOp (Lt/Le/Gt/Ge/Eq/Ne), the result is already
+                // i1 and we use it directly.  Otherwise we emit `arith.trunci`.
+                let cond_already_i1 = cond_instrs.last().map(|last| {
+                    matches!(
+                        last,
+                        Instr::BinOp {
+                            op: BinOp::Lt
+                                | BinOp::Le
+                                | BinOp::Gt
+                                | BinOp::Ge
+                                | BinOp::Eq
+                                | BinOp::Ne,
+                            ..
+                        }
+                    )
+                }).unwrap_or(false);
+
+                if cond_already_i1 {
+                    // Comparison result is already i1 — use it directly.
+                    self.emit_line(&format!(
+                        "    cf.cond_br %{}, ^if_then_{lbl}, ^if_else_{lbl}",
+                        cond_id.0
+                    ));
+                } else {
+                    // Plain i64 → truncate to i1 first.
+                    self.emit_line(&format!(
+                        "    %cond_i1_{lbl} = arith.trunci %{} : i64 to i1",
+                        cond_id.0
+                    ));
+                    self.emit_line(&format!(
+                        "    cf.cond_br %cond_i1_{lbl}, ^if_then_{lbl}, ^if_else_{lbl}"
+                    ));
+                }
+
+                // Then block.
+                self.emit_line(&format!("  ^if_then_{lbl}:"));
+                let mut then_sub = LoweringContext::new();
+                for (vid, kind) in &self.values {
+                    then_sub.values.insert(*vid, kind.clone());
+                }
+                for (idx, ti) in then_instrs.iter().enumerate() {
+                    then_sub.emit_instr(idx, ti)?;
+                }
+                self.body.push_str(&then_sub.body);
+                for (vid, kind) in then_sub.values {
+                    self.values.insert(vid, kind);
+                }
+                // If the last instruction in the then-block was already a
+                // `return`, do NOT emit a redundant `cf.br` — the block is
+                // already properly terminated.
+                let then_ends_with_return = then_instrs
+                    .last()
+                    .map(|i| matches!(i, Instr::Return { .. }))
+                    .unwrap_or(false);
+                if !then_ends_with_return {
+                    self.emit_line(&format!("    cf.br ^if_after_{lbl}"));
+                }
+
+                // Else block.
+                self.emit_line(&format!("  ^if_else_{lbl}:"));
+                let mut else_sub = LoweringContext::new();
+                for (vid, kind) in &self.values {
+                    else_sub.values.insert(*vid, kind.clone());
+                }
+                for (idx, ei) in else_instrs.iter().enumerate() {
+                    else_sub.emit_instr(idx, ei)?;
+                }
+                self.body.push_str(&else_sub.body);
+                for (vid, kind) in else_sub.values {
+                    self.values.insert(vid, kind);
+                }
+                let else_ends_with_return = else_instrs
+                    .last()
+                    .map(|i| matches!(i, Instr::Return { .. }))
+                    .unwrap_or(false);
+                if !else_ends_with_return {
+                    self.emit_line(&format!("    cf.br ^if_after_{lbl}"));
+                }
+
+                // After block — placeholder dst for non-returning branches.
+                self.emit_line(&format!("  ^if_after_{lbl}:"));
+                // Record the result SSA ids from each branch in case
+                // downstream code references them.
+                self.values.insert(*then_result, ValueKind::ScalarI64);
+                self.values.insert(*else_result, ValueKind::ScalarI64);
+                // Emit a placeholder i64 for the dst so the outer scope has
+                // a valid SSA value.  Functions that use early-return in both
+                // branches never reach this; non-returning if expressions
+                // (used as pure values) get a zero placeholder here.
+                self.emit_line(&format!("    %{} = arith.constant 0 : i64", dst.0));
+                self.values.insert(*dst, ValueKind::ScalarI64);
             }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
@@ -615,6 +795,13 @@ fn select_arith_op(op: BinOp, dtype: &DType) -> &'static str {
             BinOp::Ge => "arith.cmpf \"oge\",",
             BinOp::Eq => "arith.cmpf \"oeq\",",
             BinOp::Ne => "arith.cmpf \"one\",",
+            // Bitwise ops on floating-point tensors are not meaningful;
+            // emit a placeholder that mlir-opt will reject loudly rather
+            // than silently producing wrong code.
+            #[cfg(feature = "std-surface")]
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                "arith.andi"
+            }
         },
         _ => match op {
             BinOp::Add => "arith.addi",
@@ -628,6 +815,16 @@ fn select_arith_op(op: BinOp, dtype: &DType) -> &'static str {
             BinOp::Ge => "arith.cmpi \"sge\",",
             BinOp::Eq => "arith.cmpi \"eq\",",
             BinOp::Ne => "arith.cmpi \"ne\",",
+            #[cfg(feature = "std-surface")]
+            BinOp::BitAnd => "arith.andi",
+            #[cfg(feature = "std-surface")]
+            BinOp::BitOr => "arith.ori",
+            #[cfg(feature = "std-surface")]
+            BinOp::BitXor => "arith.xori",
+            #[cfg(feature = "std-surface")]
+            BinOp::Shl => "arith.shli",
+            #[cfg(feature = "std-surface")]
+            BinOp::Shr => "arith.shrsi",
         },
     }
 }

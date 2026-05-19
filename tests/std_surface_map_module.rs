@@ -47,9 +47,57 @@ fn fn_body<'a>(ir: &'a libmind::ir::IRModule, name: &str) -> &'a [Instr] {
 }
 
 fn count_calls(body: &[Instr], callee: &str) -> usize {
-    body.iter()
-        .filter(|i| matches!(i, Instr::Call { name, .. } if name == callee))
-        .count()
+    let mut n = 0;
+    for instr in body {
+        match instr {
+            Instr::Call { name, .. } if name == callee => n += 1,
+            // Recurse into If branches so that calls inside conditional code
+            // are counted even after Phase 6.5 Stage 1a moved them into
+            // Instr::If sub-instruction streams. Fully recursive to handle
+            // nested ifs (else-branches containing further ifs).
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                n += count_calls_recursive(cond_instrs, callee);
+                n += count_calls_recursive(then_instrs, callee);
+                n += count_calls_recursive(else_instrs, callee);
+            }
+            _ => {}
+        }
+    }
+    n
+}
+
+/// Fully recursive call-count that descends into all sub-IR streams
+/// (Instr::If branches, Instr::While bodies, nested FnDef bodies).
+fn count_calls_recursive(instrs: &[Instr], callee: &str) -> usize {
+    let mut n = 0;
+    for instr in instrs {
+        match instr {
+            Instr::Call { name, .. } if name == callee => n += 1,
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                n += count_calls_recursive(cond_instrs, callee);
+                n += count_calls_recursive(then_instrs, callee);
+                n += count_calls_recursive(else_instrs, callee);
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                n += count_calls_recursive(cond_instrs, callee);
+                n += count_calls_recursive(body, callee);
+            }
+            _ => {}
+        }
+    }
+    n
 }
 
 #[test]

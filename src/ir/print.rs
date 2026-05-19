@@ -306,6 +306,25 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        // Phase 6.5 Stage 1a — conditional branch.
+        #[cfg(feature = "std-surface")]
+        Instr::If {
+            dst,
+            cond_id,
+            then_result,
+            else_result,
+            ..
+        } => {
+            writeln!(
+                out,
+                "  {} = if cond={} then={} else={}",
+                value_name(*dst),
+                value_name(*cond_id),
+                value_name(*then_result),
+                value_name(*else_result),
+            )
+            .unwrap();
+        }
         _ => {}
     }
 }
@@ -327,6 +346,16 @@ fn format_binop(op: BinOp) -> &'static str {
         BinOp::Ge => "ge",
         BinOp::Eq => "eq",
         BinOp::Ne => "ne",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitAnd => "bitand",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitOr => "bitor",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitXor => "bitxor",
+        #[cfg(feature = "std-surface")]
+        BinOp::Shl => "shl",
+        #[cfg(feature = "std-surface")]
+        BinOp::Shr => "shr",
     }
 }
 

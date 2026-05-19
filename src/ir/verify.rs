@@ -239,6 +239,12 @@ fn validate_operands(
             check_defined(*base)?;
             check_defined(*index)?;
         }
+        // Phase 6.5 Stage 1a: If — condition, then, and else each reside in
+        // their own sub-instruction streams (separate SSA namespaces from the
+        // outer scope).  The outer verifier treats the node as an opaque
+        // control-flow unit. Gated.
+        #[cfg(feature = "std-surface")]
+        Instr::If { .. } => {}
     }
 
     Ok(())

@@ -47,13 +47,26 @@ fn count_while_instrs(instrs: &[Instr]) -> usize {
     let mut n = 0;
     for instr in instrs {
         match instr {
-            Instr::While { body, .. } => {
+            Instr::While { body, cond_instrs, .. } => {
                 n += 1;
-                // Recurse into the body to count nested while loops.
+                // Recurse into the body and cond to count nested while loops.
                 n += count_while_instrs(body);
+                n += count_while_instrs(cond_instrs);
             }
             Instr::FnDef { body, .. } => {
                 n += count_while_instrs(body);
+            }
+            // Recurse into If branches: a while loop may live inside an if arm
+            // (Phase 6.5 Stage 1a moves if-body instructions into sub-streams).
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                n += count_while_instrs(cond_instrs);
+                n += count_while_instrs(then_instrs);
+                n += count_while_instrs(else_instrs);
             }
             _ => {}
         }
