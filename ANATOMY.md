@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2489 | **Est. tokens:** ~6,109,531
-**Generated:** 2026-05-19 03:49 UTC
+**Files:** 2491 | **Est. tokens:** ~6,114,061
+**Generated:** 2026-05-19 04:05 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~29,487 |
+| `./` | 31 | ~29,706 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -46,7 +46,7 @@
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 4 | ~10,715 |
-| `examples/lexer/` | 4 | ~4,393 |
+| `examples/lexer/` | 6 | ~8,704 |
 | `examples/parser/` | 4 | ~12,269 |
 | `examples/typecheck/` | 4 | ~11,919 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -413,7 +413,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~11282 tok, huge) — Changelog
+- `CHANGELOG.md` (~11501 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -623,6 +623,8 @@
 - `hello_tensor.mind` (~140 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
 ### `examples/lexer/`
 
+- `bootstrap_smoke.py` (~2380 tok, huge)
+- `BOOTSTRAP_SMOKE_REPORT.md` (~1931 tok, huge) — Phase 6.5 Stage 1 — Bootstrap Smoke Report
 - `EXPECTED.md` (~1098 tok, large) — Phase 6.1 — Expected Token Stream
 - `fixture.mind` (~66 tok, small) — Phase 6.1 lexer smoke fixture.
 - `main.mind` (~2240 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke

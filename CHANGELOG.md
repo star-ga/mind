@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 6.5 Stage 1 — pure-MIND lexer cdylib bootstrap smoke
+
+**Status: BLOCKED-BY `Instr::If` missing from mindc IR**
+
+`examples/lexer/main.mind` compiles to MLIR but `mlir-opt` rejects the output
+because `if`/`return` bodies are lowered flat into a single basic block, placing
+`func.return` ops in the middle of the block (invalid MLIR). A secondary blocker
+is `BitOp::And` (`&`) not mapped through the IR, causing `load_byte`'s mask
+expression to silently emit zero.
+
+Added artifacts:
+- `examples/lexer/bootstrap_smoke.py` — complete ctypes harness; will execute
+  correctly once `libmindc_lexer.so` is buildable.
+- `examples/lexer/BOOTSTRAP_SMOKE_REPORT.md` — full failure analysis, three-gap
+  breakdown, Stage 2 prerequisites.
+
+Next step (Stage 2): add `Instr::If` to `src/ir/mod.rs`, lower
+`ast::Node::If` into it, and emit `scf.if` in `src/mlir/lowering.rs`.
+
 ## [0.5.0] - 2026-05-18
 
 ### Milestone: RFC 0005 Phase 6.2b — three compiler gaps closed; self-host substrate complete
