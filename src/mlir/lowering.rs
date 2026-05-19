@@ -418,6 +418,11 @@ impl LoweringContext {
                 for (vid, kind) in cond_sub.values {
                     self.values.insert(vid, kind);
                 }
+                // Bubble up extern_calls from the condition sub-context.
+                #[cfg(feature = "std-surface")]
+                for ec in cond_sub.extern_calls {
+                    self.extern_calls.insert(ec);
+                }
                 // i64 condition → i1 for cf.cond_br.
                 self.emit_line(&format!(
                     "    %cond_bool_{lbl} = arith.trunci %{} : i64 to i1",
@@ -438,6 +443,11 @@ impl LoweringContext {
                 self.body.push_str(&body_sub.body);
                 for (vid, kind) in body_sub.values {
                     self.values.insert(vid, kind);
+                }
+                // Bubble up extern_calls from the body sub-context.
+                #[cfg(feature = "std-surface")]
+                for ec in body_sub.extern_calls {
+                    self.extern_calls.insert(ec);
                 }
                 // Back-edge: loop back to the header.
                 self.emit_line(&format!("    cf.br ^while_header_{lbl}"));
@@ -536,6 +546,10 @@ impl LoweringContext {
                 for (vid, kind) in cond_sub.values {
                     self.values.insert(vid, kind);
                 }
+                // Bubble up extern_calls from the condition sub-context.
+                for ec in cond_sub.extern_calls {
+                    self.extern_calls.insert(ec);
+                }
 
                 // Determine whether the condition value is already i1 (produced
                 // by a comparison BinOp like `arith.cmpi`) or is a plain i64
@@ -589,6 +603,10 @@ impl LoweringContext {
                 for (vid, kind) in then_sub.values {
                     self.values.insert(vid, kind);
                 }
+                // Bubble up extern_calls from the then sub-context.
+                for ec in then_sub.extern_calls {
+                    self.extern_calls.insert(ec);
+                }
                 // If the last instruction in the then-block was already a
                 // `return`, do NOT emit a `cf.br` — the block is already
                 // properly terminated.  Otherwise forward then_result to the
@@ -616,6 +634,10 @@ impl LoweringContext {
                 self.body.push_str(&else_sub.body);
                 for (vid, kind) in else_sub.values {
                     self.values.insert(vid, kind);
+                }
+                // Bubble up extern_calls from the else sub-context.
+                for ec in else_sub.extern_calls {
+                    self.extern_calls.insert(ec);
                 }
                 let else_ends_with_return = else_instrs
                     .last()

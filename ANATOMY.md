@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2496 | **Est. tokens:** ~6,139,865
-**Generated:** 2026-05-19 05:16 UTC
+**Files:** 2497 | **Est. tokens:** ~6,145,989
+**Generated:** 2026-05-19 05:31 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~32,397 |
+| `./` | 31 | ~33,989 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -48,14 +48,14 @@
 | `examples/emit_ir/` | 4 | ~10,715 |
 | `examples/lexer/` | 6 | ~8,706 |
 | `examples/parser/` | 5 | ~17,813 |
-| `examples/typecheck/` | 4 | ~11,919 |
+| `examples/typecheck/` | 5 | ~14,524 |
 | `examples/zoo/` | 6 | ~12,885 |
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 6 | ~4,785 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~1,231 |
+| `runtime-support/` | 1 | ~2,898 |
 | `scripts/` | 2 | ~2,268 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
@@ -372,7 +372,7 @@
 | `src/ir/` | 3 | ~9,248 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 3 | ~11,966 |
+| `src/mlir/` | 3 | ~12,226 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
@@ -414,7 +414,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~14192 tok, huge) — Changelog
+- `CHANGELOG.md` (~15784 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -653,9 +653,10 @@
 - `tiny_edge_model.mind` (~1900 tok, huge) — Tiny Edge Model Example
 ### `examples/typecheck/`
 
+- `bootstrap_smoke.py` (~2608 tok, huge)
 - `EXPECTED.md` (~2015 tok, huge) — Phase 6.3 — Expected Type-Check Report
 - `fixture.mind` (~198 tok, small) — Phase 6.3 type-checker smoke fixture.
-- `main.mind` (~7094 tok, huge) — examples/typecheck/main.mind — RFC 0005 Phase 6.3 self-host
+- `main.mind` (~7091 tok, huge) — examples/typecheck/main.mind — RFC 0005 Phase 6.3 self-host
 - `README.md` (~2612 tok, huge) — RFC 0005 Phase 6.3 — Self-Host Type-Checker Seed
 ### `examples/zoo/`
 
@@ -696,7 +697,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~1231 tok, large) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~2898 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3573,7 +3574,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `lowering.rs` (~9999 tok, huge) — Copyright 2025 STARGA Inc.
+- `lowering.rs` (~10259 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~282 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
