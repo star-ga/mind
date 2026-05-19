@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — mind-blas Track A (RFC 0006)
+
+Six `__mind_blas_*` i64-ABI intrinsics added to `runtime-support/mind_intrinsics.c`
+with AVX2 fast paths (function-level `__attribute__((target("avx2,fma")))`) and
+scalar fallbacks selected once at `.so`-load time via `__builtin_cpu_supports`:
+
+- `__mind_blas_dot_f32(a, b, len) -> i64` — 8-lane FMA, returns f32 bits in low 32.
+- `__mind_blas_dot_l1_f32(a, b, len) -> i64` — sqrt-free sum-of-abs-diffs.
+- `__mind_blas_dot_linf_f32(a, b, len) -> i64` — max-abs-diff (Chebyshev).
+- `__mind_blas_matmul_rmajor_f32(w, x, y, rows, cols) -> i64` — row-major matmul,
+  returns 0 on OK / -1 on bad address.
+- `__mind_blas_dot_q16(a, b, len) -> i64` — Q16.16 dot, 8-lane `mullo_epi32`,
+  byte-identical scalar-vs-AVX2 (associative-safe at this bit-width).
+- `__mind_blas_dot_l1_q16(a, b, len) -> i64` — Q16.16 sum-of-abs-diff, byte-identical.
+
+Pure-MIND surface at `std/blas.mind` declares `extern fn` for each intrinsic
+plus thin `pub fn dot_l1_f32(...)` etc. wrappers, gated under the existing
+`std-surface` registration table in `src/project/stdlib.rs` and recognised by
+the `std-surface` intrinsic registry in `src/type_checker/mod.rs`.
+
+Target: closes the 40× gap surfaced by the mind-nerve A1.5 measurement
+(15 ms p95 tail-recursive scalar matmul on 11,922-row catalog) on the f32
+score path. The Q16.16 path stays byte-identical scalar-vs-SIMD —
+preserves the cross-arch bit-identity gate.
+
+Default-build hot path byte-identical to v0.6.1: every BLAS code path is
+gated under `feature = "std-surface"` (registry, MIND module) and the C
+intrinsics are only linked into the cdylib when `--emit-shared` is used
+(same path that already bundles `vec_new` / `__mind_load_i64`). The clang
+runtime-support compile gets no new flags. Bench-gate +7% cap held.
+
+RFC stub at `docs/rfcs/0006-mind-blas.md` declares the surface contract,
+the five sub-backends (`mind-blas:{scalar,simd-x86,simd-arm,cuda,q16-photonic}`),
+and notes that Track B (native MLIR vector dialect lowering inside mindc) is
+the follow-on thesis-pure implementation.
+
+Smoke harness at `tests/blas_smoke.rs` compiles a `--emit-shared` cdylib
+that calls each intrinsic, dlopens it via `python3 ctypes`, and verifies:
+- AVX2-vs-scalar byte-identical on 1024-element f32 vectors (host has AVX2);
+- AVX2 within 1e-6 relative tolerance on 1M-element f32 vectors (reduction reorder);
+- Q16.16 path byte-identical scalar-vs-AVX2 on every length tested.
+
 ## [0.6.1] - 2026-05-18 — Bootstrap fixed-point reached: libmindc_mind.so compiles its own source byte-identically to mindc-Rust. The Rust implementation is now decorative.
 
 ### Phase 6.5 Fixed-Point — pure-MIND mindc achieves bootstrap fixed-point

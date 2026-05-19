@@ -1525,6 +1525,12 @@ fn infer_grad(
 #[cfg(feature = "std-surface")]
 const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     ("__mind_alloc", 1),
+    ("__mind_blas_dot_f32", 3),
+    ("__mind_blas_dot_l1_f32", 3),
+    ("__mind_blas_dot_l1_q16", 3),
+    ("__mind_blas_dot_linf_f32", 3),
+    ("__mind_blas_dot_q16", 3),
+    ("__mind_blas_matmul_rmajor_f32", 5),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
     ("__mind_read", 4),
