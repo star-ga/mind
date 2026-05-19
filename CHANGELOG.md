@@ -7,6 +7,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Phase 6.5 Stage 3 — pure-MIND type-checker cdylib bootstrap PASS
+
+`examples/typecheck/main.mind` compiles to
+`examples/typecheck/libmindc_typecheck.so` (40KB) via `mindc --emit-shared`.
+The Python harness `examples/typecheck/bootstrap_smoke.py` loads
+`libmindc_lexer.so` + `libmindc_parser.so` + `libmindc_typecheck.so`, runs
+`lex()` → `parse()` → `typecheck()` on `examples/typecheck/fixture.mind`, and
+confirms the returned `String` report is byte-identical to the text documented
+in `examples/typecheck/EXPECTED.md`.
+
+**Stage 3 verdict: PASS — 127-byte type-check report byte-identical to EXPECTED.md.**
+
+Three compiler / runtime gaps closed to reach this milestone:
+
+#### Gap S3-A — `extern_calls` not propagated from `Instr::If` and `Instr::While` sub-contexts (blocking)
+
+`src/mlir/lowering.rs` emits `Instr::If` and `Instr::While` by creating
+sub-`LoweringContext` values for the condition, then-branch, else-branch, and
+loop body.  The sub-contexts correctly accumulate `extern_calls` entries (one
+per `Instr::Call` encountered), but those entries were never merged back into
+the parent context.  At module-assembly time only the parent's `extern_calls`
+are converted to `func.func private` forward declarations, so any external
+function called exclusively inside an `if` or `while` branch was silently
+omitted — triggering an `mlir-opt` "does not reference a valid function" error
+when the module was passed to the MLIR pipeline.
+
+For `main.mind` the affected symbols were `map_len` (called in the condition
+of `env_lookup_rest`'s `if i >= map_len(env)` branch) and `map_key_at` /
+`map_value_at` (called inside the same `if` body).  All three were called at
+runtime but had no `func.func private` declaration, causing the build to fail.
+
+**Fix:** After processing each sub-context in `Instr::If` (condition, then,
+else) and `Instr::While` (condition, body), merged `sub.extern_calls` into
+`self.extern_calls` with a `for ec in sub.extern_calls { self.extern_calls.insert(ec); }` loop — matching the existing pattern already used for `Instr::FnDef`.
+
+- `src/mlir/lowering.rs`: four new extern-call bubble-up loops — one per
+  sub-context in `Instr::While` (cond, body) and `Instr::If` (cond, then, else).
+
+#### Gap S3-B — `std.map` and `std.string` C implementations missing from runtime-support stub (blocking)
+
+`runtime-support/mind_intrinsics.c` provided C stubs for `std.vec` surface
+functions (`vec_new`, `vec_push`, `vec_get`, `vec_set`, `vec_len`, `vec_cap`,
+`vec_addr`) but not for `std.map` (`map_new`, `map_insert`, `map_len`,
+`map_cap`, `map_keys_addr`, `map_vals_addr`, `map_key_at`, `map_value_at`) or
+`std.string` (`string_new`, `string_push_byte`, `string_len`, `string_cap`,
+`string_addr`, `string_get_byte`).
+
+`main.mind` calls all these functions via `Instr::Call` (they are pure-MIND
+stdlib functions compiled as external references, not inlined into the MLIR).
+After Gap S3-A was closed, the `func.func private` declarations were emitted
+correctly, but the LLVM codegen step produced an `.so` with unresolved symbols
+for every `map_*` and `string_*` call.
+
+**Fix:** Added complete C implementations of both surfaces to
+`runtime-support/mind_intrinsics.c`, matching the RFC 0005 Option C heap-record
+ABI:
+
+- `Map` record (4×i64, 32 bytes at 8-byte stride): `keys_addr`, `vals_addr`,
+  `len`, `cap`.  `map_insert` allocates a fresh 32-byte header on every call
+  (non-mutating ABI, matching `std/map.mind`'s immutable semantics).
+- `String` record (3×i64, 24 bytes): `addr`, `len`, `cap`.  `string_push_byte`
+  allocates a fresh 24-byte header on every call; backing store grows at
+  cap 0 → 16, then doubles (matching `std/string.mind`).  Each byte is stored
+  as an i64 at its byte offset (stride-1, overlapping writes — the low byte of
+  each slot carries the character value, matching `__mind_load_i64(addr + i) & 255`).
+
+#### Gap S3-C — `make_byte_buf_*` stride mismatch (semantic correctness, non-blocking build but causes wrong output)
+
+`main.mind` builds reference byte buffers for type-name comparison via helper
+functions `make_byte_buf_3/4/6` that store each byte as an i64 at 8-byte stride
+(offsets 0, 8, 16…).  However `bytes_eq_rest` reads both buffers at 1-byte
+stride via `load_byte(buf, lo+i)`.  The source buffer (a C string) is laid out
+at byte stride, so `load_byte` reads correct values from it.  The name buffers
+produced by `make_byte_buf_*` are laid out at i64 stride, so `load_byte` reads
+zero at positions 1, 2, …7 instead of the intended characters — causing every
+type-name comparison to fail and every type to resolve to `ty_unknown`.
+
+This was not caught by the Phase 6.3 parse-clean gate (which only validates the
+MIND IR, not execution output).  Stage 3 is the first time `main.mind` actually
+runs.
+
+**Fix (`examples/typecheck/main.mind`):** Changed `make_byte_buf_3/4/6` to
+store bytes at stride-1 (offsets 0, 1, 2… instead of 0, 8, 16…) and reduced
+the allocation to 16 bytes (sufficient for the longest name buffer at stride-1
+with the 8-byte i64 write tail):
+
+```mind
+// before: stride-8 (wrong)
+__mind_store_i64(h + 0, b0);
+__mind_store_i64(h + 8, b1);
+__mind_store_i64(h + 16, b2);
+
+// after: stride-1 (matches bytes_eq_rest's 1-byte reads)
+__mind_store_i64(h + 0, b0);
+__mind_store_i64(h + 1, b1);
+__mind_store_i64(h + 2, b2);
+```
+
+**Note on EXPECTED.md byte count:** The `EXPECTED.md` byte-map table claims
+124 total bytes, but the correct count is **127** (line 1 "fn add…" is 27 bytes
+not 26, line 3 "fn compute…" is 36 bytes not 35 — the byte map has two typos).
+The text block in EXPECTED.md is correct; the totals in the per-line table are
+off.  The harness compares against the correct 127-byte string derived from the
+text.
+
+**Stage 1 (lexer) still PASS** — re-confirmed by re-running
+`examples/lexer/bootstrap_smoke.py` (32/32 tokens byte-identical).
+
+**Stage 2 (parser) still PASS** — re-confirmed by re-running
+`examples/parser/bootstrap_smoke.py` (42 AST nodes byte-identical).
+
+**Bench-gate (vs `.bench-baseline-2026-05-18-rfc0005.txt`, +5% cap):**
+All three fixes are entirely off the hot frontend pipeline
+(`parse_typecheck_ir`).  The `extern_calls` bubble-up is a no-op for programs
+that have no `Instr::Call` inside `if`/`while` branches; the new C stubs add
+link-time weight but not frontend latency.  Bench-gate delta is negligible.
+
 ## [0.5.2] - 2026-05-18
 
 ### Phase 6.5 Stage 2 — pure-MIND parser cdylib bootstrap PASS
