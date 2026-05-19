@@ -33,9 +33,10 @@ fn array_lit_three_elements_parses_and_lowers() {
     // The parsed module should contain an ArrayLit node.
     let ir = lower_to_ir(&module);
     // Must contain a ConstArray instruction with 3 elements.
-    let has_const_array = ir.instrs.iter().any(|i| {
-        matches!(i, Instr::ConstArray { values, .. } if values.len() == 3)
-    });
+    let has_const_array = ir
+        .instrs
+        .iter()
+        .any(|i| matches!(i, Instr::ConstArray { values, .. } if values.len() == 3));
     assert!(
         has_const_array,
         "expected ConstArray with 3 elements in IR, got: {:?}",
@@ -68,9 +69,10 @@ fn array_lit_4096_entries_no_stack_overflow() {
 
     let module = parser::parse(&src).expect("4096-entry array literal must parse without overflow");
     let ir = lower_to_ir(&module);
-    let has_const_array = ir.instrs.iter().any(|i| {
-        matches!(i, Instr::ConstArray { values, .. } if values.len() == 4096)
-    });
+    let has_const_array = ir
+        .instrs
+        .iter()
+        .any(|i| matches!(i, Instr::ConstArray { values, .. } if values.len() == 4096));
     assert!(
         has_const_array,
         "expected ConstArray with 4096 elements in lowered IR"
