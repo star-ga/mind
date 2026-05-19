@@ -276,6 +276,36 @@ fn format_instr(instr: &Instr, out: &mut String) {
                 writeln!(out, "  // fn {name}").unwrap();
             }
         }
+        // RFC 0005 Phase 6.2b Gap 2 — array literal constant blob.
+        #[cfg(feature = "std-surface")]
+        Instr::ConstArray { dst, name, values } => {
+            let label = name.as_deref().unwrap_or("<anon>");
+            writeln!(
+                out,
+                "  {} = const.array[i64; {}] @{} = [{}]",
+                value_name(*dst),
+                values.len(),
+                label,
+                values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .unwrap();
+        }
+        // RFC 0005 Phase 6.2b Gap 2 — array element load.
+        #[cfg(feature = "std-surface")]
+        Instr::ArrayLoad { dst, base, index } => {
+            writeln!(
+                out,
+                "  {} = array.load {} [{}]",
+                value_name(*dst),
+                value_name(*base),
+                value_name(*index),
+            )
+            .unwrap();
+        }
         _ => {}
     }
 }

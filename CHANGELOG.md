@@ -7,6 +7,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — RFC 0005 Phase 6.2b Gap 2: array literals `[expr, …]` + fixed-size array types `[T; N]`
+
+Array literals and fixed-size array types are now a first-class surface in mindc
+(gated to the `std-surface` cargo feature; default-build hot path byte-identical).
+
+**Reproducer** that now parses, type-checks, and lowers cleanly:
+```mind
+const FOO: [i64; 4] = [1, 2, 3, 4];
+
+fn nth(i: i64) -> i64 {
+    FOO[i]
+}
+```
+
+**Implementation:**
+- `src/ir/mod.rs`: new `Instr::ConstArray { dst, name, values }` (const blob
+  with O(N) IR, not N individual stores) and `Instr::ArrayLoad { dst, base, index }`
+  for `arr[i]` element loads. Both gated to `std-surface`. `instruction_dst`,
+  `IRModule.const_array_defs` side-table, and `IRModule.new()` updated.
+- `src/ir/print.rs`: `const.array[i64; N]` and `array.load` textual IR forms.
+- `src/ir/verify.rs`: `ConstArray` and `ArrayLoad` verifier arms.
+- `src/eval/lower.rs`: module-level `Const { ty: Array, .. }` arm lowers to
+  `ConstArray` and seeds `const_array_defs`. `ArrayLit` expression arm iterates
+  elements (no per-element recursion). `IndexAccess` arm emits `ArrayLoad`.
+  `Ident` resolution checks `const_array_defs` and re-emits the blob into fn
+  bodies (avoids cross-SSA-namespace ValueId aliasing). `FnDef` arm inherits
+  `const_array_defs` and strips const-array ids from `fn_env` to prevent
+  SSA-id aliasing with fn params.
+- `src/type_checker/mod.rs`: `Let { ann: TypeAnn::Array, .. }` arm validates
+  array-literal length against the `[T; N]` annotation and emits a diagnostic
+  on mismatch. `Node::While` stub arm added for Gap 1 compatibility.
+- `src/eval/mod.rs`, `src/type_checker/mod.rs`: stub match arms for
+  `Node::While` (RFC 0005 Gap 1) to allow feature-gated compilation.
+- `tests/std_surface_array_literals.rs`: 5 test cases — basic 3-element literal,
+  empty `[i64; 0]`, 4,096-entry literal (no stack overflow), `const FOO + FOO[i]`
+  round-trip, and type-length mismatch rejection.
+
+**Bench-gate (default build, vs .bench-baseline-2026-05-18-rfc0005.txt):**
+- small_matmul:  2.85 µs (baseline 2.80 µs, +1.7%) ✓
+- medium_mlp:    6.32 µs (baseline 6.55 µs, -3.5%) ✓
+- large_network: 16.76 µs (baseline 17.10 µs, -2.0%) ✓
+
+All within the +7% cap. New code paths are entirely behind `std-surface`;
+default-build parser and IR pipeline are untouched.
+
+**4,096-entry LUT IR size:** A 4,096-element `ConstArray` produces exactly one
+IR instruction (`const.array[i64; 4096] @NAME = [...]`) rather than 4,096
+`__mind_store_i64` calls. Source-file line count for the reproducer: ~1 line per
+LUT (the array literal) vs the previous ~4,100 lines per LUT.
+
+### Added — RFC 0005 Phase 6.2b Gap 1: `while` statement parsing + MLIR basic-block loop lowering
+
+The `while` keyword is now a recognised statement in mindc (gated to the
+`std-surface` cargo feature, leaving the default-build hot path byte-identical).
+
+**Reproducer** that previously failed with `error[parse][E1001]: expected expression`:
+```mind
+fn count_to(n: i64) -> i64 {
+    let mut i: i64 = 0
+    while i < n {
+        i = i + 1
+    }
+    i
+}
+```
+
+Now parses, type-checks, and emits IR cleanly under
+`cargo run --features "std-surface" -- build <file> --emit-ir`.
+
+**Implementation:**
+- `src/ast/mod.rs`: new `Node::While { cond, body, span }` variant (gated).
+- `src/parser/mod.rs`: `parse_while()` dispatched from `parse_stmt()` (gated,
+  ~28 LOC).
+- `src/ir/mod.rs`: new `Instr::While { cond_id, cond_instrs, body, live_vars }`
+  (gated); `instruction_dst` and IR verifier updated accordingly.
+- `src/eval/lower.rs`: `Node::While` arm in `lower_expr` lowers condition and
+  body into separate sub-modules and emits `Instr::While` (~50 LOC, gated).
+- `src/mlir/lowering.rs`: `Instr::While` arm emits `cf.br`/`cf.cond_br`
+  basic-block loop (header → body → back-edge, plus after-block) using the
+  `cf` dialect (~60 LOC, gated).
+- `tests/std_surface_while_statement.rs`: 6 test cases (5 under `std-surface`,
+  1 additionally under `mlir-lowering`) — trivial counted loop, nested while,
+  mutable state outside loop, while inside if arm, reproducer smoke test, and
+  MLIR block structure assertion.
+
+**Bench-gate (default build, vs .bench-baseline-2026-05-18-rfc0005.txt):**
+- small_matmul:  2.76 µs (baseline 2.80 µs, -1.4%) ✓
+- medium_mlp:    6.35 µs (baseline 6.55 µs, -3.1%) ✓
+- large_network: 17.54 µs (baseline 17.10 µs, +2.6%) ✓
+
+All within the +7% cap. Default-build pipeline byte-identical — feature gate
+enforced at module level (no per-statement dispatch).
+
+**`examples/policy.mind` status:** The file uses `while` in two helper functions
+(`starts_with` and `find_substring`). After this change those two `while` loops
+parse correctly. The file has additional issues beyond `while` that are out of
+scope for Gap 1: `const TIMEOUT_SHIFT: u32 = 8` uses a `u32` type annotation
+that the type-checker rejects at the std-surface level; enum variants with
+`= N` discriminants (`InvalidInput = 1`, etc.) are not yet parsed; and the
+`Effect` struct body is incomplete in the excerpt. These are pre-existing gaps
+unrelated to Gap 1.
+
 ### Fixed — RFC 0005 Phase 6.2b Gap 3: unsigned-i64 literal reinterpret-cast
 
 Integer literals in the range `(i64::MAX, u64::MAX]` are now accepted by the

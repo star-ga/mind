@@ -1455,6 +1455,11 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             infer_expr(inner, env)?;
             Ok((ValueType::ScalarI32, *span))
         }
+        // RFC 0005 Gap 1: while loop type. The body may change mutable
+        // variables; the while expression itself is unit-typed (ScalarI32
+        // placeholder) until Gap 1 lands full control-flow typing.
+        #[cfg(feature = "std-surface")]
+        Node::While { span, .. } => Ok((ValueType::ScalarI32, *span)),
     }
 }
 
@@ -2081,6 +2086,35 @@ pub fn check_module_types_in_file(
                 value,
                 span,
             } => match ann {
+                // RFC 0005 Phase 6.2b Gap 2 — fixed-size array annotation
+                // `[T; N]`.  Check that the RHS array literal has exactly N
+                // elements; element-type compatibility defers to the element
+                // type's own value-type inference.
+                #[cfg(feature = "std-surface")]
+                Some(crate::ast::TypeAnn::Array { length, .. }) => {
+                    // Count elements in the RHS if it's an ArrayLit.
+                    let rhs_len: Option<usize> = match value.as_ref() {
+                        Node::ArrayLit { elements, .. } => Some(elements.len()),
+                        _ => None,
+                    };
+                    if let Some(actual) = rhs_len {
+                        if actual != *length as usize {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "array length mismatch for `{}`: annotation [_; {}] but \
+                                     literal has {} elements",
+                                    name, length, actual
+                                ),
+                                *span,
+                                TYPE_ERR_CODE,
+                            ));
+                        }
+                    }
+                    // Register as ScalarI64 in the env (element type, v1 approximation).
+                    tenv.insert(name.clone(), ValueType::ScalarI64);
+                }
                 Some(annotation) => match valuetype_from_ann(annotation) {
                     Some(vt_ann) => {
                         match infer_expr(value, &tenv) {

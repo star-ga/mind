@@ -223,6 +223,22 @@ fn validate_operands(
         Instr::SparseAttr { src, .. } => {
             check_defined(*src)?;
         }
+        // RFC 0005 Gap 1: While loop — condition and body each reside in their
+        // own sub-module (separate SSA namespaces).  The outer verifier treats
+        // the node as an opaque control-flow unit; no use-before-def check
+        // at the module level is applicable. Gated.
+        #[cfg(feature = "std-surface")]
+        Instr::While { .. } => {}
+        // RFC 0005 Phase 6.2b Gap 2: array constant — values are literals,
+        // no SSA operand references to check.
+        #[cfg(feature = "std-surface")]
+        Instr::ConstArray { .. } => {}
+        // RFC 0005 Phase 6.2b Gap 2: array load — base and index must be defined.
+        #[cfg(feature = "std-surface")]
+        Instr::ArrayLoad { base, index, .. } => {
+            check_defined(*base)?;
+            check_defined(*index)?;
+        }
     }
 
     Ok(())

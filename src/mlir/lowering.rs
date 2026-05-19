@@ -351,6 +351,70 @@ impl LoweringContext {
                 Some(v) => self.emit_line(&format!("    return %{} : i64", v.0)),
                 None => self.emit_line("    return"),
             },
+            // RFC 0005 Gap 1: `while cond { body }` — basic-block loop lowering.
+            //
+            // MLIR structure emitted (cf dialect):
+            //
+            //   cf.br ^while_header_N
+            // ^while_header_N:
+            //   <cond_instrs>
+            //   %cond_bool_N = arith.trunci %cond_id : i64 to i1
+            //   cf.cond_br %cond_bool_N, ^while_body_N, ^while_after_N
+            // ^while_body_N:
+            //   <body_instrs>
+            //   cf.br ^while_header_N
+            // ^while_after_N:
+            //
+            // N = instr_index for uniqueness across nested whiles. Gated.
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_id,
+                cond_instrs,
+                body,
+                ..
+            } => {
+                let lbl = instr_index;
+                // Fall into the header from the entry block.
+                self.emit_line(&format!("    cf.br ^while_header_{lbl}"));
+                // Header block: evaluate condition.
+                self.emit_line(&format!("  ^while_header_{lbl}:"));
+                let mut cond_sub = LoweringContext::new();
+                for (vid, kind) in &self.values {
+                    cond_sub.values.insert(*vid, kind.clone());
+                }
+                for (idx, ci) in cond_instrs.iter().enumerate() {
+                    cond_sub.emit_instr(idx, ci)?;
+                }
+                self.body.push_str(&cond_sub.body);
+                for (vid, kind) in cond_sub.values {
+                    self.values.insert(vid, kind);
+                }
+                // i64 condition → i1 for cf.cond_br.
+                self.emit_line(&format!(
+                    "    %cond_bool_{lbl} = arith.trunci %{} : i64 to i1",
+                    cond_id.0
+                ));
+                self.emit_line(&format!(
+                    "    cf.cond_br %cond_bool_{lbl}, ^while_body_{lbl}, ^while_after_{lbl}"
+                ));
+                // Body block.
+                self.emit_line(&format!("  ^while_body_{lbl}:"));
+                let mut body_sub = LoweringContext::new();
+                for (vid, kind) in &self.values {
+                    body_sub.values.insert(*vid, kind.clone());
+                }
+                for (idx, bi) in body.iter().enumerate() {
+                    body_sub.emit_instr(idx, bi)?;
+                }
+                self.body.push_str(&body_sub.body);
+                for (vid, kind) in body_sub.values {
+                    self.values.insert(vid, kind);
+                }
+                // Back-edge: loop back to the header.
+                self.emit_line(&format!("    cf.br ^while_header_{lbl}"));
+                // After block: execution continues here when the condition is false.
+                self.emit_line(&format!("  ^while_after_{lbl}:"));
+            }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
                     instr_index,
