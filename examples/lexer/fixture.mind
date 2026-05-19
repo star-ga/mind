@@ -1,0 +1,12 @@
+// Phase 6.1 lexer smoke fixture.
+//
+// Token-stream contract for this file is documented in
+// examples/lexer/EXPECTED.md.  Don't reformat without bumping the
+// expected stream.
+
+use std.vec;
+
+pub fn add(x: i64, y: i64) -> i64 {
+    let z: i64 = x + y;
+    z
+}

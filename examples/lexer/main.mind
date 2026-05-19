@@ -1,0 +1,250 @@
+// examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
+//
+// First step of the self-host ladder: a pure-MIND tokeniser that
+// walks an in-memory source buffer byte-by-byte and emits a flat
+// Vec<i64> where every three consecutive entries form a Token
+// `(kind, lo, hi)` triple.
+//
+// Built on the seven RFC 0005 intrinsics: __mind_alloc, __mind_realloc,
+// __mind_free, __mind_load_i64, __mind_store_i64, __mind_read,
+// __mind_write.  Uses the bundled std.vec for the token-stream backing
+// store and std.string conventions for byte loads at i64-aligned
+// addresses.  No tensor ops, no host calls beyond the intrinsics.
+//
+// Loop strategy: mindc v0.4.4's parser does not accept `while` as
+// a statement (the keyword appears in src/parser/mod.rs only as part
+// of mindc's own internal Rust scanner, not in the surface grammar).
+// Every loop in this file is therefore expressed as tail recursion,
+// which mindc *does* parse and lower correctly.  Phase 6.2 will
+// fold these back into `while` once the parser gains statement-loop
+// support; the recursive shape ports cleanly because it's already in
+// the iteration-style fixed-state form.
+//
+// Build:
+//   cargo run --features "std-surface cross-module-imports" \
+//       --bin mindc -- examples/lexer/main.mind --emit-ir
+//
+// Smoke gate (Phase 6.1 contract): the token stream produced by this
+// lexer on the test fixture must be byte-identical to the canonical
+// stream documented in examples/lexer/EXPECTED.md.  Phase 6.2 will
+// promote this from a documented fixture to an integration test that
+// invokes the compiled `.so` and diffs against mindc-Rust's own
+// tokeniser output.
+
+use std.vec;
+
+// ===== Token kinds (i64 tags) =====
+//
+// Kind values are arbitrary i64 constants; the only contract is that
+// the same source byte sequence always produces the same kind
+// sequence.  Frozen for Phase 6.1 so the fixture stays stable.
+
+pub fn tk_eof() -> i64    { 0 }
+pub fn tk_ident() -> i64  { 1 }
+pub fn tk_int() -> i64    { 2 }
+pub fn tk_lparen() -> i64 { 3 }
+pub fn tk_rparen() -> i64 { 4 }
+pub fn tk_lbrace() -> i64 { 5 }
+pub fn tk_rbrace() -> i64 { 6 }
+pub fn tk_comma() -> i64  { 7 }
+pub fn tk_semi() -> i64   { 8 }
+pub fn tk_colon() -> i64  { 9 }
+pub fn tk_arrow() -> i64  { 10 }
+pub fn tk_eq() -> i64     { 11 }
+pub fn tk_plus() -> i64   { 12 }
+pub fn tk_minus() -> i64  { 13 }
+pub fn tk_star() -> i64   { 14 }
+pub fn tk_slash() -> i64  { 15 }
+pub fn tk_lt() -> i64     { 16 }
+pub fn tk_gt() -> i64     { 17 }
+pub fn tk_kw_fn() -> i64  { 18 }
+pub fn tk_kw_let() -> i64 { 19 }
+pub fn tk_kw_use() -> i64 { 20 }
+pub fn tk_kw_pub() -> i64 { 21 }
+
+// ===== Byte loads =====
+//
+// __mind_load_i64 returns the 8 bytes starting at an arbitrary
+// address; masking with 0xff extracts the low byte.  This mirrors
+// std.string.string_get_byte's documented "lower 8 bits of a packed
+// load" contract.
+
+pub fn load_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+// ===== Classification primitives =====
+
+pub fn is_space(b: i64) -> i64 {
+    if b == 32 { return 1; }   // ' '
+    if b == 9  { return 1; }   // '\t'
+    if b == 10 { return 1; }   // '\n'
+    if b == 13 { return 1; }   // '\r'
+    0
+}
+
+pub fn is_digit(b: i64) -> i64 {
+    if b >= 48 { if b <= 57 { return 1; } }
+    0
+}
+
+pub fn is_alpha(b: i64) -> i64 {
+    if b >= 65 { if b <= 90 { return 1; } }
+    if b >= 97 { if b <= 122 { return 1; } }
+    if b == 95 { return 1; }
+    0
+}
+
+pub fn is_alnum(b: i64) -> i64 {
+    if is_alpha(b) == 1 { return 1; }
+    is_digit(b)
+}
+
+// ===== Token-stream packing =====
+//
+// Tokens are stored as a flat Vec<i64> with stride 3.  Pushing a
+// token means pushing (kind, lo, hi).  std.vec.vec_push returns a
+// fresh Vec (non-mutating); the caller threads the value through.
+
+pub fn push_token(toks: Vec, kind: i64, lo: i64, hi: i64) -> Vec {
+    let t1: Vec = vec_push(toks, kind);
+    let t2: Vec = vec_push(t1, lo);
+    vec_push(t2, hi)
+}
+
+// ===== Keyword detection =====
+//
+// Compare a [lo, hi) byte range in `buf` against a fixed keyword.
+// Returns the keyword's tk_* tag if matched, or tk_ident() otherwise.
+// Phase 6.1 covers `fn`, `let`, `use`, `pub`; Phase 6.2 will table-
+// drive this once std.map is stress-tested under the parser.
+
+pub fn classify_ident(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n == 2 {
+        if load_byte(buf, lo) == 102 {            // 'f'
+            if load_byte(buf, lo + 1) == 110 {    // 'n'
+                return tk_kw_fn();
+            }
+        }
+    }
+    if n == 3 {
+        let c0: i64 = load_byte(buf, lo);
+        let c1: i64 = load_byte(buf, lo + 1);
+        let c2: i64 = load_byte(buf, lo + 2);
+        if c0 == 108 { if c1 == 101 { if c2 == 116 { return tk_kw_let(); } } }  // let
+        if c0 == 117 { if c1 == 115 { if c2 == 101 { return tk_kw_use(); } } }  // use
+        if c0 == 112 { if c1 == 117 { if c2 == 98  { return tk_kw_pub(); } } }  // pub
+    }
+    tk_ident()
+}
+
+// ===== Sub-scans (tail-recursive) =====
+//
+// Each sub-scan walks a span of bytes that all match a predicate,
+// returning the first byte offset that breaks the predicate.  Tail
+// recursion stands in for `while` — mindc v0.4.4 parses the recursive
+// form cleanly.
+
+pub fn scan_ident_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len { return i; }
+    if is_alnum(load_byte(buf, i)) == 1 { return scan_ident_end(buf, i + 1, buf_len); }
+    i
+}
+
+pub fn scan_int_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len { return i; }
+    if is_digit(load_byte(buf, i)) == 1 { return scan_int_end(buf, i + 1, buf_len); }
+    i
+}
+
+pub fn scan_comment_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len { return i; }
+    if load_byte(buf, i) == 10 { return i + 1; }   // include the newline in skip
+    scan_comment_end(buf, i + 1, buf_len)
+}
+
+// Single-char punctuation -> token kind.  Unknown chars map to
+// tk_ident() as a soft fallback; the parser layer (Phase 6.2) is
+// responsible for rejecting them.
+pub fn match_punct(b: i64) -> i64 {
+    if b == 40  { return tk_lparen(); }  // (
+    if b == 41  { return tk_rparen(); }  // )
+    if b == 123 { return tk_lbrace(); }  // {
+    if b == 125 { return tk_rbrace(); }  // }
+    if b == 44  { return tk_comma(); }   // ,
+    if b == 59  { return tk_semi(); }    // ;
+    if b == 58  { return tk_colon(); }   // :
+    if b == 61  { return tk_eq(); }      // =
+    if b == 43  { return tk_plus(); }    // +
+    if b == 45  { return tk_minus(); }   // -
+    if b == 42  { return tk_star(); }    // *
+    if b == 47  { return tk_slash(); }   // /
+    if b == 60  { return tk_lt(); }      // <
+    if b == 62  { return tk_gt(); }      // >
+    tk_ident()
+}
+
+// ===== Main scan loop (tail-recursive) =====
+//
+// Walks i from 0 to buf_len.  Each call consumes either:
+//  - one whitespace byte
+//  - one `//` line comment (through the newline)
+//  - one identifier or keyword
+//  - one integer literal
+//  - one punctuation token (single-char or `->`)
+// then tail-recurses to scan(buf, new_i, buf_len, toks).
+// Termination: when i >= buf_len, emits TK_EOF and returns.
+
+pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
+    if i >= buf_len { return push_token(toks, tk_eof(), buf_len, buf_len); }
+    let b: i64 = load_byte(buf, i);
+    // whitespace
+    if is_space(b) == 1 { return scan(buf, i + 1, buf_len, toks); }
+    // line comment `//`
+    if b == 47 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 47 {
+                let after: i64 = scan_comment_end(buf, i + 2, buf_len);
+                return scan(buf, after, buf_len, toks);
+            }
+        }
+    }
+    // identifier / keyword
+    if is_alpha(b) == 1 {
+        let hi: i64 = scan_ident_end(buf, i + 1, buf_len);
+        let kind: i64 = classify_ident(buf, i, hi);
+        let next_toks: Vec = push_token(toks, kind, i, hi);
+        return scan(buf, hi, buf_len, next_toks);
+    }
+    // integer literal
+    if is_digit(b) == 1 {
+        let hi: i64 = scan_int_end(buf, i + 1, buf_len);
+        let next_toks: Vec = push_token(toks, tk_int(), i, hi);
+        return scan(buf, hi, buf_len, next_toks);
+    }
+    // `->` two-char punctuation lookahead
+    if b == 45 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 62 {
+                let next_toks: Vec = push_token(toks, tk_arrow(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    // single-char punctuation
+    let kind: i64 = match_punct(b);
+    let next_toks: Vec = push_token(toks, kind, i, i + 1);
+    scan(buf, i + 1, buf_len, next_toks)
+}
+
+// ===== Public entry =====
+//
+// lex(buf, buf_len) — caller passes the i64 base address of a byte
+// buffer plus its length.  Returns a Vec<i64> stride-3 token stream
+// terminated by a tk_eof() triple.
+
+pub fn lex(buf: i64, buf_len: i64) -> Vec {
+    let empty: Vec = vec_new();
+    scan(buf, 0, buf_len, empty)
+}
