@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2509 | **Est. tokens:** ~6,193,954
-**Generated:** 2026-05-19 09:15 UTC
+**Files:** 2509 | **Est. tokens:** ~6,193,980
+**Generated:** 2026-05-19 09:41 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/type_checker/` | 1 | ~22,070 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~4,006 |
-| `tests/` | 104 | ~104,478 |
+| `tests/` | 104 | ~104,504 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -3798,7 +3798,7 @@
 - `std_surface_io_module.rs` (~1571 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_map_module.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1454 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_phase_d_env_override.rs` (~1462 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_d_env_override.rs` (~1488 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2034 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2650 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
