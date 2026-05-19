@@ -1,0 +1,1630 @@
+// examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+//
+// Combined pure-MIND mindc front-end: lexer + parser + type-checker +
+// MLIR-text emitter wired into a single cdylib.  Every function from
+// the four preceding stages (Phase 6.1–6.4) is inlined here verbatim
+// (duplicate helper names are deduplicated to their first canonical
+// definition); the only net-new code is the `mindc_compile` entry
+// at the bottom.
+//
+// Why a single file rather than `use examples.lexer.main` etc.:
+// mindc v0.5.x's `use` resolver covers `std.*` only; user-space
+// .mind files that are binary entry-point files (they define `main`)
+// are not exposed as importable modules.  The single-file merge is
+// therefore the only path that compiles through the current surface
+// grammar.  A follow-on RFC will introduce a `mod` keyword for
+// user-space module composition.
+//
+// Build:
+//   cargo run --features "mlir-build std-surface cross-module-imports" \
+//       --bin mindc -- \
+//       examples/mindc_mind/main.mind \
+//       --emit-shared examples/mindc_mind/libmindc_mind.so
+//
+// Smoke gate (Phase 6.5 Stage 5 contract):
+//   mindc_compile(buf_addr, buf_len) on fixture.mind produces an
+//   EmitState whose .buf is byte-identical to the 148-byte MLIR text
+//   documented in examples/mindc_mind/EXPECTED.md and to the output
+//   of `mindc --emit-ir` on the same fixture.  Verification is done
+//   by examples/mindc_mind/bootstrap_smoke.py.
+
+use std.vec;
+use std.map;
+use std.string;
+use std.io;
+
+// ===========================================================================
+// SECTION 1 — LEXER (Phase 6.1)
+// examples/lexer/main.mind, verbatim.
+// Provides: lex(buf, buf_len) -> Vec
+// ===========================================================================
+
+// ===== Token kinds (i64 tags) =====
+
+pub fn tk_eof()    -> i64 { 0 }
+pub fn tk_ident()  -> i64 { 1 }
+pub fn tk_int()    -> i64 { 2 }
+pub fn tk_lparen() -> i64 { 3 }
+pub fn tk_rparen() -> i64 { 4 }
+pub fn tk_lbrace() -> i64 { 5 }
+pub fn tk_rbrace() -> i64 { 6 }
+pub fn tk_comma()  -> i64 { 7 }
+pub fn tk_semi()   -> i64 { 8 }
+pub fn tk_colon()  -> i64 { 9 }
+pub fn tk_arrow()  -> i64 { 10 }
+pub fn tk_eq()     -> i64 { 11 }
+pub fn tk_plus()   -> i64 { 12 }
+pub fn tk_minus()  -> i64 { 13 }
+pub fn tk_star()   -> i64 { 14 }
+pub fn tk_slash()  -> i64 { 15 }
+pub fn tk_lt()     -> i64 { 16 }
+pub fn tk_gt()     -> i64 { 17 }
+pub fn tk_kw_fn()  -> i64 { 18 }
+pub fn tk_kw_let() -> i64 { 19 }
+pub fn tk_kw_use() -> i64 { 20 }
+pub fn tk_kw_pub() -> i64 { 21 }
+pub fn tk_dot()    -> i64 { 22 }
+
+// ===== Byte loads =====
+
+pub fn load_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+// ===== Classification primitives =====
+
+pub fn is_space(b: i64) -> i64 {
+    if b == 32 { return 1; }
+    if b == 9  { return 1; }
+    if b == 10 { return 1; }
+    if b == 13 { return 1; }
+    0
+}
+
+pub fn is_digit(b: i64) -> i64 {
+    if b >= 48 { if b <= 57 { return 1; } }
+    0
+}
+
+pub fn is_alpha(b: i64) -> i64 {
+    if b >= 65 { if b <= 90 { return 1; } }
+    if b >= 97 { if b <= 122 { return 1; } }
+    if b == 95 { return 1; }
+    0
+}
+
+pub fn is_alnum(b: i64) -> i64 {
+    if is_alpha(b) == 1 { return 1; }
+    is_digit(b)
+}
+
+// ===== Token-stream packing =====
+
+pub fn push_token(toks: Vec, kind: i64, lo: i64, hi: i64) -> Vec {
+    let t1: Vec = vec_push(toks, kind);
+    let t2: Vec = vec_push(t1, lo);
+    vec_push(t2, hi)
+}
+
+// ===== Keyword detection =====
+
+pub fn classify_ident(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    if n == 2 {
+        if load_byte(buf, lo) == 102 {
+            if load_byte(buf, lo + 1) == 110 {
+                return tk_kw_fn();
+            }
+        }
+    }
+    if n == 3 {
+        let c0: i64 = load_byte(buf, lo);
+        let c1: i64 = load_byte(buf, lo + 1);
+        let c2: i64 = load_byte(buf, lo + 2);
+        if c0 == 108 { if c1 == 101 { if c2 == 116 { return tk_kw_let(); } } }
+        if c0 == 117 { if c1 == 115 { if c2 == 101 { return tk_kw_use(); } } }
+        if c0 == 112 { if c1 == 117 { if c2 == 98  { return tk_kw_pub(); } } }
+    }
+    tk_ident()
+}
+
+// ===== Sub-scans (tail-recursive) =====
+
+pub fn scan_ident_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len { return i; }
+    if is_alnum(load_byte(buf, i)) == 1 { return scan_ident_end(buf, i + 1, buf_len); }
+    i
+}
+
+pub fn scan_int_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len { return i; }
+    if is_digit(load_byte(buf, i)) == 1 { return scan_int_end(buf, i + 1, buf_len); }
+    i
+}
+
+pub fn scan_comment_end(buf: i64, i: i64, buf_len: i64) -> i64 {
+    if i >= buf_len { return i; }
+    if load_byte(buf, i) == 10 { return i + 1; }
+    scan_comment_end(buf, i + 1, buf_len)
+}
+
+pub fn match_punct(b: i64) -> i64 {
+    if b == 40  { return tk_lparen(); }
+    if b == 41  { return tk_rparen(); }
+    if b == 123 { return tk_lbrace(); }
+    if b == 125 { return tk_rbrace(); }
+    if b == 44  { return tk_comma(); }
+    if b == 59  { return tk_semi(); }
+    if b == 58  { return tk_colon(); }
+    if b == 61  { return tk_eq(); }
+    if b == 43  { return tk_plus(); }
+    if b == 45  { return tk_minus(); }
+    if b == 42  { return tk_star(); }
+    if b == 47  { return tk_slash(); }
+    if b == 46  { return tk_dot(); }
+    if b == 60  { return tk_lt(); }
+    if b == 62  { return tk_gt(); }
+    tk_ident()
+}
+
+// ===== Main scan loop (tail-recursive) =====
+
+pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
+    if i >= buf_len { return push_token(toks, tk_eof(), buf_len, buf_len); }
+    let b: i64 = load_byte(buf, i);
+    if is_space(b) == 1 { return scan(buf, i + 1, buf_len, toks); }
+    if b == 47 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 47 {
+                let after: i64 = scan_comment_end(buf, i + 2, buf_len);
+                return scan(buf, after, buf_len, toks);
+            }
+        }
+    }
+    if is_alpha(b) == 1 {
+        let hi: i64 = scan_ident_end(buf, i + 1, buf_len);
+        let kind: i64 = classify_ident(buf, i, hi);
+        let next_toks: Vec = push_token(toks, kind, i, hi);
+        return scan(buf, hi, buf_len, next_toks);
+    }
+    if is_digit(b) == 1 {
+        let hi: i64 = scan_int_end(buf, i + 1, buf_len);
+        let next_toks: Vec = push_token(toks, tk_int(), i, hi);
+        return scan(buf, hi, buf_len, next_toks);
+    }
+    if b == 45 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 62 {
+                let next_toks: Vec = push_token(toks, tk_arrow(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    let kind: i64 = match_punct(b);
+    let next_toks: Vec = push_token(toks, kind, i, i + 1);
+    scan(buf, i + 1, buf_len, next_toks)
+}
+
+// ===== Public entry: lex =====
+
+pub fn lex(buf: i64, buf_len: i64) -> Vec {
+    let empty: Vec = vec_new();
+    scan(buf, 0, buf_len, empty)
+}
+
+// ===========================================================================
+// SECTION 2 — PARSER (Phase 6.2)
+// examples/parser/main.mind, with deduplication:
+//   removed: tk_* constants, load_byte  (already defined above)
+// Provides: parse(toks: Vec, buf: i64) -> i64
+// ===========================================================================
+
+// ===== AST kind tags =====
+
+pub fn ast_int_lit() -> i64 { 1 }
+pub fn ast_ident()   -> i64 { 2 }
+pub fn ast_binop()   -> i64 { 3 }
+pub fn ast_call()    -> i64 { 4 }
+pub fn ast_fn_def()  -> i64 { 5 }
+pub fn ast_let()     -> i64 { 6 }
+pub fn ast_use()     -> i64 { 7 }
+pub fn ast_return()  -> i64 { 8 }
+pub fn ast_param()   -> i64 { 9 }
+pub fn ast_block()   -> i64 { 10 }
+pub fn ast_program() -> i64 { 11 }
+pub fn ast_paren()   -> i64 { 12 }
+
+// ===== Binop operator tags =====
+
+pub fn op_add() -> i64 { 1 }
+pub fn op_sub() -> i64 { 2 }
+pub fn op_mul() -> i64 { 3 }
+pub fn op_div() -> i64 { 4 }
+pub fn op_lt()  -> i64 { 5 }
+pub fn op_gt()  -> i64 { 6 }
+pub fn op_eq()  -> i64 { 7 }
+
+// ===== Token-stream accessors =====
+
+pub fn tok_kind(toks: Vec, i: i64) -> i64 { vec_get(toks, i * 3) }
+pub fn tok_lo(toks: Vec, i: i64)   -> i64 { vec_get(toks, i * 3 + 1) }
+pub fn tok_hi(toks: Vec, i: i64)   -> i64 { vec_get(toks, i * 3 + 2) }
+
+pub fn tok_count(toks: Vec) -> i64 { vec_len(toks) / 3 }
+
+pub fn at_eof(toks: Vec, pos: i64) -> i64 {
+    if pos >= tok_count(toks) { return 1; }
+    if tok_kind(toks, pos) == tk_eof() { return 1; }
+    0
+}
+
+// ===== AST node layout (7×i64 heap record, 56 bytes) =====
+
+pub fn ast_alloc() -> i64 { __mind_alloc(56) }
+
+pub fn ast_new_leaf(kind: i64, span_lo: i64, span_hi: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  kind);
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, 0);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_binop(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64, op: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_binop());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, lhs);
+    __mind_store_i64(n + 32, rhs);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, op);
+    n
+}
+
+pub fn ast_new_call(span_lo: i64, span_hi: i64, callee: i64, args_vec_addr: i64, args_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_call());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, callee);
+    __mind_store_i64(n + 32, args_vec_addr);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, args_len);
+    n
+}
+
+pub fn ast_new_fn_def(span_lo: i64, span_hi: i64,
+                      name: i64, params_addr: i64, body: i64,
+                      params_len: i64, is_pub: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_fn_def());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name);
+    __mind_store_i64(n + 32, params_addr);
+    __mind_store_i64(n + 40, body);
+    __mind_store_i64(n + 48, params_len * 2 + is_pub);
+    n
+}
+
+pub fn ast_new_let(span_lo: i64, span_hi: i64, name: i64, ty: i64, init: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_let());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name);
+    __mind_store_i64(n + 32, ty);
+    __mind_store_i64(n + 40, init);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_use(span_lo: i64, span_hi: i64, head: i64, tail: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_use());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, head);
+    __mind_store_i64(n + 32, tail);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_return(span_lo: i64, span_hi: i64, value: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_return());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, value);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_param(span_lo: i64, span_hi: i64, name: i64, ty: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_param());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name);
+    __mind_store_i64(n + 32, ty);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_block(span_lo: i64, span_hi: i64, stmts_addr: i64, stmts_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_block());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, stmts_addr);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, stmts_len);
+    n
+}
+
+pub fn ast_new_program(span_lo: i64, span_hi: i64, items_addr: i64, items_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_program());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, items_addr);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, items_len);
+    n
+}
+
+pub fn ast_new_paren(span_lo: i64, span_hi: i64, inner: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_paren());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, inner);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// ===== AST accessors =====
+
+pub fn ast_kind(node: i64)    -> i64 { __mind_load_i64(node + 0) }
+pub fn ast_span_lo(node: i64) -> i64 { __mind_load_i64(node + 8) }
+pub fn ast_span_hi(node: i64) -> i64 { __mind_load_i64(node + 16) }
+pub fn ast_child0(node: i64)  -> i64 { __mind_load_i64(node + 24) }
+pub fn ast_child1(node: i64)  -> i64 { __mind_load_i64(node + 32) }
+pub fn ast_child2(node: i64)  -> i64 { __mind_load_i64(node + 40) }
+pub fn ast_aux(node: i64)     -> i64 { __mind_load_i64(node + 48) }
+
+// ===== ParseResult =====
+
+struct ParseResult {
+    next_pos: i64,
+    node: i64,
+}
+
+pub fn pr_new(next_pos: i64, node: i64) -> ParseResult {
+    ParseResult { next_pos: next_pos, node: node }
+}
+
+pub fn pr_pos(r: ParseResult)  -> i64 { r.next_pos }
+pub fn pr_node(r: ParseResult) -> i64 { r.node }
+
+// ===== Return-keyword detector =====
+
+pub fn is_ident_return(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 6 {
+        if load_byte(buf, lo)     == 114 {
+        if load_byte(buf, lo + 1) == 101 {
+        if load_byte(buf, lo + 2) == 116 {
+        if load_byte(buf, lo + 3) == 117 {
+        if load_byte(buf, lo + 4) == 114 {
+        if load_byte(buf, lo + 5) == 110 {
+            return 1;
+        } } } } } }
+    }
+    0
+}
+
+// ===== Pratt precedence table =====
+
+pub fn infix_prec(kind: i64) -> i64 {
+    if kind == tk_eq()    { return 1; }
+    if kind == tk_lt()    { return 2; }
+    if kind == tk_gt()    { return 2; }
+    if kind == tk_plus()  { return 3; }
+    if kind == tk_minus() { return 3; }
+    if kind == tk_star()  { return 4; }
+    if kind == tk_slash() { return 4; }
+    0
+}
+
+pub fn tk_to_op(kind: i64) -> i64 {
+    if kind == tk_plus()  { return op_add(); }
+    if kind == tk_minus() { return op_sub(); }
+    if kind == tk_star()  { return op_mul(); }
+    if kind == tk_slash() { return op_div(); }
+    if kind == tk_lt()    { return op_lt(); }
+    if kind == tk_gt()    { return op_gt(); }
+    if kind == tk_eq()    { return op_eq(); }
+    0
+}
+
+// ===== Primary / prefix parser =====
+
+pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let k: i64   = tok_kind(toks, pos);
+    let lo: i64  = tok_lo(toks, pos);
+    let hi: i64  = tok_hi(toks, pos);
+
+    if k == tk_int() {
+        let n: i64 = ast_new_leaf(ast_int_lit(), lo, hi);
+        return pr_new(pos + 1, n);
+    }
+
+    if k == tk_lparen() {
+        let inner: ParseResult = parse_expr(toks, pos + 1, buf);
+        let after_inner: i64   = pr_pos(inner);
+        let close_hi: i64      = tok_hi(toks, after_inner);
+        let after_close: i64   = if tok_kind(toks, after_inner) == tk_rparen() {
+            after_inner + 1
+        } else {
+            after_inner
+        };
+        let paren: i64 = ast_new_paren(lo, close_hi, pr_node(inner));
+        return pr_new(after_close, paren);
+    }
+
+    if k == tk_ident() {
+        if at_eof(toks, pos + 1) == 0 {
+            if tok_kind(toks, pos + 1) == tk_lparen() {
+                return parse_call(toks, pos, buf);
+            }
+        }
+        let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
+        return pr_new(pos + 1, n);
+    }
+
+    let fallback: i64 = ast_new_leaf(ast_ident(), lo, hi);
+    pr_new(pos + 1, fallback)
+}
+
+// ===== Call parser =====
+
+pub fn parse_call(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let lo: i64      = tok_lo(toks, pos);
+    let name_hi: i64 = tok_hi(toks, pos);
+    let callee: i64  = ast_new_leaf(ast_ident(), lo, name_hi);
+
+    let empty_args: Vec  = vec_new();
+    let after_open: i64  = pos + 2;
+
+    if tok_kind(toks, after_open) == tk_rparen() {
+        let close_hi: i64  = tok_hi(toks, after_open);
+        let call_node: i64 = ast_new_call(lo, close_hi, callee,
+                                          vec_addr(empty_args), 0);
+        return pr_new(after_open + 1, call_node);
+    }
+
+    let args_res: ParseResult = parse_args_rest(toks, after_open, buf, empty_args);
+    let after_args: i64       = pr_pos(args_res);
+    let args_node: i64        = pr_node(args_res);
+    let args_addr: i64        = ast_child0(args_node);
+    let args_len: i64         = ast_aux(args_node);
+
+    let close_hi: i64    = tok_hi(toks, after_args);
+    let after_close: i64 = if tok_kind(toks, after_args) == tk_rparen() {
+        after_args + 1
+    } else {
+        after_args
+    };
+
+    let call_node: i64 = ast_new_call(lo, close_hi, callee, args_addr, args_len);
+    pr_new(after_close, call_node)
+}
+
+pub fn parse_args_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    let one: ParseResult = parse_expr(toks, pos, buf);
+    let new_acc: Vec     = vec_push(acc, pr_node(one));
+    let after_one: i64   = pr_pos(one);
+    if tok_kind(toks, after_one) == tk_comma() {
+        return parse_args_rest(toks, after_one + 1, buf, new_acc);
+    }
+    let sentinel: i64 = ast_new_block(0, 0, vec_addr(new_acc), vec_len(new_acc));
+    pr_new(after_one, sentinel)
+}
+
+// ===== Pratt expression parser =====
+
+pub fn parse_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let prim: ParseResult = parse_primary(toks, pos, buf);
+    parse_pratt(toks, pr_pos(prim), buf, pr_node(prim), 1)
+}
+
+pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
+    if at_eof(toks, pos) == 1 { return pr_new(pos, lhs); }
+    let k: i64    = tok_kind(toks, pos);
+    let prec: i64 = infix_prec(k);
+    if prec == 0 { return pr_new(pos, lhs); }
+    if prec < min_prec { return pr_new(pos, lhs); }
+
+    let op_tag: i64 = tk_to_op(k);
+    let rhs_prim: ParseResult = parse_primary(toks, pos + 1, buf);
+    let rhs_full: ParseResult = parse_pratt(toks, pr_pos(rhs_prim), buf, pr_node(rhs_prim), prec + 1);
+
+    let lhs_lo: i64   = ast_span_lo(lhs);
+    let rhs_hi: i64   = ast_span_hi(pr_node(rhs_full));
+    let combined: i64 = ast_new_binop(lhs_lo, rhs_hi, lhs, pr_node(rhs_full), op_tag);
+
+    parse_pratt(toks, pr_pos(rhs_full), buf, combined, min_prec)
+}
+
+// ===== Statements =====
+
+pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_let() { return parse_let(toks, pos, buf); }
+    if k == tk_ident() {
+        let lo: i64 = tok_lo(toks, pos);
+        let hi: i64 = tok_hi(toks, pos);
+        if is_ident_return(buf, lo, hi) == 1 {
+            return parse_return(toks, pos, buf);
+        }
+    }
+    let e: ParseResult = parse_expr(toks, pos, buf);
+    let after_e: i64   = pr_pos(e);
+    if tok_kind(toks, after_e) == tk_semi() {
+        return pr_new(after_e + 1, pr_node(e));
+    }
+    e
+}
+
+pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let kw_lo: i64   = tok_lo(toks, pos);
+    let name_lo: i64 = tok_lo(toks, pos + 1);
+    let name_hi: i64 = tok_hi(toks, pos + 1);
+    let name: i64    = ast_new_leaf(ast_ident(), name_lo, name_hi);
+    let ty_lo: i64   = tok_lo(toks, pos + 3);
+    let ty_hi: i64   = tok_hi(toks, pos + 3);
+    let ty: i64      = ast_new_leaf(ast_ident(), ty_lo, ty_hi);
+    let init: ParseResult = parse_expr(toks, pos + 5, buf);
+    let after_init: i64   = pr_pos(init);
+    let after_semi: i64   = if tok_kind(toks, after_init) == tk_semi() {
+        after_init + 1
+    } else {
+        after_init
+    };
+    let init_hi: i64  = ast_span_hi(pr_node(init));
+    let let_node: i64 = ast_new_let(kw_lo, init_hi, name, ty, pr_node(init));
+    pr_new(after_semi, let_node)
+}
+
+pub fn parse_return(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let kw_lo: i64        = tok_lo(toks, pos);
+    let value: ParseResult = parse_expr(toks, pos + 1, buf);
+    let after_v: i64      = pr_pos(value);
+    let after_semi: i64   = if tok_kind(toks, after_v) == tk_semi() {
+        after_v + 1
+    } else {
+        after_v
+    };
+    let v_hi: i64 = ast_span_hi(pr_node(value));
+    let r: i64    = ast_new_return(kw_lo, v_hi, pr_node(value));
+    pr_new(after_semi, r)
+}
+
+// ===== Blocks =====
+
+pub fn parse_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let open_lo: i64   = tok_lo(toks, pos);
+    let acc: Vec       = vec_new();
+    let body: ParseResult = parse_block_stmts(toks, pos + 1, buf, acc);
+    let after_body: i64   = pr_pos(body);
+    let stmts_node: i64   = pr_node(body);
+    let stmts_addr: i64   = ast_child0(stmts_node);
+    let stmts_len: i64    = ast_aux(stmts_node);
+
+    let close_hi: i64    = tok_hi(toks, after_body);
+    let after_close: i64 = if tok_kind(toks, after_body) == tk_rbrace() {
+        after_body + 1
+    } else {
+        after_body
+    };
+    let blk: i64 = ast_new_block(open_lo, close_hi, stmts_addr, stmts_len);
+    pr_new(after_close, blk)
+}
+
+pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if at_eof(toks, pos) == 1 {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    let one: ParseResult = parse_stmt(toks, pos, buf);
+    let new_acc: Vec     = vec_push(acc, pr_node(one));
+    parse_block_stmts(toks, pr_pos(one), buf, new_acc)
+}
+
+// ===== Function definitions =====
+
+pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
+    let fn_lo: i64   = tok_lo(toks, pos);
+    let name_lo: i64 = tok_lo(toks, pos + 1);
+    let name_hi: i64 = tok_hi(toks, pos + 1);
+    let name: i64    = ast_new_leaf(ast_ident(), name_lo, name_hi);
+
+    let params_acc: Vec = vec_new();
+    let params_res: ParseResult = parse_params_rest(toks, pos + 3, buf, params_acc);
+    let after_params: i64 = pr_pos(params_res);
+    let params_node: i64  = pr_node(params_res);
+    let params_addr: i64  = ast_child0(params_node);
+    let params_len: i64   = ast_aux(params_node);
+
+    let after_rparen: i64 = if tok_kind(toks, after_params) == tk_rparen() {
+        after_params + 1
+    } else {
+        after_params
+    };
+    let after_arrow: i64 = if tok_kind(toks, after_rparen) == tk_arrow() {
+        after_rparen + 1
+    } else {
+        after_rparen
+    };
+    let after_ret: i64 = after_arrow + 1;
+
+    let body_res: ParseResult = parse_block(toks, after_ret, buf);
+    let body_hi: i64          = ast_span_hi(pr_node(body_res));
+
+    let fn_node: i64 = ast_new_fn_def(fn_lo, body_hi,
+                                       name, params_addr, pr_node(body_res),
+                                       params_len, is_pub);
+    pr_new(pr_pos(body_res), fn_node)
+}
+
+pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if tok_kind(toks, pos) == tk_rparen() {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    let n_lo: i64  = tok_lo(toks, pos);
+    let n_hi: i64  = tok_hi(toks, pos);
+    let n_name: i64 = ast_new_leaf(ast_ident(), n_lo, n_hi);
+    let t_lo: i64  = tok_lo(toks, pos + 2);
+    let t_hi: i64  = tok_hi(toks, pos + 2);
+    let n_ty: i64  = ast_new_leaf(ast_ident(), t_lo, t_hi);
+    let p: i64     = ast_new_param(n_lo, t_hi, n_name, n_ty);
+    let new_acc: Vec  = vec_push(acc, p);
+    let after_param: i64 = pos + 3;
+    if tok_kind(toks, after_param) == tk_comma() {
+        return parse_params_rest(toks, after_param + 1, buf, new_acc);
+    }
+    let s: i64 = ast_new_block(0, 0, vec_addr(new_acc), vec_len(new_acc));
+    pr_new(after_param, s)
+}
+
+// ===== Use statements =====
+
+pub fn parse_use(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let use_lo: i64 = tok_lo(toks, pos);
+    let h_lo: i64   = tok_lo(toks, pos + 1);
+    let h_hi: i64   = tok_hi(toks, pos + 1);
+    let head: i64   = ast_new_leaf(ast_ident(), h_lo, h_hi);
+    let t_lo: i64   = tok_lo(toks, pos + 3);
+    let t_hi: i64   = tok_hi(toks, pos + 3);
+    let tail: i64   = ast_new_leaf(ast_ident(), t_lo, t_hi);
+    let after_semi: i64 = if tok_kind(toks, pos + 4) == tk_semi() {
+        pos + 5
+    } else {
+        pos + 4
+    };
+    let node: i64 = ast_new_use(use_lo, t_hi, head, tail);
+    pr_new(after_semi, node)
+}
+
+// ===== Top-level item / program =====
+
+pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_use() { return parse_use(toks, pos, buf); }
+    if k == tk_kw_pub() { return parse_fn_def(toks, pos + 1, buf, 1); }
+    if k == tk_kw_fn()  { return parse_fn_def(toks, pos, buf, 0); }
+    let lo: i64 = tok_lo(toks, pos);
+    let hi: i64 = tok_hi(toks, pos);
+    let n: i64  = ast_new_leaf(ast_ident(), lo, hi);
+    pr_new(pos + 1, n)
+}
+
+pub fn parse_items_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if at_eof(toks, pos) == 1 {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    let one: ParseResult = parse_item(toks, pos, buf);
+    let new_acc: Vec     = vec_push(acc, pr_node(one));
+    parse_items_rest(toks, pr_pos(one), buf, new_acc)
+}
+
+// ===== Public entry: parse =====
+
+pub fn parse(toks: Vec, buf: i64) -> i64 {
+    let acc: Vec          = vec_new();
+    let res: ParseResult  = parse_items_rest(toks, 0, buf, acc);
+    let s: i64            = pr_node(res);
+    let items_addr: i64   = ast_child0(s);
+    let items_len: i64    = ast_aux(s);
+    ast_new_program(0, 0, items_addr, items_len)
+}
+
+// ===========================================================================
+// SECTION 3 — TYPE CHECKER (Phase 6.3)
+// examples/typecheck/main.mind, with deduplication:
+//   removed: ast_* constants, op_* constants, ast_* accessors, load_byte
+//            (all already defined above)
+// Provides: typecheck(ast_root: i64, buf: i64) -> String
+// ===========================================================================
+
+// ===== Type tags =====
+
+pub fn ty_unknown() -> i64 { 0 }
+pub fn ty_i64()     -> i64 { 1 }
+pub fn ty_f64()     -> i64 { 2 }
+pub fn ty_bool()    -> i64 { 3 }
+pub fn ty_vec()     -> i64 { 4 }
+pub fn ty_string()  -> i64 { 5 }
+pub fn ty_unit()    -> i64 { 6 }
+
+// ===== Fn-def aux unpacking =====
+
+pub fn fn_def_params_len(node: i64) -> i64 { ast_aux(node) / 2 }
+pub fn fn_def_is_pub(node: i64)     -> i64 { ast_aux(node) - (ast_aux(node) / 2) * 2 }
+
+// ===== Byte-range equality =====
+
+pub fn bytes_eq(buf: i64, lo: i64, hi: i64,
+                cmp_buf: i64, clo: i64, chi: i64) -> i64 {
+    if hi - lo == chi - clo {
+        return bytes_eq_rest(buf, lo, hi, cmp_buf, clo);
+    }
+    0
+}
+
+pub fn bytes_eq_rest(buf: i64, lo: i64, hi: i64,
+                     cmp_buf: i64, clo: i64) -> i64 {
+    if lo >= hi { return 1; }
+    if load_byte(buf, lo) == load_byte(cmp_buf, clo) {
+        return bytes_eq_rest(buf, lo + 1, hi, cmp_buf, clo + 1);
+    }
+    0
+}
+
+// ===== Type-name byte tables =====
+
+pub fn make_byte_buf_3(b0: i64, b1: i64, b2: i64) -> i64 {
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    h
+}
+
+pub fn make_byte_buf_4(b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    __mind_store_i64(h + 3, b3);
+    h
+}
+
+pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64,
+                       b3: i64, b4: i64, b5: i64) -> i64 {
+    let h: i64 = __mind_alloc(16);
+    __mind_store_i64(h + 0, b0);
+    __mind_store_i64(h + 1, b1);
+    __mind_store_i64(h + 2, b2);
+    __mind_store_i64(h + 3, b3);
+    __mind_store_i64(h + 4, b4);
+    __mind_store_i64(h + 5, b5);
+    h
+}
+
+pub fn name_buf_i64()    -> i64 { make_byte_buf_3(105, 54, 52) }
+pub fn name_buf_f64()    -> i64 { make_byte_buf_3(102, 54, 52) }
+pub fn name_buf_bool()   -> i64 { make_byte_buf_4(98, 111, 111, 108) }
+pub fn name_buf_vec()    -> i64 { make_byte_buf_3(86, 101, 99) }
+pub fn name_buf_string() -> i64 { make_byte_buf_6(83, 116, 114, 105, 110, 103) }
+
+pub fn resolve_type_ident(buf: i64, lo: i64, hi: i64) -> i64 {
+    let i64_buf: i64 = name_buf_i64();
+    if bytes_eq(buf, lo, hi, i64_buf, 0, 3) == 1 { return ty_i64(); }
+    let f64_buf: i64 = name_buf_f64();
+    if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 { return ty_f64(); }
+    let bool_buf: i64 = name_buf_bool();
+    if bytes_eq(buf, lo, hi, bool_buf, 0, 4) == 1 { return ty_bool(); }
+    let vec_buf: i64 = name_buf_vec();
+    if bytes_eq(buf, lo, hi, vec_buf, 0, 3) == 1 { return ty_vec(); }
+    let str_buf: i64 = name_buf_string();
+    if bytes_eq(buf, lo, hi, str_buf, 0, 6) == 1 { return ty_string(); }
+    ty_unknown()
+}
+
+// ===== Name hashing (DJB2) =====
+
+pub fn djb2_seed()  -> i64 { 5381 }
+pub fn djb2_prime() -> i64 { 33 }
+
+pub fn name_hash(buf: i64, lo: i64, hi: i64) -> i64 {
+    name_hash_rest(buf, lo, hi, djb2_seed())
+}
+
+pub fn name_hash_rest(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
+    if lo >= hi { return acc; }
+    let b: i64     = load_byte(buf, lo);
+    let mixed: i64 = (acc * djb2_prime()) + b;
+    name_hash_rest(buf, lo + 1, hi, mixed)
+}
+
+// ===== Env helpers =====
+
+pub fn env_new() -> Map { map_new() }
+
+pub fn env_bind(env: Map, buf: i64, lo: i64, hi: i64, ty: i64) -> Map {
+    let key: i64 = name_hash(buf, lo, hi);
+    map_insert(env, key, ty)
+}
+
+pub fn env_lookup(env: Map, buf: i64, lo: i64, hi: i64) -> i64 {
+    let key: i64 = name_hash(buf, lo, hi);
+    env_lookup_rest(env, key, 0, ty_unknown())
+}
+
+pub fn env_lookup_rest(env: Map, key: i64, i: i64, best: i64) -> i64 {
+    if i >= map_len(env) { return best; }
+    let new_best: i64 = if map_key_at(env, i) == key {
+        map_value_at(env, i)
+    } else {
+        best
+    };
+    env_lookup_rest(env, key, i + 1, new_best)
+}
+
+// ===== String-building helpers (for type-check report) =====
+
+pub fn push_ascii(s: String, b: i64)   -> String { string_push_byte(s, b) }
+pub fn push_newline(s: String)          -> String { string_push_byte(s, 10) }
+pub fn push_space(s: String)            -> String { string_push_byte(s, 32) }
+
+pub fn push_bytes(s: String, buf: i64, lo: i64, hi: i64) -> String {
+    if lo >= hi { return s; }
+    let b: i64     = load_byte(buf, lo);
+    let next: String = string_push_byte(s, b);
+    push_bytes(next, buf, lo + 1, hi)
+}
+
+pub fn push_type_name(s: String, ty: i64) -> String {
+    if ty == ty_i64() {
+        let s1: String = string_push_byte(s, 105);
+        let s2: String = string_push_byte(s1, 54);
+        return string_push_byte(s2, 52);
+    }
+    if ty == ty_f64() {
+        let s1: String = string_push_byte(s, 102);
+        let s2: String = string_push_byte(s1, 54);
+        return string_push_byte(s2, 52);
+    }
+    if ty == ty_bool() {
+        let s1: String = string_push_byte(s, 98);
+        let s2: String = string_push_byte(s1, 111);
+        let s3: String = string_push_byte(s2, 111);
+        return string_push_byte(s3, 108);
+    }
+    if ty == ty_vec() {
+        let s1: String = string_push_byte(s, 86);
+        let s2: String = string_push_byte(s1, 101);
+        return string_push_byte(s2, 99);
+    }
+    if ty == ty_string() {
+        let s1: String = string_push_byte(s, 83);
+        let s2: String = string_push_byte(s1, 116);
+        let s3: String = string_push_byte(s2, 114);
+        let s4: String = string_push_byte(s3, 105);
+        let s5: String = string_push_byte(s4, 110);
+        return string_push_byte(s5, 103);
+    }
+    if ty == ty_unit() {
+        let s1: String = string_push_byte(s, 40);
+        return string_push_byte(s1, 41);
+    }
+    string_push_byte(s, 63)
+}
+
+pub fn push_kw_let(s: String) -> String {
+    let s1: String = string_push_byte(s, 108);
+    let s2: String = string_push_byte(s1, 101);
+    let s3: String = string_push_byte(s2, 116);
+    string_push_byte(s3, 32)
+}
+
+pub fn push_kw_fn(s: String) -> String {
+    let s1: String = string_push_byte(s, 102);
+    let s2: String = string_push_byte(s1, 110);
+    string_push_byte(s2, 32)
+}
+
+pub fn push_colon(s: String) -> String {
+    let s1: String = string_push_byte(s, 32);
+    let s2: String = string_push_byte(s1, 58);
+    string_push_byte(s2, 32)
+}
+
+pub fn push_arrow(s: String) -> String {
+    let s1: String = string_push_byte(s, 32);
+    let s2: String = string_push_byte(s1, 45);
+    let s3: String = string_push_byte(s2, 62);
+    string_push_byte(s3, 32)
+}
+
+pub fn push_lparen(s: String) -> String { string_push_byte(s, 40) }
+pub fn push_rparen(s: String) -> String { string_push_byte(s, 41) }
+
+pub fn push_comma(s: String) -> String {
+    let s1: String = string_push_byte(s, 44);
+    string_push_byte(s1, 32)
+}
+
+pub fn push_kw_error(s: String) -> String {
+    let s1: String = string_push_byte(s, 69);
+    let s2: String = string_push_byte(s1, 82);
+    let s3: String = string_push_byte(s2, 82);
+    let s4: String = string_push_byte(s3, 79);
+    let s5: String = string_push_byte(s4, 82);
+    let s6: String = string_push_byte(s5, 58);
+    string_push_byte(s6, 32)
+}
+
+pub fn push_at_span(s: String) -> String {
+    let s1: String = string_push_byte(s, 32);
+    let s2: String = string_push_byte(s1, 97);
+    let s3: String = string_push_byte(s2, 116);
+    let s4: String = string_push_byte(s3, 32);
+    let s5: String = string_push_byte(s4, 115);
+    let s6: String = string_push_byte(s5, 112);
+    let s7: String = string_push_byte(s6, 97);
+    let s8: String = string_push_byte(s7, 110);
+    let s9: String = string_push_byte(s8, 32);
+    string_push_byte(s9, 91)
+}
+
+pub fn push_i64(s: String, n: i64) -> String {
+    if n < 10 {
+        return string_push_byte(s, 48 + n);
+    }
+    let high: String = push_i64(s, n / 10);
+    string_push_byte(high, 48 + (n - (n / 10) * 10))
+}
+
+pub fn push_err_return_mismatch(s: String) -> String {
+    let s1: String  = string_push_byte(s, 114);
+    let s2: String  = string_push_byte(s1, 101);
+    let s3: String  = string_push_byte(s2, 116);
+    let s4: String  = string_push_byte(s3, 117);
+    let s5: String  = string_push_byte(s4, 114);
+    let s6: String  = string_push_byte(s5, 110);
+    let s7: String  = string_push_byte(s6, 32);
+    let s8: String  = string_push_byte(s7, 116);
+    let s9: String  = string_push_byte(s8, 121);
+    let s10: String = string_push_byte(s9, 112);
+    let s11: String = string_push_byte(s10, 101);
+    let s12: String = string_push_byte(s11, 32);
+    let s13: String = string_push_byte(s12, 109);
+    let s14: String = string_push_byte(s13, 105);
+    let s15: String = string_push_byte(s14, 115);
+    let s16: String = string_push_byte(s15, 109);
+    let s17: String = string_push_byte(s16, 97);
+    let s18: String = string_push_byte(s17, 116);
+    let s19: String = string_push_byte(s18, 99);
+    string_push_byte(s19, 104)
+}
+
+// ===== TcResult =====
+
+struct TcResult {
+    env: Map,
+    report: String,
+}
+
+pub fn tc_new(env: Map, report: String) -> TcResult {
+    TcResult { env: env, report: report }
+}
+
+pub fn tc_env(r: TcResult)    -> Map    { r.env }
+pub fn tc_report(r: TcResult) -> String { r.report }
+
+// ===== Expression type resolution =====
+
+pub fn type_of_expr(node: i64, env: Map, buf: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+
+    if k == ast_int_lit() { return ty_i64(); }
+
+    if k == ast_ident() {
+        let lo: i64 = ast_span_lo(node);
+        let hi: i64 = ast_span_hi(node);
+        return env_lookup(env, buf, lo, hi);
+    }
+
+    if k == ast_binop() {
+        let op: i64 = ast_aux(node);
+        if op == op_lt() { return ty_bool(); }
+        if op == op_gt() { return ty_bool(); }
+        if op == op_eq() { return ty_bool(); }
+        let lhs: i64 = ast_child0(node);
+        return type_of_expr(lhs, env, buf);
+    }
+
+    if k == ast_paren() {
+        let inner: i64 = ast_child0(node);
+        return type_of_expr(inner, env, buf);
+    }
+
+    if k == ast_call() { return ty_unknown(); }
+
+    ty_unknown()
+}
+
+// ===== Statement / item walkers =====
+
+pub fn tc_let(node: i64, env: Map, buf: i64, report: String) -> TcResult {
+    let name_node: i64 = ast_child0(node);
+    let ty_node: i64   = ast_child1(node);
+
+    let n_lo: i64 = ast_span_lo(name_node);
+    let n_hi: i64 = ast_span_hi(name_node);
+    let t_lo: i64 = ast_span_lo(ty_node);
+    let t_hi: i64 = ast_span_hi(ty_node);
+
+    let ty: i64      = resolve_type_ident(buf, t_lo, t_hi);
+    let new_env: Map = env_bind(env, buf, n_lo, n_hi, ty);
+
+    let s1: String = push_kw_let(report);
+    let s2: String = push_bytes(s1, buf, n_lo, n_hi);
+    let s3: String = push_colon(s2);
+    let s4: String = push_type_name(s3, ty);
+    let s5: String = push_newline(s4);
+
+    tc_new(new_env, s5)
+}
+
+pub fn tc_return(node: i64, env: Map, buf: i64, report: String, expected_ret: i64) -> TcResult {
+    let value: i64  = ast_child0(node);
+    let actual: i64 = type_of_expr(value, env, buf);
+
+    if actual == expected_ret {
+        return tc_new(env, report);
+    }
+    let lo: i64 = ast_span_lo(node);
+    let hi: i64 = ast_span_hi(node);
+    let s1: String = push_kw_error(report);
+    let s2: String = push_err_return_mismatch(s1);
+    let s3: String = push_at_span(s2);
+    let s4: String = push_i64(s3, lo);
+    let s5: String = push_comma(s4);
+    let s6: String = push_i64(s5, hi);
+    let s7: String = string_push_byte(s6, 41);
+    let s8: String = push_newline(s7);
+    tc_new(env, s8)
+}
+
+pub fn tc_stmt(node: i64, env: Map, buf: i64, report: String, expected_ret: i64) -> TcResult {
+    let k: i64 = ast_kind(node);
+    if k == ast_let()    { return tc_let(node, env, buf, report); }
+    if k == ast_return() { return tc_return(node, env, buf, report, expected_ret); }
+    let _: i64 = type_of_expr(node, env, buf);
+    tc_new(env, report)
+}
+
+pub fn tc_block(block: i64, env: Map, buf: i64, report: String, expected_ret: i64) -> TcResult {
+    let stmts_addr: i64 = ast_child0(block);
+    let stmts_len: i64  = ast_aux(block);
+    tc_block_stmts_rest(stmts_addr, stmts_len, 0, env, buf, report, expected_ret)
+}
+
+pub fn tc_block_stmts_rest(stmts_addr: i64, stmts_len: i64, i: i64,
+                           env: Map, buf: i64, report: String,
+                           expected_ret: i64) -> TcResult {
+    if i >= stmts_len { return tc_new(env, report); }
+    let stmt: i64       = __mind_load_i64(stmts_addr + i * 8);
+    let after: TcResult = tc_stmt(stmt, env, buf, report, expected_ret);
+    tc_block_stmts_rest(stmts_addr, stmts_len, i + 1,
+                        tc_env(after), buf, tc_report(after), expected_ret)
+}
+
+pub fn fn_default_ret() -> i64 { ty_i64() }
+
+pub fn tc_fn_def(node: i64, env: Map, buf: i64, report: String) -> TcResult {
+    let name_node: i64   = ast_child0(node);
+    let params_addr: i64 = ast_child1(node);
+    let body: i64        = ast_child2(node);
+    let params_len: i64  = fn_def_params_len(node);
+
+    let n_lo: i64 = ast_span_lo(name_node);
+    let n_hi: i64 = ast_span_hi(name_node);
+
+    let fn_env: Map = env_new();
+    let after_params: TcResult = tc_params_rest(params_addr, params_len, 0,
+                                                 fn_env, buf, report, n_lo, n_hi, 1);
+
+    let header1: String = push_arrow(tc_report(after_params));
+    let header2: String = push_type_name(header1, fn_default_ret());
+    let header3: String = push_newline(header2);
+
+    let after_body: TcResult = tc_block(body, tc_env(after_params), buf, header3, fn_default_ret());
+
+    tc_new(env, tc_report(after_body))
+}
+
+pub fn tc_params_rest(params_addr: i64, params_len: i64, i: i64,
+                      env: Map, buf: i64, report: String,
+                      name_lo: i64, name_hi: i64, is_first: i64) -> TcResult {
+    if i >= params_len {
+        if is_first == 1 {
+            let s1: String = push_kw_fn(report);
+            let s2: String = push_bytes(s1, buf, name_lo, name_hi);
+            let s3: String = push_colon(s2);
+            let s4: String = push_lparen(s3);
+            let s5: String = push_rparen(s4);
+            return tc_new(env, s5);
+        }
+        let close: String = push_rparen(report);
+        return tc_new(env, close);
+    }
+
+    let p: i64      = __mind_load_i64(params_addr + i * 8);
+    let p_name: i64 = ast_child0(p);
+    let p_type: i64 = ast_child1(p);
+    let pn_lo: i64  = ast_span_lo(p_name);
+    let pn_hi: i64  = ast_span_hi(p_name);
+    let pt_lo: i64  = ast_span_lo(p_type);
+    let pt_hi: i64  = ast_span_hi(p_type);
+
+    let pt: i64      = resolve_type_ident(buf, pt_lo, pt_hi);
+    let new_env: Map = env_bind(env, buf, pn_lo, pn_hi, pt);
+
+    let prefix: String = if is_first == 1 {
+        let s1: String = push_kw_fn(report);
+        let s2: String = push_bytes(s1, buf, name_lo, name_hi);
+        let s3: String = push_colon(s2);
+        push_lparen(s3)
+    } else {
+        push_comma(report)
+    };
+    let with_type: String = push_type_name(prefix, pt);
+
+    tc_params_rest(params_addr, params_len, i + 1,
+                   new_env, buf, with_type, name_lo, name_hi, 0)
+}
+
+pub fn tc_item(node: i64, env: Map, buf: i64, report: String) -> TcResult {
+    let k: i64 = ast_kind(node);
+    if k == ast_fn_def() { return tc_fn_def(node, env, buf, report); }
+    tc_new(env, report)
+}
+
+pub fn tc_items_rest(items_addr: i64, items_len: i64, i: i64,
+                     env: Map, buf: i64, report: String) -> TcResult {
+    if i >= items_len { return tc_new(env, report); }
+    let item: i64       = __mind_load_i64(items_addr + i * 8);
+    let after: TcResult = tc_item(item, env, buf, report);
+    tc_items_rest(items_addr, items_len, i + 1,
+                  tc_env(after), buf, tc_report(after))
+}
+
+// ===== Public entry: typecheck =====
+
+pub fn typecheck(ast_root: i64, buf: i64) -> String {
+    let items_addr: i64    = ast_child0(ast_root);
+    let items_len: i64     = ast_aux(ast_root);
+    let env: Map           = env_new();
+    let report: String     = string_new();
+    let result: TcResult   = tc_items_rest(items_addr, items_len, 0, env, buf, report);
+    tc_report(result)
+}
+
+// ===========================================================================
+// SECTION 4 — MLIR-TEXT EMITTER (Phase 6.4)
+// examples/emit_ir/main.mind, with deduplication:
+//   removed: ast_* constants, op_* constants, ast_* accessors, load_byte
+//            (all already defined above)
+// Provides: lower_program(ast_addr: i64, buf: i64) -> EmitState
+// ===========================================================================
+
+// ===== EmitState =====
+
+struct EmitState {
+    buf: String,
+    next_id: i64,
+    last_id: i64,
+}
+
+pub fn es_new() -> EmitState {
+    EmitState { buf: string_new(), next_id: 0, last_id: 0 - 1 }
+}
+
+pub fn es_buf(s: EmitState)     -> String { s.buf }
+pub fn es_next_id(s: EmitState) -> i64    { s.next_id }
+pub fn es_last_id(s: EmitState) -> i64    { s.last_id }
+
+pub fn es_push(s: EmitState, b: i64) -> EmitState {
+    EmitState {
+        buf: string_push_byte(s.buf, b),
+        next_id: s.next_id,
+        last_id: s.last_id,
+    }
+}
+
+// ===== ASCII byte constants =====
+
+pub fn ch_space()   -> i64 { 32 }
+pub fn ch_newline() -> i64 { 10 }
+pub fn ch_percent() -> i64 { 37 }
+pub fn ch_eq_sign() -> i64 { 61 }
+pub fn ch_comma()   -> i64 { 44 }
+pub fn ch_dot()     -> i64 { 46 }
+pub fn ch_slash()   -> i64 { 47 }
+pub fn ch_lbrace()  -> i64 { 123 }
+pub fn ch_rbrace()  -> i64 { 125 }
+
+// ===== Decimal i64 writer =====
+
+pub fn emit_digits_collect(n: i64, acc: Vec) -> Vec {
+    if n == 0 { return acc; }
+    let d: i64      = n - (n / 10) * 10;
+    let new_acc: Vec = vec_push(acc, 48 + d);
+    emit_digits_collect(n / 10, new_acc)
+}
+
+pub fn emit_digits_flush(s: EmitState, digits: Vec, i: i64) -> EmitState {
+    if i < 0 { return s; }
+    let b: i64         = vec_get(digits, i);
+    let s2: EmitState  = es_push(s, b);
+    emit_digits_flush(s2, digits, i - 1)
+}
+
+pub fn emit_i64(s: EmitState, n: i64) -> EmitState {
+    if n == 0 { return es_push(s, 48); }
+    let collected: Vec = emit_digits_collect(n, vec_new());
+    emit_digits_flush(s, collected, vec_len(collected) - 1)
+}
+
+// ===== Byte-range writer =====
+
+pub fn emit_byte_range(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
+    if lo >= hi { return s; }
+    let b: i64        = load_byte(buf, lo);
+    let s2: EmitState = es_push(s, b);
+    emit_byte_range(s2, buf, lo + 1, hi)
+}
+
+// ===== Fixed-literal writers =====
+
+pub fn emit_lit_module_open(s: EmitState) -> EmitState {
+    let s1: EmitState  = es_push(s,  109);
+    let s2: EmitState  = es_push(s1, 111);
+    let s3: EmitState  = es_push(s2, 100);
+    let s4: EmitState  = es_push(s3, 117);
+    let s5: EmitState  = es_push(s4, 108);
+    let s6: EmitState  = es_push(s5, 101);
+    let s7: EmitState  = es_push(s6, ch_space());
+    let s8: EmitState  = es_push(s7, ch_lbrace());
+    es_push(s8, ch_newline())
+}
+
+pub fn emit_lit_fn_comment_head(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s,  ch_space());
+    let s2: EmitState = es_push(s1, ch_space());
+    let s3: EmitState = es_push(s2, ch_slash());
+    let s4: EmitState = es_push(s3, ch_slash());
+    let s5: EmitState = es_push(s4, ch_space());
+    let s6: EmitState = es_push(s5, 102);
+    let s7: EmitState = es_push(s6, 110);
+    es_push(s7, ch_space())
+}
+
+pub fn emit_lit_const_i64_head(s: EmitState, id: i64) -> EmitState {
+    let s1: EmitState  = es_push(s,  ch_space());
+    let s2: EmitState  = es_push(s1, ch_space());
+    let s3: EmitState  = es_push(s2, ch_percent());
+    let s4: EmitState  = emit_i64(s3, id);
+    let s5: EmitState  = es_push(s4, ch_space());
+    let s6: EmitState  = es_push(s5, ch_eq_sign());
+    let s7: EmitState  = es_push(s6, ch_space());
+    let s8: EmitState  = es_push(s7, 99);
+    let s9: EmitState  = es_push(s8, 111);
+    let s10: EmitState = es_push(s9, 110);
+    let s11: EmitState = es_push(s10, 115);
+    let s12: EmitState = es_push(s11, 116);
+    let s13: EmitState = es_push(s12, ch_dot());
+    let s14: EmitState = es_push(s13, 105);
+    let s15: EmitState = es_push(s14, 54);
+    let s16: EmitState = es_push(s15, 52);
+    es_push(s16, ch_space())
+}
+
+pub fn emit_lit_output(s: EmitState, id: i64) -> EmitState {
+    let s1: EmitState  = es_push(s,  ch_space());
+    let s2: EmitState  = es_push(s1, ch_space());
+    let s3: EmitState  = es_push(s2, 111);
+    let s4: EmitState  = es_push(s3, 117);
+    let s5: EmitState  = es_push(s4, 116);
+    let s6: EmitState  = es_push(s5, 112);
+    let s7: EmitState  = es_push(s6, 117);
+    let s8: EmitState  = es_push(s7, 116);
+    let s9: EmitState  = es_push(s8, ch_space());
+    let s10: EmitState = es_push(s9, ch_percent());
+    let s11: EmitState = emit_i64(s10, id);
+    es_push(s11, ch_newline())
+}
+
+pub fn emit_lit_module_close(s: EmitState) -> EmitState {
+    let s1: EmitState  = es_push(s,  ch_rbrace());
+    let s2: EmitState  = es_push(s1, ch_space());
+    let s3: EmitState  = es_push(s2, ch_space());
+    let s4: EmitState  = es_push(s3, ch_slash());
+    let s5: EmitState  = es_push(s4, ch_slash());
+    let s6: EmitState  = es_push(s5, ch_space());
+    let s7: EmitState  = es_push(s6, 110);
+    let s8: EmitState  = es_push(s7, 101);
+    let s9: EmitState  = es_push(s8, 120);
+    let s10: EmitState = es_push(s9, 116);
+    let s11: EmitState = es_push(s10, 95);
+    let s12: EmitState = es_push(s11, 105);
+    let s13: EmitState = es_push(s12, 100);
+    let s14: EmitState = es_push(s13, ch_space());
+    let s15: EmitState = es_push(s14, ch_eq_sign());
+    let s16: EmitState = es_push(s15, ch_space());
+    let s17: EmitState = emit_i64(s16, s.next_id);
+    es_push(s17, ch_newline())
+}
+
+pub fn emit_op_mnemonic(s: EmitState, op: i64) -> EmitState {
+    if op == op_add() {
+        let s1: EmitState = es_push(s, 97);
+        let s2: EmitState = es_push(s1, 100);
+        return es_push(s2, 100);
+    }
+    if op == op_sub() {
+        let s1: EmitState = es_push(s, 115);
+        let s2: EmitState = es_push(s1, 117);
+        return es_push(s2, 98);
+    }
+    if op == op_mul() {
+        let s1: EmitState = es_push(s, 109);
+        let s2: EmitState = es_push(s1, 117);
+        return es_push(s2, 108);
+    }
+    if op == op_div() {
+        let s1: EmitState = es_push(s, 100);
+        let s2: EmitState = es_push(s1, 105);
+        return es_push(s2, 118);
+    }
+    if op == op_lt() {
+        let s1: EmitState = es_push(s, 108);
+        return es_push(s1, 116);
+    }
+    if op == op_gt() {
+        let s1: EmitState = es_push(s, 103);
+        return es_push(s1, 116);
+    }
+    if op == op_eq() {
+        let s1: EmitState = es_push(s, 101);
+        return es_push(s1, 113);
+    }
+    let s1: EmitState = es_push(s, 63);
+    es_push(s1, 63)
+}
+
+// ===== Integer-literal value parsing =====
+
+pub fn parse_int_span(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
+    if lo >= hi { return acc; }
+    let b: i64 = load_byte(buf, lo);
+    parse_int_span(buf, lo + 1, hi, acc * 10 + (b - 48))
+}
+
+// ===== Expression lowering =====
+
+pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
+    let k: i64 = ast_kind(node);
+
+    if k == ast_int_lit() {
+        let val: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        let id: i64  = s.next_id;
+        let s1: EmitState = emit_lit_const_i64_head(s, id);
+        let s2: EmitState = emit_i64(s1, val);
+        let s3: EmitState = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    }
+
+    if k == ast_ident() {
+        let id: i64 = s.next_id;
+        let s1: EmitState = emit_lit_const_i64_head(s, id);
+        let s2: EmitState = es_push(s1, 48);
+        let s3: EmitState = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    }
+
+    if k == ast_binop() {
+        let s1: EmitState = emit_expr(s, buf, ast_child0(node));
+        let lhs_id: i64   = s1.last_id;
+        let s2: EmitState = emit_expr(s1, buf, ast_child1(node));
+        let rhs_id: i64   = s2.last_id;
+        let id: i64       = s2.next_id;
+        let s3: EmitState  = es_push(s2,  ch_space());
+        let s4: EmitState  = es_push(s3,  ch_space());
+        let s5: EmitState  = es_push(s4,  ch_percent());
+        let s6: EmitState  = emit_i64(s5, id);
+        let s7: EmitState  = es_push(s6,  ch_space());
+        let s8: EmitState  = es_push(s7,  ch_eq_sign());
+        let s9: EmitState  = es_push(s8,  ch_space());
+        let s10: EmitState = emit_op_mnemonic(s9, ast_aux(node));
+        let s11: EmitState = es_push(s10, ch_space());
+        let s12: EmitState = es_push(s11, ch_percent());
+        let s13: EmitState = emit_i64(s12, lhs_id);
+        let s14: EmitState = es_push(s13, ch_comma());
+        let s15: EmitState = es_push(s14, ch_space());
+        let s16: EmitState = es_push(s15, ch_percent());
+        let s17: EmitState = emit_i64(s16, rhs_id);
+        let s18: EmitState = es_push(s17, ch_newline());
+        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id };
+    }
+
+    if k == ast_paren() {
+        return emit_expr(s, buf, ast_child0(node));
+    }
+
+    if k == ast_call() {
+        let args_addr: i64  = ast_child1(node);
+        let args_len: i64   = ast_aux(node);
+        let s_args: EmitState = emit_call_args(s, buf, args_addr, args_len, 0);
+        let id: i64         = s_args.next_id;
+        let s1: EmitState   = emit_lit_const_i64_head(s_args, id);
+        let s2: EmitState   = es_push(s1, 48);
+        let s3: EmitState   = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    }
+
+    let id: i64         = s.next_id;
+    let s1: EmitState   = emit_lit_const_i64_head(s, id);
+    let s2: EmitState   = es_push(s1, 48);
+    let s3: EmitState   = es_push(s2, ch_newline());
+    EmitState { buf: s3.buf, next_id: id + 1, last_id: id }
+}
+
+pub fn emit_call_args(s: EmitState, buf: i64, args_addr: i64, args_len: i64, i: i64) -> EmitState {
+    if i >= args_len { return s; }
+    let arg_node: i64  = __mind_load_i64(args_addr + i * 8);
+    let s1: EmitState  = emit_expr(s, buf, arg_node);
+    emit_call_args(s1, buf, args_addr, args_len, i + 1)
+}
+
+// ===== Statement lowering =====
+
+pub fn emit_stmt(s: EmitState, buf: i64, node: i64) -> EmitState {
+    let k: i64 = ast_kind(node);
+    if k == ast_let() {
+        return emit_expr(s, buf, ast_child2(node));
+    }
+    if k == ast_return() {
+        let s1: EmitState = emit_expr(s, buf, ast_child0(node));
+        let s2: EmitState = emit_lit_output(s1, s1.last_id);
+        return s2;
+    }
+    emit_expr(s, buf, node)
+}
+
+pub fn emit_block_stmts(s: EmitState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> EmitState {
+    if i >= stmts_len { return s; }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let s1: EmitState  = emit_stmt(s, buf, stmt_node);
+    emit_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1)
+}
+
+// ===== Function definition lowering =====
+
+pub fn emit_fn_def(s: EmitState, buf: i64, node: i64) -> EmitState {
+    let name_node: i64 = ast_child0(node);
+    let name_lo: i64   = ast_span_lo(name_node);
+    let name_hi: i64   = ast_span_hi(name_node);
+    let s1: EmitState  = emit_lit_fn_comment_head(s);
+    let s2: EmitState  = emit_byte_range(s1, buf, name_lo, name_hi);
+    let s3: EmitState  = es_push(s2, ch_newline());
+
+    let id: i64        = s3.next_id;
+    let s4: EmitState  = emit_lit_const_i64_head(s3, id);
+    let s5: EmitState  = es_push(s4, 48);
+    let s6: EmitState  = es_push(s5, ch_newline());
+    let s7: EmitState  = EmitState { buf: s6.buf, next_id: id + 1, last_id: id };
+    emit_lit_output(s7, id)
+}
+
+// ===== Program-level lowering =====
+
+pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i64, i: i64) -> EmitState {
+    if i >= items_len { return s; }
+    let item: i64      = __mind_load_i64(items_addr + i * 8);
+    let k: i64         = ast_kind(item);
+    let s1: EmitState  = if k == ast_fn_def() {
+        emit_fn_def(s, buf, item)
+    } else {
+        s
+    };
+    emit_program_items(s1, buf, items_addr, items_len, i + 1)
+}
+
+// ===== Public entry: lower_program =====
+
+pub fn lower_program(ast_addr: i64, buf: i64) -> EmitState {
+    let items_addr: i64 = ast_child0(ast_addr);
+    let items_len: i64  = ast_aux(ast_addr);
+    let s0: EmitState   = es_new();
+    let s1: EmitState   = emit_lit_module_open(s0);
+    let id0: i64        = s1.next_id;
+    let s2: EmitState   = emit_lit_const_i64_head(s1, id0);
+    let s3: EmitState   = es_push(s2, 48);
+    let s4: EmitState   = es_push(s3, ch_newline());
+    let s5: EmitState   = EmitState { buf: s4.buf, next_id: id0 + 1, last_id: id0 };
+    let s6: EmitState   = emit_lit_output(s5, id0);
+    let s7: EmitState   = emit_program_items(s6, buf, items_addr, items_len, 0);
+    emit_lit_module_close(s7)
+}
+
+pub fn flush_to_stdout(s: EmitState) -> i64 {
+    print_bytes(string_addr(s.buf), string_len(s.buf))
+}
+
+// ===========================================================================
+// SECTION 5 — COMBINED DRIVER (Phase 6.5 Stage 5 APEX)
+// ===========================================================================
+
+// mindc_compile(src_addr, src_len) -> i64
+//
+// Runs the full compilation pipeline:
+//   1. lex(src_addr, src_len)         -> Vec (token stream)
+//   2. parse(tokens, src_addr)         -> i64 (AST root / ast_program)
+//   3. typecheck(ast_root, src_addr)   -> String (type-check report, unused)
+//   4. lower_program(ast_root, src_addr) -> EmitState (MLIR text accumulator)
+//
+// Returns the i64 heap-record address of the EmitState.  The caller
+// reads EmitState fields at the returned address:
+//   offset  0 : buf     (String handle — addr/len/cap)
+//   offset  8 : next_id (SSA value counter)
+//   offset 16 : last_id (most-recently allocated SSA id)
+//
+// The Python harness (bootstrap_smoke.py) reads the EmitState via
+// ctypes and compares the decoded String bytes to EXPECTED.md.
+
+// mindc_compile returns EmitState (heap-record address in Option-C ABI).
+// The Python harness calls it with c_int64 restype and reads the
+// EmitState fields at the returned address:
+//   offset  0 : buf     (String handle)
+//   offset  8 : next_id (SSA counter)
+//   offset 16 : last_id (last allocated SSA id)
+pub fn mindc_compile(src_addr: i64, src_len: i64) -> EmitState {
+    let tokens: Vec   = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let _tc: String   = typecheck(ast_root, src_addr);
+    lower_program(ast_root, src_addr)
+}
