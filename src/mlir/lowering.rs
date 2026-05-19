@@ -486,20 +486,25 @@ impl LoweringContext {
             //   cf.cond_br %cond_i1_N, ^if_then_N, ^if_else_N
             // ^if_then_N:
             //   <then_instrs>
-            //   cf.br ^if_after_N
+            //   cf.br ^if_after_N(%then_result : i64)
             // ^if_else_N:
             //   <else_instrs>
-            //   cf.br ^if_after_N
-            // ^if_after_N:
-            //   %dst = arith.constant 0 : i64   (placeholder — scf.if yield
-            //                                    is the proper fix; cf.br
-            //                                    cannot forward values across
-            //                                    basic blocks without block
-            //                                    arguments. For functions that
-            //                                    only use early-return semantics
-            //                                    this placeholder is never read.)
+            //   cf.br ^if_after_N(%else_result : i64)
+            // ^if_after_N(%dst : i64):
             //
-            // N = instr_index for uniqueness. Gated.
+            // Block arguments are used to forward the branch value to the
+            // join block — this is MLIR's standard pattern for if-as-value.
+            // The previous placeholder (arith.constant 0) broke all if
+            // expressions used as values (e.g. `let x = if cond { a } else { b }`),
+            // replacing the selected value with 0.
+            //
+            // For branches that terminate with `Instr::Return`, the
+            // `cf.br ^if_after_N` is omitted because the block is already
+            // terminated by a `return` op.  If BOTH branches return, the
+            // ^if_after_N block receives no predecessors but mlir-opt will
+            // DCE it; the block arg is still declared for structural validity.
+            //
+            // N = dst.0 (globally unique SSA id) for uniqueness. Gated.
             #[cfg(feature = "std-surface")]
             Instr::If {
                 cond_id,
@@ -585,14 +590,18 @@ impl LoweringContext {
                     self.values.insert(vid, kind);
                 }
                 // If the last instruction in the then-block was already a
-                // `return`, do NOT emit a redundant `cf.br` — the block is
-                // already properly terminated.
+                // `return`, do NOT emit a `cf.br` — the block is already
+                // properly terminated.  Otherwise forward then_result to the
+                // join block via a block-argument branch.
                 let then_ends_with_return = then_instrs
                     .last()
                     .map(|i| matches!(i, Instr::Return { .. }))
                     .unwrap_or(false);
                 if !then_ends_with_return {
-                    self.emit_line(&format!("    cf.br ^if_after_{lbl}"));
+                    self.emit_line(&format!(
+                        "    cf.br ^if_after_{lbl}(%{} : i64)",
+                        then_result.0
+                    ));
                 }
 
                 // Else block.
@@ -613,20 +622,22 @@ impl LoweringContext {
                     .map(|i| matches!(i, Instr::Return { .. }))
                     .unwrap_or(false);
                 if !else_ends_with_return {
-                    self.emit_line(&format!("    cf.br ^if_after_{lbl}"));
+                    self.emit_line(&format!(
+                        "    cf.br ^if_after_{lbl}(%{} : i64)",
+                        else_result.0
+                    ));
                 }
 
-                // After block — placeholder dst for non-returning branches.
-                self.emit_line(&format!("  ^if_after_{lbl}:"));
-                // Record the result SSA ids from each branch in case
-                // downstream code references them.
+                // Join block: declare the block argument that carries the if-value.
+                // Both incoming `cf.br` edges supply an i64; the block argument
+                // becomes `%dst`.  If both branches returned, the block has no
+                // predecessors and mlir-opt will DCE it — that's fine.
+                self.emit_line(&format!("  ^if_after_{lbl}(%{} : i64):", dst.0));
+                // Register then_result and else_result as known values for any
+                // downstream code that directly references them (e.g. for
+                // branch_bindings threading in the fn-body loop).
                 self.values.insert(*then_result, ValueKind::ScalarI64);
                 self.values.insert(*else_result, ValueKind::ScalarI64);
-                // Emit a placeholder i64 for the dst so the outer scope has
-                // a valid SSA value.  Functions that use early-return in both
-                // branches never reach this; non-returning if expressions
-                // (used as pure values) get a zero placeholder here.
-                self.emit_line(&format!("    %{} = arith.constant 0 : i64", dst.0));
                 self.values.insert(*dst, ValueKind::ScalarI64);
             }
             _ => {

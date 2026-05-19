@@ -17,11 +17,11 @@ use std::io::Write;
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
 #[cfg(feature = "mlir-build")]
-use std::process::Child;
-#[cfg(feature = "mlir-build")]
 use std::process::Command;
 #[cfg(feature = "mlir-build")]
 use std::process::Stdio;
+#[cfg(feature = "mlir-build")]
+use std::sync::{Arc, Mutex};
 #[cfg(feature = "mlir-build")]
 use std::time::Duration;
 #[cfg(feature = "mlir-build")]
@@ -361,6 +361,15 @@ struct CommandOutput {
     status: std::process::ExitStatus,
 }
 
+/// Spawn `program` with `args`, optionally feed `input` on stdin, and collect
+/// stdout + stderr while respecting `timeout`.
+///
+/// The previous implementation wrote all of stdin before draining stdout, which
+/// deadlocked whenever the child's stdout pipe filled up (> 64 KiB OS buffer).
+/// The parser MLIR is ~61 KiB in and ~95 KiB out, which exceeds the pipe buffer
+/// and caused a permanent hang.  This version drains stdout and stderr on
+/// dedicated threads while the main thread writes stdin and polls for
+/// termination, eliminating the deadlock.
 #[cfg(feature = "mlir-build")]
 fn run_command(
     program: &str,
@@ -369,6 +378,9 @@ fn run_command(
     timeout: Duration,
     label: &'static str,
 ) -> Result<CommandOutput, BuildError> {
+    use std::io::Read;
+    use std::thread;
+
     let mut cmd = Command::new(program);
     cmd.args(args.iter().map(|s| s.as_str()));
     if input.is_some() {
@@ -384,26 +396,42 @@ fn run_command(
         _ => BuildError::Io(err),
     })?;
 
+    // Drain stdout and stderr on background threads to prevent pipe-buffer
+    // deadlock when child output exceeds the OS pipe buffer (typically 64 KiB).
+    let stdout_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+
+    let stdout_buf_clone = Arc::clone(&stdout_buf);
+    let stdout_thread = stdout_pipe.map(|mut pipe| {
+        thread::spawn(move || {
+            let _ = pipe.read_to_end(&mut stdout_buf_clone.lock().unwrap());
+        })
+    });
+
+    let stderr_buf_clone = Arc::clone(&stderr_buf);
+    let stderr_thread = stderr_pipe.map(|mut pipe| {
+        thread::spawn(move || {
+            let _ = pipe.read_to_end(&mut stderr_buf_clone.lock().unwrap());
+        })
+    });
+
+    // Write stdin after launching the drain threads so the child can read its
+    // input while we drain its output — mutual progress guaranteed.
     if let Some(data) = input {
         if let Some(mut stdin) = child.stdin.take() {
             stdin.write_all(data)?;
+            // Drop stdin to signal EOF to the child.
         }
     }
 
-    wait_with_timeout(&mut child, timeout, label)?;
-    collect_child_output(child)
-}
-
-#[cfg(feature = "mlir-build")]
-fn wait_with_timeout(
-    child: &mut Child,
-    timeout: Duration,
-    label: &'static str,
-) -> Result<(), BuildError> {
+    // Poll for child termination with timeout.
     let start = Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => return Ok(()),
+            Ok(Some(s)) => break s,
             Ok(None) => {
                 if start.elapsed() > timeout {
                     let _ = child.kill();
@@ -414,24 +442,24 @@ fn wait_with_timeout(
             }
             Err(err) => return Err(BuildError::Io(err)),
         }
+    };
+
+    // Join drain threads before reading the buffers.
+    if let Some(t) = stdout_thread {
+        let _ = t.join();
     }
-}
-
-#[cfg(feature = "mlir-build")]
-fn collect_child_output(mut child: Child) -> Result<CommandOutput, BuildError> {
-    use std::io::Read;
-
-    let mut stdout = Vec::new();
-    if let Some(mut out) = child.stdout.take() {
-        out.read_to_end(&mut stdout)?;
+    if let Some(t) = stderr_thread {
+        let _ = t.join();
     }
 
-    let mut stderr = Vec::new();
-    if let Some(mut err) = child.stderr.take() {
-        err.read_to_end(&mut stderr)?;
-    }
-
-    let status = child.wait()?;
+    let stdout = Arc::try_unwrap(stdout_buf)
+        .unwrap_or_default()
+        .into_inner()
+        .unwrap_or_default();
+    let stderr = Arc::try_unwrap(stderr_buf)
+        .unwrap_or_default()
+        .into_inner()
+        .unwrap_or_default();
 
     Ok(CommandOutput {
         stdout,
