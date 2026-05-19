@@ -1,0 +1,814 @@
+// examples/parser/main.mind — RFC 0005 Phase 6.2 self-host parser seed.
+//
+// Second step of the self-host ladder.  Builds on the Phase 6.1
+// tokeniser (examples/lexer/main.mind, commit 29bd08b) and consumes
+// its flat stride-3 Vec<i64> token stream `(kind, lo, hi)`.  Emits
+// an AST whose nodes are RFC 0005 Option-C heap records — every AST
+// reference is an opaque i64 base address allocated via
+// __mind_alloc, fields stored with __mind_store_i64 at fixed 8-byte
+// offsets.  Variable-length child lists (call args, fn params, block
+// statements) use a `Vec<i64>` of child node addresses, identical in
+// shape to the lexer's token stream Vec.
+//
+// Grammar supported (Phase 6.2 scope):
+//
+//   program     := item*
+//   item        := use_stmt | fn_def
+//   use_stmt    := "use" IDENT "." IDENT ";"
+//   fn_def      := "pub"? "fn" IDENT "(" params ")" "->" IDENT block
+//   params      := (param ("," param)*)?
+//   param       := IDENT ":" IDENT
+//   block       := "{" stmt* "}"
+//   stmt        := let_stmt | return_stmt | expr_stmt
+//   let_stmt    := "let" IDENT ":" IDENT "=" expr ";"
+//   return_stmt := IDENT("return") expr ";"      // see note below
+//   expr_stmt   := expr ";"?
+//   expr        := pratt(0)
+//   pratt(p)    := prefix (infix_op pratt(prec+1))*
+//   prefix      := INT_LIT | IDENT | IDENT "(" args ")" | "(" expr ")"
+//   args        := (expr ("," expr)*)?
+//   infix_op    := "+" | "-" | "*" | "/" | "<" | ">" | "="
+//
+// Note on `return`: Phase 6.1 lexer does not yet recognise `return`
+// as a keyword — it surfaces as `tk_ident()` with byte span "return".
+// The parser detects it by comparing the identifier byte range
+// against the literal "return" via load_byte().  Phase 6.3 lexer
+// growth will promote it to a dedicated tk_kw_return().
+//
+// Build:
+//   cargo run --features "std-surface cross-module-imports" \
+//       --bin mindc -- examples/parser/main.mind --emit-ir
+//
+// Smoke gate (Phase 6.2 contract): the AST produced on
+// examples/parser/fixture.mind must match the tree documented in
+// examples/parser/EXPECTED.md.  Phase 6.3 promotes this from a
+// documented fixture to a Cargo integration test by linking the
+// compiled .so and walking the heap-record graph.
+//
+// Loop strategy: still pure tail recursion — mindc v0.4.4 does not
+// accept `while` as a statement (see docs/rfcs/0005-phase-6-2-mindc-
+// gaps.md Gap 1).  The Pratt loop, the statement loop inside `block`,
+// the comma-separated arg/param loops — all expressed as recursive
+// `parse_*_rest(toks, pos, acc) -> ParseResult` functions.
+
+use std.vec;
+
+// ===== AST kind tags =====
+//
+// Frozen for Phase 6.2.  Phase 6.3 (type-checker) will add type-
+// annotated variants but never renumber an existing tag — the
+// `EXPECTED.md` AST tree is keyed by these constants.
+
+pub fn ast_int_lit() -> i64 { 1 }   // span_lo/span_hi cover the literal bytes
+pub fn ast_ident() -> i64   { 2 }   // span covers the identifier
+pub fn ast_binop() -> i64   { 3 }   // child0 = lhs, child1 = rhs, aux = op tag
+pub fn ast_call() -> i64    { 4 }   // child0 = callee (ident node), child1 = Vec<i64> args
+pub fn ast_fn_def() -> i64  { 5 }   // child0 = name ident, child1 = Vec<i64> params, child2 = body block, aux = is_pub
+pub fn ast_let() -> i64     { 6 }   // child0 = name ident, child1 = type ident, child2 = init expr
+pub fn ast_use() -> i64     { 7 }   // child0 = path-head ident, child1 = path-tail ident
+pub fn ast_return() -> i64  { 8 }   // child0 = value expr
+pub fn ast_param() -> i64   { 9 }   // child0 = name ident, child1 = type ident
+pub fn ast_block() -> i64   { 10 }  // child0 = Vec<i64> stmts
+pub fn ast_program() -> i64 { 11 }  // child0 = Vec<i64> items
+pub fn ast_paren() -> i64   { 12 }  // child0 = inner expr (transparent for shape)
+
+// ===== Binop operator tags (subset of token kinds, copied so the
+// AST stays self-describing without forcing the type-checker to
+// pull in lexer constants). =====
+
+pub fn op_add() -> i64 { 1 }
+pub fn op_sub() -> i64 { 2 }
+pub fn op_mul() -> i64 { 3 }
+pub fn op_div() -> i64 { 4 }
+pub fn op_lt()  -> i64 { 5 }
+pub fn op_gt()  -> i64 { 6 }
+pub fn op_eq()  -> i64 { 7 }   // single `=` — treated as a binop for Phase 6.2
+
+// ===== Token-kind mirror (must match examples/lexer/main.mind) =====
+//
+// Duplicated as plain fns rather than imported because the lexer
+// module isn't yet exposed as a cross-module import target in mindc
+// v0.4.4 (the `tk_*` fns live in examples/lexer/main.mind, which is
+// a binary entry-point file, not a stdlib module).  Phase 6.3 will
+// fold the token-kind constants into a shared examples/lexer/tokens
+// module and import them from both sides.
+
+pub fn tk_eof()    -> i64 { 0 }
+pub fn tk_ident()  -> i64 { 1 }
+pub fn tk_int()    -> i64 { 2 }
+pub fn tk_lparen() -> i64 { 3 }
+pub fn tk_rparen() -> i64 { 4 }
+pub fn tk_lbrace() -> i64 { 5 }
+pub fn tk_rbrace() -> i64 { 6 }
+pub fn tk_comma()  -> i64 { 7 }
+pub fn tk_semi()   -> i64 { 8 }
+pub fn tk_colon()  -> i64 { 9 }
+pub fn tk_arrow()  -> i64 { 10 }
+pub fn tk_eq()     -> i64 { 11 }
+pub fn tk_plus()   -> i64 { 12 }
+pub fn tk_minus()  -> i64 { 13 }
+pub fn tk_star()   -> i64 { 14 }
+pub fn tk_slash()  -> i64 { 15 }
+pub fn tk_lt()     -> i64 { 16 }
+pub fn tk_gt()     -> i64 { 17 }
+pub fn tk_kw_fn()  -> i64 { 18 }
+pub fn tk_kw_let() -> i64 { 19 }
+pub fn tk_kw_use() -> i64 { 20 }
+pub fn tk_kw_pub() -> i64 { 21 }
+
+// ===== Token-stream accessors =====
+//
+// The lexer's output is a Vec<i64> with stride 3: triple i goes at
+// linear offsets (3i, 3i+1, 3i+2) and decodes to (kind, lo, hi).
+
+pub fn tok_kind(toks: Vec, i: i64) -> i64 {
+    vec_get(toks, i * 3)
+}
+
+pub fn tok_lo(toks: Vec, i: i64) -> i64 {
+    vec_get(toks, i * 3 + 1)
+}
+
+pub fn tok_hi(toks: Vec, i: i64) -> i64 {
+    vec_get(toks, i * 3 + 2)
+}
+
+pub fn tok_count(toks: Vec) -> i64 {
+    vec_len(toks) / 3
+}
+
+// Cheap "are we at EOF?" — used to terminate every recursive loop
+// without relying on a sentinel position past the array.
+pub fn at_eof(toks: Vec, pos: i64) -> i64 {
+    if pos >= tok_count(toks) { return 1; }
+    if tok_kind(toks, pos) == tk_eof() { return 1; }
+    0
+}
+
+// ===== AST node layout =====
+//
+// Each AST node is a 7×i64 heap record (56 bytes):
+//
+//   offset 0   : kind tag (ast_* constant)
+//   offset 8   : span_lo  (source-byte start)
+//   offset 16  : span_hi  (source-byte end)
+//   offset 24  : child0   (i64 addr of subnode, or 0)
+//   offset 32  : child1   (i64 addr of subnode, or 0)
+//   offset 40  : child2   (i64 addr of subnode, or 0)
+//   offset 48  : aux      (op tag for binop, is_pub for fn_def, etc.)
+//
+// Variable-length child lists (Vec<i64> of node addresses) ride in
+// whichever child slot the AST kind reserves — they're stored as the
+// Vec's base address (i64 from vec_addr) plus a separate slot for
+// the Vec's length.  For Phase 6.2 we cheat slightly: we store the
+// Vec address in child1 (or child0 for ast_program/ast_block) and
+// the Vec length in `aux`.  That's enough for a deterministic
+// pre-order walk without re-introducing a generic Vec field on every
+// node.  Phase 6.3 will introduce a proper "node-list" pointer type
+// if the heuristic shows seams.
+
+pub fn ast_alloc() -> i64 {
+    __mind_alloc(56)
+}
+
+pub fn ast_new_leaf(kind: i64, span_lo: i64, span_hi: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  kind);
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, 0);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_binop(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64, op: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_binop());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, lhs);
+    __mind_store_i64(n + 32, rhs);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, op);
+    n
+}
+
+pub fn ast_new_call(span_lo: i64, span_hi: i64, callee: i64, args_vec_addr: i64, args_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_call());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, callee);
+    __mind_store_i64(n + 32, args_vec_addr);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, args_len);
+    n
+}
+
+pub fn ast_new_fn_def(span_lo: i64, span_hi: i64,
+                      name: i64, params_addr: i64, body: i64,
+                      params_len: i64, is_pub: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_fn_def());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name);
+    __mind_store_i64(n + 32, params_addr);
+    __mind_store_i64(n + 40, body);
+    // Pack params_len in the high 32 bits of aux, is_pub in the low.
+    // Both fit in a single i64 without losing fidelity for Phase 6.2
+    // (we never expect 2^32 parameters).
+    __mind_store_i64(n + 48, params_len * 2 + is_pub);
+    n
+}
+
+pub fn ast_new_let(span_lo: i64, span_hi: i64, name: i64, ty: i64, init: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_let());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name);
+    __mind_store_i64(n + 32, ty);
+    __mind_store_i64(n + 40, init);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_use(span_lo: i64, span_hi: i64, head: i64, tail: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_use());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, head);
+    __mind_store_i64(n + 32, tail);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_return(span_lo: i64, span_hi: i64, value: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_return());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, value);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_param(span_lo: i64, span_hi: i64, name: i64, ty: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_param());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name);
+    __mind_store_i64(n + 32, ty);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_block(span_lo: i64, span_hi: i64, stmts_addr: i64, stmts_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_block());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, stmts_addr);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, stmts_len);
+    n
+}
+
+pub fn ast_new_program(span_lo: i64, span_hi: i64, items_addr: i64, items_len: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_program());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, items_addr);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, items_len);
+    n
+}
+
+pub fn ast_new_paren(span_lo: i64, span_hi: i64, inner: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0,  ast_paren());
+    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, inner);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// ===== AST accessors (for downstream consumers, e.g. Phase 6.3
+// type-checker walking the heap-record tree). =====
+
+pub fn ast_kind(node: i64)    -> i64 { __mind_load_i64(node + 0) }
+pub fn ast_span_lo(node: i64) -> i64 { __mind_load_i64(node + 8) }
+pub fn ast_span_hi(node: i64) -> i64 { __mind_load_i64(node + 16) }
+pub fn ast_child0(node: i64)  -> i64 { __mind_load_i64(node + 24) }
+pub fn ast_child1(node: i64)  -> i64 { __mind_load_i64(node + 32) }
+pub fn ast_child2(node: i64)  -> i64 { __mind_load_i64(node + 40) }
+pub fn ast_aux(node: i64)     -> i64 { __mind_load_i64(node + 48) }
+
+// ===== ParseResult — threaded through every parse_* function =====
+//
+// Every parse helper returns a ParseResult { next_pos, node }.  We
+// chose a struct over a Vec<i64> for two reasons:
+//
+//   1. Bit-identical lowering across mindc backends (RFC 0005 P0e
+//      chose Option C: struct lowers to heap-record with i64 addr).
+//   2. Type-checker readability: the type signature
+//      `parse_expr(...) -> ParseResult` documents intent in the .mind
+//      source far better than `(toks: Vec, pos_addr: i64) -> Vec`.
+//
+// `node` is the i64 base-address of the constructed AST node.
+
+struct ParseResult {
+    next_pos: i64,
+    node: i64,
+}
+
+pub fn pr_new(next_pos: i64, node: i64) -> ParseResult {
+    ParseResult { next_pos: next_pos, node: node }
+}
+
+pub fn pr_pos(r: ParseResult)  -> i64 { r.next_pos }
+pub fn pr_node(r: ParseResult) -> i64 { r.node }
+
+// ===== Token-kind helpers (mirror the lexer's load_byte for the
+// byte-level keyword detection used to spot `return`). =====
+
+pub fn load_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+// Compare the [lo, hi) byte range in `buf` against the literal
+// "return" (6 bytes: 0x72,0x65,0x74,0x75,0x72,0x6e).  Returns 1 on
+// match, 0 otherwise.  Pulled out so Phase 6.3 keyword promotion
+// can replace this with a tk_kw_return() check trivially.
+pub fn is_ident_return(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 6 {
+        if load_byte(buf, lo)     == 114 {     // 'r'
+        if load_byte(buf, lo + 1) == 101 {     // 'e'
+        if load_byte(buf, lo + 2) == 116 {     // 't'
+        if load_byte(buf, lo + 3) == 117 {     // 'u'
+        if load_byte(buf, lo + 4) == 114 {     // 'r'
+        if load_byte(buf, lo + 5) == 110 {     // 'n'
+            return 1;
+        } } } } } }
+    }
+    0
+}
+
+// ===== Precedence table for the Pratt loop =====
+//
+// 0 returned ⇒ "not a binary infix operator" ⇒ Pratt loop terminates.
+// Higher values bind tighter.  Left-associative for every op in this
+// table (the rhs is parsed at `prec + 1`).
+
+pub fn infix_prec(kind: i64) -> i64 {
+    if kind == tk_eq()    { return 1; }
+    if kind == tk_lt()    { return 2; }
+    if kind == tk_gt()    { return 2; }
+    if kind == tk_plus()  { return 3; }
+    if kind == tk_minus() { return 3; }
+    if kind == tk_star()  { return 4; }
+    if kind == tk_slash() { return 4; }
+    0
+}
+
+pub fn tk_to_op(kind: i64) -> i64 {
+    if kind == tk_plus()  { return op_add(); }
+    if kind == tk_minus() { return op_sub(); }
+    if kind == tk_star()  { return op_mul(); }
+    if kind == tk_slash() { return op_div(); }
+    if kind == tk_lt()    { return op_lt(); }
+    if kind == tk_gt()    { return op_gt(); }
+    if kind == tk_eq()    { return op_eq(); }
+    0
+}
+
+// ===== Primary / prefix parser =====
+//
+// Phase 6.2 prefix forms:
+//   - integer literal            → ast_int_lit
+//   - identifier                 → ast_ident
+//   - identifier "(" args ")"    → ast_call
+//   - "(" expr ")"               → ast_paren wrapping inner
+//
+// `buf` carries the source byte buffer through every parse fn —
+// needed because `return`-as-identifier detection re-reads the
+// identifier's byte span from the original source.  Token kinds
+// alone are not sufficient until the lexer learns the keyword.
+
+pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let k: i64 = tok_kind(toks, pos);
+    let lo: i64 = tok_lo(toks, pos);
+    let hi: i64 = tok_hi(toks, pos);
+
+    // Integer literal: single token, no follow-on.
+    if k == tk_int() {
+        let n: i64 = ast_new_leaf(ast_int_lit(), lo, hi);
+        return pr_new(pos + 1, n);
+    }
+
+    // Parenthesised expression: "(" expr ")".
+    if k == tk_lparen() {
+        let inner: ParseResult = parse_expr(toks, pos + 1, buf);
+        let after_inner: i64 = pr_pos(inner);
+        // Expect a ")".  We don't have a real error path in Phase
+        // 6.2; on mismatch we still advance to keep the recursive
+        // tail well-typed.  Phase 6.3 will introduce a Result enum.
+        let close_hi: i64 = tok_hi(toks, after_inner);
+        let after_close: i64 = if tok_kind(toks, after_inner) == tk_rparen() {
+            after_inner + 1
+        } else {
+            after_inner
+        };
+        let paren: i64 = ast_new_paren(lo, close_hi, pr_node(inner));
+        return pr_new(after_close, paren);
+    }
+
+    // Identifier — could be a bare ident or the head of a call.
+    if k == tk_ident() {
+        // Lookahead for "(" → call form.
+        if at_eof(toks, pos + 1) == 0 {
+            if tok_kind(toks, pos + 1) == tk_lparen() {
+                return parse_call(toks, pos, buf);
+            }
+        }
+        let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
+        return pr_new(pos + 1, n);
+    }
+
+    // Unknown prefix — soft-fail to an empty ident so the tail
+    // recursion keeps the parser well-typed.  Phase 6.3 swaps this
+    // for a real error variant.
+    let fallback: i64 = ast_new_leaf(ast_ident(), lo, hi);
+    pr_new(pos + 1, fallback)
+}
+
+// ===== Call parser =====
+//
+// Entry condition: tok[pos] is an identifier, tok[pos+1] is "(".
+
+pub fn parse_call(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let lo: i64 = tok_lo(toks, pos);
+    let name_hi: i64 = tok_hi(toks, pos);
+    let callee: i64 = ast_new_leaf(ast_ident(), lo, name_hi);
+
+    // pos+1 is "("; arguments start at pos+2.
+    let empty_args: Vec = vec_new();
+    let after_open: i64 = pos + 2;
+
+    // Handle the empty-arg-list case directly.
+    if tok_kind(toks, after_open) == tk_rparen() {
+        let close_hi: i64 = tok_hi(toks, after_open);
+        let call_node: i64 = ast_new_call(lo, close_hi, callee,
+                                          vec_addr(empty_args), 0);
+        return pr_new(after_open + 1, call_node);
+    }
+
+    let args_res: ParseResult = parse_args_rest(toks, after_open, buf, empty_args);
+    let after_args: i64 = pr_pos(args_res);
+    // pr_node(args_res) carries the args Vec encoded as a sentinel
+    // ast_block whose child0 is the Vec address and aux is the count
+    // — we extract those rather than threading a Vec separately.
+    let args_node: i64 = pr_node(args_res);
+    let args_addr: i64 = ast_child0(args_node);
+    let args_len: i64  = ast_aux(args_node);
+
+    let close_hi: i64 = tok_hi(toks, after_args);
+    let after_close: i64 = if tok_kind(toks, after_args) == tk_rparen() {
+        after_args + 1
+    } else {
+        after_args
+    };
+
+    let call_node: i64 = ast_new_call(lo, close_hi, callee, args_addr, args_len);
+    pr_new(after_close, call_node)
+}
+
+// Parse one expr, then either consume "," and recurse, or stop on
+// ")".  Accumulates args into `acc` (a Vec<i64> of node addresses).
+// Returns a sentinel ast_block-shaped node carrying (addr, len) so
+// the caller can extract them without a second return slot.
+
+pub fn parse_args_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    let one: ParseResult = parse_expr(toks, pos, buf);
+    let new_acc: Vec = vec_push(acc, pr_node(one));
+    let after_one: i64 = pr_pos(one);
+    if tok_kind(toks, after_one) == tk_comma() {
+        return parse_args_rest(toks, after_one + 1, buf, new_acc);
+    }
+    let sentinel: i64 = ast_new_block(0, 0, vec_addr(new_acc), vec_len(new_acc));
+    pr_new(after_one, sentinel)
+}
+
+// ===== Pratt expression parser =====
+//
+// parse_expr(toks, pos, buf) parses a complete expression at
+// precedence 0.  Internally calls parse_pratt(toks, pos, buf, lhs,
+// min_prec) which loops while the next token is an infix op of
+// precedence >= min_prec, consuming it and folding into a left-deep
+// binop tree.
+
+pub fn parse_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let prim: ParseResult = parse_primary(toks, pos, buf);
+    parse_pratt(toks, pr_pos(prim), buf, pr_node(prim), 1)
+}
+
+pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
+    if at_eof(toks, pos) == 1 { return pr_new(pos, lhs); }
+    let k: i64 = tok_kind(toks, pos);
+    let prec: i64 = infix_prec(k);
+    if prec == 0 { return pr_new(pos, lhs); }
+    if prec < min_prec { return pr_new(pos, lhs); }
+
+    let op_tag: i64 = tk_to_op(k);
+    // Recursive descent for the right operand at prec+1 (left-assoc).
+    let rhs_prim: ParseResult = parse_primary(toks, pos + 1, buf);
+    let rhs_full: ParseResult = parse_pratt(toks, pr_pos(rhs_prim), buf, pr_node(rhs_prim), prec + 1);
+
+    let lhs_lo: i64 = ast_span_lo(lhs);
+    let rhs_hi: i64 = ast_span_hi(pr_node(rhs_full));
+    let combined: i64 = ast_new_binop(lhs_lo, rhs_hi, lhs, pr_node(rhs_full), op_tag);
+
+    parse_pratt(toks, pr_pos(rhs_full), buf, combined, min_prec)
+}
+
+// ===== Statements =====
+//
+// parse_stmt dispatches on the first token kind:
+//   - tk_kw_let           → parse_let
+//   - tk_ident("return")  → parse_return  (Phase 6.1 lexer limitation)
+//   - else                → parse_expr (Phase 6.2 expr-statement)
+
+pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_let() { return parse_let(toks, pos, buf); }
+    if k == tk_ident() {
+        let lo: i64 = tok_lo(toks, pos);
+        let hi: i64 = tok_hi(toks, pos);
+        if is_ident_return(buf, lo, hi) == 1 {
+            return parse_return(toks, pos, buf);
+        }
+    }
+    // Expression statement.  Consume a trailing semicolon if present
+    // — Phase 6.2 tolerates both `EXPR ;` and a final tail-EXPR (the
+    // block's implicit return).
+    let e: ParseResult = parse_expr(toks, pos, buf);
+    let after_e: i64 = pr_pos(e);
+    if tok_kind(toks, after_e) == tk_semi() {
+        return pr_new(after_e + 1, pr_node(e));
+    }
+    e
+}
+
+// let NAME : TYPE = EXPR ;
+pub fn parse_let(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    // pos + 1 = name ident
+    let name_lo: i64 = tok_lo(toks, pos + 1);
+    let name_hi: i64 = tok_hi(toks, pos + 1);
+    let name: i64 = ast_new_leaf(ast_ident(), name_lo, name_hi);
+    // pos + 2 = ":"
+    // pos + 3 = type ident
+    let ty_lo: i64 = tok_lo(toks, pos + 3);
+    let ty_hi: i64 = tok_hi(toks, pos + 3);
+    let ty: i64 = ast_new_leaf(ast_ident(), ty_lo, ty_hi);
+    // pos + 4 = "="
+    let init: ParseResult = parse_expr(toks, pos + 5, buf);
+    let after_init: i64 = pr_pos(init);
+    // Consume optional trailing semicolon.
+    let after_semi: i64 = if tok_kind(toks, after_init) == tk_semi() {
+        after_init + 1
+    } else {
+        after_init
+    };
+    let init_hi: i64 = ast_span_hi(pr_node(init));
+    let let_node: i64 = ast_new_let(kw_lo, init_hi, name, ty, pr_node(init));
+    pr_new(after_semi, let_node)
+}
+
+// return EXPR ;        (where `return` arrives as tk_ident "return")
+pub fn parse_return(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    let value: ParseResult = parse_expr(toks, pos + 1, buf);
+    let after_v: i64 = pr_pos(value);
+    let after_semi: i64 = if tok_kind(toks, after_v) == tk_semi() {
+        after_v + 1
+    } else {
+        after_v
+    };
+    let v_hi: i64 = ast_span_hi(pr_node(value));
+    let r: i64 = ast_new_return(kw_lo, v_hi, pr_node(value));
+    pr_new(after_semi, r)
+}
+
+// ===== Blocks =====
+//
+// "{" stmt* "}".  Statements accumulate into a Vec<i64> of node
+// addresses; the Vec base+len are stowed in the resulting ast_block.
+
+pub fn parse_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let open_lo: i64 = tok_lo(toks, pos);
+    // pos points at "{"; statements start at pos + 1.
+    let acc: Vec = vec_new();
+    let body: ParseResult = parse_block_stmts(toks, pos + 1, buf, acc);
+    let after_body: i64 = pr_pos(body);
+    // pr_node(body) is a sentinel block carrying (addr, len) of the
+    // accumulated stmts vec.
+    let stmts_node: i64 = pr_node(body);
+    let stmts_addr: i64 = ast_child0(stmts_node);
+    let stmts_len: i64  = ast_aux(stmts_node);
+
+    let close_hi: i64 = tok_hi(toks, after_body);
+    let after_close: i64 = if tok_kind(toks, after_body) == tk_rbrace() {
+        after_body + 1
+    } else {
+        after_body
+    };
+    let blk: i64 = ast_new_block(open_lo, close_hi, stmts_addr, stmts_len);
+    pr_new(after_close, blk)
+}
+
+pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if at_eof(toks, pos) == 1 {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    let one: ParseResult = parse_stmt(toks, pos, buf);
+    let new_acc: Vec = vec_push(acc, pr_node(one));
+    parse_block_stmts(toks, pr_pos(one), buf, new_acc)
+}
+
+// ===== Function definitions =====
+//
+//   "pub"? "fn" IDENT "(" params ")" "->" IDENT block
+//
+// The return type is parsed but not currently stored in the
+// ast_fn_def node (Phase 6.3 type-checker will hoist it into the
+// node's child slot once we widen the heap-record).  Phase 6.2 ships
+// without it to keep the node shape stable.
+
+pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
+    // pos points at "fn".
+    let fn_lo: i64 = tok_lo(toks, pos);
+    // pos + 1 = name ident
+    let name_lo: i64 = tok_lo(toks, pos + 1);
+    let name_hi: i64 = tok_hi(toks, pos + 1);
+    let name: i64 = ast_new_leaf(ast_ident(), name_lo, name_hi);
+    // pos + 2 = "("; params start at pos + 3.
+    let params_acc: Vec = vec_new();
+    let params_res: ParseResult = parse_params_rest(toks, pos + 3, buf, params_acc);
+    let after_params: i64 = pr_pos(params_res);
+    let params_node: i64 = pr_node(params_res);
+    let params_addr: i64 = ast_child0(params_node);
+    let params_len: i64  = ast_aux(params_node);
+
+    // after_params should be at ")"; advance past it.
+    let after_rparen: i64 = if tok_kind(toks, after_params) == tk_rparen() {
+        after_params + 1
+    } else {
+        after_params
+    };
+
+    // Expect "->" at after_rparen; skip if present.
+    let after_arrow: i64 = if tok_kind(toks, after_rparen) == tk_arrow() {
+        after_rparen + 1
+    } else {
+        after_rparen
+    };
+
+    // after_arrow = return-type ident; skip one token regardless.
+    let after_ret: i64 = after_arrow + 1;
+
+    // Body block.
+    let body_res: ParseResult = parse_block(toks, after_ret, buf);
+    let body_hi: i64 = ast_span_hi(pr_node(body_res));
+
+    let fn_node: i64 = ast_new_fn_def(fn_lo, body_hi,
+                                       name, params_addr, pr_node(body_res),
+                                       params_len, is_pub);
+    pr_new(pr_pos(body_res), fn_node)
+}
+
+// (param ("," param)*)?    where param := IDENT ":" IDENT
+// Returns a sentinel block carrying the params Vec.
+pub fn parse_params_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    // Empty list — caller is already at ")".
+    if tok_kind(toks, pos) == tk_rparen() {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    // One param: IDENT ":" IDENT.
+    let n_lo: i64 = tok_lo(toks, pos);
+    let n_hi: i64 = tok_hi(toks, pos);
+    let n_name: i64 = ast_new_leaf(ast_ident(), n_lo, n_hi);
+    // pos + 1 = ":"
+    let t_lo: i64 = tok_lo(toks, pos + 2);
+    let t_hi: i64 = tok_hi(toks, pos + 2);
+    let n_ty: i64 = ast_new_leaf(ast_ident(), t_lo, t_hi);
+    let p: i64 = ast_new_param(n_lo, t_hi, n_name, n_ty);
+    let new_acc: Vec = vec_push(acc, p);
+    let after_param: i64 = pos + 3;
+    if tok_kind(toks, after_param) == tk_comma() {
+        return parse_params_rest(toks, after_param + 1, buf, new_acc);
+    }
+    let s: i64 = ast_new_block(0, 0, vec_addr(new_acc), vec_len(new_acc));
+    pr_new(after_param, s)
+}
+
+// ===== Use statements =====
+//
+// use IDENT "." IDENT ";"
+//
+// Phase 6.1 lexer maps "." to tk_slash() (documented limitation in
+// examples/lexer/EXPECTED.md row 3 note).  We accept either tk_slash
+// or tk_ident in the dot slot so a future tk_dot() doesn't break
+// the parser.
+
+pub fn parse_use(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let use_lo: i64 = tok_lo(toks, pos);
+    // pos + 1 = head ident
+    let h_lo: i64 = tok_lo(toks, pos + 1);
+    let h_hi: i64 = tok_hi(toks, pos + 1);
+    let head: i64 = ast_new_leaf(ast_ident(), h_lo, h_hi);
+    // pos + 2 = "." (currently tk_slash in v0.4.4 lexer)
+    // pos + 3 = tail ident
+    let t_lo: i64 = tok_lo(toks, pos + 3);
+    let t_hi: i64 = tok_hi(toks, pos + 3);
+    let tail: i64 = ast_new_leaf(ast_ident(), t_lo, t_hi);
+    // pos + 4 = ";"
+    let after_semi: i64 = if tok_kind(toks, pos + 4) == tk_semi() {
+        pos + 5
+    } else {
+        pos + 4
+    };
+    let node: i64 = ast_new_use(use_lo, t_hi, head, tail);
+    pr_new(after_semi, node)
+}
+
+// ===== Top-level item / program =====
+//
+// program := item*
+// item    := use_stmt | "pub"? fn_def
+
+pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_use() { return parse_use(toks, pos, buf); }
+    if k == tk_kw_pub() {
+        // pos + 1 should be "fn"
+        return parse_fn_def(toks, pos + 1, buf, 1);
+    }
+    if k == tk_kw_fn() {
+        return parse_fn_def(toks, pos, buf, 0);
+    }
+    // Unknown top-level token — emit an empty ident leaf and skip
+    // one token so the recursive driver makes progress.  Phase 6.3
+    // will replace this with a real diagnostic.
+    let lo: i64 = tok_lo(toks, pos);
+    let hi: i64 = tok_hi(toks, pos);
+    let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
+    pr_new(pos + 1, n)
+}
+
+pub fn parse_items_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if at_eof(toks, pos) == 1 {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    let one: ParseResult = parse_item(toks, pos, buf);
+    let new_acc: Vec = vec_push(acc, pr_node(one));
+    parse_items_rest(toks, pr_pos(one), buf, new_acc)
+}
+
+// ===== Public entry =====
+//
+// parse(toks, buf) — consumes a Phase 6.1 token stream + the
+// original source buffer (needed for the `return` keyword byte-
+// compare) and returns an ast_program node.  The returned i64 is
+// the heap-record base address of the root.
+
+pub fn parse(toks: Vec, buf: i64) -> i64 {
+    let acc: Vec = vec_new();
+    let res: ParseResult = parse_items_rest(toks, 0, buf, acc);
+    let s: i64 = pr_node(res);
+    let items_addr: i64 = ast_child0(s);
+    let items_len: i64  = ast_aux(s);
+    ast_new_program(0, 0, items_addr, items_len)
+}
