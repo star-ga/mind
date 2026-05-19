@@ -1,6 +1,34 @@
 # Phase 6.5 — Bootstrap Fixed-Point Report
 
 **Date:** 2026-05-18
+**Tag:** v0.6.1
+**Verdict:** PASS — byte-identical (10,889 bytes, next_id=206)
+
+---
+
+## v0.6.1 Resolution
+
+Bootstrap fixed-point reached. `libmindc_mind.so` (compiled from
+`examples/mindc_mind/main.mind`) compiles its own source and produces MLIR
+byte-identical to mindc-Rust on the same input.
+
+Three fixes closed the 6-SSA-value gap:
+
+1. Added `struct` keyword detection in `parse_item` + `parse_struct_def` helper
+   that consumes the entire struct body and returns a single `ast_struct_def`
+   (kind 13) leaf node — one item per struct def matching the Rust parser.
+
+2. Extended `emit_program_items` to emit a stub for `ast_use()` (kind 7) and
+   `ast_struct_def()` (kind 13) items, matching mindc-Rust's one-stub-per-item
+   behaviour in `lower_to_ir`.
+
+3. Removed the spurious prefix stub from `lower_program` (it had no oracle
+   counterpart and shifted all SSA ids by +1).
+
+---
+
+## Historical: v0.6.0 (APEX) — FIRST-DIVERGENCE record follows
+
 **Tag:** v0.6.0 (APEX)
 **Verdict:** FIRST-DIVERGENCE
 
