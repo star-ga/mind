@@ -141,7 +141,78 @@ Add to `tests/`:
 - `docs/rfcs/0005-pure-mind-std-surface.md` §"Adoption plan" Phase 6.2 row.
 - `mind-internal/plans/encoder-port-audit-2026-05-18.md` §7 ("mindc feature requests") — declared "none required" for A1, which is still true at the *language semantics* level; the gaps documented here are *ergonomic*, not semantic. A1 ships fine without them, but pays the O(N) source-line tax.
 
+## Phase 6.3 addendum (type-checker in MIND)
+
+### Gap 3 — unsigned i64 literals reject as integer overflow
+
+**Discovered while writing:** `examples/typecheck/main.mind`.
+
+**Reproducer:**
+
+```mind
+pub fn fnv_offset() -> i64 { 14695981039346656037 }
+```
+
+**Result on mindc v0.4.4:**
+```
+error[parse][E1001]: integer overflow
+  --> examples/typecheck/main.mind:232:50
+   | pub fn fnv_offset() -> i64 { 14695981039346656037 }
+   |                                                  ^
+```
+
+**Diagnosis:** mindc v0.4.4's parser interprets every integer
+literal as signed i64.  FNV-1a 64-bit's offset basis
+(`0xCBF29CE484222325` = `14695981039346656037`) exceeds
+`i64::MAX` (`9223372036854775807` = `0x7FFFFFFFFFFFFFFF`) and
+trips the overflow guard.  Same shape for any unsigned-i64
+constant beyond `i64::MAX` — including useful values like:
+- FNV-1a 64-bit offset basis (`14695981039346656037`)
+- SipHash round constants (`0x736f6d6570736575` is fine,
+  `0xdoddledoodoo`-family rotated constants are not)
+- `u64::MAX` (`18446744073709551615`)
+
+**Impact:**
+- The Phase 6.3 type-checker swapped FNV-1a for DJB2 (seed 5381,
+  prime 33) to stay inside `i64::MAX` — fine for short
+  identifiers but a documented narrower hash than FNV.
+- Q16.16 LUT work that uses unsigned-i64 sentinels has to
+  pre-shift them into signed range.
+- Any future hash-based collection (proper `std.map` bucketing,
+  Bloom filters, signing-key constants) will hit this.
+
+**Two options for Phase 6.4 (or 6.3b if hash quality
+becomes load-bearing first):**
+
+1. **Accept literals as `u64` and reinterpret-cast to i64
+   internally.**  Parser change: treat literals in the range
+   `[i64::MAX+1, u64::MAX]` as `u64` and store the bit
+   pattern as a signed-i64 with the same byte representation
+   (i.e. `14695981039346656037` becomes the negative i64
+   `-3750762994362895579`).  ~30 LOC parser change; preserves
+   the seven-intrinsic surface.
+2. **Introduce a `u64` literal suffix (`14695981039346656037u`).**
+   Same idea but explicit at the source site; bigger grammar
+   change but lets the type-checker distinguish "I want this
+   bit pattern" from "I want this number".  ~80 LOC parser
+   change including the suffix lexer rule.
+
+**Recommendation:** **Option 1.**  All existing arithmetic
+intrinsics are signed-i64 anyway, so the bit-pattern
+reinterpretation is the only thing the user actually needs.
+The negative-i64 display in tooling is acceptable because
+the surface contract is "this constant always has these
+bytes", which Option 1 preserves byte-for-byte.
+
+**Effort:** ~30 LOC parser change in `src/parser/mod.rs`
+(extend the integer-literal range check), ~20 LOC of tests
+covering FNV-1a basis, `u64::MAX`, the i64-MAX boundary.
+Bench-gate impact: zero — same parse path, wider range
+check.
+
 ---
 
 Authored 2026-05-18 alongside the mind-nerve Phase II Q16.16 substrate sprint.
 Pickup artifact for the next compiler session.
+
+Updated 2026-05-18 with Phase 6.3 Gap 3 (unsigned-i64 literals).
