@@ -186,9 +186,16 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
         // family. Skipping the dialect conversion would force every
         // caller of `build_mlir_artifacts(preset = "none")` to fail at
         // the translate step.
+        // `convert-vector-to-llvm` lowers RFC 0006 Track B `vector`-dialect
+        // ops (vector.load / vector.fma / vector.reduction) emitted by the
+        // `dot_f32_v` path. It is a no-op on IR that contains no vector
+        // ops, so the scalar `fn f(x, y) { x + y }` class is unaffected
+        // and the default `cargo build` (which never runs mlir-opt — this
+        // is the `mlir-build` feature path) is byte-identical.
         "none" | "core" | "cpu-demo" | "jit-cpu" => Some(
             "canonicalize,cse,\
              convert-scf-to-cf,\
+             convert-vector-to-llvm,\
              expand-strided-metadata,\
              finalize-memref-to-llvm,\
              convert-cf-to-llvm,\

@@ -5,6 +5,83 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2026-05-19 — mind-blas Track B increment 1: native MLIR vector-dialect `dot_f32` lowering inside mindc (no runtime-support C shim; bench-gate +7% cap held, v0.6.1 bootstrap fixed-point byte-identical)
+
+### Added — mind-blas Track B increment 1 (RFC 0006 §9)
+
+The thesis-pure follow-on to Track A. A native MLIR `vector`-dialect
+reduction now vectorizes dense f32 dot products **through mindc itself**
+rather than via the Track A runtime-support AVX2 C bridge. No `-fPIC`
+shim object, no `clang`-attribute SIMD path, no Windows-MSVC
+symbol-export problem — LLVM's vector legalisation maps the ops to the
+host SIMD width (AVX2 / AVX-512 / NEON / SVE2 / NVPTX) with zero
+per-target code in mindc.
+
+Three new IR primitives in `src/ir/mod.rs`, all
+`#[cfg(feature = "std-surface")]`-gated exactly like the RFC-0005
+`ConstArray` / `If` additions:
+
+- `Instr::VecLoad { dst, base, offset, lanes }` — load `lanes`
+  contiguous f32 from an opaque i64 heap address.
+- `Instr::VecFma { dst, a, b, acc, lanes }` — element-wise fused
+  multiply-add across lanes.
+- `Instr::VecReduceAdd { dst, src, lanes }` — horizontal sum of a
+  SIMD vector to an i64-packed f32 scalar.
+
+MLIR lowering in `src/mlir/lowering.rs` emits real `vector`-dialect
+ops: `vector.load` (via `llvm.inttoptr` + byte `llvm.getelementptr` +
+vector-typed `llvm.load`), `vector.fma`, and
+`vector.reduction <add>`. The `core` build pipeline gains
+`convert-vector-to-llvm` (a no-op on vector-free IR — the scalar
+`fn f(x, y) { x + y }` class and the default `cargo build`, which never
+runs `mlir-opt`, are byte-identical).
+
+Surface: `std/blas.mind` gains `pub fn dot_f32_v(a, b, len) -> i64`
+over the new `__mind_blas_dot_f32_v` intrinsic (registered in the
+`std-surface` intrinsic table). The intrinsic's `Instr::Call` is
+intercepted by the lowering and emitted as a fused 8-lane
+`vector.fma` main loop + `vector.reduction <add>` horizontal sum +
+scalar tail for the `len % 8` remainder. Track A's
+`__mind_blas_dot_f32` extern path is **unchanged and still registered**
+— Track B is strictly additive; Track A remains the runtime-support
+scalar/AVX2 fallback.
+
+Numerical contract (smoke harness `tests/blas_vec_smoke.rs`, gated
+`mlir-build std-surface cross-module-imports`, self-skips on Windows
+to match `blas_smoke.rs`): the native vector `dot_f32` is within 1e-4
+relative of an f64-accumulating oracle on 1024- and 1,000,000-element
+vectors (the tree-shaped pairwise reduction reorders summation exactly
+like Track A's AVX2 path), and byte-identical to a sequential scalar
+reference for sub-lane lengths (< 8, pure scalar-tail path).
+
+Default-build hot path byte-identical to v0.6.2: all Track B IR
+variants, the `ValueKind::VectorF32` kind, the lowering arms, the
+intrinsic recognizer, and the surface fn are `std-surface`-gated and
+never reachable on the default build. Bench-gate held vs
+`.bench-baseline-2026-05-18-rfc0005.txt`: small_matmul 2.80→2.79 µs
+(−0.5%), medium_mlp 6.55→6.56 µs (+0.1%), large_network 17.10→17.61 µs
+(+3.0%, inside the documented ±2131 ns large_network jitter band and
+the +7% cap). v0.6.1 bootstrap fixed-point unchanged — the pure-MIND
+bootstrap source uses no vector ops, so the oracle does not shift
+(`libmindc_mind.so` still compiles its own source byte-identically:
+10,889 bytes / next_id 206).
+
+#### Marker vs implemented
+
+Implemented: `VecLoad` / `VecFma` / `VecReduceAdd` IR + MLIR lowering,
+the fused `dot_f32_v` native reduction loop, the numerical-equivalence
+gate. The `@target("simd-x86" | "simd-arm")` substrate annotation from
+RFC 0006 §9 is **not** parsed in this increment — the host target
+triple drives LLVM's vector legalisation today and the `vector<8xf32>`
+width is portable across x86/ARM without an explicit hint, so the
+annotation is deferred (no behavioural marker added rather than a
+no-op token that would imply more than it does). Q16.16 vector path,
+`VecStore`, `dot_l1` / `dot_linf` / `matmul` vector lowering, and the
+cross-module std-wrapper inlining (the `use std.blas` path emits a
+forward decl for `dot_f32_v` exactly as Track A's `dot_f32` does today —
+the working codegen entry point is the direct `__mind_blas_dot_f32_v`
+intrinsic) are deferred to Track B increment 2.
+
 ## [0.6.2] - 2026-05-19 — Correctness: bare negative literals no longer lower to 0 (compiler bug #11, surfaced by the pure-MIND LUT work; v0.6.1 bootstrap fixed-point byte-identical, bench-gate improved)
 
 ### Fixed — bare negative integer literals lowered to `const 0`
