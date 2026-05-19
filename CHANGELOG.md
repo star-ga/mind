@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-05-18
+
 ### Phase 6.5 Stage 3 — pure-MIND type-checker cdylib bootstrap PASS
 
 `examples/typecheck/main.mind` compiles to
