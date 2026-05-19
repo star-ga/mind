@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2504 | **Est. tokens:** ~6,173,962
-**Generated:** 2026-05-19 06:21 UTC
+**Files:** 2507 | **Est. tokens:** ~6,188,402
+**Generated:** 2026-05-19 06:58 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~35,834 |
+| `./` | 31 | ~36,455 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -40,7 +40,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 11 | ~21,424 |
+| `docs/rfcs/` | 12 | ~24,100 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -56,7 +56,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 6 | ~4,785 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~3,114 |
+| `runtime-support/` | 1 | ~7,639 |
 | `scripts/` | 2 | ~2,268 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
@@ -377,14 +377,14 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
-| `src/project/` | 3 | ~16,844 |
+| `src/project/` | 3 | ~16,858 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~22,017 |
+| `src/type_checker/` | 1 | ~22,070 |
 | `src/types/` | 4 | ~3,179 |
-| `std/` | 4 | ~3,165 |
-| `tests/` | 102 | ~97,046 |
+| `std/` | 5 | ~4,006 |
+| `tests/` | 103 | ~102,756 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -414,8 +414,8 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~17629 tok, huge) — Changelog
+- `Cargo.toml` (~838 tok, large) — [package]
+- `CHANGELOG.md` (~18245 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -579,6 +579,7 @@
 - `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
+- `0006-mind-blas.md` (~2676 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -707,7 +708,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~3114 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~7639 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3608,7 +3609,7 @@
 
 - `mod.rs` (~10465 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~2713 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~2727 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3632,7 +3633,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~22017 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~22070 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3641,6 +3642,7 @@
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
 ### `std/`
 
+- `blas.mind` (~841 tok, large) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `map.mind` (~816 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `string.mind` (~869 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
@@ -3661,6 +3663,7 @@
 - `gpu_graceful_failure.mind` (~73 tok, small) — Backend test: GPU backend graceful failure
 ### `tests/`
 
+- `blas_smoke.rs` (~5710 tok, huge) — Copyright 2025 STARGA Inc.
 - `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `cli_buffers.rs` (~459 tok, medium) — Copyright 2025 STARGA Inc.
 - `cli_build.rs` (~648 tok, large) — Copyright 2025 STARGA Inc.

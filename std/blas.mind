@@ -1,0 +1,75 @@
+// std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
+// __mind_blas_* intrinsics shipped via runtime-support/mind_intrinsics.c.
+//
+// The intrinsics are i64-ABI, Option-C convention: pointers are opaque
+// int64_t addresses (RFC 0005 P0a), and f32 / Q16.16 scalar results are
+// packed into the low 32 bits of an i64 return value.  Callers that need
+// the unboxed f32 reinterpret the low 32 bits as IEEE-754 bits — for
+// pure-MIND consumers the i64 packed form is what `score_topk` and
+// friends consume directly (the comparison is on the packed bit pattern
+// for Q16.16; the f32 path bridges through __mind_blas_dot_f32 then
+// memcpy-bitcasts at the MIND call site once Phase 3+ ships a real
+// `bitcast<f32>(i64)` op).
+//
+// Determinism contract (RFC 0006 §3):
+//   * f32 path is within ~1e-6 relative tolerance of the scalar oracle
+//     on length 1M; byte-identical on lengths < 8 (no SIMD lanes used).
+//   * Q16.16 path is byte-identical between scalar and AVX2 at every
+//     length — required for the cross-arch bit-identity gate (task #57).
+//
+// Default-build hot path is untouched: this module is registered in the
+// stdlib table only under `feature = "std-surface"`.
+
+// dot_f32 — f32 dot product of two `len`-element vectors at opaque
+// addresses `a_addr` and `b_addr`.  Returns the result packed in the
+// low 32 bits of i64 (IEEE-754 f32 bit pattern).  Callers in pure MIND
+// today consume the packed bits; the bitcast to a native MIND f32 lands
+// once RFC 0006 Phase B ships scalar f32 in the type system.
+pub fn dot_f32(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_f32(a_addr, b_addr, len)
+}
+
+// dot_l1_f32 — f32 Manhattan distance (sum of |a[i] - b[i]|).
+// Sqrt-free reduction — the substrate-natural metric on photonic
+// targets and the lowest-Landauer-floor choice on conventional CPUs.
+pub fn dot_l1_f32(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_l1_f32(a_addr, b_addr, len)
+}
+
+// dot_linf_f32 — f32 Chebyshev distance (max of |a[i] - b[i]|).
+// Same i64-packed-f32 return contract.
+pub fn dot_linf_f32(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_linf_f32(a_addr, b_addr, len)
+}
+
+// matmul_rmajor_f32 — row-major matmul: y = W · x where W is
+// `rows × cols` (row-major), x is `cols`-vector, y is `rows`-vector
+// (writable, caller-allocated).  Returns 0 on success, -1 if any
+// pointer is null.
+//
+// Inner loop reuses the same AVX2/scalar dispatcher as dot_f32, so the
+// 8-lane FMA improvement applies row-by-row without duplication on the
+// criterion bench's primary score path (catalog · query).
+pub fn matmul_rmajor_f32(
+    w_addr: i64,
+    x_addr: i64,
+    y_addr: i64,
+    rows: i64,
+    cols: i64,
+) -> i64 {
+    __mind_blas_matmul_rmajor_f32(w_addr, x_addr, y_addr, rows, cols)
+}
+
+// dot_q16 — Q16.16 fixed-point dot product.
+// Returns the Q16.16 result sign-extended into i64 (low 32 bits carry
+// the value).  Bit-identical scalar-vs-AVX2 at every length.
+pub fn dot_q16(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_q16(a_addr, b_addr, len)
+}
+
+// dot_l1_q16 — Q16.16 Manhattan distance.
+// Same packed-i64 return contract; same cross-arch bit-identity
+// guarantee as dot_q16.
+pub fn dot_l1_q16(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_l1_q16(a_addr, b_addr, len)
+}
