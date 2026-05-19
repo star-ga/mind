@@ -245,6 +245,24 @@ fn validate_operands(
         // control-flow unit. Gated.
         #[cfg(feature = "std-surface")]
         Instr::If { .. } => {}
+        // RFC 0006 Track B: SIMD vector primitives. Each operand is an
+        // ordinary SSA value that must be defined before use; the lane
+        // count is a compile-time literal, nothing to check there. Gated.
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoad { base, offset, .. } => {
+            check_defined(*base)?;
+            check_defined(*offset)?;
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecFma { a, b, acc, .. } => {
+            check_defined(*a)?;
+            check_defined(*b)?;
+            check_defined(*acc)?;
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecReduceAdd { src, .. } => {
+            check_defined(*src)?;
+        }
     }
 
     Ok(())

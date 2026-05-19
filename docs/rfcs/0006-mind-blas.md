@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | RFC | 0006 |
-| Title | mind-blas — native BLAS surface (Track A landing) |
-| Status | Track A landing |
+| Title | mind-blas — native BLAS surface (Track A + Track B increment 1) |
+| Status | Track A landed; Track B increment 1 landed |
 | Authors | STARGA Inc. |
 | Created | 2026-05-18 |
 | Supersedes | — |
@@ -196,24 +196,75 @@ Does NOT land:
   under `__x86_64__` / `_M_X64`; ARM hosts take the scalar fallback path
   unconditionally until Track B brings native vector-dialect lowering.
 
-## 9. Track B sketch (informational)
+## 9. Track B — native MLIR vector-dialect lowering
 
-Track B adds four new IR primitives — `Instr::VecLoad`, `Instr::VecStore`,
-`Instr::VecFma`, `Instr::VecReduce` — that lower to the MLIR `vector`
-dialect. LLVM's vector legalisation then maps them to AVX2 / AVX-512 /
-NEON / SVE2 / NVPTX without per-target code in mindc.
+Track B replaces the runtime-support C bridge with a thesis-pure path:
+dense f32 reductions vectorize *through mindc itself* via the MLIR
+`vector` dialect. LLVM's vector legalisation maps the ops to the host
+SIMD width with no per-target code in mindc, no `-fPIC` shim object,
+and no Windows-MSVC symbol-export problem.
 
-A `@target("simd-x86" | "simd-arm" | "cuda" | "q16-photonic")` annotation
-on a `pub fn` selects the lowering substrate per call. The default is
-inferred from the host target triple; the annotation is the override.
+### 9.1 Increment 1 (landed, v0.6.3)
 
-The bench-gate gets a new sub-benchmark category — *dense reduction
-throughput* — measured at p95 µs for an 8K-row matmul. The compile-time
-frontend gate (2.80–17.10 µs from `.bench-baseline-2026-05-18-rfc0005.txt`)
-MUST hold; vector-dialect lowering is module-gated like every other
-mindc feature.
+Three new `#[cfg(feature = "std-surface")]`-gated IR primitives in
+`src/ir/mod.rs`:
 
-Track B is ~7 days of work after Track A bench numbers are public.
+- `Instr::VecLoad { dst, base, offset, lanes }` — load `lanes`
+  contiguous f32 from an opaque i64 heap address.
+- `Instr::VecFma { dst, a, b, acc, lanes }` — element-wise fused
+  multiply-add across lanes.
+- `Instr::VecReduceAdd { dst, src, lanes }` — horizontal sum to an
+  i64-packed f32 scalar.
+
+`src/mlir/lowering.rs` emits the MLIR `vector` dialect:
+
+- `vector.load` is realised as `llvm.inttoptr` (recover the pointer
+  from the Option-C i64 address) + a byte `llvm.getelementptr` + a
+  vector-typed `llvm.load` of `vector<lanes x f32>`.
+- `vector.fma` lowers (via `convert-vector-to-llvm`) to the
+  `llvm.intr.fmuladd` intrinsic.
+- `vector.reduction <add>` lowers to `llvm.intr.vector.reduce.fadd`.
+
+The `core` build pipeline registers `convert-vector-to-llvm` alongside
+the existing `arith` / `scf` / `cf` / `func` conversions — a no-op on
+vector-free IR, so every existing scalar program and the default
+`cargo build` (which never runs `mlir-opt`) are byte-identical.
+
+Surface: `std/blas.mind` exposes `pub fn dot_f32_v(a, b, len) -> i64`
+over the new `__mind_blas_dot_f32_v` intrinsic. The intrinsic's
+`Instr::Call` is intercepted and emitted as a fused 8-lane
+`vector.fma` main loop + `vector.reduction <add>` horizontal sum +
+scalar tail for the `len % 8` remainder. Track A's
+`__mind_blas_dot_f32` extern path is unchanged and still the
+runtime-support scalar/AVX2 fallback — Track B is strictly additive.
+
+Numerical contract (`tests/blas_vec_smoke.rs`): within 1e-4 relative
+of an f64 oracle on 1024- and 1M-element vectors (the pairwise
+`vector.reduction` reorders summation exactly like Track A's AVX2
+path); byte-identical to a sequential scalar reference for sub-lane
+lengths. The bench-gate +7% cap (`.bench-baseline-2026-05-18-rfc0005.txt`)
+held: small_matmul −0.5%, medium_mlp +0.1%, large_network +3.0%
+(inside the documented large_network jitter band). v0.6.1 bootstrap
+fixed-point unchanged (10,889 bytes / next_id 206) — the bootstrap
+source uses no vector ops.
+
+### 9.2 Deferred to increment 2
+
+- `@target("simd-x86" | "simd-arm" | "cuda" | "q16-photonic")` per-call
+  substrate annotation. Increment 1 lets the host target triple drive
+  LLVM's vector legalisation; the portable `vector<8xf32>` width needs
+  no explicit hint on x86/ARM, so no no-op marker token was added (it
+  would imply more than it does).
+- Q16.16 vector path (must stay byte-identical scalar-vs-vector for the
+  cross-arch bit-identity gate #57), `Instr::VecStore`, and vector
+  lowering for `dot_l1` / `dot_linf` / `matmul_rmajor`.
+- Cross-module std-wrapper inlining. The `use std.blas` path emits a
+  `func.func private @dot_f32_v` forward decl exactly as Track A's
+  `dot_f32` does today; the working codegen entry point is the direct
+  `__mind_blas_dot_f32_v` intrinsic call.
+- A *dense reduction throughput* bench sub-category (p95 µs for an 8K-row
+  matmul). The compile-time frontend gate (2.80–17.10 µs) MUST continue
+  to hold; vector-dialect lowering stays module-gated.
 
 ## 10. References
 

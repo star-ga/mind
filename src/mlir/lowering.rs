@@ -19,6 +19,20 @@ use crate::ir::{BinOp, IRModule, Instr, ValueId};
 use crate::opt::ir_canonical::canonicalize_module;
 use crate::types::{ConvPadding, DType, ShapeDim};
 
+/// RFC 0006 Track B (increment 1) — the pure-MIND surface name whose
+/// `Instr::Call` lowers to a native MLIR `vector`-dialect reduction loop
+/// instead of a `func.call` to the Track A runtime-support C bridge.
+/// Declared unconditionally so the default-build catch-all stays
+/// byte-identical; only the gated `Instr::Call` arm ever compares it.
+#[cfg(feature = "std-surface")]
+const VEC_DOT_F32_INTRINSIC: &str = "__mind_blas_dot_f32_v";
+
+/// RFC 0006 Track B — the statically-known SIMD lane count emitted by the
+/// `dot_f32_v` lowering. Eight f32 lanes is the AVX2 / NEON-pair width;
+/// LLVM legalises wider/narrower targets from the same `vector<8xf32>`.
+#[cfg(feature = "std-surface")]
+const VEC_DOT_F32_LANES: usize = 8;
+
 /// Structured errors produced by the MLIR lowering pipeline.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MlirLowerError {
@@ -53,7 +67,18 @@ pub struct MlirModule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ValueKind {
     ScalarI64,
-    Tensor { dtype: DType, shape: Vec<ShapeDim> },
+    Tensor {
+        dtype: DType,
+        shape: Vec<ShapeDim>,
+    },
+    /// RFC 0006 Track B — a `vector<lanes x f32>` SSA value produced by
+    /// the SIMD primitives (`VecLoad` / `VecFma`). Gated; the default
+    /// build never constructs the producing instructions so this variant
+    /// is unreachable there.
+    #[cfg(feature = "std-surface")]
+    VectorF32 {
+        lanes: usize,
+    },
 }
 
 struct LoweringContext {
@@ -281,6 +306,18 @@ impl LoweringContext {
                         }
                     }
                 }
+                // RFC 0006 Track B (increment 1) — the `dot_f32_v` surface
+                // fn lowers to a *native* MLIR `vector`-dialect reduction
+                // loop instead of a `func.call` to the Track A
+                // runtime-support C bridge.  Track A's `__mind_blas_dot_f32`
+                // extern path is untouched and remains the scalar/AVX2
+                // fallback; this is purely additive.  Any other callee
+                // keeps the generic `func.call` lowering below.
+                if name == VEC_DOT_F32_INTRINSIC && args.len() == 3 {
+                    self.emit_vec_dot_f32(*dst, args[0], args[1], args[2]);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
                 let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
                 let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
                 self.emit_line(&format!(
@@ -484,6 +521,86 @@ impl LoweringContext {
                     dst, base, index
                 ));
             }
+            // RFC 0006 Track B (increment 1) — SIMD vector load.
+            //
+            // The Option-C ABI gives us i64 opaque addresses; native MLIR
+            // memory access uses `llvm.inttoptr` to recover a pointer,
+            // `llvm.getelementptr` (i8 element type) to apply the byte
+            // offset, then a vector-typed `llvm.load` of
+            // `vector<lanes x f32>`.  `convert-vector-to-llvm` +
+            // `reconcile-unrealized-casts` legalise this to the host SIMD
+            // width with no per-target code and no C shim — the Track B
+            // thesis-pure property (vs Track A's runtime-support bridge).
+            #[cfg(feature = "std-surface")]
+            Instr::VecLoad {
+                dst,
+                base,
+                offset,
+                lanes,
+            } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %vptr_b{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
+                    dst.0, base.0
+                ));
+                self.emit_line(&format!(
+                    "    %vptr{0} = llvm.getelementptr %vptr_b{0}[%{1}] : \
+                     (!llvm.ptr, i64) -> !llvm.ptr, i8",
+                    dst.0, offset.0
+                ));
+                self.emit_line(&format!(
+                    "    %{0} = llvm.load %vptr{0} : !llvm.ptr -> vector<{1}xf32>",
+                    dst.0, l
+                ));
+                self.values.insert(*dst, ValueKind::VectorF32 { lanes: l });
+            }
+            // RFC 0006 Track B (increment 1) — element-wise fused
+            // multiply-add: `dst = a * b + acc`.  Lowers to `vector.fma`,
+            // which `convert-vector-to-llvm` turns into the
+            // `llvm.intr.fmuladd` intrinsic (one hardware FMA per lane
+            // group on targets that have one).
+            #[cfg(feature = "std-surface")]
+            Instr::VecFma {
+                dst,
+                a,
+                b,
+                acc,
+                lanes,
+            } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %{0} = vector.fma %{1}, %{2}, %{3} : vector<{4}xf32>",
+                    dst.0, a.0, b.0, acc.0, l
+                ));
+                self.values.insert(*dst, ValueKind::VectorF32 { lanes: l });
+            }
+            // RFC 0006 Track B (increment 1) — horizontal sum to scalar.
+            //
+            // `vector.reduction <add>` becomes `llvm.intr.vector.reduce.fadd`.
+            // The result is the f32 scalar bit-packed (zero-extended) into
+            // an i64 so it travels the Option-C i64 ABI exactly like every
+            // other `__mind_blas_*` return value.  The tree-shaped pairwise
+            // reduction is NOT bit-identical to a sequential scalar sum —
+            // the numerical contract bounds it to 1e-4 relative of the f64
+            // oracle, matching Track A's AVX2 path.
+            #[cfg(feature = "std-surface")]
+            Instr::VecReduceAdd { dst, src, lanes } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %vred{0} = vector.reduction <add>, %{1} : \
+                     vector<{2}xf32> into f32",
+                    dst.0, src.0, l
+                ));
+                self.emit_line(&format!(
+                    "    %vbits{0} = arith.bitcast %vred{0} : f32 to i32",
+                    dst.0
+                ));
+                self.emit_line(&format!(
+                    "    %{0} = arith.extui %vbits{0} : i32 to i64",
+                    dst.0
+                ));
+                self.values.insert(*dst, ValueKind::ScalarI64);
+            }
             // Phase 6.5 Stage 1a — `if cond { then } else { else }` lowering.
             //
             // MLIR structure emitted (cf dialect, matching the While pattern):
@@ -672,6 +789,135 @@ impl LoweringContext {
         Ok(())
     }
 
+    /// RFC 0006 Track B (increment 1) — emit a native MLIR `vector`-dialect
+    /// f32 dot-product reduction over two opaque i64 base addresses and a
+    /// runtime length.
+    ///
+    /// Structure (all in the `vector` / `scf` / `arith` / `llvm` dialects,
+    /// no runtime-support C call):
+    ///
+    /// ```text
+    ///   main loop  : scf.for step LANES, vector.load + vector.fma
+    ///   horizontal : vector.reduction <add>
+    ///   scalar tail: scf.for step 1 for the len % LANES remainder
+    ///   pack       : arith.bitcast f32 -> i32 -> zext i64  (Option-C ABI)
+    /// ```
+    ///
+    /// The body uses the same op repertoire as the standalone
+    /// `Instr::VecLoad` / `VecFma` / `VecReduceAdd` arms; emitting it as one
+    /// fused block keeps the SSA namespace local and the loop-carried
+    /// `vector<LANES x f32>` accumulator legal. `convert-vector-to-llvm`
+    /// + `convert-scf-to-cf` legalise it with no per-target code.
+    #[cfg(feature = "std-surface")]
+    fn emit_vec_dot_f32(&mut self, dst: ValueId, a_addr: ValueId, b_addr: ValueId, len: ValueId) {
+        let d = dst.0;
+        let l = VEC_DOT_F32_LANES;
+        // Byte stride of one f32 element.
+        let elem_bytes = std::mem::size_of::<f32>() as i64;
+        self.emit_line(&format!("    %vd_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vd_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vd_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vd_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!(
+            "    %vd_len_{d} = arith.index_cast %{} : i64 to index",
+            len.0
+        ));
+        self.emit_line(&format!(
+            "    %vd_nv_{d} = arith.divui %vd_len_{d}, %vd_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vd_ve_{d} = arith.muli %vd_nv_{d}, %vd_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vd_ap_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vd_bp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            b_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vd_z_{d} = arith.constant dense<0.0> : vector<{l}xf32>"
+        ));
+        // Vectorised main loop: LANES-wide FMA accumulation.
+        self.emit_line(&format!(
+            "    %vd_vacc_{d} = scf.for %vd_i_{d} = %vd_c0_{d} to %vd_ve_{d} \
+             step %vd_cl_{d} iter_args(%vd_acc_{d} = %vd_z_{d}) -> (vector<{l}xf32>) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vd_ii_{d} = arith.index_cast %vd_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vd_bo_{d} = arith.muli %vd_ii_{d}, %vd_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vd_ai_{d} = llvm.getelementptr %vd_ap_{d}[%vd_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vd_bi_{d} = llvm.getelementptr %vd_bp_{d}[%vd_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vd_av_{d} = llvm.load %vd_ai_{d} : !llvm.ptr -> vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "      %vd_bv_{d} = llvm.load %vd_bi_{d} : !llvm.ptr -> vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "      %vd_fa_{d} = vector.fma %vd_av_{d}, %vd_bv_{d}, %vd_acc_{d} : \
+             vector<{l}xf32>"
+        ));
+        self.emit_line(&format!("      scf.yield %vd_fa_{d} : vector<{l}xf32>"));
+        self.emit_line("    }");
+        // Horizontal sum of the lane accumulator.
+        self.emit_line(&format!(
+            "    %vd_vs_{d} = vector.reduction <add>, %vd_vacc_{d} : \
+             vector<{l}xf32> into f32"
+        ));
+        // Scalar tail for the len % LANES remainder.
+        self.emit_line(&format!(
+            "    %vd_ts_{d} = scf.for %vd_j_{d} = %vd_ve_{d} to %vd_len_{d} \
+             step %vd_c1_{d} iter_args(%vd_s_{d} = %vd_vs_{d}) -> (f32) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vd_jj_{d} = arith.index_cast %vd_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vd_jb_{d} = arith.muli %vd_jj_{d}, %vd_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vd_aj_{d} = llvm.getelementptr %vd_ap_{d}[%vd_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vd_bj_{d} = llvm.getelementptr %vd_bp_{d}[%vd_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vd_as_{d} = llvm.load %vd_aj_{d} : !llvm.ptr -> f32"
+        ));
+        self.emit_line(&format!(
+            "      %vd_bs_{d} = llvm.load %vd_bj_{d} : !llvm.ptr -> f32"
+        ));
+        self.emit_line(&format!(
+            "      %vd_p_{d} = arith.mulf %vd_as_{d}, %vd_bs_{d} : f32"
+        ));
+        self.emit_line(&format!(
+            "      %vd_ns_{d} = arith.addf %vd_s_{d}, %vd_p_{d} : f32"
+        ));
+        self.emit_line(&format!("      scf.yield %vd_ns_{d} : f32"));
+        self.emit_line("    }");
+        // Pack the f32 result into the low 32 bits of an i64 (Option-C ABI,
+        // identical contract to Track A's `__mind_blas_dot_f32`).
+        self.emit_line(&format!(
+            "    %vd_bits_{d} = arith.bitcast %vd_ts_{d} : f32 to i32"
+        ));
+        self.emit_line(&format!("    %{d} = arith.extui %vd_bits_{d} : i32 to i64"));
+    }
+
     fn tensor_info(
         &self,
         id: &ValueId,
@@ -790,6 +1036,8 @@ fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
     match kind {
         ValueKind::ScalarI64 => Ok("i64".to_string()),
         ValueKind::Tensor { dtype, shape } => Ok(tensor_type(shape, dtype.as_str())),
+        #[cfg(feature = "std-surface")]
+        ValueKind::VectorF32 { lanes } => Ok(format!("vector<{lanes}xf32>")),
     }
 }
 

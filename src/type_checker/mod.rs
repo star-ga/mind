@@ -1526,6 +1526,13 @@ fn infer_grad(
 const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     ("__mind_alloc", 1),
     ("__mind_blas_dot_f32", 3),
+    // RFC 0006 Track B (increment 1): native MLIR vector-dialect
+    // `dot_f32`. Same i64 ABI / arity (3) as the Track A scalar bridge;
+    // the difference is purely in lowering — the `Instr::Call` for this
+    // name emits a `vector`-dialect reduction loop, not a `func.call` to
+    // the runtime-support C shim. Track A's `__mind_blas_dot_f32` stays
+    // registered and is the unchanged scalar/AVX2 fallback.
+    ("__mind_blas_dot_f32_v", 3),
     ("__mind_blas_dot_l1_f32", 3),
     ("__mind_blas_dot_l1_q16", 3),
     ("__mind_blas_dot_linf_f32", 3),
