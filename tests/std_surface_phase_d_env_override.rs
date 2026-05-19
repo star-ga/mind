@@ -52,9 +52,11 @@ fn env_unset_uses_bundled_stdlib() {
     with_env("MIND_STDLIB_PATH", None, || {
         let mods = parsed_stdlib_modules();
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
-        // The bundled set is exactly the four canonical modules,
-        // in deterministic alphabetical order.
-        assert_eq!(mods.len(), 4);
+        // The bundled set is exactly the five canonical modules
+        // (std.blas joined in RFC 0006 / mind-blas Track A), in
+        // deterministic alphabetical order.
+        assert_eq!(mods.len(), 5);
+        assert!(names.contains(&"std.blas"));
         assert!(names.contains(&"std.io"));
         assert!(names.contains(&"std.map"));
         assert!(names.contains(&"std.string"));
@@ -78,7 +80,7 @@ fn env_set_to_repo_std_dir_round_trips() {
 
     with_env("MIND_STDLIB_PATH", Some(&std_dir), || {
         let mods = parsed_stdlib_modules();
-        assert_eq!(mods.len(), 4);
+        assert_eq!(mods.len(), 5);
 
         // Build the same project-loader-shaped table and confirm
         // every canonical public fn still resolves through the
@@ -107,7 +109,7 @@ fn env_set_to_missing_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            4,
+            5,
             "missing override dir must fall back to bundled stdlib"
         );
     });
@@ -133,7 +135,7 @@ fn env_set_to_partial_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            4,
+            5,
             "partial override dir must fall back to bundled stdlib"
         );
     });
