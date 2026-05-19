@@ -401,14 +401,33 @@ own tests no longer race the shared temp `.so` under parallel load.
   emits a `func.func private @<name>_v` forward decl exactly as Track A
   does; the working codegen entry point remains the direct
   `__mind_blas_*_v` intrinsic call (unchanged from increment 1).
-- Defensive: apply the same explicit `{alignment = 4}` to the vector
-  `llvm.load`s in `dot_f32_v` / `dot_q16_v` / `dot_l1_q16_v` /
-  `dot_l1_f32_v` / `dot_linf_f32_v`. They are currently only ever called
-  on allocation-base (over-aligned) pointers so they do not fault and
-  their byte-identity / 1e-4 contracts are unaffected (alignment changes
-  fault behaviour, never the loaded values), but a future caller passing
-  an interior pointer would hit the same GP-fault matmul did. Tracked as
-  hardening, not a correctness regression in current use.
+_(The defensive `{alignment = 4}` hardening for the other `dot_*_v`
+kernels — `dot_f32_v` / `dot_q16_v` / `dot_l1_q16_v` / `dot_l1_f32_v` /
+`dot_linf_f32_v`, plus the `VecLoad`/`VecLoadI32` IR-primitive paths —
+**shipped in v0.6.7**, see §9.3b-follow-up below.)_
+
+### 9.3b-follow-up — alignment hardening shipped (mindc v0.6.7)
+
+- **All vector `llvm.load`s now carry an explicit `{alignment = 4 : i64}`.**
+  Every `llvm.load … -> vector<…>` the std-surface lowering emits
+  (`emit_vec_dot_f32`, `emit_vec_dot_q16`, `emit_vec_dot_l1_q16`,
+  `emit_vec_dot_metric_f32` for f32 L1/L∞, and the `Instr::VecLoad` /
+  `Instr::VecLoadI32` primitive lowerings) now emits the explicit
+  4-byte alignment, exactly as the inc-3b matmul fix does. These kernels
+  are currently only ever called on allocation-base (over-aligned)
+  pointers so they did not fault, but a future caller passing an
+  interior pointer (e.g. a mind-nerve encode rewire dotting catalog
+  rows in place — task #230) would have hit the identical
+  `vmovaps` GP-fault the matmul did. Alignment changes the emitted move
+  (`vmovaps`→`vmovups`) but **never the loaded bytes**, so this is
+  provably contract-neutral: the cross-arch bit-identity gate #57 still
+  holds *exactly* for `dot_q16_v`/`dot_l1_q16_v` (re-verified —
+  `blas_vec_q16_smoke` byte-identity tests pass unchanged) and the
+  `dot_f32_v` below-one-lane byte-identity + 1e-4 contracts are
+  unaffected (`blas_vec_smoke` 3/3, `blas_vec_q16_smoke` 6/6). Default
+  release binary byte-identical and bootstrap fixed-point byte-identical
+  (`next_id = 206`) — bench-gate 0.0%. Pre-emptive hardening so the
+  #230 encode rewire can pass interior pointers safely.
 
 ## 10. References
 
