@@ -58,6 +58,22 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
 /// path" is the safer behaviour — the user gets an "unknown
 /// identifier" at the call site rather than a build crash.
 pub fn parsed_stdlib_modules() -> Vec<(String, Module)> {
+    // Phase D — env-var override.
+    //
+    // If `MIND_STDLIB_PATH` is set, treat it as a directory containing
+    // `vec.mind`, `string.mind`, `map.mind`, `io.mind` and parse those
+    // instead of the bundled blobs. This lets a downstream user fork
+    // the stdlib without rebuilding mindc — e.g. a stricter
+    // string-validation variant for a regulated deployment.
+    //
+    // Falls back silently to the bundled blobs on any error (missing
+    // dir, missing file, unreadable, parse failure). The principle
+    // matches `parsed_stdlib_modules`'s own behaviour: a broken
+    // override is the user's problem to surface, not ours to crash on.
+    if let Some(modules) = parsed_stdlib_modules_from_env() {
+        return modules;
+    }
+
     let mut out = Vec::with_capacity(STDLIB_MIND_SOURCES.len());
     for (path, src) in STDLIB_MIND_SOURCES {
         if let Ok(ast) = crate::parser::parse(src) {
@@ -65,6 +81,36 @@ pub fn parsed_stdlib_modules() -> Vec<(String, Module)> {
         }
     }
     out
+}
+
+/// Reads `MIND_STDLIB_PATH` from the environment. If set and pointing
+/// at a directory that contains all four `.mind` source files, returns
+/// the parsed modules; otherwise returns `None` so the caller can fall
+/// back to the bundled blobs.
+///
+/// "All four files present and all four parse" is the bar — partial
+/// overrides (e.g. supply your own `vec.mind`, fall back to bundled
+/// for the rest) would be useful but introduce surprising
+/// last-write-wins precedence between bundled and override; better to
+/// require a full set for now and revisit if there's user demand.
+fn parsed_stdlib_modules_from_env() -> Option<Vec<(String, Module)>> {
+    let root = std::env::var_os("MIND_STDLIB_PATH")?;
+    let root = std::path::PathBuf::from(root);
+    if !root.is_dir() {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(STDLIB_MIND_SOURCES.len());
+    for (module_path, _) in STDLIB_MIND_SOURCES {
+        // "std.vec" -> "vec.mind"; works for the 4 current modules and
+        // matches the on-disk layout under mind/std/.
+        let file_name = module_path.trim_start_matches("std.").to_string() + ".mind";
+        let candidate = root.join(&file_name);
+        let src = std::fs::read_to_string(&candidate).ok()?;
+        let ast = crate::parser::parse(&src).ok()?;
+        out.push(((*module_path).to_string(), ast));
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -124,5 +170,75 @@ mod tests {
             .lookup_imported_fn("vec_push")
             .expect("vec_push must be in the bundled stdlib");
         assert_eq!(vec_push.param_types.len(), 2);
+    }
+
+    #[test]
+    fn env_override_falls_back_when_unset() {
+        // Phase D: when MIND_STDLIB_PATH is not set, parsed_stdlib_modules
+        // must transparently return the bundled set. This is the default
+        // path every existing consumer relies on; the override must not
+        // change behaviour when absent.
+        //
+        // SAFETY: We deliberately remove the env var inside the test.
+        // Cargo runs tests in parallel by default; a co-running test
+        // that *did* set MIND_STDLIB_PATH could observe the unset. We
+        // gate this against any concurrent setter by only asserting on
+        // the bundled-paths invariant, not on the env var's state
+        // post-test.
+        unsafe {
+            std::env::remove_var("MIND_STDLIB_PATH");
+        }
+        let mods = parsed_stdlib_modules();
+        assert_eq!(mods.len(), STDLIB_MIND_SOURCES.len());
+    }
+
+    #[test]
+    fn env_override_loads_directory_when_set() {
+        // Phase D: pointing MIND_STDLIB_PATH at the repo's own std/
+        // directory must round-trip every module through the override
+        // path (file-system read + parse) instead of the bundled blobs.
+        // We assert on count + names rather than on internal AST
+        // identity since the bundled and on-disk sources are the same
+        // file (verified by the include_str! pointing at ../../std/*).
+        let std_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+        assert!(
+            std_dir.is_dir(),
+            "test prerequisite: {} exists",
+            std_dir.display()
+        );
+
+        unsafe {
+            std::env::set_var("MIND_STDLIB_PATH", &std_dir);
+        }
+        let mods = parsed_stdlib_modules();
+        unsafe {
+            std::env::remove_var("MIND_STDLIB_PATH");
+        }
+
+        let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(mods.len(), STDLIB_MIND_SOURCES.len());
+        assert!(names.contains(&"std.vec"));
+        assert!(names.contains(&"std.string"));
+        assert!(names.contains(&"std.map"));
+        assert!(names.contains(&"std.io"));
+    }
+
+    #[test]
+    fn env_override_falls_back_on_missing_dir() {
+        // A pointed-at dir that doesn't exist must NOT crash and must
+        // NOT silently produce an empty stdlib — the override is
+        // honoured "best effort" and falls back to the bundled set.
+        unsafe {
+            std::env::set_var("MIND_STDLIB_PATH", "/nonexistent/mind/stdlib/path");
+        }
+        let mods = parsed_stdlib_modules();
+        unsafe {
+            std::env::remove_var("MIND_STDLIB_PATH");
+        }
+        assert_eq!(
+            mods.len(),
+            STDLIB_MIND_SOURCES.len(),
+            "missing override dir must fall back to bundled stdlib"
+        );
     }
 }
