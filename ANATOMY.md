@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2511 | **Est. tokens:** ~6,220,668
-**Generated:** 2026-05-19 14:16 UTC
+**Files:** 2511 | **Est. tokens:** ~6,220,989
+**Generated:** 2026-05-19 14:36 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 13 | ~28,939 |
+| `docs/rfcs/` | 13 | ~29,260 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -579,7 +579,7 @@
 - `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
-- `0006-mind-blas.md` (~4815 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
+- `0006-mind-blas.md` (~5136 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~2700 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
