@@ -5,6 +5,98 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-05-19 — mind-blas Track B increment 2: native MLIR vector-dialect Q16.16 dot (byte-identical to the Track A scalar oracle — cross-arch bit-identity gate #57 closed for the vector path), `VecStore`, and f32 L1/L∞ vector reductions (bench-gate +7% cap held by byte-identical default binary; v0.6.1 bootstrap fixed-point unchanged)
+
+### Added — mind-blas Track B increment 2 (RFC 0006 §9.2)
+
+The honestly-deferred follow-on to increment 1. The native MLIR
+`vector`-dialect path now covers the **Q16.16 fixed-point** dot product
+and the **f32 L1 / L∞** metrics, all `#[cfg(feature = "std-surface")]`-
+gated and strictly additive — Track A and Track B increment 1 paths are
+untouched.
+
+Five new IR primitives in `src/ir/mod.rs`:
+
+- `Instr::VecStore { src, base, offset, lanes }` — the symmetric
+  counterpart of `VecLoad` (vector-typed `llvm.store` to an opaque i64
+  heap address; no SSA result). Enables vectorised output kernels.
+- `Instr::VecLoadI32 { dst, base, offset, lanes }` — the i32 sibling
+  of `VecLoad`, for the Q16.16 path.
+- `Instr::VecMulAddQ16 { dst, a, b, acc, lanes }` — Q16.16 fused
+  widening multiply-shift-accumulate with an **arithmetic**
+  (`arith.shrsi`) per-element `>> 16`, mirroring the Track A scalar
+  oracle exactly.
+- `Instr::VecReduceAddI64 { dst, src, lanes }` — horizontal i64 sum
+  (`vector.reduction <add>` → `llvm.intr.vector.reduce.add`).
+
+MLIR lowering in `src/mlir/lowering.rs` adds standalone arms for the
+five primitives plus three fused intrinsic interceptions:
+
+- `__mind_blas_dot_q16_v` — `vector<8xi64>` widen-multiply-arithmetic-
+  shift-accumulate loop + associative `vector.reduction <add>` + an
+  identical-per-element scalar tail + `trunc i64->i32` / `sext i32->i64`
+  pack. **Byte-identical to the Track A scalar oracle
+  `__mind_blas_dot_q16` at every length** (Q16.16 integer reduction is
+  associative; the per-element arithmetic shift is replicated exactly).
+  This closes the cross-arch Q16.16 bit-identity gate (task #57) for
+  the thesis-pure vector path.
+- `__mind_blas_dot_l1_f32_v` / `__mind_blas_dot_linf_f32_v` — masked
+  absolute value (bitcast f32->i32, `andi 0x7fffffff`, bitcast back —
+  `arith`-only, no `math` dialect, identical to Track A's AVX2
+  `_mm256_and_ps` abs) + `vector.reduction <add>` (L1) or
+  `<maximumf>` (L∞, the LLVM-18 op spelling).
+
+Surfaces in `std/blas.mind`: `pub fn dot_q16_v`, `dot_l1_f32_v`,
+`dot_linf_f32_v` (registered in `STD_SURFACE_INTRINSICS`; direct
+`__mind_blas_*_v` intrinsic entry exactly as increment 1).
+
+A dense-reduction-throughput bench sub-category
+(`blas_dense_reduction_lowering`, an 8K-element vector-reduction
+lowering cost for each of the four metrics) lands additively in
+`benches/std_surface.rs`. It is in the `std_surface` bench target
+(`required-features = ["std-surface", "mlir-lowering"]`), so it cannot
+enter the headline `compiler` criterion group or perturb
+`.bench-baseline-2026-05-18-rfc0005.txt`.
+
+### Verification
+
+- **#57 Q16.16 vector bit-identity gate** — `tests/blas_vec_q16_smoke.rs`
+  asserts `__mind_blas_dot_q16_v` is byte-for-byte equal to the Track A
+  scalar oracle at lengths {0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33,
+  1024, 4096, 65537}. PASS at every length.
+- **f32 L1/L∞** within 1e-4 relative of an f64 oracle (max observed
+  6.2e-6; L∞ byte-exact).
+- **Bench-gate +7% cap** — satisfied by construction and proven
+  deterministically: a release `mindc` built at clean `c130db3` and one
+  at increment-2 HEAD (both default-features) are byte-identical
+  (sha256 9a9edf42 ... 16717); every increment-2 line is
+  `std-surface`-gated and absent from the default-feature binary the
+  `compiler` bench measures. Wall-clock A/B medians on the shared box
+  were machine-noise-bound (clean `c130db3` itself ran ~+9% over the
+  frozen baseline that day), so the binary-equality proof is the
+  authoritative evidence.
+- **v0.6.1 bootstrap fixed-point** unchanged: `examples/mindc_mind/
+  fixed_point_smoke.py` reports byte-identical (10,889 bytes /
+  next_id 206) — the bootstrap source uses no vector ops.
+- Track A `blas_smoke` 12/12, increment-1 `blas_vec_smoke` 3/3, new
+  `blas_vec_q16_smoke` 4/4 all green; 519 std-surface tests pass;
+  clippy (`--no-default-features` and `--features std-surface`,
+  both `-D warnings`) + `cargo fmt --check` + rustdoc
+  (`-D warnings`, private items) clean. The two `mlir-build` vector
+  harnesses were hardened with a `OnceLock` single-build so their own
+  tests no longer race the shared temp `.so` under parallel load (a
+  pre-existing latent flake in the increment-1 harness, surfaced only
+  with `mlir-build` enabled; CI runs the gated suite without
+  `mlir-build`).
+
+### Deferred to increment 3 (RFC 0006 §9.3)
+
+`@target(...)` per-call substrate annotation (a real per-call selection
+needs MLIR target-attribute plumbing through parser->AST->typecheck->
+lowering — increment-3 scope, not an inert token), a vectorised
+`matmul_rmajor_f32` inner loop, cross-module `use std.blas` vector-path
+inlining, and a `dot_l1_q16_v` Q16.16-L1 vector path.
+
 ## [0.6.3] - 2026-05-19 — mind-blas Track B increment 1: native MLIR vector-dialect `dot_f32` lowering inside mindc (no runtime-support C shim; bench-gate +7% cap held, v0.6.1 bootstrap fixed-point byte-identical)
 
 ### Added — mind-blas Track B increment 1 (RFC 0006 §9)

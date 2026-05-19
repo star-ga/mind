@@ -373,6 +373,71 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        // RFC 0006 Track B (increment 2) — symmetric / Q16.16 primitives.
+        #[cfg(feature = "std-surface")]
+        Instr::VecStore {
+            src,
+            base,
+            offset,
+            lanes,
+        } => {
+            writeln!(
+                out,
+                "  vec.store {}, {} [{}] : vector<{}xf32>",
+                value_name(*src),
+                value_name(*base),
+                value_name(*offset),
+                lanes,
+            )
+            .unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoadI32 {
+            dst,
+            base,
+            offset,
+            lanes,
+        } => {
+            writeln!(
+                out,
+                "  {} = vec.load.i32 {} [{}] : vector<{}xi32>",
+                value_name(*dst),
+                value_name(*base),
+                value_name(*offset),
+                lanes,
+            )
+            .unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecMulAddQ16 {
+            dst,
+            a,
+            b,
+            acc,
+            lanes,
+        } => {
+            writeln!(
+                out,
+                "  {} = vec.muladd.q16 {}, {}, {} : vector<{}xi64>",
+                value_name(*dst),
+                value_name(*a),
+                value_name(*b),
+                value_name(*acc),
+                lanes,
+            )
+            .unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecReduceAddI64 { dst, src, lanes } => {
+            writeln!(
+                out,
+                "  {} = vec.reduce.add.i64 {} : vector<{}xi64> into i64",
+                value_name(*dst),
+                value_name(*src),
+                lanes,
+            )
+            .unwrap();
+        }
         _ => {}
     }
 }

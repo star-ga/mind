@@ -57,10 +57,32 @@ pub fn dot_l1_f32(a_addr: i64, b_addr: i64, len: i64) -> i64 {
     __mind_blas_dot_l1_f32(a_addr, b_addr, len)
 }
 
+// dot_l1_f32_v — RFC 0006 Track B (increment 2): native MLIR
+// `vector`-dialect L1 (sum of |a[i] - b[i]|).  Same i64-packed-f32 ABI
+// as dot_l1_f32; the call lowers to an abs-difference + add reduction
+// loop inside mindc rather than a func.call to the Track A C bridge.
+// Numerical contract: within ~1e-4 relative of an f64 oracle (the
+// tree-shaped reduction reorders summation like Track A's AVX2 path).
+// Track A's dot_l1_f32 is unchanged and remains the scalar/AVX2
+// fallback; Track B is strictly additive.
+pub fn dot_l1_f32_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_l1_f32_v(a_addr, b_addr, len)
+}
+
 // dot_linf_f32 — f32 Chebyshev distance (max of |a[i] - b[i]|).
 // Same i64-packed-f32 return contract.
 pub fn dot_linf_f32(a_addr: i64, b_addr: i64, len: i64) -> i64 {
     __mind_blas_dot_linf_f32(a_addr, b_addr, len)
+}
+
+// dot_linf_f32_v — RFC 0006 Track B (increment 2): native MLIR
+// `vector`-dialect L∞ (max of |a[i] - b[i]|).  Same i64-packed-f32 ABI
+// as dot_linf_f32; lowers to an abs-difference + max reduction loop.
+// Max is associative so this is byte-identical to the scalar reference,
+// but the harness asserts the same ~1e-4 tolerance for uniformity with
+// the L1/L2 vector paths.  Track A's dot_linf_f32 is unchanged.
+pub fn dot_linf_f32_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_linf_f32_v(a_addr, b_addr, len)
 }
 
 // matmul_rmajor_f32 — row-major matmul: y = W · x where W is
@@ -86,6 +108,21 @@ pub fn matmul_rmajor_f32(
 // the value).  Bit-identical scalar-vs-AVX2 at every length.
 pub fn dot_q16(a_addr: i64, b_addr: i64, len: i64) -> i64 {
     __mind_blas_dot_q16(a_addr, b_addr, len)
+}
+
+// dot_q16_v — RFC 0006 Track B (increment 2): native MLIR
+// `vector`-dialect Q16.16 dot product.  Same i64 ABI as dot_q16; the
+// call lowers to a `vector<8xi64>` widen-multiply-arithmetic-shift-
+// accumulate loop + associative i64 horizontal sum inside mindc.
+//
+// Cross-arch bit-identity (task #57): because Q16.16 integer reduction
+// is associative and the per-element arithmetic `>> 16` is replicated
+// exactly, this path is BYTE-IDENTICAL to the Track A scalar oracle
+// dot_q16 at every length — not merely within a tolerance.  This is
+// the determinism-critical metric on photonic / fixed-point substrates.
+// Track A's dot_q16 is unchanged and remains the scalar/AVX2 fallback.
+pub fn dot_q16_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_q16_v(a_addr, b_addr, len)
 }
 
 // dot_l1_q16 — Q16.16 Manhattan distance.

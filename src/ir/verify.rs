@@ -263,6 +263,31 @@ fn validate_operands(
         Instr::VecReduceAdd { src, .. } => {
             check_defined(*src)?;
         }
+        // RFC 0006 Track B (increment 2) — symmetric / Q16.16 vector
+        // primitives. Same operand-defined-before-use discipline. Gated.
+        #[cfg(feature = "std-surface")]
+        Instr::VecStore {
+            src, base, offset, ..
+        } => {
+            check_defined(*src)?;
+            check_defined(*base)?;
+            check_defined(*offset)?;
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoadI32 { base, offset, .. } => {
+            check_defined(*base)?;
+            check_defined(*offset)?;
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecMulAddQ16 { a, b, acc, .. } => {
+            check_defined(*a)?;
+            check_defined(*b)?;
+            check_defined(*acc)?;
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecReduceAddI64 { src, .. } => {
+            check_defined(*src)?;
+        }
     }
 
     Ok(())

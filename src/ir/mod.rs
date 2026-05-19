@@ -410,6 +410,100 @@ pub enum Instr {
         /// Statically known SIMD lane count of `src`.
         lanes: usize,
     },
+    /// RFC 0006 Track B (increment 2) — store `lanes` contiguous f32 values
+    /// from a SIMD vector value back to a heap address.
+    ///
+    /// Symmetric with [`Instr::VecLoad`]: `base` is an i64 opaque base
+    /// address (Option-C ABI), `offset` is an i64 byte offset, `src` is the
+    /// `vector<lanes x f32>` SSA value to store. Lowers to an
+    /// `llvm.inttoptr` + byte `llvm.getelementptr` + vector-typed
+    /// `llvm.store`. Enables vectorised output kernels (e.g. a future
+    /// vectorised `matmul_rmajor` writing its row result back through the
+    /// vector path). Produces no SSA value.
+    ///
+    /// Gated to `std-surface` — default builds never construct this variant.
+    #[cfg(feature = "std-surface")]
+    VecStore {
+        /// SSA id of the `vector<lanes x f32>` value to store.
+        src: ValueId,
+        /// SSA id of the i64 base-address value.
+        base: ValueId,
+        /// SSA id of the i64 byte-offset value.
+        offset: ValueId,
+        /// Statically known SIMD lane count.
+        lanes: usize,
+    },
+    /// RFC 0006 Track B (increment 2) — load `lanes` contiguous i32 Q16.16
+    /// fixed-point values from a heap address into a SIMD vector value.
+    ///
+    /// The i32 sibling of [`Instr::VecLoad`]; same opaque-i64-address
+    /// Option-C ABI. Used by the Q16.16 vector dot path. Lowers to
+    /// `llvm.inttoptr` + byte `llvm.getelementptr` + vector-typed
+    /// `llvm.load` of `vector<lanes x i32>`.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    VecLoadI32 {
+        /// SSA destination: the loaded `vector<lanes x i32>` value.
+        dst: ValueId,
+        /// SSA id of the i64 base-address value.
+        base: ValueId,
+        /// SSA id of the i64 byte-offset value.
+        offset: ValueId,
+        /// Statically known SIMD lane count.
+        lanes: usize,
+    },
+    /// RFC 0006 Track B (increment 2) — Q16.16 fused widening
+    /// multiply-shift-accumulate across lanes.
+    ///
+    /// `dst[i] = acc[i] + ((sext_i64(a[i]) * sext_i64(b[i])) >> 16)`,
+    /// element-wise, with an *arithmetic* (sign-preserving) right shift —
+    /// the exact per-element operation the Track A scalar oracle
+    /// `mind_blas_dot_q16_scalar` performs (`acc += prod >> 16`). `a` and
+    /// `b` are `vector<lanes x i32>`; `acc` and `dst` are
+    /// `vector<lanes x i64>`.
+    ///
+    /// Q16.16 integer reduction is associative, so accumulating into i64
+    /// lanes and summing the lanes afterwards (`VecReduceAddI64`) yields a
+    /// result **byte-identical** to the sequential scalar oracle at every
+    /// length. This is the cross-arch bit-identity contract (task #57)
+    /// extended to the native vector path — unlike the f32
+    /// `VecReduceAdd`, this path is NOT lossy.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    VecMulAddQ16 {
+        /// SSA destination: the `vector<lanes x i64>` accumulator result.
+        dst: ValueId,
+        /// SSA id of the first `vector<lanes x i32>` Q16.16 multiplicand.
+        a: ValueId,
+        /// SSA id of the second `vector<lanes x i32>` Q16.16 multiplicand.
+        b: ValueId,
+        /// SSA id of the `vector<lanes x i64>` accumulator addend.
+        acc: ValueId,
+        /// Statically known SIMD lane count (must match the operands).
+        lanes: usize,
+    },
+    /// RFC 0006 Track B (increment 2) — horizontal sum of an i64 SIMD
+    /// vector down to a single i64 scalar.
+    ///
+    /// Lowers to MLIR `vector.reduction <add>` over `vector<lanes x i64>`,
+    /// which becomes `llvm.intr.vector.reduce.add`. Integer addition is
+    /// associative, so the reduction is bit-identical to a sequential
+    /// scalar accumulation regardless of the lane-grouping LLVM chooses —
+    /// this is what makes the Q16.16 vector path satisfy the task-#57
+    /// cross-arch bit-identity gate.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    VecReduceAddI64 {
+        /// SSA destination: the reduced i64 scalar.
+        dst: ValueId,
+        /// SSA id of the `vector<lanes x i64>` source.
+        src: ValueId,
+        /// Statically known SIMD lane count of `src`.
+        lanes: usize,
+    },
 }
 
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
@@ -446,6 +540,12 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::VecLoad { dst, .. }
         | Instr::VecFma { dst, .. }
         | Instr::VecReduceAdd { dst, .. } => Some(*dst),
+        #[cfg(feature = "std-surface")]
+        Instr::VecStore { .. } => None,
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoadI32 { dst, .. }
+        | Instr::VecMulAddQ16 { dst, .. }
+        | Instr::VecReduceAddI64 { dst, .. } => Some(*dst),
     }
 }
 
