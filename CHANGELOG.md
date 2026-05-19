@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-18
+
+### Milestone: RFC 0005 Phase 6.2b — three compiler gaps closed; self-host substrate complete
+
+mindc v0.5.0 closes the three documented surface-grammar gaps that
+blocked the pure-MIND self-host work (Phase 6 ladder). All three land
+behind module-level feature gates (`std-surface`) so the default-build
+hot path stays byte-identical; the +7% bench-gate cap holds (current
+delta vs `.bench-baseline-2026-05-18-rfc0005.txt`: small_matmul -0.7%,
+medium_mlp -1.5%, large_network +3.5%).
+
+With v0.5.0, four-and-a-half of the six Phase 6 sub-steps are shipped
+(6.1 lexer + 6.2a parser + 6.3 type-checker + 6.4 MLIR emit in pure MIND;
+6.2b grammar growth in mindc). Phase 6.5 (fixed-point bootstrap, apex)
+remains open.
+
 ### Added — RFC 0005 Phase 6.2b Gap 2: array literals `[expr, …]` + fixed-size array types `[T; N]`
 
 Array literals and fixed-size array types are now a first-class surface in mindc
