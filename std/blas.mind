@@ -131,3 +131,19 @@ pub fn dot_q16_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
 pub fn dot_l1_q16(a_addr: i64, b_addr: i64, len: i64) -> i64 {
     __mind_blas_dot_l1_q16(a_addr, b_addr, len)
 }
+
+// dot_l1_q16_v — RFC 0006 Track B (increment 3): native MLIR
+// `vector`-dialect Q16.16 L1 (Manhattan, sum of |a-b|) reduction.  Same
+// packed-i64 ABI as dot_l1_q16; the call lowers inside mindc to a
+// `vector<8xi64>` widen-subtract-abs-accumulate loop + associative i64
+// horizontal sum + scalar tail.
+//
+// Cross-arch bit-identity (task #57): integer reduction is associative
+// and per-element |sext64(a) - sext64(b)| is exact, so this path is
+// BYTE-IDENTICAL to the Track A scalar oracle dot_l1_q16 at every
+// length — not merely within a tolerance.  This closes the Q16.16
+// vector-path metric parity deferred in increment 2 (RFC 0006 §9.3).
+// Track A's dot_l1_q16 is unchanged and remains the scalar/AVX2 fallback.
+pub fn dot_l1_q16_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
+    __mind_blas_dot_l1_q16_v(a_addr, b_addr, len)
+}
