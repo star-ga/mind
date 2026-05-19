@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2495 | **Est. tokens:** ~6,132,619
-**Generated:** 2026-05-19 04:50 UTC
+**Files:** 2496 | **Est. tokens:** ~6,139,867
+**Generated:** 2026-05-19 05:14 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~31,208 |
+| `./` | 31 | ~32,399 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -47,7 +47,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 4 | ~10,715 |
 | `examples/lexer/` | 6 | ~8,706 |
-| `examples/parser/` | 4 | ~12,269 |
+| `examples/parser/` | 5 | ~17,813 |
 | `examples/typecheck/` | 4 | ~11,919 |
 | `examples/zoo/` | 6 | ~12,885 |
 | `.githooks/` | 1 | ~98 |
@@ -365,14 +365,14 @@
 | `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/eval/` | 13 | ~72,460 |
+| `src/eval/` | 13 | ~72,839 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
 | `src/ir/` | 3 | ~9,248 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 3 | ~11,832 |
+| `src/mlir/` | 3 | ~11,966 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
@@ -414,7 +414,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~13003 tok, huge) — Changelog
+- `CHANGELOG.md` (~14194 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -635,6 +635,7 @@
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
 ### `examples/parser/`
 
+- `bootstrap_smoke.py` (~5544 tok, huge)
 - `EXPECTED.md` (~2140 tok, huge) — Phase 6.2 — Expected AST Tree
 - `fixture.mind` (~159 tok, small) — Phase 6.2 parser smoke fixture.
 - `main.mind` (~7716 tok, huge) — examples/parser/main.mind — RFC 0005 Phase 6.2 self-host parser seed.
@@ -3521,7 +3522,7 @@
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower.rs` (~13849 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~3657 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~4036 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8312 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
@@ -3572,7 +3573,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `lowering.rs` (~9865 tok, huge) — Copyright 2025 STARGA Inc.
+- `lowering.rs` (~9999 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~282 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
