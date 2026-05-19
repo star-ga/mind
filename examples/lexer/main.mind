@@ -61,6 +61,7 @@ pub fn tk_kw_fn() -> i64  { 18 }
 pub fn tk_kw_let() -> i64 { 19 }
 pub fn tk_kw_use() -> i64 { 20 }
 pub fn tk_kw_pub() -> i64 { 21 }
+pub fn tk_dot() -> i64    { 22 }
 
 // ===== Byte loads =====
 //
@@ -180,6 +181,7 @@ pub fn match_punct(b: i64) -> i64 {
     if b == 45  { return tk_minus(); }   // -
     if b == 42  { return tk_star(); }    // *
     if b == 47  { return tk_slash(); }   // /
+    if b == 46  { return tk_dot(); }     // .
     if b == 60  { return tk_lt(); }      // <
     if b == 62  { return tk_gt(); }      // >
     tk_ident()

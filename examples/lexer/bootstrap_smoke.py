@@ -84,7 +84,7 @@ class Token(NamedTuple):
 EXPECTED_TOKENS: list[Token] = [
     Token(20, 181, 184),   # tk_kw_use  'use'
     Token(1,  185, 188),   # tk_ident   'std'
-    Token(15, 188, 189),   # tk_slash   '.'  (dot falls through to tk_slash — Phase 6.1 known)
+    Token(22, 188, 189),   # tk_dot     '.'
     Token(1,  189, 192),   # tk_ident   'vec'
     Token(8,  192, 193),   # tk_semi    ';'
     Token(21, 195, 198),   # tk_kw_pub  'pub'
