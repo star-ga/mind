@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — RFC 0005 Phase 6.2b Gap 3: unsigned-i64 literal reinterpret-cast
+
+Integer literals in the range `(i64::MAX, u64::MAX]` are now accepted by the
+mindc parser.  Previously any literal exceeding `i64::MAX` (e.g. the FNV-1a
+64-bit offset basis `14695981039346656037`) was rejected with
+`error[parse][E1001]: integer overflow`.
+
+The parser now tries a signed-i64 parse first; on failure it falls back to an
+unsigned-u64 parse and reinterprets the bit-pattern as a signed i64 via
+standard two's-complement (Rust `u64 as i64`).  Literals exceeding `u64::MAX`
+continue to be rejected.  Literals that fit in `i64` are unaffected — the
+fallback branch is never reached for them.
+
+- `14695981039346656037` (FNV-1a offset basis) → `-3750763034362895579i64`
+- `18446744073709551615` (`u64::MAX`) → `-1i64`
+- `9223372036854775808` (`i64::MAX + 1`) → `i64::MIN`
+- `18446744073709551616` (`u64::MAX + 1`) → still rejected as overflow
+
+**Scope:** `src/parser/mod.rs` — four sites (two in the expression literal
+parser, two in the pattern-match literal parser); a shared `parse_i64_literal`
+/ `parse_i64_pattern` helper extracted to keep all four sites consistent.
+The i32 parse at the attribute-argument site is unchanged.
+
+**Tests:** `tests/parser_unsigned_i64_literals.rs` — 9 tests covering all
+boundary values, byte-level round-trip, fn-body context, and the for-range
+disambiguation path.
+
+**Bench-gate:** default-build hot path is byte-identical (the fallback branch
+is only reached on literals outside `i64` range, which never appear in the
+canonical compile corpus).  Measured: `small_matmul -0.4%`, `medium_mlp
++4.6%`, `large_network +2.3%` — all within the +7% cap.
+
+Closes Gap 3 from `docs/rfcs/0005-phase-6-2-mindc-gaps.md` §"Phase 6.3
+addendum".
+
 ### Added — RFC 0005 Phase 6.2a: pure-MIND self-host parser seed
 
 Second step of the self-host ladder. `examples/parser/` ships a

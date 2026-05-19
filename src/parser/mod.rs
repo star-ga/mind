@@ -230,6 +230,35 @@ impl<'a> P<'a> {
         )
     }
 
+    /// Parse a decimal digit string as an i64 literal.
+    ///
+    /// Values in `[0, i64::MAX]` are returned as-is.
+    /// Values in `(i64::MAX, u64::MAX]` are reinterpreted as signed i64 via
+    /// the standard Rust `u64 as i64` bit-pattern cast (two's complement), so
+    /// `14695981039346656037` (FNV-1a 64-bit offset basis) becomes
+    /// `-3750762994362895579i64` with the same byte representation.
+    /// Values exceeding `u64::MAX` produce an `integer overflow` error.
+    fn parse_i64_literal(&self, d: &str) -> Result<i64, ParseError> {
+        if let Ok(v) = d.parse::<i64>() {
+            return Ok(v);
+        }
+        d.parse::<u64>()
+            .map(|u| u as i64)
+            .map_err(|_| self.err("integer overflow".into()))
+    }
+
+    /// Same as [`parse_i64_literal`] but for pattern-match positions; the
+    /// error message reads "integer overflow in pattern" so diagnostics remain
+    /// consistent with the pre-existing wording at those sites.
+    fn parse_i64_pattern(&self, d: &str) -> Result<i64, ParseError> {
+        if let Ok(v) = d.parse::<i64>() {
+            return Ok(v);
+        }
+        d.parse::<u64>()
+            .map(|u| u as i64)
+            .map_err(|_| self.err("integer overflow in pattern".into()))
+    }
+
     /// Read a numeric literal token for use inside attribute argument lists.
     /// Accepts optional leading `-`, digits, optional `.` + digits.
     /// Returns the raw text as a string, or `None` if nothing numeric is here.
@@ -781,6 +810,12 @@ impl<'a> P<'a> {
         }
         if self.at_keyword(b"if") {
             return self.parse_if_expr();
+        }
+        // RFC 0005 Gap 1: `while` statement — gated to std-surface so the
+        // default-build hot path stays byte-identical.
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"while") {
+            return self.parse_while();
         }
         // Expression or assignment
         let start = self.pos;
@@ -1637,6 +1672,30 @@ impl<'a> P<'a> {
         })
     }
 
+    /// Parse `while cond { body }` (RFC 0005 Gap 1).
+    ///
+    /// The condition is a full expression terminated by `{`; the body is a
+    /// block of statements terminated by `}`. No `break` / `continue` in
+    /// this phase (noted as follow-on in the design doc).
+    #[cfg(feature = "std-surface")]
+    fn parse_while(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 5; // consume "while"
+        self.skip_ws_and_newlines();
+        let cond = self.parse_expr()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let body = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::While {
+            cond: Box::new(cond),
+            body,
+            span,
+        })
+    }
+
     /// Pratt operator-precedence parser for expressions (mindc 0.2.5).
     ///
     /// Replaces the recursive-descent chain
@@ -2171,7 +2230,7 @@ impl<'a> P<'a> {
             // Disambiguate: `1.0` is float, `1..10` is range
             if self.pos + 1 < self.b.len() && self.b[self.pos + 1] == b'.' {
                 // Range syntax `N..M` — return integer
-                let val: i64 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
+                let val = self.parse_i64_literal(&d)?;
                 let span = Span::new(start, self.pos);
                 return Ok(Node::Lit(Literal::Int(val), span));
             }
@@ -2219,7 +2278,7 @@ impl<'a> P<'a> {
             let span = Span::new(start, self.pos);
             return Ok(Node::Lit(Literal::Float(val), span));
         }
-        let val: i64 = d.parse().map_err(|_| self.err("integer overflow".into()))?;
+        let val = self.parse_i64_literal(&d)?;
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Int(val), span))
     }
@@ -3023,9 +3082,7 @@ impl<'a> P<'a> {
             let d = self
                 .digits()
                 .ok_or_else(|| self.err("expected digits after `-` in pattern".into()))?;
-            let v: i64 = d
-                .parse()
-                .map_err(|_| self.err("integer overflow in pattern".into()))?;
+            let v = self.parse_i64_pattern(&d)?;
             return Ok(Pattern::Literal(Literal::Int(-v)));
         }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
@@ -3039,9 +3096,7 @@ impl<'a> P<'a> {
                     .map_err(|_| self.err("float parse error in pattern".into()))?;
                 return Ok(Pattern::Literal(Literal::Float(f)));
             }
-            let v: i64 = d
-                .parse()
-                .map_err(|_| self.err("integer overflow in pattern".into()))?;
+            let v = self.parse_i64_pattern(&d)?;
             return Ok(Pattern::Literal(Literal::Int(v)));
         }
         let name = self

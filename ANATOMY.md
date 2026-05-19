@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2423 | **Est. tokens:** ~5,964,202
-**Generated:** 2026-05-16 10:49 UTC
+**Files:** 2489 | **Est. tokens:** ~6,106,280
+**Generated:** 2026-05-19 03:30 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,13 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 27 | ~18,090 |
+| `./` | 31 | ~28,025 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 7 | ~831 |
-| `benches/` | 5 | ~6,036 |
-| `benchmarks/` | 14 | ~24,260 |
+| `.arch-mind/` | 2 | ~553 |
+| `audits/` | 6 | ~607 |
+| `benches/` | 8 | ~8,263 |
+| `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
@@ -35,18 +36,24 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 20 | ~21,929 |
+| `docs/` | 22 | ~25,294 |
+| `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 5 | ~4,272 |
+| `docs/rfcs/` | 11 | ~21,221 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 14 | ~31,974 |
+| `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
+| `examples/emit_ir/` | 4 | ~10,715 |
+| `examples/lexer/` | 4 | ~4,393 |
+| `examples/parser/` | 4 | ~12,269 |
+| `examples/typecheck/` | 4 | ~11,919 |
 | `examples/zoo/` | 6 | ~12,885 |
+| `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 6 | ~3,978 |
+| `.github/workflows/` | 6 | ~4,785 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `scripts/` | 2 | ~2,268 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
@@ -350,32 +357,32 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~14,928 |
-| `src/ast/` | 1 | ~2,780 |
-| `src/autodiff/` | 3 | ~4,224 |
-| `src/bin/` | 2 | ~10,458 |
-| `src/cache/` | 4 | ~3,422 |
+| `src/` | 7 | ~16,226 |
+| `src/ast/` | 1 | ~4,642 |
+| `src/autodiff/` | 3 | ~4,256 |
+| `src/bin/` | 2 | ~11,291 |
+| `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
-| `src/distributed/` | 6 | ~7,453 |
-| `src/eval/` | 12 | ~57,067 |
+| `src/distributed/` | 6 | ~7,433 |
+| `src/eval/` | 13 | ~67,493 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/ir/` | 3 | ~6,322 |
-| `src/ir/compact/` | 3 | ~13,890 |
+| `src/ir/` | 3 | ~8,315 |
+| `src/ir/compact/` | 3 | ~14,082 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 2 | ~4,569 |
-| `src/ops/` | 2 | ~2,047 |
-| `src/opt/` | 4 | ~6,745 |
+| `src/mlir/` | 3 | ~9,040 |
+| `src/ops/` | 3 | ~4,764 |
+| `src/opt/` | 4 | ~8,030 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~20,640 |
-| `src/project/` | 1 | ~9,206 |
-| `src/runtime/` | 3 | ~968 |
+| `src/project/` | 3 | ~16,844 |
+| `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~16,673 |
+| `src/type_checker/` | 1 | ~21,629 |
 | `src/types/` | 4 | ~3,179 |
-| `tests/` | 76 | ~42,868 |
+| `std/` | 4 | ~3,165 |
+| `tests/` | 99 | ~88,972 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -386,7 +393,7 @@
 | `tests/runtime/` | 2 | ~135 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tools/` | 3 | ~2,968 |
+| `tools/` | 3 | ~3,237 |
 | `tools/pytorch_bridge/` | 6 | ~4,678 |
 | `tools/pytorch_bridge/tests/` | 2 | ~1,244 |
 | `.wrangler/cache/` | 1 | ~21 |
@@ -399,11 +406,14 @@
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~534 tok, large) —    Compiling mind v0.2.3 (/home/n/mind)
 - `.bench-baseline-2026-04-28-pratt.txt` (~185 tok, small) — === Pratt parser baseline (mindc 0.2.5, 2026-04-28) ===
+- `.bench-baseline-2026-05-17-phase10-6.txt` (~408 tok, medium) — === Phase 10.6 surface-syntax baseline (mindc 0.2.10, 2026-05-17) ===
+- `.bench-baseline-2026-05-17-phase10-7.txt` (~565 tok, large) — === Phase 10.7 surface baseline (mindc 0.2.11, 2026-05-17) ===
+- `.bench-baseline-2026-05-18-rfc0005.txt` (~781 tok, large) — === RFC 0005 Phase 2 baseline (mindc 0.4.0, 2026-05-18) ===
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~695 tok, large) — [package]
-- `CHANGELOG.md` (~2410 tok, huge) — Changelog
+- `Cargo.toml` (~833 tok, large) — [package]
+- `CHANGELOG.md` (~9820 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -411,16 +421,17 @@
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~110 tok, small) — # Rust
+- `.gitignore` (~237 tok, medium) — # Rust
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~3629 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~3993 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
-- `STATUS.md` (~893 tok, large) — MIND Compiler Status
+- `.sembleignore` (~72 tok, small) — # semble code-search ignore list
+- `STATUS.md` (~963 tok, large) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -430,20 +441,26 @@
 - `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
 ### `.arch-mind/`
 
-- `last_summary.json` (~153 tok, small) — Keys: _aggregated_for_phase_a, _comment, _languages, _repo_root, edges
-- `_log_rules.txt` (~13 tok, tiny) — rules: 9  scan_metrics: 9
-- `_log_scan.txt` (~10 tok, tiny) — wrote /home/n/mind/.arch-mind/scan.json
-- `_log_sidecar.txt` (~12 tok, tiny) — wrote /home/n/mind/.arch-mind/last_summary.json
 - `rules.mind` (~463 tok, medium) — mind (language compiler / runtime root) architectural-governance rules
-- `scan_before.json` (~90 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 - `scan.json` (~90 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+### `audits/`
+
+- `arch-mind-2026-05-18-post-phase-6-1.json` (~169 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+- `arch-mind-v0.4.0.json` (~86 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+- `arch-mind-v0.4.1.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+- `arch-mind-v0.4.2.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+- `arch-mind-v0.4.3.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+- `arch-mind-v0.4.4.json` (~88 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `benches/`
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
-- `compiler.rs` (~1322 tok, large) — Small program: Simple matrix multiplication
-- `operations.rs` (~1143 tok, large) — Element-wise operations
+- `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `compiler.rs` (~1754 tok, huge) — Small program: Simple matrix multiplication
+- `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
+- `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1267 tok, large) — Simple broadcasting scenarios
 - `simple_benchmarks.rs` (~643 tok, large) — Benchmark source programs that are known to work
+- `std_surface.rs` (~422 tok, medium) — Copyright 2025 STARGA Inc.
 ### `benchmarks/autograd_comparison/`
 
 - `autograd_results.json` (~424 tok, medium) — Keys: system_info, benchmarks
@@ -510,7 +527,7 @@
 - `RUN_GUIDE.md` (~1465 tok, large) — MIND Patent Benchmarks - Environment Guide
 - `SAME_MACHINE_BENCHMARKS.md` (~2320 tok, huge) — Same-Machine Benchmarks - Addressing Copilot Concerns
 - `scientific_benchmark.py` (~1603 tok, huge)
-- `scientific_benchmark_raw.py` (~2351 tok, huge)
+- `scientific_benchmark_raw.py` (~2452 tok, huge)
 ### `.cargo/`
 
 - `config.toml` (~130 tok, small) — [registries]
@@ -518,6 +535,9 @@
 
 - `architecture.md` (~755 tok, large) — Architecture
 - `autodiff.md` (~467 tok, medium) — Static autodiff (public)
+### `docs/backends/`
+
+- `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
 ### `docs/benchmarks/`
 
 - `compiler_performance.md` (~4607 tok, huge) — MIND Compiler Performance Benchmarks
@@ -541,30 +561,38 @@
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
-- `ir-stability.md` (~959 tok, large) — IR stability contract
+- `ir-stability.md` (~1023 tok, large) — IR stability contract
 - `mlir-lowering.md` (~210 tok, medium) — MLIR lowering pipeline (public)
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `performance.md` (~742 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
+- `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
 ### `docs/rfcs/`
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
 - `0001-bitnet-native-support.md` (~3191 tok, huge) — RFC 0001: Native BitNet Support — `tri` and `q16_16` Types
+- `0002-pub-fn-c-exports.md` (~2091 tok, huge) — RFC 0002: `pub fn` → C ABI Symbol Export
+- `0003-cdylib-aot-emit.md` (~3195 tok, huge) — RFC 0003: cdylib AOT emit + symbol versioning
+- `0004-evidence-token-types.md` (~1907 tok, huge) — RFC 0004: Compile-Time Evidence Token Types
+- `0005-phase-6-2-mindc-gaps.md` (~3167 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
+- `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
+- `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~8910 tok, huge) — Roadmap
+- `roadmap.md` (~10228 tok, huge) — Roadmap
 - `security.md` (~753 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
+- `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
 ### `docs/specs/`
 
 - `README.md` (~23 tok, tiny) — Specifications
 - `v1.0.md` (~953 tok, large) — MIND Language Specification v1.0 (Working Draft)
 ### `docs/`
 
-- `type-system.md` (~605 tok, large) — Type System
+- `type-system.md` (~947 tok, large) — Type System
 - `versioning.md` (~630 tok, large) — MIND Core Stability & Versioning
 - `whitepaper.md` (~2844 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
@@ -582,11 +610,34 @@
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
 - `audit_report.mind` (~2289 tok, huge) — audit_report.mind -- Compliance Artifact Generation
 - `README.md` (~1073 tok, large) — Compliance Example
+### `examples/emit_ir/`
+
+- `EXPECTED.md` (~1942 tok, huge) — Phase 6.4 — Expected IR Text
+- `fixture.mind` (~182 tok, small) — Phase 6.4 emit_ir smoke fixture.
+- `main.mind` (~6377 tok, huge) — examples/emit_ir/main.mind — RFC 0005 Phase 6.4 self-host MLIR text emitter.
+- `README.md` (~2214 tok, huge) — RFC 0005 Phase 6.4 — Self-Host MLIR Text Emitter
 ### `examples/`
 
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
-- `hello_tensor.mind` (~142 tok, small) — Hello World example for MIND
+- `hello_stdlib.mind` (~270 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
+- `hello_tensor.mind` (~140 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
+### `examples/lexer/`
+
+- `EXPECTED.md` (~1098 tok, large) — Phase 6.1 — Expected Token Stream
+- `fixture.mind` (~66 tok, small) — Phase 6.1 lexer smoke fixture.
+- `main.mind` (~2240 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
+- `README.md` (~989 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
+### `examples/`
+
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
+### `examples/parser/`
+
+- `EXPECTED.md` (~2140 tok, huge) — Phase 6.2 — Expected AST Tree
+- `fixture.mind` (~159 tok, small) — Phase 6.2 parser smoke fixture.
+- `main.mind` (~7716 tok, huge) — examples/parser/main.mind — RFC 0005 Phase 6.2 self-host parser seed.
+- `README.md` (~2254 tok, huge) — RFC 0005 Phase 6.2 — Self-Host Parser Seed
+### `examples/`
+
 - `policy.mind` (~1221 tok, large) — policy.mind — v0.1 Execution Boundary Kernel
 - `README.md` (~2066 tok, huge) — MIND Examples
 - `remizov_benchmark.mind` (~6297 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -596,6 +647,12 @@
 - `remizov_solver.mind` (~3699 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `remizov_verify.mind` (~3618 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `tiny_edge_model.mind` (~1900 tok, huge) — Tiny Edge Model Example
+### `examples/typecheck/`
+
+- `EXPECTED.md` (~2015 tok, huge) — Phase 6.3 — Expected Type-Check Report
+- `fixture.mind` (~198 tok, small) — Phase 6.3 type-checker smoke fixture.
+- `main.mind` (~7094 tok, huge) — examples/typecheck/main.mind — RFC 0005 Phase 6.3 self-host
+- `README.md` (~2612 tok, huge) — RFC 0005 Phase 6.3 — Self-Host Type-Checker Seed
 ### `examples/zoo/`
 
 - `conv_classifier.mind` (~2518 tok, huge) — CNN Classifier — MIND Model Zoo
@@ -604,6 +661,9 @@
 - `mlp_mnist.mind` (~2368 tok, huge) — MLP MNIST Classifier — MIND Model Zoo
 - `README.md` (~1191 tok, large) — MIND Model Zoo
 - `transformer_block.mind` (~3967 tok, huge) — Transformer Block — MIND Model Zoo
+### `.githooks/`
+
+- `pre-commit` (~98 tok, small) — #!/usr/bin/env bash
 ### `.github/`
 
 - `CODEOWNERS` (~8 tok, tiny) — *       @cputer
@@ -618,9 +678,9 @@
 - `release-drafter.yml` (~85 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~507 tok, large) — name: Bench gate
+- `bench-gate.yml` (~1052 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~1358 tok, large) — name: CI
+- `ci.yml` (~1620 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
 - `release.yml` (~1579 tok, huge) — name: Release
@@ -3419,25 +3479,25 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~4642 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~342 tok, medium) — Copyright 2025 STARGA Inc.
-- `rules.rs` (~1198 tok, large) — Copyright 2025 STARGA Inc.
+- `rules.rs` (~1230 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
 
 - `mind-ai.rs` (~6045 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~4413 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~5246 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `fingerprint.rs` (~526 tok, large) — Copyright 2025-2026 STARGA Inc.
+- `fingerprint.rs` (~649 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~964 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/`
 
-- `conformance.rs` (~1871 tok, huge)
+- `conformance.rs` (~1879 tok, huge)
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3448,26 +3508,27 @@
 - `invariants.rs` (~1416 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~580 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `pipeline.rs` (~1973 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `shard.rs` (~1660 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `shard.rs` (~1640 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/eval/`
 
-- `autodiff.rs` (~13879 tok, huge) — Copyright 2025 STARGA Inc.
+- `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
-- `ir_interp.rs` (~3096 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~3792 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~2563 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_export.rs` (~8194 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_interp.rs` (~3183 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~9877 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~3012 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_export.rs` (~8203 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
-- `mlir_opt.rs` (~902 tok, large) — Copyright 2025 STARGA Inc.
+- `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~18137 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~18954 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
 - `tensor.rs` (~8346 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
+- `struct_resolver.rs` (~2854 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~1770 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -3481,7 +3542,7 @@
 - `sys.rs` (~1772 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/ir/compact/`
 
-- `emit.rs` (~4112 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~4304 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~2332 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~7446 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
@@ -3494,41 +3555,42 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `mod.rs` (~2353 tok, huge) — Copyright 2025 STARGA Inc.
-- `print.rs` (~2022 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~1947 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~3632 tok, huge) — Copyright 2025 STARGA Inc.
+- `print.rs` (~2437 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~2246 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~887 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~909 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
-- `lowering.rs` (~4299 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~270 tok, medium) — Copyright 2025 STARGA Inc.
+- `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
+- `lowering.rs` (~7073 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~282 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
+- `cerebras.rs` (~2713 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `core_v1.rs` (~1823 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~224 tok, medium) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~228 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/opt/`
 
-- `fold.rs` (~1051 tok, large) — Copyright 2025 STARGA Inc.
-- `ir_canonical.rs` (~1415 tok, large) — Copyright 2025 STARGA Inc.
-- `memory_layout.rs` (~4099 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `fold.rs` (~1175 tok, large) — Copyright 2025 STARGA Inc.
+- `ir_canonical.rs` (~2565 tok, huge) — Copyright 2025 STARGA Inc.
+- `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
 ### `src/package/`
 
 - `manifest.rs` (~310 tok, medium) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
-### `src/parser/`
-
-- `mod.rs` (~20640 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~2028 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~9206 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10465 tok, huge) — Copyright 2025 STARGA Inc.
+- `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~2713 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3541,7 +3603,7 @@
 ### `src/runtime/`
 
 - `mod.rs` (~92 tok, small) — Runtime abstractions for execution backends.
-- `types.rs` (~588 tok, large) — Shared runtime surface types for execution backends.
+- `types.rs` (~1105 tok, large) — Shared runtime surface types for execution backends.
 ### `src/shapes/`
 
 - `engine.rs` (~1882 tok, huge) — A rank-N tensor shape represented as a list of extents.
@@ -3552,13 +3614,19 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~16673 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~21629 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
 - `intern.rs` (~1554 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~880 tok, large) — Copyright 2025 STARGA Inc.
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
+### `std/`
+
+- `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
+- `map.mind` (~816 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
+- `string.mind` (~869 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `vec.mind` (~652 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -3575,10 +3643,11 @@
 - `gpu_graceful_failure.mind` (~73 tok, small) — Backend test: GPU backend graceful failure
 ### `tests/`
 
-- `cli_buffers.rs` (~443 tok, medium) — Copyright 2025 STARGA Inc.
+- `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `cli_buffers.rs` (~459 tok, medium) — Copyright 2025 STARGA Inc.
 - `cli_build.rs` (~648 tok, large) — Copyright 2025 STARGA Inc.
-- `cli_eval.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `cli_exec.rs` (~543 tok, large) — Copyright 2025 STARGA Inc.
+- `cli_eval.rs` (~502 tok, large) — Copyright 2025 STARGA Inc.
+- `cli_exec.rs` (~558 tok, large) — Copyright 2025 STARGA Inc.
 - `cli_tensor.rs` (~469 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/conformance/cpu_baseline/`
 
@@ -3601,12 +3670,13 @@
 - `backend_unavailable.mind` (~2 tok, tiny)
 ### `tests/`
 
-- `conformance.rs` (~149 tok, small)
+- `conformance.rs` (~129 tok, small)
 - `CONFORMANCE_TESTS.md` (~1225 tok, large) — MIND Conformance Test Corpus
 - `const_folding.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
-- `conv2d_exec.rs` (~578 tok, large) — Copyright 2025 STARGA Inc.
+- `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
+- `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3628,7 +3698,7 @@
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
 - `ir_core.rs` (~847 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
 - `ir_load_save.rs` (~715 tok, large) — Copyright 2025 STARGA Inc.
-- `ir_lower.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
+- `ir_lower.rs` (~1331 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_stub.rs` (~219 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/ir_verification/`
 
@@ -3644,9 +3714,9 @@
 - `linalg_grad.rs` (~315 tok, medium) — Copyright 2025 STARGA Inc.
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~1949 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_build.rs` (~1272 tok, large) — Copyright 2025 STARGA Inc.
-- `mlir_exec.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
+- `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_indexing.rs` (~414 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_export_linalg.rs` (~338 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_export_reductions.rs` (~335 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3659,20 +3729,23 @@
 - `mlir_opt.rs` (~424 tok, medium) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
-- `parse_rfn_mind.rs` (~1235 tok, large) — Parse-target tests for rfn-mind syntax acceptance (Phase 10.5).
-- `pipeline.rs` (~1351 tok, large) — Copyright 2025 STARGA Inc.
+- `parse_match_and_ref.rs` (~2699 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse_phase10_surface.rs` (~3880 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~1467 tok, large) — Copyright 2025 STARGA Inc.
+- `reap_threshold.rs` (~2045 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
-- `repl_basic.rs` (~543 tok, large) — Copyright 2025 STARGA Inc.
+- `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
 ### `tests/`
 
-- `shape_integration.rs` (~409 tok, medium)
+- `shape_integration.rs` (~416 tok, medium)
 - `shape_ops_preview.rs` (~302 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/shapes/`
 
@@ -3688,10 +3761,28 @@
 
 - `shapes.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `smoke.rs` (~259 tok, medium) — Copyright 2025 STARGA Inc.
+- `sparse_tensor_types.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
+- `std_surface_array_literals.rs` (~1336 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access.rs` (~2819 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access_step2.rs` (~3234 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_intrinsics.rs` (~2087 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_io_module.rs` (~1571 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_map_module.rs` (~1541 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_c_stdlib_bundle.rs` (~1454 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_d_env_override.rs` (~1462 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_string_module.rs` (~1831 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_struct_lowering.rs` (~2650 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_use_import.rs` (~1753 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_vec_module.rs` (~1656 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_while_statement.rs` (~3024 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
+- `target_cerebras.rs` (~340 tok, medium) — Cerebras backend target — first-class surface tests.
 - `tensor_broadcast.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_buffers.rs` (~517 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_eval.rs` (~457 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3711,11 +3802,11 @@
 - `type_error_spans.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
-- `verify_audit.rs` (~1995 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
+- `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
-- `bench_gate.py` (~1264 tok, large) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~1533 tok, huge) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `tools/pytorch_bridge/`
 
