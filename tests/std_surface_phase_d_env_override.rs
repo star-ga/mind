@@ -102,8 +102,7 @@ fn env_set_to_missing_dir_falls_back_to_bundled() {
     // "best effort" contract documented in `stdlib.rs` —
     // user-side breakage of the override surfaces as the override
     // simply not taking effect, never as a compiler crash.
-    let nonexistent =
-        std::path::Path::new("/nonexistent/mind/stdlib/path/that/does/not/exist");
+    let nonexistent = std::path::Path::new("/nonexistent/mind/stdlib/path/that/does/not/exist");
     with_env("MIND_STDLIB_PATH", Some(nonexistent), || {
         let mods = parsed_stdlib_modules();
         assert_eq!(
