@@ -3,8 +3,8 @@
 | Field | Value |
 |---|---|
 | RFC | 0006 |
-| Title | mind-blas — native BLAS surface (Track A + Track B increment 1) |
-| Status | Track A landed; Track B increment 1 landed |
+| Title | mind-blas — native BLAS surface (Track A + Track B increments 1–2) |
+| Status | Track A landed; Track B increments 1 + 2 landed |
 | Authors | STARGA Inc. |
 | Created | 2026-05-18 |
 | Supersedes | — |
@@ -248,23 +248,110 @@ held: small_matmul −0.5%, medium_mlp +0.1%, large_network +3.0%
 fixed-point unchanged (10,889 bytes / next_id 206) — the bootstrap
 source uses no vector ops.
 
-### 9.2 Deferred to increment 2
+### 9.2 Increment 2 (landed, v0.6.4)
+
+Five new `#[cfg(feature = "std-surface")]`-gated IR primitives in
+`src/ir/mod.rs`:
+
+- `Instr::VecStore { src, base, offset, lanes }` — the symmetric
+  counterpart of `VecLoad`: a vector-typed `llvm.store` to an opaque
+  i64 heap address. Produces no SSA value; enables vectorised output
+  kernels.
+- `Instr::VecLoadI32 { dst, base, offset, lanes }` — the i32 sibling
+  of `VecLoad`, used by the Q16.16 path.
+- `Instr::VecMulAddQ16 { dst, a, b, acc, lanes }` — Q16.16 fused
+  widening multiply-shift-accumulate: `dst = acc + ((sext64(a) *
+  sext64(b)) >>a 16)`, element-wise, with an **arithmetic**
+  (`arith.shrsi`) right shift exactly mirroring the Track A scalar
+  oracle's per-element `prod >> 16`.
+- `Instr::VecReduceAddI64 { dst, src, lanes }` — horizontal i64 sum
+  (`vector.reduction <add>` → `llvm.intr.vector.reduce.add`).
+
+Surfaces in `std/blas.mind` (each a direct `__mind_blas_*_v` intrinsic
+intercepted by the lowering — same forward-decl-only `use std.blas`
+status as increment 1):
+
+- **`dot_q16_v`** — the Q16.16 vector dot. Lowers to a
+  `vector<8xi64>` widen-multiply-arithmetic-shift-accumulate `scf.for`
+  loop + an associative `vector.reduction <add>` horizontal i64 sum +
+  an identical-per-element scalar tail, then `trunc i64→i32` +
+  `sext i32→i64` (byte-for-byte the C oracle's `(int64_t)(int32_t)acc`
+  return). **Q16.16 integer reduction is associative and the
+  per-element arithmetic `>> 16` is replicated exactly, so this path
+  is BYTE-IDENTICAL to the Track A scalar oracle `__mind_blas_dot_q16`
+  at every length** — not within a tolerance. This closes the
+  cross-arch Q16.16 bit-identity gate (task #57) for the thesis-pure
+  vector path. Asserted by `tests/blas_vec_q16_smoke.rs` at lengths
+  {0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 1024, 4096, 65537}.
+- **`dot_l1_f32_v`** — f32 L1 (sum of `|a−b|`). Abs-difference via a
+  sign-bit mask (bitcast f32→i32, `andi 0x7fffffff`, bitcast back —
+  `arith`-only, no `math` dialect, identical to Track A's AVX2
+  `_mm256_and_ps` abs) + `vector.reduction <add>`.
+- **`dot_linf_f32_v`** — f32 L∞ (max of `|a−b|`). Same masked abs +
+  `vector.reduction <maximumf>` (LLVM-18 op spelling; `<maxf>` was
+  removed). Max is associative so this is in fact byte-exact; the
+  harness asserts the same 1e-4 relative bound for uniformity.
+
+The f32 L1/L∞ numerical contract is the increment-1 1e-4-relative-of-
+f64-oracle bound (the tree-shaped reduction reorders the f32 summation
+exactly like Track A's AVX2 path). All five primitives reuse the
+existing `convert-vector-to-llvm` pipeline registration — no new pass,
+no per-target code; the default `cargo build` (which never runs
+`mlir-opt`) stays byte-identical.
+
+Track A's `__mind_blas_dot_q16` / `_dot_l1_f32` / `_dot_linf_f32`
+extern paths and Track B increment 1's `dot_f32_v` are untouched —
+increment 2 is strictly additive.
+
+A *dense-reduction-throughput* bench sub-category lands additively in
+`benches/std_surface.rs` (`blas_dense_reduction_lowering`): the cost
+of lowering an 8K-element vector reduction for each of the four
+metrics. It lives in the `std_surface` bench target
+(`required-features = ["std-surface", "mlir-lowering"]`) so it cannot
+enter the headline `compiler` criterion group or perturb
+`.bench-baseline-2026-05-18-rfc0005.txt`.
+
+Gates held: the bench-gate +7% cap is satisfied by construction and
+proven deterministically — a release `mindc` built at clean `c130db3`
+and one built at increment-2 HEAD (both default-features) are
+**byte-identical** (`sha256 9a9edf42…16717`), because every
+increment-2 line is `#[cfg(feature = "std-surface")]`-gated and absent
+from the default-feature binary that the `compiler` criterion bench
+measures. (Wall-clock A/B medians on the shared box were noise-bound —
+clean `c130db3` itself measured ~+9% over the frozen baseline that
+day from machine load — so the binary-equality proof is the
+authoritative bench-gate evidence, not the timings.) The v0.6.1 bootstrap fixed-point smoke
+is unchanged (10,889 bytes / next_id 206 — the bootstrap source uses
+no vector ops). Track A `blas_smoke` (12/12) and increment-1
+`blas_vec_smoke` (3/3) stay green; the two `mlir-build` vector
+harnesses were also hardened with a `OnceLock` single-build so their
+own tests no longer race the shared temp `.so` under parallel load.
+
+### 9.3 Deferred to increment 3
 
 - `@target("simd-x86" | "simd-arm" | "cuda" | "q16-photonic")` per-call
-  substrate annotation. Increment 1 lets the host target triple drive
-  LLVM's vector legalisation; the portable `vector<8xf32>` width needs
-  no explicit hint on x86/ARM, so no no-op marker token was added (it
-  would imply more than it does).
-- Q16.16 vector path (must stay byte-identical scalar-vs-vector for the
-  cross-arch bit-identity gate #57), `Instr::VecStore`, and vector
-  lowering for `dot_l1` / `dot_linf` / `matmul_rmajor`.
-- Cross-module std-wrapper inlining. The `use std.blas` path emits a
-  `func.func private @dot_f32_v` forward decl exactly as Track A's
-  `dot_f32` does today; the working codegen entry point is the direct
-  `__mind_blas_dot_f32_v` intrinsic call.
-- A *dense reduction throughput* bench sub-category (p95 µs for an 8K-row
-  matmul). The compile-time frontend gate (2.80–17.10 µs) MUST continue
-  to hold; vector-dialect lowering stays module-gated.
+  substrate annotation. Still deferred. Increment 1's reasoning holds:
+  the host target triple already drives LLVM's vector legalisation and
+  the portable `vector<8x...>` width needs no explicit hint on x86/ARM,
+  so a parsed-but-inert marker token would imply a per-call substrate
+  selection that does not yet exist. A *real* per-call selection
+  requires threading an MLIR target-attribute (or per-call lane-width
+  override) through the parser → AST → type-checker → `Instr::Call` →
+  lowering — genuinely increment-3 scope, not a token. Documenting it
+  precisely here is the honest status: not a no-op shipped, not
+  silently dropped.
+- A vectorised `matmul_rmajor_f32` inner loop. `VecStore` (the
+  vectorised-output-kernel enabler) landed in increment 2, but wiring a
+  full row-major `y = W·x` vector kernel through it did not land
+  cleanly within increment 2's additive-only envelope; deferred to
+  increment 3.
+- Cross-module std-wrapper inlining. The `use std.blas` path still
+  emits a `func.func private @<name>_v` forward decl exactly as Track A
+  does; the working codegen entry point remains the direct
+  `__mind_blas_*_v` intrinsic call (unchanged from increment 1).
+- A Q16.16 L1 (`dot_l1_q16_v`) vector path. Track A ships scalar/AVX2
+  `__mind_blas_dot_l1_q16`; the vector form is a natural increment-3
+  follow-on once the per-call substrate annotation lands.
 
 ## 10. References
 

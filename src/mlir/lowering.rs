@@ -33,6 +33,46 @@ const VEC_DOT_F32_INTRINSIC: &str = "__mind_blas_dot_f32_v";
 #[cfg(feature = "std-surface")]
 const VEC_DOT_F32_LANES: usize = 8;
 
+/// RFC 0006 Track B (increment 2) — the pure-MIND surface name whose
+/// `Instr::Call` lowers to a native MLIR `vector`-dialect Q16.16
+/// reduction. Byte-identical to the Track A scalar oracle
+/// `__mind_blas_dot_q16` at every length (task #57 — integer reduction
+/// is associative, the per-element arithmetic `>> 16` is replicated
+/// exactly in `vector<8xi64>` lanes).
+#[cfg(feature = "std-surface")]
+const VEC_DOT_Q16_INTRINSIC: &str = "__mind_blas_dot_q16_v";
+
+/// RFC 0006 Track B (increment 2) — native MLIR vector-dialect f32
+/// L1 (Manhattan, sum of `|a-b|`) reduction surface name.
+#[cfg(feature = "std-surface")]
+const VEC_DOT_L1_F32_INTRINSIC: &str = "__mind_blas_dot_l1_f32_v";
+
+/// RFC 0006 Track B (increment 2) — native MLIR vector-dialect f32
+/// L∞ (Chebyshev, max of `|a-b|`) reduction surface name.
+#[cfg(feature = "std-surface")]
+const VEC_DOT_LINF_F32_INTRINSIC: &str = "__mind_blas_dot_linf_f32_v";
+
+/// RFC 0006 Track B (increment 2) — Q16.16 vector lane count. The
+/// scalar Q16.16 oracle widens each `i32` product to `i64` before the
+/// arithmetic `>> 16`; the vector path mirrors that with
+/// `vector<8xi64>` accumulator lanes. Eight matches the f32 width so
+/// LLVM legalises both metrics from a single tile shape.
+#[cfg(feature = "std-surface")]
+const VEC_Q16_LANES: usize = 8;
+
+/// RFC 0006 Track B (increment 2) — which f32 distance metric the
+/// vectorised reduction emits. L2 has its own `emit_vec_dot_f32`
+/// (multiply-accumulate); L1/L∞ share `emit_vec_dot_metric_f32`
+/// (abs-difference + add/max reduction).
+#[cfg(feature = "std-surface")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VecMetric {
+    /// Sum of `|a[i] - b[i]|` — `vector.reduction <add>`.
+    L1,
+    /// Max of `|a[i] - b[i]|` — `vector.reduction <maximumf>`.
+    Linf,
+}
+
 /// Structured errors produced by the MLIR lowering pipeline.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum MlirLowerError {
@@ -77,6 +117,14 @@ enum ValueKind {
     /// is unreachable there.
     #[cfg(feature = "std-surface")]
     VectorF32 {
+        lanes: usize,
+    },
+    /// RFC 0006 Track B (increment 2) — a `vector<lanes x i64>` SSA value
+    /// produced by the Q16.16 SIMD primitives (`VecLoadI32` widened /
+    /// `VecMulAddQ16`). Gated; default builds never construct the
+    /// producing instructions so this variant is unreachable there.
+    #[cfg(feature = "std-surface")]
+    VectorI64 {
         lanes: usize,
     },
 }
@@ -315,6 +363,33 @@ impl LoweringContext {
                 // keeps the generic `func.call` lowering below.
                 if name == VEC_DOT_F32_INTRINSIC && args.len() == 3 {
                     self.emit_vec_dot_f32(*dst, args[0], args[1], args[2]);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // RFC 0006 Track B (increment 2) — the Q16.16 vector dot.
+                // Byte-identical to Track A's scalar `__mind_blas_dot_q16`
+                // oracle at every length (task #57 cross-arch bit-identity
+                // gate): per-element widen -> multiply -> arithmetic
+                // `>> 16` -> i64-lane accumulate -> associative lane sum
+                // -> truncate-low-32 + sign-extend. Track A's
+                // `__mind_blas_dot_q16` extern path is untouched.
+                if name == VEC_DOT_Q16_INTRINSIC && args.len() == 3 {
+                    self.emit_vec_dot_q16(*dst, args[0], args[1], args[2]);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // RFC 0006 Track B (increment 2) — f32 L1 / L∞ vector
+                // reductions (sum-of-abs / max-of-abs). Same i64-packed-f32
+                // ABI and ~1e-4-relative numerical contract as the f32 L2
+                // `dot_f32_v` path; Track A's scalar/AVX2 L1/L∞ externs
+                // are untouched.
+                if name == VEC_DOT_L1_F32_INTRINSIC && args.len() == 3 {
+                    self.emit_vec_dot_metric_f32(*dst, args[0], args[1], args[2], VecMetric::L1);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                if name == VEC_DOT_LINF_F32_INTRINSIC && args.len() == 3 {
+                    self.emit_vec_dot_metric_f32(*dst, args[0], args[1], args[2], VecMetric::Linf);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
@@ -598,6 +673,118 @@ impl LoweringContext {
                 self.emit_line(&format!(
                     "    %{0} = arith.extui %vbits{0} : i32 to i64",
                     dst.0
+                ));
+                self.values.insert(*dst, ValueKind::ScalarI64);
+            }
+            // RFC 0006 Track B (increment 2) — symmetric vector store:
+            // `mem[base + offset .. +lanes] = src`.  Recovers the pointer
+            // from the Option-C i64 address (`llvm.inttoptr`), applies the
+            // byte offset (`llvm.getelementptr`, i8 element type) and emits
+            // a vector-typed `llvm.store`.  Mirror image of `VecLoad`.
+            #[cfg(feature = "std-surface")]
+            Instr::VecStore {
+                src,
+                base,
+                offset,
+                lanes,
+            } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %vsp_b{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
+                    src.0, base.0
+                ));
+                self.emit_line(&format!(
+                    "    %vsp{0} = llvm.getelementptr %vsp_b{0}[%{1}] : \
+                     (!llvm.ptr, i64) -> !llvm.ptr, i8",
+                    src.0, offset.0
+                ));
+                self.emit_line(&format!(
+                    "    llvm.store %{0}, %vsp{0} : vector<{1}xf32>, !llvm.ptr",
+                    src.0, l
+                ));
+            }
+            // RFC 0006 Track B (increment 2) — i32 sibling of `VecLoad`
+            // for the Q16.16 path.  Same address recovery; the loaded
+            // value is `vector<lanes x i32>`.
+            #[cfg(feature = "std-surface")]
+            Instr::VecLoadI32 {
+                dst,
+                base,
+                offset,
+                lanes,
+            } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %viptr_b{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
+                    dst.0, base.0
+                ));
+                self.emit_line(&format!(
+                    "    %viptr{0} = llvm.getelementptr %viptr_b{0}[%{1}] : \
+                     (!llvm.ptr, i64) -> !llvm.ptr, i8",
+                    dst.0, offset.0
+                ));
+                self.emit_line(&format!(
+                    "    %{0} = llvm.load %viptr{0} : !llvm.ptr -> vector<{1}xi32>",
+                    dst.0, l
+                ));
+                self.values.insert(*dst, ValueKind::VectorI64 { lanes: l });
+            }
+            // RFC 0006 Track B (increment 2) — Q16.16 fused widening
+            // multiply-shift-accumulate.  `dst = acc + ((sext64(a) *
+            // sext64(b)) >>a 16)`, element-wise.  The shift is *arithmetic*
+            // (`arith.shrsi`), exactly mirroring the Track A scalar oracle's
+            // per-element `prod >> 16` under LLVM `ashr` semantics — this
+            // is the operation the cross-arch bit-identity contract (#57)
+            // pins.  `a`/`b` are `vector<lanes x i32>`; `acc`/`dst` are
+            // `vector<lanes x i64>`.
+            #[cfg(feature = "std-surface")]
+            Instr::VecMulAddQ16 {
+                dst,
+                a,
+                b,
+                acc,
+                lanes,
+            } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %vqa{0} = arith.extsi %{1} : vector<{2}xi32> to vector<{2}xi64>",
+                    dst.0, a.0, l
+                ));
+                self.emit_line(&format!(
+                    "    %vqb{0} = arith.extsi %{1} : vector<{2}xi32> to vector<{2}xi64>",
+                    dst.0, b.0, l
+                ));
+                self.emit_line(&format!(
+                    "    %vqp{0} = arith.muli %vqa{0}, %vqb{0} : vector<{1}xi64>",
+                    dst.0, l
+                ));
+                self.emit_line(&format!(
+                    "    %vqs16_{0} = arith.constant dense<16> : vector<{1}xi64>",
+                    dst.0, l
+                ));
+                self.emit_line(&format!(
+                    "    %vqsh{0} = arith.shrsi %vqp{0}, %vqs16_{0} : vector<{1}xi64>",
+                    dst.0, l
+                ));
+                self.emit_line(&format!(
+                    "    %{0} = arith.addi %{1}, %vqsh{0} : vector<{2}xi64>",
+                    dst.0, acc.0, l
+                ));
+                self.values.insert(*dst, ValueKind::VectorI64 { lanes: l });
+            }
+            // RFC 0006 Track B (increment 2) — horizontal i64 sum.
+            // `vector.reduction <add>` over `vector<lanes x i64>` ->
+            // `llvm.intr.vector.reduce.add`.  Integer addition is
+            // associative, so this is bit-identical to a sequential scalar
+            // accumulation no matter how LLVM groups the lanes — the
+            // property the #57 Q16.16 gate relies on.
+            #[cfg(feature = "std-surface")]
+            Instr::VecReduceAddI64 { dst, src, lanes } => {
+                let l = *lanes;
+                self.emit_line(&format!(
+                    "    %{0} = vector.reduction <add>, %{1} : \
+                     vector<{2}xi64> into i64",
+                    dst.0, src.0, l
                 ));
                 self.values.insert(*dst, ValueKind::ScalarI64);
             }
@@ -918,6 +1105,344 @@ impl LoweringContext {
         self.emit_line(&format!("    %{d} = arith.extui %vd_bits_{d} : i32 to i64"));
     }
 
+    /// RFC 0006 Track B (increment 2) — emit a native MLIR
+    /// `vector`-dialect Q16.16 dot-product reduction.
+    ///
+    /// This path is **byte-identical** to the Track A scalar oracle
+    /// `mind_blas_dot_q16_scalar` at every length — the cross-arch
+    /// bit-identity gate (task #57) extended to the thesis-pure vector
+    /// path. The scalar oracle computes, per element,
+    /// `acc += ((i64)a[i] * (i64)b[i]) >> 16` (arithmetic shift) and
+    /// finally returns `(i64)(i32)acc`. The vector path performs the
+    /// *identical* per-element widen-multiply-arithmetic-shift, then
+    /// accumulates into `vector<LANES x i64>` lanes and sums the lanes
+    /// with `vector.reduction <add>`. Integer addition is associative,
+    /// so the lane re-association does not perturb a single bit — unlike
+    /// the f32 path, no tolerance is needed.
+    ///
+    /// Structure:
+    ///
+    /// ```text
+    ///   main loop  : scf.for step LANES, i32 loads, extsi i64,
+    ///                muli, shrsi 16, addi (i64-lane accumulate)
+    ///   horizontal : vector.reduction <add> over vector<LANES x i64>
+    ///   scalar tail : scf.for step 1 for the len % LANES remainder,
+    ///                identical per-element op in scalar i64
+    ///   pack       : trunc i64 -> i32 -> sext i64 (Option-C ABI,
+    ///                identical to `(i64)(i32)acc` in the C oracle)
+    /// ```
+    #[cfg(feature = "std-surface")]
+    fn emit_vec_dot_q16(&mut self, dst: ValueId, a_addr: ValueId, b_addr: ValueId, len: ValueId) {
+        let d = dst.0;
+        let l = VEC_Q16_LANES;
+        // Q16.16 lanes are i32 (4 bytes), same stride as f32.
+        let elem_bytes = std::mem::size_of::<i32>() as i64;
+        self.emit_line(&format!("    %vq_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vq_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vq_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vq_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!("    %vq_s16_{d} = arith.constant 16 : i64"));
+        self.emit_line(&format!(
+            "    %vq_s16v_{d} = arith.constant dense<16> : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "    %vq_len_{d} = arith.index_cast %{} : i64 to index",
+            len.0
+        ));
+        self.emit_line(&format!(
+            "    %vq_nv_{d} = arith.divui %vq_len_{d}, %vq_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vq_ve_{d} = arith.muli %vq_nv_{d}, %vq_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vq_ap_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vq_bp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            b_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vq_z_{d} = arith.constant dense<0> : vector<{l}xi64>"
+        ));
+        // Vectorised main loop: LANES-wide widening MAC into i64 lanes.
+        self.emit_line(&format!(
+            "    %vq_vacc_{d} = scf.for %vq_i_{d} = %vq_c0_{d} to %vq_ve_{d} \
+             step %vq_cl_{d} iter_args(%vq_acc_{d} = %vq_z_{d}) -> (vector<{l}xi64>) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vq_ii_{d} = arith.index_cast %vq_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bo_{d} = arith.muli %vq_ii_{d}, %vq_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_ai_{d} = llvm.getelementptr %vq_ap_{d}[%vq_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bi_{d} = llvm.getelementptr %vq_bp_{d}[%vq_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vq_av_{d} = llvm.load %vq_ai_{d} : !llvm.ptr -> vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bv_{d} = llvm.load %vq_bi_{d} : !llvm.ptr -> vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vq_aw_{d} = arith.extsi %vq_av_{d} : vector<{l}xi32> to vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bw_{d} = arith.extsi %vq_bv_{d} : vector<{l}xi32> to vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vq_pr_{d} = arith.muli %vq_aw_{d}, %vq_bw_{d} : vector<{l}xi64>"
+        ));
+        // Per-element arithmetic right shift by 16 — mirrors the scalar
+        // oracle's `prod >> 16` exactly (LLVM `ashr`).
+        self.emit_line(&format!(
+            "      %vq_sh_{d} = arith.shrsi %vq_pr_{d}, %vq_s16v_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vq_na_{d} = arith.addi %vq_acc_{d}, %vq_sh_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!("      scf.yield %vq_na_{d} : vector<{l}xi64>"));
+        self.emit_line("    }");
+        // Associative horizontal i64 sum — bit-identical regardless of
+        // lane grouping (this is what makes #57 hold for the vector path).
+        self.emit_line(&format!(
+            "    %vq_vs_{d} = vector.reduction <add>, %vq_vacc_{d} : \
+             vector<{l}xi64> into i64"
+        ));
+        // Scalar tail for the len % LANES remainder — identical per-element
+        // op in scalar i64 so the boundary elements match the oracle too.
+        self.emit_line(&format!(
+            "    %vq_ts_{d} = scf.for %vq_j_{d} = %vq_ve_{d} to %vq_len_{d} \
+             step %vq_c1_{d} iter_args(%vq_s_{d} = %vq_vs_{d}) -> (i64) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vq_jj_{d} = arith.index_cast %vq_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_jb_{d} = arith.muli %vq_jj_{d}, %vq_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_aj_{d} = llvm.getelementptr %vq_ap_{d}[%vq_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bj_{d} = llvm.getelementptr %vq_bp_{d}[%vq_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vq_as_{d} = llvm.load %vq_aj_{d} : !llvm.ptr -> i32"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bs_{d} = llvm.load %vq_bj_{d} : !llvm.ptr -> i32"
+        ));
+        self.emit_line(&format!(
+            "      %vq_asw_{d} = arith.extsi %vq_as_{d} : i32 to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_bsw_{d} = arith.extsi %vq_bs_{d} : i32 to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_p_{d} = arith.muli %vq_asw_{d}, %vq_bsw_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_psh_{d} = arith.shrsi %vq_p_{d}, %vq_s16_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vq_ns_{d} = arith.addi %vq_s_{d}, %vq_psh_{d} : i64"
+        ));
+        self.emit_line(&format!("      scf.yield %vq_ns_{d} : i64"));
+        self.emit_line("    }");
+        // Final `(i64)(i32)acc`: truncate to the low 32 Q16.16 bits then
+        // sign-extend back into i64 — byte-for-byte the C oracle's return.
+        self.emit_line(&format!(
+            "    %vq_lo_{d} = arith.trunci %vq_ts_{d} : i64 to i32"
+        ));
+        self.emit_line(&format!("    %{d} = arith.extsi %vq_lo_{d} : i32 to i64"));
+    }
+
+    /// RFC 0006 Track B (increment 2) — emit a native MLIR
+    /// `vector`-dialect f32 L1 (sum of `|a-b|`) or L∞ (max of `|a-b|`)
+    /// reduction.
+    ///
+    /// Same i64-packed-f32 Option-C ABI as `dot_f32_v`. The reduction is
+    /// `vector.reduction <add>` (L1) or `<maximumf>` (L∞) on the lane
+    /// accumulator after a sign-bit-mask absolute value of the lane
+    /// difference (bitcast f32->i32, AND 0x7fffffff, bitcast back —
+    /// `arith`-only, no `math` dialect, identical to Track A's AVX2
+    /// `_mm256_and_ps` abs). The
+    /// tree-shaped reduction reorders the f32 summation exactly like Track
+    /// A's AVX2 L1/L∞ path, so the numerical contract is the documented
+    /// 1e-4 relative bound vs an f64 oracle (L∞ max is associative and is
+    /// in fact byte-identical, but the harness asserts the same tolerance
+    /// for uniformity).
+    #[cfg(feature = "std-surface")]
+    fn emit_vec_dot_metric_f32(
+        &mut self,
+        dst: ValueId,
+        a_addr: ValueId,
+        b_addr: ValueId,
+        len: ValueId,
+        metric: VecMetric,
+    ) {
+        let d = dst.0;
+        let l = VEC_DOT_F32_LANES;
+        let elem_bytes = std::mem::size_of::<f32>() as i64;
+        // Lane / scalar reduction op + identity element per metric.
+        let (vred_kind, init_dense, scalar_combine_op): (&str, &str, &str) = match metric {
+            VecMetric::L1 => ("<add>", "0.0", "arith.addf"),
+            VecMetric::Linf => ("<maximumf>", "0.0", "arith.maximumf"),
+        };
+        self.emit_line(&format!("    %vm_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vm_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vm_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vm_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!(
+            "    %vm_len_{d} = arith.index_cast %{} : i64 to index",
+            len.0
+        ));
+        self.emit_line(&format!(
+            "    %vm_nv_{d} = arith.divui %vm_len_{d}, %vm_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vm_ve_{d} = arith.muli %vm_nv_{d}, %vm_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vm_ap_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vm_bp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            b_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vm_z_{d} = arith.constant dense<{init_dense}> : vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "    %vm_vacc_{d} = scf.for %vm_i_{d} = %vm_c0_{d} to %vm_ve_{d} \
+             step %vm_cl_{d} iter_args(%vm_acc_{d} = %vm_z_{d}) -> (vector<{l}xf32>) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vm_ii_{d} = arith.index_cast %vm_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vm_bo_{d} = arith.muli %vm_ii_{d}, %vm_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vm_ai_{d} = llvm.getelementptr %vm_ap_{d}[%vm_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vm_bi_{d} = llvm.getelementptr %vm_bp_{d}[%vm_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vm_av_{d} = llvm.load %vm_ai_{d} : !llvm.ptr -> vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "      %vm_bv_{d} = llvm.load %vm_bi_{d} : !llvm.ptr -> vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "      %vm_di_{d} = arith.subf %vm_av_{d}, %vm_bv_{d} : vector<{l}xf32>"
+        ));
+        // Absolute value via sign-bit mask (bitcast f32->i32, AND
+        // 0x7fffffff, bitcast back).  This uses only `arith` ops already
+        // in the shared lowering pipeline — `math.absf` would need
+        // `convert-math-to-llvm` added to the pipeline, perturbing the
+        // bench-gate moat.  It is also exactly Track A's AVX2 abs (an
+        // `_mm256_and_ps` with a 0x7fffffff mask), so the vector path is
+        // numerically faithful to that reference.
+        self.emit_line(&format!(
+            "      %vm_am_{d} = arith.constant dense<2147483647> : vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vm_db_{d} = arith.bitcast %vm_di_{d} : vector<{l}xf32> to vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vm_abi_{d} = arith.andi %vm_db_{d}, %vm_am_{d} : vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vm_ab_{d} = arith.bitcast %vm_abi_{d} : vector<{l}xi32> to vector<{l}xf32>"
+        ));
+        match metric {
+            VecMetric::L1 => {
+                self.emit_line(&format!(
+                    "      %vm_na_{d} = arith.addf %vm_acc_{d}, %vm_ab_{d} : vector<{l}xf32>"
+                ));
+            }
+            VecMetric::Linf => {
+                self.emit_line(&format!(
+                    "      %vm_na_{d} = arith.maximumf %vm_acc_{d}, %vm_ab_{d} : vector<{l}xf32>"
+                ));
+            }
+        }
+        self.emit_line(&format!("      scf.yield %vm_na_{d} : vector<{l}xf32>"));
+        self.emit_line("    }");
+        self.emit_line(&format!(
+            "    %vm_vs_{d} = vector.reduction {vred_kind}, %vm_vacc_{d} : \
+             vector<{l}xf32> into f32"
+        ));
+        // Scalar tail.
+        self.emit_line(&format!(
+            "    %vm_ts_{d} = scf.for %vm_j_{d} = %vm_ve_{d} to %vm_len_{d} \
+             step %vm_c1_{d} iter_args(%vm_s_{d} = %vm_vs_{d}) -> (f32) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vm_jj_{d} = arith.index_cast %vm_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vm_jb_{d} = arith.muli %vm_jj_{d}, %vm_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vm_aj_{d} = llvm.getelementptr %vm_ap_{d}[%vm_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vm_bj_{d} = llvm.getelementptr %vm_bp_{d}[%vm_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vm_as_{d} = llvm.load %vm_aj_{d} : !llvm.ptr -> f32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_bs_{d} = llvm.load %vm_bj_{d} : !llvm.ptr -> f32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_ds_{d} = arith.subf %vm_as_{d}, %vm_bs_{d} : f32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_asm_{d} = arith.constant 2147483647 : i32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_dsb_{d} = arith.bitcast %vm_ds_{d} : f32 to i32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_absi_{d} = arith.andi %vm_dsb_{d}, %vm_asm_{d} : i32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_abs_{d} = arith.bitcast %vm_absi_{d} : i32 to f32"
+        ));
+        self.emit_line(&format!(
+            "      %vm_ns_{d} = {scalar_combine_op} %vm_s_{d}, %vm_abs_{d} : f32"
+        ));
+        self.emit_line(&format!("      scf.yield %vm_ns_{d} : f32"));
+        self.emit_line("    }");
+        self.emit_line(&format!(
+            "    %vm_bits_{d} = arith.bitcast %vm_ts_{d} : f32 to i32"
+        ));
+        self.emit_line(&format!("    %{d} = arith.extui %vm_bits_{d} : i32 to i64"));
+    }
+
     fn tensor_info(
         &self,
         id: &ValueId,
@@ -1038,6 +1563,8 @@ fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
         ValueKind::Tensor { dtype, shape } => Ok(tensor_type(shape, dtype.as_str())),
         #[cfg(feature = "std-surface")]
         ValueKind::VectorF32 { lanes } => Ok(format!("vector<{lanes}xf32>")),
+        #[cfg(feature = "std-surface")]
+        ValueKind::VectorI64 { lanes } => Ok(format!("vector<{lanes}xi64>")),
     }
 }
 

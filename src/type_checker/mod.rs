@@ -1534,9 +1534,23 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // registered and is the unchanged scalar/AVX2 fallback.
     ("__mind_blas_dot_f32_v", 3),
     ("__mind_blas_dot_l1_f32", 3),
+    // RFC 0006 Track B (increment 2): native MLIR vector-dialect f32 L1
+    // (sum-of-abs) reduction. Same i64 ABI / arity (3) as the Track A
+    // scalar bridge; lowering interception emits an abs-diff + add
+    // reduction loop. Track A's `__mind_blas_dot_l1_f32` is unchanged.
+    ("__mind_blas_dot_l1_f32_v", 3),
     ("__mind_blas_dot_l1_q16", 3),
     ("__mind_blas_dot_linf_f32", 3),
+    // RFC 0006 Track B (increment 2): native MLIR vector-dialect f32 L∞
+    // (max-of-abs) reduction. Track A's `__mind_blas_dot_linf_f32` is
+    // unchanged.
+    ("__mind_blas_dot_linf_f32_v", 3),
     ("__mind_blas_dot_q16", 3),
+    // RFC 0006 Track B (increment 2): native MLIR vector-dialect Q16.16
+    // dot product. Byte-identical to the Track A scalar oracle
+    // `__mind_blas_dot_q16` at every length (task #57 cross-arch
+    // bit-identity gate). Track A's `__mind_blas_dot_q16` is unchanged.
+    ("__mind_blas_dot_q16_v", 3),
     ("__mind_blas_matmul_rmajor_f32", 5),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),

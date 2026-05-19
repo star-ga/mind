@@ -47,6 +47,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use libloading::{Library, Symbol};
 
@@ -78,37 +79,47 @@ fn mindc_path() -> PathBuf {
     rel
 }
 
-/// Compile SRC to a temporary `.so` via the native vector-dialect path.
+/// Compile SRC to a temporary `.so` via the native vector-dialect path,
+/// **exactly once** for the whole test binary (the `OnceLock` makes the
+/// three tests share one build + one `.so` so they never race the temp-
+/// file write/dlopen when `cargo test` runs them on parallel threads —
+/// an intermittent "file too short" dlopen failure otherwise surfaces
+/// under machine load).
+///
 /// Returns `None` if the MLIR toolchain (`mlir-opt` / `mlir-translate` /
 /// `clang`) is not on PATH, in which case the test self-skips — building
 /// mindc already needs clang, but the toolchain may be shadowed in some
 /// CI sandboxes and the gated suite must not hard-fail there.
-fn build_vec_so() -> Option<PathBuf> {
-    for tool in ["mlir-opt", "mlir-translate", "clang"] {
-        if which::which(tool).is_err() {
-            println!("blas_vec_smoke: {tool} not on PATH; skipping");
-            return None;
+fn build_vec_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                println!("blas_vec_smoke: {tool} not on PATH; skipping");
+                return None;
+            }
         }
-    }
 
-    let dir = std::env::temp_dir();
-    let src_path = dir.join("mind_blas_vec_smoke.mind");
-    let so_path = dir.join("mind_blas_vec_smoke.so");
-    std::fs::write(&src_path, SRC).expect("write test .mind source");
+        let dir = std::env::temp_dir();
+        let src_path = dir.join("mind_blas_vec_smoke.mind");
+        let so_path = dir.join("mind_blas_vec_smoke.so");
+        std::fs::write(&src_path, SRC).expect("write test .mind source");
 
-    let status = Command::new(mindc_path())
-        .args([
-            src_path.to_str().unwrap(),
-            "--emit-shared",
-            so_path.to_str().unwrap(),
-        ])
-        .status()
-        .expect("spawn mindc");
-    assert!(
-        status.success(),
-        "mindc --emit-shared failed for the Track B vector source"
-    );
-    Some(so_path)
+        let status = Command::new(mindc_path())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the Track B vector source"
+        );
+        Some(so_path)
+    })
+    .as_ref()
 }
 
 fn f32_from_packed(bits_i64: i64) -> f32 {
