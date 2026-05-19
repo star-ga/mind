@@ -42,6 +42,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 // ---------------------------------------------------------------------------
 // Seven RFC 0005 intrinsics
@@ -74,16 +75,34 @@ int64_t __mind_store_i64(int64_t addr, int64_t val) {
     return 0;
 }
 
-int64_t __mind_read(int64_t path_addr, int64_t path_len,
-                    int64_t buf_addr,  int64_t buf_cap) {
-    (void)path_addr; (void)path_len; (void)buf_addr; (void)buf_cap;
-    return -1; // not needed for Phase 6.5 Stage 1
+// __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
+// offset == -1 means "use current stream position" (plain read).
+int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
+    if (buf_addr == 0 || count <= 0) return 0;
+    void *buf = (void *)(uintptr_t)buf_addr;
+    if (offset < 0) {
+        return (int64_t)read((int)fd, buf, (size_t)count);
+    }
+    return (int64_t)pread((int)fd, buf, (size_t)count, (off_t)offset);
 }
 
-int64_t __mind_write(int64_t path_addr, int64_t path_len,
-                     int64_t buf_addr,  int64_t buf_len) {
-    (void)path_addr; (void)path_len; (void)buf_addr; (void)buf_len;
-    return -1; // not needed for Phase 6.5 Stage 1
+// __mind_write(fd, buf_addr, count, offset) — POSIX write/pwrite.
+// offset == -1 means "use current stream position" (plain write).
+int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
+    if (buf_addr == 0 || count <= 0) return 0;
+    void *buf = (void *)(uintptr_t)buf_addr;
+    if (offset < 0) {
+        return (int64_t)write((int)fd, buf, (size_t)count);
+    }
+    return (int64_t)pwrite((int)fd, buf, (size_t)count, (off_t)offset);
+}
+
+// print_bytes — convenience: write `count` bytes from `buf_addr` to stdout.
+// Corresponds to std/io.mind `print_bytes(buf_addr, count)`.
+// Compiled by mindc as an external call (the MIND stdlib function body is
+// not inlined into the cdylib during --emit-shared).
+int64_t print_bytes(int64_t buf_addr, int64_t count) {
+    return __mind_write(1, buf_addr, count, -1);
 }
 
 // ---------------------------------------------------------------------------
