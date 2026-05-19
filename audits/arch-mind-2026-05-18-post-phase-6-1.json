@@ -1,0 +1,14 @@
+{
+  "_fixture": "/tmp/arch-mind-mind-post-phase-6-1.json",
+  "acyclicity_q16": 655360000,
+  "depth_q16": 524288000,
+  "equality_q16": 297817298,
+  "evidence_chain_density": 89787,
+  "governance_kernel_coverage": 5939818,
+  "mcp_tool_isolation": 655360000,
+  "modularity_q16": 38550588,
+  "q16_determinism_purity": 424056470,
+  "redundancy_q16": 644874240,
+  "_tag": "v0.4.4+post-phase-6-1",
+  "_note": "Post-Phase-6.1 (self-host lexer at examples/lexer/) + Phase 6.2 design note + Phase D2b design note + CHANGELOG [Unreleased]. Pre-v0.5.0 baseline. Self-host lexer adds 4 example files (~470 LOC) but does not touch src/ \u2014 structural metrics unmoved on the hot path."
+}
