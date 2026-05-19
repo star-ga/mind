@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — bare negative integer literals lowered to `const 0`
+
+`lower_expr` had no arm for `ast::Node::Neg`, so every bare negative
+integer literal — and any unary-minus expression — fell through to the
+catch-all `_ =>` and was silently lowered to `Instr::ConstI64(_, 0)`.
+`let a: i64 = -65536; return a;` emitted the constant `0`; the
+binary-subtraction source form `(0 - 65536)` was always correct because
+it parses as `Node::Binary { Sub }`, which had its own arm.
+
+Surfaced by the pure-MIND lookup-table work: generated tables containing
+entries such as `-524288` / `-65536` were silently zeroed at lowering
+time, corrupting every negative LUT entry.
+
+Fix adds a `Node::Neg` arm to `lower_expr` (and the negated-literal
+tensor-fill case to `lower_tensor_binding`):
+
+- integer-literal operand folds to `ConstI64(n.wrapping_neg())` —
+  `wrapping_neg` keeps `INT64_MIN` well-defined so `-9223372036854775808`
+  yields `i64::MIN`, byte-identical to two's-complement
+  `0 - INT64_MIN` via `arith.subi`;
+- float-literal operand folds to `ConstF64(-f)`;
+- any other operand lowers as `0 - operand` through `BinOp::Sub`, so the
+  type-driven IR→MLIR path selects `arith.subi` / `arith.subf` exactly
+  as the hand-written subtraction form already did.
+
+`-N` is now identical to `(0 - N)` for every i64 N including the
+`INT64_MIN` edge. Negative literals in arithmetic (`x + -5`), call
+arguments (`f(-3)`), array literals (`[-7, 9]`), negative float
+literals, and double negation (`-(-8)`) all verified. New regression
+suite `tests/ir_negative_literals.rs` (10 cases). Correctness-only:
+no currently-correct lowering changes — the new arm fires solely on
+`Node::Neg`, which previously produced wrong code.
+
+Regression gates: `cargo test --features std-surface` 519 passed /
+0 failed. Bench-gate vs `.bench-baseline-2026-05-18-rfc0005.txt`:
+small_matmul 2.80 → 2.77 µs (−1.2%), medium_mlp 6.55 → 6.43 µs
+(−1.8%), large_network 17.10 → 17.06 µs (−0.2%) — all at or below
+floor, +7% cap held. v0.6.1 bootstrap fixed-point unchanged:
+`libmindc_mind.so` still compiles its own source byte-identically
+(10,889 bytes / next_id 206) — the pure-MIND bootstrap source contains
+no negative literals, so the oracle does not shift.
+
 ### Added — mind-blas Track A (RFC 0006)
 
 Six `__mind_blas_*` i64-ABI intrinsics added to `runtime-support/mind_intrinsics.c`

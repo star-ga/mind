@@ -176,6 +176,28 @@ fn lower_tensor_binding(
                     return *id;
                 }
             }
+            // Negated literal tensor fill (`let t: f32[4] = -1.0`). Without
+            // this, the negative fill value fell through to `lower_expr` and
+            // lost its tensor shape; fold the sign into the fill scalar.
+            ast::Node::Neg { operand, .. } => match operand.as_ref() {
+                ast::Node::Lit(Literal::Int(n), _) => {
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstTensor(
+                        id,
+                        dtype,
+                        shape,
+                        Some(n.wrapping_neg() as f64),
+                    ));
+                    return id;
+                }
+                ast::Node::Lit(Literal::Float(f), _) => {
+                    let id = ir.fresh();
+                    ir.instrs
+                        .push(Instr::ConstTensor(id, dtype, shape, Some(-*f)));
+                    return id;
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -212,6 +234,41 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstF64(id, *f));
             id
         }
+        // Unary negation `-expr`. Without this arm a bare negative literal
+        // (`-65536`) — or any unary minus — fell through to the catch-all
+        // `_ =>` and was silently lowered to `const.i64 0`. `-N` must be
+        // identical to `(0 - N)` for every i64 N. Literal operands fold to
+        // a single negated constant; runtime operands lower as `0 - operand`
+        // so the type-driven IR→MLIR path picks `arith.subi`/`arith.subf`
+        // exactly as the binary-subtraction source form already does.
+        ast::Node::Neg { operand, .. } => match operand.as_ref() {
+            ast::Node::Lit(Literal::Int(n), _) => {
+                let id = ir.fresh();
+                // `wrapping_neg` keeps INT64_MIN well-defined: `-INT64_MIN`
+                // wraps back to INT64_MIN, matching two's-complement
+                // `0 - INT64_MIN` via `arith.subi`.
+                ir.instrs.push(Instr::ConstI64(id, n.wrapping_neg()));
+                id
+            }
+            ast::Node::Lit(Literal::Float(f), _) => {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstF64(id, -*f));
+                id
+            }
+            _ => {
+                let zero = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(zero, 0));
+                let rhs = lower_expr(operand, ir, env, struct_env, receiver_types);
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::BinOp {
+                    dst,
+                    op: BinOp::Sub,
+                    lhs: zero,
+                    rhs,
+                });
+                dst
+            }
+        },
         ast::Node::Lit(Literal::Str(_), _) => {
             // Strings don't have IR representation yet; emit placeholder
             let id = ir.fresh();
