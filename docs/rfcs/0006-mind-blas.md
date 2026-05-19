@@ -361,10 +361,27 @@ own tests no longer race the shared temp `.so` under parallel load.
   precisely here is the honest status: not a no-op shipped, not
   silently dropped.
 - A vectorised `matmul_rmajor_f32` inner loop. `VecStore` (the
-  vectorised-output-kernel enabler) landed in increment 2, but wiring a
-  full row-major `y = W·x` vector kernel through it did not land
-  cleanly within increment 2's additive-only envelope; deferred to
-  increment 3.
+  vectorised-output-kernel enabler) landed in increment 2. An increment-3b
+  attempt emitted it as an outer `scf.for` over rows, each row inlining
+  the proven increment-1 `dot_f32` vector reduction (8-lane `vector.fma`
+  + `vector.reduction <add>` + scalar tail) then `llvm.store`-ing `y[r]`.
+  The emitted MLIR is structurally valid and **numerically correct** —
+  verified against an f64 oracle for every shape with either no scalar
+  tail *or* a single output row (`(1,1) (1,8) (2,8) (3,7) (8,8) (1,9)
+  (1,16) (1,17)` all pass within 1e-4). It **miscompiles**, however, for
+  the combination *rows ≥ 2 AND a non-empty scalar tail* (e.g. `(2,17)`):
+  a SIGSEGV inside the kernel on the second row iteration, with all
+  memory accesses provably in-bounds and no aligned-move/alignment fault
+  in the disassembly — i.e. a code-generation defect in mindc's
+  `scf`→`cf`→LLVM lowering of a *triple-nested* loop with three different
+  iter-carry types (outer i64 → inner `vector<8xf32>` → tail f32), not a
+  logic or bounds error in the emitter. Honestly **not shipped** rather
+  than ship a kernel that faults on the dominant encode shape. Deferred
+  to a later increment; the fix is a different lowering strategy for the
+  per-row reduction (a flat single loop nest, or `memref`/`linalg`
+  lowering, avoiding the triple-nested mixed-carry `scf.for`), not a
+  patch to the current emitter. The bit-exact Q16.16 `dot_l1_q16_v`
+  (increment 3a, shipped v0.6.5) was unaffected and is unchanged.
 - Cross-module std-wrapper inlining. The `use std.blas` path still
   emits a `func.func private @<name>_v` forward decl exactly as Track A
   does; the working codegen entry point remains the direct
