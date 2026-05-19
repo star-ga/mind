@@ -1,0 +1,23 @@
+// Phase 6.2 parser smoke fixture.
+//
+// AST contract for this file is documented in
+// examples/parser/EXPECTED.md.  Don't reformat without bumping the
+// expected tree.
+//
+// The fixture extends the Phase 6.1 lexer fixture with:
+//   - a fn call ("add(x, y)") in expression position
+//   - a binop chain ("x + y * z") to exercise Pratt precedence
+//   - a multi-statement block (let + return + tail expression)
+//   - a multi-parameter fn signature
+
+use std.vec;
+
+pub fn add(x: i64, y: i64) -> i64 {
+    let z: i64 = x + y;
+    return z;
+}
+
+pub fn compute(x: i64, y: i64, z: i64) -> i64 {
+    let r: i64 = x + y * z;
+    add(r, x)
+}
