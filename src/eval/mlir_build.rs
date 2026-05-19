@@ -30,6 +30,16 @@ use std::time::Instant;
 #[cfg(feature = "mlir-build")]
 use tempfile::NamedTempFile;
 
+/// RFC 0005 Phase 6.5 Stage 1b — runtime-support C stub.
+///
+/// Bundled at compile time (like std/*.mind in Phase C) so the --emit-shared
+/// cdylib path needs no external file at build time.  The text is compiled to
+/// a temporary .o by `compile_runtime_support_obj` and statically linked into
+/// every --emit-shared output, making the .so self-contained.
+#[cfg(feature = "mlir-build")]
+const MIND_RUNTIME_SUPPORT_C: &str =
+    include_str!("../../runtime-support/mind_intrinsics.c");
+
 #[cfg(feature = "mlir-build")]
 #[derive(Clone, Debug)]
 pub struct BuildTools {
@@ -124,11 +134,16 @@ pub fn build_all(
     }
 
     if let Some(path) = opts.emit_obj_file {
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, false)?;
+        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, false, &[])?;
     }
 
     if let Some(path) = opts.emit_shared {
-        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true)?;
+        // Phase 6.5 Stage 1b: compile the runtime-support stub to a temp .o
+        // and link it into the shared library so vec_new / vec_push /
+        // __mind_load_i64 etc. are resolved without an external dependency.
+        let runtime_obj = compile_runtime_support_obj(tools)?;
+        let extra = [runtime_obj.path().to_path_buf()];
+        run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
     }
 
     Ok(BuildProducts {
@@ -241,6 +256,45 @@ fn run_mlir_translate(input: &str, tools: &BuildTools) -> Result<String, BuildEr
     Ok(decode_to_string(&output.stdout))
 }
 
+/// Compile the bundled runtime-support C stub to a temporary .o file.
+///
+/// The returned `NamedTempFile` must be kept alive until the link step
+/// completes; dropping it removes the .o from the filesystem.
+#[cfg(feature = "mlir-build")]
+fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, BuildError> {
+    use std::ffi::OsStr;
+
+    let mut src_tmp = NamedTempFile::with_suffix(".c")?;
+    src_tmp.write_all(MIND_RUNTIME_SUPPORT_C.as_bytes())?;
+
+    let obj_tmp = NamedTempFile::with_suffix(".o")?;
+
+    let args: Vec<String> = vec![
+        "-x".into(),
+        "c".into(),
+        src_tmp.path().to_string_lossy().into_owned(),
+        "-c".into(),
+        "-fPIC".into(),
+        "-O2".into(),
+        "-o".into(),
+        obj_tmp.path().to_string_lossy().into_owned(),
+    ];
+
+    let output = run_command(&tools.clang, &args, None, tools.timeout, "clang")?;
+    if !output.status.success() {
+        return Err(BuildError::Subprocess {
+            tool: "clang",
+            stderr: decode_to_string(&output.stderr),
+        });
+    }
+
+    // Suppress "unused variable" lint — src_tmp must live until clang finishes.
+    let _ = src_tmp.path().as_os_str() != OsStr::new("");
+    drop(src_tmp);
+
+    Ok(obj_tmp)
+}
+
 #[cfg(feature = "mlir-build")]
 fn run_clang_codegen(
     llvm_ir: &str,
@@ -248,6 +302,7 @@ fn run_clang_codegen(
     target_triple: Option<&str>,
     output_path: &Path,
     shared: bool,
+    extra_objs: &[std::path::PathBuf],
 ) -> Result<(), BuildError> {
     if let Some(parent) = output_path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -273,6 +328,17 @@ fn run_clang_codegen(
         args.push("-fPIC".into());
     } else {
         args.push("-c".into());
+    }
+    // Extra object files (e.g. runtime-support stub).
+    // Reset -x before adding them so clang treats each as a native object,
+    // not as LLVM IR (the -x ir flag set above applies to all subsequent
+    // inputs unless overridden).
+    if !extra_objs.is_empty() {
+        args.push("-x".into());
+        args.push("none".into());
+        for obj in extra_objs {
+            args.push(obj.to_string_lossy().into_owned());
+        }
     }
     args.push("-o".into());
     args.push(output_path.to_string_lossy().into_owned());
