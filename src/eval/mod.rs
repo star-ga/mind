@@ -1196,6 +1196,13 @@ pub(crate) fn eval_value_expr_mode(
         Node::Match { .. } | Node::Ref { .. } => Err(EvalError::UnsupportedMsg(
             "Phase 10.7 constructs not yet implemented".into(),
         )),
+        // RFC 0005 Gap 1: while loop. Full evaluation lands with the Gap 1
+        // lowering pass; the evaluator stub returns 0 so feature-gated tests
+        // that touch other nodes in the same file still compile.
+        #[cfg(feature = "std-surface")]
+        Node::While { .. } => Err(EvalError::UnsupportedMsg(
+            "`while` evaluation not yet implemented in interpreter".into(),
+        )),
     }
 }
 

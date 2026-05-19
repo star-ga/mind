@@ -366,6 +366,17 @@ pub enum Node {
         body: Vec<Node>,
         span: Span,
     },
+    /// While loop: `while cond { body }` (RFC 0005 Gap 1).
+    ///
+    /// Lowers to a header-block + body-block basic-block loop in MLIR with
+    /// zero per-iteration stack allocation. `break` / `continue` are
+    /// follow-on items (Gap 1 ships the loop primitive only).
+    #[cfg(feature = "std-surface")]
+    While {
+        cond: Box<Node>,
+        body: Vec<Node>,
+        span: Span,
+    },
     /// Print statement: `print("msg", expr)`
     Print {
         args: Vec<Node>,
@@ -638,6 +649,8 @@ impl Node {
             | Node::Bitwise { span, .. }
             | Node::Match { span, .. }
             | Node::Ref { span, .. } => *span,
+            #[cfg(feature = "std-surface")]
+            Node::While { span, .. } => *span,
         }
     }
 

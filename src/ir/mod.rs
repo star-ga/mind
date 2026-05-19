@@ -255,6 +255,65 @@ pub enum Instr {
         name: String,
         index: usize,
     },
+    /// Fixed-size array constant: `const NAME: [i64; N] = [v0, v1, …]`
+    /// (RFC 0005 Phase 6.2b Gap 2).
+    ///
+    /// `dst` is the SSA id that holds the base address (i64) of the
+    /// read-only constant blob.  `values` carries the literal element
+    /// values in declaration order; they are stamped into a const section
+    /// by the backend rather than emitted as N individual store instructions.
+    ///
+    /// `name` is `Some(ident)` for module-level named constants (so that
+    /// `IndexAccess` on the identifier can be emitted as a direct load from
+    /// the named blob) and `None` for anonymous literals.
+    ///
+    /// Gated to `std-surface` — default builds never construct this variant.
+    #[cfg(feature = "std-surface")]
+    ConstArray {
+        /// SSA destination: the i64 base-address value of the const blob.
+        dst: ValueId,
+        /// Symbolic name, present for named `const` declarations.
+        name: Option<String>,
+        /// Packed element values in declaration order.
+        values: Vec<i64>,
+    },
+    /// Load one element from a fixed-size array constant at a runtime index
+    /// (RFC 0005 Phase 6.2b Gap 2).
+    ///
+    /// Emitted for `arr[idx]` when `arr` is a `[i64; N]` value.  The
+    /// backend lowers this to a bounds-checked (or unchecked, Phase 6.2b)
+    /// load from the base address.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    ArrayLoad {
+        /// SSA destination: the loaded i64 element.
+        dst: ValueId,
+        /// SSA id of the base-address value (produced by `ConstArray`).
+        base: ValueId,
+        /// SSA id of the runtime index value.
+        index: ValueId,
+    },
+    /// While loop (RFC 0005 Gap 1).
+    ///
+    /// Carries the SSA id of the condition value and the sequence of IR
+    /// instructions that form the loop body. The body is re-lowered on every
+    /// iteration; mutable variables are threaded as re-bound SSA values.
+    /// Gated to `std-surface` — default builds never construct this variant.
+    #[cfg(feature = "std-surface")]
+    While {
+        /// SSA id of the boolean (i1 / i64) condition value. Re-evaluated by
+        /// the header block on each iteration.
+        cond_id: ValueId,
+        /// Instructions that produce the condition value (re-emitted into the
+        /// header block on every MLIR lowering pass).
+        cond_instrs: Vec<Instr>,
+        /// Instructions forming the loop body (emitted into the body block).
+        body: Vec<Instr>,
+        /// SSA ids of variables that are mutated in the body and must be
+        /// live across the back-edge (threaded as block arguments).
+        live_vars: Vec<(String, ValueId)>,
+    },
 }
 
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
@@ -281,6 +340,10 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Param { dst, .. }
         | Instr::SparseAttr { dst, .. } => Some(*dst),
         Instr::Output(_) | Instr::FnDef { .. } | Instr::Return { .. } => None,
+        #[cfg(feature = "std-surface")]
+        Instr::While { .. } => None,
+        #[cfg(feature = "std-surface")]
+        Instr::ConstArray { dst, .. } | Instr::ArrayLoad { dst, .. } => Some(*dst),
     }
 }
 
@@ -320,6 +383,14 @@ pub struct IRModule {
     /// stay stable. Gated; the default build never populates this.
     #[cfg(feature = "std-surface")]
     pub struct_defs: std::collections::BTreeMap<String, Vec<String>>,
+    /// RFC 0005 Phase 6.2b Gap 2 — const-array data registry.
+    /// Maps a const-array name to its element values so that fn bodies can
+    /// re-emit a `ConstArray` node when they reference the name.  This is
+    /// required because fn bodies lower into a fresh `IRModule` with an
+    /// independent SSA counter, so outer module ValueIds cannot be reused.
+    /// `BTreeMap` for deterministic iteration. Gated.
+    #[cfg(feature = "std-surface")]
+    pub const_array_defs: std::collections::BTreeMap<String, Vec<i64>>,
 }
 
 impl IRModule {
@@ -330,6 +401,8 @@ impl IRModule {
             exports: std::collections::HashSet::new(),
             #[cfg(feature = "std-surface")]
             struct_defs: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            const_array_defs: std::collections::BTreeMap::new(),
         }
     }
 

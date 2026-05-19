@@ -116,6 +116,28 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 ir.instrs.push(Instr::ConstI64(id, 0));
                 ir.instrs.push(Instr::Output(id));
             }
+            // RFC 0005 Phase 6.2b Gap 2 — module-level `const NAME: [i64; N] = [...]`.
+            // Lowers to a named ConstArray IR node and also registers the
+            // element data in `ir.const_array_defs` so that fn bodies (which
+            // use a fresh SSA namespace) can re-emit the blob on demand.
+            #[cfg(feature = "std-surface")]
+            ast::Node::Const {
+                name,
+                ty: Some(TypeAnn::Array { .. }),
+                value,
+                ..
+            } => {
+                let values = extract_array_lit_values(value);
+                ir.const_array_defs.insert(name.clone(), values.clone());
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstArray {
+                    dst: id,
+                    name: Some(name.clone()),
+                    values,
+                });
+                env.insert(name.clone(), id);
+                ir.instrs.push(Instr::Output(id));
+            }
             other => {
                 let id = lower_expr(other, &mut ir, &env, &struct_env, receiver_types);
                 ir.instrs.push(Instr::Output(id));
@@ -196,13 +218,32 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
-        ast::Node::Lit(Literal::Ident(name), _) => env.get(name).copied().unwrap_or_else(|| {
+        ast::Node::Lit(Literal::Ident(name), _) => {
+            // Fast path: SSA binding from env (params, let-bindings).
+            if let Some(id) = env.get(name).copied() {
+                return id;
+            }
+            // Phase 6.2b Gap 2: const-array identifier — re-emit the
+            // ConstArray blob into the current IR (fn body or module level)
+            // so the ArrayLoad that follows has a valid base in this
+            // IR's SSA namespace.
+            #[cfg(feature = "std-surface")]
+            if let Some(values) = ir.const_array_defs.get(name).cloned() {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstArray {
+                    dst: id,
+                    name: Some(name.clone()),
+                    values,
+                });
+                return id;
+            }
+            // Undefined — emit placeholder.
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: undefined identifier `{name}`, defaulting to 0");
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
-        }),
+        }
         ast::Node::Binary {
             op, left, right, ..
         } => {
@@ -416,8 +457,28 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             {
                 fn_ir.struct_defs = ir.struct_defs.clone();
+                // Phase 6.2b Gap 2: inherit const-array data so that
+                // fn bodies can re-emit ConstArray nodes on demand.
+                fn_ir.const_array_defs = ir.const_array_defs.clone();
             }
-            let mut fn_env = env.clone();
+            // Build fn_env from env, but do NOT carry over const-array
+            // SSA ids from the outer module — those ids are only valid in
+            // the outer ir's SSA namespace.  Const-array identifiers will
+            // be re-resolved in the Ident arm below via const_array_defs.
+            let mut fn_env: HashMap<String, ValueId> = env
+                .iter()
+                .filter(|(name, _)| {
+                    #[cfg(feature = "std-surface")]
+                    {
+                        !ir.const_array_defs.contains_key(*name)
+                    }
+                    #[cfg(not(feature = "std-surface"))]
+                    {
+                        true
+                    }
+                })
+                .map(|(k, v)| (k.clone(), *v))
+                .collect();
             // RFC 0005 P0f Step 1 — fresh per-fn struct binding map.
             // Inherits outer module-scope bindings (so an outer
             // `let cfg = Config { ... }` is visible to inner field
@@ -592,6 +653,77 @@ fn lower_expr(
         // v1. The inner expression lowers directly; the ref tag is only
         // meaningful to the type-checker.
         ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env, struct_env, receiver_types),
+        // RFC 0005 Gap 1: `while cond { body }` lowering.
+        //
+        // The condition and body each lower into their own sub-modules so
+        // the MLIR stage can place them in separate basic blocks (header and
+        // body blocks, respectively).  Mutable variables that are written in
+        // the body are collected as `live_vars` and threaded as block
+        // arguments in the MLIR lowering.
+        //
+        // Gated to `std-surface` — default builds never reach this arm.
+        #[cfg(feature = "std-surface")]
+        ast::Node::While { cond, body, .. } => {
+            // Lower the condition expression into a scratch sub-module to
+            // capture the instructions that produce it without polluting the
+            // parent IR stream.  The resulting ValueIds are local to the
+            // sub-module; MLIR lowering re-emits them verbatim in the header
+            // block so the numbering is stable.
+            let mut cond_ir = IRModule::new();
+            // Seed the condition sub-module's env with the current bindings
+            // so identifiers in the condition (e.g. `i`, `n`) resolve.
+            let cond_env = env.clone();
+            let cond_id = lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
+
+            // Lower the body into a scratch sub-module.  Track every Assign
+            // target — those are the variables that are live across the
+            // back-edge and must become block arguments in MLIR.
+            let mut body_ir = IRModule::new();
+            let mut body_env = env.clone();
+            let mut mutated: Vec<(String, ValueId)> = Vec::new();
+
+            for stmt in body {
+                match stmt {
+                    ast::Node::Assign { name, value, .. } => {
+                        let new_id = lower_expr(
+                            value,
+                            &mut body_ir,
+                            &body_env,
+                            struct_env,
+                            receiver_types,
+                        );
+                        body_env.insert(name.clone(), new_id);
+                        // Record the variable and its post-body value.
+                        if let Some(pos) = mutated.iter().position(|(n, _)| n == name) {
+                            mutated[pos].1 = new_id;
+                        } else {
+                            mutated.push((name.clone(), new_id));
+                        }
+                    }
+                    other => {
+                        lower_expr(other, &mut body_ir, &body_env, struct_env, receiver_types);
+                    }
+                }
+            }
+
+            // After the loop, the parent env sees the post-body bindings of
+            // mutated variables so that code after the while statement uses
+            // the correct SSA ids.  Gap 1 full implementation will thread
+            // them via block arguments; the `env.insert` is deferred until
+            // `lower_expr` accepts `&mut env` (a Gap 1 follow-on).
+
+            ir.instrs.push(Instr::While {
+                cond_id,
+                cond_instrs: cond_ir.instrs,
+                body: body_ir.instrs,
+                live_vars: mutated,
+            });
+
+            // `while` is a statement; produce a unit i64 placeholder.
+            let unit = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(unit, 0));
+            unit
+        }
         // RFC 0005 P0e Step 1 — `Foo { f1: v1, f2: v2, ... }` lowers to a
         // heap record. Layout = one `i64` slot per field, packed at
         // 8-byte stride. The struct value is the `i64` base address from
@@ -778,6 +910,49 @@ fn lower_expr(
                 }
             }
         }
+        // RFC 0005 Phase 6.2b Gap 2 — anonymous array literal `[v0, v1, …]`
+        // in expression position.  Elements are extracted iteratively
+        // (not by recursing once per element) so a 4,096-entry literal
+        // does not grow the Rust call-stack linearly.
+        #[cfg(feature = "std-surface")]
+        ast::Node::ArrayLit { elements, .. } => {
+            let values: Vec<i64> = elements
+                .iter()
+                .map(|e| extract_const_i64(e).unwrap_or(0))
+                .collect();
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::ConstArray {
+                dst,
+                name: None,
+                values,
+            });
+            dst
+        }
+        // RFC 0005 Phase 6.2b Gap 2 — `receiver[index]`.  When the receiver
+        // resolves to a ConstArray base address, this emits `ArrayLoad`.
+        #[cfg(feature = "std-surface")]
+        ast::Node::IndexAccess {
+            receiver, index, ..
+        } => {
+            let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+            let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::ArrayLoad {
+                dst,
+                base,
+                index: index_id,
+            });
+            dst
+        }
+        // RFC 0005 Phase 6.2b Gap 2 — `receiver[index] = value` on arrays.
+        // Const arrays are read-only in this phase; emit a placeholder to
+        // keep the IR shape stable.
+        #[cfg(feature = "std-surface")]
+        ast::Node::IndexAssign { .. } => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
         _ => {
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
@@ -785,6 +960,33 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+    }
+}
+
+/// Extract a compile-time i64 value from a literal expression node.
+/// Returns `None` for non-literal (runtime) expressions.
+#[cfg(feature = "std-surface")]
+fn extract_const_i64(node: &ast::Node) -> Option<i64> {
+    match node {
+        ast::Node::Lit(Literal::Int(n), _) => Some(*n),
+        ast::Node::Neg { operand, .. } => extract_const_i64(operand).map(|v| -v),
+        _ => None,
+    }
+}
+
+/// Extract the element value list from an `ArrayLit` node iteratively.
+/// Non-literal elements default to 0.  Returns an empty Vec for non-ArrayLit RHS.
+#[cfg(feature = "std-surface")]
+fn extract_array_lit_values(node: &ast::Node) -> Vec<i64> {
+    match node {
+        ast::Node::ArrayLit { elements, .. } => {
+            let mut out = Vec::with_capacity(elements.len());
+            for elem in elements {
+                out.push(extract_const_i64(elem).unwrap_or(0));
+            }
+            out
+        }
+        _ => Vec::new(),
     }
 }
 
