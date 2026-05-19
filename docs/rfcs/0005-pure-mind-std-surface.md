@@ -340,7 +340,9 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
 | 2-resolver | `use std.foo` cross-module resolver (Phase A) | mindc v0.4.0 | **shipped** |
 | B     | Per-arg signature matching on imported `pub fn`s | mindc v0.4.1 | **shipped** |
 | C     | Bundle `std/*.mind` into mindc via `include_str!` | mindc v0.4.2 | **shipped** |
-| D₁    | `$MIND_STDLIB_PATH` override for the bundled stdlib | mindc v0.4.2 | **shipped** |
+| D₁    | `$MIND_STDLIB_PATH` override for the bundled stdlib | mindc v0.4.3 | **shipped** |
+| D₂a   | Named-struct param names preserved in Phase B error messages | mindc v0.4.4 | **shipped** |
+| D₂b   | Cross-arg Named-struct *identity* matching (Vec ≠ String at call site) | TBD | deferred |
 | 6     | Self-host smoke — `mindc` lexer in MIND | TBD | open |
 
 The original phases-1-through-6 sequence is preserved below for the
