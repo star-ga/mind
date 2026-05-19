@@ -225,6 +225,17 @@ fn constant_fold(instrs: &mut [Instr]) {
                         BinOp::Ge => (l >= r) as i64,
                         BinOp::Eq => (l == r) as i64,
                         BinOp::Ne => (l != r) as i64,
+                        // Phase 6.5 Stage 1a — bitwise constant folding.
+                        #[cfg(feature = "std-surface")]
+                        BinOp::BitAnd => l & r,
+                        #[cfg(feature = "std-surface")]
+                        BinOp::BitOr => l | r,
+                        #[cfg(feature = "std-surface")]
+                        BinOp::BitXor => l ^ r,
+                        #[cfg(feature = "std-surface")]
+                        BinOp::Shl => l.wrapping_shl(r as u32),
+                        #[cfg(feature = "std-surface")]
+                        BinOp::Shr => l >> r,
                     };
                     *instr = Instr::ConstI64(dst_id, folded);
                     constants.insert(dst_id, folded);

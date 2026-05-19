@@ -314,6 +314,34 @@ pub enum Instr {
         /// live across the back-edge (threaded as block arguments).
         live_vars: Vec<(String, ValueId)>,
     },
+    /// Conditional branch (Phase 6.5 Stage 1a).
+    ///
+    /// Lowers `if cond { then } else { else }` into separate sub-instruction
+    /// streams so the MLIR backend can emit `scf.if` / `cf.cond_br` without
+    /// placing a `func.return` in the middle of a basic block.
+    ///
+    /// `dst` receives the result value of whichever branch was taken.
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    If {
+        /// SSA id of the boolean (i1 / i64) condition value.
+        cond_id: ValueId,
+        /// Instructions that produce the condition value.
+        cond_instrs: Vec<Instr>,
+        /// Instructions forming the then-branch.
+        then_instrs: Vec<Instr>,
+        /// SSA id of the then-branch result value (last value produced).
+        then_result: ValueId,
+        /// Instructions forming the else-branch (may be empty — unit i64=0).
+        else_instrs: Vec<Instr>,
+        /// SSA id of the else-branch result value.
+        else_result: ValueId,
+        /// SSA id that receives the selected branch result in the outer scope.
+        dst: ValueId,
+        /// Variable bindings produced in either branch and visible after the
+        /// if (Gap C: let bindings threaded back to outer fn_env).
+        branch_bindings: Vec<(String, ValueId)>,
+    },
 }
 
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
@@ -344,6 +372,8 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::While { .. } => None,
         #[cfg(feature = "std-surface")]
         Instr::ConstArray { dst, .. } | Instr::ArrayLoad { dst, .. } => Some(*dst),
+        #[cfg(feature = "std-surface")]
+        Instr::If { dst, .. } => Some(*dst),
     }
 }
 
@@ -361,6 +391,21 @@ pub enum BinOp {
     Ge,
     Eq,
     Ne,
+    /// Bitwise AND (`&`). Phase 6.5 Stage 1a.
+    #[cfg(feature = "std-surface")]
+    BitAnd,
+    /// Bitwise OR (`|`). Phase 6.5 Stage 1a.
+    #[cfg(feature = "std-surface")]
+    BitOr,
+    /// Bitwise XOR (`^`). Phase 6.5 Stage 1a.
+    #[cfg(feature = "std-surface")]
+    BitXor,
+    /// Left shift (`<<`). Phase 6.5 Stage 1a.
+    #[cfg(feature = "std-surface")]
+    Shl,
+    /// Arithmetic right shift (`>>`). Phase 6.5 Stage 1a.
+    #[cfg(feature = "std-surface")]
+    Shr,
 }
 
 #[derive(Debug, Clone)]

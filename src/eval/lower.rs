@@ -266,6 +266,32 @@ fn lower_expr(
             ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
             dst
         }
+        // Phase 6.5 Stage 1a — bitwise binary operators.
+        // `ast::Node::Bitwise` is kept separate from `Node::Binary` by design
+        // (see ast/mod.rs comments). Map each BitOp to its IR BinOp variant.
+        // Gated to `std-surface`.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Bitwise {
+            op, left, right, ..
+        } => {
+            let lhs = lower_expr(left, ir, env, struct_env, receiver_types);
+            let rhs = lower_expr(right, ir, env, struct_env, receiver_types);
+            let dst = ir.fresh();
+            let ir_op = match op {
+                ast::BitOp::And => BinOp::BitAnd,
+                ast::BitOp::Or => BinOp::BitOr,
+                ast::BitOp::Xor => BinOp::BitXor,
+                ast::BitOp::Shl => BinOp::Shl,
+                ast::BitOp::Shr => BinOp::Shr,
+            };
+            ir.instrs.push(Instr::BinOp {
+                dst,
+                op: ir_op,
+                lhs,
+                rhs,
+            });
+            dst
+        }
         ast::Node::CallTensorSum {
             x, axes, keepdims, ..
         } => {
@@ -559,6 +585,19 @@ fn lower_expr(
                         let id =
                             lower_expr(other, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
                         ret_id = Some(id);
+                        // Gap C: if the emitted statement was an `Instr::If`,
+                        // thread its branch_bindings back into `fn_env` so
+                        // subsequent statements in this fn body can reference
+                        // let bindings declared inside either branch.
+                        #[cfg(feature = "std-surface")]
+                        if let Some(Instr::If {
+                            branch_bindings, ..
+                        }) = fn_ir.instrs.last()
+                        {
+                            for (bname, bid) in branch_bindings.clone() {
+                                fn_env.insert(bname, bid);
+                            }
+                        }
                     }
                 }
             }
@@ -598,15 +637,232 @@ fn lower_expr(
                 id
             })
         }
+        // Phase 6.5 Stage 1a — `if cond { then } else { else }` lowering.
+        //
+        // The condition, then-branch, and else-branch each lower into separate
+        // sub-IRModule scratch buffers so that `Instr::Return` nodes inside a
+        // branch do not appear as mid-block terminators in the parent flat
+        // instruction stream. The MLIR lowerer converts `Instr::If` into an
+        // `scf.if` or a `cf.cond_br`+basic-block structure, placing each
+        // branch's instructions in its own MLIR basic block.
+        //
+        // Gap C: `let` bindings produced inside either branch are collected in
+        // `branch_bindings` and re-inserted into the outer `env` after the
+        // `Instr::If` is emitted so subsequent statements in the same scope can
+        // reference them. This replicates the pattern `Instr::While` uses for
+        // `live_vars`.
+        //
+        // Gated to `std-surface`.
+        #[cfg(feature = "std-surface")]
         ast::Node::If {
             cond,
             then_branch,
             else_branch,
             ..
         } => {
-            // Lower condition
+            // ── 1. Lower the condition into a scratch sub-module ──────────────
+            //
+            // Sub-modules must inherit `struct_defs` and `const_array_defs`
+            // from the parent IR so that `FieldAccess` and const-array
+            // references inside branch conditions and bodies resolve correctly.
+            //
+            // Chain `next_id`: cond_ir starts at ir.next_id, then_ir starts
+            // at cond_ir.next_id, else_ir starts at then_ir.next_id. This
+            // ensures all ValueIds across all three sub-modules are globally
+            // unique and disjoint from the parent scope's ids (especially fn
+            // parameters which occupy the lowest ids).
+            let mut cond_ir = sub_ir_from(ir);
+            let cond_env = env.clone();
+            let cond_id =
+                lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
+
+            // ── 2. Lower the then-branch into a scratch sub-module ────────────
+            //      Starts from cond_ir's highest id.
+            let mut then_ir = sub_ir_from_after(&cond_ir, ir);
+            let mut then_env = env.clone();
+            let mut branch_bindings: Vec<(String, ValueId)> = Vec::new();
+            let mut then_result = then_ir.fresh();
+            then_ir.instrs.push(Instr::ConstI64(then_result, 0));
+            for stmt in then_branch {
+                match stmt {
+                    ast::Node::Return { value, .. } => {
+                        let ret_val = value.as_ref().map(|v| {
+                            lower_expr(v, &mut then_ir, &then_env, struct_env, receiver_types)
+                        });
+                        then_ir.instrs.push(Instr::Return { value: ret_val });
+                        if let Some(rv) = ret_val {
+                            then_result = rv;
+                        }
+                    }
+                    ast::Node::Let {
+                        name, ann, value, ..
+                    } => {
+                        let id = match ann {
+                            Some(TypeAnn::Tensor { dtype, dims })
+                            | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
+                                &mut then_ir,
+                                value,
+                                dtype,
+                                dims,
+                                &then_env,
+                                struct_env,
+                                receiver_types,
+                            ),
+                            _ => lower_expr(
+                                value,
+                                &mut then_ir,
+                                &then_env,
+                                struct_env,
+                                receiver_types,
+                            ),
+                        };
+                        then_env.insert(name.clone(), id);
+                        // Gap C: record binding so it is visible after the if.
+                        if let Some(pos) = branch_bindings.iter().position(|(n, _)| n == name) {
+                            branch_bindings[pos].1 = id;
+                        } else {
+                            branch_bindings.push((name.clone(), id));
+                        }
+                        then_result = id;
+                    }
+                    ast::Node::Assign { name, value, .. } => {
+                        let id = lower_expr(
+                            value,
+                            &mut then_ir,
+                            &then_env,
+                            struct_env,
+                            receiver_types,
+                        );
+                        then_env.insert(name.clone(), id);
+                        then_result = id;
+                    }
+                    other => {
+                        then_result = lower_expr(
+                            other,
+                            &mut then_ir,
+                            &then_env,
+                            struct_env,
+                            receiver_types,
+                        );
+                    }
+                }
+            }
+
+            // ── 3. Lower the else-branch (or synthesise a unit zero) ──────────
+            //      Starts from then_ir's highest id.
+            let mut else_ir = sub_ir_from_after(&then_ir, ir);
+            let mut else_env = env.clone();
+            let mut else_result = else_ir.fresh();
+            else_ir.instrs.push(Instr::ConstI64(else_result, 0));
+            if let Some(else_stmts) = else_branch {
+                for stmt in else_stmts {
+                    match stmt {
+                        ast::Node::Return { value, .. } => {
+                            let ret_val = value.as_ref().map(|v| {
+                                lower_expr(
+                                    v,
+                                    &mut else_ir,
+                                    &else_env,
+                                    struct_env,
+                                    receiver_types,
+                                )
+                            });
+                            else_ir.instrs.push(Instr::Return { value: ret_val });
+                            if let Some(rv) = ret_val {
+                                else_result = rv;
+                            }
+                        }
+                        ast::Node::Let {
+                            name, ann, value, ..
+                        } => {
+                            let id = match ann {
+                                Some(TypeAnn::Tensor { dtype, dims })
+                                | Some(TypeAnn::DiffTensor { dtype, dims }) => {
+                                    lower_tensor_binding(
+                                        &mut else_ir,
+                                        value,
+                                        dtype,
+                                        dims,
+                                        &else_env,
+                                        struct_env,
+                                        receiver_types,
+                                    )
+                                }
+                                _ => lower_expr(
+                                    value,
+                                    &mut else_ir,
+                                    &else_env,
+                                    struct_env,
+                                    receiver_types,
+                                ),
+                            };
+                            else_env.insert(name.clone(), id);
+                            if let Some(pos) =
+                                branch_bindings.iter().position(|(n, _)| n == name)
+                            {
+                                branch_bindings[pos].1 = id;
+                            } else {
+                                branch_bindings.push((name.clone(), id));
+                            }
+                            else_result = id;
+                        }
+                        ast::Node::Assign { name, value, .. } => {
+                            let id = lower_expr(
+                                value,
+                                &mut else_ir,
+                                &else_env,
+                                struct_env,
+                                receiver_types,
+                            );
+                            else_env.insert(name.clone(), id);
+                            else_result = id;
+                        }
+                        other => {
+                            else_result = lower_expr(
+                                other,
+                                &mut else_ir,
+                                &else_env,
+                                struct_env,
+                                receiver_types,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // ── 4. Emit Instr::If into the parent IR stream ───────────────────
+            // Advance the parent's SSA counter to after all sub-module ids.
+            ir.next_id = ir.next_id.max(else_ir.next_id);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::If {
+                cond_id,
+                cond_instrs: cond_ir.instrs,
+                then_instrs: then_ir.instrs,
+                then_result,
+                else_instrs: else_ir.instrs,
+                else_result,
+                dst,
+                branch_bindings,
+            });
+
+            // Gap C: branch_bindings are stored on the Instr::If node so
+            // callers that own a mutable env (e.g. the fn-body loop below)
+            // can thread them back after the if.  `lower_expr` takes `env`
+            // as a shared reference and cannot mutate the outer scope here.
+
+            dst
+        }
+        // Non-gated fallback for `ast::Node::If` when `std-surface` is off.
+        // Retains the old sequential-flatten behaviour so the default build
+        // compiles and the existing `if_expr` tests continue to pass.
+        #[cfg(not(feature = "std-surface"))]
+        ast::Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             let _cond_id = lower_expr(cond, ir, env, struct_env, receiver_types);
-            // For now, just lower the then branch (control flow needs more work)
             let mut last_id = None;
             for stmt in then_branch {
                 last_id = Some(lower_expr(stmt, ir, env, struct_env, receiver_types));
@@ -988,6 +1244,41 @@ fn extract_array_lit_values(node: &ast::Node) -> Vec<i64> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Create a sub-IRModule for branch/body lowering that inherits the metadata
+/// tables from `parent` (struct schemas, const-array data) and starts its SSA
+/// counter at `parent.next_id`.
+///
+/// Starting at the parent's current `next_id` ensures that every ValueId
+/// allocated inside the sub-module is disjoint from all ValueIds already
+/// visible in the enclosing function scope (parameters, outer lets, etc.).
+/// Without this, a constant emitted in a condition sub-IR (e.g.
+/// `ConstI64(ValueId(0), 32)`) would collide with the function's first
+/// parameter (`%0: i64`) when both are serialised into the same MLIR block.
+///
+/// Used by `Instr::If` lowering and any future control-flow arms that lower
+/// branches into separate scratch IRModules.
+#[cfg(feature = "std-surface")]
+fn sub_ir_from(parent: &IRModule) -> IRModule {
+    let mut m = IRModule::new();
+    m.next_id = parent.next_id;
+    m.struct_defs = parent.struct_defs.clone();
+    m.const_array_defs = parent.const_array_defs.clone();
+    m
+}
+
+/// Like `sub_ir_from`, but chains the SSA counter from `prev` (the previously
+/// built sub-module) so that each successive sub-module's ids are disjoint from
+/// all predecessors.  Metadata is still copied from `meta_src` (the original
+/// parent scope).
+#[cfg(feature = "std-surface")]
+fn sub_ir_from_after(prev: &IRModule, meta_src: &IRModule) -> IRModule {
+    let mut m = IRModule::new();
+    m.next_id = prev.next_id;
+    m.struct_defs = meta_src.struct_defs.clone();
+    m.const_array_defs = meta_src.const_array_defs.clone();
+    m
 }
 
 fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Option<(DType, Vec<ShapeDim>)> {

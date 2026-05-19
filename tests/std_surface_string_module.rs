@@ -46,9 +46,33 @@ fn fn_body<'a>(ir: &'a libmind::ir::IRModule, name: &str) -> &'a [Instr] {
 }
 
 fn count_calls(body: &[Instr], callee: &str) -> usize {
-    body.iter()
-        .filter(|i| matches!(i, Instr::Call { name, .. } if name == callee))
-        .count()
+    let mut n = 0;
+    for instr in body {
+        match instr {
+            Instr::Call { name, .. } if name == callee => n += 1,
+            // Recurse into If and While sub-instruction streams so that
+            // calls inside conditional/loop code are counted correctly
+            // after Phase 6.5 Stage 1a moved them into Instr::If branches.
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                n += count_calls(cond_instrs, callee);
+                n += count_calls(then_instrs, callee);
+                n += count_calls(else_instrs, callee);
+            }
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                n += count_calls(cond_instrs, callee);
+                n += count_calls(body, callee);
+            }
+            _ => {}
+        }
+    }
+    n
 }
 
 #[test]

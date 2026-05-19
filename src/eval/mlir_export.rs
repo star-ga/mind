@@ -387,6 +387,17 @@ fn emit_int_binop(emitter: &mut MlirEmitter, dst: ValueId, op: BinOp, lhs: Value
         BinOp::Ge => "arith.cmpi sge,",
         BinOp::Eq => "arith.cmpi eq,",
         BinOp::Ne => "arith.cmpi ne,",
+        // Phase 6.5 Stage 1a — bitwise ops.
+        #[cfg(feature = "std-surface")]
+        BinOp::BitAnd => "arith.andi",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitOr => "arith.ori",
+        #[cfg(feature = "std-surface")]
+        BinOp::BitXor => "arith.xori",
+        #[cfg(feature = "std-surface")]
+        BinOp::Shl => "arith.shli",
+        #[cfg(feature = "std-surface")]
+        BinOp::Shr => "arith.shrsi",
     };
     emitter.write_fmt(format_args!(
         "    %{} = {} %{}, %{} : i64\n",
