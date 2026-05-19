@@ -327,7 +327,27 @@ no vector ops). Track A `blas_smoke` (12/12) and increment-1
 harnesses were also hardened with a `OnceLock` single-build so their
 own tests no longer race the shared temp `.so` under parallel load.
 
-### 9.3 Deferred to increment 3
+### 9.3a Increment 3a — shipped (mindc v0.6.5)
+
+- **Q16.16 L1 (`dot_l1_q16_v`) vector path — SHIPPED.** Native MLIR
+  `vector<8xi64>` widen → signed-subtract → arith-only absolute value
+  (`maxsi(d, 0 - d)`, mirroring the Track A C oracle's `if (d<0) d=-d`)
+  → i64-lane accumulate → associative `vector.reduction <add>` → scalar
+  tail → `trunci`/`extsi` pack. **Byte-identical to the Track A scalar
+  oracle `__mind_blas_dot_l1_q16` at every RFC length**
+  {0,1,2,7,8,9,15,16,17,31,32,33,1024,4096,65537} — exact, not a
+  tolerance (integer add is associative; per-element
+  `|sext64(a) - sext64(b)|` is exact). This **closes the Q16.16
+  vector-path metric parity** that increment 2 left open: the
+  cross-arch bit-identity gate (task #57) now holds for *both* the
+  vector dot (`dot_q16_v`, inc 2) and the vector L1 (`dot_l1_q16_v`,
+  inc 3a). All code is `#[cfg(feature = "std-surface")]`-gated; the
+  default-feature `mindc` binary is byte-identical (release build,
+  reproducible) and the bootstrap fixed-point IR is byte-identical
+  (the bootstrap source uses no vector ops) — bench-gate 0.0%. Smoke:
+  `blas_vec_q16_smoke::vec_dot_l1_q16_byte_identical_to_scalar_oracle_all_lengths`.
+
+### 9.3b Deferred to increment 3b
 
 - `@target("simd-x86" | "simd-arm" | "cuda" | "q16-photonic")` per-call
   substrate annotation. Still deferred. Increment 1's reasoning holds:
@@ -349,9 +369,6 @@ own tests no longer race the shared temp `.so` under parallel load.
   emits a `func.func private @<name>_v` forward decl exactly as Track A
   does; the working codegen entry point remains the direct
   `__mind_blas_*_v` intrinsic call (unchanged from increment 1).
-- A Q16.16 L1 (`dot_l1_q16_v`) vector path. Track A ships scalar/AVX2
-  `__mind_blas_dot_l1_q16`; the vector form is a natural increment-3
-  follow-on once the per-call substrate annotation lands.
 
 ## 10. References
 

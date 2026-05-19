@@ -1540,6 +1540,13 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // reduction loop. Track A's `__mind_blas_dot_l1_f32` is unchanged.
     ("__mind_blas_dot_l1_f32_v", 3),
     ("__mind_blas_dot_l1_q16", 3),
+    // RFC 0006 Track B (increment 3): native MLIR vector-dialect Q16.16 L1
+    // (Manhattan, sum-of-abs) reduction. Byte-identical to the Track A
+    // scalar oracle `__mind_blas_dot_l1_q16` at every length (task #57
+    // cross-arch bit-identity gate); closes the Q16.16 vector-path metric
+    // parity deferred in increment 2. Track A's `__mind_blas_dot_l1_q16`
+    // is unchanged.
+    ("__mind_blas_dot_l1_q16_v", 3),
     ("__mind_blas_dot_linf_f32", 3),
     // RFC 0006 Track B (increment 2): native MLIR vector-dialect f32 L∞
     // (max-of-abs) reduction. Track A's `__mind_blas_dot_linf_f32` is

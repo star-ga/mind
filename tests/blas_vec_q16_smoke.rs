@@ -60,6 +60,9 @@ const SRC: &str = r#"
 pub fn dotq(a: i64, b: i64, n: i64) -> i64 {
     __mind_blas_dot_q16_v(a, b, n)
 }
+pub fn dotl1q(a: i64, b: i64, n: i64) -> i64 {
+    __mind_blas_dot_l1_q16_v(a, b, n)
+}
 pub fn dotl1(a: i64, b: i64, n: i64) -> i64 {
     __mind_blas_dot_l1_f32_v(a, b, n)
 }
@@ -185,6 +188,23 @@ fn ref_dot_q16_scalar(a: &[i32], b: &[i32]) -> i64 {
     (acc as i32) as i64
 }
 
+/// Track A scalar oracle for Q16.16 L1, byte-for-byte
+/// (`mind_blas_dot_l1_q16_scalar` in `runtime-support/mind_intrinsics.c`):
+/// `d = (i64)a - (i64)b; if (d<0) d=-d; acc += d`, then `(i64)(i32)acc`.
+/// This is the exact function the cross-arch bit-identity gate (#57)
+/// pins for the L1 vector path.
+fn ref_dot_l1_q16_scalar(a: &[i32], b: &[i32]) -> i64 {
+    let mut acc: i64 = 0;
+    for i in 0..a.len() {
+        let mut d = (a[i] as i64) - (b[i] as i64);
+        if d < 0 {
+            d = -d;
+        }
+        acc += d;
+    }
+    (acc as i32) as i64
+}
+
 fn ref_dot_l1_f64(a: &[f32], b: &[f32]) -> f64 {
     let mut acc = 0.0_f64;
     for i in 0..a.len() {
@@ -237,6 +257,38 @@ fn vec_dot_q16_byte_identical_to_scalar_oracle_all_lengths() {
         assert_eq!(
             got, expect,
             "len={len}: native vector Q16.16 dot MUST be byte-identical \
+             to the Track A scalar oracle (cross-arch bit-identity gate, \
+             task #57); got={got} expect={expect}"
+        );
+    }
+}
+
+/// THE #57 GATE for the Q16.16 **L1** vector path (RFC 0006 increment 3).
+/// Native vector `dot_l1_q16_v` == Track A scalar oracle
+/// `mind_blas_dot_l1_q16_scalar`, byte-for-byte, at every RFC-mandated
+/// length. Bit-exact, not a tolerance: integer add is associative and
+/// per-element `|sext64(a) - sext64(b)|` is exact. Closes the Q16.16
+/// vector-path metric parity deferred in increment 2.
+#[test]
+fn vec_dot_l1_q16_byte_identical_to_scalar_oracle_all_lengths() {
+    let Some(so) = build_vec_so() else {
+        return;
+    };
+    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+
+    for &len in LENGTHS {
+        let (a, b) = make_pair_q16(len, 0x1111_AA00 + len as u64);
+        let got = call3(
+            &lib,
+            b"dotl1q\0",
+            a.as_ptr() as i64,
+            b.as_ptr() as i64,
+            len as i64,
+        );
+        let expect = ref_dot_l1_q16_scalar(&a, &b);
+        assert_eq!(
+            got, expect,
+            "len={len}: native vector Q16.16 L1 MUST be byte-identical \
              to the Track A scalar oracle (cross-arch bit-identity gate, \
              task #57); got={got} expect={expect}"
         );
