@@ -1974,12 +1974,21 @@ fn check_imported_fn_call(
         let (actual, arg_span) = infer_expr(arg, env)?;
         let expected = cm_typeann_to_valuetype(declared);
         if !cm_arg_compatible(&expected, &actual) {
+            // Phase D2 (light): if the declared parameter is a Named
+            // struct (`Vec`, `String`, `Map`, ...), surface the
+            // struct's name in the error message rather than the
+            // lossy ScalarI64 it lowers to under the Option-C heap
+            // ABI. The compatibility check itself stays permissive
+            // (Named structs accept i64-typed values since that's
+            // the on-wire ABI), but when widening fails on a
+            // *different* arg the user now sees which Named-typed
+            // parameter triggered it.
             return Err(TypeErrSpan {
                 msg: format!(
                     "imported `{name}` argument {i} expects {exp}; got {got}",
                     name = sig.name,
                     i = i,
-                    exp = describe_value_type(&expected),
+                    exp = describe_param_type(declared),
                     got = describe_value_type(&actual),
                 ),
                 span: arg_span,
@@ -2003,6 +2012,24 @@ fn check_imported_fn_call(
 #[cfg(feature = "cross-module-imports")]
 fn cm_typeann_to_valuetype(ann: &crate::ast::TypeAnn) -> ValueType {
     valuetype_from_ann(ann).unwrap_or(ValueType::ScalarI64)
+}
+
+/// Phase D2 (light) — render a parameter's TypeAnn for an error
+/// message in a way that *preserves* Named struct identity. The Phase
+/// B compatibility check still operates on `ValueType` (where Named
+/// structs collapse to `ScalarI64`), but when we hand an error string
+/// to the user, "expected Vec (heap-record i64 addr)" is far more
+/// debuggable than "expected scalar i64". Slice / Array / Ref
+/// aggregates and primitive scalars fall through to the existing
+/// `describe_value_type` rendering.
+#[cfg(feature = "cross-module-imports")]
+fn describe_param_type(ann: &crate::ast::TypeAnn) -> String {
+    match ann {
+        crate::ast::TypeAnn::Named(name) => {
+            format!("{name} (heap-record i64 addr)")
+        }
+        _ => describe_value_type(&cm_typeann_to_valuetype(ann)),
+    }
 }
 
 /// RFC 0005 Phase B — compatibility check for a single arg.  Accepts

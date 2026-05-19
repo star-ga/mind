@@ -157,3 +157,46 @@ fn imported_fn_with_no_return_type_defaults_to_i64() {
         diags
     );
 }
+
+#[test]
+fn phase_d2_named_struct_param_named_in_arity_error() {
+    // Phase D2 (light): when arity mismatches against a fn whose
+    // parameters include a Named struct, the error message must
+    // preserve the struct's name rather than collapsing it to the
+    // i64 ABI lowering. The compatibility check itself stays
+    // permissive (Named structs accept i64 values under Option-C);
+    // this is purely an error-message-clarity contract.
+    //
+    // We trigger a per-arg widening failure by passing a tensor
+    // expression where a Vec was declared. The actual ValueType
+    // (Tensor) doesn't widen to ScalarI64, so the per-arg check
+    // fires and the error message gets exercised.
+    let donor_src = "pub struct Vec { addr: i64, len: i64, cap: i64 }\n\
+         pub fn vec_set(v: Vec, i: i64, x: i64) -> i64 { x }\n";
+    let donor_ast = parser::parse(donor_src).expect("donor must parse");
+    let table = build_module_table(&[("crate.donor".to_string(), &donor_ast)]);
+    // A tensor literal expression won't widen to i64 under the
+    // Phase-B compatibility rule, so the error path fires for
+    // argument 0.
+    let consumer_src = "use crate.donor\n\
+                        let t: tensor<f32[3]> = zeros([3])\n\
+                        let r = vec_set(t, 0, 99)\n";
+    let consumer_ast = parser::parse(consumer_src).expect("consumer must parse");
+    let env = TypeEnv::new();
+    let diags = check_module_types_with_modules(&consumer_ast, consumer_src, None, &env, &table);
+    let combined = diags
+        .iter()
+        .map(|d| format!("{:?}", d))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        combined.contains("expects Vec"),
+        "Phase D2 error must name the Vec parameter; got:\n{}",
+        combined
+    );
+    assert!(
+        combined.contains("heap-record i64 addr"),
+        "Phase D2 error must mention the heap-record ABI; got:\n{}",
+        combined
+    );
+}
