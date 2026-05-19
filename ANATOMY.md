@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2511 | **Est. tokens:** ~6,217,307
-**Generated:** 2026-05-19 13:51 UTC
+**Files:** 2511 | **Est. tokens:** ~6,220,668
+**Generated:** 2026-05-19 14:16 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/rfcs/` | 13 | ~28,684 |
+| `docs/rfcs/` | 13 | ~28,939 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -373,7 +373,7 @@
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/mlir/` | 3 | ~21,137 |
+| `src/mlir/` | 3 | ~23,462 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
@@ -381,10 +381,10 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/type_checker/` | 1 | ~22,392 |
+| `src/type_checker/` | 1 | ~22,499 |
 | `src/types/` | 4 | ~3,179 |
-| `std/` | 5 | ~4,783 |
-| `tests/` | 106 | ~109,713 |
+| `std/` | 5 | ~4,996 |
+| `tests/` | 106 | ~110,174 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 13 | ~248 |
@@ -579,7 +579,7 @@
 - `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
-- `0006-mind-blas.md` (~4560 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
+- `0006-mind-blas.md` (~4815 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~2700 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
@@ -3586,7 +3586,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `lowering.rs` (~19170 tok, huge) — Copyright 2025 STARGA Inc.
+- `lowering.rs` (~21495 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~282 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
@@ -3634,7 +3634,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~22392 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~22499 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3643,7 +3643,7 @@
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `blas.mind` (~1618 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
+- `blas.mind` (~1831 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `map.mind` (~816 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `string.mind` (~869 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
@@ -3665,7 +3665,7 @@
 ### `tests/`
 
 - `blas_smoke.rs` (~5925 tok, huge) — Copyright 2025 STARGA Inc.
-- `blas_vec_q16_smoke.rs` (~2738 tok, huge) — Copyright 2025 STARGA Inc.
+- `blas_vec_q16_smoke.rs` (~3199 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
 - `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `cli_buffers.rs` (~459 tok, medium) — Copyright 2025 STARGA Inc.

@@ -47,6 +47,15 @@ const VEC_DOT_Q16_INTRINSIC: &str = "__mind_blas_dot_q16_v";
 #[cfg(feature = "std-surface")]
 const VEC_DOT_L1_F32_INTRINSIC: &str = "__mind_blas_dot_l1_f32_v";
 
+/// RFC 0006 Track B (increment 3) — native MLIR vector-dialect Q16.16
+/// L1 (Manhattan, sum of `|a-b|`) reduction surface name. Byte-identical
+/// to the Track A scalar oracle `__mind_blas_dot_l1_q16` at every length
+/// (task #57 — integer reduction is associative, and per-element
+/// `|sext64(a) - sext64(b)|` is exact; this completes the Q16.16
+/// vector-path metric parity left open in increment 2, RFC 0006 §9.3).
+#[cfg(feature = "std-surface")]
+const VEC_DOT_L1_Q16_INTRINSIC: &str = "__mind_blas_dot_l1_q16_v";
+
 /// RFC 0006 Track B (increment 2) — native MLIR vector-dialect f32
 /// L∞ (Chebyshev, max of `|a-b|`) reduction surface name.
 #[cfg(feature = "std-surface")]
@@ -385,6 +394,21 @@ impl LoweringContext {
                 // are untouched.
                 if name == VEC_DOT_L1_F32_INTRINSIC && args.len() == 3 {
                     self.emit_vec_dot_metric_f32(*dst, args[0], args[1], args[2], VecMetric::L1);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // RFC 0006 Track B (increment 3) — the Q16.16 L1 vector
+                // reduction. Byte-identical to Track A's scalar
+                // `__mind_blas_dot_l1_q16` oracle at every length (task #57):
+                // per-element widen -> signed subtract -> arith-only abs
+                // (`maxsi(d, 0-d)`, mirroring the C oracle's `if (d<0) d=-d`)
+                // -> i64-lane accumulate -> associative lane sum ->
+                // truncate-low-32 + sign-extend. Completes the Q16.16
+                // vector-path metric parity left open in increment 2
+                // (RFC 0006 §9.3). Track A's `__mind_blas_dot_l1_q16` extern
+                // path is untouched and remains the scalar/AVX2 fallback.
+                if name == VEC_DOT_L1_Q16_INTRINSIC && args.len() == 3 {
+                    self.emit_vec_dot_l1_q16(*dst, args[0], args[1], args[2]);
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
@@ -1267,6 +1291,174 @@ impl LoweringContext {
             "    %vq_lo_{d} = arith.trunci %vq_ts_{d} : i64 to i32"
         ));
         self.emit_line(&format!("    %{d} = arith.extsi %vq_lo_{d} : i32 to i64"));
+    }
+
+    /// RFC 0006 Track B (increment 3) — emit a native MLIR
+    /// `vector`-dialect Q16.16 **L1** (Manhattan, sum of `|a-b|`)
+    /// reduction.
+    ///
+    /// **Byte-identical** to the Track A scalar oracle
+    /// `mind_blas_dot_l1_q16_scalar` at every length — the cross-arch
+    /// bit-identity contract (task #57). The oracle accumulates
+    /// `d = (i64)a[i] - (i64)b[i]; if (d < 0) d = -d; acc += d` in i64 and
+    /// returns `(i64)(i32)acc`. This kernel replicates exactly that: widen
+    /// both i32 lanes to i64, signed-subtract, take the absolute value as
+    /// `maxsi(d, 0 - d)` (pure `arith`, no `math` dialect — the same value
+    /// as the C `if (d<0) d=-d` for every representable `d`, and the lane
+    /// difference of two sign-extended i32 is in `[-(2^32-1), 2^32-1]`, far
+    /// from `i64::MIN`, so the `-d` negation never overflows), accumulate
+    /// into i64 lanes, then an associative `vector.reduction <add>`
+    /// horizontal sum + a scalar tail doing the identical per-element op,
+    /// then `trunci i64->i32` + `extsi i32->i64`. Integer add is
+    /// associative, so lane grouping is irrelevant — bit-identical to the
+    /// sequential scalar oracle on every input. This closes the Q16.16
+    /// vector-path metric parity deferred in increment 2 (RFC 0006 §9.3).
+    /// Track A's `__mind_blas_dot_l1_q16` extern path is untouched.
+    #[cfg(feature = "std-surface")]
+    fn emit_vec_dot_l1_q16(
+        &mut self,
+        dst: ValueId,
+        a_addr: ValueId,
+        b_addr: ValueId,
+        len: ValueId,
+    ) {
+        let d = dst.0;
+        let l = VEC_Q16_LANES;
+        // Q16.16 lanes are i32 (4 bytes), same stride as f32.
+        let elem_bytes = std::mem::size_of::<i32>() as i64;
+        self.emit_line(&format!("    %vl_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vl_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vl_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vl_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!("    %vl_z0_{d} = arith.constant 0 : i64"));
+        self.emit_line(&format!(
+            "    %vl_zv_{d} = arith.constant dense<0> : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "    %vl_len_{d} = arith.index_cast %{} : i64 to index",
+            len.0
+        ));
+        self.emit_line(&format!(
+            "    %vl_nv_{d} = arith.divui %vl_len_{d}, %vl_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vl_ve_{d} = arith.muli %vl_nv_{d}, %vl_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vl_ap_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vl_bp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            b_addr.0
+        ));
+        // Vectorised main loop: LANES-wide widen -> sub -> abs -> i64 accumulate.
+        self.emit_line(&format!(
+            "    %vl_vacc_{d} = scf.for %vl_i_{d} = %vl_c0_{d} to %vl_ve_{d} \
+             step %vl_cl_{d} iter_args(%vl_acc_{d} = %vl_zv_{d}) -> (vector<{l}xi64>) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vl_ii_{d} = arith.index_cast %vl_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bo_{d} = arith.muli %vl_ii_{d}, %vl_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_ai_{d} = llvm.getelementptr %vl_ap_{d}[%vl_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bi_{d} = llvm.getelementptr %vl_bp_{d}[%vl_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vl_av_{d} = llvm.load %vl_ai_{d} : !llvm.ptr -> vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bv_{d} = llvm.load %vl_bi_{d} : !llvm.ptr -> vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "      %vl_aw_{d} = arith.extsi %vl_av_{d} : vector<{l}xi32> to vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bw_{d} = arith.extsi %vl_bv_{d} : vector<{l}xi32> to vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vl_df_{d} = arith.subi %vl_aw_{d}, %vl_bw_{d} : vector<{l}xi64>"
+        ));
+        // arith-only absolute value: |d| = max(d, -d). Mirrors the C
+        // oracle's `if (d < 0) d = -d` exactly for every representable d.
+        self.emit_line(&format!(
+            "      %vl_ng_{d} = arith.subi %vl_zv_{d}, %vl_df_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vl_ab_{d} = arith.maxsi %vl_df_{d}, %vl_ng_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vl_na_{d} = arith.addi %vl_acc_{d}, %vl_ab_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!("      scf.yield %vl_na_{d} : vector<{l}xi64>"));
+        self.emit_line("    }");
+        // Associative horizontal i64 sum — bit-identical regardless of
+        // lane grouping (this is what makes #57 hold for the vector path).
+        self.emit_line(&format!(
+            "    %vl_vs_{d} = vector.reduction <add>, %vl_vacc_{d} : \
+             vector<{l}xi64> into i64"
+        ));
+        // Scalar tail for the len % LANES remainder — identical per-element
+        // op in scalar i64 so the boundary elements match the oracle too.
+        self.emit_line(&format!(
+            "    %vl_ts_{d} = scf.for %vl_j_{d} = %vl_ve_{d} to %vl_len_{d} \
+             step %vl_c1_{d} iter_args(%vl_s_{d} = %vl_vs_{d}) -> (i64) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vl_jj_{d} = arith.index_cast %vl_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_jb_{d} = arith.muli %vl_jj_{d}, %vl_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_aj_{d} = llvm.getelementptr %vl_ap_{d}[%vl_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bj_{d} = llvm.getelementptr %vl_bp_{d}[%vl_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vl_as_{d} = llvm.load %vl_aj_{d} : !llvm.ptr -> i32"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bs_{d} = llvm.load %vl_bj_{d} : !llvm.ptr -> i32"
+        ));
+        self.emit_line(&format!(
+            "      %vl_asw_{d} = arith.extsi %vl_as_{d} : i32 to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_bsw_{d} = arith.extsi %vl_bs_{d} : i32 to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_sd_{d} = arith.subi %vl_asw_{d}, %vl_bsw_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_sn_{d} = arith.subi %vl_z0_{d}, %vl_sd_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_sa_{d} = arith.maxsi %vl_sd_{d}, %vl_sn_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vl_ns_{d} = arith.addi %vl_s_{d}, %vl_sa_{d} : i64"
+        ));
+        self.emit_line(&format!("      scf.yield %vl_ns_{d} : i64"));
+        self.emit_line("    }");
+        // Final `(i64)(i32)acc`: truncate to the low 32 Q16.16 bits then
+        // sign-extend back into i64 — byte-for-byte the C oracle's return.
+        self.emit_line(&format!(
+            "    %vl_lo_{d} = arith.trunci %vl_ts_{d} : i64 to i32"
+        ));
+        self.emit_line(&format!("    %{d} = arith.extsi %vl_lo_{d} : i32 to i64"));
     }
 
     /// RFC 0006 Track B (increment 2) — emit a native MLIR
