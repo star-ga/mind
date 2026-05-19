@@ -1,0 +1,24 @@
+// Phase 6.4 emit_ir smoke fixture.
+//
+// Identical to examples/parser/fixture.mind by construction — the
+// Phase 6.4 contract is that the MIND-side emitter on this fixture
+// produces the same byte stream mindc-Rust's --emit-ir does on the
+// same file.  Keeping the fixture verbatim ensures the round-trip
+// gate stays meaningful (different fixtures would be testing
+// different code paths).
+//
+// IR contract for this file is documented in
+// examples/emit_ir/EXPECTED.md.  Don't reformat without bumping the
+// expected output table.
+
+use std.vec;
+
+pub fn add(x: i64, y: i64) -> i64 {
+    let z: i64 = x + y;
+    return z;
+}
+
+pub fn compute(x: i64, y: i64, z: i64) -> i64 {
+    let r: i64 = x + y * z;
+    add(r, x)
+}
