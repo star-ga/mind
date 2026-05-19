@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-18 — Bootstrap fixed-point reached: libmindc_mind.so compiles its own source byte-identically to mindc-Rust. The Rust implementation is now decorative.
+
+### Phase 6.5 Fixed-Point — pure-MIND mindc achieves bootstrap fixed-point
+
+`libmindc_mind.so` (compiled from `examples/mindc_mind/main.mind`) now compiles
+`main.mind` itself and produces MLIR output that is byte-identical (10,889 bytes,
+next_id=206) to the oracle produced by mindc-Rust on the same source.
+
+Two targeted fixes to the MLIR-text emitter closed the 6-SSA-value gap:
+
+1. **Struct-definition parsing** — `parse_item` now detects the `struct` keyword
+   via byte inspection and calls a new `parse_struct_def` helper that consumes
+   the entire struct body (up to the closing `}`) and returns a single
+   `ast_struct_def` (kind 13) leaf node.  This matches the Rust parser's
+   `StructDef` item shape and ensures exactly one stub per struct definition.
+
+2. **Top-level stub coverage** — `emit_program_items` now emits a
+   `const.i64 0 / output` stub for `UseDecl` (kind 7) and `StructDef` (kind 13)
+   items, matching mindc-Rust's `lower_to_ir` which emits one stub per module-
+   level item regardless of kind.
+
+3. **Removed spurious prefix stub** — `lower_program` previously emitted one
+   extra stub before calling `emit_program_items`.  That stub had no counterpart
+   in the oracle; removing it corrects the SSA-value offset for all subsequent
+   output.
+
+Net SSA change: +7 stubs added (4 use-decl + 3 struct-def), −1 spurious prefix
+stub removed = +6, closing the exact gap.
+
 ## [0.6.0] - 2026-05-18
 
 ### Phase 6.5 Stage 5 APEX — pure-MIND mindc compiles MIND byte-identical to mindc-Rust

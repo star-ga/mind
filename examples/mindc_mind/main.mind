@@ -128,6 +128,43 @@ pub fn classify_ident(buf: i64, lo: i64, hi: i64) -> i64 {
     tk_ident()
 }
 
+// Returns 1 if the bytes buf[lo..hi] spell "struct" (6 bytes).
+pub fn is_struct_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 6 {
+        if load_byte(buf, lo + 0) == 115 {
+            if load_byte(buf, lo + 1) == 116 {
+                if load_byte(buf, lo + 2) == 114 {
+                    if load_byte(buf, lo + 3) == 117 {
+                        if load_byte(buf, lo + 4) == 99 {
+                            if load_byte(buf, lo + 5) == 116 {
+                                return 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Advance past all tokens until (and including) the closing `}` of a struct body.
+pub fn skip_to_rbrace(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 { return pos; }
+    if tok_kind(toks, pos) == tk_rbrace() { return pos + 1; }
+    skip_to_rbrace(toks, pos + 1)
+}
+
+// Parse a struct definition: consume `struct Name { ... }` and return a single
+// ast_struct_def leaf node so the emitter can emit exactly one stub for it.
+pub fn parse_struct_def(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let lo: i64   = tok_lo(toks, pos);
+    let after: i64 = skip_to_rbrace(toks, pos + 2);
+    let hi: i64   = tok_hi(toks, after - 1);
+    let n: i64    = ast_new_leaf(ast_struct_def(), lo, hi);
+    pr_new(after, n)
+}
+
 // ===== Sub-scans (tail-recursive) =====
 
 pub fn scan_ident_end(buf: i64, i: i64, buf_len: i64) -> i64 {
@@ -232,7 +269,8 @@ pub fn ast_return()  -> i64 { 8 }
 pub fn ast_param()   -> i64 { 9 }
 pub fn ast_block()   -> i64 { 10 }
 pub fn ast_program() -> i64 { 11 }
-pub fn ast_paren()   -> i64 { 12 }
+pub fn ast_paren()      -> i64 { 12 }
+pub fn ast_struct_def() -> i64 { 13 }
 
 // ===== Binop operator tags =====
 
@@ -743,6 +781,11 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     if k == tk_kw_fn()  { return parse_fn_def(toks, pos, buf, 0); }
     let lo: i64 = tok_lo(toks, pos);
     let hi: i64 = tok_hi(toks, pos);
+    if k == tk_ident() {
+        if is_struct_kw(buf, lo, hi) == 1 {
+            return parse_struct_def(toks, pos, buf);
+        }
+    }
     let n: i64  = ast_new_leaf(ast_ident(), lo, hi);
     pr_new(pos + 1, n)
 }
@@ -1562,6 +1605,17 @@ pub fn emit_fn_def(s: EmitState, buf: i64, node: i64) -> EmitState {
 
 // ===== Program-level lowering =====
 
+// Emit a single const.i64 0 / output stub for items that lower to a placeholder
+// (UseDecl and StructDef — matches mindc-Rust lower_to_ir behaviour).
+pub fn emit_item_stub(s: EmitState) -> EmitState {
+    let id: i64        = s.next_id;
+    let s1: EmitState  = emit_lit_const_i64_head(s, id);
+    let s2: EmitState  = es_push(s1, 48);
+    let s3: EmitState  = es_push(s2, ch_newline());
+    let s4: EmitState  = EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    emit_lit_output(s4, id)
+}
+
 pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i64, i: i64) -> EmitState {
     if i >= items_len { return s; }
     let item: i64      = __mind_load_i64(items_addr + i * 8);
@@ -1569,7 +1623,15 @@ pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i6
     let s1: EmitState  = if k == ast_fn_def() {
         emit_fn_def(s, buf, item)
     } else {
-        s
+        if k == ast_use() {
+            emit_item_stub(s)
+        } else {
+            if k == ast_struct_def() {
+                emit_item_stub(s)
+            } else {
+                s
+            }
+        }
     };
     emit_program_items(s1, buf, items_addr, items_len, i + 1)
 }
@@ -1581,14 +1643,8 @@ pub fn lower_program(ast_addr: i64, buf: i64) -> EmitState {
     let items_len: i64  = ast_aux(ast_addr);
     let s0: EmitState   = es_new();
     let s1: EmitState   = emit_lit_module_open(s0);
-    let id0: i64        = s1.next_id;
-    let s2: EmitState   = emit_lit_const_i64_head(s1, id0);
-    let s3: EmitState   = es_push(s2, 48);
-    let s4: EmitState   = es_push(s3, ch_newline());
-    let s5: EmitState   = EmitState { buf: s4.buf, next_id: id0 + 1, last_id: id0 };
-    let s6: EmitState   = emit_lit_output(s5, id0);
-    let s7: EmitState   = emit_program_items(s6, buf, items_addr, items_len, 0);
-    emit_lit_module_close(s7)
+    let s2: EmitState   = emit_program_items(s1, buf, items_addr, items_len, 0);
+    emit_lit_module_close(s2)
 }
 
 pub fn flush_to_stdout(s: EmitState) -> i64 {
