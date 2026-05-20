@@ -5,6 +5,30 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.7] - 2026-05-20 — mind-blas Track B increment 4: `matmul_rmajor_q16_v` pure-MIND Q16.16 matvec (byte-identical via dot_q16_v composition, no new intrinsic, no compiler change; prerequisite for mind-nerve 0.3.0b7 thesis-pure encode path)
+
+### Added — `matmul_rmajor_q16_v` in std/blas.mind (RFC 0006 inc 4)
+
+Pure-MIND row-major Q16.16 matrix-vector composed directly on
+`dot_q16_v` via an open-coded tail-recursive row loop. Same i64
+stride-8 ABI as `matmul_rmajor_f32_v`. **No new intrinsic, no mindc
+compiler change** — the outer row loop runs as MIND code, so the
+function lives entirely in `std/blas.mind`.
+
+**Byte-identity (task #57)**: each `y[r] = dot_q16_v(W[r,:], x)` is
+bit-identical to the Track A scalar oracle `dot_q16(W[r,:], x)` per
+the increment-2 invariant; the outer loop is deterministic ascending
+`r`; the full output is byte-identical to a Track-A scalar reference
+at every `(rows, cols)`. Existing `blas_vec_q16_smoke` 6/6 PASS after
+rebuilding mindc with the new std/blas baked in.
+
+This is the prerequisite primitive consumed by **mind-nerve 0.3.0b7**
+(`#233(a)` thesis-pure encode): each encoder linear layer is
+expressed as `T` calls to `matmul_rmajor_q16_v` with zero C-shim
+involvement.
+
+`mind@641e6cb`.
+
 ## [0.6.4] - 2026-05-19 — mind-blas Track B increment 2: native MLIR vector-dialect Q16.16 dot (byte-identical to the Track A scalar oracle — cross-arch bit-identity gate #57 closed for the vector path), `VecStore`, and f32 L1/L∞ vector reductions (bench-gate +7% cap held by byte-identical default binary; v0.6.1 bootstrap fixed-point unchanged)
 
 ### Added — mind-blas Track B increment 2 (RFC 0006 §9.2)
