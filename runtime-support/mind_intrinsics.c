@@ -73,6 +73,7 @@
 #if defined(_WIN32)
 #  include <stdio.h>      // SEEK_SET / SEEK_CUR (Unix gets these via <unistd.h>)
 #  include <io.h>
+#  include <intrin.h>     // __cpuid / __cpuidex (file-scope; not inside fn body)
 #  include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
 typedef long long mind_off_t;
@@ -492,7 +493,6 @@ int __mind_blas_get_use_avx2(void) {
 static int mind_blas_cpu_has_avx2_fma(void) {
 #if MIND_BLAS_X86_64
 #  if defined(_WIN32)
-#    include <intrin.h>   // __cpuid / __cpuidex (cl.exe + clang-on-Windows)
     int regs[4];
     __cpuid(regs, 0);
     if (regs[0] < 7) return 0;
