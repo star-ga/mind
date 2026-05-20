@@ -620,7 +620,7 @@ fn main() {
         };
 
         // Handle heredoc
-        if let Some((seq, cmd, ref mut content)) = heredoc_buffer.as_mut() {
+        if let Some((seq, cmd, content)) = heredoc_buffer.as_mut() {
             if line.trim() == "EOF" {
                 // Process accumulated heredoc
                 let full_args = content.clone();

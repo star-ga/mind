@@ -121,8 +121,13 @@ fn cdylib_has_no_undefined_mind_symbols() {
     let undefined: Vec<&str> = text.lines().filter(|l| l.contains(" U ")).collect();
 
     // The only undefined symbols allowed are libc symbols that the
-    // runtime-support stub itself depends on.
-    let allowed = ["malloc", "free", "memcpy", "realloc"];
+    // runtime-support stub itself depends on.  The POSIX I/O calls
+    // are pulled in by std.io's __mind_read / __mind_write / pread /
+    // pwrite passthrough (see runtime-support/mind_intrinsics.c).
+    let allowed = [
+        "malloc", "free", "memcpy", "realloc",
+        "read", "write", "pread", "pwrite",
+    ];
 
     for sym_line in &undefined {
         let name = sym_line.trim().split_whitespace().last().unwrap_or("");
