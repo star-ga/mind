@@ -168,6 +168,24 @@ jobs:
           # Both together — full RFC 0005 surface (Phase 2 + Phase B).
           cargo test --verbose --no-default-features --features std-surface,cross-module-imports
 
+      - name: Run gated tests — autodiff + mlir-lowering + cpu-buffers
+        # Five tests live behind these three feature flags and were never
+        # executed in any CI matrix row before the 2026-05-19 stale-test
+        # sweep:
+        #   - tests/pipeline.rs::compile_source_runs_autodiff       (autodiff)
+        #   - tests/pipeline.rs::pipeline_emits_grad_ir             (autodiff)
+        #   - tests/pipeline.rs::lower_to_mlir_produces_stable_text (mlir-lowering)
+        #   - tests/tensor_buffers.rs::* (2 tests)                  (cpu-buffers)
+        # The default-build job above did `cargo check --features cpu-exec`
+        # without running tests, so cpu-buffers / autodiff regressions
+        # would have shipped silently.
+        shell: bash
+        run: |
+          set -e
+          cargo test --verbose --no-default-features --features autodiff
+          cargo test --verbose --no-default-features --features mlir-lowering
+          cargo test --verbose --no-default-features --features cpu-buffers
+
       - name: Clippy
         shell: bash
         run: |

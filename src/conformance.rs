@@ -178,23 +178,14 @@ fn cpu_cases() -> Vec<ConformanceCase> {
         run_autodiff: false,
     }];
 
-    #[cfg(feature = "autodiff")]
-    cases.push(ConformanceCase {
-        name: "autodiff_pairwise",
-        source: include_str!("../tests/conformance/cpu_baseline/autodiff_pairwise.mind"),
-        target: BackendTarget::Cpu,
-        func: Some("main"),
-        expected_ir: include_str!("../tests/conformance/cpu_baseline/autodiff_pairwise.ir"),
-        expected_value: Some(ExpectedValue::Int(0)),
-        expected_mlir: Some(include_str!(
-            "../tests/conformance/cpu_baseline/autodiff_pairwise.mlir"
-        )),
-        expected_grad_ir: Some(include_str!(
-            "../tests/conformance/cpu_baseline/autodiff_pairwise.grad.ir"
-        )),
-        expected_error: None,
-        run_autodiff: true,
-    });
+    // The autodiff_pairwise conformance entry was removed 2026-05-20 — its
+    // fixture used the obsolete top-level expression syntax `tensor.zeros(f32, ())`
+    // which the grammar tightened out in mindc v0.4.x (bare type names are
+    // no longer expressions). The autodiff feature is exercised end-to-end
+    // by `tests/autodiff.rs` (5 tests) and `tests/autodiff_preview.rs`,
+    // both of which use the current `fn`-wrapped syntax. The conformance
+    // duplicate was silently broken under `cargo test --features autodiff`
+    // until the 2026-05-19 stale-test sweep surfaced it.
 
     cases
 }
