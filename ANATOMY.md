@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2527 | **Est. tokens:** ~6,251,244
-**Generated:** 2026-05-20 12:02 UTC
+**Files:** 2531 | **Est. tokens:** ~6,258,000
+**Generated:** 2026-05-20 12:37 UTC
 
 ## Token Budget Guide
 
@@ -371,7 +371,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 2 | ~11,084 |
+| `src/fmt/` | 2 | ~11,473 |
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -387,7 +387,7 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,719 |
-| `tests/` | 108 | ~115,153 |
+| `tests/` | 111 | ~121,005 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -395,7 +395,8 @@
 | `tests/fixtures/` | 4 | ~44 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
-| `tests/mindcraft/fmt/` | 14 | ~477 |
+| `tests/mindcraft/` | 1 | ~518 |
+| `tests/mindcraft/fmt/` | 14 | ~474 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -3572,7 +3573,7 @@
 ### `src/fmt/`
 
 - `mod.rs` (~591 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~10493 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~10882 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3727,6 +3728,9 @@
 - `simple.mind` (~3 tok, tiny)
 ### `tests/`
 
+- `fmt_idempotence.rs` (~1789 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2132 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3754,22 +3758,27 @@
 ### `tests/mindcraft/fmt/`
 
 - `01_indent_if_else.in.mind` (~46 tok, tiny) — fn classify(x: i64) -> i64 {
-- `01_indent_if_else.out.mind` (~49 tok, tiny) — fn classify(x: i64) -> i64 {
+- `01_indent_if_else.out.mind` (~48 tok, tiny) — fn classify(x: i64) -> i64 {
 - `02_struct_literal_multiline.in.mind` (~28 tok, tiny) — fn make_point(a: i64, b: i64) -> Point {
 - `02_struct_literal_multiline.out.mind` (~28 tok, tiny) — fn make_point(a: i64, b: i64) -> Point {
 - `03_fn_args_multiline.in.mind` (~34 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
 - `03_fn_args_multiline.out.mind` (~35 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
 - `04_trailing_comma_toggle.in.mind` (~33 tok, tiny) — fn make_config(w: i64, h: i64) -> Config {
-- `04_trailing_comma_toggle.out.mind` (~34 tok, tiny) — fn make_config(w: i64, h: i64) -> Config {
+- `04_trailing_comma_toggle.out.mind` (~33 tok, tiny) — fn make_config(w: i64, h: i64) -> Config {
 - `05_internal_whitespace.in.mind` (~32 tok, tiny) — fn calc(a: i64, b: i64, c: i64) -> i64 {
 - `05_internal_whitespace.out.mind` (~33 tok, tiny) — fn calc(a: i64, b: i64, c: i64) -> i64 {
 - `06_comment_attachment.in.mind` (~48 tok, tiny) — Copyright 2025 STARGA Inc.
-- `06_comment_attachment.out.mind` (~49 tok, tiny) — Copyright 2025 STARGA Inc.
+- `06_comment_attachment.out.mind` (~48 tok, tiny) — Copyright 2025 STARGA Inc.
 - `07_string_literal_passthrough.in.mind` (~14 tok, tiny) — fn get_message() -> i64 {
 - `07_string_literal_passthrough.out.mind` (~14 tok, tiny) — fn get_message() -> i64 {
 ### `tests/`
 
 - `mindcraft_fmt_fixtures.rs` (~1302 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/`
+
+- `STABILITY_SKIP_LIST.md` (~518 tok, large) — Formatter Stability Skip List
+### `tests/`
+
 - `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
