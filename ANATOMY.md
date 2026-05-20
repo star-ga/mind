@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2533 | **Est. tokens:** ~6,265,404
-**Generated:** 2026-05-20 13:16 UTC
+**Files:** 2534 | **Est. tokens:** ~6,266,348
+**Generated:** 2026-05-20 13:25 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,12 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~40,431 |
+| `./` | 31 | ~40,443 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 8 | ~8,908 |
+| `benches/` | 9 | ~9,840 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -419,7 +419,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~838 tok, large) — [package]
+- `Cargo.toml` (~850 tok, large) — [package]
 - `CHANGELOG.md` (~22221 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
@@ -464,6 +464,7 @@
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~1754 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
+- `mindcraft_fmt.rs` (~932 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1267 tok, large) — Simple broadcasting scenarios
 - `simple_benchmarks.rs` (~643 tok, large) — Benchmark source programs that are known to work
