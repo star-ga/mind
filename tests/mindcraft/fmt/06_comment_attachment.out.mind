@@ -2,10 +2,10 @@
 
 // helper computes the sum
 fn sum(a: i64, b: i64) -> i64 {
-    a + b;
+    a + b
 }
 
 /// Compute the product of two integers.
 fn product(a: i64, b: i64) -> i64 {
-    a * b;
+    a * b
 }

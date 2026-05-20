@@ -4,5 +4,5 @@ struct Point {
 }
 
 fn make_point(a: i64, b: i64) -> Point {
-    Point { x: a, y: b };
+    Point { x: a, y: b }
 }

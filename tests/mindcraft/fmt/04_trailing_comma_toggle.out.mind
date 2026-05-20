@@ -4,5 +4,5 @@ struct Config {
 }
 
 fn make_config(w: i64, h: i64) -> Config {
-    Config { width: w, height: h };
+    Config { width: w, height: h }
 }

@@ -2,5 +2,5 @@ fn calc(a: i64, b: i64, c: i64) -> i64 {
     let x: i64 = a + b * c;
     let y: i64 = a + b * c;
     let z: i64 = x + y;
-    z;
+    z
 }
