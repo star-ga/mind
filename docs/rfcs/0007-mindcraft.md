@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0007 |
 | Title | Mindcraft — pure-MIND format / lint / check toolchain |
-| Status | Planned (design) — sequencing gate CLEARED 2026-05-19, see §9 |
+| Status | Phase 2A shipped (mindc v0.6.8) — sequencing gate CLEARED 2026-05-19, see §9 |
 | Authors | STARGA Inc. |
 | Created | 2026-05-19 |
 | Supersedes | — |
@@ -185,16 +185,35 @@ begin. (Further native-encoder latency optimization continues
 independently and is not a Mindcraft prerequisite — the gate is
 measurement + numerical correctness, both satisfied.)
 
-Phased delivery now that the gate has cleared:
+### Phase 2A — shipped (mindc v0.6.8, 2026-05-20)
 
-1. Configuration surface in `Mind.toml` (`[mindcraft]`, severity model,
-   overrides, per-target sections, `$schema`, inline-suppression syntax).
-2. `mindc check` rebuilt on the shared configuration/diagnostic surface.
-3. Rule engine + default rule pack, rules as `.mind` files, driven by the
-   self-hosted front-end.
-4. `mindc lint` (engine + `--fix` + `--reporter json`).
-5. `mindc fmt` (canonical pretty-printer over the self-hosted AST;
-   idempotent; `--check` CI mode).
+Phase 2A (`mindc fmt` scaffolding, no line-wrap) is complete. All six PR
+steps landed on `main`:
+
+| Step | Commit | Description |
+|---|---|---|
+| 1 | `4cfe7b9` | `feat(parser)`: trivia layer for comment-preserving CST |
+| 2 | `bfeffbe` | `feat(fmt)`: scaffolding + canonical walker (Phase 2A, no wrap) |
+| 3 | `434da71` | `test(fmt)`: stdlib stability + idempotence + IR-preservation |
+| 4 | `696027a` | `feat(mindc)`: fmt subcommand (`--check`/`--diff`/`--stdin`) |
+| 5 | `d1f10f6` | `bench(fmt)`: criterion benchmark for mindc fmt (Phase 2A Step 5) |
+| 6 | `6df49e5` | `docs(mindcraft)`: Phase 2A fmt reference + RFC 0007 status update |
+
+The normative formatter reference is at `docs/mindcraft/fmt.md`.
+
+**Phase 2B (soft line-wrap at `max_line_length`) is deferred.** The
+`max_line_length` setting is validated and stored but has no effect in Phase
+2A. Phase 2B remains a separate PR gated on post-Phase 2A review.
+
+Phased delivery going forward:
+
+1. ~~Configuration surface in `Mind.toml`.~~ (Phase 1, shipped `6526029`)
+2. ~~`mindc fmt` (canonical pretty-printer, idempotent, `--check` CI mode).~~ (Phase 2A, shipped above)
+3. Phase 2B: soft line-wrap at `max_line_length`. (deferred)
+4. `mindc check` rebuilt on the shared configuration/diagnostic surface. (Phase 3)
+5. Rule engine + default rule pack, rules as `.mind` files, driven by the
+   self-hosted front-end. (Phase 3)
+6. `mindc lint` (engine + `--fix` + `--reporter json`). (Phase 4)
 
 Bench-gate discipline applies throughout: the compiler frontend latency
 floor is preserved; Mindcraft passes are additive and feature-gated, never

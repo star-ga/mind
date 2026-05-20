@@ -261,123 +261,49 @@ enum Edit {
     Insert,
 }
 
-/// Compute the diff between `old` and `new` using Myers O(ND) algorithm.
+/// Compute the diff between `old` and `new` via LCS (O(n*m) DP).
 ///
-/// Returns a sequence of `(old_idx_or_none, new_idx_or_none, Edit)` triples.
-fn compute_lcs_diff<'a>(old: &[&'a str], new: &[&'a str]) -> Vec<Edit> {
+/// Builds the longest-common-subsequence table, then backtracks to produce
+/// a flat `Edit` sequence aligned with `old` (deletes and keeps) and `new`
+/// (inserts and keeps).
+fn compute_lcs_diff(old: &[&str], new: &[&str]) -> Vec<Edit> {
     let n = old.len();
     let m = new.len();
-    let max = n + m;
 
-    if max == 0 {
-        return Vec::new();
-    }
-
-    // v[k + max] stores the furthest-reaching x position on diagonal k.
-    let mut v = vec![0_isize; 2 * max + 1];
-    // Store the complete trace to reconstruct the path.
-    let mut trace: Vec<Vec<isize>> = Vec::new();
-
-    'outer: for d in 0..=(max as isize) {
-        let snapshot = v.clone();
-        trace.push(snapshot);
-        let k_min = -d;
-        let k_max = d;
-        let mut k = k_min;
-        while k <= k_max {
-            let idx = (k + max as isize) as usize;
-            let mut x = if k == k_min
-                || (k != k_max && v[idx.wrapping_sub(1)] < v[idx + 1])
-            {
-                v[idx + 1]
+    // dp[i][j] = length of LCS of old[..i] and new[..j].
+    // Flat row-major layout: index as dp[i * (m+1) + j].
+    let mut dp = vec![0u32; (n + 1) * (m + 1)];
+    for i in 1..=n {
+        for j in 1..=m {
+            dp[i * (m + 1) + j] = if old[i - 1] == new[j - 1] {
+                dp[(i - 1) * (m + 1) + (j - 1)] + 1
             } else {
-                v[idx.wrapping_sub(1)] + 1
+                dp[(i - 1) * (m + 1) + j].max(dp[i * (m + 1) + (j - 1)])
             };
-            let mut y = x - k;
-            // Snake: advance along matching diagonals.
-            while x < n as isize && y < m as isize && old[x as usize] == new[y as usize] {
-                x += 1;
-                y += 1;
-            }
-            v[idx] = x;
-            if x >= n as isize && y >= m as isize {
-                break 'outer;
-            }
-            k += 2;
         }
     }
 
-    // Backtrack through the trace to reconstruct the edit script.
-    let mut x = n as isize;
-    let mut y = m as isize;
-    let mut edits: Vec<(isize, isize)> = Vec::new(); // (x, y) waypoints
-
-    for (d, snap) in trace.iter().enumerate().rev() {
-        let d = d as isize;
-        let k = x - y;
-        let idx = (k + max as isize) as usize;
-
-        let prev_k = if k == -d
-            || (k != d && snap[idx.wrapping_sub(1)] < snap[idx + 1])
+    // Backtrack to build the edit sequence (reversed, then flipped).
+    let mut edits: Vec<Edit> = Vec::with_capacity(n + m);
+    let mut i = n;
+    let mut j = m;
+    while i > 0 || j > 0 {
+        if i > 0 && j > 0 && old[i - 1] == new[j - 1] {
+            edits.push(Edit::Keep);
+            i -= 1;
+            j -= 1;
+        } else if j > 0
+            && (i == 0 || dp[i * (m + 1) + (j - 1)] >= dp[(i - 1) * (m + 1) + j])
         {
-            k + 1
+            edits.push(Edit::Insert);
+            j -= 1;
         } else {
-            k - 1
-        };
-        let prev_idx = (prev_k + max as isize) as usize;
-        let prev_x = snap[prev_idx];
-        let prev_y = prev_x - prev_k;
-
-        // Snake first (backwards): equal elements between prev and current.
-        while x > prev_x + 1 && y > prev_y + 1 {
-            x -= 1;
-            y -= 1;
-            edits.push((x, y));
+            edits.push(Edit::Delete);
+            i -= 1;
         }
-        // The step itself.
-        if d > 0 {
-            edits.push((prev_x, prev_y));
-        }
-        x = prev_x;
-        y = prev_y;
     }
     edits.reverse();
-
-    // Convert waypoints to edits by comparing consecutive positions.
-    let mut result = Vec::with_capacity(n + m);
-    let mut ox: usize = 0;
-    let mut nx: usize = 0;
-
-    for (wx, wy) in edits {
-        let wx = wx as usize;
-        let wy = wy as usize;
-        // Walk old from ox to wx: delete
-        while ox < wx {
-            result.push(Edit::Delete);
-            ox += 1;
-        }
-        // Walk new from nx to wy: insert
-        while nx < wy {
-            result.push(Edit::Insert);
-            nx += 1;
-        }
-        // Keep this pair (it was a match)
-        if ox < n && nx < m {
-            result.push(Edit::Keep);
-            ox += 1;
-            nx += 1;
-        }
-    }
-    // Drain any remaining old/new lines.
-    while ox < n {
-        result.push(Edit::Delete);
-        ox += 1;
-    }
-    while nx < m {
-        result.push(Edit::Insert);
-        nx += 1;
-    }
-    result
+    edits
 }
 
 /// Build the unified-diff string from an edit script.
