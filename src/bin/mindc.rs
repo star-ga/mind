@@ -20,6 +20,8 @@ use std::process;
 
 use clap::{ArgAction, Parser, Subcommand};
 
+use libmind::fmt::cli as mindc_fmt;
+
 use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{compile_source_with_name, CompileOptions};
@@ -114,6 +116,25 @@ enum Command {
         /// Which profile to execute (cpu|gpu).
         #[arg(long, default_value = "cpu")]
         profile: String,
+    },
+    /// Format MIND source files (or directories of *.mind files).
+    Fmt {
+        /// Files or directories to format. Directories are walked recursively
+        /// for *.mind files. Defaults to the current directory when omitted.
+        #[arg(value_name = "PATHS")]
+        paths: Vec<String>,
+        /// Check whether files are already formatted; exit 1 if any would
+        /// change. No files are written.
+        #[arg(long)]
+        check: bool,
+        /// Print a unified diff between the original and formatted source;
+        /// exit 1 if any file would change. No files are written.
+        #[arg(long)]
+        diff: bool,
+        /// Read source from stdin and write the formatted result to stdout.
+        /// Cannot be combined with positional PATHS.
+        #[arg(long)]
+        stdin: bool,
     },
     /// Inspect compiler knowledge about Core profiles.
     Ops {
@@ -251,6 +272,14 @@ fn main() {
         Some(Command::Conformance { profile }) => {
             run_conformance(profile);
             return;
+        }
+        Some(Command::Fmt {
+            paths,
+            check,
+            diff,
+            stdin,
+        }) => {
+            process::exit(mindc_fmt::run_fmt(paths, *check, *diff, *stdin));
         }
         Some(Command::Ops { .. }) => {
             print_ops(&cli.command);

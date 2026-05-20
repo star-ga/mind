@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2531 | **Est. tokens:** ~6,258,000
-**Generated:** 2026-05-20 12:37 UTC
+**Files:** 2533 | **Est. tokens:** ~6,265,404
+**Generated:** 2026-05-20 13:16 UTC
 
 ## Token Budget Guide
 
@@ -363,7 +363,7 @@
 | `src/` | 7 | ~16,197 |
 | `src/ast/` | 1 | ~4,642 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~11,289 |
+| `src/bin/` | 2 | ~11,555 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
@@ -371,7 +371,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 2 | ~11,473 |
+| `src/fmt/` | 3 | ~15,669 |
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -387,7 +387,7 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,719 |
-| `tests/` | 111 | ~121,005 |
+| `tests/` | 112 | ~123,947 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3518,7 +3518,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~5246 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~5512 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3572,7 +3572,8 @@
 - `sys.rs` (~1772 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/fmt/`
 
-- `mod.rs` (~591 tok, large) — Copyright 2025 STARGA Inc.
+- `cli.rs` (~4193 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
 - `printer.rs` (~10882 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
@@ -3773,6 +3774,7 @@
 - `07_string_literal_passthrough.out.mind` (~14 tok, tiny) — fn get_message() -> i64 {
 ### `tests/`
 
+- `mindcraft_fmt_cli.rs` (~2942 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt_fixtures.rs` (~1302 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/`
 
