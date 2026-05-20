@@ -1,0 +1,11 @@
+fn classify(x: i64) -> i64 {
+    if x < 0 {
+        let sign: i64 = -1;
+        if x < -100 {
+            let extreme: i64 = 1;
+        }
+    } else {
+        let sign: i64 = 1;
+    }
+    x;
+}
