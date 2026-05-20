@@ -89,6 +89,10 @@ harness = false
 name = "cerebras_stencil"
 harness = false
 
+[[bench]]
+name = "mindcraft_fmt"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
