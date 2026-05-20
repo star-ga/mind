@@ -5,6 +5,71 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.8] - 2026-05-19 — mind-blas Windows-MSVC C-shim port: `runtime-support/mind_intrinsics.c` now builds and links on Windows (cl.exe + clang-on-Windows), `tests/blas_smoke.rs` un-skipped; 12/12 PASS cross-microarch (Haswell-E Linux ↔ Meteor Lake Windows); Q16.16 byte-identity invariant (task #57) gated x86↔x86
+
+### Added — Windows-MSVC support for the SIMD runtime shim (RFC 0006 #225)
+
+`runtime-support/mind_intrinsics.c` ports cleanly to both Microsoft
+Visual C++ (`cl.exe`) and clang-on-Windows. The same C source compiles
+on:
+
+- gcc Linux x86_64 (Haswell-E i7-5930K)
+- clang-on-Windows x86_64 (Meteor Lake Core Ultra 9 185H)
+
+with `tests/blas_smoke.rs`'s 12 tests passing on both. The two Q16.16
+byte-identity gates —
+`dot_q16_byte_identical_scalar_vs_avx2_all_lengths` and the L1 sibling
+— hold cross-microarch (2014 µarch → 2024 µarch), closing the x86↔x86
+half of task #57.
+
+### Portability shims
+
+The single-source approach uses a small `_MSC_VER && !__clang__` /
+`_WIN32` ladder for the items the GCC-style toolchain takes for
+granted:
+
+- `MIND_TARGET_AVX2` — `__attribute__((target("avx2,fma")))` on
+  GCC/clang; empty on MSVC (cl.exe gets `/arch:AVX2` globally).
+- `MIND_ALIGN32` — `__attribute__((aligned(32)))` / `__declspec(align(32))`.
+- `MIND_EXPORT` — `__declspec(dllexport)` on Windows; empty on Linux
+  (ELF auto-exports visible symbols, PE does not).
+- Constructor — `__attribute__((constructor))` on GCC/clang; cl.exe
+  uses the `.CRT$XCU` section trick to register a function-pointer
+  initializer at DLL load.
+- CPU feature probe — clang-on-Windows lacks the compiler-rt symbols
+  `__cpu_indicator_init` / `__cpu_model`, so we use `__cpuid` /
+  `__cpuidex` from `<intrin.h>` on every `_WIN32` build (works for
+  both `cl.exe` and clang-on-Windows).
+- `pread` / `pwrite` — emulated via `<io.h>` `_read` / `_write` with a
+  save-cursor / `SetFilePointer` / restore wrapper.
+- `<stdio.h>` for `SEEK_SET` / `SEEK_CUR` on Windows (Unix gets them
+  via `<unistd.h>`).
+- `<intrin.h>` is included at file scope (NOT inside any function
+  body), because `<intrin.h>` defines many inline functions and C
+  does not allow function definitions inside other functions.
+
+### Test surface un-skipped
+
+`tests/blas_smoke.rs` removes its `#[cfg(windows)]` self-skip and now
+builds the shim into `mind_blas_smoke.dll` on Windows via clang. All
+12 tests pass:
+
+```
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+finished in 0.69s
+```
+
+### What this does NOT change
+
+No `.mind` source, no MLIR lowering, no codegen, no public ABI, no
+intrinsic surface. The compiler is byte-identical; the bench-gate
++7% cap holds (no change to the default Linux binary). Existing
+Linux behaviour is unchanged — `MIND_EXPORT`, `MIND_ALIGN32`,
+`MIND_TARGET_AVX2` all expand to the same GCC attributes already in
+use.
+
+`mind@19e4028`.
+
 ## [0.6.7] - 2026-05-20 — mind-blas Track B increment 4: `matmul_rmajor_q16_v` pure-MIND Q16.16 matvec (byte-identical via dot_q16_v composition, no new intrinsic, no compiler change; prerequisite for mind-nerve 0.3.0b7 thesis-pure encode path)
 
 ### Added — `matmul_rmajor_q16_v` in std/blas.mind (RFC 0006 inc 4)
