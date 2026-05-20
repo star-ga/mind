@@ -23,6 +23,10 @@ use crate::ast::{BinOp, Literal, MatchArm, Module, Node, Param, Pattern, Span, T
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
 
+mod trivia;
+pub use trivia::{Trivia, TriviaKind, TriviaStream};
+use trivia::{TriviaCollector, strip_comments_with_trivia};
+
 #[derive(Debug, Clone)]
 pub struct ParseError {
     pub offset: usize,
@@ -3153,40 +3157,8 @@ fn extract_reap_threshold(attrs: &[crate::ast::Attribute]) -> Option<f64> {
     result
 }
 
-/// Strip single-line comments (`// ...`) from source code.
-/// Preserves line structure for accurate error reporting.
-/// Correctly handles `//` inside string literals.
-fn strip_comments(input: &str) -> String {
-    input
-        .lines()
-        .map(|line| {
-            let bytes = line.as_bytes();
-            let mut in_string = false;
-            let mut i = 0;
-            while i < bytes.len() {
-                if in_string {
-                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                        i += 2; // skip escaped character
-                        continue;
-                    }
-                    if bytes[i] == b'"' {
-                        in_string = false;
-                    }
-                } else if bytes[i] == b'"' {
-                    in_string = true;
-                } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                    return &line[..i];
-                }
-                i += 1;
-            }
-            line
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 pub fn parse(input: &str) -> Result<Module, Vec<ParseError>> {
-    let stripped = strip_comments(input);
+    let (stripped, _) = strip_comments_with_trivia(input, &mut None);
     let mut p = P::new(&stripped);
     match p.parse_module() {
         Ok(m) => Ok(m),
@@ -3203,7 +3175,7 @@ pub fn parse_with_diagnostics_in_file(
     input: &str,
     file: Option<&str>,
 ) -> Result<Module, Vec<PrettyDiagnostic>> {
-    let stripped = strip_comments(input);
+    let (stripped, _) = strip_comments_with_trivia(input, &mut None);
     let mut p = P::new(&stripped);
     match p.parse_module() {
         Ok(m) => Ok(m),
@@ -3224,5 +3196,33 @@ pub fn parse_with_diagnostics_in_file(
             };
             Err(vec![diag])
         }
+    }
+}
+
+/// Parse `input`, collecting trivia (comments and blank lines) in addition to
+/// the AST.
+///
+/// Returns `(module, trivia_stream)` where `module` is identical to what
+/// [`parse`] returns for the same input, and `trivia_stream` contains one
+/// [`Trivia`] record per `//` comment, `///` doc-comment, and blank line in the
+/// original source, in source order.
+///
+/// The `module` field is unaffected by trivia collection — its `Node` tree is
+/// byte-identical to the result of `parse(input)`.
+pub fn parse_with_trivia(input: &str) -> Result<(Module, TriviaStream), Vec<ParseError>> {
+    // All trivia is collected during the comment-stripping pass, before the
+    // parser sees the source.  This is zero-overhead for regular `parse` calls
+    // (which pass `None` and take the fast path).
+    let mut collector = Some(TriviaCollector::new());
+    let (stripped, _offset_map) = strip_comments_with_trivia(input, &mut collector);
+
+    let stream = collector
+        .expect("collector must be Some after strip_comments_with_trivia")
+        .into_stream();
+
+    let mut p = P::new(&stripped);
+    match p.parse_module() {
+        Ok(m) => Ok((m, stream)),
+        Err(e) => Err(vec![e]),
     }
 }
