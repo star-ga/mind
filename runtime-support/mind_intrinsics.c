@@ -42,66 +42,125 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+// --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
+// Function/data attributes that vary between GCC/Clang and MSVC, plus
+// POSIX I/O replacements. Defined here so every code path below stays
+// untouched and works under both clang/gcc (Linux/Mac) and cl.exe
+// (Windows).  See tests/blas_smoke.rs for the Windows un-skip.
+#if defined(_MSC_VER) && !defined(__clang__)
+#  define MIND_TARGET_AVX2   /* cl.exe needs /arch:AVX2 globally; no per-fn attr */
+#  define MIND_ALIGN32       __declspec(align(32))
+#else
+#  define MIND_TARGET_AVX2   __attribute__((target("avx2,fma")))
+#  define MIND_ALIGN32       __attribute__((aligned(32)))
+#endif
+
+// DLL symbol export. MSVC + clang-cl need __declspec(dllexport) explicitly
+// on every public symbol (Windows OpenSSH-built DLLs cannot rely on the
+// ELF-style "all global symbols exported" default). On ELF / Mach-O the
+// macro expands to nothing; default-visibility makes them externally
+// linkable already, matching the historical clang -shared -fPIC behaviour.
+#if defined(_WIN32) || defined(_WIN64)
+#  define MIND_EXPORT __declspec(dllexport)
+#else
+#  define MIND_EXPORT
+#endif
+
+// POSIX I/O: Windows has _read / _write in <io.h> and lacks pread/pwrite.
+// Emulate pread/pwrite via _lseeki64+_read/_write — non-atomic, matches
+// the existing single-threaded runtime use.
+#if defined(_WIN32)
+#  include <io.h>
+#  include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+typedef long long mind_off_t;
+static ssize_t mind_pread_emu(int fd, void *buf, size_t count, mind_off_t off) {
+    long long cur = _lseeki64(fd, 0, SEEK_CUR);
+    if (cur < 0) return -1;
+    if (_lseeki64(fd, off, SEEK_SET) < 0) return -1;
+    int r = _read(fd, buf, (unsigned)count);
+    _lseeki64(fd, cur, SEEK_SET);
+    return (ssize_t)r;
+}
+static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t off) {
+    long long cur = _lseeki64(fd, 0, SEEK_CUR);
+    if (cur < 0) return -1;
+    if (_lseeki64(fd, off, SEEK_SET) < 0) return -1;
+    int r = _write(fd, buf, (unsigned)count);
+    _lseeki64(fd, cur, SEEK_SET);
+    return (ssize_t)r;
+}
+#  define MIND_READ(fd, b, c)      _read((fd), (b), (unsigned)(c))
+#  define MIND_WRITE(fd, b, c)     _write((fd), (b), (unsigned)(c))
+#  define MIND_PREAD(fd, b, c, o)  mind_pread_emu((fd), (b), (c), (mind_off_t)(o))
+#  define MIND_PWRITE(fd, b, c, o) mind_pwrite_emu((fd), (b), (c), (mind_off_t)(o))
+#else
+#  include <unistd.h>
+#  define MIND_READ(fd, b, c)      read((fd), (b), (c))
+#  define MIND_WRITE(fd, b, c)     write((fd), (b), (c))
+#  define MIND_PREAD(fd, b, c, o)  pread((fd), (b), (c), (off_t)(o))
+#  define MIND_PWRITE(fd, b, c, o) pwrite((fd), (b), (c), (off_t)(o))
+#endif
 
 // ---------------------------------------------------------------------------
 // Seven RFC 0005 intrinsics
 // ---------------------------------------------------------------------------
 
-int64_t __mind_alloc(int64_t bytes) {
+MIND_EXPORT int64_t __mind_alloc(int64_t bytes) {
     if (bytes <= 0) return 0;
     void *p = malloc((size_t)bytes);
     return (int64_t)(uintptr_t)p;
 }
 
-int64_t __mind_realloc(int64_t addr, int64_t new_bytes) {
+MIND_EXPORT int64_t __mind_realloc(int64_t addr, int64_t new_bytes) {
     void *p = realloc((void *)(uintptr_t)addr, (size_t)new_bytes);
     return (int64_t)(uintptr_t)p;
 }
 
-int64_t __mind_free(int64_t addr) {
+MIND_EXPORT int64_t __mind_free(int64_t addr) {
     free((void *)(uintptr_t)addr);
     return 0;
 }
 
-int64_t __mind_load_i64(int64_t addr) {
+MIND_EXPORT int64_t __mind_load_i64(int64_t addr) {
     int64_t val;
     memcpy(&val, (void *)(uintptr_t)addr, sizeof(int64_t));
     return val;
 }
 
-int64_t __mind_store_i64(int64_t addr, int64_t val) {
+MIND_EXPORT int64_t __mind_store_i64(int64_t addr, int64_t val) {
     memcpy((void *)(uintptr_t)addr, &val, sizeof(int64_t));
     return 0;
 }
 
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
 // offset == -1 means "use current stream position" (plain read).
-int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
+MIND_EXPORT int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
     if (buf_addr == 0 || count <= 0) return 0;
     void *buf = (void *)(uintptr_t)buf_addr;
     if (offset < 0) {
-        return (int64_t)read((int)fd, buf, (size_t)count);
+        return (int64_t)MIND_READ((int)fd, buf, (size_t)count);
     }
-    return (int64_t)pread((int)fd, buf, (size_t)count, (off_t)offset);
+    return (int64_t)MIND_PREAD((int)fd, buf, (size_t)count, offset);
 }
 
 // __mind_write(fd, buf_addr, count, offset) — POSIX write/pwrite.
 // offset == -1 means "use current stream position" (plain write).
-int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
+MIND_EXPORT int64_t __mind_write(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
     if (buf_addr == 0 || count <= 0) return 0;
     void *buf = (void *)(uintptr_t)buf_addr;
     if (offset < 0) {
-        return (int64_t)write((int)fd, buf, (size_t)count);
+        return (int64_t)MIND_WRITE((int)fd, buf, (size_t)count);
     }
-    return (int64_t)pwrite((int)fd, buf, (size_t)count, (off_t)offset);
+    return (int64_t)MIND_PWRITE((int)fd, buf, (size_t)count, offset);
 }
 
 // print_bytes — convenience: write `count` bytes from `buf_addr` to stdout.
 // Corresponds to std/io.mind `print_bytes(buf_addr, count)`.
 // Compiled by mindc as an external call (the MIND stdlib function body is
 // not inlined into the cdylib during --emit-shared).
-int64_t print_bytes(int64_t buf_addr, int64_t count) {
+MIND_EXPORT int64_t print_bytes(int64_t buf_addr, int64_t count) {
     return __mind_write(1, buf_addr, count, -1);
 }
 
@@ -113,7 +172,7 @@ int64_t print_bytes(int64_t buf_addr, int64_t count) {
 // ---------------------------------------------------------------------------
 
 // Allocate a new Vec heap record with addr=0, len=0, cap=0.
-int64_t vec_new(void) {
+MIND_EXPORT int64_t vec_new(void) {
     int64_t rec = __mind_alloc(24); // 3 × i64
     __mind_store_i64(rec,      0);  // addr
     __mind_store_i64(rec + 8,  0);  // len
@@ -121,24 +180,24 @@ int64_t vec_new(void) {
     return rec;
 }
 
-int64_t vec_len(int64_t v) {
+MIND_EXPORT int64_t vec_len(int64_t v) {
     return __mind_load_i64(v + 8);
 }
 
-int64_t vec_cap(int64_t v) {
+MIND_EXPORT int64_t vec_cap(int64_t v) {
     return __mind_load_i64(v + 16);
 }
 
-int64_t vec_addr(int64_t v) {
+MIND_EXPORT int64_t vec_addr(int64_t v) {
     return __mind_load_i64(v);
 }
 
-int64_t vec_get(int64_t v, int64_t i) {
+MIND_EXPORT int64_t vec_get(int64_t v, int64_t i) {
     int64_t base = __mind_load_i64(v);
     return __mind_load_i64(base + i * 8);
 }
 
-int64_t vec_set(int64_t v, int64_t i, int64_t value) {
+MIND_EXPORT int64_t vec_set(int64_t v, int64_t i, int64_t value) {
     int64_t base = __mind_load_i64(v);
     return __mind_store_i64(base + i * 8, value);
 }
@@ -147,7 +206,7 @@ int64_t vec_set(int64_t v, int64_t i, int64_t value) {
 //
 // Returns the same Vec record address (mutates in place).
 // Growth: cap 0 → 4, otherwise double when len == cap.
-int64_t vec_push(int64_t v, int64_t value) {
+MIND_EXPORT int64_t vec_push(int64_t v, int64_t value) {
     int64_t len  = __mind_load_i64(v + 8);
     int64_t cap  = __mind_load_i64(v + 16);
     int64_t base = __mind_load_i64(v);
@@ -183,7 +242,7 @@ int64_t vec_push(int64_t v, int64_t value) {
 // ---------------------------------------------------------------------------
 
 // map_new — empty Map heap record, all fields zero.
-int64_t map_new(void) {
+MIND_EXPORT int64_t map_new(void) {
     int64_t rec = __mind_alloc(32); // 4 × i64
     __mind_store_i64(rec,      0);  // keys_addr
     __mind_store_i64(rec + 8,  0);  // vals_addr
@@ -193,33 +252,33 @@ int64_t map_new(void) {
 }
 
 // map_len — current entry count.
-int64_t map_len(int64_t m) {
+MIND_EXPORT int64_t map_len(int64_t m) {
     return __mind_load_i64(m + 16);
 }
 
 // map_cap — current backing-store capacity.
-int64_t map_cap(int64_t m) {
+MIND_EXPORT int64_t map_cap(int64_t m) {
     return __mind_load_i64(m + 24);
 }
 
 // map_keys_addr — opaque i64 base address of the keys array.
-int64_t map_keys_addr(int64_t m) {
+MIND_EXPORT int64_t map_keys_addr(int64_t m) {
     return __mind_load_i64(m);
 }
 
 // map_vals_addr — opaque i64 base address of the values array.
-int64_t map_vals_addr(int64_t m) {
+MIND_EXPORT int64_t map_vals_addr(int64_t m) {
     return __mind_load_i64(m + 8);
 }
 
 // map_key_at — key at logical index i (no bounds check).
-int64_t map_key_at(int64_t m, int64_t i) {
+MIND_EXPORT int64_t map_key_at(int64_t m, int64_t i) {
     int64_t keys = __mind_load_i64(m);
     return __mind_load_i64(keys + i * 8);
 }
 
 // map_value_at — value at logical index i (no bounds check).
-int64_t map_value_at(int64_t m, int64_t i) {
+MIND_EXPORT int64_t map_value_at(int64_t m, int64_t i) {
     int64_t vals = __mind_load_i64(m + 8);
     return __mind_load_i64(vals + i * 8);
 }
@@ -231,7 +290,7 @@ int64_t map_value_at(int64_t m, int64_t i) {
 // returns a new Map handle).  The backing stores are either reused (when
 // len < cap) or reallocated (when len == cap, doubling policy).
 // Growth: cap 0 → 4, then doubles.
-int64_t map_insert(int64_t m, int64_t key, int64_t value) {
+MIND_EXPORT int64_t map_insert(int64_t m, int64_t key, int64_t value) {
     int64_t keys_addr = __mind_load_i64(m);
     int64_t vals_addr = __mind_load_i64(m + 8);
     int64_t len       = __mind_load_i64(m + 16);
@@ -285,7 +344,7 @@ int64_t map_insert(int64_t m, int64_t key, int64_t value) {
 // ---------------------------------------------------------------------------
 
 // string_new — empty String heap record, all fields zero.
-int64_t string_new(void) {
+MIND_EXPORT int64_t string_new(void) {
     int64_t rec = __mind_alloc(24); // 3 × i64
     __mind_store_i64(rec,      0);  // addr
     __mind_store_i64(rec + 8,  0);  // len
@@ -294,22 +353,22 @@ int64_t string_new(void) {
 }
 
 // string_len — current byte length.
-int64_t string_len(int64_t s) {
+MIND_EXPORT int64_t string_len(int64_t s) {
     return __mind_load_i64(s + 8);
 }
 
 // string_cap — backing-store capacity in bytes.
-int64_t string_cap(int64_t s) {
+MIND_EXPORT int64_t string_cap(int64_t s) {
     return __mind_load_i64(s + 16);
 }
 
 // string_addr — opaque i64 base address of the byte content.
-int64_t string_addr(int64_t s) {
+MIND_EXPORT int64_t string_addr(int64_t s) {
     return __mind_load_i64(s);
 }
 
 // string_get_byte — single byte read (lower 8 bits, no bounds check).
-int64_t string_get_byte(int64_t s, int64_t i) {
+MIND_EXPORT int64_t string_get_byte(int64_t s, int64_t i) {
     int64_t base = __mind_load_i64(s);
     return __mind_load_i64(base + i) & 0xFF;
 }
@@ -320,7 +379,7 @@ int64_t string_get_byte(int64_t s, int64_t i) {
 // call (matches std/string.mind's non-mutating semantics).  The backing
 // store is reused when len < cap and reallocated (doubling) when len == cap.
 // Growth: cap 0 → 16, then doubles.
-int64_t string_push_byte(int64_t s, int64_t b) {
+MIND_EXPORT int64_t string_push_byte(int64_t s, int64_t b) {
     int64_t base    = __mind_load_i64(s);
     int64_t len     = __mind_load_i64(s + 8);
     int64_t cap     = __mind_load_i64(s + 16);
@@ -418,22 +477,54 @@ int __mind_blas_get_use_avx2(void) {
     return mind_blas_use_avx2;
 }
 
-#if defined(__GNUC__) || defined(__clang__)
-__attribute__((constructor))
-#endif
-static void mind_blas_init_dispatch(void) {
-#if MIND_BLAS_X86_64 && (defined(__GNUC__) || defined(__clang__))
-    // __builtin_cpu_init must be called before __builtin_cpu_supports on gcc;
-    // clang treats it as a no-op.  We need both AVX2 (256-bit lanes) and FMA
-    // (fused-multiply-add); CPUs that have AVX2 typically also have FMA, but
-    // the pair is checked explicitly so a Haswell-without-FMA outlier falls
-    // back to scalar instead of SIGILL-ing inside _mm256_fmadd_ps.
+// CPU-feature probe — AVX2 (256-bit lanes) + FMA (fused multiply-add).
+// CPUs that have AVX2 typically also have FMA, but we check the pair so a
+// Haswell-without-FMA outlier falls back to scalar instead of SIGILL-ing
+// inside _mm256_fmadd_ps.
+static int mind_blas_cpu_has_avx2_fma(void) {
+#if MIND_BLAS_X86_64
+#  if defined(_MSC_VER) && !defined(__clang__)
+    // MSVC: documented __cpuid / __cpuidex intrinsics from <intrin.h>.
+    int regs[4];
+    __cpuid(regs, 0);
+    if (regs[0] < 7) return 0;
+    __cpuidex(regs, 7, 0);
+    int has_avx2 = (regs[1] >> 5) & 1;    // CPUID 7,0 EBX bit 5
+    __cpuid(regs, 1);
+    int has_fma  = (regs[2] >> 12) & 1;   // CPUID 1   ECX bit 12
+    return has_avx2 && has_fma;
+#  else
+    // GCC/Clang: builtins — clang's __builtin_cpu_init is a no-op, gcc needs it.
     __builtin_cpu_init();
-    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
-        mind_blas_use_avx2 = 1;
-    }
+    return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+#  endif
+#else
+    return 0;
 #endif
 }
+
+#if defined(_MSC_VER) && !defined(__clang__)
+// MSVC: register a CRT-initializer in the .CRT$XCU section so the
+// dispatcher runs once at DLL load, mirroring GCC's __attribute__((constructor))
+// semantics. This is the documented Microsoft pattern (see MS Learn /
+// "CRT Initialization") — the dispatcher function pointer goes into the
+// CRT's startup walk between $XCA and $XCZ.
+#  pragma section(".CRT$XCU", read)
+static void mind_blas_init_dispatch(void);
+__declspec(allocate(".CRT$XCU")) static void (*mind_blas_ctor_p)(void) = mind_blas_init_dispatch;
+static void mind_blas_init_dispatch(void) {
+    if (mind_blas_cpu_has_avx2_fma()) {
+        mind_blas_use_avx2 = 1;
+    }
+}
+#else
+__attribute__((constructor))
+static void mind_blas_init_dispatch(void) {
+    if (mind_blas_cpu_has_avx2_fma()) {
+        mind_blas_use_avx2 = 1;
+    }
+}
+#endif
 
 // Pack an f32 into the low 32 bits of an i64 (sign-extended zero of high 32).
 // The caller is expected to reinterpret the low 32 bits as IEEE-754 f32 via
@@ -441,7 +532,7 @@ static void mind_blas_init_dispatch(void) {
 // keeps strict-aliasing rules happy on every supported compiler.
 static inline int64_t mind_blas_pack_f32(float v) {
     uint32_t bits;
-    __builtin_memcpy(&bits, &v, sizeof(bits));
+    memcpy(&bits, &v, sizeof(bits));
     return (int64_t)(uint64_t)bits;
 }
 
@@ -456,7 +547,7 @@ static float mind_blas_dot_f32_scalar(const float *a, const float *b, int64_t le
 }
 
 #if MIND_BLAS_X86_64
-__attribute__((target("avx2,fma")))
+MIND_TARGET_AVX2
 static float mind_blas_dot_f32_avx2(const float *a, const float *b, int64_t len) {
     __m256 acc = _mm256_setzero_ps();
     int64_t i = 0;
@@ -479,7 +570,7 @@ static float mind_blas_dot_f32_avx2(const float *a, const float *b, int64_t len)
 }
 #endif
 
-int64_t __mind_blas_dot_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
+MIND_EXPORT int64_t __mind_blas_dot_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
     if (len <= 0 || a_addr == 0 || b_addr == 0) return mind_blas_pack_f32(0.0f);
     const float *a = (const float *)(uintptr_t)a_addr;
     const float *b = (const float *)(uintptr_t)b_addr;
@@ -508,7 +599,7 @@ static float mind_blas_dot_l1_f32_scalar(const float *a, const float *b, int64_t
 }
 
 #if MIND_BLAS_X86_64
-__attribute__((target("avx2,fma")))
+MIND_TARGET_AVX2
 static float mind_blas_dot_l1_f32_avx2(const float *a, const float *b, int64_t len) {
     // Sign mask: all bits set except the IEEE-754 sign bit -> bitwise AND
     // clears the sign and produces |x| in a single instruction.
@@ -536,7 +627,7 @@ static float mind_blas_dot_l1_f32_avx2(const float *a, const float *b, int64_t l
 }
 #endif
 
-int64_t __mind_blas_dot_l1_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
+MIND_EXPORT int64_t __mind_blas_dot_l1_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
     if (len <= 0 || a_addr == 0 || b_addr == 0) return mind_blas_pack_f32(0.0f);
     const float *a = (const float *)(uintptr_t)a_addr;
     const float *b = (const float *)(uintptr_t)b_addr;
@@ -566,7 +657,7 @@ static float mind_blas_dot_linf_f32_scalar(const float *a, const float *b, int64
 }
 
 #if MIND_BLAS_X86_64
-__attribute__((target("avx2,fma")))
+MIND_TARGET_AVX2
 static float mind_blas_dot_linf_f32_avx2(const float *a, const float *b, int64_t len) {
     const __m256 abs_mask = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
     __m256 acc = _mm256_setzero_ps();
@@ -596,7 +687,7 @@ static float mind_blas_dot_linf_f32_avx2(const float *a, const float *b, int64_t
 }
 #endif
 
-int64_t __mind_blas_dot_linf_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
+MIND_EXPORT int64_t __mind_blas_dot_linf_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
     if (len <= 0 || a_addr == 0 || b_addr == 0) return mind_blas_pack_f32(0.0f);
     const float *a = (const float *)(uintptr_t)a_addr;
     const float *b = (const float *)(uintptr_t)b_addr;
@@ -618,7 +709,7 @@ int64_t __mind_blas_dot_linf_f32(int64_t a_addr, int64_t b_addr, int64_t len) {
 // y must point at `rows` writable f32 slots.  Returns 0 on success, -1 if any
 // pointer is null.  Inner loop reuses the dot_f32 dispatcher so any AVX2
 // improvement applies row-by-row without duplication.
-int64_t __mind_blas_matmul_rmajor_f32(
+MIND_EXPORT int64_t __mind_blas_matmul_rmajor_f32(
     int64_t w_addr, int64_t x_addr, int64_t y_addr,
     int64_t rows, int64_t cols
 ) {
@@ -684,7 +775,7 @@ static int64_t mind_blas_dot_q16_scalar(const int32_t *a, const int32_t *b, int6
 // all-1s in lanes where x < 0, all-0s otherwise), shifted into the top 16
 // bits.  This matches the bit pattern the C-level `x >> 16` expression
 // produces under the LLVM `ashr` semantics our toolchain documents.
-__attribute__((target("avx2,fma")))
+MIND_TARGET_AVX2
 static inline __m256i mind_blas_srai_epi64_q16(__m256i x) {
     __m256i sign = _mm256_cmpgt_epi64(_mm256_setzero_si256(), x);
     __m256i logical = _mm256_srli_epi64(x, 16);
@@ -692,7 +783,7 @@ static inline __m256i mind_blas_srai_epi64_q16(__m256i x) {
     return _mm256_or_si256(logical, fill);
 }
 
-__attribute__((target("avx2,fma")))
+MIND_TARGET_AVX2
 static int64_t mind_blas_dot_q16_avx2(const int32_t *a, const int32_t *b, int64_t len) {
     // The widening multiply `_mm256_mul_epi32` takes the even-indexed 32-bit
     // lanes of each input, sign-extends them to 64 bits, multiplies, and
@@ -726,7 +817,7 @@ static int64_t mind_blas_dot_q16_avx2(const int32_t *a, const int32_t *b, int64_
         acc = _mm256_add_epi64(acc, prod_odd);
     }
     // Horizontal sum of four i64 lanes.
-    int64_t buf[4] __attribute__((aligned(32)));
+    int64_t buf[4] MIND_ALIGN32;
     _mm256_store_si256((__m256i *)buf, acc);
     int64_t sum = buf[0] + buf[1] + buf[2] + buf[3];
     for (; i < len; ++i) {
@@ -737,7 +828,7 @@ static int64_t mind_blas_dot_q16_avx2(const int32_t *a, const int32_t *b, int64_
 }
 #endif
 
-int64_t __mind_blas_dot_q16(int64_t a_addr, int64_t b_addr, int64_t len) {
+MIND_EXPORT int64_t __mind_blas_dot_q16(int64_t a_addr, int64_t b_addr, int64_t len) {
     if (len <= 0 || a_addr == 0 || b_addr == 0) return 0;
     const int32_t *a = (const int32_t *)(uintptr_t)a_addr;
     const int32_t *b = (const int32_t *)(uintptr_t)b_addr;
@@ -765,7 +856,7 @@ static int64_t mind_blas_dot_l1_q16_scalar(const int32_t *a, const int32_t *b, i
 }
 
 #if MIND_BLAS_X86_64
-__attribute__((target("avx2,fma")))
+MIND_TARGET_AVX2
 static int64_t mind_blas_dot_l1_q16_avx2(const int32_t *a, const int32_t *b, int64_t len) {
     // Lane-wise: |a - b| as i32, then widen + sum.  _mm256_abs_epi32 is a
     // single AVX2 instruction; for the widening sum we go via two
@@ -786,7 +877,7 @@ static int64_t mind_blas_dot_l1_q16_avx2(const int32_t *a, const int32_t *b, int
         acc = _mm256_add_epi64(acc, lo64);
         acc = _mm256_add_epi64(acc, hi64);
     }
-    int64_t buf[4] __attribute__((aligned(32)));
+    int64_t buf[4] MIND_ALIGN32;
     _mm256_store_si256((__m256i *)buf, acc);
     int64_t sum = buf[0] + buf[1] + buf[2] + buf[3];
     for (; i < len; ++i) {
@@ -798,7 +889,7 @@ static int64_t mind_blas_dot_l1_q16_avx2(const int32_t *a, const int32_t *b, int
 }
 #endif
 
-int64_t __mind_blas_dot_l1_q16(int64_t a_addr, int64_t b_addr, int64_t len) {
+MIND_EXPORT int64_t __mind_blas_dot_l1_q16(int64_t a_addr, int64_t b_addr, int64_t len) {
     if (len <= 0 || a_addr == 0 || b_addr == 0) return 0;
     const int32_t *a = (const int32_t *)(uintptr_t)a_addr;
     const int32_t *b = (const int32_t *)(uintptr_t)b_addr;
