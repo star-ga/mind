@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2534 | **Est. tokens:** ~6,266,348
-**Generated:** 2026-05-20 13:25 UTC
+**Files:** 2535 | **Est. tokens:** ~6,268,343
+**Generated:** 2026-05-20 14:07 UTC
 
 ## Token Budget Guide
 
@@ -40,8 +40,8 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
-| `docs/mindcraft/` | 1 | ~2,213 |
-| `docs/rfcs/` | 13 | ~29,868 |
+| `docs/mindcraft/` | 2 | ~4,452 |
+| `docs/rfcs/` | 13 | ~30,116 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -371,7 +371,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~15,669 |
+| `src/fmt/` | 3 | ~15,177 |
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -572,6 +572,7 @@
 - `ir-stability.md` (~1023 tok, large) — IR stability contract
 ### `docs/mindcraft/`
 
+- `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
 - `phase2-implementation-plan.md` (~2213 tok, huge) — Mindcraft Phase 2 — Implementation Plan
 ### `docs/`
 
@@ -591,7 +592,7 @@
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
-- `0007-mindcraft.md` (~2700 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
+- `0007-mindcraft.md` (~2948 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3573,7 +3574,7 @@
 - `sys.rs` (~1772 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/fmt/`
 
-- `cli.rs` (~4193 tok, huge) — Copyright 2025 STARGA Inc.
+- `cli.rs` (~3701 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
 - `printer.rs` (~10882 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
