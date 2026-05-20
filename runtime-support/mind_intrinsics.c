@@ -467,7 +467,7 @@ static int mind_blas_use_avx2 = 0;
 // Returns the previous value so the harness can save/restore.  Argument:
 //   0 -> force scalar path
 //   1 -> force AVX2 path (no-ops to scalar if AVX2 wasn't detected at load)
-int __mind_blas_set_use_avx2(int v) {
+MIND_EXPORT int __mind_blas_set_use_avx2(int v) {
     int prev = mind_blas_use_avx2;
     mind_blas_use_avx2 = (v != 0) ? 1 : 0;
     return prev;
@@ -475,7 +475,7 @@ int __mind_blas_set_use_avx2(int v) {
 
 // Read the dispatcher flag — the harness uses this to sanity-check that AVX2
 // was detected at .so load on hosts that have it.
-int __mind_blas_get_use_avx2(void) {
+MIND_EXPORT int __mind_blas_get_use_avx2(void) {
     return mind_blas_use_avx2;
 }
 
