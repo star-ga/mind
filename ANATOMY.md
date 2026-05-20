@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2535 | **Est. tokens:** ~6,268,343
-**Generated:** 2026-05-20 14:07 UTC
+**Files:** 2542 | **Est. tokens:** ~6,275,555
+**Generated:** 2026-05-20 15:00 UTC
 
 ## Token Budget Guide
 
@@ -360,7 +360,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,197 |
+| `src/` | 7 | ~16,200 |
 | `src/ast/` | 1 | ~4,642 |
 | `src/autodiff/` | 3 | ~4,256 |
 | `src/bin/` | 2 | ~11,555 |
@@ -375,6 +375,8 @@
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
+| `src/lint/` | 2 | ~3,584 |
+| `src/lint/rules/` | 2 | ~1,099 |
 | `src/mlir/` | 3 | ~26,259 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
@@ -387,7 +389,7 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,719 |
-| `tests/` | 112 | ~123,947 |
+| `tests/` | 113 | ~126,452 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -397,6 +399,7 @@
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~518 |
 | `tests/mindcraft/fmt/` | 14 | ~474 |
+| `tests/mindcraft/lint/` | 2 | ~21 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -3597,8 +3600,18 @@
 - `verify.rs` (~2729 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~912 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~915 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/lint/`
+
+- `mod.rs` (~1173 tok, large) — Copyright 2025 STARGA Inc.
+- `rule.rs` (~2411 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/lint/rules/`
+
+- `mod.rs` (~304 tok, medium) — Copyright 2025 STARGA Inc.
+- `trailing_whitespace.rs` (~795 tok, large) — Copyright 2025 STARGA Inc.
+### `src/`
+
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/mlir/`
 
@@ -3757,6 +3770,7 @@
 
 - `linalg_grad.rs` (~315 tok, medium) — Copyright 2025 STARGA Inc.
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
+- `lint_infrastructure.rs` (~2505 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/fmt/`
 
@@ -3778,6 +3792,10 @@
 
 - `mindcraft_fmt_cli.rs` (~2942 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt_fixtures.rs` (~1302 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/lint/`
+
+- `trailing_ws_clean.mind` (~10 tok, tiny) — fn foo() -> i64 {
+- `trailing_ws_dirty.mind` (~11 tok, tiny) — fn foo() -> i64 {
 ### `tests/mindcraft/`
 
 - `STABILITY_SKIP_LIST.md` (~518 tok, large) — Formatter Stability Skip List
