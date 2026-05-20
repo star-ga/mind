@@ -71,6 +71,7 @@
 // Emulate pread/pwrite via _lseeki64+_read/_write — non-atomic, matches
 // the existing single-threaded runtime use.
 #if defined(_WIN32)
+#  include <stdio.h>      // SEEK_SET / SEEK_CUR (Unix gets these via <unistd.h>)
 #  include <io.h>
 #  include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
