@@ -7,5 +7,5 @@ fn classify(x: i64) -> i64 {
     } else {
         let sign: i64 = 1;
     }
-    x;
+    x
 }

@@ -217,9 +217,14 @@ pub fn print_module(
         emit_node(&mut p, item, 0);
         p.push("\n");
 
-        // After the last item, flush any trailing trivia.
+        // After the last item, flush any trailing trivia (comments that
+        // appear after the last AST node — e.g. file-end doc comments,
+        // or block-interior comments the trivia walk places past the
+        // last item).  Use total_lines (exclusive upper bound) so the
+        // loop in emit_leading_trivia covers every line including the
+        // last one.
         if idx + 1 == item_count {
-            p.emit_leading_trivia(total_lines.saturating_sub(1));
+            p.emit_leading_trivia(total_lines);
         }
     }
 
@@ -532,8 +537,17 @@ fn emit_export(p: &mut Printer, names: &[String]) {
 
 /// Emit a list of statements that form a fn body, with collapse of excess
 /// blank lines (max 1) and stripping leading/trailing blank lines.
+///
+/// Semicolon policy (canonical MIND style — matches std/*.mind):
+/// - `let` bindings, `return`, `assign`, `assert`, `print` → always `;`
+/// - Block-structured nodes (`if`, `for`, `while`, `match`, inner blocks) → no `;`
+/// - Bare expression-statements that are the LAST statement → no `;`
+///   (implicit return expression; adding `;` is valid but not canonical)
+/// - Bare expression-statements that are NOT last → `;`
 fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
-    for stmt in stmts {
+    let len = stmts.len();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i + 1 == len;
         match stmt {
             Node::If { cond, then_branch, else_branch, .. } => {
                 let ind = p.indent_str();
@@ -576,10 +590,28 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
                 emit_fn_def(p, name, params, ret_type, body, *reap_threshold);
                 p.push("\n");
             }
+            // Statements with mandatory semicolons regardless of position.
+            Node::Let { .. }
+            | Node::Return { .. }
+            | Node::Assign { .. }
+            | Node::IndexAssign { .. }
+            | Node::FieldAssign { .. }
+            | Node::Assert { .. }
+            | Node::Print { .. } => {
+                emit_stmt(p, stmt);
+                p.push(";\n");
+            }
+            // Bare expression-statements: add `;` only when not the last
+            // statement (non-last = definitely a side-effecting call, not
+            // an implicit return).  The last bare expression is the
+            // canonical implicit-return form used throughout std/*.mind.
             _ => {
                 emit_stmt(p, stmt);
-                // Statements that are not block-structured get a semicolon.
-                p.push(";\n");
+                if is_last {
+                    p.push("\n");
+                } else {
+                    p.push(";\n");
+                }
             }
         }
     }
