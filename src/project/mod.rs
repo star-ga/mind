@@ -48,6 +48,177 @@ pub struct ProjectManifest {
     /// via an `export { ... }` block in the source.
     #[serde(default)]
     pub exports: ExportsConfig,
+    /// RFC 0007 (Mindcraft) Phase 1 — configuration surface for the
+    /// pure-MIND format / lint / check toolchain. Absent on projects
+    /// that don't opt in; defaults give every rule its canonical
+    /// severity, the canonical formatter settings, and VCS-aware
+    /// file selection. Per-target sections (`[mindcraft.cpu]`, etc.)
+    /// layer backend-specific overrides on top.
+    #[serde(default)]
+    pub mindcraft: MindcraftConfig,
+}
+
+/// RFC 0007 (Mindcraft) — `[mindcraft]` configuration block in
+/// `Mind.toml`. All fields default; an absent table is equivalent
+/// to the canonical "zero-config" state. See `docs/rfcs/0007-mindcraft.md`
+/// §5 for the normative description.
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MindcraftConfig {
+    /// Published JSON-schema URL so editors offer completion + validation
+    /// on `Mind.toml`. Stored verbatim — the compiler does not fetch it.
+    #[serde(default, rename = "$schema")]
+    pub schema: Option<String>,
+    /// Per-rule severity overrides. Keys are rule ids (e.g.
+    /// ``"lint::q16_overflow"``); values are ``off`` / ``info`` /
+    /// ``warn`` / ``error``. Unknown ids are reported by ``mindc check``
+    /// as a config-level diagnostic (not silently ignored), so typos
+    /// don't get traded for surprise behaviour.
+    #[serde(default)]
+    pub rules: HashMap<String, RuleSeverity>,
+    /// Formatter settings. Zero-config = the canonical layout; this
+    /// block exists so projects with a deliberate house style can pin
+    /// values — never as a tuning surface for "what looks nicer".
+    #[serde(default)]
+    pub format: MindcraftFormatConfig,
+    /// Glob-scoped layered overrides. Later entries take precedence
+    /// over earlier ones; each entry's `rules` map merges into the
+    /// surrounding config (not replaces it).
+    #[serde(default)]
+    pub overrides: Vec<MindcraftOverride>,
+    /// VCS integration — when ``use_ignore_file`` is true, the default
+    /// file set for ``mindc check`` follows the repository's ignore
+    /// rules (`.gitignore` etc.) so generated / vendored sources are
+    /// excluded by default.
+    #[serde(default)]
+    pub vcs: MindcraftVcsConfig,
+    /// Per-target sections. `[mindcraft.cpu]`, `[mindcraft.gpu]`,
+    /// `[mindcraft.cerebras]` layer backend-specific rules first-class
+    /// (e.g. a Q16.16-overflow rule that is `error` on a fixed-point
+    /// target and `warn` elsewhere). Each section accepts the same
+    /// keys as the surrounding block; merge order is base → per-target.
+    #[serde(default)]
+    pub cpu: Option<Box<MindcraftConfig>>,
+    #[serde(default)]
+    pub gpu: Option<Box<MindcraftConfig>>,
+    #[serde(default)]
+    pub cerebras: Option<Box<MindcraftConfig>>,
+}
+
+/// RFC 0007 §5 — severity model for individual rules. Mapped from
+/// the lowercase TOML strings; deserialisation rejects any other
+/// value with a clear error.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RuleSeverity {
+    /// Rule disabled — no diagnostic emitted, no `--fix` mutation.
+    Off,
+    /// Informational note; does not affect exit code.
+    Info,
+    /// Warning; surfaces in CI output. Default for stylistic rules.
+    Warn,
+    /// Hard error; ``mindc check`` exits non-zero on any match.
+    Error,
+}
+
+impl Default for RuleSeverity {
+    fn default() -> Self {
+        // Canonical default for any rule not explicitly mapped — see
+        // RFC 0007 §6. Each rule ships with its own baseline; this
+        // is only the fallback when the manifest mentions a rule by
+        // id with no value (TOML's bare ``"lint::foo"`` form).
+        RuleSeverity::Warn
+    }
+}
+
+/// RFC 0007 §5 — formatter settings. Zero-config gives the canonical
+/// layout; this block exists for deliberate house styles. Values are
+/// validated by ``mindc fmt`` at configuration-load time.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MindcraftFormatConfig {
+    /// Indent width in spaces. Canonical default 4; values <1 or >16
+    /// are rejected at load time.
+    #[serde(default = "default_format_indent")]
+    pub indent_width: u8,
+    /// Soft column limit for line wrapping. Canonical default 100.
+    /// Values below 40 are rejected (impractically narrow).
+    #[serde(default = "default_format_max_line_length")]
+    pub max_line_length: u16,
+    /// When true, the formatter inserts a trailing comma after the
+    /// final element of multi-line collections. Canonical default
+    /// ``true`` — matches the self-hosted front-end's own surface.
+    #[serde(default = "default_format_trailing_comma")]
+    pub trailing_comma: bool,
+}
+
+impl Default for MindcraftFormatConfig {
+    fn default() -> Self {
+        Self {
+            indent_width: default_format_indent(),
+            max_line_length: default_format_max_line_length(),
+            trailing_comma: default_format_trailing_comma(),
+        }
+    }
+}
+
+fn default_format_indent() -> u8 {
+    4
+}
+
+fn default_format_max_line_length() -> u16 {
+    100
+}
+
+fn default_format_trailing_comma() -> bool {
+    true
+}
+
+/// RFC 0007 §5 — glob-scoped override layer. Later entries in
+/// `overrides = [...]` take precedence; each entry's `rules` map
+/// merges into the surrounding config (not replaces).
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MindcraftOverride {
+    /// Glob patterns the override applies to (e.g.
+    /// ``["tests/**", "bench/**"]``).
+    #[serde(default)]
+    pub includes: Vec<String>,
+    /// Glob patterns explicitly excluded from this override layer
+    /// even when matched by ``includes``.
+    #[serde(default)]
+    pub excludes: Vec<String>,
+    /// Rule-severity overrides scoped to the matching files.
+    #[serde(default)]
+    pub rules: HashMap<String, RuleSeverity>,
+    /// Format-config overrides scoped to the matching files. Absent =
+    /// inherit from the surrounding block.
+    #[serde(default)]
+    pub format: Option<MindcraftFormatConfig>,
+}
+
+/// RFC 0007 §5 — VCS integration. When ``use_ignore_file`` is true,
+/// the default file set for ``mindc check`` walks the repository's
+/// ignore rules so generated / vendored sources are excluded.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MindcraftVcsConfig {
+    #[serde(default = "default_vcs_use_ignore_file")]
+    pub use_ignore_file: bool,
+}
+
+impl Default for MindcraftVcsConfig {
+    fn default() -> Self {
+        Self {
+            use_ignore_file: default_vcs_use_ignore_file(),
+        }
+    }
+}
+
+fn default_vcs_use_ignore_file() -> bool {
+    // Canonical default: respect the repo's .gitignore so generated /
+    // vendored sources aren't surprise inputs to the toolchain.
+    true
 }
 
 /// `[exports]` block in `Mind.toml`. Currently only `c_abi` is defined;
