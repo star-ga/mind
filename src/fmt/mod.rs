@@ -24,6 +24,7 @@
 //! - String-literal contents passed through bytewise.
 
 mod printer;
+pub mod cli;
 
 use crate::parser::{parse_with_trivia, ParseError};
 use crate::project::MindcraftFormatConfig;
