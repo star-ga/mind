@@ -492,6 +492,7 @@ int __mind_blas_get_use_avx2(void) {
 static int mind_blas_cpu_has_avx2_fma(void) {
 #if MIND_BLAS_X86_64
 #  if defined(_WIN32)
+#    include <intrin.h>   // __cpuid / __cpuidex (cl.exe + clang-on-Windows)
     int regs[4];
     __cpuid(regs, 0);
     if (regs[0] < 7) return 0;
