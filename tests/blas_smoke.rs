@@ -65,62 +65,58 @@ type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 type SetIntFn = unsafe extern "C" fn(i32) -> i32;
 type GetIntFn = unsafe extern "C" fn() -> i32;
 
-/// Compile `runtime-support/mind_intrinsics.c` to a freestanding `.so`
-/// at a deterministic location under `target/blas_smoke/`.  Returns
-/// `None` if clang is not available, in which case the test is skipped.
+/// Compile `runtime-support/mind_intrinsics.c` into a freestanding shared
+/// library at a deterministic location under `target/blas_smoke/`.
+/// Linux/Mac: `clang -shared -fPIC` → ELF/Mach-O `libmind_blas_smoke.so`.
+/// Windows: `clang -shared` → MSVC-ABI `mind_blas_smoke.dll` (#225 — the
+/// `MIND_EXPORT` macro in mind_intrinsics.c emits `__declspec(dllexport)`
+/// on every public ABI symbol). Requires clang on PATH on every platform;
+/// on Windows that's installable via VS 2022's "C++ Clang tools for
+/// Windows" optional component or `winget install LLVM.LLVM`. If clang
+/// isn't available the test is skipped (returns `None`).
 fn build_runtime_support_so() -> Option<PathBuf> {
-    // The runtime-support C shim is validated on Unix toolchains
-    // (clang -> ELF/Mach-O shared object; symbols auto-exported). A
-    // Windows-MSVC DLL needs __declspec(dllexport)/.def symbol export
-    // plus the clang-cl driver — a tracked follow-on (the mind-blas
-    // Windows-MSVC port). Self-skip on Windows so the gated suite stays
-    // green; the AVX2 + scalar paths are fully exercised on Linux/macOS,
-    // and the Q16.16 cross-arch determinism gate is asserted there.
+    let clang = which::which("clang").ok()?;
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let src = manifest_dir.join(RUNTIME_SUPPORT_REL);
+    assert!(
+        src.exists(),
+        "runtime-support source must exist at {}",
+        src.display()
+    );
+
+    let out_dir = manifest_dir.join("target").join("blas_smoke");
+    std::fs::create_dir_all(&out_dir).expect("create target/blas_smoke");
+
     #[cfg(windows)]
-    {
-        // Tracked follow-on: the mind-blas Windows-MSVC C-shim port.
-        eprintln!("blas_smoke: skipped on Windows (MSVC C-shim port pending)");
-        return None;
-    }
-
+    let so_path = out_dir.join("mind_blas_smoke.dll");
     #[cfg(not(windows))]
-    {
-        let clang = which::which("clang").ok()?;
+    let so_path = out_dir.join("libmind_blas_smoke.so");
 
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let src = manifest_dir.join(RUNTIME_SUPPORT_REL);
-        assert!(
-            src.exists(),
-            "runtime-support source must exist at {}",
-            src.display()
-        );
+    let mut cmd = Command::new(&clang);
+    cmd.args([
+        "-x",
+        "c",
+        src.to_str().unwrap(),
+        "-shared",
+        "-O2",
+        "-o",
+        so_path.to_str().unwrap(),
+    ]);
+    // -fPIC is ELF-only; PE/COFF DLLs are always position-independent via
+    // section relocations, and clang in MSVC driver mode rejects -fPIC.
+    #[cfg(not(windows))]
+    cmd.arg("-fPIC");
 
-        let out_dir = manifest_dir.join("target").join("blas_smoke");
-        std::fs::create_dir_all(&out_dir).expect("create target/blas_smoke");
-        let so_path = out_dir.join("libmind_blas_smoke.so");
+    let status = cmd.status().expect("spawn clang");
+    assert!(
+        status.success(),
+        "clang failed to compile {} into {}",
+        src.display(),
+        so_path.display()
+    );
 
-        let status = Command::new(&clang)
-            .args([
-                "-x",
-                "c",
-                src.to_str().unwrap(),
-                "-shared",
-                "-fPIC",
-                "-O2",
-                "-o",
-                so_path.to_str().unwrap(),
-            ])
-            .status()
-            .expect("spawn clang");
-        assert!(
-            status.success(),
-            "clang failed to compile {} into {}",
-            src.display(),
-            so_path.display()
-        );
-
-        Some(so_path)
-    }
+    Some(so_path)
 }
 
 fn open_lib(path: &Path) -> Library {
