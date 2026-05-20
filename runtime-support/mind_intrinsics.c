@@ -482,10 +482,16 @@ int __mind_blas_get_use_avx2(void) {
 // CPUs that have AVX2 typically also have FMA, but we check the pair so a
 // Haswell-without-FMA outlier falls back to scalar instead of SIGILL-ing
 // inside _mm256_fmadd_ps.
+//
+// On Windows we use the __cpuid / __cpuidex intrinsics (`<intrin.h>`) for
+// BOTH cl.exe AND clang-cl/clang -- clang's `__builtin_cpu_supports`
+// emits references to compiler-rt symbols (`__cpu_indicator_init`,
+// `__cpu_model`) that don't auto-link with `clang -shared` + lld-link on
+// PE/COFF. The CPUID intrinsics are documented + portable across both
+// Windows toolchains.
 static int mind_blas_cpu_has_avx2_fma(void) {
 #if MIND_BLAS_X86_64
-#  if defined(_MSC_VER) && !defined(__clang__)
-    // MSVC: documented __cpuid / __cpuidex intrinsics from <intrin.h>.
+#  if defined(_WIN32)
     int regs[4];
     __cpuid(regs, 0);
     if (regs[0] < 7) return 0;
@@ -495,7 +501,8 @@ static int mind_blas_cpu_has_avx2_fma(void) {
     int has_fma  = (regs[2] >> 12) & 1;   // CPUID 1   ECX bit 12
     return has_avx2 && has_fma;
 #  else
-    // GCC/Clang: builtins — clang's __builtin_cpu_init is a no-op, gcc needs it.
+    // Linux/Mac GCC/Clang: builtins — clang's __builtin_cpu_init is a
+    // no-op, gcc needs it. Both link the compiler-rt symbols fine on ELF.
     __builtin_cpu_init();
     return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
 #  endif
