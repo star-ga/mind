@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2511 | **Est. tokens:** ~6,225,745
-**Generated:** 2026-05-19 15:27 UTC
+**Files:** 2510 | **Est. tokens:** ~6,238,378
+**Generated:** 2026-05-20 11:05 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~39,397 |
+| `./` | 31 | ~40,431 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -40,6 +40,7 @@
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
+| `docs/mindcraft/` | 1 | ~2,213 |
 | `docs/rfcs/` | 13 | ~29,868 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
@@ -54,9 +55,9 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 6 | ~4,785 |
+| `.github/workflows/` | 6 | ~5,042 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~7,639 |
+| `runtime-support/` | 1 | ~8,780 |
 | `scripts/` | 2 | ~2,268 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
@@ -359,10 +360,10 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,226 |
+| `src/` | 7 | ~16,194 |
 | `src/ast/` | 1 | ~4,642 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~11,291 |
+| `src/bin/` | 2 | ~11,289 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
@@ -377,17 +378,18 @@
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
-| `src/project/` | 3 | ~16,858 |
+| `src/parser/` | 1 | ~3,259 |
+| `src/project/` | 3 | ~18,565 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
-| `std/` | 5 | ~5,267 |
-| `tests/` | 106 | ~111,169 |
+| `std/` | 5 | ~5,719 |
+| `tests/` | 107 | ~113,851 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/conformance/cpu_baseline/` | 13 | ~248 |
+| `tests/conformance/cpu_baseline/` | 9 | ~170 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/fixtures/` | 4 | ~44 |
 | `tests/ir_verification/` | 2 | ~108 |
@@ -415,7 +417,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~838 tok, large) — [package]
-- `CHANGELOG.md` (~21187 tok, huge) — Changelog
+- `CHANGELOG.md` (~22221 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -564,6 +566,11 @@
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1023 tok, large) — IR stability contract
+### `docs/mindcraft/`
+
+- `phase2-implementation-plan.md` (~2213 tok, huge) — Mindcraft Phase 2 — Implementation Plan
+### `docs/`
+
 - `mlir-lowering.md` (~210 tok, medium) — MLIR lowering pipeline (public)
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
 - `performance.md` (~742 tok, large) — Performance Guide
@@ -697,7 +704,7 @@
 
 - `bench-gate.yml` (~1052 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~1620 tok, huge) — name: CI
+- `ci.yml` (~1877 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
 - `release.yml` (~1579 tok, huge) — name: Release
@@ -709,7 +716,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~7639 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~8780 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3507,7 +3514,7 @@
 - `rules.rs` (~1230 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
 
-- `mind-ai.rs` (~6045 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc.rs` (~5246 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
@@ -3517,7 +3524,7 @@
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/`
 
-- `conformance.rs` (~1879 tok, huge)
+- `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3603,12 +3610,15 @@
 
 - `manifest.rs` (~310 tok, medium) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
+### `src/parser/`
+
+- `trivia.rs` (~3259 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~10465 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~12172 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~2727 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3643,7 +3653,7 @@
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `blas.mind` (~2102 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
+- `blas.mind` (~2554 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `map.mind` (~816 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `string.mind` (~869 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
@@ -3664,7 +3674,7 @@
 - `gpu_graceful_failure.mind` (~73 tok, small) — Backend test: GPU backend graceful failure
 ### `tests/`
 
-- `blas_smoke.rs` (~5925 tok, huge) — Copyright 2025 STARGA Inc.
+- `blas_smoke.rs` (~5881 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~4194 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
 - `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -3675,10 +3685,6 @@
 - `cli_tensor.rs` (~469 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/conformance/cpu_baseline/`
 
-- `autodiff_pairwise.grad.ir` (~20 tok, tiny) — module {
-- `autodiff_pairwise.ir` (~15 tok, tiny) — module {
-- `autodiff_pairwise.mind` (~18 tok, tiny)
-- `autodiff_pairwise.mlir` (~25 tok, tiny) — module {
 - `autodiff_pairwise.runtime` (~1 tok, tiny) — 0
 - `phase_10_5_const.mind` (~34 tok, tiny) — fn main() {
 - `phase_10_5_logical.mind` (~32 tok, tiny) — fn main() {
@@ -3756,6 +3762,7 @@
 - `package_basic.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2699 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse_phase10_surface.rs` (~3880 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parser_trivia.rs` (~2672 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1467 tok, large) — Copyright 2025 STARGA Inc.
 - `reap_threshold.rs` (~2045 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3791,7 +3798,7 @@
 - `std_surface_array_literals.rs` (~1334 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_cdylib_link.rs` (~1369 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_cdylib_link.rs` (~1423 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access.rs` (~2819 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3234 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
