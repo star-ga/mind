@@ -1,0 +1,8 @@
+fn add(a: i64, b: i64) -> i64 {
+    a + b;
+}
+
+fn compute(x: i64, y: i64, z: i64) -> i64 {
+    let tmp: i64 = add(x, y);
+    add(tmp, z);
+}

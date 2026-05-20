@@ -1,0 +1,4 @@
+fn get_message() -> i64 {
+    let s: i64 = 42;
+    s;
+}
