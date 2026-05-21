@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2610 | **Est. tokens:** ~6,490,835
-**Generated:** 2026-05-21 22:01 UTC
+**Files:** 2615 | **Est. tokens:** ~6,505,313
+**Generated:** 2026-05-21 22:17 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~44,344 |
+| `./` | 32 | ~44,750 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -361,16 +361,17 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,220 |
+| `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~5,436 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~16,676 |
+| `src/bin/` | 2 | ~17,022 |
 | `src/build/` | 2 | ~10,769 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~7,926 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
+| `src/doc/` | 3 | ~10,190 |
 | `src/eval/` | 13 | ~77,961 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
@@ -394,8 +395,8 @@
 | `src/type_checker/` | 1 | ~24,222 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 13 | ~65,351 |
-| `tests/` | 137 | ~206,828 |
+| `std/` | 14 | ~66,326 |
+| `tests/` | 138 | ~209,386 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -435,7 +436,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~24687 tok, huge) — Changelog
+- `CHANGELOG.md` (~25093 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -3544,7 +3545,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~10633 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~10979 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5055 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3577,6 +3578,11 @@
 - `mod.rs` (~580 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `pipeline.rs` (~1973 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `shard.rs` (~1640 tok, huge) — Copyright 2025-2026 STARGA Inc.
+### `src/doc/`
+
+- `html.rs` (~956 tok, large) — Copyright 2025 STARGA Inc.
+- `markdown.rs` (~2652 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6582 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3633,7 +3639,7 @@
 - `verify.rs` (~2769 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~935 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -3730,6 +3736,7 @@
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `string.mind` (~875 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
+- `vec.html` (~975 tok, large) — <!DOCTYPE html>
 - `vec.mind` (~662 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
@@ -3830,6 +3837,7 @@
 - `mindc_build_phase_a.rs` (~4493 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5106 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6195 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_doc_phase1.rs` (~2558 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/`
 
 - `clean.mind` (~11 tok, tiny) — fn add(a: i64, b: i64) -> i64 {

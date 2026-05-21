@@ -5,6 +5,36 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — `mindc doc` (Phase 1) + RFC 0008 Phase F + Phase G KEYSTONE
+
+### Added — `mindc doc`: rustdoc-style HTML documentation generator (Phase 1, task #264)
+
+New `mindc doc [PATHS...] [--out=<dir>] [--no-deps] [--open]` subcommand.
+
+- Walks `*.mind` files (recursively); extracts all `pub` items (`fn`, `struct`,
+  `enum`, `const`, `type`) plus their immediately-preceding `///` doc-comment
+  blocks from the trivia stream.
+- Renders one HTML page per source file and a top-level `index.html`.  Output
+  paths mirror the source hierarchy relative to the common ancestor of the
+  given input files, so `std/vec.mind` → `target/doc/std/vec.html`.
+- Emits `search-index.json` (`[{name, kind, file, line}]`) for client-side
+  search tooling.
+- Minimal Markdown renderer (paragraphs, headings, fenced code, inline code,
+  bold, italic, links, lists) — no external crate dependencies.
+- Dark-themed embedded CSS (~3 KB per page); no external resources; works offline.
+- `--open` triggers `xdg-open`/`open` on the generated `index.html`.
+- Exit codes: 0 = success, 1 = parse/I/O error, 2 = invalid CLI args (via clap).
+
+Deliverables:
+- `src/doc/mod.rs` — extraction pipeline, path resolution, search-index
+- `src/doc/html.rs` — HTML page template + embedded CSS
+- `src/doc/markdown.rs` — minimal Markdown → HTML renderer
+- `src/bin/mindc.rs` — `Doc` subcommand wired into the CLI dispatcher
+- `tests/mindc_doc_phase1.rs` — 7 integration tests, all passing
+
+Hard-gate results: 7/7 new tests pass; 200 library unit tests pass (including
+21 doc-module tests); full suite unaffected; bench-gate held.
+
 ## [Unreleased] — RFC 0008 Phase F + Phase G KEYSTONE: `mindc build` self-hosts the mind repo
 
 ### Added — RFC 0008 Phase F: incremental compilation cache
