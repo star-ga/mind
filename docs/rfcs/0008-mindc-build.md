@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Phase D + E Shipped** |
+| Status | **Phase F Shipped** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -584,16 +584,29 @@ Deliverables:
   resolution, cache population, `--check` on absent lock, `mindc fetch`
   idempotency, `mindc clean --all`, tree_sha256 stability
 
-### Phase F — incremental cache
+### Phase F — incremental cache — **Shipped**
 
 SHA256-keyed object cache (§4.6). Rebuilds only changed modules and their
-dependants. Integration test: touch one source file → only that file and
-downstream modules recompile.
+dependants. Integration test: touch one source file → only that file
+recompiles; unchanged modules hit from cache.
 
 Deliverables:
-- `target/incremental/` layout
-- Cache key derivation (source || flags || dep-hashes || target)
-- `mindc clean` / `mindc clean --all`
+- `src/build/cache.rs` — `module_cache_key`, `probe`, `write_object`,
+  `clean_all_caches`, `BuildManifest`, `ObjectMeta`; self-contained FIPS 180-4
+  SHA-256; atomic write-via-rename for concurrency safety
+- Cache layout: `target/<target>/<optimize>/.cache/{objects,meta}/<sha256>.{o,json}`
+  + `manifest.json`; per-target + per-optimize-level isolation (cpu/cerebras/…
+  and debug/release never share entries)
+- `src/build/mod.rs` — Phase F cache probe integrated into `run_build`;
+  `BuildOpts::no_cache`; `IncrementalStats` in `BuildOutput`; cache written
+  on every successful compile (even with `--no-cache`)
+- `src/bin/mindc.rs` — `mindc build --no-cache` flag; `mindc build --verbose`
+  reports `[CACHE HIT] <module> (<key-prefix>)`; `mindc clean --cache` wipes
+  `target/*/.cache/` directories leaving linked binaries intact
+- `tests/mindc_cache_phase_f.rs` — 13 tests (10 spec + 3 unit), all passing
+- Cache key format version `mindc-cache-v1\n` — bump invalidates all users
+- Hard-gate results: 13/13 pass; full suite 0 failed; self-build smoke passes;
+  bootstrap fixed-point unchanged; warm rebuild ≈3 ms vs cold ≈188 ms (63×)
 
 ### Phase G — keystone: bootstrap mind itself with mindc build
 

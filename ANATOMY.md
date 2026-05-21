@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2587 | **Est. tokens:** ~6,379,869
-**Generated:** 2026-05-21 11:53 UTC
+**Files:** 2589 | **Est. tokens:** ~6,381,804
+**Generated:** 2026-05-21 12:25 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~40,426 |
+| `./` | 31 | ~43,272 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -41,8 +41,8 @@
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
-| `docs/research/` | 1 | ~12,942 |
-| `docs/rfcs/` | 14 | ~41,078 |
+| `docs/research/` | 1 | ~117 |
+| `docs/rfcs/` | 14 | ~41,339 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -364,8 +364,8 @@
 | `src/` | 7 | ~16,220 |
 | `src/ast/` | 1 | ~4,821 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~16,374 |
-| `src/build/` | 1 | ~4,524 |
+| `src/bin/` | 2 | ~16,676 |
+| `src/build/` | 2 | ~10,769 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~7,926 |
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 5 | ~5,709 |
-| `tests/` | 126 | ~157,291 |
+| `tests/` | 127 | ~162,397 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -435,7 +435,7 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~22221 tok, huge) — Changelog
+- `CHANGELOG.md` (~23733 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -448,12 +448,12 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~3993 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~4328 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~963 tok, large) — MIND Compiler Status
+- `STATUS.md` (~1962 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -598,7 +598,7 @@
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
 ### `docs/research/`
 
-- `2026-05-21-autoresearch-rfc-0009-0011.md` (~12942 tok, huge) — Autoresearch: Innovative Techniques for RFCs 0008E / 0009 / 0010 / 0011
+- `README.md` (~117 tok, small) — Research notes
 ### `docs/rfcs/`
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
@@ -611,7 +611,7 @@
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
-- `0008-mindc-build.md` (~10418 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
+- `0008-mindc-build.md` (~10679 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3540,10 +3540,11 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~10331 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~10633 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
-- `mod.rs` (~4524 tok, huge) — Copyright 2025 STARGA Inc.
+- `cache.rs` (~5055 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~5714 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3813,6 +3814,7 @@
 - `lint_infrastructure.rs` (~2505 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4493 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_cache_phase_f.rs` (~5106 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6195 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/`
 
