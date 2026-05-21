@@ -474,7 +474,16 @@ pub struct TargetConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum DependencySpec {
+    /// Simple version string: `foo = "1.0"`.
     Simple(String),
+    /// Inline table with a `path` field (Phase C / Phase D):
+    /// `foo = { path = "../foo" }`.
+    Path {
+        path: String,
+        #[serde(default)]
+        features: Vec<String>,
+    },
+    /// Inline table with an explicit `version` field.
     Detailed {
         version: String,
         #[serde(default)]
