@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2578 | **Est. tokens:** ~6,329,984
-**Generated:** 2026-05-21 07:47 UTC
+**Files:** 2582 | **Est. tokens:** ~6,340,053
+**Generated:** 2026-05-21 08:46 UTC
 
 ## Token Budget Guide
 
@@ -41,7 +41,7 @@
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
-| `docs/rfcs/` | 14 | ~40,605 |
+| `docs/rfcs/` | 14 | ~40,721 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -360,10 +360,10 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,208 |
-| `src/ast/` | 1 | ~4,736 |
+| `src/` | 7 | ~16,211 |
+| `src/ast/` | 1 | ~4,821 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~12,795 |
+| `src/bin/` | 2 | ~13,206 |
 | `src/build/` | 1 | ~4,524 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
@@ -388,15 +388,16 @@
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
+| `src/test/` | 1 | ~5,810 |
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,709 |
-| `tests/` | 123 | ~143,477 |
+| `tests/` | 124 | ~146,975 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
-| `tests/fixtures/` | 4 | ~44 |
+| `tests/fixtures/` | 6 | ~190 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~408 |
@@ -604,7 +605,7 @@
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
-- `0008-mindc-build.md` (~9945 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
+- `0008-mindc-build.md` (~10061 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3524,7 +3525,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~4736 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~4821 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3533,7 +3534,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~6752 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~7163 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `mod.rs` (~4524 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3618,7 +3619,7 @@
 - `verify.rs` (~2729 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~923 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~926 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -3687,6 +3688,9 @@
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
+### `src/test/`
+
+- `mod.rs` (~5810 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
 - `mod.rs` (~22584 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3764,6 +3768,8 @@
 - `invalid_broadcast.mind` (~17 tok, tiny)
 - `invalid.mind` (~6 tok, tiny)
 - `simple.mind` (~3 tok, tiny)
+- `test_phase_b_all_pass.mind` (~67 tok, small) — RFC 0008 Phase B test fixture — both tests pass.
+- `test_phase_b_one_fail.mind` (~79 tok, small) — RFC 0008 Phase B test fixture — one pass, one fail.
 ### `tests/`
 
 - `fmt_idempotence.rs` (~1789 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3882,6 +3888,7 @@
 ### `tests/`
 
 - `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_test_phase_b.rs` (~3466 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_indexing.rs` (~414 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3935,8 +3942,8 @@
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cdylib_link.rs` (~1423 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access.rs` (~2855 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access_step2.rs` (~3294 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access.rs` (~2863 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access_step2.rs` (~3318 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_if_statement.rs` (~3275 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2087 tok, huge) — Copyright 2025 STARGA Inc.

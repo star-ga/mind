@@ -320,6 +320,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
             },
             Node::FnDef {
                 is_pub: false,
+                is_test: false,
                 name: "read".to_string(),
                 params: vec![],
                 ret_type: None,

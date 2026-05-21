@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Phase A Shipped** |
+| Status | **Phase B Shipped** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -514,18 +514,23 @@ Deliverables:
 - Mind.toml validation for `[build]`, `[test]`, `[workspace]` section fields
 - Self-build smoke gate: `mindc build examples/mindc_mind/main.mind --emit=cdylib --out=/tmp/mindc_self_build.so` passes
 
-### Phase B — test discovery and runner
+### Phase B — test discovery and runner — **Shipped**
 
-`mindc test` discovery via `#[test]`, the test registry injector, the
-process-per-test runner, and the human + JSON reporters. `--filter`, `--list`,
-`--no-capture`. Integration with the existing `test_project` Rust path runs
-in parallel; parity CI asserts both report the same test results.
+`mindc test` discovery via `[test]`, the in-process panic-isolation runner,
+and the human + JSON reporters. `--filter`, `--list`, `--threads`, `--no-capture`.
+The pure-MIND binary test runner path (process-per-test, `__mind_test_registry`
+linker section) is future work gated on the MLIR compiled binary path.
 
 Deliverables:
-- `test_runner.mind` — the pure-MIND test runner binary
-- `#[test]` attribute parsing in the lexer/parser
-- Test registry linker section (`__mind_test_registry`)
-- Reporter output matching the §5.4 format spec
+- `src/test/mod.rs` — RFC 0008 Phase B test runner (`run_tests`, `discover_tests_in_source`)
+- `[test]` attribute parsing in the parser (`is_test: bool` on `Node::FnDef`)
+- `mindc test [PATHS...] [--filter] [--list] [--threads] [--no-capture] [--reporter]`
+  CLI subcommand in `src/bin/mindc.rs`
+- Human and JSON reporters matching §5.4 format spec
+- `tests/mindc_test_phase_b.rs` — 18 integration tests, all passing
+- `tests/fixtures/test_phase_b_all_pass.mind` + `test_phase_b_one_fail.mind`
+- Isolation model: in-process `catch_unwind` (process-per-test deferred to
+  when MLIR compiled binary path is available — see §10 decision)
 
 ### Phase C — workspace support
 

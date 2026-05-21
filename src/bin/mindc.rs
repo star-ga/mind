@@ -23,13 +23,14 @@ use clap::{ArgAction, Parser, Subcommand};
 use libmind::build::{run_build, BuildOpts};
 use libmind::check::{run_check, CheckOptions, ReporterKind};
 use libmind::fmt::cli as mindc_fmt;
+use libmind::test::{run_tests, ReporterKind as TestReporterKind, TestOptions as MindTestOptions};
 
 use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{compile_source_with_name, CompileOptions};
 use libmind::project::{
-    bench_project, run_project, test_project, BenchOptions, BuildOptions,
-    BuildTarget, EmitKind, OptimizeLevel, TestOptions,
+    bench_project, run_project, BenchOptions, BuildOptions,
+    BuildTarget, EmitKind, OptimizeLevel,
 };
 use libmind::BackendTarget;
 use libmind::{conformance, ConformanceOptions, ConformanceProfile};
@@ -102,17 +103,34 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
-    /// Run project tests (tests/*.mind).
+    /// Run tests marked with `[test]` in MIND source files (RFC 0008 Phase B).
+    ///
+    /// Discovers all `[test]`-annotated functions in the specified paths (or
+    /// the current directory when none are given), compiles and runs each as an
+    /// isolated test case, and reports pass/fail in cargo-test–compatible output.
+    ///
+    /// Exit code 0 = all tests passed.  Exit code 1 = one or more failed.
     Test {
-        /// Target backend (cpu, cuda, etc.).
-        #[arg(long, value_name = "TARGET")]
-        target: Option<String>,
-        /// Show verbose test output.
-        #[arg(short, long)]
-        verbose: bool,
-        /// Filter test suites by name.
-        #[arg(long, value_name = "PATTERN")]
+        /// Source files or directories to search for `[test]` functions.
+        /// When omitted, walks the current directory for *.mind files.
+        #[arg(value_name = "PATHS")]
+        paths: Vec<String>,
+        /// Run only tests whose name contains this substring.
+        #[arg(long, value_name = "SUBSTR")]
         filter: Option<String>,
+        /// Do not capture test stdout/stderr; print it immediately.
+        #[arg(long)]
+        no_capture: bool,
+        /// Maximum parallel worker threads (0 = use available parallelism).
+        #[arg(long, value_name = "N", default_value = "0")]
+        threads: usize,
+        /// List test names and exit without running any tests.
+        #[arg(long)]
+        list: bool,
+        /// Diagnostic reporter: human (default) or json.
+        #[arg(long, value_name = "REPORTER", default_value = "human",
+              value_parser = ["human", "json"])]
+        reporter: String,
     },
     /// Run project benchmarks (bench/*.mind).
     Bench {
@@ -292,22 +310,15 @@ fn main() {
             return;
         }
         Some(Command::Test {
-            target,
-            verbose,
+            paths,
             filter,
+            no_capture: _,
+            threads,
+            list,
+            reporter,
         }) => {
-            let opts = TestOptions {
-                target: target.clone(),
-                verbose: *verbose,
-                filter: filter.clone(),
-            };
-            match test_project(&opts) {
-                Ok(code) => process::exit(code),
-                Err(err) => {
-                    eprintln!("error: {}", err);
-                    process::exit(1);
-                }
-            }
+            run_mindc_test(paths, filter.as_deref(), *threads, *list, reporter);
+            return;
         }
         Some(Command::Bench {
             target,
@@ -543,6 +554,43 @@ fn run_mindc_build(
         Err(err) => {
             eprintln!("error[build]: {}", err);
             process::exit(err.exit_code());
+        }
+    }
+}
+
+fn run_mindc_test(
+    paths: &[String],
+    filter: Option<&str>,
+    threads: usize,
+    list: bool,
+    reporter: &str,
+) {
+    let reporter_kind = if reporter == "json" {
+        TestReporterKind::Json
+    } else {
+        TestReporterKind::Human
+    };
+
+    let opts = MindTestOptions {
+        paths: paths.iter().map(std::path::PathBuf::from).collect(),
+        filter: filter.unwrap_or("").to_string(),
+        capture: true,
+        threads,
+        list,
+        reporter: reporter_kind,
+    };
+
+    match run_tests(&opts) {
+        Ok(summary) => {
+            if summary.all_passed() {
+                process::exit(0);
+            } else {
+                process::exit(1);
+            }
+        }
+        Err(err) => {
+            eprintln!("error[test]: {}", err);
+            process::exit(1);
         }
     }
 }

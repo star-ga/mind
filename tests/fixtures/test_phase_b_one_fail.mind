@@ -1,0 +1,14 @@
+// RFC 0008 Phase B test fixture — one pass, one fail.
+// Used by tests/mindc_test_phase_b.rs
+
+[test]
+fn test_passes() {
+    let x: i64 = 2 + 2
+    assert x == 4
+}
+
+[test]
+fn test_fails() {
+    // This assertion should fail, causing the test to be reported as FAILED.
+    assert 1 == 2, "one does not equal two"
+}
