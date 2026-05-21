@@ -95,6 +95,7 @@ pub mod check;
 pub mod fmt;
 pub mod lint;
 pub mod project;
+pub mod test;
 
 #[cfg(feature = "python-bindings")]
 pub mod python;

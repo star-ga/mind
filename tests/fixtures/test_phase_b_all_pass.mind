@@ -1,0 +1,14 @@
+// RFC 0008 Phase B test fixture — both tests pass.
+// Used by tests/mindc_test_phase_b.rs
+
+[test]
+fn test_addition_is_correct() {
+    let x: i64 = 1 + 1
+    assert x == 2
+}
+
+[test]
+fn test_multiplication_is_correct() {
+    let y: i64 = 3 * 4
+    assert y == 12
+}
