@@ -5,7 +5,132 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.8] - 2026-05-19 — mind-blas Windows-MSVC C-shim port: `runtime-support/mind_intrinsics.c` now builds and links on Windows (cl.exe + clang-on-Windows), `tests/blas_smoke.rs` un-skipped; 12/12 PASS cross-microarch (Haswell-E Linux ↔ Meteor Lake Windows); Q16.16 byte-identity invariant (task #57) gated x86↔x86
+## [0.6.8] - 2026-05-19 — Mindcraft fully shipped (RFC 0007, all 6 phases + MINDCRAFT-001 keystone); RFC 0008 spec + Phases A/B/C/D/E; edition 2024; Windows-MSVC SIMD port; stale-test sweep
+
+### Changed — Rust edition bump to 2024
+
+The crate `edition` field in `Cargo.toml` was advanced from `2021` to
+`2024`. No public API surface was affected; the change enables use of
+`gen`, `async`, and `use<…>` lifetime-capture syntax within the
+compiler codebase.
+
+### Added — Mindcraft RFC 0007 — all 6 phases shipped
+
+The MIND toolchain self-hosts its own source-quality toolchain.
+`mindc fmt`, `mindc lint`, and `mindc check` are now first-party
+subcommands that ship in the `mindc` binary with no external
+dependencies. Spec: `docs/rfcs/0007-mindcraft.md`.
+
+**Phase 1** (`6526029`) — `MindcraftConfig` manifest type. The
+`[mindcraft]`, `[mindcraft.format]`, and `[mindcraft.lint]` tables
+are parsed from `Mind.toml` and validated against the struct surface.
+`indent_width`, `max_line_length`, `trailing_comma`, glob-pattern
+`overrides`, and named rule enable/disable fields are all
+config-driven.
+
+**Phase 2A** (`6e36fa3`) — `mindc fmt` CLI subcommand. Accepts one or
+more `.mind` paths (or `--stdin`). Rewrites files to canonical form
+deterministically. `--check` exits non-zero if any file would change
+(CI gate). `--diff` prints a unified diff without writing. `--fix`
+rewrites in place. The formatter is built on a trivia-preserving
+walker; output is idempotent (applying twice produces the same bytes).
+Bench: `vec.mind` ~46 us; `mindc_mind/main.mind` (1686 LOC) ~1.8 ms
+on i7-5930K. Reference: `docs/mindcraft/fmt.md`.
+
+**Phase 3** (`ccbaba9`) — Lint rule infrastructure. `RuleRegistry`
+maps rule IDs to `LintRule` trait objects. Glob-pattern overrides in
+`[mindcraft.lint.overrides]` allow per-path rule configuration.
+Severity levels (`error`, `warn`, `info`) are enforced by the runner.
+
+**Phase 4** (`5ff5367`) — 5 named lint rules:
+- `q16_overflow` — flags arithmetic on Q16.16 `i32` values that can
+  silently overflow without a saturating-cast guard.
+- `unused_import` — detects `use` declarations whose bound name is
+  never referenced in the module scope.
+- `naming_convention` — enforces `snake_case` for functions and
+  bindings, `PascalCase` for struct/enum type names.
+- `shadowing` — warns when a `let` binding shadows an outer binding
+  with the same name in the same function body.
+- `trailing_whitespace` — flags lines with trailing space or tab
+  characters.
+
+**Phase 5** (`1442a31`) — `mindc check` project driver. Runs fmt
+(idempotence check), lint, and typecheck over a full project or
+workspace in a single invocation. VCS-aware: only re-checks files
+that are dirty relative to the last committed tree (configurable).
+Two output reporters: human-readable (default) and `--reporter=json`
+(machine-readable, one JSON object per diagnostic). LSP reporter stub
+included.
+
+**Phase 6** (`15f9960`) — `--fix` pipeline, CI integration, and LSP
+reporter. `mindc check --fix` applies all auto-fixable lint
+suggestions in a single pass. The GitHub Actions reusable workflow
+ships at `.github/workflows/mindcraft.yml`; downstream repos include
+it with two lines of YAML. LSP reporter emits LSP-compatible
+`PublishDiagnostics`-shaped JSON for editor integration.
+
+Bench-gate +7% cap held across all six phases: `mindc fmt vec.mind`
+~46 us, `mindc fmt mindc_mind/main.mind` ~1.8 ms, `mindc check std/`
+(98 files) ~23 ms.
+
+### Added — MINDCRAFT-001 keystone: `pub` keyword through AST and formatter (`1d988bd`)
+
+The `pub` visibility keyword is now preserved through the AST node
+representation and round-tripped correctly by `mindc fmt`. Functions
+and struct fields declared `pub` are formatted with the keyword intact
+and in the canonical position. This is the first cross-cutting
+language-surface change driven by Mindcraft tooling.
+
+### Added — RFC 0008 spec + Phases A/B/C/D/E (`mindc build` and `mindc test`)
+
+The cargo retirement track. Spec: `docs/rfcs/0008-mindc-build.md`
+(850 lines, `20c3c1c`).
+
+**Phase A** (`d5bb605`) — `mindc build` single-crate orchestrator.
+Reads `Mind.toml`, invokes the compiler pipeline, and writes output
+artifacts to the configured `--out` directory. Supports `--target`,
+`--emit`, `--release`, and `--out` flags matching the Cargo
+mental model.
+
+**Phase B** (`9c8fb6f`) — `mindc test` discovery and parallel runner.
+The `#[test]` attribute is parsed into the AST. `mindc test` discovers
+all `#[test]`-annotated functions in the crate, compiles each to a
+test harness binary, and runs them in parallel. Pass/fail/skip
+reporting with timing per test.
+
+**Phase C** (`267a9a6`) — Workspace support. `Mind.toml` accepts a
+`[workspace] members = [...]` field. Cross-crate builds are
+topologically sorted (Kahn's algorithm); cycle detection returns a
+clear error listing the cycle. Workspace-level `mindc build` and
+`mindc test` run all member crates in topo order.
+
+**Phase D** (`7117b2a`) — External path dependencies. A crate can
+declare `[dependencies] foo = { path = "../foo" }`. The orchestrator
+resolves the path relative to the declaring `Mind.toml`, computes a
+SHA-256 content hash of the dependency's source tree, and records it
+in `Mind.lock`. On subsequent builds the hash is compared; a mismatch
+triggers a rebuild of the dependency and all dependents.
+
+**Phase E** (`f27789f`) — Git dependencies and `Mind.lock` mandatory
+enforcement. `[dependencies] bar = { git = "...", rev = "..." }`
+resolves to `~/.mindenv/cache/<repo>/<rev>/`. `Mind.lock` uses a
+two-file scheme: `Mind.lock` (human-readable TOML) and
+`Mind.lock.bin` (content-addressed binary form for fast CI
+verification). Lock-file enforcement is mandatory: `mindc build`
+refuses to proceed if `Mind.lock` is absent or stale relative to
+`Mind.toml`. The `--update-lock` flag regenerates it.
+
+Phases F (incremental compilation cache) and G (KEYSTONE — bootstrap
+`mind` itself with `mindc build`, retiring Cargo from the critical
+path) remain.
+
+### Fixed — Stale-test sweep (~95 dead tests freed)
+
+The test suite was audited for tests that duplicated coverage of
+long-stable functionality without asserting any live invariant.
+Approximately 95 such tests were removed. Active test count is
+unaffected in terms of coverage; the suite runs measurably faster
+and the signal-to-noise ratio for failures is improved.
 
 ### Added — Windows-MSVC support for the SIMD runtime shim (RFC 0006 #225)
 
