@@ -345,7 +345,7 @@ rec = lib.read_to_string(path_addr)
 assert rec != 0, 'read_to_string returned null'
 read_addr = lib.__mind_load_i64(rec + 0)
 read_len  = lib.__mind_load_i64(rec + 8)
-assert read_len == len(content), f'len mismatch: {{read_len}} vs {len(content)}'
+assert read_len == len(content), f'len mismatch: {{read_len}} vs {{len(content)}}'
 raw = (ctypes.c_uint8 * read_len).from_address(read_addr)
 got = bytes(raw)
 assert got == content, f'content mismatch: {{got!r}}'

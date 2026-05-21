@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2619 | **Est. tokens:** ~6,512,852
-**Generated:** 2026-05-21 22:23 UTC
+**Files:** 2618 | **Est. tokens:** ~6,487,849
+**Generated:** 2026-05-21 22:57 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~45,043 |
+| `./` | 31 | ~20,030 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 17 | ~60,392 |
+| `docs/rfcs/` | 17 | ~60,402 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -436,7 +436,6 @@
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
 - `Cargo.toml` (~833 tok, large) — [package]
-- `CHANGELOG.md` (~25313 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -455,7 +454,7 @@
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~1972 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~2272 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -613,11 +612,11 @@
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
-- `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
+- `0007-mindcraft.md` (~3497 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
-- `0010-memory-safety-and-c-abi.md` (~6980 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
+- `0010-memory-safety-and-c-abi.md` (~6985 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4812 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
