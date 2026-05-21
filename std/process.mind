@@ -1,0 +1,346 @@
+// std/process.mind — Task #268: subprocess + process environment in pure MIND.
+//
+// Subprocess spawning via fork/execvp + pipe, environment variable access,
+// working directory, and process exit via libc extern "C".
+//
+// Child heap record layout (40 bytes):
+//   offset  0: pid    (i64)
+//   offset  8: stdin  (i64) — write-end of pipe to child stdin (or -1)
+//   offset 16: stdout (i64) — read-end of pipe from child stdout (or -1)
+//   offset 24: stderr (i64) — read-end of pipe from child stderr (or -1)
+//   offset 32: flags  (i64) — bit 0 = capture mode
+//
+// ExitStatus heap record layout (16 bytes):
+//   offset 0: code   (i64) — exit code (0 = success)
+//   offset 8: signal (i64) — signal number that terminated the child, or 0
+//
+// String-returning functions return a heap record [addr, len, cap].
+// Empty (addr=0, len=0) means "not set" or error.
+
+// ---------------------------------------------------------------------------
+// libc extern "C" surface
+// ---------------------------------------------------------------------------
+
+extern "C" {
+    unsafe fn fork() -> i32;
+    unsafe fn execvp(file: *const u8, argv: *const *const u8) -> i32;
+    unsafe fn waitpid(pid: i32, status: *mut i32, options: i32) -> i32;
+    unsafe fn kill(pid: i32, sig: i32) -> i32;
+    unsafe fn pipe(pipefd: *mut i32) -> i32;
+    unsafe fn dup2(oldfd: i32, newfd: i32) -> i32;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn getenv(name: *const u8) -> *mut u8;
+    unsafe fn setenv(name: *const u8, value: *const u8, overwrite: i32) -> i32;
+    unsafe fn unsetenv(name: *const u8) -> i32;
+    unsafe fn getcwd(buf: *mut u8, size: i64) -> *mut u8;
+    unsafe fn chdir(path: *const u8) -> i32;
+    safe fn exit(status: i32);
+    unsafe fn getpid() -> i32;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers — iteration via tail recursion (no while loops)
+// ---------------------------------------------------------------------------
+
+// Length of a NUL-terminated C string.
+fn proc_cstr_len_rec(addr: i64, i: i64) -> i64 {
+    let b: i64 = __mind_load_i64(addr + i) & 255;
+    if b == 0 {
+        i
+    } else {
+        proc_cstr_len_rec(addr, i + 1)
+    }
+}
+
+fn proc_cstr_len(addr: i64) -> i64 {
+    proc_cstr_len_rec(addr, 0)
+}
+
+// Heap-copy src_len bytes from src_addr, appending NUL.
+fn proc_copy_bytes_rec(src: i64, dst: i64, src_len: i64, i: i64) -> i64 {
+    if i >= src_len {
+        0
+    } else {
+        __mind_store_i64(dst + i, __mind_load_i64(src + i) & 255);
+        proc_copy_bytes_rec(src, dst, src_len, i + 1)
+    }
+}
+
+fn proc_heap_copy(src_addr: i64, src_len: i64) -> i64 {
+    let dst: i64 = __mind_alloc(src_len + 1);
+    let _ = proc_copy_bytes_rec(src_addr, dst, src_len, 0);
+    __mind_store_i64(dst + src_len, 0);
+    dst
+}
+
+// Decode a waitpid(2) status word into an ExitStatus heap record.
+fn proc_decode_status(status: i64) -> i64 {
+    let rec: i64 = __mind_alloc(16);
+    let low7: i64 = status & 127;
+    if low7 == 0 {
+        let code: i64 = (status >> 8) & 255;
+        __mind_store_i64(rec + 0, code);
+        __mind_store_i64(rec + 8, 0)
+    } else {
+        __mind_store_i64(rec + 0, 0 - 1);
+        __mind_store_i64(rec + 8, low7)
+    }
+    rec
+}
+
+// Copy argv_vec_len pointers from argv_vec_addr into arr starting at index 1.
+fn proc_fill_argv_rec(arr: i64, argv_vec_addr: i64, argv_vec_len: i64, i: i64) -> i64 {
+    if i >= argv_vec_len {
+        0
+    } else {
+        let arg_addr: i64 = __mind_load_i64(argv_vec_addr + i * 8);
+        __mind_store_i64(arr + (i + 1) * 8, arg_addr);
+        proc_fill_argv_rec(arr, argv_vec_addr, argv_vec_len, i + 1)
+    }
+}
+
+// Build a NULL-terminated argv array on the heap.
+// argv[0] = prog_addr; argv[1..N] from argv_vec_addr; argv[N+1] = NULL.
+fn proc_build_argv(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
+    let total: i64 = argv_vec_len + 2;
+    let arr: i64 = __mind_alloc(total * 8);
+    __mind_store_i64(arr, prog_addr);
+    let _ = proc_fill_argv_rec(arr, argv_vec_addr, argv_vec_len, 0);
+    __mind_store_i64(arr + (argv_vec_len + 1) * 8, 0);
+    arr
+}
+
+// ---------------------------------------------------------------------------
+// Public: Child accessors
+// ---------------------------------------------------------------------------
+
+pub fn child_pid(c: i64) -> i64 {
+    __mind_load_i64(c + 0)
+}
+
+pub fn child_stdin(c: i64) -> i64 {
+    __mind_load_i64(c + 8)
+}
+
+pub fn child_stdout(c: i64) -> i64 {
+    __mind_load_i64(c + 16)
+}
+
+pub fn child_stderr(c: i64) -> i64 {
+    __mind_load_i64(c + 24)
+}
+
+// ---------------------------------------------------------------------------
+// Public: ExitStatus accessors
+// ---------------------------------------------------------------------------
+
+pub fn exit_code(s: i64) -> i64 {
+    __mind_load_i64(s + 0)
+}
+
+pub fn exit_signal(s: i64) -> i64 {
+    __mind_load_i64(s + 8)
+}
+
+// ---------------------------------------------------------------------------
+// Public: spawn / wait / kill
+// ---------------------------------------------------------------------------
+
+// spawn — fork + exec program with args. stdin/stdout/stderr inherited.
+// prog_addr: NUL-terminated program name (resolved via PATH).
+// argv_vec_addr: packed array of NUL-terminated arg string addresses.
+// argv_vec_len: number of extra args (not counting prog).
+// Returns a Child heap record. On fork failure, pid = -1.
+pub fn spawn(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
+    let child: i64 = __mind_alloc(40);
+    __mind_store_i64(child + 0, 0 - 1);
+    __mind_store_i64(child + 8, 0 - 1);
+    __mind_store_i64(child + 16, 0 - 1);
+    __mind_store_i64(child + 24, 0 - 1);
+    __mind_store_i64(child + 32, 0);
+    let argv: i64 = proc_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
+    let pid: i32 = fork();
+    if pid < 0 {
+        return child;
+    }
+    if pid == 0 {
+        let _ = execvp(prog_addr as *const u8, argv as *const *const u8);
+        exit(127)
+    }
+    __mind_store_i64(child + 0, pid as i64);
+    child
+}
+
+// spawn_capture — fork + exec with stdin/stdout/stderr captured via pipes.
+// Returns a Child heap record with valid stdin/stdout/stderr fd fields.
+pub fn spawn_capture(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i64 {
+    let child: i64 = __mind_alloc(40);
+    __mind_store_i64(child + 0, 0 - 1);
+    __mind_store_i64(child + 8, 0 - 1);
+    __mind_store_i64(child + 16, 0 - 1);
+    __mind_store_i64(child + 24, 0 - 1);
+    __mind_store_i64(child + 32, 1);
+    let p_in: i64 = __mind_alloc(8);
+    let p_out: i64 = __mind_alloc(8);
+    let p_err: i64 = __mind_alloc(8);
+    let _ = memset(p_in as *mut u8, 0, 8);
+    let _ = memset(p_out as *mut u8, 0, 8);
+    let _ = memset(p_err as *mut u8, 0, 8);
+    let r1: i32 = pipe(p_in as *mut i32);
+    let r2: i32 = pipe(p_out as *mut i32);
+    let r3: i32 = pipe(p_err as *mut i32);
+    if r1 != 0 {
+        return child;
+    }
+    if r2 != 0 {
+        return child;
+    }
+    if r3 != 0 {
+        return child;
+    }
+    let pin_r: i64 = __mind_load_i64(p_in + 0) & 65535;
+    let pin_w: i64 = __mind_load_i64(p_in + 4) & 65535;
+    let pout_r: i64 = __mind_load_i64(p_out + 0) & 65535;
+    let pout_w: i64 = __mind_load_i64(p_out + 4) & 65535;
+    let perr_r: i64 = __mind_load_i64(p_err + 0) & 65535;
+    let perr_w: i64 = __mind_load_i64(p_err + 4) & 65535;
+    let argv: i64 = proc_build_argv(prog_addr, argv_vec_addr, argv_vec_len);
+    let pid: i32 = fork();
+    if pid < 0 {
+        return child;
+    }
+    if pid == 0 {
+        let _ = dup2(pin_r as i32, 0);
+        let _ = dup2(pout_w as i32, 1);
+        let _ = dup2(perr_w as i32, 2);
+        let _ = close(pin_w as i32);
+        let _ = close(pout_r as i32);
+        let _ = close(perr_r as i32);
+        let _ = execvp(prog_addr as *const u8, argv as *const *const u8);
+        exit(127)
+    }
+    let _ = close(pin_r as i32);
+    let _ = close(pout_w as i32);
+    let _ = close(perr_w as i32);
+    __mind_store_i64(child + 0, pid as i64);
+    __mind_store_i64(child + 8, pin_w);
+    __mind_store_i64(child + 16, pout_r);
+    __mind_store_i64(child + 24, perr_r);
+    child
+}
+
+// wait — wait for a Child to finish. Returns an ExitStatus heap record.
+pub fn wait(c: i64) -> i64 {
+    let pid: i64 = child_pid(c);
+    let status_buf: i64 = __mind_alloc(4);
+    __mind_store_i64(status_buf + 0, 0);
+    __mind_store_i64(status_buf + 1, 0);
+    __mind_store_i64(status_buf + 2, 0);
+    __mind_store_i64(status_buf + 3, 0);
+    let _ = waitpid(pid as i32, status_buf as *mut i32, 0);
+    let raw: i64 = __mind_load_i64(status_buf) & 65535;
+    proc_decode_status(raw)
+}
+
+// proc_kill — send signal sig to child process. Returns 1 on success.
+pub fn proc_kill(c: i64, sig: i64) -> i64 {
+    let pid: i64 = child_pid(c);
+    let r: i32 = kill(pid as i32, sig as i32);
+    if r == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public: environment variables
+// ---------------------------------------------------------------------------
+
+// getenv — return value of environment variable as String heap record.
+// Returns len=0 string if not set.
+pub fn getenv(name_addr: i64) -> i64 {
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, 0);
+    __mind_store_i64(rec + 8, 0);
+    __mind_store_i64(rec + 16, 0);
+    let vp: i64 = getenv(name_addr as *const u8) as i64;
+    if vp == 0 {
+        return rec;
+    }
+    let vlen: i64 = proc_cstr_len(vp);
+    let copy: i64 = proc_heap_copy(vp, vlen);
+    __mind_store_i64(rec + 0, copy);
+    __mind_store_i64(rec + 8, vlen);
+    __mind_store_i64(rec + 16, vlen + 1);
+    rec
+}
+
+// proc_setenv — set an environment variable. Returns 1 on success.
+pub fn proc_setenv(name_addr: i64, value_addr: i64) -> i64 {
+    let r: i32 = setenv(name_addr as *const u8, value_addr as *const u8, 1);
+    if r == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// proc_unsetenv — remove an environment variable. Returns 1 on success.
+pub fn proc_unsetenv(name_addr: i64) -> i64 {
+    let r: i32 = unsetenv(name_addr as *const u8);
+    if r == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public: working directory
+// ---------------------------------------------------------------------------
+
+// current_dir — return the current working directory as a String heap record.
+// Returns len=0 string on error.
+pub fn current_dir() -> i64 {
+    let rec: i64 = __mind_alloc(24);
+    __mind_store_i64(rec + 0, 0);
+    __mind_store_i64(rec + 8, 0);
+    __mind_store_i64(rec + 16, 0);
+    let buf: i64 = __mind_alloc(4096);
+    let _ = memset(buf as *mut u8, 0, 4096);
+    let rp: i64 = getcwd(buf as *mut u8, 4096) as i64;
+    if rp == 0 {
+        return rec;
+    }
+    let rlen: i64 = proc_cstr_len(buf);
+    __mind_store_i64(rec + 0, buf);
+    __mind_store_i64(rec + 8, rlen);
+    __mind_store_i64(rec + 16, 4096);
+    rec
+}
+
+// set_current_dir — change the working directory. Returns 1 on success.
+pub fn set_current_dir(path_addr: i64) -> i64 {
+    let r: i32 = chdir(path_addr as *const u8);
+    if r == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public: process lifecycle
+// ---------------------------------------------------------------------------
+
+// proc_exit — terminate the current process with exit code. Does not return.
+pub fn proc_exit(code: i64) {
+    exit(code as i32)
+}
+
+// proc_pid — return the current process ID.
+pub fn proc_pid() -> i64 {
+    getpid() as i64
+}
