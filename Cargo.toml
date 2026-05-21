@@ -27,7 +27,7 @@ libc = { version = "0.2", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 which = { version = "6", optional = true }
-tempfile = { version = "3", optional = true }
+tempfile = "3"
 toml = "0.8"
 tar = { version = "0.4", optional = true }
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"], optional = true }
@@ -38,7 +38,6 @@ pyo3 = { version = "0.22", optional = true, features = ["extension-module"] }
 [dev-dependencies]
 criterion = "0.5"
 proptest = "1.4"
-tempfile = "3"
 which = "6"
 libloading = "0.8"
 
@@ -122,10 +121,10 @@ mlir-lowering = []
 mlir_backend = ["melior"]
 llvm = ["inkwell"]
 mlir-subprocess = ["which"]
-mlir-exec = ["mlir-subprocess", "tempfile"]
+mlir-exec = ["mlir-subprocess"]
 mlir-jit = ["libloading"]
 mlir-gpu = []
-mlir-build = ["mlir-subprocess", "tempfile"]
+mlir-build = ["mlir-subprocess"]
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
 cross-module-imports = []  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver

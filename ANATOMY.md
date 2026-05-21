@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2585 | **Est. tokens:** ~6,364,576
-**Generated:** 2026-05-21 10:27 UTC
+**Files:** 2587 | **Est. tokens:** ~6,379,852
+**Generated:** 2026-05-21 11:26 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~40,443 |
+| `./` | 31 | ~40,426 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
 | `docs/research/` | 1 | ~12,942 |
-| `docs/rfcs/` | 14 | ~40,887 |
+| `docs/rfcs/` | 14 | ~41,078 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -361,13 +361,14 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,216 |
+| `src/` | 7 | ~16,220 |
 | `src/ast/` | 1 | ~4,821 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~15,472 |
+| `src/bin/` | 2 | ~16,374 |
 | `src/build/` | 1 | ~4,524 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
+| `src/deps/` | 1 | ~7,909 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/eval/` | 13 | ~73,494 |
@@ -385,7 +386,7 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,094 |
+| `src/project/` | 3 | ~20,186 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
@@ -394,7 +395,7 @@
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 5 | ~5,709 |
-| `tests/` | 125 | ~151,096 |
+| `tests/` | 126 | ~157,291 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -433,7 +434,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~850 tok, large) — [package]
+- `Cargo.toml` (~833 tok, large) — [package]
 - `CHANGELOG.md` (~22221 tok, huge) — Changelog
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
@@ -610,7 +611,7 @@
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
-- `0008-mindc-build.md` (~10227 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
+- `0008-mindc-build.md` (~10418 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3539,7 +3540,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~9429 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~10331 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `mod.rs` (~4524 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3557,6 +3558,9 @@
 ### `src/`
 
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
+### `src/deps/`
+
+- `mod.rs` (~7909 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3624,7 +3628,7 @@
 - `verify.rs` (~2729 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~935 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -3669,7 +3673,7 @@
 - `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~13701 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~2727 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3809,6 +3813,7 @@
 - `lint_infrastructure.rs` (~2505 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4493 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_deps_phase_de.rs` (~6195 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/`
 
 - `clean.mind` (~11 tok, tiny) — fn add(a: i64, b: i64) -> i64 {

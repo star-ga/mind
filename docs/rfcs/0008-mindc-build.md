@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Phase C Shipped** |
+| Status | **Phase D + E Shipped** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -551,30 +551,38 @@ Deliverables:
   expansion, toposort, cycle detection, virtual manifests, exclude, canonical
   paths, external path deps, and error exit codes; all 12 passing
 
-### Phase D — path deps
+### Phase D — path deps — **Shipped**
 
-`[dependencies]` entries with `path = ...`. Recursive manifest loading, dep
-DAG construction, cycle detection, feature propagation.
-
-Deliverables:
-- Path dep resolution in `build.mind`
-- Cycle detection with named-path error
-- Feature-flag propagation through the dep graph
-- `Mind.lock` generation for path deps (trivial — no rev to pin, just a
-  snapshot of the local path's manifest version)
-
-### Phase E — git deps + ~/.mindenv/cache + lockfile
-
-`git = ...` deps. Network fetch to `~/.mindenv/cache/`, `Mind.lock` with sha256
-content verification, `mindc fetch`, `mindc lock`. This phase introduces the
-only non-deterministic step (network) in the otherwise purely deterministic
-pipeline; `Mind.lock` makes subsequent builds deterministic again.
+External `path = ...` deps with `tree_sha256` drift detection and mandatory
+`Mind.lock` enforcement (AP-2). The build fails with a clear message if
+`Mind.lock` is absent or stale.
 
 Deliverables:
-- `~/.mindenv/cache/` directory layout spec
-- `Mind.lock` TOML format (§4.3)
-- `mindc fetch` and `mindc lock` subcommands
-- Offline build from cached deps
+- `src/deps/mod.rs` — `resolve_and_verify_deps`, `run_lock`, `run_fetch`,
+  `run_clean`; `compute_tree_sha256` (self-contained FIPS 180-4 SHA-256);
+  `MindLock` / `LockEntry` TOML schema; `DepError` with exit codes
+- `src/project/mod.rs` — `DependencySpec::Git { git, rev, tag, branch }`
+  variant added alongside the existing `Path` variant
+- `tests/mindc_deps_phase_de.rs` — 12 Phase D tests covering external path
+  deps, drift detection, lock regeneration, --check, --update, AP-2 enforcement
+
+### Phase E — git deps + ~/.mindenv/cache + lockfile — **Shipped**
+
+`git = ...` deps with rev/tag/branch resolution to full 40-char SHA at lock
+time (AP-1: URL + rev + tree_sha256 triple). Content-addressed cache at
+`~/.mindenv/cache/git/<hostname>/<owner>/<repo>/<sha>/`. Mandatory lockfile
+enforcement on `mindc build` (AP-2). `mindc lock`, `mindc fetch`, `mindc clean`
+subcommands.
+
+Deliverables:
+- `src/deps/mod.rs` — git dep resolution via `git` CLI (`shallow_clone` +
+  `full_clone_and_checkout` fallback), `mindenv_cache_root()`,
+  `git_cache_dir()`, `fetch_git_dep_into`, `run_fetch`, `run_lock --check`,
+  `run_lock --update <pkg>`, `run_clean --cache`, `run_clean --all`
+- `src/bin/mindc.rs` — `Lock`, `Fetch`, `Clean` subcommands wired in
+- `tests/mindc_deps_phase_de.rs` — Phase E tests covering git rev/branch/tag
+  resolution, cache population, `--check` on absent lock, `mindc fetch`
+  idempotency, `mindc clean --all`, tree_sha256 stability
 
 ### Phase F — incremental cache
 
