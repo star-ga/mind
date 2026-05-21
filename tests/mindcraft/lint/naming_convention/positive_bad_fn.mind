@@ -1,0 +1,6 @@
+// Positive fixture: function name violates lower_snake_case.
+// "BadFn" is UpperCamelCase — should trigger for fn.
+
+fn BadFn() -> i32 {
+    1
+}

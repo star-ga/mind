@@ -1,0 +1,8 @@
+// Positive fixture: bare i32 * i32 without >>16 narrowing.
+// The rule should fire on `a * b` where both are i32 and the result
+// feeds directly back into an i32 binding without a >>16 shift.
+
+fn mul_no_shift(a: i32, b: i32) -> i32 {
+    let result: i32 = a * b
+    result
+}

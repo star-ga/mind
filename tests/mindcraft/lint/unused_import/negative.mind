@@ -1,0 +1,9 @@
+// Negative fixture: `use std.vec` is declared AND the `vec` identifier
+// is referenced in the module body (as a call), so no warning.
+
+use std.vec
+
+fn make_vec() -> i64 {
+    let v = vec_new()
+    vec_len(v)
+}

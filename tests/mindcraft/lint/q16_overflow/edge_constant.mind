@@ -1,0 +1,7 @@
+// Edge case: i32 * literal constant still triggers if no >>16 shift.
+// Both sides are effectively i32 (the constant is int-typed).
+
+fn scale_no_shift(x: i32) -> i32 {
+    let result: i32 = x * 65536
+    result
+}

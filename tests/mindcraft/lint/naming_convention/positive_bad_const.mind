@@ -1,0 +1,4 @@
+// Positive fixture: const name violates SCREAMING_SNAKE_CASE.
+// "bad_const" is lower_snake_case — should trigger for const.
+
+const bad_const: i32 = 42

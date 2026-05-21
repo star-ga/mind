@@ -1,0 +1,6 @@
+// Positive fixture: struct name violates UpperCamelCase.
+// "badStruct" is lowerCamelCase — should trigger for struct.
+
+struct badStruct {
+    x: i32,
+}

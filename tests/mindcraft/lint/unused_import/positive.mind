@@ -1,0 +1,9 @@
+// Positive fixture: `use std.vec` is declared but no symbol from vec
+// is referenced anywhere in the module body.
+
+use std.vec
+
+fn do_something() -> i32 {
+    let x: i32 = 1
+    x
+}

@@ -14,18 +14,34 @@
 //!
 //! Phase 3 ships one proof-of-life rule (`trailing_whitespace`) to validate
 //! the infrastructure end-to-end.  Phase 4 adds the five named production
-//! rules (`q16_overflow`, `unused_import`, `naming_convention`, `shadowing`,
-//! and one additional rule).
+//! rules: `q16_overflow`, `unused_import`, `naming_convention`, `shadowing`,
+//! and retains `trailing_whitespace`.
 
+pub mod naming_convention;
+pub mod q16_overflow;
+pub mod shadowing;
 pub mod trailing_whitespace;
+pub mod unused_import;
 
+pub use naming_convention::NamingConvention;
+pub use q16_overflow::Q16Overflow;
+pub use shadowing::Shadowing;
 pub use trailing_whitespace::TrailingWhitespace;
+pub use unused_import::UnusedImport;
 
 use super::rule::RuleRegistry;
 
-/// Register all built-in Phase 3 rules into `registry`.
+/// Register all built-in Phase 4 rules into `registry`.
+///
+/// Registration order determines the order diagnostics appear in output
+/// (before span-sorting).  Rules are registered in alphabetical id order
+/// so the output is deterministic and predictable.
 ///
 /// Call this once at startup before invoking [`super::run_lint`].
 pub fn register_defaults(registry: &mut RuleRegistry) {
+    registry.register(NamingConvention);
+    registry.register(Q16Overflow);
+    registry.register(Shadowing);
     registry.register(TrailingWhitespace);
+    registry.register(UnusedImport);
 }
