@@ -24,6 +24,7 @@ use libmind::build::{run_build, BuildOpts};
 use libmind::check::{run_check, CheckOptions, ReporterKind};
 use libmind::fmt::cli as mindc_fmt;
 use libmind::test::{run_tests, ReporterKind as TestReporterKind, TestOptions as MindTestOptions};
+use libmind::workspace::{resolve_workspace_members, toposort_members, WorkspaceOpts};
 
 use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
@@ -87,6 +88,14 @@ enum Command {
         /// Show verbose output.
         #[arg(short, long)]
         verbose: bool,
+        /// Build only the named workspace member (and its prerequisites).
+        /// Alias: -p.  RFC 0008 Phase C.
+        #[arg(long, short = 'p', value_name = "NAME")]
+        package: Option<String>,
+        /// Explicitly build all workspace members (no-op when at workspace root;
+        /// included for parity with cargo).
+        #[arg(long)]
+        workspace: bool,
     },
     /// Build and run a MIND project.
     Run {
@@ -131,6 +140,10 @@ enum Command {
         #[arg(long, value_name = "REPORTER", default_value = "human",
               value_parser = ["human", "json"])]
         reporter: String,
+        /// Run tests for only the named workspace member (and its prerequisites).
+        /// Alias: -p.  RFC 0008 Phase C.
+        #[arg(long, short = 'p', value_name = "NAME")]
+        package: Option<String>,
     },
     /// Run project benchmarks (bench/*.mind).
     Bench {
@@ -296,8 +309,10 @@ fn main() {
             optimize,
             out,
             verbose,
+            package,
+            workspace: _,
         }) => {
-            run_mindc_build(paths, *release, target, emit, optimize, out, *verbose);
+            run_mindc_build(paths, *release, target, emit, optimize, out, *verbose, package.as_deref());
             return;
         }
         Some(Command::Run {
@@ -316,8 +331,9 @@ fn main() {
             threads,
             list,
             reporter,
+            package,
         }) => {
-            run_mindc_test(paths, filter.as_deref(), *threads, *list, reporter);
+            run_mindc_test(paths, filter.as_deref(), *threads, *list, reporter, package.as_deref());
             return;
         }
         Some(Command::Bench {
@@ -491,7 +507,17 @@ fn run_mindc_build(
     optimize: &Option<String>,
     out: &Option<String>,
     verbose: bool,
+    package: Option<&str>,
 ) {
+    // Workspace detection: if we are at a workspace root and no explicit
+    // source paths are given, delegate to the workspace build path.
+    if paths.is_empty() {
+        if let Some(root) = detect_workspace_root() {
+            run_workspace_build(&root, release, target, emit, optimize, out, verbose, package);
+            return;
+        }
+    }
+
     // Parse --target override.
     let eff_target: Option<BuildTarget> = match target {
         None => None,
@@ -564,7 +590,17 @@ fn run_mindc_test(
     threads: usize,
     list: bool,
     reporter: &str,
+    package: Option<&str>,
 ) {
+    // Workspace detection: if invoked in a workspace root with no explicit
+    // source paths, run tests for all members (or the named member).
+    if paths.is_empty() {
+        if let Some(root) = detect_workspace_root() {
+            run_workspace_test(&root, filter, threads, list, reporter, package);
+            return;
+        }
+    }
+
     let reporter_kind = if reporter == "json" {
         TestReporterKind::Json
     } else {
@@ -592,6 +628,254 @@ fn run_mindc_test(
             eprintln!("error[test]: {}", err);
             process::exit(1);
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0008 Phase C — workspace dispatch helpers
+// ---------------------------------------------------------------------------
+
+/// Detect whether the current working directory (or a parent) is a workspace
+/// root (has a `Mind.toml` with a `[workspace]` block).
+///
+/// Returns `Some(root)` when a workspace root is found, `None` otherwise.
+fn detect_workspace_root() -> Option<std::path::PathBuf> {
+    use libmind::project::find_project_root;
+    let root = find_project_root().ok()?;
+    let text = std::fs::read_to_string(root.join("Mind.toml")).ok()?;
+    if text.contains("[workspace]") {
+        Some(root)
+    } else {
+        None
+    }
+}
+
+/// Build all workspace members (or a filtered subset) in topological order.
+fn run_workspace_build(
+    workspace_root: &std::path::Path,
+    release: bool,
+    target: &Option<String>,
+    emit: &Option<String>,
+    optimize: &Option<String>,
+    out: &Option<String>,
+    verbose: bool,
+    package: Option<&str>,
+) {
+    let members = match resolve_workspace_members(workspace_root) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error[workspace]: {e}");
+            process::exit(e.exit_code());
+        }
+    };
+
+    let sorted = match toposort_members(&members) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error[workspace]: {e}");
+            process::exit(e.exit_code());
+        }
+    };
+
+    let ws_opts = WorkspaceOpts {
+        package_filter: package.map(|s| s.to_string()),
+    };
+    let selected = ws_opts.filter_members(&members, &sorted);
+
+    if selected.is_empty() && package.is_some() {
+        eprintln!(
+            "error[workspace]: package '{}' not found in workspace",
+            package.unwrap()
+        );
+        process::exit(2);
+    }
+
+    let mut any_failed = false;
+    for member in &selected {
+        if verbose {
+            eprintln!("   Building workspace member: {}", member.name);
+        }
+        // Change into the member directory and delegate to the single-crate
+        // builder by temporarily pushing the manifest path.
+        let member_paths: Vec<String> = vec![];
+        let eff_out: Option<String> = if out.is_some() && selected.len() == 1 {
+            out.clone()
+        } else {
+            None // each member uses its own default output path
+        };
+        let member_out = std::env::current_dir().ok().map(|_| eff_out).flatten();
+
+        // Run the Phase A build for this member's root.
+        let mut build_opts = BuildOpts {
+            paths: member_paths.iter().map(std::path::PathBuf::from).collect(),
+            target: parse_target_opt(target),
+            emit: parse_emit_opt(emit),
+            optimize: parse_optimize_opt(release, optimize),
+            out: member_out.map(std::path::PathBuf::from),
+            verbose,
+        };
+        // Override paths to use the member root's entry point resolution.
+        // The member root is passed via a synthetic path pointing to the member.
+        build_opts.paths = vec![member.root.clone()];
+
+        // Temporarily change working directory to the member root so that
+        // find_project_root() inside run_build picks up the member's Mind.toml.
+        let saved_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.to_path_buf());
+        if std::env::set_current_dir(&member.root).is_ok() {
+            build_opts.paths = vec![];
+        }
+
+        match run_build(&build_opts) {
+            Ok(output) => {
+                println!(
+                    "   Finished {} ({}) [{}] {}",
+                    member.name,
+                    output.target,
+                    output.emit.as_str(),
+                    output.artifact_path.display()
+                );
+            }
+            Err(err) => {
+                eprintln!("error[workspace][{}]: {}", member.name, err);
+                any_failed = true;
+            }
+        }
+
+        // Restore working directory.
+        let _ = std::env::set_current_dir(&saved_dir);
+    }
+
+    if any_failed {
+        process::exit(1);
+    }
+}
+
+fn parse_target_opt(target: &Option<String>) -> Option<BuildTarget> {
+    match target {
+        None => None,
+        Some(t) => match BuildTarget::parse(t) {
+            Ok(bt) => Some(bt),
+            Err(msg) => {
+                eprintln!("error[build]: {msg}");
+                process::exit(2);
+            }
+        },
+    }
+}
+
+fn parse_emit_opt(emit: &Option<String>) -> Option<EmitKind> {
+    match emit {
+        None => None,
+        Some(e) => match EmitKind::parse(e) {
+            Ok(ek) => Some(ek),
+            Err(msg) => {
+                eprintln!("error[build]: {msg}");
+                process::exit(2);
+            }
+        },
+    }
+}
+
+fn parse_optimize_opt(release: bool, optimize: &Option<String>) -> Option<OptimizeLevel> {
+    if release {
+        Some(OptimizeLevel::Release)
+    } else {
+        match optimize {
+            None => None,
+            Some(o) => match OptimizeLevel::parse(o) {
+                Ok(ol) => Some(ol),
+                Err(msg) => {
+                    eprintln!("error[build]: {msg}");
+                    process::exit(2);
+                }
+            },
+        }
+    }
+}
+
+/// Run tests for all workspace members (or a filtered subset).
+fn run_workspace_test(
+    workspace_root: &std::path::Path,
+    filter: Option<&str>,
+    threads: usize,
+    list: bool,
+    reporter: &str,
+    package: Option<&str>,
+) {
+    let members = match resolve_workspace_members(workspace_root) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error[workspace]: {e}");
+            process::exit(e.exit_code());
+        }
+    };
+
+    let sorted = match toposort_members(&members) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error[workspace]: {e}");
+            process::exit(e.exit_code());
+        }
+    };
+
+    let ws_opts = WorkspaceOpts {
+        package_filter: package.map(|s| s.to_string()),
+    };
+    let selected = ws_opts.filter_members(&members, &sorted);
+
+    if selected.is_empty() && package.is_some() {
+        eprintln!(
+            "error[workspace]: package '{}' not found in workspace",
+            package.unwrap()
+        );
+        process::exit(2);
+    }
+
+    let reporter_kind = if reporter == "json" {
+        TestReporterKind::Json
+    } else {
+        TestReporterKind::Human
+    };
+
+    let mut any_failed = false;
+    let saved_dir = std::env::current_dir().unwrap_or_else(|_| workspace_root.to_path_buf());
+
+    for member in &selected {
+        if std::env::set_current_dir(&member.root).is_err() {
+            eprintln!(
+                "error[workspace]: cannot enter member directory: {}",
+                member.root.display()
+            );
+            any_failed = true;
+            continue;
+        }
+
+        let opts = MindTestOptions {
+            paths: vec![],
+            filter: filter.unwrap_or("").to_string(),
+            capture: true,
+            threads,
+            list,
+            reporter: reporter_kind.clone(),
+        };
+
+        match run_tests(&opts) {
+            Ok(summary) => {
+                if !summary.all_passed() {
+                    any_failed = true;
+                }
+            }
+            Err(err) => {
+                eprintln!("error[test][{}]: {}", member.name, err);
+                any_failed = true;
+            }
+        }
+
+        let _ = std::env::set_current_dir(&saved_dir);
+    }
+
+    if any_failed {
+        process::exit(1);
     }
 }
 

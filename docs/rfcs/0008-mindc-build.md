@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Phase B Shipped** |
+| Status | **Phase C Shipped** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -532,16 +532,24 @@ Deliverables:
 - Isolation model: in-process `catch_unwind` (process-per-test deferred to
   when MLIR compiled binary path is available — see §10 decision)
 
-### Phase C — workspace support
+### Phase C — workspace support — **Shipped**
 
 `[workspace]` table parsing, member enumeration, topological build order across
 members, and workspace-level `mindc build` / `mindc test` that acts on all
 members.
 
 Deliverables:
-- Workspace manifest parsing and validation
-- Cross-member dep resolution (local paths only at this phase)
-- `mindc build` operating on the workspace root
+- `src/workspace/mod.rs` — workspace resolution engine: glob expansion, exclude
+  filtering, virtual manifest support, Kahn's topological sort, cycle detection
+  (exit code 2), `WorkspaceOpts::filter_members` with BFS transitive-dep closure
+- `src/project/mod.rs` — `DependencySpec::Path { path, features }` variant for
+  cross-member path dep discovery
+- `src/bin/mindc.rs` — `--package`/`-p` and `--workspace` flags on `mindc build`;
+  `--package`/`-p` on `mindc test`; `detect_workspace_root`, `run_workspace_build`,
+  `run_workspace_test` delegation using `set_current_dir`
+- `tests/mindc_workspace_phase_c.rs` — 12 integration tests covering glob
+  expansion, toposort, cycle detection, virtual manifests, exclude, canonical
+  paths, external path deps, and error exit codes; all 12 passing
 
 ### Phase D — path deps
 

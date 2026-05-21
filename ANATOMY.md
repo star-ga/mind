@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2582 | **Est. tokens:** ~6,340,053
-**Generated:** 2026-05-21 08:46 UTC
+**Files:** 2584 | **Est. tokens:** ~6,351,634
+**Generated:** 2026-05-21 09:49 UTC
 
 ## Token Budget Guide
 
@@ -41,7 +41,7 @@
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
-| `docs/rfcs/` | 14 | ~40,721 |
+| `docs/rfcs/` | 14 | ~40,887 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -360,10 +360,10 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,211 |
+| `src/` | 7 | ~16,216 |
 | `src/ast/` | 1 | ~4,821 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~13,206 |
+| `src/bin/` | 2 | ~15,472 |
 | `src/build/` | 1 | ~4,524 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
@@ -384,15 +384,16 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,019 |
+| `src/project/` | 3 | ~20,094 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
+| `src/workspace/` | 1 | ~4,948 |
 | `std/` | 5 | ~5,709 |
-| `tests/` | 124 | ~146,975 |
+| `tests/` | 125 | ~151,096 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -605,7 +606,7 @@
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
-- `0008-mindc-build.md` (~10061 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
+- `0008-mindc-build.md` (~10227 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3534,7 +3535,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~7163 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~9429 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `mod.rs` (~4524 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3619,7 +3620,7 @@
 - `verify.rs` (~2729 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~926 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -3664,7 +3665,7 @@
 - `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~13626 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13701 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~2727 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3700,6 +3701,9 @@
 - `intern.rs` (~1554 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~880 tok, large) — Copyright 2025 STARGA Inc.
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
+### `src/workspace/`
+
+- `mod.rs` (~4948 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
@@ -3889,6 +3893,7 @@
 
 - `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3466 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_workspace_phase_c.rs` (~4121 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_indexing.rs` (~414 tok, medium) — Copyright 2025 STARGA Inc.
