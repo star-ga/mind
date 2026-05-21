@@ -27,6 +27,7 @@ use crate::ast::Module;
 use crate::ast::Node;
 
 use crate::ast::Span as AstSpan;
+use crate::ast::TypeAnn;
 
 use crate::diagnostics::{Diagnostic as Pretty, Severity, Span};
 
@@ -1460,6 +1461,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // placeholder) until Gap 1 lands full control-flow typing.
         #[cfg(feature = "std-surface")]
         Node::While { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        // RFC 0010 Phase A: `extern "C"` blocks are declarations; they do not
+        // produce a typed value. Return ScalarI32 placeholder for compatibility.
+        Node::ExternBlock { span, .. } => Ok((ValueType::ScalarI32, *span)),
     }
 }
 
@@ -1926,6 +1930,10 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         // SparseTensor: runtime resolves layout; return None so callers
         // fall through to the runtime resolver path (same pattern as Slice).
         crate::ast::TypeAnn::SparseTensor { .. } => None,
+        // RFC 0010 Phase A: raw pointer types are opaque handles in the MIND
+        // type system — they don't map to a ValueType. Return None to let
+        // callers treat them as unresolved (typically, extern fn signatures).
+        crate::ast::TypeAnn::RawPtr { .. } => None,
     }
 }
 
@@ -2281,6 +2289,43 @@ pub fn check_module_types_in_file(
             | Node::EnumDef { .. } => {
                 // Record-only at v1: parser shipped, typechecker hooks deferred.
             }
+            // RFC 0010 Phase A: validate extern "C" block signatures.
+            // All parameter and return types must be Copy-compatible C ABI
+            // types: i8/i16/i32/i64, u8/u16/u32/u64, f32/f64, bool, or
+            // raw pointers `*const T` / `*mut T`. Aggregate types (String,
+            // Vec, user-defined structs) are rejected with `safety::extern_non_copy`.
+            Node::ExternBlock { fns, .. } => {
+                for efn in fns {
+                    for param in &efn.params {
+                        if let Err(msg) = check_extern_type(&param.ty) {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "extern \"C\" fn `{}` parameter `{}`: {}",
+                                    efn.name, param.name, msg
+                                ),
+                                param.span,
+                                "safety::extern_non_copy",
+                            ));
+                        }
+                    }
+                    if let Some(ret) = &efn.ret_type {
+                        if let Err(msg) = check_extern_type(ret) {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "extern \"C\" fn `{}` return type: {}",
+                                    efn.name, msg
+                                ),
+                                efn.span,
+                                "safety::extern_non_copy",
+                            ));
+                        }
+                    }
+                }
+            }
             // `assert <cond>` at module-level: typecheck the condition.
             Node::Assert { cond, .. } => {
                 if let Err(e) = infer_expr(cond, &tenv) {
@@ -2308,6 +2353,57 @@ pub fn check_module_types_in_file(
     }
 
     errs
+}
+
+/// RFC 0010 Phase A — verify that a type used in an `extern "C"` signature is
+/// a C-ABI-compatible Copy type.
+///
+/// Accepted: i8, i16, i32, i64, u8, u16, u32, u64, f32, f64, bool, usize,
+/// isize, and raw pointers (`*const T` / `*mut T` for any accepted T).
+///
+/// Rejected: Named user types (String, Vec, custom structs), tensors,
+/// slices, references, tuples, generic types, etc.
+///
+/// Returns `Ok(())` on acceptance, `Err(reason)` on rejection.
+fn check_extern_type(ann: &TypeAnn) -> Result<(), String> {
+    match ann {
+        // All built-in scalar types are C-ABI-compatible.
+        TypeAnn::ScalarI32
+        | TypeAnn::ScalarI64
+        | TypeAnn::ScalarF32
+        | TypeAnn::ScalarF64
+        | TypeAnn::ScalarBool
+        | TypeAnn::ScalarU32 => Ok(()),
+        // Raw pointers: validate the pointee type recursively. Phase A
+        // accepts any built-in pointee; the pointer itself lowers to !llvm.ptr.
+        TypeAnn::RawPtr { pointee, .. } => check_extern_type(pointee),
+        // Named types: accept only the primitive names that map directly to
+        // C scalar types. Everything else (String, Vec, custom structs) is
+        // rejected because it is not a Copy type by the C ABI.
+        TypeAnn::Named(name) => match name.as_str() {
+            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64" | "bool" | "usize" | "isize" => Ok(()),
+            _ => Err(format!(
+                "type `{name}` is not a C-ABI-compatible Copy type; \
+                 only integer, float, bool, and raw pointer types are \
+                 allowed in `extern \"C\"` signatures (safety::extern_non_copy)"
+            )),
+        },
+        // Aggregate and non-Copy types are rejected.
+        TypeAnn::Tensor { .. }
+        | TypeAnn::DiffTensor { .. }
+        | TypeAnn::SparseTensor { .. }
+        | TypeAnn::Slice { .. }
+        | TypeAnn::Ref { .. }
+        | TypeAnn::Array { .. }
+        | TypeAnn::Tuple { .. }
+        | TypeAnn::Generic { .. } => Err(
+            "aggregate/non-Copy type is not allowed in `extern \"C\"` \
+             signatures (safety::extern_non_copy); use a raw pointer `*const T` \
+             or `*mut T` to pass aggregate data across the C ABI"
+                .into(),
+        ),
+    }
 }
 
 fn diag_from_span(

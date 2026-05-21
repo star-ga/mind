@@ -16,8 +16,8 @@
 //! from the [`TriviaStream`].
 
 use crate::ast::{
-    Attribute, BinOp, BitOp, EnumVariant, Field, Literal, LogicalOp, MatchArm, Module, Node,
-    Param, Pattern, SparseLayout, StructLitField, TypeAnn,
+    Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, Literal, LogicalOp,
+    MatchArm, Module, Node, Param, Pattern, SparseLayout, StructLitField, TypeAnn,
 };
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
@@ -1205,6 +1205,10 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         Node::While { cond, body, .. } => {
             emit_while_inline(p, cond, body);
         }
+        // RFC 0010 Phase A: emit the extern "C" block in canonical form.
+        Node::ExternBlock { callconv, fns, .. } => {
+            emit_extern_block(p, callconv, fns);
+        }
     }
 }
 
@@ -1403,7 +1407,65 @@ fn emit_type_ann(p: &mut Printer, ty: &TypeAnn) {
             }
             p.push(">");
         }
+        // RFC 0010 Phase A: raw pointer type `*const T` / `*mut T`.
+        TypeAnn::RawPtr { mutable, pointee } => {
+            if *mutable {
+                p.push("*mut ");
+            } else {
+                p.push("*const ");
+            }
+            emit_type_ann(p, pointee);
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0010 Phase A: extern "C" block emitter
+// ---------------------------------------------------------------------------
+
+fn emit_extern_block(p: &mut Printer, callconv: &CallConv, fns: &[ExternFn]) {
+    let ind = p.indent_str();
+    p.push(&ind);
+    p.push("extern \"C\"");
+    match callconv {
+        CallConv::C => {}
+        CallConv::SysV => p.push(" callconv(.sysv)"),
+        CallConv::Win64 => p.push(" callconv(.win64)"),
+        CallConv::Aapcs => p.push(" callconv(.aapcs)"),
+    }
+    p.push(" {\n");
+    p.indent += 1;
+    for efn in fns {
+        let inner_ind = p.indent_str();
+        p.push(&inner_ind);
+        p.push(if efn.is_unsafe { "unsafe fn " } else { "safe fn " });
+        p.push(&efn.name);
+        p.push("(");
+        for (i, param) in efn.params.iter().enumerate() {
+            if i > 0 {
+                p.push(", ");
+            }
+            p.push(&param.name);
+            p.push(": ");
+            emit_type_ann(p, &param.ty);
+        }
+        if efn.is_varargs {
+            if !efn.params.is_empty() {
+                p.push(", ");
+            }
+            p.push("...");
+        }
+        p.push(")");
+        if let Some(ret) = &efn.ret_type {
+            p.push(" -> ");
+            emit_type_ann(p, ret);
+        }
+        p.push(";\n");
+    }
+    p.indent -= 1;
+    let close_ind = p.indent_str();
+    p.push(&close_ind);
+    p.push("}");
 }
 
 // ---------------------------------------------------------------------------

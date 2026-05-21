@@ -173,6 +173,15 @@ struct LoweringContext {
     /// Names defined locally (Instr::FnDef) — filter from extern decls.
     #[cfg(feature = "std-surface")]
     defined_fns: std::collections::BTreeSet<String>,
+    /// RFC 0010 Phase A: `extern "C"` fn declarations — name → (param_types,
+    /// ret_type, is_varargs). Populated by `Instr::ExternFnDecl`; consulted
+    /// by the `Instr::Call` arm to decide whether to emit `llvm.call` or
+    /// `func.call`. Gated to std-surface.
+    #[cfg(feature = "std-surface")]
+    extern_c_fns: std::collections::BTreeMap<
+        String,
+        (Vec<String>, Option<String>, bool), // (param_types, ret_type, is_varargs)
+    >,
 }
 
 impl LoweringContext {
@@ -187,6 +196,8 @@ impl LoweringContext {
             user_fns: String::new(),
             #[cfg(feature = "std-surface")]
             defined_fns: std::collections::BTreeSet::new(),
+            #[cfg(feature = "std-surface")]
+            extern_c_fns: std::collections::BTreeMap::new(),
         }
     }
 
@@ -442,6 +453,55 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
+                // RFC 0010 Phase A: if the callee was declared via an
+                // `extern "C"` block, emit `llvm.call` with the declared
+                // signature; otherwise fall back to the existing `func.call`
+                // i64-ABI path used by the std-surface runtime bridge.
+                if let Some((param_types, ret_type, is_varargs)) =
+                    self.extern_c_fns.get(name).cloned()
+                {
+                    // Build arg list with declared types (or i64 for extras
+                    // beyond the declared arity, which covers varargs).
+                    let arg_refs: Vec<String> =
+                        args.iter().map(|a| format!("%{}", a.0)).collect();
+                    let arg_type_pairs: Vec<String> = args
+                        .iter()
+                        .enumerate()
+                        .map(|(i, a)| {
+                            let ty = param_types
+                                .get(i)
+                                .map(String::as_str)
+                                .unwrap_or("i64");
+                            format!("%{} : {}", a.0, ty)
+                        })
+                        .collect();
+                    let param_type_str: Vec<String> = args
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| {
+                            param_types
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_else(|| "i64".to_string())
+                        })
+                        .collect();
+                    let _ = arg_type_pairs; // used in signature comment
+                    let call_ret_ty = ret_type.as_deref().unwrap_or("i64");
+                    let varargs_suffix = if is_varargs { ", ..." } else { "" };
+                    self.emit_line(&format!(
+                        "    %{} = llvm.call @{}({}) : ({}{}) -> {}",
+                        dst.0,
+                        name,
+                        arg_refs.join(", "),
+                        param_type_str.join(", "),
+                        varargs_suffix,
+                        call_ret_ty,
+                    ));
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    // Track in extern_c_fns so the module-level emitter
+                    // knows to emit the llvm.func declaration.
+                    // (Already present — no action needed.)
+                } else {
                 let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
                 let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
                 self.emit_line(&format!(
@@ -453,6 +513,7 @@ impl LoweringContext {
                 ));
                 self.values.insert(*dst, ValueKind::ScalarI64);
                 self.extern_calls.insert((name.clone(), args.len()));
+                }
             }
             // RFC 0005 P0d: emit `func.func @name(%pN: i64...) -> i64 { ... }`
             // for each user-defined function. The body is lowered into a
@@ -468,6 +529,10 @@ impl LoweringContext {
                 ..
             } => {
                 let mut sub = LoweringContext::new();
+                // RFC 0010 Phase A: inherit extern_c_fns so that any
+                // `llvm.call` emitted inside a user fn body resolves
+                // correctly against the module-level extern declarations.
+                sub.extern_c_fns = self.extern_c_fns.clone();
                 for (_pname, pid) in params {
                     sub.values.insert(*pid, ValueKind::ScalarI64);
                 }
@@ -525,6 +590,11 @@ impl LoweringContext {
                 }
                 for df in sub.defined_fns {
                     self.defined_fns.insert(df);
+                }
+                // RFC 0010 Phase A: bubble up any ExternFnDecl discovered
+                // inside the fn body (unusual but valid at the IR level).
+                for (efn_name, sig) in sub.extern_c_fns {
+                    self.extern_c_fns.insert(efn_name, sig);
                 }
                 self.user_fns.push_str(&sub.user_fns);
             }
@@ -1013,6 +1083,23 @@ impl LoweringContext {
                 self.values.insert(*then_result, ValueKind::ScalarI64);
                 self.values.insert(*else_result, ValueKind::ScalarI64);
                 self.values.insert(*dst, ValueKind::ScalarI64);
+            }
+            // RFC 0010 Phase A: register an extern "C" declaration so that
+            // subsequent `Instr::Call` ops to the same name emit `llvm.call`
+            // instead of `func.call`. No MLIR text is emitted here — the
+            // `llvm.func` declaration is assembled at the module level after
+            // all instructions are processed (see `lower_ir_to_mlir`). Gated.
+            #[cfg(feature = "std-surface")]
+            Instr::ExternFnDecl {
+                name,
+                param_types,
+                ret_type,
+                is_varargs,
+            } => {
+                self.extern_c_fns.insert(
+                    name.clone(),
+                    (param_types.clone(), ret_type.clone(), *is_varargs),
+                );
             }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
@@ -1942,6 +2029,28 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     // `func.call`s inside @main resolve. Gated; default build emits none.
     #[cfg(feature = "std-surface")]
     out.push_str(&ctx.user_fns);
+
+    // RFC 0010 Phase A: one `llvm.func @name(type...) -> type` declaration
+    // per `extern "C"` symbol referenced via `Instr::ExternFnDecl`. Emitted
+    // before `@main` so `llvm.call` ops resolve. Sorted (BTreeMap) for
+    // deterministic MLIR text. Gated; default build emits none.
+    #[cfg(feature = "std-surface")]
+    for (name, (param_types, ret_type, is_varargs)) in &ctx.extern_c_fns {
+        let params_str = if param_types.is_empty() {
+            String::new()
+        } else {
+            param_types.join(", ")
+        };
+        let varargs_suffix = if *is_varargs {
+            if param_types.is_empty() { "...".to_string() } else { ", ...".to_string() }
+        } else {
+            String::new()
+        };
+        let ret_str = ret_type.as_deref().unwrap_or("i64");
+        out.push_str(&format!(
+            "  llvm.func @{name}({params_str}{varargs_suffix}) -> {ret_str}\n"
+        ));
+    }
 
     if ret_types.is_empty() {
         out.push_str("  func.func @main() -> () {\n");
