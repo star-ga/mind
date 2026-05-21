@@ -7,6 +7,15 @@
 [![CI](https://github.com/star-ga/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/star-ga/mind/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
+## Install
+
+```sh
+curl -sSL https://mindlang.dev/install.sh | sh
+```
+
+Pre-built binaries for Linux, macOS, and Windows — no Rust toolchain required.
+See [`docs/install.md`](docs/install.md) for all install options including manual download, checksum verification, and build from source.
+
 ## Overview
 
 MIND is a Rust-first language and runtime for building intelligent systems with auditable foundations. It blends declarative tensor algebra, static shape inference, automatic differentiation, and MLIR/LLVM lowering in a compact toolchain that scales from research prototypes to production.

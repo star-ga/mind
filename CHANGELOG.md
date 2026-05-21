@@ -5,6 +5,21 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — `mindc doc` (Phase 1) + RFC 0008 Phase F + Phase G KEYSTONE + standalone binary distribution (task #265)
+
+### Added — Standalone binary distribution (task #265)
+
+Standalone binary distribution: `mindc` is now available as pre-built binaries for
+Linux (x86_64 static musl), macOS (universal x86_64 + arm64), and Windows (x86_64
+MSVC). No Rust toolchain required. See `docs/install.md`.
+
+- `.github/workflows/release-binary.yml` — builds and publishes binaries on tag push
+- `scripts/install.sh` — one-line curl-pipe installer for Linux/macOS
+- `scripts/install.ps1` — one-line PowerShell installer for Windows
+- `docs/install.md` — installation guide (curl-pipe, manual, build from source)
+- Every release asset is accompanied by a `SHA256SUMS` manifest for checksum verification
+- Cosign signing is stubbed; wire `STARGA_COSIGN_KEY` secret to enable
+
 ## [Unreleased] — `mindc doc` (Phase 1) + RFC 0008 Phase F + Phase G KEYSTONE
 
 ### Added — `mindc doc`: rustdoc-style HTML documentation generator (Phase 1, task #264)
