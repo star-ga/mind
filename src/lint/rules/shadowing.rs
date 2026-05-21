@@ -177,6 +177,7 @@ fn check_scope(stmts: &[Node], ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
                     help: Some(format!(
                         "rename `{name}` or use `#[allow(lint::shadowing, reason = \"intentional\")]`"
                     )),
+                    auto_fix: None,
                 });
             } else {
                 seen.insert(name.as_str(), (span.start(), span.end()));

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2571 | **Est. tokens:** ~6,299,175
-**Generated:** 2026-05-21 02:37 UTC
+**Files:** 2575 | **Est. tokens:** ~6,308,916
+**Generated:** 2026-05-21 06:26 UTC
 
 ## Token Budget Guide
 
@@ -41,7 +41,7 @@
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
-| `docs/rfcs/` | 13 | ~30,260 |
+| `docs/rfcs/` | 13 | ~30,660 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -55,7 +55,7 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 6 | ~5,042 |
+| `.github/workflows/` | 7 | ~5,776 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~8,780 |
 | `scripts/` | 2 | ~2,268 |
@@ -363,21 +363,21 @@
 | `src/` | 7 | ~16,204 |
 | `src/ast/` | 1 | ~4,736 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~11,943 |
+| `src/bin/` | 2 | ~12,147 |
 | `src/cache/` | 4 | ~3,545 |
-| `src/check/` | 3 | ~7,098 |
+| `src/check/` | 3 | ~9,753 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/eval/` | 13 | ~73,494 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~15,256 |
+| `src/fmt/` | 3 | ~15,407 |
 | `src/ir/` | 3 | ~12,360 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
-| `src/lint/` | 2 | ~3,584 |
-| `src/lint/rules/` | 6 | ~8,972 |
+| `src/lint/` | 2 | ~3,995 |
+| `src/lint/rules/` | 6 | ~9,076 |
 | `src/mlir/` | 3 | ~26,259 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
@@ -390,7 +390,7 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,709 |
-| `tests/` | 119 | ~133,902 |
+| `tests/` | 122 | ~138,984 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -602,7 +602,7 @@
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
 - `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
-- `0007-mindcraft.md` (~3092 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
+- `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `000-template.md` (~1 tok, tiny)
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -719,8 +719,9 @@
 
 - `bench-gate.yml` (~1052 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~1877 tok, huge) — name: CI
+- `ci.yml` (~2135 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
+- `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
 - `release.yml` (~1579 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -3530,7 +3531,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~5900 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~6104 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3540,7 +3541,7 @@
 ### `src/check/`
 
 - `gitignore.rs` (~2347 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~4377 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7032 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3589,7 +3590,7 @@
 - `sys.rs` (~1772 tok, huge) — Copyright 2025-2026 STARGA Inc.
 ### `src/fmt/`
 
-- `cli.rs` (~3701 tok, huge) — Copyright 2025 STARGA Inc.
+- `cli.rs` (~3852 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
 - `printer.rs` (~10961 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
@@ -3616,16 +3617,16 @@
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
-- `mod.rs` (~1173 tok, large) — Copyright 2025 STARGA Inc.
-- `rule.rs` (~2411 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1311 tok, large) — Copyright 2025 STARGA Inc.
+- `rule.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/rules/`
 
 - `mod.rs` (~454 tok, medium) — Copyright 2025 STARGA Inc.
-- `naming_convention.rs` (~1862 tok, huge) — Copyright 2025 STARGA Inc.
-- `q16_overflow.rs` (~2400 tok, huge) — Copyright 2025 STARGA Inc.
-- `shadowing.rs` (~1757 tok, huge) — Copyright 2025 STARGA Inc.
-- `trailing_whitespace.rs` (~795 tok, large) — Copyright 2025 STARGA Inc.
-- `unused_import.rs` (~1704 tok, huge) — Copyright 2025 STARGA Inc.
+- `naming_convention.rs` (~1868 tok, huge) — Copyright 2025 STARGA Inc.
+- `q16_overflow.rs` (~2406 tok, huge) — Copyright 2025 STARGA Inc.
+- `shadowing.rs` (~1766 tok, huge) — Copyright 2025 STARGA Inc.
+- `trailing_whitespace.rs` (~869 tok, large) — Copyright 2025 STARGA Inc.
+- `unused_import.rs` (~1713 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3797,7 +3798,15 @@
 ### `tests/mindcraft/check/`
 
 - `drifted.mind` (~12 tok, tiny) — fn add(a: i64,  b: i64) -> i64 {
+### `tests/`
+
+- `mindcraft_check_fix.rs` (~1667 tok, huge) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/check/`
+
 - `ignored.mind` (~9 tok, tiny) — fn ignored_fn() -> i64 {
+### `tests/`
+
+- `mindcraft_check_lsp_reporter.rs` (~1975 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/subdir/`
 
 - `nested.mind` (~9 tok, tiny) — fn nested(x: i64) -> i64 {
@@ -3823,6 +3832,7 @@
 ### `tests/`
 
 - `mindcraft_fmt_cli.rs` (~2942 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindcraft_fmt_fix.rs` (~1440 tok, large) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt_fixtures.rs` (~1302 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/lint/naming_convention/`
 

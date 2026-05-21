@@ -225,6 +225,40 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-default-features --document-private-items
 
+  mindcraft_check:
+    name: Mindcraft check (RFC 0007 Phase 6)
+    runs-on: ubuntu-latest
+    # Lint warnings should not block the compile+test CI matrix during the
+    # initial rollout.  Once the std/ and examples/ tree is fully clean this
+    # flag can be removed.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-mindcraft-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-mindcraft-
+
+      - name: Build mindc
+        run: cargo build --release --no-default-features --bin mindc
+
+      - name: Run mindc check on std/ and examples/
+        run: |
+          cargo run --release --no-default-features --bin mindc -- \
+            check std/ examples/
+
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features
   # Will re-enable when stable Rust supports edition 2024 let-chains
   # msrv:

@@ -67,6 +67,32 @@ pub trait LintRule: Send + Sync {
     /// `check` returns; rules should emit their `default_severity()` or any
     /// placeholder — it will be overwritten.
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<Diagnostic>;
+
+    /// Attempt to produce a machine-applicable fix for `diagnostic`.
+    ///
+    /// Returns `None` when the rule does not support automatic fixes (the
+    /// default). Override this for rules that can deterministically rewrite
+    /// the source to remove the diagnostic.
+    ///
+    /// The returned [`Fix`] carries the byte-range in the original source that
+    /// should be replaced, plus the replacement text.
+    fn auto_fix(&self, _ctx: &LintCtx<'_>, _diagnostic: &Diagnostic) -> Option<Fix> {
+        None
+    }
+}
+
+/// A machine-applicable source edit produced by an auto-fixable lint rule.
+///
+/// The edit replaces `source[range.start..range.end]` with `replacement`.
+/// After applying the edit the source is re-checked; multiple non-overlapping
+/// edits from the same pass are applied in reverse byte-offset order to keep
+/// the offsets valid.
+#[derive(Debug, Clone)]
+pub struct Fix {
+    /// Byte range to replace (from [`SourceSpan`]).
+    pub range: std::ops::Range<usize>,
+    /// Text that replaces `source[range]`.  Empty string = deletion.
+    pub replacement: String,
 }
 
 // ---------------------------------------------------------------------------

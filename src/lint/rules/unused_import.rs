@@ -90,6 +90,7 @@ impl LintRule for UnusedImport {
                         "remove the `use` declaration or use the imported symbol"
                             .to_string(),
                     ),
+                    auto_fix: None,
                 });
             }
         }

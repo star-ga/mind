@@ -28,11 +28,16 @@ use crate::project::{find_project_root, load_manifest, MindcraftFormatConfig};
 /// Entry point called from `mindc.rs`.
 ///
 /// Returns an exit code: 0 = clean, 1 = drift/error, 2 = usage error.
+///
+/// The `fix` flag is an explicit alias for the default write mode: files are
+/// formatted in-place and a summary line `Formatted N files, M unchanged` is
+/// printed to stdout.
 pub fn run_fmt(
     paths: &[String],
     check: bool,
     diff: bool,
     stdin: bool,
+    fix: bool,
 ) -> i32 {
     // --stdin is mutually exclusive with positional paths.
     if stdin && !paths.is_empty() {
@@ -55,15 +60,24 @@ pub fn run_fmt(
     };
 
     if files.is_empty() {
-        // No .mind files found — clean by definition.
+        if fix {
+            println!("Formatted 0 files, 0 unchanged.");
+        }
         return 0;
     }
 
     let mut exit_code = 0_i32;
+    let mut formatted_count = 0usize;
+    let mut unchanged_count = 0usize;
 
     for path in &files {
         match process_file(path, check, diff, &cfg) {
-            Ok(FileResult::Clean) | Ok(FileResult::Written) => {}
+            Ok(FileResult::Clean) => {
+                unchanged_count += 1;
+            }
+            Ok(FileResult::Written) => {
+                formatted_count += 1;
+            }
             Ok(FileResult::Drifted) => {
                 exit_code = 1;
             }
@@ -72,6 +86,13 @@ pub fn run_fmt(
                 exit_code = 1;
             }
         }
+    }
+
+    if fix {
+        println!(
+            "Formatted {formatted_count} file{}, {unchanged_count} unchanged.",
+            if formatted_count == 1 { "" } else { "s" },
+        );
     }
 
     exit_code
