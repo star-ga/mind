@@ -40,11 +40,12 @@ use crate::ast::Module;
 /// table's deterministic-insertion contract is preserved when the
 /// project loader prepends these to the user's own modules.
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
-    ("std.blas", include_str!("../../std/blas.mind")),
-    ("std.io", include_str!("../../std/io.mind")),
-    ("std.map", include_str!("../../std/map.mind")),
+    ("std.blas",   include_str!("../../std/blas.mind")),
+    ("std.io",     include_str!("../../std/io.mind")),
+    ("std.map",    include_str!("../../std/map.mind")),
     ("std.string", include_str!("../../std/string.mind")),
-    ("std.vec", include_str!("../../std/vec.mind")),
+    ("std.toml",   include_str!("../../std/toml.mind")),
+    ("std.vec",    include_str!("../../std/vec.mind")),
 ];
 
 /// Parse every bundled std/*.mind source and return the
@@ -139,6 +140,7 @@ mod tests {
         assert!(names.contains(&"std.string"));
         assert!(names.contains(&"std.map"));
         assert!(names.contains(&"std.io"));
+        assert!(names.contains(&"std.toml"));
     }
 
     #[test]
@@ -153,6 +155,7 @@ mod tests {
         assert!(table.resolves(&["std".into(), "string".into()], "string_new"));
         assert!(table.resolves(&["std".into(), "map".into()], "map_new"));
         assert!(table.resolves(&["std".into(), "io".into()], "stdout"));
+        assert!(table.resolves(&["std".into(), "toml".into()], "toml_parse"));
     }
 
     #[test]
@@ -222,6 +225,7 @@ mod tests {
         assert!(names.contains(&"std.string"));
         assert!(names.contains(&"std.map"));
         assert!(names.contains(&"std.io"));
+        assert!(names.contains(&"std.toml"));
     }
 
     #[test]
