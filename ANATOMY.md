@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2591 | **Est. tokens:** ~6,388,237
-**Generated:** 2026-05-21 13:08 UTC
+**Files:** 2596 | **Est. tokens:** ~6,421,048
+**Generated:** 2026-05-21 15:31 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 14 | ~41,624 |
+| `docs/rfcs/` | 17 | ~60,147 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -386,7 +386,7 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,186 |
+| `src/project/` | 3 | ~20,246 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
@@ -394,8 +394,8 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 5 | ~5,709 |
-| `tests/` | 128 | ~166,905 |
+| `std/` | 6 | ~15,332 |
+| `tests/` | 129 | ~171,510 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -613,7 +613,10 @@
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3492 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
+- `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
+- `0010-memory-safety-and-c-abi.md` (~6735 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
+- `0011-async-and-structured-concurrency.md` (~4812 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -3677,7 +3680,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~2727 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~2787 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3720,6 +3723,7 @@
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `map.mind` (~826 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `string.mind` (~875 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `vec.mind` (~662 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
@@ -3786,9 +3790,9 @@
 - `test_phase_b_one_fail.mind` (~79 tok, small) — RFC 0008 Phase B test fixture — one pass, one fail.
 ### `tests/`
 
-- `fmt_idempotence.rs` (~1789 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~1987 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_stdlib_stability.rs` (~1927 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2164 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3967,10 +3971,11 @@
 - `std_surface_intrinsics.rs` (~2087 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1571 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_map_module.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_phase_c_stdlib_bundle.rs` (~1454 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_phase_d_env_override.rs` (~1488 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_d_env_override.rs` (~1522 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2034 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2686 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_toml.rs` (~4127 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1753 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1859 tok, huge) — Copyright 2025 STARGA Inc.

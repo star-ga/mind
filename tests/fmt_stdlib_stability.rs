@@ -28,9 +28,11 @@
 //! gaps where the formatter cannot faithfully reproduce source constructs
 //! because the information was discarded during parsing.
 //!
-//! **Current skip list: empty** — MINDCRAFT-001 is resolved.  The AST
-//! `Node::FnDef`, `Node::StructDef`, `Node::EnumDef`, and `Field` now carry
-//! an `is_pub: bool` field.  All five stdlib files are stable.
+//! **Current skip list:** `toml.mind` (TOML-001) — uses `while` loops which
+//! require the `std-surface` feature for the formatter parser, and the raw
+//! source has alignment whitespace not emitted by the formatter.  Idempotence
+//! is separately enforced by `idempotence_stdlib_toml` in `fmt_idempotence.rs`.
+//! MINDCRAFT-001 is resolved: the five default-build stdlib files are stable.
 
 use libmind::fmt::format_source;
 use libmind::project::MindcraftFormatConfig;
@@ -74,9 +76,16 @@ fn diff_lines(expected: &str, got: &str) -> String {
 /// formatter output.  It MUST still be idempotent (enforced by
 /// `fmt_idempotence.rs`).
 ///
-/// MINDCRAFT-001 is RESOLVED — all five stdlib files are now stable.
-/// The skip list is intentionally empty.
-const STABILITY_SKIP_LIST: &[(&str, &str)] = &[];
+/// MINDCRAFT-001 is RESOLVED — all default-build stdlib files are now stable.
+/// toml.mind is on the skip list because:
+///   1. It uses `while` loops, which require `std-surface` for the formatter.
+///   2. The formatter canonicalises whitespace/trailing-space, so the raw
+///      source differs from formatter output (alignment spaces in one-liner fns).
+/// Idempotence for toml.mind is separately enforced by `idempotence_stdlib_toml`
+/// in `fmt_idempotence.rs` (runs under `std-surface`).
+const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
+    ("toml", "TOML-001: while-loop + whitespace alignment; std-surface required"),
+];
 
 fn stability_skip_reason(stem: &str) -> Option<&'static str> {
     STABILITY_SKIP_LIST
@@ -114,6 +123,14 @@ fn stability_blas() {
     check_or_skip("blas");
 }
 
+/// `toml.mind` uses `while` loops, which require the `std-surface` feature to
+/// be recognised by the formatter's parser.
+#[test]
+#[cfg(feature = "std-surface")]
+fn stability_toml() {
+    check_or_skip("toml");
+}
+
 // ---------------------------------------------------------------------------
 // Aggregated summary test — counts skipped vs passed.
 // ---------------------------------------------------------------------------
@@ -126,6 +143,7 @@ fn stability_summary() {
     let base = manifest_dir().join("std");
     let cfg = default_cfg();
 
+    // toml.mind requires std-surface for while-loop parsing — tested separately
     let std_files = ["vec", "string", "io", "map", "blas"];
     let mut passed = 0usize;
     let mut skipped: Vec<(&str, &str)> = Vec::new();

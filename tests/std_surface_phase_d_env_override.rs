@@ -52,14 +52,15 @@ fn env_unset_uses_bundled_stdlib() {
     with_env("MIND_STDLIB_PATH", None, || {
         let mods = parsed_stdlib_modules();
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
-        // The bundled set is exactly the five canonical modules
-        // (std.blas joined in RFC 0006 / mind-blas Track A), in
-        // deterministic alphabetical order.
-        assert_eq!(mods.len(), 5);
+        // The bundled set is exactly the six canonical modules
+        // (std.blas joined in RFC 0006; std.toml joined in task #258),
+        // in deterministic alphabetical order.
+        assert_eq!(mods.len(), 6);
         assert!(names.contains(&"std.blas"));
         assert!(names.contains(&"std.io"));
         assert!(names.contains(&"std.map"));
         assert!(names.contains(&"std.string"));
+        assert!(names.contains(&"std.toml"));
         assert!(names.contains(&"std.vec"));
     });
 }
@@ -80,7 +81,7 @@ fn env_set_to_repo_std_dir_round_trips() {
 
     with_env("MIND_STDLIB_PATH", Some(&std_dir), || {
         let mods = parsed_stdlib_modules();
-        assert_eq!(mods.len(), 5);
+        assert_eq!(mods.len(), 6);
 
         // Build the same project-loader-shaped table and confirm
         // every canonical public fn still resolves through the
@@ -94,6 +95,7 @@ fn env_set_to_repo_std_dir_round_trips() {
         assert!(table.resolves(&["std".into(), "string".into()], "string_new"));
         assert!(table.resolves(&["std".into(), "map".into()], "map_new"));
         assert!(table.resolves(&["std".into(), "io".into()], "stdout"));
+        assert!(table.resolves(&["std".into(), "toml".into()], "toml_parse"));
     });
 }
 
@@ -109,7 +111,7 @@ fn env_set_to_missing_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            5,
+            6,
             "missing override dir must fall back to bundled stdlib"
         );
     });
@@ -135,7 +137,7 @@ fn env_set_to_partial_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            5,
+            6,
             "partial override dir must fall back to bundled stdlib"
         );
     });

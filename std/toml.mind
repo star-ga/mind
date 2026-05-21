@@ -1,0 +1,1237 @@
+// std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
+//
+// Parses the subset of TOML 1.0 sufficient to read Mind.toml without the Rust
+// `toml` crate.  Scope (Phase 1):
+//   - Bare keys and quoted strings (basic `"..."` + literal `'...'`)
+//   - Integers (decimal and hex 0x...)
+//   - Booleans (true / false)
+//   - Arrays of strings/ints   (`exclude = ["a", "b"]`)
+//   - Standard tables          (`[package]`, `[build]`)
+//   - Sub-tables via dotted keys (`[mindcraft.format]`)
+//   - Inline tables            (`some = { git = "...", rev = "..." }`)
+//   - Arrays of tables         (`[[dependencies]]`)
+//   - Comments                 (`# ... to end-of-line`)
+//   - Whitespace + newlines
+//
+// Deferred to Phase 2: float, datetime, multi-line strings, octal/binary.
+//
+// Value representation -- TomlValue is a heap-record accessed via opaque i64
+// handle.  All recursive TomlValue references stay at the RFC 0005 Option-C
+// (i64-ABI) level.
+//
+// Heap layout of a TomlValue record (13 fields x 8 bytes = 104 bytes):
+//   offset 0   kind      -- 0=Str, 1=Int, 2=Bool, 3=Arr, 4=Tbl
+//   offset 8   s_addr    -- String.addr (kind=0)
+//   offset 16  s_len     -- String.len  (kind=0)
+//   offset 24  s_cap     -- String.cap  (kind=0)
+//   offset 32  ival      -- i64 integer  (kind=1)
+//   offset 40  bval      -- 0 or 1      (kind=2)
+//   offset 48  arr_addr  -- Vec.addr of i64 handles  (kind=3)
+//   offset 56  arr_len   -- Vec.len
+//   offset 64  arr_cap   -- Vec.cap
+//   offset 72  tbl_keys  -- Map.keys_addr (i64 handles to String heap records)
+//   offset 80  tbl_vals  -- Map.vals_addr (i64 handles to TomlValue)
+//   offset 88  tbl_len   -- Map.len
+//   offset 96  tbl_cap   -- Map.cap
+//
+// A String heap record is 3 x 8 bytes: [addr | len | cap].
+
+use std.vec;
+use std.map;
+use std.string;
+
+// --- TomlValue kind constants ---
+
+pub fn tv_kind_str()  -> i64 { 0 }
+pub fn tv_kind_int()  -> i64 { 1 }
+pub fn tv_kind_bool() -> i64 { 2 }
+pub fn tv_kind_arr()  -> i64 { 3 }
+pub fn tv_kind_tbl()  -> i64 { 4 }
+
+// --- TomlValue field accessors ---
+
+pub fn tv_kind(h: i64)     -> i64 { __mind_load_i64(h + 0)  }
+pub fn tv_s_addr(h: i64)   -> i64 { __mind_load_i64(h + 8)  }
+pub fn tv_s_len(h: i64)    -> i64 { __mind_load_i64(h + 16) }
+pub fn tv_s_cap(h: i64)    -> i64 { __mind_load_i64(h + 24) }
+pub fn tv_ival(h: i64)     -> i64 { __mind_load_i64(h + 32) }
+pub fn tv_bval(h: i64)     -> i64 { __mind_load_i64(h + 40) }
+pub fn tv_arr_addr(h: i64) -> i64 { __mind_load_i64(h + 48) }
+pub fn tv_arr_len(h: i64)  -> i64 { __mind_load_i64(h + 56) }
+pub fn tv_arr_cap(h: i64)  -> i64 { __mind_load_i64(h + 64) }
+pub fn tv_tbl_keys(h: i64) -> i64 { __mind_load_i64(h + 72) }
+pub fn tv_tbl_vals(h: i64) -> i64 { __mind_load_i64(h + 80) }
+pub fn tv_tbl_len(h: i64)  -> i64 { __mind_load_i64(h + 88) }
+pub fn tv_tbl_cap(h: i64)  -> i64 { __mind_load_i64(h + 96) }
+
+// --- TomlValue allocator ---
+
+fn tv_alloc() -> i64 {
+    let h: i64 = __mind_alloc(104);
+    __mind_store_i64(h + 0,  0);
+    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 16, 0);
+    __mind_store_i64(h + 24, 0);
+    __mind_store_i64(h + 32, 0);
+    __mind_store_i64(h + 40, 0);
+    __mind_store_i64(h + 48, 0);
+    __mind_store_i64(h + 56, 0);
+    __mind_store_i64(h + 64, 0);
+    __mind_store_i64(h + 72, 0);
+    __mind_store_i64(h + 80, 0);
+    __mind_store_i64(h + 88, 0);
+    __mind_store_i64(h + 96, 0);
+    h
+}
+
+// --- TomlValue constructors ---
+
+fn tv_make_str(s_addr: i64, s_len: i64, s_cap: i64) -> i64 {
+    let h: i64 = tv_alloc();
+    __mind_store_i64(h + 0,  tv_kind_str());
+    __mind_store_i64(h + 8,  s_addr);
+    __mind_store_i64(h + 16, s_len);
+    __mind_store_i64(h + 24, s_cap);
+    h
+}
+
+fn tv_make_int(v: i64) -> i64 {
+    let h: i64 = tv_alloc();
+    __mind_store_i64(h + 0,  tv_kind_int());
+    __mind_store_i64(h + 32, v);
+    h
+}
+
+fn tv_make_bool(v: i64) -> i64 {
+    let h: i64 = tv_alloc();
+    __mind_store_i64(h + 0,  tv_kind_bool());
+    __mind_store_i64(h + 40, v);
+    h
+}
+
+fn tv_make_arr() -> i64 {
+    let h: i64 = tv_alloc();
+    __mind_store_i64(h + 0, tv_kind_arr());
+    h
+}
+
+fn tv_make_tbl() -> i64 {
+    let h: i64 = tv_alloc();
+    __mind_store_i64(h + 0, tv_kind_tbl());
+    h
+}
+
+// --- Byte copy helper ---
+
+fn copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(dst + i, __mind_load_i64(src + i) & 255);
+        i = i + 1;
+    }
+    0
+}
+
+fn copy_i64s(src: i64, dst: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// --- Array push (in-place mutation on heap record) ---
+
+fn tv_arr_push(h: i64, elem: i64) -> i64 {
+    let old_len: i64  = __mind_load_i64(h + 56);
+    let old_cap: i64  = __mind_load_i64(h + 64);
+    let old_addr: i64 = __mind_load_i64(h + 48);
+    let new_cap: i64 = if old_cap == 0 {
+        4
+    } else {
+        if old_len < old_cap {
+            old_cap
+        } else {
+            old_cap * 2
+        }
+    };
+    let new_addr: i64 = if new_cap == old_cap {
+        old_addr
+    } else {
+        let a: i64 = __mind_alloc(new_cap * 8);
+        let _ = copy_i64s(old_addr, a, old_len);
+        a
+    };
+    __mind_store_i64(new_addr + old_len * 8, elem);
+    __mind_store_i64(h + 48, new_addr);
+    __mind_store_i64(h + 56, old_len + 1);
+    __mind_store_i64(h + 64, new_cap);
+    0
+}
+
+// tv_arr_get -- element at index i.
+pub fn tv_arr_get(h: i64, i: i64) -> i64 {
+    __mind_load_i64(__mind_load_i64(h + 48) + i * 8)
+}
+
+// --- String heap record operations ---
+
+// str_alloc -- copy `src_len` bytes from `src_addr` into a new String record.
+fn str_alloc(src_addr: i64, src_len: i64) -> i64 {
+    let h: i64 = __mind_alloc(24);
+    let dat: i64 = if src_len == 0 {
+        0
+    } else {
+        let d: i64 = __mind_alloc(src_len);
+        let _ = copy_bytes(src_addr, d, src_len);
+        d
+    };
+    __mind_store_i64(h + 0,  dat);
+    __mind_store_i64(h + 8,  src_len);
+    __mind_store_i64(h + 16, src_len);
+    h
+}
+
+// str_eq_h -- byte-compare two String heap records.  1 = equal, 0 = not equal.
+fn str_eq_h(a: i64, b: i64) -> i64 {
+    let la: i64 = __mind_load_i64(a + 8);
+    let lb: i64 = __mind_load_i64(b + 8);
+    if la == lb {
+        bytes_eq(__mind_load_i64(a + 0), __mind_load_i64(b + 0), la)
+    } else {
+        0
+    }
+}
+
+fn bytes_eq(aa: i64, ba: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < n {
+        let ba_byte: i64 = __mind_load_i64(ba + i) & 255;
+        let aa_byte: i64 = __mind_load_i64(aa + i) & 255;
+        if aa_byte == ba_byte {
+            i = i + 1;
+        } else {
+            ok = 0;
+            i = n;
+        }
+    }
+    ok
+}
+
+// --- Table insert/lookup (in-place on heap record) ---
+
+// tv_tbl_set -- insert or update key->val.  Key is a String heap record handle.
+fn tv_tbl_set(h: i64, key_h: i64, val_h: i64) -> i64 {
+    let old_len: i64  = __mind_load_i64(h + 88);
+    let old_cap: i64  = __mind_load_i64(h + 96);
+    let old_keys: i64 = __mind_load_i64(h + 72);
+    let old_vals: i64 = __mind_load_i64(h + 80);
+    // Update in-place if key already present.
+    let mut idx: i64 = 0;
+    let mut updated: i64 = 0;
+    while idx < old_len {
+        let k: i64 = __mind_load_i64(old_keys + idx * 8);
+        if str_eq_h(k, key_h) == 1 {
+            __mind_store_i64(old_vals + idx * 8, val_h);
+            updated = 1;
+            idx = old_len;
+        } else {
+            idx = idx + 1;
+        }
+    }
+    if updated == 0 {
+        // Append new entry.
+        let new_cap: i64 = if old_cap == 0 {
+            4
+        } else {
+            if old_len < old_cap {
+                old_cap
+            } else {
+                old_cap * 2
+            }
+        };
+        let new_keys: i64 = if new_cap == old_cap {
+            old_keys
+        } else {
+            let nk: i64 = __mind_alloc(new_cap * 8);
+            let _ = copy_i64s(old_keys, nk, old_len);
+            nk
+        };
+        let new_vals: i64 = if new_cap == old_cap {
+            old_vals
+        } else {
+            let nv: i64 = __mind_alloc(new_cap * 8);
+            let _ = copy_i64s(old_vals, nv, old_len);
+            nv
+        };
+        __mind_store_i64(new_keys + old_len * 8, key_h);
+        __mind_store_i64(new_vals + old_len * 8, val_h);
+        __mind_store_i64(h + 72, new_keys);
+        __mind_store_i64(h + 80, new_vals);
+        __mind_store_i64(h + 88, old_len + 1);
+        __mind_store_i64(h + 96, new_cap);
+    }
+    0
+}
+
+// tv_tbl_get_raw -- look up a raw byte key (addr+len) in a Table.  Returns handle or 0.
+fn tv_tbl_get_raw(h: i64, key_addr: i64, key_len: i64) -> i64 {
+    let tbl_len: i64  = __mind_load_i64(h + 88);
+    let tbl_keys: i64 = __mind_load_i64(h + 72);
+    let tbl_vals: i64 = __mind_load_i64(h + 80);
+    let mut idx: i64  = 0;
+    let mut found: i64 = 0;
+    while idx < tbl_len {
+        let k: i64   = __mind_load_i64(tbl_keys + idx * 8);
+        let k_len: i64 = __mind_load_i64(k + 8);
+        if k_len == key_len {
+            if bytes_eq(__mind_load_i64(k + 0), key_addr, key_len) == 1 {
+                found = __mind_load_i64(tbl_vals + idx * 8);
+                idx = tbl_len;
+            } else {
+                idx = idx + 1;
+            }
+        } else {
+            idx = idx + 1;
+        }
+    }
+    found
+}
+
+// tv_tbl_get_or_make -- look up; if absent, insert a new empty Table.
+fn tv_tbl_get_or_make(h: i64, key_addr: i64, key_len: i64) -> i64 {
+    let existing: i64 = tv_tbl_get_raw(h, key_addr, key_len);
+    if existing == 0 {
+        let sub: i64 = tv_make_tbl();
+        let key_h: i64 = str_alloc(key_addr, key_len);
+        let _ = tv_tbl_set(h, key_h, sub);
+        sub
+    } else {
+        existing
+    }
+}
+
+// tv_tbl_get_or_make_h -- look up via String handle; if absent, insert empty Table.
+fn tv_tbl_get_or_make_h(h: i64, key_h: i64) -> i64 {
+    let tbl_len: i64  = __mind_load_i64(h + 88);
+    let tbl_keys: i64 = __mind_load_i64(h + 72);
+    let tbl_vals: i64 = __mind_load_i64(h + 80);
+    let mut idx: i64  = 0;
+    let mut found: i64 = 0;
+    while idx < tbl_len {
+        let k: i64 = __mind_load_i64(tbl_keys + idx * 8);
+        if str_eq_h(k, key_h) == 1 {
+            found = __mind_load_i64(tbl_vals + idx * 8);
+            idx = tbl_len;
+        } else {
+            idx = idx + 1;
+        }
+    }
+    if found == 0 {
+        let sub: i64 = tv_make_tbl();
+        let _ = tv_tbl_set(h, key_h, sub);
+        sub
+    } else {
+        found
+    }
+}
+
+// --- Byte classification helpers ---
+
+fn load_byte(buf: i64, i: i64) -> i64 {
+    __mind_load_i64(buf + i) & 255
+}
+
+fn is_ws(b: i64) -> i64 {
+    if b == 32 { return 1; }
+    if b == 9  { return 1; }
+    0
+}
+
+fn is_newline(b: i64) -> i64 {
+    if b == 10 { return 1; }
+    if b == 13 { return 1; }
+    0
+}
+
+fn is_digit(b: i64) -> i64 {
+    if b >= 48 { if b <= 57 { return 1; } }
+    0
+}
+
+fn is_hex_digit(b: i64) -> i64 {
+    if is_digit(b) == 1 { return 1; }
+    if b >= 65 { if b <= 70  { return 1; } }
+    if b >= 97 { if b <= 102 { return 1; } }
+    0
+}
+
+fn is_bare_key_char(b: i64) -> i64 {
+    if b >= 97 { if b <= 122 { return 1; } }
+    if b >= 65 { if b <= 90  { return 1; } }
+    if b >= 48 { if b <= 57  { return 1; } }
+    if b == 45 { return 1; }
+    if b == 95 { return 1; }
+    0
+}
+
+fn hex_val(b: i64) -> i64 {
+    if b >= 48 { if b <= 57  { return b - 48; } }
+    if b >= 65 { if b <= 70  { return b - 55; } }
+    if b >= 97 { if b <= 102 { return b - 87; } }
+    0
+}
+
+// --- Skip helpers ---
+
+fn skip_ws(buf: i64, i: i64, len: i64) -> i64 {
+    let mut pos: i64 = i;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos >= len {
+            running = 0;
+        } else {
+            if is_ws(load_byte(buf, pos)) == 1 {
+                pos = pos + 1;
+            } else {
+                running = 0;
+            }
+        }
+    }
+    pos
+}
+
+fn skip_comment(buf: i64, i: i64, len: i64) -> i64 {
+    let mut pos: i64 = i;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos >= len {
+            running = 0;
+        } else {
+            if is_newline(load_byte(buf, pos)) == 1 {
+                pos = pos + 1;
+                running = 0;
+            } else {
+                pos = pos + 1;
+            }
+        }
+    }
+    pos
+}
+
+fn skip_to_eol(buf: i64, i: i64, len: i64) -> i64 {
+    let mut pos: i64 = i;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos >= len {
+            running = 0;
+        } else {
+            if is_newline(load_byte(buf, pos)) == 1 {
+                running = 0;
+            } else {
+                pos = pos + 1;
+            }
+        }
+    }
+    pos
+}
+
+fn skip_ws_nl(buf: i64, i: i64, len: i64) -> i64 {
+    let mut pos: i64 = i;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos >= len {
+            running = 0;
+        } else {
+            let b: i64 = load_byte(buf, pos);
+            if is_ws(b) == 1 {
+                pos = pos + 1;
+            } else {
+                if is_newline(b) == 1 {
+                    pos = pos + 1;
+                } else {
+                    if b == 35 {
+                        pos = skip_comment(buf, pos + 1, len);
+                    } else {
+                        running = 0;
+                    }
+                }
+            }
+        }
+    }
+    pos
+}
+
+// --- String builder ---
+
+// sb_new -- allocate a 3-field string builder record [dat_addr, len, cap].
+fn sb_new() -> i64 {
+    let h: i64 = __mind_alloc(24);
+    __mind_store_i64(h + 0,  0);
+    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 16, 0);
+    h
+}
+
+fn sb_push(h: i64, b: i64) -> i64 {
+    let old_len: i64 = __mind_load_i64(h + 8);
+    let old_cap: i64 = __mind_load_i64(h + 16);
+    let old_dat: i64 = __mind_load_i64(h + 0);
+    let new_cap: i64 = if old_cap == 0 {
+        16
+    } else {
+        if old_len < old_cap {
+            old_cap
+        } else {
+            old_cap * 2
+        }
+    };
+    let new_dat: i64 = if new_cap == old_cap {
+        old_dat
+    } else {
+        let d: i64 = __mind_alloc(new_cap);
+        let _ = copy_bytes(old_dat, d, old_len);
+        d
+    };
+    __mind_store_i64(new_dat + old_len, b);
+    __mind_store_i64(h + 0,  new_dat);
+    __mind_store_i64(h + 8,  old_len + 1);
+    __mind_store_i64(h + 16, new_cap);
+    0
+}
+
+// --- String parsing ---
+
+// parse_basic_string -- parse from position `i` (after opening `"`).
+// Returns Vec [pos_after_close_quote, sb_handle].
+fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
+    let sb: i64 = sb_new();
+    let mut pos: i64 = i;
+    let mut done: i64 = 0;
+    while done == 0 {
+        if pos >= len {
+            done = 1;
+        } else {
+            let b: i64 = load_byte(buf, pos);
+            if b == 34 {
+                pos = pos + 1;
+                done = 1;
+            } else {
+                if b == 92 {
+                    pos = pos + 1;
+                    if pos < len {
+                        let e: i64 = load_byte(buf, pos);
+                        if e == 110  { let _ = sb_push(sb, 10);  pos = pos + 1; }
+                        else {
+                        if e == 116  { let _ = sb_push(sb, 9);   pos = pos + 1; }
+                        else {
+                        if e == 114  { let _ = sb_push(sb, 13);  pos = pos + 1; }
+                        else {
+                        if e == 92   { let _ = sb_push(sb, 92);  pos = pos + 1; }
+                        else {
+                        if e == 34   { let _ = sb_push(sb, 34);  pos = pos + 1; }
+                        else {
+                            let _ = sb_push(sb, e);
+                            pos = pos + 1;
+                        }}}}}
+                    }
+                } else {
+                    let _ = sb_push(sb, b);
+                    pos = pos + 1;
+                }
+            }
+        }
+    }
+    let r: Vec  = vec_new();
+    let r1: Vec = vec_push(r, pos);
+    vec_push(r1, sb)
+}
+
+// parse_literal_string -- from `i` (after opening `'`).
+// Returns Vec [pos_after_close, sb_handle].
+fn parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
+    let sb: i64 = sb_new();
+    let mut pos: i64 = i;
+    let mut done: i64 = 0;
+    while done == 0 {
+        if pos >= len {
+            done = 1;
+        } else {
+            let b: i64 = load_byte(buf, pos);
+            if b == 39 {
+                pos = pos + 1;
+                done = 1;
+            } else {
+                let _ = sb_push(sb, b);
+                pos = pos + 1;
+            }
+        }
+    }
+    let r: Vec  = vec_new();
+    let r1: Vec = vec_push(r, pos);
+    vec_push(r1, sb)
+}
+
+// --- Integer parsing ---
+
+// parse_integer -- decimal or 0x hex (with optional _ separators and leading -).
+// Returns Vec [pos_after, value].
+fn parse_integer(buf: i64, i: i64, len: i64) -> Vec {
+    let mut pos: i64 = i;
+    let negative: i64 = if pos < len {
+        if load_byte(buf, pos) == 45 {
+            pos = pos + 1;
+            1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let is_hex: i64 = if pos + 1 < len {
+        if load_byte(buf, pos) == 48 {
+            if load_byte(buf, pos + 1) == 120 {
+                pos = pos + 2;
+                1
+            } else { 0 }
+        } else { 0 }
+    } else { 0 };
+    let mut acc: i64 = 0;
+    let mut running: i64 = 1;
+    if is_hex == 1 {
+        while running == 1 {
+            if pos >= len {
+                running = 0;
+            } else {
+                let b: i64 = load_byte(buf, pos);
+                if is_hex_digit(b) == 1 {
+                    acc = acc * 16 + hex_val(b);
+                    pos = pos + 1;
+                } else {
+                    if b == 95 {
+                        pos = pos + 1;
+                    } else {
+                        running = 0;
+                    }
+                }
+            }
+        }
+    } else {
+        while running == 1 {
+            if pos >= len {
+                running = 0;
+            } else {
+                let b: i64 = load_byte(buf, pos);
+                if is_digit(b) == 1 {
+                    acc = acc * 10 + (b - 48);
+                    pos = pos + 1;
+                } else {
+                    if b == 95 {
+                        pos = pos + 1;
+                    } else {
+                        running = 0;
+                    }
+                }
+            }
+        }
+    }
+    let val: i64 = if negative == 1 { 0 - acc } else { acc };
+    let r: Vec  = vec_new();
+    let r1: Vec = vec_push(r, pos);
+    vec_push(r1, val)
+}
+
+// --- Key parsing ---
+
+// parse_key_segment -- one bare or quoted key segment.
+// Returns Vec [pos_after, str_handle].
+fn parse_key_segment(buf: i64, i: i64, len: i64) -> Vec {
+    let b: i64 = load_byte(buf, i);
+    if b == 34 {
+        let r: Vec = parse_basic_string(buf, i + 1, len);
+        let pos: i64 = vec_get(r, 0);
+        let sb: i64  = vec_get(r, 1);
+        let str_h: i64 = str_alloc(
+            __mind_load_i64(sb + 0),
+            __mind_load_i64(sb + 8)
+        );
+        let out: Vec = vec_new();
+        let out1: Vec = vec_push(out, pos);
+        vec_push(out1, str_h)
+    } else {
+        if b == 39 {
+            let r: Vec = parse_literal_string(buf, i + 1, len);
+            let pos: i64 = vec_get(r, 0);
+            let sb: i64  = vec_get(r, 1);
+            let str_h: i64 = str_alloc(
+                __mind_load_i64(sb + 0),
+                __mind_load_i64(sb + 8)
+            );
+            let out: Vec = vec_new();
+            let out1: Vec = vec_push(out, pos);
+            vec_push(out1, str_h)
+        } else {
+            // Bare key: [a-zA-Z0-9_-]+
+            let lo: i64 = i;
+            let mut pos: i64 = i;
+            let mut running: i64 = 1;
+            while running == 1 {
+                if pos >= len {
+                    running = 0;
+                } else {
+                    if is_bare_key_char(load_byte(buf, pos)) == 1 {
+                        pos = pos + 1;
+                    } else {
+                        running = 0;
+                    }
+                }
+            }
+            let str_h: i64 = str_alloc(buf + lo, pos - lo);
+            let out: Vec = vec_new();
+            let out1: Vec = vec_push(out, pos);
+            vec_push(out1, str_h)
+        }
+    }
+}
+
+// parse_dotted_key -- parse `a.b.c = ...` style key.
+// Navigates/creates sub-tables in `tbl` for all but the last segment.
+// Returns Vec [pos_after_key, target_tbl_h, last_key_str_h].
+fn parse_dotted_key(buf: i64, i: i64, len: i64, tbl: i64) -> Vec {
+    let r0: Vec    = parse_key_segment(buf, i, len);
+    let pos0: i64  = vec_get(r0, 0);
+    let k0: i64    = vec_get(r0, 1);
+    let pos1: i64  = skip_ws(buf, pos0, len);
+    if pos1 < len {
+        if load_byte(buf, pos1) == 46 {
+            let sub: i64 = tv_tbl_get_or_make_h(tbl, k0);
+            return parse_dotted_key(buf, pos1 + 1, len, sub);
+        }
+    }
+    let out: Vec  = vec_new();
+    let out1: Vec = vec_push(out, pos1);
+    let out2: Vec = vec_push(out1, tbl);
+    vec_push(out2, k0)
+}
+
+// --- Value parsing ---
+
+// parse_value -- parse a single TOML value at position `i`.
+// Returns Vec [pos_after, tv_handle] (handle = 0 means parse failed / unknown).
+fn parse_value(buf: i64, i: i64, len: i64) -> Vec {
+    let pos: i64 = skip_ws(buf, i, len);
+    if pos >= len {
+        let r: Vec  = vec_new();
+        let r1: Vec = vec_push(r, pos);
+        return vec_push(r1, 0);
+    }
+    let b: i64 = load_byte(buf, pos);
+    if b == 34 {
+        let r: Vec   = parse_basic_string(buf, pos + 1, len);
+        let p2: i64  = vec_get(r, 0);
+        let sb: i64  = vec_get(r, 1);
+        let tv: i64  = tv_make_str(
+            __mind_load_i64(sb + 0),
+            __mind_load_i64(sb + 8),
+            __mind_load_i64(sb + 16)
+        );
+        let out: Vec  = vec_new();
+        let out1: Vec = vec_push(out, p2);
+        return vec_push(out1, tv);
+    }
+    if b == 39 {
+        let r: Vec   = parse_literal_string(buf, pos + 1, len);
+        let p2: i64  = vec_get(r, 0);
+        let sb: i64  = vec_get(r, 1);
+        let tv: i64  = tv_make_str(
+            __mind_load_i64(sb + 0),
+            __mind_load_i64(sb + 8),
+            __mind_load_i64(sb + 16)
+        );
+        let out: Vec  = vec_new();
+        let out1: Vec = vec_push(out, p2);
+        return vec_push(out1, tv);
+    }
+    if b == 91 {
+        return parse_array(buf, pos + 1, len);
+    }
+    if b == 123 {
+        return parse_inline_table(buf, pos + 1, len);
+    }
+    // true
+    if b == 116 {
+        if pos + 3 < len {
+            if load_byte(buf, pos + 1) == 114 {
+                if load_byte(buf, pos + 2) == 117 {
+                    if load_byte(buf, pos + 3) == 101 {
+                        let tv: i64   = tv_make_bool(1);
+                        let out: Vec  = vec_new();
+                        let out1: Vec = vec_push(out, pos + 4);
+                        return vec_push(out1, tv);
+                    }
+                }
+            }
+        }
+    }
+    // false
+    if b == 102 {
+        if pos + 4 < len {
+            if load_byte(buf, pos + 1) == 97 {
+                if load_byte(buf, pos + 2) == 108 {
+                    if load_byte(buf, pos + 3) == 115 {
+                        if load_byte(buf, pos + 4) == 101 {
+                            let tv: i64   = tv_make_bool(0);
+                            let out: Vec  = vec_new();
+                            let out1: Vec = vec_push(out, pos + 5);
+                            return vec_push(out1, tv);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // integer (decimal starts with 0-9, or negative -)
+    if is_digit(b) == 1 {
+        let r: Vec    = parse_integer(buf, pos, len);
+        let p2: i64   = vec_get(r, 0);
+        let ival: i64 = vec_get(r, 1);
+        let tv: i64   = tv_make_int(ival);
+        let out: Vec  = vec_new();
+        let out1: Vec = vec_push(out, p2);
+        return vec_push(out1, tv);
+    }
+    if b == 45 {
+        // Could be negative integer.  Peek next byte.
+        if pos + 1 < len {
+            if is_digit(load_byte(buf, pos + 1)) == 1 {
+                let r: Vec    = parse_integer(buf, pos, len);
+                let p2: i64   = vec_get(r, 0);
+                let ival: i64 = vec_get(r, 1);
+                let tv: i64   = tv_make_int(ival);
+                let out: Vec  = vec_new();
+                let out1: Vec = vec_push(out, p2);
+                return vec_push(out1, tv);
+            }
+        }
+    }
+    // Unknown value -- skip to end of line.
+    let out: Vec  = vec_new();
+    let out1: Vec = vec_push(out, skip_to_eol(buf, pos, len));
+    vec_push(out1, 0)
+}
+
+// parse_array -- parse elements from `i` (after `[`).
+fn parse_array(buf: i64, i: i64, len: i64) -> Vec {
+    let arr: i64 = tv_make_arr();
+    let mut pos: i64 = skip_ws_nl(buf, i, len);
+    let mut done: i64 = 0;
+    while done == 0 {
+        if pos >= len {
+            done = 1;
+        } else {
+            let b: i64 = load_byte(buf, pos);
+            if b == 93 {
+                pos = pos + 1;
+                done = 1;
+            } else {
+                if b == 44 {
+                    pos = skip_ws_nl(buf, pos + 1, len);
+                } else {
+                    let r: Vec  = parse_value(buf, pos, len);
+                    let p2: i64 = vec_get(r, 0);
+                    let tv: i64 = vec_get(r, 1);
+                    if tv == 0 {
+                        done = 1;
+                    } else {
+                        let _ = tv_arr_push(arr, tv);
+                        pos = skip_ws_nl(buf, p2, len);
+                    }
+                }
+            }
+        }
+    }
+    let out: Vec  = vec_new();
+    let out1: Vec = vec_push(out, pos);
+    vec_push(out1, arr)
+}
+
+// parse_inline_table -- parse entries from `i` (after `{`).
+fn parse_inline_table(buf: i64, i: i64, len: i64) -> Vec {
+    let tbl: i64 = tv_make_tbl();
+    let mut pos: i64 = skip_ws(buf, i, len);
+    let mut done: i64 = 0;
+    while done == 0 {
+        if pos >= len {
+            done = 1;
+        } else {
+            let b: i64 = load_byte(buf, pos);
+            if b == 125 {
+                pos = pos + 1;
+                done = 1;
+            } else {
+                if b == 44 {
+                    pos = skip_ws(buf, pos + 1, len);
+                } else {
+                    let kr: Vec  = parse_key_segment(buf, pos, len);
+                    let kp: i64  = vec_get(kr, 0);
+                    let kh: i64  = vec_get(kr, 1);
+                    let ep: i64  = skip_ws(buf, kp, len);
+                    let vstart: i64 = if ep < len {
+                        if load_byte(buf, ep) == 61 { ep + 1 } else { ep }
+                    } else { ep };
+                    let vr: Vec  = parse_value(buf, vstart, len);
+                    let vp: i64  = vec_get(vr, 0);
+                    let vh: i64  = vec_get(vr, 1);
+                    if vh == 0 {
+                        done = 1;
+                    } else {
+                        let _ = tv_tbl_set(tbl, kh, vh);
+                        pos = skip_ws(buf, vp, len);
+                    }
+                }
+            }
+        }
+    }
+    let out: Vec  = vec_new();
+    let out1: Vec = vec_push(out, pos);
+    vec_push(out1, tbl)
+}
+
+// --- Section header parsing ---
+
+// find_close_bracket -- scan forward for `]`, return its offset.
+fn find_close_bracket(buf: i64, i: i64, len: i64) -> i64 {
+    let mut pos: i64 = i;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos >= len {
+            running = 0;
+        } else {
+            if load_byte(buf, pos) == 93 {
+                running = 0;
+            } else {
+                pos = pos + 1;
+            }
+        }
+    }
+    pos
+}
+
+// navigate_path_str -- walk "a.b.c" in `root`, creating sub-tables as needed.
+// Returns the innermost table handle.
+fn navigate_path_str(root: i64, buf: i64, start: i64, end: i64) -> i64 {
+    let mut cur: i64    = root;
+    let mut seg_lo: i64 = start;
+    let mut pos: i64    = start;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos > end {
+            running = 0;
+        } else {
+            let is_dot: i64 = if pos == end {
+                1
+            } else {
+                if load_byte(buf, pos) == 46 { 1 } else { 0 }
+            };
+            if is_dot == 1 {
+                let seg_len: i64 = pos - seg_lo;
+                cur = tv_tbl_get_or_make(cur, buf + seg_lo, seg_len);
+                seg_lo = pos + 1;
+            }
+            pos = pos + 1;
+        }
+    }
+    cur
+}
+
+// navigate_section_parent -- navigate to parent table of last segment.
+// Returns Vec [parent_tbl, seg_addr, seg_len].
+fn navigate_section_parent(root: i64, buf: i64, start: i64, end: i64) -> Vec {
+    // Find the last '.' in [start, end).
+    let mut last_dot: i64 = 0 - 1;
+    let mut pos: i64 = start;
+    while pos < end {
+        if load_byte(buf, pos) == 46 {
+            last_dot = pos;
+        }
+        pos = pos + 1;
+    }
+    if last_dot < 0 {
+        let out: Vec  = vec_new();
+        let out1: Vec = vec_push(out, root);
+        let out2: Vec = vec_push(out1, buf + start);
+        vec_push(out2, end - start)
+    } else {
+        let parent: i64 = navigate_path_str(root, buf, start, last_dot);
+        let out: Vec  = vec_new();
+        let out1: Vec = vec_push(out, parent);
+        let out2: Vec = vec_push(out1, buf + last_dot + 1);
+        vec_push(out2, end - last_dot - 1)
+    }
+}
+
+// parse_section_header -- called with `i` pointing past the first `[`.
+// Returns Vec [pos_after_line, current_table_handle].
+fn parse_section_header(buf: i64, i: i64, len: i64, root: i64) -> Vec {
+    // Detect `[[` (array-of-tables) vs `[` (plain table).
+    let is_aot: i64 = if i < len {
+        if load_byte(buf, i) == 91 { 1 } else { 0 }
+    } else { 0 };
+    let path_start: i64 = if is_aot == 1 { i + 1 } else { i };
+    // Find closing `]`.
+    let path_end: i64 = find_close_bracket(buf, path_start, len);
+    // Advance past `]` (and `]]` for aot).
+    let after_close: i64 = if is_aot == 1 {
+        if path_end + 1 < len {
+            if load_byte(buf, path_end + 1) == 93 {
+                path_end + 2
+            } else {
+                path_end + 1
+            }
+        } else {
+            path_end + 1
+        }
+    } else {
+        path_end + 1
+    };
+    let pos_after_line: i64 = skip_to_eol(buf, after_close, len);
+    let cur_tbl: i64 = if is_aot == 1 {
+        // Navigate to parent, get-or-make the array, append new table.
+        let pv: Vec     = navigate_section_parent(root, buf, path_start, path_end);
+        let parent: i64 = vec_get(pv, 0);
+        let k_addr: i64 = vec_get(pv, 1);
+        let k_len: i64  = vec_get(pv, 2);
+        let existing: i64 = tv_tbl_get_raw(parent, k_addr, k_len);
+        let arr_tv: i64 = if existing == 0 {
+            let a: i64  = tv_make_arr();
+            let kh: i64 = str_alloc(k_addr, k_len);
+            let _ = tv_tbl_set(parent, kh, a);
+            a
+        } else {
+            existing
+        };
+        let new_tbl: i64 = tv_make_tbl();
+        let _ = tv_arr_push(arr_tv, new_tbl);
+        new_tbl
+    } else {
+        navigate_path_str(root, buf, path_start, path_end)
+    };
+    let out: Vec  = vec_new();
+    let out1: Vec = vec_push(out, pos_after_line);
+    vec_push(out1, cur_tbl)
+}
+
+// --- Key=value line parsing ---
+
+fn parse_keyval(buf: i64, i: i64, len: i64, tbl: i64) -> i64 {
+    let kr: Vec     = parse_dotted_key(buf, i, len, tbl);
+    let kp: i64     = vec_get(kr, 0);
+    let target: i64 = vec_get(kr, 1);
+    let kh: i64     = vec_get(kr, 2);
+    let ep: i64     = skip_ws(buf, kp, len);
+    let vstart: i64 = if ep < len {
+        if load_byte(buf, ep) == 61 { ep + 1 } else { ep }
+    } else { ep };
+    let vr: Vec  = parse_value(buf, vstart, len);
+    let vp: i64  = vec_get(vr, 0);
+    let vh: i64  = vec_get(vr, 1);
+    if vh == 0 {
+        skip_to_eol(buf, vp, len)
+    } else {
+        let _ = tv_tbl_set(target, kh, vh);
+        skip_to_eol(buf, vp, len)
+    }
+}
+
+// --- Public API ---
+
+// toml_parse -- parse a TOML 1.0 document.
+// `buf` is the i64 base address of UTF-8 bytes; `buf_len` is the byte count.
+// Returns the i64 handle of the root Table TomlValue.
+pub fn toml_parse(buf: i64, buf_len: i64) -> i64 {
+    let root: i64    = tv_make_tbl();
+    let mut pos: i64 = skip_ws_nl(buf, 0, buf_len);
+    let mut cur: i64 = root;
+    while pos < buf_len {
+        let b: i64 = load_byte(buf, pos);
+        if b == 35 {
+            pos = skip_comment(buf, pos + 1, buf_len);
+            pos = skip_ws_nl(buf, pos, buf_len);
+        } else {
+            if b == 91 {
+                let hr: Vec      = parse_section_header(buf, pos + 1, buf_len, root);
+                let np: i64      = vec_get(hr, 0);
+                let new_tbl: i64 = vec_get(hr, 1);
+                cur = new_tbl;
+                pos = skip_ws_nl(buf, np, buf_len);
+            } else {
+                if is_ws(b) == 1 {
+                    pos = skip_ws(buf, pos, buf_len);
+                } else {
+                    if is_newline(b) == 1 {
+                        pos = pos + 1;
+                    } else {
+                        let np: i64 = parse_keyval(buf, pos, buf_len, cur);
+                        pos = skip_ws_nl(buf, np, buf_len);
+                    }
+                }
+            }
+        }
+    }
+    root
+}
+
+// toml_get -- dotted-path lookup.
+// `path_buf` is i64 address of UTF-8 path bytes; `path_len` is byte count.
+// Returns TomlValue handle or 0 if not found.
+pub fn toml_get(tv: i64, path_buf: i64, path_len: i64) -> i64 {
+    if path_len == 0 { return tv; }
+    let mut cur: i64    = tv;
+    let mut seg_lo: i64 = 0;
+    let mut pos: i64    = 0;
+    let mut running: i64 = 1;
+    while running == 1 {
+        if pos >= path_len {
+            // Last segment -- look it up.
+            let seg_len: i64 = path_len - seg_lo;
+            cur = tv_tbl_get_raw(cur, path_buf + seg_lo, seg_len);
+            running = 0;
+        } else {
+            if load_byte(path_buf, pos) == 46 {
+                let seg_len: i64 = pos - seg_lo;
+                let child: i64 = tv_tbl_get_raw(cur, path_buf + seg_lo, seg_len);
+                if child == 0 {
+                    cur = 0;
+                    running = 0;
+                } else {
+                    cur = child;
+                    seg_lo = pos + 1;
+                    pos = pos + 1;
+                }
+            } else {
+                pos = pos + 1;
+            }
+        }
+    }
+    cur
+}
+
+// toml_dump -- serialise a TomlValue to canonical TOML text.
+// Returns a String heap record handle (3xi64: dat_addr/len/cap).
+// Round-trip contract: toml_parse(toml_dump(v)) equals v semantically.
+pub fn toml_dump(tv: i64) -> i64 {
+    let sb: i64 = sb_new();
+    let _ = dump_value(sb, tv);
+    sb
+}
+
+fn dump_value(sb: i64, tv: i64) -> i64 {
+    let k: i64 = tv_kind(tv);
+    if k == tv_kind_str() {
+        let _ = sb_push(sb, 34);
+        let _ = dump_escaped(sb, tv_s_addr(tv), tv_s_len(tv));
+        let _ = sb_push(sb, 34);
+    } else {
+        if k == tv_kind_int() {
+            let _ = dump_i64_digits(sb, tv_ival(tv));
+        } else {
+            if k == tv_kind_bool() {
+                if tv_bval(tv) == 1 {
+                    let _ = sb_push(sb, 116);
+                    let _ = sb_push(sb, 114);
+                    let _ = sb_push(sb, 117);
+                    let _ = sb_push(sb, 101);
+                } else {
+                    let _ = sb_push(sb, 102);
+                    let _ = sb_push(sb, 97);
+                    let _ = sb_push(sb, 108);
+                    let _ = sb_push(sb, 115);
+                    let _ = sb_push(sb, 101);
+                }
+            } else {
+                if k == tv_kind_arr() {
+                    let _ = sb_push(sb, 91);
+                    let alen: i64 = tv_arr_len(tv);
+                    let mut ai: i64 = 0;
+                    while ai < alen {
+                        if ai > 0 {
+                            let _ = sb_push(sb, 44);
+                            let _ = sb_push(sb, 32);
+                        }
+                        let _ = dump_value(sb, tv_arr_get(tv, ai));
+                        ai = ai + 1;
+                    }
+                    let _ = sb_push(sb, 93);
+                } else {
+                    // Table -- inline brace form.
+                    let _ = sb_push(sb, 123);
+                    let tlen: i64  = tv_tbl_len(tv);
+                    let tkeys: i64 = tv_tbl_keys(tv);
+                    let tvals: i64 = tv_tbl_vals(tv);
+                    let mut ti: i64 = 0;
+                    while ti < tlen {
+                        if ti > 0 {
+                            let _ = sb_push(sb, 44);
+                            let _ = sb_push(sb, 32);
+                        }
+                        let kh: i64 = __mind_load_i64(tkeys + ti * 8);
+                        let vh: i64 = __mind_load_i64(tvals + ti * 8);
+                        let _ = dump_escaped(sb, __mind_load_i64(kh + 0), __mind_load_i64(kh + 8));
+                        let _ = sb_push(sb, 32);
+                        let _ = sb_push(sb, 61);
+                        let _ = sb_push(sb, 32);
+                        let _ = dump_value(sb, vh);
+                        ti = ti + 1;
+                    }
+                    let _ = sb_push(sb, 125);
+                }
+            }
+        }
+    }
+    0
+}
+
+fn dump_escaped(sb: i64, addr: i64, slen: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < slen {
+        let b: i64 = load_byte(addr, i);
+        if b == 34 {
+            let _ = sb_push(sb, 92);
+            let _ = sb_push(sb, 34);
+        } else {
+            if b == 92 {
+                let _ = sb_push(sb, 92);
+                let _ = sb_push(sb, 92);
+            } else {
+                if b == 10 {
+                    let _ = sb_push(sb, 92);
+                    let _ = sb_push(sb, 110);
+                } else {
+                    let _ = sb_push(sb, b);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    0
+}
+
+fn dump_i64_digits(sb: i64, v: i64) -> i64 {
+    if v == 0 {
+        return sb_push(sb, 48);
+    }
+    if v < 0 {
+        let _ = sb_push(sb, 45);
+        dump_u64_digits(sb, 0 - v)
+    } else {
+        dump_u64_digits(sb, v)
+    }
+}
+
+fn dump_u64_digits(sb: i64, v: i64) -> i64 {
+    if v == 0 { return 0; }
+    let _ = dump_u64_digits(sb, v / 10);
+    sb_push(sb, 48 + (v - (v / 10) * 10))
+}
