@@ -438,6 +438,62 @@ impl<'a> P<'a> {
 
     fn type_ann(&mut self) -> Result<TypeAnn, ParseError> {
         self.skip_ws();
+        // RFC 0010 Phase B: callback function pointer type `extern "C" fn(T, U) -> R`.
+        // Accepted in `extern "C"` block parameter/return positions.
+        // Lowers to opaque `!llvm.ptr` in MLIR; the parameter and return types
+        // are stored for type-checking only.
+        if self.at_keyword(b"extern") {
+            let save = self.pos;
+            self.pos += 6; // "extern"
+            self.skip_ws();
+            // Must be followed by `"C"` and then `fn`.
+            if self.at(b'"') && self.pos + 2 < self.b.len()
+                && self.b[self.pos + 1] == b'C'
+                && self.b[self.pos + 2] == b'"'
+            {
+                self.pos += 3; // skip `"C"`
+                self.skip_ws();
+                if self.at_keyword(b"fn") {
+                    self.pos += 2; // "fn"
+                    self.skip_ws();
+                    self.expect(b'(')?;
+                    let mut params: Vec<TypeAnn> = Vec::new();
+                    self.skip_ws_and_newlines();
+                    if !self.at(b')') {
+                        loop {
+                            self.skip_ws_and_newlines();
+                            if self.starts_with(b"...") {
+                                self.pos += 3;
+                                self.skip_ws();
+                                break;
+                            }
+                            params.push(self.type_ann()?);
+                            self.skip_ws_and_newlines();
+                            if !self.eat(b',') {
+                                break;
+                            }
+                            self.skip_ws_and_newlines();
+                            if self.at(b')') {
+                                break;
+                            }
+                        }
+                    }
+                    self.skip_ws_and_newlines();
+                    self.expect(b')')?;
+                    self.skip_ws();
+                    let ret = if self.starts_with(b"->") {
+                        self.pos += 2;
+                        self.skip_ws();
+                        Some(Box::new(self.type_ann()?))
+                    } else {
+                        None
+                    };
+                    return Ok(TypeAnn::FnPtr { params, ret });
+                }
+            }
+            // Not a function pointer — back up and fall through.
+            self.pos = save;
+        }
         // RFC 0010 Phase A: raw pointer types `*const T` / `*mut T`.
         // These are valid in `extern "C"` signatures. The pointee type is
         // recorded for documentation; Phase A lowers all raw pointers to

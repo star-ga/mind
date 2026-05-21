@@ -355,6 +355,7 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::Tuple { .. })
                     | Some(TypeAnn::SparseTensor { .. })
                     | Some(TypeAnn::RawPtr { .. })
+                    | Some(TypeAnn::FnPtr { .. })
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {

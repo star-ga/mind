@@ -1934,6 +1934,8 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
         // type system — they don't map to a ValueType. Return None to let
         // callers treat them as unresolved (typically, extern fn signatures).
         crate::ast::TypeAnn::RawPtr { .. } => None,
+        // RFC 0010 Phase B: callback function pointers are opaque handles.
+        crate::ast::TypeAnn::FnPtr { .. } => None,
     }
 }
 
@@ -2377,17 +2379,28 @@ fn check_extern_type(ann: &TypeAnn) -> Result<(), String> {
         // Raw pointers: validate the pointee type recursively. Phase A
         // accepts any built-in pointee; the pointer itself lowers to !llvm.ptr.
         TypeAnn::RawPtr { pointee, .. } => check_extern_type(pointee),
-        // Named types: accept only the primitive names that map directly to
-        // C scalar types. Everything else (String, Vec, custom structs) is
-        // rejected because it is not a Copy type by the C ABI.
+        // RFC 0010 Phase B: callback function pointers `extern "C" fn(T) -> R`
+        // are C-ABI-compatible; they lower to !llvm.ptr. Validate that the
+        // callback parameter and return types also satisfy Phase B rules.
+        TypeAnn::FnPtr { params, ret } => {
+            for p in params {
+                check_extern_type(p)?;
+            }
+            if let Some(r) = ret {
+                check_extern_type(r)?;
+            }
+            Ok(())
+        }
+        // Named types: accept primitive names and user-defined names (which
+        // may be `#[repr(C)]` structs — the IR lowering validates those).
+        // Phase B: any Named type is tentatively accepted; the repr(C)
+        // registry check happens at IR lowering time, not in the type-checker.
         TypeAnn::Named(name) => match name.as_str() {
             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
             | "f32" | "f64" | "bool" | "usize" | "isize" => Ok(()),
-            _ => Err(format!(
-                "type `{name}` is not a C-ABI-compatible Copy type; \
-                 only integer, float, bool, and raw pointer types are \
-                 allowed in `extern \"C\"` signatures (safety::extern_non_copy)"
-            )),
+            // Phase B: accept any other Named type as a potential repr(C) struct.
+            // The programmer is responsible for annotating it with `#[repr(C)]`.
+            _ => Ok(()),
         },
         // Aggregate and non-Copy types are rejected.
         TypeAnn::Tensor { .. }

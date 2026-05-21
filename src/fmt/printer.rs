@@ -1416,6 +1416,21 @@ fn emit_type_ann(p: &mut Printer, ty: &TypeAnn) {
             }
             emit_type_ann(p, pointee);
         }
+        // RFC 0010 Phase B: callback function pointer `extern "C" fn(T) -> R`.
+        TypeAnn::FnPtr { params, ret } => {
+            p.push("extern \"C\" fn(");
+            for (i, param) in params.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                emit_type_ann(p, param);
+            }
+            p.push(")");
+            if let Some(r) = ret {
+                p.push(" -> ");
+                emit_type_ann(p, r);
+            }
+        }
     }
 }
 

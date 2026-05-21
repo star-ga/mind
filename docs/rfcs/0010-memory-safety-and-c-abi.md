@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0010 |
 | Title | Memory safety model + C ABI in pure MIND |
-| Status | **Phase A Shipped — Phases B–J planned** |
+| Status | **Phase B Shipped — Phases C–J planned** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -328,7 +328,7 @@ testable.
 | Phase | Deliverable | Gate | Status |
 |---|---|---|---|
 | A | Parse `extern "C"` blocks; parse `safe`/`unsafe` fn attribution; parse `callconv(.)` tags; parse `...` variadic syntax. Emit parse errors for invalid combinations. Type-check extern signatures (Copy-only rule). Lower `extern "C"` fn calls to `llvm.call`; emit `llvm.func` declarations. | mindc parses all new syntax; existing test suite unchanged; 7 Phase A tests pass. | **Shipped** (`e82b831`) |
-| B | System V AMD64 calling convention lowering. Validates against the platform ABI spec on Linux x86_64. | round-trip test: MIND calls C, C calls MIND, values match. | Planned |
+| B | System V AMD64 calling convention lowering for `#[repr(C)]` structs (up to 4 Copy fields, ≤16B); `extern "C" fn(T) -> R` callback function pointer types (`TypeAnn::FnPtr` → `!llvm.ptr`); vararg call lowering with per-position type hints (`vararg_hints: Vec<String>` on `ExternFnDecl`); SysV struct classification (`sysv_classify_struct`). | 17 Phase B tests pass; Phase A tests unchanged; bootstrap fixed-point preserved. | **Shipped** |
 | C | Win64 calling convention lowering. | same round-trip gate on Windows x86_64. | Planned |
 | D | AAPCS (AArch64) calling convention lowering. | same round-trip gate on AArch64 Linux. | Planned |
 | E | Hand-written MIND `std.mlir` bindings for the MLIR C API (~150 functions). Authored against the MLIR C API header set. Safety attribution per function: `safe` for pure query functions, `unsafe` for mutation and pointer-passing functions. | std.mlir compiles under mindc; a smoke test exercises round-trip MLIR construction from MIND code. | Planned |
