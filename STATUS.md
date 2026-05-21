@@ -1,11 +1,11 @@
 # MIND Compiler Status
 
 > **Last Updated:** 2026-05-21
-> **Version:** 0.6.8
+> **Version:** 0.7.0
 
 ## Overview
 
-MIND is a deterministic AI compiler and statically-typed tensor programming language designed for certified AI systems in regulated industries. The compiler self-hosts: the pure-MIND `libmindc_mind.so` compiles its own source byte-identically to the Rust reference implementation (bootstrap fixed-point, v0.6.1).
+MIND is a deterministic AI compiler and statically-typed tensor programming language designed for certified AI systems in regulated industries. The compiler self-hosts: the pure-MIND `libmindc_mind.so` compiles its own source byte-identically to the Rust reference implementation (bootstrap fixed-point, v0.6.1). v0.7.0 is the credibility-ladder rung 3 graduation marker: Mindcraft fully shipped (RFC 0007), RFC 0008 KEYSTONE (cargo retired from the pure-MIND compile loop), RFC 0010 extern "C" foundations (Phases A/B/C shipped), 13 stdlib modules, `mindc doc`, and standalone binary releases.
 
 ## Feature Status
 
@@ -25,9 +25,14 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Self-hosted compiler — bootstrap fixed-point | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
 | mind-blas (RFC 0006) Track A + Track B inc 1–4 | ✅ Complete | v0.6.3–v0.6.7 | [`docs/rfcs/0006-mind-blas.md`](docs/rfcs/0006-mind-blas.md) |
 | **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ **Fully Shipped** | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
-| **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.6.8+** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
+| **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.7.0** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
 | Rust edition | ✅ 2024 | v0.6.8 | `Cargo.toml` |
 | Windows-MSVC SIMD port (RFC 0006 #225) | ✅ Complete | v0.6.8 | `runtime-support/mind_intrinsics.c` |
+| **RFC 0010 extern "C" + SysV/Win64 ABI (Phases A/B/C shipped; E/F scaffolded)** | ✅ **A/B/C** + scaffold E/F | **v0.7.0** | [`docs/rfcs/0010-memory-safety-and-c-abi.md`](docs/rfcs/0010-memory-safety-and-c-abi.md) |
+| **13 stdlib modules** (vec/string/map/io/blas/toml/json/regex/net/fs/process/mlir/llvm) | ✅ Complete | **v0.7.0** | `std/` |
+| **`mindc doc`** — rustdoc-style HTML documentation generator | ✅ Phase 1 shipped | **v0.7.0** | `src/doc/` |
+| **Standalone binary release pipeline** (linux-musl + macos-universal + windows-msvc) | ✅ Complete | **v0.7.0** | `.github/workflows/release-binary.yml` |
+| RFCs 0009/0011 specifications | ✅ Drafted | **v0.7.0** | `docs/rfcs/` |
 
 ## Mindcraft (RFC 0007) — Fully Shipped in v0.6.8
 
@@ -58,7 +63,7 @@ Spec: [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md).
 | D | Path deps + content-hash drift detection | `7117b2a` | ✅ Shipped |
 | E | Git deps + `Mind.lock` mandatory enforcement | `f27789f` | ✅ Shipped |
 | F | Incremental compilation cache (cold ~188 ms, warm ~3 ms) | `01fc039` | ✅ Shipped |
-| G | **KEYSTONE** — `mindc build` bootstraps mind itself | — | ✅ **Shipped** |
+| G | **KEYSTONE** — `mindc build` bootstraps mind itself | `faa6027` | ✅ **Shipped** |
 
 **Cargo retirement claim (Phase G)**: `mindc build` produces
 `libmindc_mind.so` byte-identical to the v0.6.1 fixed-point oracle,
@@ -88,6 +93,7 @@ Spec: [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md).
 | RFC 0006 | mind-blas dense-vector surface | ✅ Complete (Track A + B) |
 | RFC 0007 | Mindcraft: `mindc fmt` / `mindc lint` / `mindc check` | ✅ Fully Shipped |
 | RFC 0008 — all 7 phases | `mindc build` + `mindc test` + workspace + deps + cache + KEYSTONE | ✅ **7/7 shipped** |
+| RFC 0010 — Phases A/B/C | extern "C" + SysV + Win64 ABI + `#[repr(C)]` | ✅ **Shipped** |
 | Phase 13 | BCI / Neuroscience runtime | ✅ Complete |
 
 See [docs/roadmap.md](docs/roadmap.md) for full phase descriptions.
@@ -108,7 +114,8 @@ See [docs/roadmap.md](docs/roadmap.md) for full phase descriptions.
 | [Benchmarks](docs/benchmarks.md) | ✅ Complete |
 | [Roadmap](docs/roadmap.md) | ✅ Complete |
 | [RFC 0007 Mindcraft](docs/rfcs/0007-mindcraft.md) | ✅ Normative |
-| [RFC 0008 mindc build](docs/rfcs/0008-mindc-build.md) | ✅ Spec complete — impl 5/7 |
+| [RFC 0008 mindc build](docs/rfcs/0008-mindc-build.md) | ✅ Spec complete — impl 7/7 |
+| [RFC 0010 memory safety + C ABI](docs/rfcs/0010-memory-safety-and-c-abi.md) | ✅ Phases A/B/C shipped; E/F scaffolded |
 
 ## CI Status
 

@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Phase G Shipped — All 7 Phases Complete** |
+| Status | **All 7 Phases Complete** — milestone v0.7.0 |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |

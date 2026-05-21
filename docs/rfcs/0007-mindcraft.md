@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0007 |
 | Title | Mindcraft — pure-MIND format / lint / check toolchain |
-| Status | **FULLY SHIPPED** — Phase 6 complete (2026-05-20) |
+| Status | **FULLY SHIPPED** — Phase 6 complete (2026-05-20); milestone v0.7.0 |
 | Authors | STARGA Inc. |
 | Created | 2026-05-19 |
 | Supersedes | — |

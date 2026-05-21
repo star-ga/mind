@@ -5,7 +5,7 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — `mindc doc` (Phase 1) + RFC 0008 Phase F + Phase G KEYSTONE + standalone binary distribution (task #265)
+## [0.7.0] - 2026-05-21 — Credibility-ladder rung 3 graduation: Mindcraft + RFC 0008 KEYSTONE + RFC 0010 foundations + 13 stdlib modules + mindc doc + standalone binary release
 
 ### Added — Standalone binary distribution (task #265)
 
@@ -20,7 +20,28 @@ MSVC). No Rust toolchain required. See `docs/install.md`.
 - Every release asset is accompanied by a `SHA256SUMS` manifest for checksum verification
 - Cosign signing is stubbed; wire `STARGA_COSIGN_KEY` secret to enable
 
-## [Unreleased] — `mindc doc` (Phase 1) + RFC 0008 Phase F + Phase G KEYSTONE
+### Summary of v0.7.0
+
+v0.7.0 is the credibility-ladder rung 3 graduation marker. Everything that shipped
+between v0.6.8 and this tag is collected here. Key themes:
+
+- **Mindcraft fully shipped** (RFC 0007 all 6 phases + MINDCRAFT-001 keystone) -- already in v0.6.8
+- **RFC 0008 `mindc build` / `mindc test` -- all 7/7 phases shipped** including Phase G KEYSTONE:
+  cargo is retired from the pure-MIND compile loop
+- **RFC 0010 extern "C" + SysV + Win64 ABI** -- Phases A/B/C shipped; Phases E/F scaffolded
+  (std.mlir + std.llvm bindings)
+- **13 stdlib modules**: vec, string, map, io, blas, toml, json, regex, net, fs, process,
+  mlir, llvm
+- **`mindc doc`** -- rustdoc-style HTML documentation generator (Phase 1)
+- **Standalone binary release pipeline** -- linux-musl + macos-universal + windows-msvc +
+  install.sh / install.ps1
+- **~720+ tests green** (up from ~579 at v0.6.8); bench-gate +7% cap held through every
+  change (-6.5% to +3% range)
+- Bootstrap fixed-point byte-identity preserved (v0.6.1 oracle hash unchanged)
+- Format string bug fix in std_surface_net_fs_process test (#265 followup)
+
+RFCs drafted in this cycle: RFC 0009 (federation package layer), RFC 0010 (memory safety +
+C ABI), RFC 0011 (async + structured concurrency).
 
 ### Added — `mindc doc`: rustdoc-style HTML documentation generator (Phase 1, task #264)
 
@@ -50,7 +71,7 @@ Deliverables:
 Hard-gate results: 7/7 new tests pass; 200 library unit tests pass (including
 21 doc-module tests); full suite unaffected; bench-gate held.
 
-## [Unreleased] — RFC 0008 Phase F + Phase G KEYSTONE: `mindc build` self-hosts the mind repo
+### Added — RFC 0008 Phase F + Phase G KEYSTONE: `mindc build` self-hosts the mind repo
 
 ### Added — RFC 0008 Phase F: incremental compilation cache
 
@@ -122,6 +143,80 @@ Hard-gate results:
   machines with a working MLIR/LLVM toolchain.
 - Phase F warm-cache (3 ms) preserved — Phase G adds zero overhead.
 - RFC 0008 status: 7/7 phases shipped.
+
+### Added — RFC 0009/0010/0011 specifications drafted
+
+Three new RFCs drafted and merged into `docs/rfcs/`:
+
+- **RFC 0009** (`62feaa7`) — Federation-first MIND package layer: decentralised
+  registry protocol, PubGrub resolver extension, SBOM + SLSA provenance hooks.
+- **RFC 0010** (`fda0e32`) — Memory safety model + C ABI in pure MIND: ownership
+  regions, borrow checker sketch, `extern "C"` calling conventions (SysV x86_64 +
+  Win64), `#[repr(C)]` structs.
+- **RFC 0011** (`40bf0e0`) — Async + structured concurrency model: task trees,
+  cancellation, structured nurseries, MIND-native async/await surface.
+
+### Added — RFC 0010 Phases A/B/C shipped; Phases E/F scaffolded
+
+**Phase A** (`e82b831`) — `extern "C"` parser, typecheck, and LLVM call lowering.
+`extern "C" fn foo(…)` declarations are parsed into the AST, type-checked, and
+lowered to direct LLVM call instructions. C-typed return values are correctly
+propagated through the type system.
+
+**Phase B** (`dea2a13`) — SysV x86_64 struct passing, variadic calls, and callback
+function pointers. Structs passed/returned by value follow the System V AMD64 ABI
+(classify → pass in registers or stack slots). Variadic `extern "C"` calls emit
+correct `llvm.call` with vararg attribution. `extern "C" fn` pointers are first-class
+values that can be stored, passed, and called.
+
+**Phase C** (`33636c5`, `933dc0e`) — Win64 calling convention + `f32` vararg promotion
+fix. Win64 shadow-space (32 bytes) allocation added; `float` arguments in vararg
+position are promoted to `double` per the C standard. Two-pass `repr_c` collection
+fixes a declaration-order hazard where forward-referenced struct layouts were computed
+before their fields were known.
+
+**Phase E scaffold** (`3557253`) — MLIR C API bindings in pure MIND: `std/mlir.mind`
+exposes the opaque handle types and the core `mlirContextCreate`, `mlirModuleOp*`,
+`mlirPassManagerRun`, and `mlirPrintPassPipeline` surface via `extern "C"` wrappers.
+
+**Phase F scaffold** (`34dd39d`) — LLVM C API bindings in pure MIND: `std/llvm.mind`
+exposes `LLVMContextCreate`, `LLVMModuleCreateWithName`, `LLVMAddFunction`,
+`LLVMBuildRet`, `LLVMWriteBitcodeToFile`, and the `LLVMTargetMachineEmitToFile` path
+via `extern "C"` wrappers. Together with Phase E this gives pure-MIND code the ability
+to drive compilation end-to-end when RFC 0010 Phase G lands the full FFI surface.
+
+### Added — 9 additional pure-MIND standard library modules
+
+Eight new `std/*.mind` modules ship with v0.7.0 (in addition to the four that shipped
+in RFC 0005: vec, string, map, io):
+
+- **`std/toml.mind`** (`244b092`) — TOML 1.0 subset parser. Covers bare keys,
+  quoted keys, `[table]` headers, inline tables, arrays, integers, floats, booleans,
+  RFC 3339 datetimes, and multi-line strings. Recursive-descent; no `serde` dep.
+- **`std/json.mind`** (`c81c4e9`) — RFC 8259 JSON subset parser. Objects, arrays,
+  strings (including `\uXXXX` escapes), numbers, booleans, null. Emits a tagged-union
+  `JsonValue` type; recursive-descent.
+- **`std/regex.mind`** (`c81c4e9`) — POSIX ERE subset: character classes `[abc]`,
+  `.`, `^$` anchors, `+?*` quantifiers, `|` alternation, `()` groups. NFA simulation;
+  no backtracking explosions; returns match offsets.
+- **`std/net.mind`** (`7e65212`) — POSIX TCP/UDP surface: `TcpListener`, `TcpStream`,
+  `UdpSocket` backed by `extern "C"` `socket`/`bind`/`listen`/`accept`/`connect`/
+  `send`/`recv`/`close` wrappers. IPv4 + IPv6.
+- **`std/fs.mind`** (`7e65212`) — POSIX filesystem surface: `open`, `read`,
+  `write`, `close`, `stat`, `mkdir`, `unlink`, `rename` via `extern "C"` wrappers.
+  `read_to_string` and `write_string` convenience helpers.
+- **`std/process.mind`** (`7e65212`) — `exec`, `spawn`, `wait`, `exit`, `getenv`,
+  `setenv` via POSIX `execvp`/`fork`/`waitpid`/`getenv`/`setenv` wrappers.
+- **`std/mlir.mind`** (`3557253`) — MLIR C API scaffold (see RFC 0010 Phase E above).
+- **`std/llvm.mind`** (`34dd39d`) — LLVM C API scaffold (see RFC 0010 Phase F above).
+
+Combined with the RFC 0005 four modules (vec, string, map, io) and std/blas (RFC 0006),
+the stdlib now counts **13 modules**.
+
+### Fixed — format string escape in std_surface_net_fs_process test
+
+Python f-string brace `{len(content)}` inside a Rust `format!(r#"..."#)` was not
+double-escaped, causing a compile error. Fixed to `{{len(content)}}`.
 
 ## [0.6.8] - 2026-05-19 — Mindcraft fully shipped (RFC 0007, all 6 phases + MINDCRAFT-001 keystone); RFC 0008 spec + Phases A/B/C/D/E; edition 2024; Windows-MSVC SIMD port; stale-test sweep
 

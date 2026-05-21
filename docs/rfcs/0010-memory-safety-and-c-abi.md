@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0010 |
 | Title | Memory safety model + C ABI in pure MIND |
-| Status | **Phase F Scaffolded — Phase C Shipped, Phase D + Phases G–J planned** |
+| Status | **Phases A/B/C Shipped; E/F Scaffolded** — milestone v0.7.0; Phase D + Phases G–J planned |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
