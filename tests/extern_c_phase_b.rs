@@ -302,6 +302,7 @@ fn fn_ptr_param_lowers_to_llvm_ptr_in_mlir() {
         ret_type: Some("!llvm.ptr".to_string()),
         is_varargs: false,
         vararg_hints: Vec::new(),
+        callconv: CallConv::SysV,
     });
     let id = m.fresh();
     m.instrs.push(Instr::ConstI64(id, 0));
@@ -336,6 +337,7 @@ fn variadic_printf_call_uses_vararg_hints() {
         ret_type: Some("i64".to_string()),
         is_varargs: true,
         vararg_hints: vec!["!llvm.ptr".to_string(), "i64".to_string()],
+        callconv: CallConv::SysV,
     });
 
     // Three arguments: fmt pointer, string arg, int arg.
@@ -397,6 +399,7 @@ fn repr_c_struct_param_expands_to_two_i64_in_mlir() {
         ret_type: Some("i64".to_string()),
         is_varargs: false,
         vararg_hints: Vec::new(),
+        callconv: CallConv::SysV,
     });
     let id = m.fresh();
     m.instrs.push(Instr::ConstI64(id, 0));

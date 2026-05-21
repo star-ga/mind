@@ -522,6 +522,7 @@ pub enum Instr {
         /// MLIR type strings for each concrete parameter.
         /// Phase A uses `"i64"` for all integer/pointer types and `"f64"` for f64.
         /// Phase B uses `"!llvm.ptr"` for raw pointer types and per-SysV struct types.
+        /// Phase C uses Win64-classified types when `callconv` is `Win64`.
         param_types: Vec<String>,
         /// MLIR type string for the return type, or `None` for void.
         ret_type: Option<String>,
@@ -538,6 +539,12 @@ pub enum Instr {
         /// floating-point args. Phase A always used `"i64"` for all extras;
         /// Phase B makes the per-position type precise.
         vararg_hints: Vec<String>,
+        /// RFC 0010 Phase C — calling convention for this declaration.
+        ///
+        /// Defaults to `CallConv::SysV` for all Phase A/B declarations.
+        /// `CallConv::Win64` causes the MLIR lowerer to emit
+        /// `cconv = #llvm.cconv<win64cc>` on `llvm.func` and `llvm.call`.
+        callconv: crate::ast::CallConv,
     },
 }
 
