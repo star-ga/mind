@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0007 |
 | Title | Mindcraft — pure-MIND format / lint / check toolchain |
-| Status | Phase 2A shipped (mindc v0.6.8) — sequencing gate CLEARED 2026-05-19, see §9 |
+| Status | Phase 5 shipped (mindc v0.6.8, 2026-05-20) — mindc check project driver live |
 | Authors | STARGA Inc. |
 | Created | 2026-05-19 |
 | Supersedes | — |
@@ -205,15 +205,25 @@ The normative formatter reference is at `docs/mindcraft/fmt.md`.
 `max_line_length` setting is validated and stored but has no effect in Phase
 2A. Phase 2B remains a separate PR gated on post-Phase 2A review.
 
+### Phase 5 — shipped (mindc v0.6.8, 2026-05-20)
+
+`mindc check` project-walker driver is live at commit `1442a31`:
+
+- `src/check/mod.rs` — top-level `run_check()` combining fmt-check + lint + type-check.
+- `src/check/gitignore.rs` — minimal in-process `.gitignore` parser (no new crate deps).
+- `src/check/reporter.rs` — Human + JSON reporter trait.
+- 9 CLI integration tests in `tests/mindcraft_check_cli.rs`.
+- Performance: 98 `.mind` files in ~23 ms (87x under the 2-second gate).
+
 Phased delivery going forward:
 
 1. ~~Configuration surface in `Mind.toml`.~~ (Phase 1, shipped `6526029`)
 2. ~~`mindc fmt` (canonical pretty-printer, idempotent, `--check` CI mode).~~ (Phase 2A, shipped above)
 3. Phase 2B: soft line-wrap at `max_line_length`. (deferred)
-4. `mindc check` rebuilt on the shared configuration/diagnostic surface. (Phase 3)
-5. Rule engine + default rule pack, rules as `.mind` files, driven by the
-   self-hosted front-end. (Phase 3)
-6. `mindc lint` (engine + `--fix` + `--reporter json`). (Phase 4)
+4. ~~`mindc check` rebuilt on the shared configuration/diagnostic surface.~~ (Phase 3 — lint infra)
+5. ~~Rule engine + default rule pack (5 named rules).~~ (Phase 4, shipped `5ff5367`)
+6. ~~`mindc check` project-walker: fmt-check + lint + type-check + reporters.~~ (Phase 5, shipped `1442a31`)
+7. `mindc lint --fix` + CI workflow. (Phase 6)
 
 Bench-gate discipline applies throughout: the compiler frontend latency
 floor is preserved; Mindcraft passes are additive and feature-gated, never
