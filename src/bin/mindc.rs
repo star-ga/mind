@@ -127,9 +127,11 @@ enum Command {
         /// for *.mind files.  Defaults to the current directory when omitted.
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
-        /// Diagnostic reporter: human (default) or json.
+        /// Diagnostic reporter: human (default), json, or lsp.
+        ///
+        /// `lsp` emits LSP-compatible Diagnostic JSON objects (RFC 0007 §C).
         #[arg(long, value_name = "REPORTER", default_value = "human",
-              value_parser = ["human", "json"])]
+              value_parser = ["human", "json", "lsp"])]
         reporter: String,
         /// Skip the format-check pass.
         #[arg(long)]
@@ -140,6 +142,14 @@ enum Command {
         /// Skip the type-check pass.
         #[arg(long)]
         no_typecheck: bool,
+        /// Apply machine-applicable fixes and rewrite files.
+        ///
+        /// For every fmt::drift diagnostic, writes the formatted file.
+        /// For every lint rule with an auto-fix, applies the byte-range edit.
+        /// Iterates up to 5 rounds; warns if convergence is not reached.
+        /// Prints: "Fixed N files, M unfixable diagnostics remaining."
+        #[arg(long)]
+        fix: bool,
     },
     /// Format MIND source files (or directories of *.mind files).
     Fmt {
@@ -159,6 +169,10 @@ enum Command {
         /// Cannot be combined with positional PATHS.
         #[arg(long)]
         stdin: bool,
+        /// Explicitly format files in-place (same as the default write mode)
+        /// and print a summary: "Formatted N files, M unchanged."
+        #[arg(long)]
+        fix: bool,
     },
     /// Inspect compiler knowledge about Core profiles.
     Ops {
@@ -303,11 +317,12 @@ fn main() {
             no_fmt,
             no_lint,
             no_typecheck,
+            fix,
         }) => {
-            let reporter_kind = if reporter == "json" {
-                ReporterKind::Json
-            } else {
-                ReporterKind::Human
+            let reporter_kind = match reporter.as_str() {
+                "json" => ReporterKind::Json,
+                "lsp"  => ReporterKind::Lsp,
+                _      => ReporterKind::Human,
             };
             let opts = CheckOptions {
                 run_fmt: !no_fmt,
@@ -315,6 +330,7 @@ fn main() {
                 run_typecheck: !no_typecheck,
                 reporter: reporter_kind,
                 paths: paths.clone(),
+                fix: *fix,
             };
             process::exit(run_check(&opts));
         }
@@ -323,8 +339,9 @@ fn main() {
             check,
             diff,
             stdin,
+            fix,
         }) => {
-            process::exit(mindc_fmt::run_fmt(paths, *check, *diff, *stdin));
+            process::exit(mindc_fmt::run_fmt(paths, *check, *diff, *stdin, *fix));
         }
         Some(Command::Ops { .. }) => {
             print_ops(&cli.command);

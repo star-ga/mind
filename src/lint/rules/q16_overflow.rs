@@ -228,5 +228,6 @@ fn make_diag(ctx: &LintCtx<'_>, start: usize, end: usize) -> Diagnostic {
              i64 product back to i32: `((a as i64 * b as i64) >> 16) as i32`"
                 .to_string(),
         ),
+        auto_fix: None,
     }
 }

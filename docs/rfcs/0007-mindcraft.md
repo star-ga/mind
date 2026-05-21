@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0007 |
 | Title | Mindcraft — pure-MIND format / lint / check toolchain |
-| Status | Phase 5 shipped (mindc v0.6.8, 2026-05-20) — mindc check project driver live |
+| Status | **FULLY SHIPPED** — Phase 6 complete (2026-05-20) |
 | Authors | STARGA Inc. |
 | Created | 2026-05-19 |
 | Supersedes | — |
@@ -223,11 +223,35 @@ Phased delivery going forward:
 4. ~~`mindc check` rebuilt on the shared configuration/diagnostic surface.~~ (Phase 3 — lint infra)
 5. ~~Rule engine + default rule pack (5 named rules).~~ (Phase 4, shipped `5ff5367`)
 6. ~~`mindc check` project-walker: fmt-check + lint + type-check + reporters.~~ (Phase 5, shipped `1442a31`)
-7. `mindc lint --fix` + CI workflow. (Phase 6)
+7. ~~`--fix` flag + CI integration + LSP reporter.~~ (Phase 6, **FULLY SHIPPED** — see below)
 
 Bench-gate discipline applies throughout: the compiler frontend latency
 floor is preserved; Mindcraft passes are additive and feature-gated, never
 in the default-build hot path.
+
+### Phase 6 — FULLY SHIPPED (2026-05-20)
+
+Mindcraft is now complete. All six deliverables landed in a single commit:
+
+| Deliverable | Description |
+|---|---|
+| A. `mindc fmt --fix` | Explicit alias for default write mode; prints `Formatted N files, M unchanged.` summary. |
+| B. `mindc check --fix` | Applies fmt::drift fixes + lint auto-fixes iteratively (up to 5 rounds); prints `Fixed N files, M unfixable diagnostics remaining.` |
+| C. `mindc check --reporter lsp` | Emits LSP-compatible Diagnostic JSON array (uri, range, severity, message, source, code). |
+| D. CI workflows | `.github/workflows/mindcraft.yml` (reusable) + `mindcraft_check` job in `ci.yml` (`continue-on-error: true` for first rollout). |
+| E. RFC 0007 status | This document — Mindcraft FULLY SHIPPED. |
+| F. Tests | `tests/mindcraft_fmt_fix.rs` (5 tests), `tests/mindcraft_check_fix.rs` (5 tests), `tests/mindcraft_check_lsp_reporter.rs` (5 tests). All pass. |
+
+**Auto-fix capability:**
+- `lint::trailing_whitespace` — deletes the trailing whitespace bytes (the only rule with a real `auto_fix()` in Phase 6).
+- All other rules return `None` from `auto_fix()`.
+- `fmt::drift` is fixed by reformatting the whole file (not a byte-range edit).
+
+**`Fix` struct** added to `lint::rule` — `{ range: Range<usize>, replacement: String }`.
+**`auto_fix` field** added to `lint::Diagnostic` — `Option<Fix>`.
+**`auto_fix()` method** added to `LintRule` trait — default returns `None`.
+
+The credibility ladder is now complete: language self-hosts → compiler self-hosts → **toolchain self-hosts**.
 
 ## 10. Non-goals
 
