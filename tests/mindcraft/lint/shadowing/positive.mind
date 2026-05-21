@@ -1,0 +1,8 @@
+// Positive fixture: two `let x` bindings in the same function body.
+// The second shadows the first — should trigger the rule.
+
+fn shadowing_example() -> i32 {
+    let x: i32 = 1
+    let x: i32 = 2
+    x
+}

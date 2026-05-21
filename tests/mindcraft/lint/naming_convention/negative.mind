@@ -1,0 +1,13 @@
+// Negative fixture: all names follow canonical conventions.
+// No diagnostics should be emitted.
+
+const GOOD_CONST: i32 = 42
+
+struct GoodStruct {
+    value: i32,
+}
+
+fn good_fn(x: i32) -> i32 {
+    let local_val: i32 = x + 1
+    local_val
+}

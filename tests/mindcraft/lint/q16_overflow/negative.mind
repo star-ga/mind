@@ -1,0 +1,8 @@
+// Negative fixture: proper Q16.16 multiply with >>16 narrowing.
+// The rule must NOT fire because the result is shifted right by 16.
+
+fn mul_q16(a: i32, b: i32) -> i32 {
+    let wide: i64 = a as i64 * b as i64
+    let result: i32 = (wide >> 16) as i32
+    result
+}
