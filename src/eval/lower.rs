@@ -58,6 +58,23 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
     let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
 
+    // RFC 0010 Phase B fix: two-pass repr_c collection.
+    // Pass 0: collect ALL #[repr(C)] struct field types before processing any
+    // ExternBlock nodes.  A single top-to-bottom pass caused a declaration-order
+    // hazard: structs defined after the extern block were not in repr_c_structs
+    // when the ExternBlock lowering ran, causing silent fallback to "i64" for
+    // mixed-type structs that should classify to MEMORY (!llvm.ptr).
+    #[cfg(feature = "std-surface")]
+    for item in &module.items {
+        if let ast::Node::StructDef { name, fields, attrs, .. } = item {
+            if attrs.iter().any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C")) {
+                let field_types: Vec<crate::ast::TypeAnn> =
+                    fields.iter().map(|f| f.ty.clone()).collect();
+                ir.repr_c_structs.insert(name.clone(), field_types);
+            }
+        }
+    }
+
     for item in &module.items {
         match item {
             ast::Node::Let {
