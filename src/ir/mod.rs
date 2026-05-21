@@ -521,11 +521,23 @@ pub enum Instr {
         name: String,
         /// MLIR type strings for each concrete parameter.
         /// Phase A uses `"i64"` for all integer/pointer types and `"f64"` for f64.
+        /// Phase B uses `"!llvm.ptr"` for raw pointer types and per-SysV struct types.
         param_types: Vec<String>,
         /// MLIR type string for the return type, or `None` for void.
         ret_type: Option<String>,
         /// `true` when `...` varargs were declared.
         is_varargs: bool,
+        /// RFC 0010 Phase B — optional type hints for variadic arguments beyond
+        /// the declared concrete parameters. When a call site passes more
+        /// arguments than `param_types.len()`, the extra argument types are
+        /// looked up from this list (by index offset from `param_types.len()`),
+        /// falling back to `"i64"` for positions beyond `vararg_hints.len()`.
+        ///
+        /// This supports the common printf use-cases: passing `!llvm.ptr`
+        /// for `*const i8` string args, `i64` for integer args, `f64` for
+        /// floating-point args. Phase A always used `"i64"` for all extras;
+        /// Phase B makes the per-position type precise.
+        vararg_hints: Vec<String>,
     },
 }
 
@@ -633,6 +645,18 @@ pub struct IRModule {
     /// `BTreeMap` for deterministic iteration. Gated.
     #[cfg(feature = "std-surface")]
     pub const_array_defs: std::collections::BTreeMap<String, Vec<i64>>,
+    /// RFC 0010 Phase B — `#[repr(C)]` struct registry.
+    ///
+    /// Maps a struct name to its field types (as `crate::ast::TypeAnn`),
+    /// in declaration order, for structs annotated with `#[repr(C)]`.
+    /// Populated by the AST→IR lowering pass when it sees a `StructDef`
+    /// with a `repr(C)` attribute.  Consumed by `extern_type_to_mlir` and
+    /// `check_extern_type` to classify Named types that appear in `extern "C"`
+    /// signatures as legal C-ABI types and to derive SysV passing convention.
+    ///
+    /// `BTreeMap` for deterministic ordering. Gated.
+    #[cfg(feature = "std-surface")]
+    pub repr_c_structs: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
 }
 
 impl IRModule {
@@ -645,6 +669,8 @@ impl IRModule {
             struct_defs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             const_array_defs: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            repr_c_structs: std::collections::BTreeMap::new(),
         }
     }
 
