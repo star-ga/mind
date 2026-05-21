@@ -38,6 +38,7 @@ fn sp() -> Span {
 
 fn field(name: &str) -> Field {
     Field {
+        is_pub: false,
         name: name.to_string(),
         ty: TypeAnn::Named("i64".to_string()),
         span: sp(),
@@ -81,6 +82,7 @@ fn struct_def_populates_schema_registry() {
     // struct Vec { addr: i64, len: i64, cap: i64 }
     let module = Module {
         items: vec![Node::StructDef {
+            is_pub: false,
             name: "Vec".to_string(),
             fields: vec![field("addr"), field("len"), field("cap")],
             attrs: vec![],
@@ -108,6 +110,7 @@ fn struct_lit_emits_alloc_plus_n_stores() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Vec".to_string(),
                 fields: vec![field("addr"), field("len"), field("cap")],
                 attrs: vec![],
@@ -154,6 +157,7 @@ fn struct_lit_reorders_out_of_order_fields_into_canonical_order() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Vec".to_string(),
                 fields: vec![field("addr"), field("len"), field("cap")],
                 attrs: vec![],
@@ -250,6 +254,7 @@ fn struct_lit_alloc_uses_8_times_field_count_bytes() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Triple".to_string(),
                 fields: vec![field("a"), field("b"), field("c")],
                 attrs: vec![],

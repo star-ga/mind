@@ -79,7 +79,11 @@ pub fn map_insert(m: Map, key: i64, value: i64) -> Map {
     let new_cap: i64 = if m.cap == 0 {
         4
     } else {
-        if m.len < m.cap { m.cap } else { m.cap * 2 }
+        if m.len < m.cap {
+            m.cap
+        } else {
+            m.cap * 2
+        }
     };
     let new_keys: i64 = if new_cap == m.cap {
         m.keys_addr
