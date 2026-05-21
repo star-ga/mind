@@ -354,6 +354,7 @@ pub fn eval_module_value_with_env_mode(
                     | Some(TypeAnn::Generic { .. })
                     | Some(TypeAnn::Tuple { .. })
                     | Some(TypeAnn::SparseTensor { .. })
+                    | Some(TypeAnn::RawPtr { .. })
                     | None => rhs,
                 };
                 if let Value::Int(n) = stored {
@@ -1203,6 +1204,10 @@ pub(crate) fn eval_value_expr_mode(
         Node::While { .. } => Err(EvalError::UnsupportedMsg(
             "`while` evaluation not yet implemented in interpreter".into(),
         )),
+        // RFC 0010 Phase A: `extern "C"` blocks are declarations, not
+        // expressions. The interpreter returns a unit placeholder; the
+        // actual call site is handled by the MLIR lowering path.
+        Node::ExternBlock { .. } => Ok(Value::Int(0)),
     }
 }
 

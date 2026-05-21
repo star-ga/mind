@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2596 | **Est. tokens:** ~6,421,048
-**Generated:** 2026-05-21 15:31 UTC
+**Files:** 2596 | **Est. tokens:** ~6,402,745
+**Generated:** 2026-05-21 16:27 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 17 | ~60,147 |
+| `docs/rfcs/` | 17 | ~60,200 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -362,7 +362,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,220 |
-| `src/ast/` | 1 | ~4,821 |
+| `src/ast/` | 1 | ~5,302 |
 | `src/autodiff/` | 3 | ~4,256 |
 | `src/bin/` | 2 | ~16,676 |
 | `src/build/` | 2 | ~10,769 |
@@ -371,17 +371,17 @@
 | `src/deps/` | 1 | ~7,926 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/eval/` | 13 | ~73,494 |
+| `src/eval/` | 13 | ~74,319 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~15,407 |
-| `src/ir/` | 3 | ~12,360 |
+| `src/fmt/` | 3 | ~15,901 |
+| `src/ir/` | 3 | ~12,718 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
 | `src/lint/` | 2 | ~3,995 |
 | `src/lint/rules/` | 6 | ~9,076 |
-| `src/mlir/` | 3 | ~26,259 |
+| `src/mlir/` | 2 | ~1,967 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
@@ -391,11 +391,11 @@
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
-| `src/type_checker/` | 1 | ~22,584 |
+| `src/type_checker/` | 1 | ~23,738 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 6 | ~15,332 |
-| `tests/` | 129 | ~171,510 |
+| `tests/` | 130 | ~174,134 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -615,7 +615,7 @@
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
-- `0010-memory-safety-and-c-abi.md` (~6735 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
+- `0010-memory-safety-and-c-abi.md` (~6788 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4812 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3535,7 +3535,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~4821 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~5302 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3582,14 +3582,14 @@
 - `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~14388 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~15134 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4154 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8312 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~18954 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~19033 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -3612,7 +3612,7 @@
 
 - `cli.rs` (~3852 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~10961 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~11455 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3628,9 +3628,9 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `mod.rs` (~6196 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6514 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3435 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~2729 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~2769 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~935 tok, large) — Copyright 2025 STARGA Inc.
@@ -3653,7 +3653,6 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `lowering.rs` (~24292 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~282 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
@@ -3707,7 +3706,7 @@
 - `mod.rs` (~5810 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~22584 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~23738 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3779,6 +3778,7 @@
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
+- `extern_c_phase_a.rs` (~2624 tok, huge) — Copyright 2025 STARGA Inc.
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/fixtures/`
 
