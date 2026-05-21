@@ -28,6 +28,55 @@ pub mod module_table;
 #[cfg(feature = "cross-module-imports")]
 pub mod stdlib;
 
+/// RFC 0008 §3 — `[test]` table in `Mind.toml`.
+/// All fields default; an absent table is equivalent to default.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TestConfig {
+    /// Substring filter applied to test names at discovery time. Empty = all.
+    #[serde(default)]
+    pub filter: String,
+    /// Run tests in parallel. Default true.
+    #[serde(default = "default_test_parallel")]
+    pub parallel: bool,
+    /// Max parallel workers. 0 = available parallelism.
+    #[serde(default)]
+    pub threads: u32,
+    /// Per-test timeout in seconds.
+    #[serde(default = "default_test_timeout")]
+    pub timeout: u32,
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        Self {
+            filter: String::new(),
+            parallel: default_test_parallel(),
+            threads: 0,
+            timeout: default_test_timeout(),
+        }
+    }
+}
+
+fn default_test_parallel() -> bool {
+    true
+}
+
+fn default_test_timeout() -> u32 {
+    30
+}
+
+/// RFC 0008 §3 — `[workspace]` table in `Mind.toml`.
+/// Absent = single-package project (no change to existing behaviour).
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct WorkspaceConfig {
+    /// Paths to workspace member roots (each must contain a `Mind.toml`).
+    #[serde(default)]
+    pub members: Vec<String>,
+    /// Paths excluded from workspace glob expansions.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
 /// Project manifest from Mind.toml
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProjectManifest {
@@ -42,20 +91,18 @@ pub struct ProjectManifest {
     pub dependencies: HashMap<String, DependencySpec>,
     #[serde(default)]
     pub profile: HashMap<String, ProfileConfig>,
-    /// RFC 0002 deliverable 3 — `[exports]` table in `Mind.toml`. The
-    /// `c_abi` list is merged into `IRModule.exports` by the build
-    /// pipeline before codegen, alongside any names already declared
-    /// via an `export { ... }` block in the source.
+    /// RFC 0002 deliverable 3 — `[exports]` table in `Mind.toml`.
     #[serde(default)]
     pub exports: ExportsConfig,
-    /// RFC 0007 (Mindcraft) Phase 1 — configuration surface for the
-    /// pure-MIND format / lint / check toolchain. Absent on projects
-    /// that don't opt in; defaults give every rule its canonical
-    /// severity, the canonical formatter settings, and VCS-aware
-    /// file selection. Per-target sections (`[mindcraft.cpu]`, etc.)
-    /// layer backend-specific overrides on top.
+    /// RFC 0007 (Mindcraft) Phase 1 — `[mindcraft]` configuration block.
     #[serde(default)]
     pub mindcraft: MindcraftConfig,
+    /// RFC 0008 §3 — `[test]` table. Absent = defaults.
+    #[serde(default)]
+    pub test: TestConfig,
+    /// RFC 0008 §3 — `[workspace]` table. Absent = single-package project.
+    #[serde(default)]
+    pub workspace: Option<WorkspaceConfig>,
 }
 
 /// RFC 0007 (Mindcraft) — `[mindcraft]` configuration block in
@@ -241,14 +288,162 @@ pub struct PackageInfo {
     pub homepage: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+/// RFC 0008 §3 — backend target vocabulary (matches `parse_target` in `mindc.rs`).
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildTarget {
+    #[default]
+    Cpu,
+    Gpu,
+    Tpu,
+    Npu,
+    Lpu,
+    Dpu,
+    Fpga,
+    Cerebras,
+    Wasm,
+}
+
+impl BuildTarget {
+    /// Canonical string name for display and path-keying.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BuildTarget::Cpu => "cpu",
+            BuildTarget::Gpu => "gpu",
+            BuildTarget::Tpu => "tpu",
+            BuildTarget::Npu => "npu",
+            BuildTarget::Lpu => "lpu",
+            BuildTarget::Dpu => "dpu",
+            BuildTarget::Fpga => "fpga",
+            BuildTarget::Cerebras => "cerebras",
+            BuildTarget::Wasm => "wasm",
+        }
+    }
+
+    /// Parse from a CLI string, accepting aliases (cuda, rocm, ...).
+    /// Returns an error string on unknown input.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "cpu" => Ok(BuildTarget::Cpu),
+            "gpu" | "cuda" | "rocm" | "metal" | "webgpu" => Ok(BuildTarget::Gpu),
+            "tpu" => Ok(BuildTarget::Tpu),
+            "npu" | "ane" | "hexagon" => Ok(BuildTarget::Npu),
+            "lpu" | "groq" => Ok(BuildTarget::Lpu),
+            "dpu" | "smartnic" | "bluefield" => Ok(BuildTarget::Dpu),
+            "fpga" | "hls" => Ok(BuildTarget::Fpga),
+            "cerebras" | "wse" | "wse2" | "wse3" => Ok(BuildTarget::Cerebras),
+            "wasm" => Ok(BuildTarget::Wasm),
+            other => Err(format!(
+                "unknown target '{}' (expected cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras|wasm)",
+                other
+            )),
+        }
+    }
+}
+
+/// RFC 0008 §3 — output artifact type.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EmitKind {
+    #[default]
+    Binary,
+    Cdylib,
+    Object,
+}
+
+impl EmitKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EmitKind::Binary => "binary",
+            EmitKind::Cdylib => "cdylib",
+            EmitKind::Object => "object",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "binary" => Ok(EmitKind::Binary),
+            "cdylib" | "shared" => Ok(EmitKind::Cdylib),
+            "object" | "obj" => Ok(EmitKind::Object),
+            other => Err(format!(
+                "unknown emit kind '{}' (expected binary|cdylib|object)",
+                other
+            )),
+        }
+    }
+}
+
+/// RFC 0008 §3 — optimization / profile level.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OptimizeLevel {
+    #[default]
+    Debug,
+    Release,
+    Size,
+}
+
+impl OptimizeLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OptimizeLevel::Debug => "debug",
+            OptimizeLevel::Release => "release",
+            OptimizeLevel::Size => "size",
+        }
+    }
+
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "debug" => Ok(OptimizeLevel::Debug),
+            "release" => Ok(OptimizeLevel::Release),
+            "size" => Ok(OptimizeLevel::Size),
+            other => Err(format!(
+                "unknown optimize level '{}' (expected debug|release|size)",
+                other
+            )),
+        }
+    }
+
+    /// Map to the `release: bool` flag used by the legacy pipeline.
+    pub fn is_release(self) -> bool {
+        matches!(self, OptimizeLevel::Release | OptimizeLevel::Size)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct BuildConfig {
+    /// Entry-point source file (relative to manifest). Default `src/main.mind`.
     #[serde(default = "default_entry")]
     pub entry: String,
+    /// Output artifact name without extension. Default: `package.name`.
     #[serde(default = "default_output")]
     pub output: String,
+    /// Legacy optimization string (kept for backwards compat with existing
+    /// `Mind.toml` files that set `optimization = "aggressive"`).
     #[serde(default = "default_optimization")]
     pub optimization: String,
+    /// RFC 0008 §3 — backend target. Default `cpu`.
+    #[serde(default)]
+    pub target: BuildTarget,
+    /// RFC 0008 §3 — artifact kind. Default `binary`.
+    #[serde(default)]
+    pub emit: EmitKind,
+    /// RFC 0008 §3 — optimization level. Default `debug`.
+    #[serde(default)]
+    pub optimize: OptimizeLevel,
+}
+
+impl Default for BuildConfig {
+    fn default() -> Self {
+        Self {
+            entry: default_entry(),
+            output: default_output(),
+            optimization: default_optimization(),
+            target: BuildTarget::default(),
+            emit: EmitKind::default(),
+            optimize: OptimizeLevel::default(),
+        }
+    }
 }
 
 fn default_entry() -> String {

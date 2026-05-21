@@ -20,6 +20,7 @@ use std::process;
 
 use clap::{ArgAction, Parser, Subcommand};
 
+use libmind::build::{run_build, BuildOpts};
 use libmind::check::{run_check, CheckOptions, ReporterKind};
 use libmind::fmt::cli as mindc_fmt;
 
@@ -27,8 +28,8 @@ use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
 use libmind::pipeline::{compile_source_with_name, CompileOptions};
 use libmind::project::{
-    bench_project, build_project, run_project, test_project, BenchOptions, BuildOptions,
-    TestOptions,
+    bench_project, run_project, test_project, BenchOptions, BuildOptions,
+    BuildTarget, EmitKind, OptimizeLevel, TestOptions,
 };
 use libmind::BackendTarget;
 use libmind::{conformance, ConformanceOptions, ConformanceProfile};
@@ -56,13 +57,32 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Build a MIND project (reads Mind.toml).
+    ///
+    /// RFC 0008 Phase A — single-crate orchestrator.
+    /// Reads [build] from Mind.toml; CLI flags override the manifest.
     Build {
-        /// Build in release mode with optimizations.
+        /// Source files to compile.  When omitted, uses [build].entry or
+        /// auto-detects src/main.mind / src/lib.mind.
+        #[arg(value_name = "PATHS")]
+        paths: Vec<String>,
+        /// Build in release mode (equivalent to --optimize=release).
         #[arg(long)]
         release: bool,
-        /// Target backend (cpu, cuda, cuda-ampere, rocm, metal, webgpu, etc.).
+        /// Target backend (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras).
+        /// Overrides [build].target in Mind.toml.
         #[arg(long, value_name = "TARGET")]
         target: Option<String>,
+        /// Output artifact type: binary | cdylib | object.
+        /// Overrides [build].emit in Mind.toml.
+        #[arg(long, value_name = "EMIT")]
+        emit: Option<String>,
+        /// Optimization level: debug | release | size.
+        /// Overrides [build].optimize in Mind.toml. --release is shorthand.
+        #[arg(long, value_name = "LEVEL", conflicts_with = "release")]
+        optimize: Option<String>,
+        /// Custom output path.  Overrides the default target/<profile>/<name>.
+        #[arg(long, value_name = "PATH")]
+        out: Option<String>,
         /// Show verbose output.
         #[arg(short, long)]
         verbose: bool,
@@ -251,11 +271,15 @@ fn main() {
 
     match &cli.command {
         Some(Command::Build {
+            paths,
             release,
             target,
+            emit,
+            optimize,
+            out,
             verbose,
         }) => {
-            run_build_command(*release, target.clone(), *verbose);
+            run_mindc_build(paths, *release, target, emit, optimize, out, *verbose);
             return;
         }
         Some(Command::Run {
@@ -448,26 +472,77 @@ fn main() {
     emit_shared_if_requested(&cli.compile, &products);
 }
 
-fn run_build_command(release: bool, target: Option<String>, verbose: bool) {
-    let opts = BuildOptions {
-        release,
-        target,
-        verbose,
-        ..Default::default()
+fn run_mindc_build(
+    paths: &[String],
+    release: bool,
+    target: &Option<String>,
+    emit: &Option<String>,
+    optimize: &Option<String>,
+    out: &Option<String>,
+    verbose: bool,
+) {
+    // Parse --target override.
+    let eff_target: Option<BuildTarget> = match target {
+        None => None,
+        Some(t) => match BuildTarget::parse(t) {
+            Ok(bt) => Some(bt),
+            Err(msg) => {
+                eprintln!("error[build]: {}", msg);
+                process::exit(2);
+            }
+        },
     };
 
-    match build_project(&opts) {
-        Ok(result) => {
+    // Parse --emit override.
+    let eff_emit: Option<EmitKind> = match emit {
+        None => None,
+        Some(e) => match EmitKind::parse(e) {
+            Ok(ek) => Some(ek),
+            Err(msg) => {
+                eprintln!("error[build]: {}", msg);
+                process::exit(2);
+            }
+        },
+    };
+
+    // --release is shorthand for --optimize=release.
+    let eff_optimize: Option<OptimizeLevel> = if release {
+        Some(OptimizeLevel::Release)
+    } else {
+        match optimize {
+            None => None,
+            Some(o) => match OptimizeLevel::parse(o) {
+                Ok(ol) => Some(ol),
+                Err(msg) => {
+                    eprintln!("error[build]: {}", msg);
+                    process::exit(2);
+                }
+            },
+        }
+    };
+
+    let opts = BuildOpts {
+        paths: paths.iter().map(std::path::PathBuf::from).collect(),
+        target: eff_target,
+        emit: eff_emit,
+        optimize: eff_optimize,
+        out: out.as_ref().map(std::path::PathBuf::from),
+        verbose,
+    };
+
+    match run_build(&opts) {
+        Ok(output) => {
             println!(
-                "   {} {} ({})",
-                if release { "Release" } else { "Debug" },
-                result.target,
-                result.output_path.display()
+                "   Finished {} [{}] {}",
+                output.target,
+                output.emit.as_str(),
+                output.artifact_path.display()
             );
+            println!("   Artifact: {} bytes", output.byte_count);
         }
         Err(err) => {
-            eprintln!("error: {}", err);
-            process::exit(1);
+            eprintln!("error[build]: {}", err);
+            process::exit(err.exit_code());
         }
     }
 }
