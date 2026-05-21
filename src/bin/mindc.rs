@@ -20,6 +20,7 @@ use std::process;
 
 use clap::{ArgAction, Parser, Subcommand};
 
+use libmind::check::{run_check, CheckOptions, ReporterKind};
 use libmind::fmt::cli as mindc_fmt;
 
 use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
@@ -116,6 +117,29 @@ enum Command {
         /// Which profile to execute (cpu|gpu).
         #[arg(long, default_value = "cpu")]
         profile: String,
+    },
+    /// Run format-check + lint + type-check over MIND source files.
+    ///
+    /// Exit code 0 = all passes clean; 1 = one or more error-severity
+    /// diagnostics detected.
+    Check {
+        /// Files or directories to check.  Directories are walked recursively
+        /// for *.mind files.  Defaults to the current directory when omitted.
+        #[arg(value_name = "PATHS")]
+        paths: Vec<String>,
+        /// Diagnostic reporter: human (default) or json.
+        #[arg(long, value_name = "REPORTER", default_value = "human",
+              value_parser = ["human", "json"])]
+        reporter: String,
+        /// Skip the format-check pass.
+        #[arg(long)]
+        no_fmt: bool,
+        /// Skip the lint pass.
+        #[arg(long)]
+        no_lint: bool,
+        /// Skip the type-check pass.
+        #[arg(long)]
+        no_typecheck: bool,
     },
     /// Format MIND source files (or directories of *.mind files).
     Fmt {
@@ -272,6 +296,27 @@ fn main() {
         Some(Command::Conformance { profile }) => {
             run_conformance(profile);
             return;
+        }
+        Some(Command::Check {
+            paths,
+            reporter,
+            no_fmt,
+            no_lint,
+            no_typecheck,
+        }) => {
+            let reporter_kind = if reporter == "json" {
+                ReporterKind::Json
+            } else {
+                ReporterKind::Human
+            };
+            let opts = CheckOptions {
+                run_fmt: !no_fmt,
+                run_lint: !no_lint,
+                run_typecheck: !no_typecheck,
+                reporter: reporter_kind,
+                paths: paths.clone(),
+            };
+            process::exit(run_check(&opts));
         }
         Some(Command::Fmt {
             paths,
