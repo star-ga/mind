@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0010 |
 | Title | Memory safety model + C ABI in pure MIND |
-| Status | **Phase B Shipped — Phases C–J planned** |
+| Status | **Phase C Shipped — Phases D–J planned** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -329,7 +329,7 @@ testable.
 |---|---|---|---|
 | A | Parse `extern "C"` blocks; parse `safe`/`unsafe` fn attribution; parse `callconv(.)` tags; parse `...` variadic syntax. Emit parse errors for invalid combinations. Type-check extern signatures (Copy-only rule). Lower `extern "C"` fn calls to `llvm.call`; emit `llvm.func` declarations. | mindc parses all new syntax; existing test suite unchanged; 7 Phase A tests pass. | **Shipped** (`e82b831`) |
 | B | System V AMD64 calling convention lowering for `#[repr(C)]` structs (up to 4 Copy fields, ≤16B); `extern "C" fn(T) -> R` callback function pointer types (`TypeAnn::FnPtr` → `!llvm.ptr`); vararg call lowering with per-position type hints (`vararg_hints: Vec<String>` on `ExternFnDecl`); SysV struct classification (`sysv_classify_struct`). | 17 Phase B tests pass; Phase A tests unchanged; bootstrap fixed-point preserved. | **Shipped** |
-| C | Win64 calling convention lowering. | same round-trip gate on Windows x86_64. | Planned |
+| C | Win64 calling convention lowering (`win64_classify_struct`, `extern_type_to_mlir_multi_win64`, `cconv = #llvm.cconv<win64cc>` attribute on `llvm.func`/`llvm.call`); f32 vararg promotion to f64 (C11 §6.5.2.2p6, audit R-03). | 10 Phase C tests pass; `0 failed` full-suite gate. | **Shipped** |
 | D | AAPCS (AArch64) calling convention lowering. | same round-trip gate on AArch64 Linux. | Planned |
 | E | Hand-written MIND `std.mlir` bindings for the MLIR C API (~150 functions). Authored against the MLIR C API header set. Safety attribution per function: `safe` for pure query functions, `unsafe` for mutation and pointer-passing functions. | std.mlir compiles under mindc; a smoke test exercises round-trip MLIR construction from MIND code. | Planned |
 | F | Hand-written MIND `std.llvm` bindings for the LLVM C API. | std.llvm compiles; smoke test exercises IR construction from MIND code. | Planned |

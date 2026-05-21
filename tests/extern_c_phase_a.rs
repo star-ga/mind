@@ -43,6 +43,7 @@ fn module_with_extern_decl() -> IRModule {
         ret_type: Some("i64".to_string()),
         is_varargs: false,
         vararg_hints: Vec::new(),
+        callconv: CallConv::SysV,
     });
     // Emit a zero constant so @main has at least one value.
     let id = m.fresh();
@@ -62,6 +63,7 @@ fn module_with_extern_call() -> IRModule {
         ret_type: Some("i64".to_string()),
         is_varargs: true,
         vararg_hints: Vec::new(),
+        callconv: CallConv::SysV,
     });
     // Synthesise two integer arguments.
     let fmt_ptr = m.fresh();
