@@ -1,0 +1,673 @@
+// std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
+// for the MLIR C API (~150 functions).
+//
+// MLIR VERSION
+//   Bound against: MLIR 18.x C API as shipped with LLVM 18
+//   Reference headers: mlir-c/IR.h, mlir-c/Pass.h, mlir-c/Support.h,
+//     mlir-c/RegisterEverything.h, mlir-c/Conversion.h,
+//     mlir-c/Dialect/{Func,LLVM,Arith,ControlFlow,SCF,Vector,Linalg,MemRef}.h
+//
+// PHASE E SCOPE
+//   This file is scaffolding only. It declares the extern "C" surface.
+//   mindc does NOT yet call these functions — it still generates textual
+//   MLIR and shells out to mlir-opt / mlir-translate (the mlir-build path).
+//   Phases F/G migrate mindc's MLIR-glue from the Rust mlir-sys crate to
+//   these bindings. Phase I (keystone) removes mlir-sys from Cargo.toml.
+//
+// OPAQUE HANDLE TYPES
+//   MLIR C API handle types are structs containing a single void pointer:
+//     struct MlirContext { void *ptr; }
+//   In MIND ABI (RFC 0010 Phase A/B) we represent them as *mut u8 —
+//   an opaque pointer. Phase F introduces [repr(C)] struct wrappers that
+//   exactly mirror the C structs; for Phase E the opaque form is used
+//   throughout because the type-checker does not yet resolve type aliases
+//   to raw pointer kinds for extern "C" compatibility checks.
+//
+// TYPE ALIAS NOTE
+//   The aliases below are purely documentary. They are not used in the
+//   extern "C" signatures because the Phase E type-checker requires raw
+//   pointer types (*mut u8) in extern signatures. Phase F replaces both
+//   the aliases and the raw pointers with [repr(C)] struct types.
+//
+// MlirStringRef NOTE
+//   MlirStringRef is { const char *data; size_t length } passed by value.
+//   Phase E treats all MlirStringRef positions as *mut u8. Callers must
+//   use mlirStringRefCreateFromCString and pass the resulting pointer.
+//   Phase F binds the full by-value struct using the Phase B SysV ABI.
+//
+// MlirLogicalResult NOTE
+//   MlirLogicalResult is { int8_t value } in C (1 = success, 0 = failure).
+//   Phase E maps it to i32. Phase F introduces a [repr(C)] struct wrapper.
+//
+// SAFETY ATTRIBUTION
+//   safe fn  — pure query: no mutation of MIND-visible state, no pointer
+//              arithmetic required by the caller.
+//   unsafe fn — mutates MLIR state, takes ownership of a pointer, or
+//               performs side effects on external mutable state. Callers
+//               must supply a # safety: comment per RFC 0010 §4.2.
+//
+// BOUND vs DEFERRED
+//   Bound in this file (~150 functions):
+//     Context, DialectRegistry, Module, Operation, OperationState, Location,
+//     Region, Block, Value, OpOperand, Type, Attribute, Identifier,
+//     NamedAttribute (opaque), SymbolTable, StringRef (query),
+//     OpPrintingFlags, PassManager, OpPassManager,
+//     RegisterEverything, selected Conversion passes (the mindc pipeline),
+//     Canonicalize + CSE + ReconcileUnrealizedCasts transforms,
+//     Dialect handle loaders for LLVM/Func/Arith/SCF/CF/Vector/Linalg/MemRef.
+//   Deferred to Phase F:
+//     MlirStringRef by-value struct wrapping.
+//     Execution engine (mlir-c/ExecutionEngine.h).
+//     Diagnostic handler registration callbacks.
+//     AffineExpr / AffineMap / IntegerSet helpers.
+//     Bytecode reader/writer beyond mlirOperationWriteBytecode.
+//     Sparse tensor, transform dialect, GPU/NVVM/ROCDL dialect helpers.
+//     Dialect-specific operation builders (mlir-c/Dialect/LLVM.h ops).
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Documentary type aliases — opaque handle names for readability.
+// NOT used in extern signatures in Phase E (see TYPE ALIAS NOTE above).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// MlirContext       = *mut u8  (single void* in C struct)
+// MlirDialect       = *mut u8
+// MlirDialectRegistry = *mut u8
+// MlirOperation     = *mut u8
+// MlirOpOperand     = *mut u8
+// MlirOpPrintingFlags = *mut u8
+// MlirBlock         = *mut u8
+// MlirRegion        = *mut u8
+// MlirSymbolTable   = *mut u8
+// MlirAttribute     = *mut u8  (const void* in C struct)
+// MlirIdentifier    = *mut u8  (const void* in C struct)
+// MlirLocation      = *mut u8  (const void* in C struct)
+// MlirModule        = *mut u8  (const void* in C struct)
+// MlirType          = *mut u8  (const void* in C struct)
+// MlirValue         = *mut u8  (const void* in C struct)
+// MlirPassManager   = *mut u8
+// MlirOpPassManager = *mut u8
+// MlirPass          = *mut u8
+// MlirExternalPass  = *mut u8
+// MlirStringRef     = *mut u8  (Phase E: opaque; C: {const char*, size_t})
+// MlirLogicalResult = i32      (Phase E: i32;    C: {int8_t value})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/Support.h — StringRef
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirStringRefCreateFromCString: create a MlirStringRef from a NUL-terminated
+// C string. Returns opaque pointer (Phase E). Caller owns the string lifetime.
+// mlirStringRefEqual: compare two string refs for equality.
+extern "C" {
+    unsafe fn mlirStringRefCreateFromCString(str: *const u8) -> *mut u8;
+    unsafe fn mlirStringRefEqual(string: *mut u8, other: *mut u8) -> bool;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Context
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirContextCreate: create an MLIR context (multithreading enabled by default).
+// mlirContextCreateWithThreading: create with explicit threading setting.
+// mlirContextCreateWithRegistry: create pre-loaded with registry dialects.
+// mlirContextDestroy: free the context and all associated resources.
+// mlirContextIsNull: true if the context pointer is null.
+// mlirContextEqual: true if both pointers refer to the same context.
+// mlirContextEnableMultithreading: toggle multithreading.
+// mlirContextLoadAllAvailableDialects: load all registered dialects.
+// mlirContextGetOrLoadDialect: get-or-load a dialect by namespace string.
+// mlirContextIsRegisteredOperation: true if the op name is registered.
+// mlirContextAppendDialectRegistry: append a registry to the context.
+// mlirContextSetAllowUnregisteredDialects: allow/forbid unknown dialects.
+// mlirContextGetAllowUnregisteredDialects: query the setting.
+// mlirContextGetNumRegisteredDialects: count of registered dialects.
+// mlirContextGetNumLoadedDialects: count of loaded dialects.
+extern "C" {
+    safe fn mlirContextCreate() -> *mut u8;
+    unsafe fn mlirContextCreateWithThreading(threading_enabled: bool) -> *mut u8;
+    unsafe fn mlirContextCreateWithRegistry(registry: *mut u8, threading_enabled: bool) -> *mut u8;
+    unsafe fn mlirContextDestroy(ctx: *mut u8);
+    safe fn mlirContextIsNull(ctx: *mut u8) -> bool;
+    safe fn mlirContextEqual(ctx1: *mut u8, ctx2: *mut u8) -> bool;
+    unsafe fn mlirContextEnableMultithreading(ctx: *mut u8, enabled: bool);
+    unsafe fn mlirContextLoadAllAvailableDialects(ctx: *mut u8);
+    unsafe fn mlirContextGetOrLoadDialect(ctx: *mut u8, dialect_namespace: *mut u8) -> *mut u8;
+    safe fn mlirContextIsRegisteredOperation(ctx: *mut u8, name: *mut u8) -> bool;
+    unsafe fn mlirContextAppendDialectRegistry(ctx: *mut u8, registry: *mut u8);
+    unsafe fn mlirContextSetAllowUnregisteredDialects(ctx: *mut u8, allow: bool);
+    safe fn mlirContextGetAllowUnregisteredDialects(ctx: *mut u8) -> bool;
+    safe fn mlirContextGetNumRegisteredDialects(ctx: *mut u8) -> i64;
+    safe fn mlirContextGetNumLoadedDialects(ctx: *mut u8) -> i64;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — DialectRegistry
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirDialectRegistryCreate: create an empty dialect registry.
+// mlirDialectRegistryDestroy: free the registry.
+extern "C" {
+    safe fn mlirDialectRegistryCreate() -> *mut u8;
+    unsafe fn mlirDialectRegistryDestroy(registry: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Location
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirLocationUnknownGet: unknown location for a context.
+// mlirLocationFileLineColGet: file:line:col location.
+// mlirLocationCallSiteGet: call-site location (callee + caller).
+// mlirLocationNameGet: named location with an optional child.
+// mlirLocationGetContext: context of a location.
+// mlirLocationEqual: equality of two locations.
+// mlirLocationPrint: print a location via a callback.
+extern "C" {
+    safe fn mlirLocationUnknownGet(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirLocationFileLineColGet(ctx: *mut u8, filename: *mut u8, line: i32, col: i32) -> *mut u8;
+    unsafe fn mlirLocationCallSiteGet(callee: *mut u8, caller: *mut u8) -> *mut u8;
+    unsafe fn mlirLocationNameGet(ctx: *mut u8, name: *mut u8, child_loc: *mut u8) -> *mut u8;
+    safe fn mlirLocationGetContext(loc: *mut u8) -> *mut u8;
+    safe fn mlirLocationEqual(loc1: *mut u8, loc2: *mut u8) -> bool;
+    unsafe fn mlirLocationPrint(loc: *mut u8, callback: *mut u8, userdata: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Module
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirModuleCreateEmpty: empty module at an unknown location.
+// mlirModuleCreateParse: parse a module from MLIR text; null on failure.
+// mlirModuleDestroy: free the module.
+// mlirModuleGetContext: context of the module.
+// mlirModuleGetBody: body block of the module's top region.
+// mlirModuleGetOperation: the module wrapped as an operation.
+// mlirModuleFromOperation: view an operation as a module (no ownership).
+extern "C" {
+    unsafe fn mlirModuleCreateEmpty(loc: *mut u8) -> *mut u8;
+    unsafe fn mlirModuleCreateParse(ctx: *mut u8, module_text: *mut u8) -> *mut u8;
+    unsafe fn mlirModuleDestroy(module: *mut u8);
+    safe fn mlirModuleGetContext(module: *mut u8) -> *mut u8;
+    safe fn mlirModuleGetBody(module: *mut u8) -> *mut u8;
+    safe fn mlirModuleGetOperation(module: *mut u8) -> *mut u8;
+    safe fn mlirModuleFromOperation(op: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — OperationState (builder passed to mlirOperationCreate)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirOperationStateGet: allocate an OperationState for the given op+loc.
+//   Phase E: returned as i64 (stack struct in C). Phase F: [repr(C)] wrapper.
+// mlirOperationStateAddResults: append result types to a state.
+// mlirOperationStateAddOperands: append operand values to a state.
+// mlirOperationStateAddOwnedRegions: append owned regions to a state.
+// mlirOperationStateAddSuccessors: append successor blocks to a state.
+// mlirOperationStateAddAttributes: append named attributes to a state.
+// mlirOperationStateEnableResultTypeInference: enable inferred result types.
+extern "C" {
+    unsafe fn mlirOperationStateGet(name: *mut u8, loc: *mut u8) -> i64;
+    unsafe fn mlirOperationStateAddResults(state: *mut u8, n: i64, types: *const u8);
+    unsafe fn mlirOperationStateAddOperands(state: *mut u8, n: i64, operands: *const u8);
+    unsafe fn mlirOperationStateAddOwnedRegions(state: *mut u8, n: i64, regions: *const u8);
+    unsafe fn mlirOperationStateAddSuccessors(state: *mut u8, n: i64, successors: *const u8);
+    unsafe fn mlirOperationStateAddAttributes(state: *mut u8, n: i64, attrs: *const u8);
+    unsafe fn mlirOperationStateEnableResultTypeInference(state: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Operation
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirOperationCreate: create an op from an OperationState (takes ownership).
+// mlirOperationCreateParse: parse an op from text; null on failure.
+// mlirOperationDestroy: free an op and all nested ops.
+// mlirOperationRemoveFromParent: detach without destroying.
+// mlirOperationIsNull: true if null.
+// mlirOperationEqual: true if same pointer.
+// mlirOperationClone: deep clone.
+// mlirOperationGetContext: context of the op.
+// mlirOperationGetLocation: location of the op.
+// mlirOperationGetName: op name as an opaque StringRef.
+// mlirOperationGetBlock: parent block (or null).
+// mlirOperationGetParentOperation: parent op (or null).
+// mlirOperationGetNextInBlock: next op in parent block list.
+// mlirOperationGetNumOperands: count of operands.
+// mlirOperationGetOperand: i-th operand value.
+// mlirOperationSetOperand: set the i-th operand.
+// mlirOperationSetOperands: replace all operands.
+// mlirOperationGetNumResults: count of results.
+// mlirOperationGetResult: i-th result value.
+// mlirOperationGetNumRegions: count of regions.
+// mlirOperationGetFirstRegion: first region.
+// mlirOperationGetRegion: i-th region.
+// mlirOperationGetNumSuccessors: count of successor blocks.
+// mlirOperationGetSuccessor: i-th successor.
+// mlirOperationSetSuccessor: set i-th successor.
+// mlirOperationGetNumAttributes: count of named attributes.
+// mlirOperationGetAttributeByName: named attribute lookup.
+// mlirOperationSetAttributeByName: set a named attribute.
+// mlirOperationRemoveAttributeByName: remove a named attribute.
+// mlirOperationDump: print to stderr.
+// mlirOperationVerify: verify; returns 1 on success, 0 on failure.
+// mlirOperationMoveAfter: re-order in parent block.
+// mlirOperationMoveBefore: re-order in parent block.
+// mlirOperationPrint: print via callback.
+// mlirOperationPrintWithFlags: print with explicit flags.
+extern "C" {
+    unsafe fn mlirOperationCreate(state: *mut u8) -> *mut u8;
+    unsafe fn mlirOperationCreateParse(ctx: *mut u8, source_str: *mut u8, source_name: *mut u8) -> *mut u8;
+    unsafe fn mlirOperationDestroy(op: *mut u8);
+    unsafe fn mlirOperationRemoveFromParent(op: *mut u8);
+    safe fn mlirOperationIsNull(op: *mut u8) -> bool;
+    safe fn mlirOperationEqual(op1: *mut u8, op2: *mut u8) -> bool;
+    unsafe fn mlirOperationClone(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetContext(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetLocation(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetName(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetBlock(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetParentOperation(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetNextInBlock(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetNumOperands(op: *mut u8) -> i64;
+    safe fn mlirOperationGetOperand(op: *mut u8, i: i64) -> *mut u8;
+    unsafe fn mlirOperationSetOperand(op: *mut u8, i: i64, new_val: *mut u8);
+    unsafe fn mlirOperationSetOperands(op: *mut u8, n: i64, operands: *const u8);
+    safe fn mlirOperationGetNumResults(op: *mut u8) -> i64;
+    safe fn mlirOperationGetResult(op: *mut u8, i: i64) -> *mut u8;
+    safe fn mlirOperationGetNumRegions(op: *mut u8) -> i64;
+    safe fn mlirOperationGetFirstRegion(op: *mut u8) -> *mut u8;
+    safe fn mlirOperationGetRegion(op: *mut u8, i: i64) -> *mut u8;
+    safe fn mlirOperationGetNumSuccessors(op: *mut u8) -> i64;
+    safe fn mlirOperationGetSuccessor(op: *mut u8, i: i64) -> *mut u8;
+    unsafe fn mlirOperationSetSuccessor(op: *mut u8, i: i64, block: *mut u8);
+    safe fn mlirOperationGetNumAttributes(op: *mut u8) -> i64;
+    safe fn mlirOperationGetAttributeByName(op: *mut u8, name: *mut u8) -> *mut u8;
+    unsafe fn mlirOperationSetAttributeByName(op: *mut u8, name: *mut u8, attr: *mut u8);
+    unsafe fn mlirOperationRemoveAttributeByName(op: *mut u8, name: *mut u8) -> bool;
+    unsafe fn mlirOperationDump(op: *mut u8);
+    unsafe fn mlirOperationVerify(op: *mut u8) -> i32;
+    unsafe fn mlirOperationMoveAfter(op: *mut u8, reference: *mut u8);
+    unsafe fn mlirOperationMoveBefore(op: *mut u8, reference: *mut u8);
+    unsafe fn mlirOperationPrint(op: *mut u8, callback: *mut u8, userdata: *mut u8);
+    unsafe fn mlirOperationPrintWithFlags(op: *mut u8, flags: *mut u8, callback: *mut u8, userdata: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — OpPrintingFlags
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirOpPrintingFlagsCreate: create default printing flags.
+// mlirOpPrintingFlagsDestroy: free flags.
+// mlirOpPrintingFlagsElideLargeElementsAttrs: elide large elements attrs.
+// mlirOpPrintingFlagsEnableDebugInfo: print debug info.
+// mlirOpPrintingFlagsPrintGenericOpForm: force generic op form.
+// mlirOpPrintingFlagsUseLocalScope: use local value numbering.
+// mlirOpPrintingFlagsAssumeVerified: skip pre-print verification.
+extern "C" {
+    safe fn mlirOpPrintingFlagsCreate() -> *mut u8;
+    unsafe fn mlirOpPrintingFlagsDestroy(flags: *mut u8);
+    unsafe fn mlirOpPrintingFlagsElideLargeElementsAttrs(flags: *mut u8, large_element_limit: i64);
+    unsafe fn mlirOpPrintingFlagsEnableDebugInfo(flags: *mut u8, enable: bool, pretty_form: bool);
+    unsafe fn mlirOpPrintingFlagsPrintGenericOpForm(flags: *mut u8);
+    unsafe fn mlirOpPrintingFlagsUseLocalScope(flags: *mut u8);
+    unsafe fn mlirOpPrintingFlagsAssumeVerified(flags: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Region
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirRegionCreate: create an empty region (caller owns).
+// mlirRegionDestroy: free a region and all nested ops.
+// mlirRegionIsNull: true if null.
+// mlirRegionEqual: true if same pointer.
+// mlirRegionGetFirstBlock: first block (or null).
+// mlirRegionAppendOwnedBlock: append a block (region takes ownership).
+// mlirRegionInsertOwnedBlock: insert at position (region takes ownership).
+// mlirRegionInsertOwnedBlockAfter: insert after reference block.
+// mlirRegionInsertOwnedBlockBefore: insert before reference block.
+// mlirRegionGetNextInOperation: next sibling region in parent op.
+// mlirRegionTakeBody: move all blocks from source into target.
+extern "C" {
+    safe fn mlirRegionCreate() -> *mut u8;
+    unsafe fn mlirRegionDestroy(region: *mut u8);
+    safe fn mlirRegionIsNull(region: *mut u8) -> bool;
+    safe fn mlirRegionEqual(r1: *mut u8, r2: *mut u8) -> bool;
+    safe fn mlirRegionGetFirstBlock(region: *mut u8) -> *mut u8;
+    unsafe fn mlirRegionAppendOwnedBlock(region: *mut u8, block: *mut u8);
+    unsafe fn mlirRegionInsertOwnedBlock(region: *mut u8, pos: i64, block: *mut u8);
+    unsafe fn mlirRegionInsertOwnedBlockAfter(region: *mut u8, reference: *mut u8, block: *mut u8);
+    unsafe fn mlirRegionInsertOwnedBlockBefore(region: *mut u8, reference: *mut u8, block: *mut u8);
+    safe fn mlirRegionGetNextInOperation(region: *mut u8) -> *mut u8;
+    unsafe fn mlirRegionTakeBody(target: *mut u8, source: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Block
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirBlockCreate: create a block with n_args arg types+locations.
+// mlirBlockDestroy: free a block (and its ops if owned).
+// mlirBlockDetach: detach from parent without destroying.
+// mlirBlockIsNull: true if null.
+// mlirBlockEqual: true if same pointer.
+// mlirBlockGetParentOperation: parent op containing this block.
+// mlirBlockGetParentRegion: parent region.
+// mlirBlockGetNextInRegion: next block in parent region.
+// mlirBlockGetFirstOperation: first op in the block.
+// mlirBlockGetTerminator: terminator op.
+// mlirBlockAppendOwnedOperation: append an op (block takes ownership).
+// mlirBlockInsertOwnedOperation: insert at position.
+// mlirBlockInsertOwnedOperationAfter: insert after reference op.
+// mlirBlockInsertOwnedOperationBefore: insert before reference op.
+// mlirBlockGetNumArguments: count of block arguments.
+// mlirBlockAddArgument: add a block argument at the end.
+// mlirBlockInsertArgument: insert a block argument at a position.
+// mlirBlockGetArgument: i-th block argument value.
+extern "C" {
+    unsafe fn mlirBlockCreate(n_args: i64, types: *const u8, locs: *const u8) -> *mut u8;
+    unsafe fn mlirBlockDestroy(block: *mut u8);
+    unsafe fn mlirBlockDetach(block: *mut u8);
+    safe fn mlirBlockIsNull(block: *mut u8) -> bool;
+    safe fn mlirBlockEqual(b1: *mut u8, b2: *mut u8) -> bool;
+    safe fn mlirBlockGetParentOperation(block: *mut u8) -> *mut u8;
+    safe fn mlirBlockGetParentRegion(block: *mut u8) -> *mut u8;
+    safe fn mlirBlockGetNextInRegion(block: *mut u8) -> *mut u8;
+    safe fn mlirBlockGetFirstOperation(block: *mut u8) -> *mut u8;
+    safe fn mlirBlockGetTerminator(block: *mut u8) -> *mut u8;
+    unsafe fn mlirBlockAppendOwnedOperation(block: *mut u8, op: *mut u8);
+    unsafe fn mlirBlockInsertOwnedOperation(block: *mut u8, pos: i64, op: *mut u8);
+    unsafe fn mlirBlockInsertOwnedOperationAfter(block: *mut u8, reference: *mut u8, op: *mut u8);
+    unsafe fn mlirBlockInsertOwnedOperationBefore(block: *mut u8, reference: *mut u8, op: *mut u8);
+    safe fn mlirBlockGetNumArguments(block: *mut u8) -> i64;
+    unsafe fn mlirBlockAddArgument(block: *mut u8, arg_type: *mut u8, loc: *mut u8) -> *mut u8;
+    unsafe fn mlirBlockInsertArgument(block: *mut u8, pos: i64, arg_type: *mut u8, loc: *mut u8) -> *mut u8;
+    safe fn mlirBlockGetArgument(block: *mut u8, i: i64) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Value
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirValueIsNull: true if the value pointer is null.
+// mlirValueEqual: true if both SSA values are the same.
+// mlirValueIsABlockArgument: true if value is a block argument.
+// mlirValueIsAOpResult: true if value is an op result.
+// mlirValueGetType: type of the value.
+// mlirValueSetType: forcefully change the value's type.
+// mlirValueGetFirstUse: first use in the use-def chain.
+// mlirValueReplaceAllUsesOfWith: replace all uses with another value.
+// mlirValueDump: print to stderr.
+// mlirValuePrint: print via callback.
+// mlirValuePrintAsOperand: print as an operand reference.
+extern "C" {
+    safe fn mlirValueIsNull(val: *mut u8) -> bool;
+    safe fn mlirValueEqual(val1: *mut u8, val2: *mut u8) -> bool;
+    safe fn mlirValueIsABlockArgument(val: *mut u8) -> bool;
+    safe fn mlirValueIsAOpResult(val: *mut u8) -> bool;
+    safe fn mlirValueGetType(val: *mut u8) -> *mut u8;
+    unsafe fn mlirValueSetType(val: *mut u8, ty: *mut u8);
+    safe fn mlirValueGetFirstUse(val: *mut u8) -> *mut u8;
+    unsafe fn mlirValueReplaceAllUsesOfWith(old_val: *mut u8, new_val: *mut u8);
+    unsafe fn mlirValueDump(val: *mut u8);
+    unsafe fn mlirValuePrint(val: *mut u8, callback: *mut u8, userdata: *mut u8);
+    unsafe fn mlirValuePrintAsOperand(val: *mut u8, state: *mut u8, callback: *mut u8, userdata: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — OpOperand (use-chain iteration)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirOpOperandIsNull: true if null (end of use chain).
+// mlirOpOperandGetOwner: owner operation.
+// mlirOpOperandGetValue: the value being used.
+// mlirOpOperandGetOperandNumber: operand index in the owner op.
+// mlirOpOperandGetNextUse: next use of the same value.
+extern "C" {
+    safe fn mlirOpOperandIsNull(op_operand: *mut u8) -> bool;
+    safe fn mlirOpOperandGetOwner(op_operand: *mut u8) -> *mut u8;
+    safe fn mlirOpOperandGetValue(op_operand: *mut u8) -> *mut u8;
+    safe fn mlirOpOperandGetOperandNumber(op_operand: *mut u8) -> i32;
+    safe fn mlirOpOperandGetNextUse(op_operand: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Type
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirTypeParseGet: parse a type from text; null on failure.
+// mlirTypeIsNull: true if null.
+// mlirTypeEqual: true if equal.
+// mlirTypeGetContext: context of the type.
+// mlirTypeGetDialect: dialect of the type.
+// mlirTypeDump: print to stderr.
+// mlirTypePrint: print via callback.
+extern "C" {
+    unsafe fn mlirTypeParseGet(ctx: *mut u8, type_str: *mut u8) -> *mut u8;
+    safe fn mlirTypeIsNull(ty: *mut u8) -> bool;
+    safe fn mlirTypeEqual(t1: *mut u8, t2: *mut u8) -> bool;
+    safe fn mlirTypeGetContext(ty: *mut u8) -> *mut u8;
+    safe fn mlirTypeGetDialect(ty: *mut u8) -> *mut u8;
+    unsafe fn mlirTypeDump(ty: *mut u8);
+    unsafe fn mlirTypePrint(ty: *mut u8, callback: *mut u8, userdata: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Attribute
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirAttributeParseGet: parse an attribute from text; null on failure.
+// mlirAttributeGetNull: the null attribute sentinel.
+// mlirAttributeIsNull: true if null.
+// mlirAttributeEqual: true if equal.
+// mlirAttributeGetContext: context of the attribute.
+// mlirAttributeGetType: type of the attribute (null for typeless).
+// mlirAttributeGetDialect: dialect of the attribute.
+// mlirAttributeDump: print to stderr.
+// mlirAttributePrint: print via callback.
+extern "C" {
+    unsafe fn mlirAttributeParseGet(ctx: *mut u8, attr_str: *mut u8) -> *mut u8;
+    safe fn mlirAttributeGetNull() -> *mut u8;
+    safe fn mlirAttributeIsNull(attr: *mut u8) -> bool;
+    safe fn mlirAttributeEqual(a1: *mut u8, a2: *mut u8) -> bool;
+    safe fn mlirAttributeGetContext(attr: *mut u8) -> *mut u8;
+    safe fn mlirAttributeGetType(attr: *mut u8) -> *mut u8;
+    safe fn mlirAttributeGetDialect(attr: *mut u8) -> *mut u8;
+    unsafe fn mlirAttributeDump(attr: *mut u8);
+    unsafe fn mlirAttributePrint(attr: *mut u8, callback: *mut u8, userdata: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — Identifier
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirIdentifierGet: intern a string identifier in the context.
+// mlirIdentifierGetContext: context of an identifier.
+// mlirIdentifierEqual: true if equal.
+// mlirIdentifierStr: string representation (opaque Phase E StringRef).
+extern "C" {
+    unsafe fn mlirIdentifierGet(ctx: *mut u8, name: *mut u8) -> *mut u8;
+    safe fn mlirIdentifierGetContext(ident: *mut u8) -> *mut u8;
+    safe fn mlirIdentifierEqual(i1: *mut u8, i2: *mut u8) -> bool;
+    safe fn mlirIdentifierStr(ident: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — NamedAttribute
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirNamedAttributeGet: construct a (identifier, attribute) pair.
+//   Phase E: returns i64 (C struct passed by value; two pointer-sized fields).
+//   Phase F: [repr(C)] struct wrapper with exact field layout.
+extern "C" {
+    unsafe fn mlirNamedAttributeGet(name: *mut u8, attr: *mut u8) -> i64;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/IR.h — SymbolTable
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirSymbolTableCreate: create a symbol table from an op.
+// mlirSymbolTableDestroy: free the symbol table.
+// mlirSymbolTableLookup: look up a symbol by name; null op if not found.
+// mlirSymbolTableInsert: insert an op into the table.
+// mlirSymbolTableErase: erase a symbol (destroys the op).
+// mlirSymbolTableGetSymbolAttributeName: the "sym_name" attribute name.
+// mlirSymbolTableGetVisibilityAttributeName: the "sym_visibility" attr name.
+// mlirSymbolTableReplaceAllSymbolUses: rename a symbol everywhere.
+extern "C" {
+    unsafe fn mlirSymbolTableCreate(op: *mut u8) -> *mut u8;
+    unsafe fn mlirSymbolTableDestroy(table: *mut u8);
+    safe fn mlirSymbolTableLookup(table: *mut u8, name: *mut u8) -> *mut u8;
+    unsafe fn mlirSymbolTableInsert(table: *mut u8, op: *mut u8) -> *mut u8;
+    unsafe fn mlirSymbolTableErase(table: *mut u8, op: *mut u8);
+    safe fn mlirSymbolTableGetSymbolAttributeName() -> *mut u8;
+    safe fn mlirSymbolTableGetVisibilityAttributeName() -> *mut u8;
+    unsafe fn mlirSymbolTableReplaceAllSymbolUses(old_sym: *mut u8, new_sym: *mut u8, from_op: *mut u8) -> i32;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/Pass.h — PassManager
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirPassManagerCreate: create a PassManager anchored at "builtin.module".
+// mlirPassManagerCreateOnOperation: create anchored at a named op.
+// mlirPassManagerDestroy: free the pass manager and all owned passes.
+// mlirPassManagerIsNull: true if null.
+// mlirPassManagerGetAsOpPassManager: cast to generic OpPassManager.
+// mlirPassManagerRunOnOp: run passes on an op; 1 = success, 0 = failure.
+// mlirPassManagerEnableIRPrinting: enable print-ir-after-all.
+// mlirPassManagerEnableVerifier: enable verifier between passes.
+// mlirPassManagerGetNestedUnder: get a nested pass manager for an op name.
+// mlirPassManagerAddOwnedPass: add a pass to the top-level manager.
+extern "C" {
+    unsafe fn mlirPassManagerCreate(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirPassManagerCreateOnOperation(ctx: *mut u8, anchor_op: *mut u8) -> *mut u8;
+    unsafe fn mlirPassManagerDestroy(pm: *mut u8);
+    safe fn mlirPassManagerIsNull(pm: *mut u8) -> bool;
+    safe fn mlirPassManagerGetAsOpPassManager(pm: *mut u8) -> *mut u8;
+    unsafe fn mlirPassManagerRunOnOp(pm: *mut u8, op: *mut u8) -> i32;
+    unsafe fn mlirPassManagerEnableIRPrinting(pm: *mut u8);
+    unsafe fn mlirPassManagerEnableVerifier(pm: *mut u8, enabled: bool);
+    unsafe fn mlirPassManagerGetNestedUnder(pm: *mut u8, op_name: *mut u8) -> *mut u8;
+    unsafe fn mlirPassManagerAddOwnedPass(pm: *mut u8, pass: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/Pass.h — OpPassManager
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirOpPassManagerGetNestedUnder: get a nested manager for an op name.
+// mlirOpPassManagerAddOwnedPass: add a pass to this manager.
+// mlirOpPassManagerAddPipeline: parse and add a textual pipeline.
+// mlirPrintPassPipeline: print the pipeline via callback.
+// mlirParsePassPipeline: parse a textual pipeline into this manager.
+extern "C" {
+    unsafe fn mlirOpPassManagerGetNestedUnder(opm: *mut u8, op_name: *mut u8) -> *mut u8;
+    unsafe fn mlirOpPassManagerAddOwnedPass(opm: *mut u8, pass: *mut u8);
+    unsafe fn mlirOpPassManagerAddPipeline(opm: *mut u8, pipeline_elements: *mut u8, callback: *mut u8, userdata: *mut u8) -> i32;
+    unsafe fn mlirPrintPassPipeline(opm: *mut u8, callback: *mut u8, userdata: *mut u8);
+    unsafe fn mlirParsePassPipeline(opm: *mut u8, pipeline: *mut u8, callback: *mut u8, userdata: *mut u8) -> i32;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mlir-c/RegisterEverything.h — dialect and pass registration
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirRegisterAllDialects: register every MLIR dialect into the context.
+// mlirRegisterAllLLVMTranslations: register LLVM IR translation interfaces.
+// mlirRegisterAllPasses: register all MLIR transformation passes.
+extern "C" {
+    unsafe fn mlirRegisterAllDialects(ctx: *mut u8);
+    unsafe fn mlirRegisterAllLLVMTranslations(ctx: *mut u8);
+    unsafe fn mlirRegisterAllPasses();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversion passes — the mindc preset_default_pipeline surface
+//
+// From mlir/Conversion/Passes.capi.h.inc (MLIR 18).
+// Only the passes used in mindc's preset_default_pipeline are bound.
+// All other conversion passes (SPIR-V, NVVM, etc.) are deferred to Phase F.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirRegisterConversionPasses: register all conversion passes globally.
+// mlirCreateConversionConvertSCFToCFPass: convert-scf-to-cf.
+// mlirCreateConversionConvertControlFlowToLLVMPass: convert-cf-to-llvm.
+// mlirCreateConversionArithToLLVMConversionPass: convert-arith-to-llvm.
+// mlirCreateConversionConvertFuncToLLVMPass: convert-func-to-llvm.
+// mlirCreateConversionConvertVectorToLLVMPass: convert-vector-to-llvm.
+// mlirCreateConversionFinalizeMemRefToLLVMConversionPass: finalize-memref-to-llvm.
+// mlirCreateConversionExpandStridedMetaData: expand-strided-metadata.
+// mlirCreateConversionConvertToLLVMPass: convert-to-llvm.
+// mlirCreateConversionConvertLinalgToLoopsPass: convert-linalg-to-loops.
+// mlirCreateConversionOneShotBufferizePass: one-shot-bufferize.
+extern "C" {
+    unsafe fn mlirRegisterConversionPasses();
+    unsafe fn mlirCreateConversionConvertSCFToCFPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionConvertSCFToCFPass();
+    unsafe fn mlirCreateConversionConvertControlFlowToLLVMPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionConvertControlFlowToLLVMPass();
+    unsafe fn mlirCreateConversionArithToLLVMConversionPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionArithToLLVMConversionPass();
+    unsafe fn mlirCreateConversionConvertFuncToLLVMPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionConvertFuncToLLVMPass();
+    unsafe fn mlirCreateConversionConvertVectorToLLVMPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionConvertVectorToLLVMPass();
+    unsafe fn mlirCreateConversionFinalizeMemRefToLLVMConversionPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionFinalizeMemRefToLLVMConversionPass();
+    unsafe fn mlirCreateConversionExpandStridedMetaData() -> *mut u8;
+    unsafe fn mlirRegisterConversionExpandStridedMetaData();
+    unsafe fn mlirCreateConversionConvertToLLVMPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionConvertToLLVMPass();
+    unsafe fn mlirCreateConversionConvertLinalgToLoopsPass() -> *mut u8;
+    unsafe fn mlirRegisterConversionConvertLinalgToLoopsPass();
+    unsafe fn mlirCreateConversionOneShotBufferizePass() -> *mut u8;
+    unsafe fn mlirRegisterConversionOneShotBufferizePass();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Transform passes — canonicalize, CSE, reconcile-unrealized-casts
+//
+// From mlir-c/Transforms.h (MLIR 18).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirCreateTransformsCanonicalize: constant folding + canonicalisation pass.
+// mlirCreateTransformsCSE: common sub-expression elimination.
+// mlirCreateTransformsReconcileUnrealizedCasts: cleanup after dialect lowering.
+extern "C" {
+    unsafe fn mlirCreateTransformsCanonicalize() -> *mut u8;
+    unsafe fn mlirRegisterTransformsCanonicalize();
+    unsafe fn mlirCreateTransformsCSE() -> *mut u8;
+    unsafe fn mlirRegisterTransformsCSE();
+    unsafe fn mlirCreateTransformsReconcileUnrealizedCasts() -> *mut u8;
+    unsafe fn mlirRegisterTransformsReconcileUnrealizedCasts();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dialect handle loaders
+//
+// Each mlirGetDialectHandle__<name>__ function registers the given dialect
+// with the context (if not already registered) and returns its handle.
+// Deferred: dialect-specific op builders live in mlir-c/Dialect/<Name>.h
+// and are Phase F work.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// mlirGetDialectHandle__llvm__: register and load the LLVM dialect.
+// mlirGetDialectHandle__func__: register and load the Func dialect.
+// mlirGetDialectHandle__arith__: register and load the Arith dialect.
+// mlirGetDialectHandle__scf__: register and load the SCF dialect.
+// mlirGetDialectHandle__cf__: register and load the ControlFlow dialect.
+// mlirGetDialectHandle__vector__: register and load the Vector dialect.
+// mlirGetDialectHandle__linalg__: register and load the Linalg dialect.
+// mlirGetDialectHandle__memref__: register and load the MemRef dialect.
+extern "C" {
+    unsafe fn mlirGetDialectHandle__llvm__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__func__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__arith__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__scf__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__cf__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__vector__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__linalg__(ctx: *mut u8) -> *mut u8;
+    unsafe fn mlirGetDialectHandle__memref__(ctx: *mut u8) -> *mut u8;
+}
