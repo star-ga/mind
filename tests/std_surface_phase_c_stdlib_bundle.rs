@@ -74,6 +74,7 @@ fn bundled_stdlib_resolves_all_four_modules() {
                     use std.string\n\
                     use std.map\n\
                     use std.io\n\
+                    use std.toml\n\
                     let v = vec_new()\n\
                     let s = string_new()\n\
                     let m = map_new()\n\

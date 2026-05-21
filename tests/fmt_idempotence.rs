@@ -80,7 +80,7 @@ fn check_idempotence(label: &str, src: &str, cfg: &MindcraftFormatConfig) -> boo
 }
 
 // ---------------------------------------------------------------------------
-// std/*.mind — 5 files
+// std/*.mind — 6 files (toml requires std-surface for while-loop parsing)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -90,6 +90,8 @@ fn idempotence_stdlib() {
     let mut passed = 0usize;
     let mut skipped = 0usize;
 
+    // The five files below use only if/let/expression syntax — no while loops —
+    // and must parse under the default build.
     for name in &["vec", "string", "io", "map", "blas"] {
         let path = base.join(format!("{name}.mind"));
         let src = std::fs::read_to_string(&path)
@@ -103,6 +105,20 @@ fn idempotence_stdlib() {
 
     assert_eq!(skipped, 0, "unexpected parse failures in std/ ({skipped} file(s))");
     assert_eq!(passed, 5, "expected 5 stdlib files, got {passed}");
+}
+
+/// `toml.mind` uses `while` loops, which require the `std-surface` feature to
+/// be recognised by the formatter's parser.  This test is separately gated.
+#[test]
+#[cfg(feature = "std-surface")]
+fn idempotence_stdlib_toml() {
+    let base = manifest_dir().join("std");
+    let cfg = default_cfg();
+    let path = base.join("toml.mind");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let exercised = check_idempotence("toml", &src, &cfg);
+    assert!(exercised, "toml.mind failed to parse under std-surface — unexpected");
 }
 
 // ---------------------------------------------------------------------------
