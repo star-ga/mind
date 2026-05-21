@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2596 | **Est. tokens:** ~6,402,745
-**Generated:** 2026-05-21 16:27 UTC
+**Files:** 2596 | **Est. tokens:** ~6,402,748
+**Generated:** 2026-05-21 16:28 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 17 | ~60,200 |
+| `docs/rfcs/` | 17 | ~60,203 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -615,7 +615,7 @@
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
-- `0010-memory-safety-and-c-abi.md` (~6788 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
+- `0010-memory-safety-and-c-abi.md` (~6791 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4812 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
