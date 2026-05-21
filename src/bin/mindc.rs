@@ -97,6 +97,12 @@ enum Command {
         /// included for parity with cargo).
         #[arg(long)]
         workspace: bool,
+        /// Bypass the incremental object cache for this build (RFC 0008 Phase F).
+        ///
+        /// New objects are still written to cache so subsequent runs benefit.
+        /// Use this when you suspect a stale cache entry.
+        #[arg(long)]
+        no_cache: bool,
     },
     /// Build and run a MIND project.
     Run {
@@ -341,8 +347,9 @@ fn main() {
             verbose,
             package,
             workspace: _,
+            no_cache,
         }) => {
-            run_mindc_build(paths, *release, target, emit, optimize, out, *verbose, package.as_deref());
+            run_mindc_build(paths, *release, target, emit, optimize, out, *verbose, package.as_deref(), *no_cache);
             return;
         }
         Some(Command::Run {
@@ -550,6 +557,7 @@ fn run_mindc_build(
     out: &Option<String>,
     verbose: bool,
     package: Option<&str>,
+    no_cache: bool,
 ) {
     // Workspace detection: if we are at a workspace root and no explicit
     // source paths are given, delegate to the workspace build path.
@@ -607,6 +615,7 @@ fn run_mindc_build(
         optimize: eff_optimize,
         out: out.as_ref().map(std::path::PathBuf::from),
         verbose,
+        no_cache,
     };
 
     match run_build(&opts) {
@@ -755,6 +764,7 @@ fn run_workspace_build(
             optimize: parse_optimize_opt(release, optimize),
             out: member_out.map(std::path::PathBuf::from),
             verbose,
+            no_cache: false,
         };
         // Override paths to use the member root's entry point resolution.
         // The member root is passed via a synthetic path pointing to the member.
@@ -993,7 +1003,9 @@ fn run_mindc_fetch(update: bool) {
 }
 
 fn run_mindc_clean(cache: bool, all: bool) {
+    use libmind::build::cache::clean_all_caches;
     use libmind::project::find_project_root;
+
     let root = match find_project_root() {
         Ok(r) => r,
         Err(e) => {
@@ -1001,6 +1013,29 @@ fn run_mindc_clean(cache: bool, all: bool) {
             process::exit(1);
         }
     };
+
+    // Phase F: --cache wipes the incremental build object cache (.cache/ dirs
+    // under target/), leaving the previously linked binaries intact.
+    if cache && !all {
+        match clean_all_caches(&root) {
+            Ok(()) => println!("   Removed incremental cache (target/*/.cache/)."),
+            Err(e) => {
+                eprintln!("error[clean]: {e}");
+                process::exit(1);
+            }
+        }
+        // Also clean the deps git cache via the deps subsystem.
+        let opts = CleanOpts { cache: true, all: false };
+        match run_clean(&root, &opts) {
+            Ok(()) => {}
+            Err(e) => {
+                eprintln!("error[clean]: {e}");
+                process::exit(e.exit_code());
+            }
+        }
+        return;
+    }
+
     let opts = CleanOpts { cache, all };
     match run_clean(&root, &opts) {
         Ok(()) => {}
