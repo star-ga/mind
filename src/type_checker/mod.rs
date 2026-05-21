@@ -2127,6 +2127,22 @@ pub fn check_module_types_in_file(
     let mut errs = Vec::new();
     let mut tenv = env.clone();
 
+    // RFC 0010 Phase B audit fix F-06: collect all #[repr(C)] struct names before
+    // validating extern "C" signatures so the type-checker can distinguish known
+    // repr(C) structs from unrelated Named types.
+    let repr_c_struct_names: std::collections::BTreeSet<String> = module
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let Node::StructDef { name, attrs, .. } = item {
+                if attrs.iter().any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C")) {
+                    return Some(name.clone());
+                }
+            }
+            None
+        })
+        .collect();
+
     for item in &module.items {
         match item {
             Node::Let {
@@ -2299,7 +2315,7 @@ pub fn check_module_types_in_file(
             Node::ExternBlock { fns, .. } => {
                 for efn in fns {
                     for param in &efn.params {
-                        if let Err(msg) = check_extern_type(&param.ty) {
+                        if let Err(msg) = check_extern_type_with_repr_c(&param.ty, &repr_c_struct_names) {
                             errs.push(diag_from_span(
                                 src,
                                 file,
@@ -2308,12 +2324,12 @@ pub fn check_module_types_in_file(
                                     efn.name, param.name, msg
                                 ),
                                 param.span,
-                                "safety::extern_non_copy",
+                                "safety::extern_non_repr_c",
                             ));
                         }
                     }
                     if let Some(ret) = &efn.ret_type {
-                        if let Err(msg) = check_extern_type(ret) {
+                        if let Err(msg) = check_extern_type_with_repr_c(ret, &repr_c_struct_names) {
                             errs.push(diag_from_span(
                                 src,
                                 file,
@@ -2322,7 +2338,7 @@ pub fn check_module_types_in_file(
                                     efn.name, msg
                                 ),
                                 efn.span,
-                                "safety::extern_non_copy",
+                                "safety::extern_non_repr_c",
                             ));
                         }
                     }
@@ -2367,7 +2383,13 @@ pub fn check_module_types_in_file(
 /// slices, references, tuples, generic types, etc.
 ///
 /// Returns `Ok(())` on acceptance, `Err(reason)` on rejection.
-fn check_extern_type(ann: &TypeAnn) -> Result<(), String> {
+/// RFC 0010 Phase B (audit fix F-06): check_extern_type with a registry of
+/// known #[repr(C)] struct names.  Named types present in `repr_c` are accepted;
+/// all other unknown Named types produce a `safety::extern_non_repr_c` diagnostic.
+fn check_extern_type_with_repr_c(
+    ann: &TypeAnn,
+    repr_c: &std::collections::BTreeSet<String>,
+) -> Result<(), String> {
     match ann {
         // All built-in scalar types are C-ABI-compatible.
         TypeAnn::ScalarI32
@@ -2378,29 +2400,34 @@ fn check_extern_type(ann: &TypeAnn) -> Result<(), String> {
         | TypeAnn::ScalarU32 => Ok(()),
         // Raw pointers: validate the pointee type recursively. Phase A
         // accepts any built-in pointee; the pointer itself lowers to !llvm.ptr.
-        TypeAnn::RawPtr { pointee, .. } => check_extern_type(pointee),
+        TypeAnn::RawPtr { pointee, .. } => check_extern_type_with_repr_c(pointee, repr_c),
         // RFC 0010 Phase B: callback function pointers `extern "C" fn(T) -> R`
         // are C-ABI-compatible; they lower to !llvm.ptr. Validate that the
         // callback parameter and return types also satisfy Phase B rules.
         TypeAnn::FnPtr { params, ret } => {
             for p in params {
-                check_extern_type(p)?;
+                check_extern_type_with_repr_c(p, repr_c)?;
             }
             if let Some(r) = ret {
-                check_extern_type(r)?;
+                check_extern_type_with_repr_c(r, repr_c)?;
             }
             Ok(())
         }
-        // Named types: accept primitive names and user-defined names (which
-        // may be `#[repr(C)]` structs — the IR lowering validates those).
-        // Phase B: any Named type is tentatively accepted; the repr(C)
-        // registry check happens at IR lowering time, not in the type-checker.
+        // Named types: accept primitives and known repr(C) structs.
+        // RFC 0010 Phase B audit fix F-06: unknown Named types are rejected
+        // with safety::extern_non_repr_c to prevent silent miscompilation.
         TypeAnn::Named(name) => match name.as_str() {
             "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
             | "f32" | "f64" | "bool" | "usize" | "isize" => Ok(()),
-            // Phase B: accept any other Named type as a potential repr(C) struct.
-            // The programmer is responsible for annotating it with `#[repr(C)]`.
-            _ => Ok(()),
+            other => {
+                if repr_c.contains(other) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "type `{other}` is not a primitive C scalar and is not annotated                          with `#[repr(C)]`; add `#[repr(C)]` to the struct definition or                          use a raw pointer `*const {other}` / `*mut {other}`                          (safety::extern_non_repr_c)"
+                    ))
+                }
+            }
         },
         // Aggregate and non-Copy types are rejected.
         TypeAnn::Tensor { .. }

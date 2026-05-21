@@ -70,34 +70,27 @@ fn parse_repr_c_attribute_on_struct() {
 // ── test 2: repr(C) struct accepted in extern "C" signature ──────────────────
 
 /// A `Named` type in an `extern "C"` signature must be accepted by the
-/// Phase B type-checker (it may be a `#[repr(C)]` struct; the IR lowering
-/// validates the full layout).
+/// Phase B type-checker when the struct carries `#[repr(C)]`.
+/// The module must include the struct definition so the type-checker's
+/// pre-pass can populate its repr(C) registry (audit fix F-06).
 #[test]
 fn typecheck_accepts_named_type_in_extern_signature() {
-    let efn = ExternFn {
-        is_unsafe: false,
-        name: "accept_timeval".to_string(),
-        params: vec![Param {
-            name: "tv".to_string(),
-            ty: TypeAnn::Named("Timeval".to_string()),
-            span: sp(),
-        }],
-        ret_type: Some(TypeAnn::ScalarI32),
-        is_varargs: false,
-        span: sp(),
-    };
-    let module = Module {
-        items: vec![Node::ExternBlock {
-            callconv: CallConv::SysV,
-            fns: vec![efn],
-            span: sp(),
-        }],
-    };
-    let diags = check_module_types_in_file(&module, "", None, &TypeEnv::new());
-    // Phase B: Named types are accepted; no diagnostic expected.
+    // Use the parser so the repr_c pre-pass has a real StructDef to scan.
+    let src = r#"
+        [repr(C)]
+        struct Timeval { tv_sec: i64, tv_usec: i64 }
+
+        extern "C" {
+            safe fn accept_timeval(tv: Timeval) -> i32
+        }
+    "#;
+    let module = parser::parse(src)
+        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
+    // A repr(C)-annotated struct must be accepted; no diagnostic expected.
     assert!(
         diags.is_empty(),
-        "expected no diagnostics for Named type in extern \"C\" signature; got: {diags:?}"
+        "expected no diagnostics for repr(C) Named type in extern \"C\" signature; got: {diags:?}"
     );
 }
 
@@ -502,5 +495,90 @@ fn sysv_scalar_field_classification() {
     assert_eq!(
         classify_scalar_field(&TypeAnn::FnPtr { params: vec![], ret: None }, r),
         (Some(SysVClass::Integer), 8)
+    );
+}
+
+// ── test 16: repr(C) struct declared AFTER extern "C" block (ordering hazard) ─
+
+/// A `#[repr(C)]` struct declared *after* the `extern "C"` block that
+/// references it must still classify correctly.  Before the two-pass fix,
+/// the `repr_c_snapshot` was empty at ExternBlock processing time and the
+/// struct fell through to the `i64` fallback — producing wrong classification
+/// for any mixed int+float struct.
+///
+/// This test verifies the fix for the declaration-order hazard (audit F-05).
+#[test]
+fn repr_c_struct_after_extern_block_classifies_correctly() {
+    // Mixed int+float struct should classify to MEMORY.
+    // With the ordering bug: the struct is unknown at lowering time -> "i64" (WRONG).
+    // With the two-pass fix: repr_c_structs is fully populated -> "!llvm.ptr" (CORRECT).
+    let src = r#"
+        extern "C" {
+            unsafe fn use_mixed(m: Mixed) -> i32
+        }
+
+        [repr(C)]
+        struct Mixed { x: i32, f: f32 }
+    "#;
+    let module = parser::parse(src)
+        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+
+    use libmind::eval::lower_to_ir;
+    let ir = lower_to_ir(&module);
+
+    // repr_c_structs must be populated regardless of declaration order.
+    assert!(
+        ir.repr_c_structs.contains_key("Mixed"),
+        "repr_c_structs must contain 'Mixed' even when StructDef comes after ExternBlock; \
+         keys: {:?}", ir.repr_c_structs.keys().collect::<Vec<_>>()
+    );
+
+    // The ExternFnDecl for use_mixed must have param_types = ["!llvm.ptr"]
+    // because Mixed is a mixed int+float struct -> MEMORY class.
+    let extern_decl = ir.instrs.iter().find_map(|instr| {
+        #[cfg(feature = "std-surface")]
+        if let Instr::ExternFnDecl { name, param_types, .. } = instr {
+            if name == "use_mixed" {
+                return Some(param_types.clone());
+            }
+        }
+        None
+    });
+    let param_types = extern_decl
+        .expect("must have ExternFnDecl for use_mixed");
+    assert_eq!(
+        param_types,
+        vec!["!llvm.ptr".to_string()],
+        "mixed int+float struct declared after ExternBlock must still classify \
+         to MEMORY (!llvm.ptr); got {param_types:?}"
+    );
+}
+
+// ── test 17: non-repr(C) struct in extern signature emits a diagnostic ─────
+
+/// A `Named` type used in an `extern "C"` signature that is NOT annotated
+/// with `#[repr(C)]` should produce at least one diagnostic.  Without the
+/// fix, a non-repr(C) struct silently falls through to "i64" lowering, which
+/// is unsound.
+///
+/// This test verifies audit finding F-06.
+#[test]
+fn non_repr_c_named_struct_in_extern_signature_emits_diagnostic() {
+    // Declare a plain struct (no #[repr(C)]) and use it in an extern block.
+    let src = r#"
+        struct NotReprC { x: i32, y: i32 }
+
+        extern "C" {
+            unsafe fn bad(n: NotReprC) -> i32
+        }
+    "#;
+    let module = parser::parse(src)
+        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+
+    let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
+    assert!(
+        !diags.is_empty(),
+        "using a non-repr(C) struct in an extern \"C\" signature must produce \
+         at least one diagnostic (safety::extern_non_repr_c); got no diagnostics"
     );
 }

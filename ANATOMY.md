@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2597 | **Est. tokens:** ~6,410,613
-**Generated:** 2026-05-21 17:45 UTC
+**Files:** 2597 | **Est. tokens:** ~6,411,977
+**Generated:** 2026-05-21 18:14 UTC
 
 ## Token Budget Guide
 
@@ -371,7 +371,7 @@
 | `src/deps/` | 1 | ~7,926 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/eval/` | 13 | ~76,272 |
+| `src/eval/` | 13 | ~76,500 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -391,11 +391,11 @@
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
-| `src/type_checker/` | 1 | ~23,891 |
+| `src/type_checker/` | 1 | ~24,222 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 6 | ~15,332 |
-| `tests/` | 131 | ~179,158 |
+| `tests/` | 131 | ~179,963 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3582,7 +3582,7 @@
 - `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~17075 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~17303 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4154 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8312 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3706,7 +3706,7 @@
 - `mod.rs` (~5810 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~23891 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~24222 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3779,7 +3779,7 @@
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2641 tok, huge) — Copyright 2025 STARGA Inc.
-- `extern_c_phase_b.rs` (~5007 tok, huge) — Copyright 2025 STARGA Inc.
+- `extern_c_phase_b.rs` (~5812 tok, huge) — Copyright 2025 STARGA Inc.
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/fixtures/`
 
