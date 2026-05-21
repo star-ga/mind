@@ -93,13 +93,7 @@ pub fn dot_linf_f32_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
 // Inner loop reuses the same AVX2/scalar dispatcher as dot_f32, so the
 // 8-lane FMA improvement applies row-by-row without duplication on the
 // criterion bench's primary score path (catalog · query).
-pub fn matmul_rmajor_f32(
-    w_addr: i64,
-    x_addr: i64,
-    y_addr: i64,
-    rows: i64,
-    cols: i64,
-) -> i64 {
+pub fn matmul_rmajor_f32(w_addr: i64, x_addr: i64, y_addr: i64, rows: i64, cols: i64) -> i64 {
     __mind_blas_matmul_rmajor_f32(w_addr, x_addr, y_addr, rows, cols)
 }
 
@@ -117,13 +111,7 @@ pub fn matmul_rmajor_f32(
 // the established f32 contract, distinct from the bit-exact Q16.16
 // paths).  Track A's matmul_rmajor_f32 is unchanged and remains the
 // scalar/AVX2 fallback.
-pub fn matmul_rmajor_f32_v(
-    w_addr: i64,
-    x_addr: i64,
-    y_addr: i64,
-    rows: i64,
-    cols: i64,
-) -> i64 {
+pub fn matmul_rmajor_f32_v(w_addr: i64, x_addr: i64, y_addr: i64, rows: i64, cols: i64) -> i64 {
     __mind_blas_matmul_rmajor_f32_v(w_addr, x_addr, y_addr, rows, cols)
 }
 
@@ -190,31 +178,17 @@ pub fn dot_l1_q16_v(a_addr: i64, b_addr: i64, len: i64) -> i64 {
 // Track-A scalar reference at every (rows, cols) — not merely within
 // a tolerance.  Track A's matmul_q16 in callers' codebases is
 // unchanged and remains the scalar/AVX2 fallback.
-fn matmul_rmajor_q16_v_row(
-    w_addr: i64,
-    x_addr: i64,
-    y_addr: i64,
-    cols: i64,
-    row_bytes: i64,
-    rows: i64,
-    r: i64,
-) -> i64 {
-    if r >= rows { return 0; }
+fn matmul_rmajor_q16_v_row(w_addr: i64, x_addr: i64, y_addr: i64, cols: i64, row_bytes: i64, rows: i64, r: i64) -> i64 {
+    if r >= rows {
+        return 0;
+    }
     let w_row: i64 = w_addr + r * row_bytes;
     let acc: i64 = dot_q16_v(w_row, x_addr, cols);
     __mind_store_i64(y_addr + r * 8, acc);
-    matmul_rmajor_q16_v_row(w_addr, x_addr, y_addr, cols, row_bytes,
-                            rows, r + 1)
+    matmul_rmajor_q16_v_row(w_addr, x_addr, y_addr, cols, row_bytes, rows, r + 1)
 }
 
-pub fn matmul_rmajor_q16_v(
-    w_addr: i64,
-    x_addr: i64,
-    y_addr: i64,
-    rows: i64,
-    cols: i64,
-) -> i64 {
+pub fn matmul_rmajor_q16_v(w_addr: i64, x_addr: i64, y_addr: i64, rows: i64, cols: i64) -> i64 {
     let row_bytes: i64 = cols * 8;
-    matmul_rmajor_q16_v_row(w_addr, x_addr, y_addr, cols, row_bytes,
-                            rows, 0)
+    matmul_rmajor_q16_v_row(w_addr, x_addr, y_addr, cols, row_bytes, rows, 0)
 }

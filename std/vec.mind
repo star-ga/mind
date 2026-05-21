@@ -66,7 +66,11 @@ pub fn vec_push(v: Vec, value: i64) -> Vec {
     let new_cap: i64 = if v.cap == 0 {
         4
     } else {
-        if v.len < v.cap { v.cap } else { v.cap * 2 }
+        if v.len < v.cap {
+            v.cap
+        } else {
+            v.cap * 2
+        }
     };
     let new_addr: i64 = if new_cap == v.cap {
         v.addr

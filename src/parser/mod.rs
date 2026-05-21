@@ -763,13 +763,15 @@ impl<'a> P<'a> {
             return self.parse_attributed_item(attrs);
         }
         // Phase 10.6: optional `pub` visibility marker before struct/enum/fn/
-        // type/const. mindc treats it as a no-op — module-level visibility
-        // is controlled by the `export` block. Accepting `pub` lets
-        // pub-prefixed source compile without forcing a rewrite.
-        if self.at_keyword(b"pub") {
+        // type/const. Captured as `is_pub` and propagated into the AST node
+        // so the formatter can round-trip the keyword faithfully.
+        let is_pub = if self.at_keyword(b"pub") {
             self.pos += 3;
             self.skip_ws_and_newlines();
-        }
+            true
+        } else {
+            false
+        };
         if self.at_keyword(b"import") {
             return self.parse_import();
         }
@@ -789,13 +791,13 @@ impl<'a> P<'a> {
             return self.parse_export_block();
         }
         if self.at_keyword(b"struct") {
-            return self.parse_struct(Vec::new());
+            return self.parse_struct(Vec::new(), is_pub);
         }
         if self.at_keyword(b"enum") {
-            return self.parse_enum(Vec::new());
+            return self.parse_enum(Vec::new(), is_pub);
         }
         if self.at_keyword(b"fn") {
-            return self.parse_fn_def();
+            return self.parse_fn_def(is_pub);
         }
         if self.at_keyword(b"assert") {
             return self.parse_assert();
@@ -995,6 +997,14 @@ impl<'a> P<'a> {
         attrs: Vec<crate::ast::Attribute>,
     ) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
+        // Optional `pub` after an attribute list: `[attr] pub fn foo() { }`.
+        let is_pub = if self.at_keyword(b"pub") {
+            self.pos += 3;
+            self.skip_ws_and_newlines();
+            true
+        } else {
+            false
+        };
         if self.at_keyword(b"module") {
             return self.parse_module_block(attrs);
         }
@@ -1005,10 +1015,10 @@ impl<'a> P<'a> {
             return self.parse_type_alias(attrs);
         }
         if self.at_keyword(b"struct") {
-            return self.parse_struct(attrs);
+            return self.parse_struct(attrs, is_pub);
         }
         if self.at_keyword(b"enum") {
-            return self.parse_enum(attrs);
+            return self.parse_enum(attrs, is_pub);
         }
         if self.at_keyword(b"fn") {
             // Extract `[reap_threshold(t)]` from the attribute list.
@@ -1016,7 +1026,7 @@ impl<'a> P<'a> {
             // stored (public mindc records them in `Node::FnDef::reap_threshold`
             // when the name matches; all other attrs are dropped).
             let reap = extract_reap_threshold(&attrs);
-            return self.parse_fn_def_with_reap(reap);
+            return self.parse_fn_def_with_reap(reap, is_pub);
         }
         Err(self.err(
             "expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into(),
@@ -1179,7 +1189,7 @@ impl<'a> P<'a> {
     }
 
     /// Parse `struct NAME { field: T, field: T }`.
-    fn parse_struct(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+    fn parse_struct(&mut self, attrs: Vec<crate::ast::Attribute>, is_pub: bool) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "struct"
         self.skip_ws();
@@ -1195,14 +1205,15 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         while !self.at(b'}') && !self.at_end() {
             let f_start = self.pos;
-            // Phase 10.6: optional `pub` visibility marker on the field.
-            // mindc-level visibility is controlled by the surrounding
-            // module's `export` block; `pub` on a field is accepted as a
-            // source-code annotation and ignored semantically.
-            if self.at_keyword(b"pub") {
+            // Optional `pub` visibility marker on the field — captured so
+            // the formatter can round-trip it faithfully.
+            let field_is_pub = if self.at_keyword(b"pub") {
                 self.pos += 3;
                 self.skip_ws();
-            }
+                true
+            } else {
+                false
+            };
             let f_name = self
                 .word()
                 .ok_or_else(|| self.err("expected field name".into()))?
@@ -1215,6 +1226,7 @@ impl<'a> P<'a> {
             let ty = self.type_ann()?;
             let f_span = Span::new(f_start, self.pos);
             fields.push(crate::ast::Field {
+                is_pub: field_is_pub,
                 name: f_name,
                 ty,
                 span: f_span,
@@ -1232,6 +1244,7 @@ impl<'a> P<'a> {
         }
         let span = Span::new(start, self.pos);
         Ok(Node::StructDef {
+            is_pub,
             name,
             fields,
             attrs,
@@ -1240,7 +1253,7 @@ impl<'a> P<'a> {
     }
 
     /// Parse `enum NAME { Variant, Variant(T), ... }`.
-    fn parse_enum(&mut self, attrs: Vec<crate::ast::Attribute>) -> Result<Node, ParseError> {
+    fn parse_enum(&mut self, attrs: Vec<crate::ast::Attribute>, is_pub: bool) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 4; // "enum"
         self.skip_ws();
@@ -1302,6 +1315,7 @@ impl<'a> P<'a> {
         }
         let span = Span::new(start, self.pos);
         Ok(Node::EnumDef {
+            is_pub,
             name,
             variants,
             attrs,
@@ -1403,13 +1417,14 @@ impl<'a> P<'a> {
         Err(self.err("expected shape dimension (integer or identifier)".into()))
     }
 
-    fn parse_fn_def(&mut self) -> Result<Node, ParseError> {
-        self.parse_fn_def_with_reap(None)
+    fn parse_fn_def(&mut self, is_pub: bool) -> Result<Node, ParseError> {
+        self.parse_fn_def_with_reap(None, is_pub)
     }
 
     /// Core `fn` parser.  `reap_threshold` is `Some(t)` when a preceding
     /// `[reap_threshold(t)]` attribute was found by `parse_attributed_item`.
-    fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>) -> Result<Node, ParseError> {
+    /// `is_pub` is `true` when a `pub` keyword preceded `fn`.
+    fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>, is_pub: bool) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 2; // "fn"
         self.skip_ws_and_newlines();
@@ -1455,6 +1470,7 @@ impl<'a> P<'a> {
         self.expect(b'}')?;
         let span = Span::new(start, self.pos);
         Ok(Node::FnDef {
+            is_pub,
             name,
             params,
             ret_type,
