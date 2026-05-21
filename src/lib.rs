@@ -93,6 +93,7 @@ pub mod package;
 pub mod build;
 pub mod check;
 pub mod deps;
+pub mod doc;
 pub mod fmt;
 pub mod lint;
 pub mod project;

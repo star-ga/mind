@@ -23,6 +23,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use libmind::build::{run_build, BuildOpts};
 use libmind::check::{run_check, CheckOptions, ReporterKind};
 use libmind::deps::{run_clean, run_fetch, run_lock, CleanOpts, FetchOpts, LockOpts};
+use libmind::doc::{run_doc, DocOptions};
 use libmind::fmt::cli as mindc_fmt;
 use libmind::test::{run_tests, ReporterKind as TestReporterKind, TestOptions as MindTestOptions};
 use libmind::workspace::{resolve_workspace_members, toposort_members, WorkspaceOpts};
@@ -258,6 +259,28 @@ enum Command {
         #[arg(long)]
         update: bool,
     },
+    /// Generate HTML documentation from `///` doc-comments in MIND source files.
+    ///
+    /// Walks *.mind files, extracts `pub` items and their preceding `///`
+    /// doc-comment blocks, and renders one HTML page per source file plus a
+    /// top-level `index.html` and `search-index.json`.
+    ///
+    /// Exit code 0 = success, 1 = parse or I/O error, 2 = invalid CLI args.
+    Doc {
+        /// Source files or directories to document.  Directories are walked
+        /// recursively for *.mind files.  Defaults to the current directory.
+        #[arg(value_name = "PATHS")]
+        paths: Vec<String>,
+        /// Output directory for generated HTML (default: `./target/doc`).
+        #[arg(long, value_name = "DIR", default_value = "target/doc")]
+        out: String,
+        /// Do not render dependency files; only document the given paths.
+        #[arg(long)]
+        no_deps: bool,
+        /// Open the generated `index.html` in a browser after rendering.
+        #[arg(long)]
+        open: bool,
+    },
     /// Remove build artifacts and/or the dependency cache (RFC 0008 Phase E).
     Clean {
         /// Wipe ~/.mindenv/cache/ entries for this project's deps.
@@ -430,6 +453,15 @@ fn main() {
             fix,
         }) => {
             process::exit(mindc_fmt::run_fmt(paths, *check, *diff, *stdin, *fix));
+        }
+        Some(Command::Doc { paths, out, no_deps, open }) => {
+            let opts = DocOptions {
+                paths: paths.clone(),
+                out_dir: std::path::PathBuf::from(out),
+                no_deps: *no_deps,
+                open: *open,
+            };
+            process::exit(run_doc(&opts));
         }
         Some(Command::Ops { .. }) => {
             print_ops(&cli.command);
