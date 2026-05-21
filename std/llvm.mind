@@ -1,0 +1,669 @@
+// std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
+// for the LLVM C API (~100 functions).
+//
+// LLVM VERSION
+//   Bound against: LLVM 18.x C API as shipped with LLVM 18
+//   Reference headers: llvm-c/Core.h, llvm-c/Types.h, llvm-c/Target.h,
+//     llvm-c/TargetMachine.h, llvm-c/BitWriter.h, llvm-c/Analysis.h,
+//     llvm-c/Transforms/PassBuilder.h
+//
+// PHASE F SCOPE
+//   This file is scaffolding only. It declares the extern "C" surface.
+//   mindc does NOT yet call these functions — it still generates textual
+//   MLIR and relies on the mlir-translate / llc pipeline (the mlir-build path).
+//   Phase H migrates mindc's LLVM-glue from the Rust inkwell crate to
+//   these bindings. Phase I (keystone) removes inkwell from Cargo.toml.
+//
+// OPAQUE HANDLE TYPES
+//   LLVM C API handle types are typedef'd opaque pointers:
+//     typedef struct LLVMOpaqueContext  *LLVMContextRef;
+//     typedef struct LLVMOpaqueModule   *LLVMModuleRef;
+//   In MIND ABI (RFC 0010 Phase A/B) we represent them as *mut u8 —
+//   an opaque pointer. Phase H introduces [repr(C)] struct wrappers that
+//   exactly mirror the C structs; for Phase F the opaque form is used
+//   throughout because the type-checker does not yet resolve type aliases
+//   to raw pointer kinds for extern "C" compatibility checks.
+//
+// TYPE ALIAS NOTE
+//   The aliases below are purely documentary. They are not used in the
+//   extern "C" signatures because the Phase F type-checker requires raw
+//   pointer types (*mut u8) in extern signatures. Phase H replaces both
+//   the aliases and the raw pointers with [repr(C)] struct types.
+//
+// LLVMBool NOTE
+//   LLVMBool is typedef'd to int (i32) in the C API. Phase F maps it to i32.
+//   A non-zero value indicates true; zero indicates false.
+//
+// LLVMCodeGenFileType NOTE
+//   LLVMCodeGenFileType is an enum (int) in C:
+//     LLVMAssemblyFile = 0, LLVMObjectFile = 1
+//   Phase F maps it to i32.
+//
+// DEFERRED SURFACE (not in Phase F)
+//   ExecutionEngine, ORC JIT, MCJIT, debug info (DIBuilder), comdat,
+//   atomics, operand bundles, intrinsic helpers beyond LLVMLookupIntrinsicID,
+//   PassManagerBuilder (removed in LLVM 17), transform manager utilities,
+//   LTO, linker, remarks, profile reader, Windows resource file support.
+//   Callback-heavy surfaces (diagnostic handlers, yield callbacks) are
+//   deferred because they require non-trivial function-pointer types.
+//   Phase H may introduce them after the Phase B FnPtr ABI is in place.
+//
+// SAFETY ATTRIBUTION
+//   safe fn  — pure query: no mutation of LLVM-visible state, no pointer
+//              arithmetic required by the caller.
+//   unsafe fn — mutates LLVM state, takes ownership of a pointer, or
+//               performs side effects on external mutable state. Callers
+//               must supply a # safety: comment per RFC 0010 §4.2.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Documentary type aliases — opaque handle names for readability.
+// NOT used in extern signatures in Phase F (see TYPE ALIAS NOTE above).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMContextRef    = *mut u8  (LLVMOpaqueContext*)
+// LLVMModuleRef     = *mut u8  (LLVMOpaqueModule*)
+// LLVMTypeRef       = *mut u8  (LLVMOpaqueType*)
+// LLVMValueRef      = *mut u8  (LLVMOpaqueValue*)
+// LLVMBasicBlockRef = *mut u8  (LLVMOpaqueBasicBlock*)
+// LLVMBuilderRef    = *mut u8  (LLVMOpaqueBuilder*)
+// LLVMPassManagerRef = *mut u8 (LLVMOpaquePassManager*)
+// LLVMMemoryBufferRef = *mut u8 (LLVMOpaqueMemoryBuffer*)
+// LLVMTargetRef     = *mut u8  (LLVMTarget*)
+// LLVMTargetDataRef = *mut u8  (LLVMOpaqueTargetData*)
+// LLVMTargetMachineRef = *mut u8 (LLVMOpaqueTargetMachine*)
+// LLVMAttributeRef  = *mut u8  (LLVMOpaqueAttributeRef*)
+// LLVMBool          = i32      (int; 0 = false, non-zero = true)
+// LLVMCodeGenFileType = i32    (enum; 0 = assembly, 1 = object)
+// LLVMVerifierFailureAction = i32 (enum; 0 = abort, 1 = print, 2 = return)
+// LLVMLinkage       = i32      (enum; 0 = external, etc.)
+// LLVMVisibility    = i32      (enum; 0 = default, etc.)
+// LLVMCallConv      = i32      (enum; 0 = C, 8 = fast, 9 = cold, etc.)
+// LLVMIntPredicate  = i32      (enum; 32 = eq, 33 = ne, 34 = ugt, etc.)
+// LLVMRealPredicate = i32      (enum; 0 = false, 1 = oeq, etc.)
+// LLVMOpcode        = i32      (enum; LLVM instruction opcodes)
+// LLVMTypeKind      = i32      (enum; 0 = void, 1 = half, 2 = bfloat, etc.)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Misc / Message
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMDisposeMessage: free a string returned by the LLVM C API (LLVMGetXxx
+//   functions that return char*).  MUST be called for every non-null char*
+//   returned by LLVM API functions; leaking is undefined behaviour.
+// LLVMGetVersion: fill out major, minor, patch integers for the linked LLVM.
+extern "C" {
+    unsafe fn LLVMDisposeMessage(message: *mut u8);
+    unsafe fn LLVMGetVersion(major: *mut u32, minor: *mut u32, patch: *mut u32);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Context
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMContextCreate: allocate a new LLVM context.
+// LLVMGetGlobalContext: return the lazily-created global context (avoid in
+//   multi-threaded code — use per-thread contexts instead).
+// LLVMContextDispose: free a context and all resources it owns.
+// LLVMContextSetDiagnosticHandler: install a diagnostic callback.
+//   Phase F: callback typed as *mut u8 (opaque); Phase H: typed FnPtr.
+// LLVMContextShouldDiscardValueNames: query the discard-names flag.
+// LLVMContextSetDiscardValueNames: set the discard-names flag (reduces memory).
+extern "C" {
+    safe fn LLVMContextCreate() -> *mut u8;
+    safe fn LLVMGetGlobalContext() -> *mut u8;
+    unsafe fn LLVMContextDispose(ctx: *mut u8);
+    unsafe fn LLVMContextSetDiagnosticHandler(ctx: *mut u8, handler: *mut u8, diagnostic_context: *mut u8);
+    safe fn LLVMContextShouldDiscardValueNames(ctx: *mut u8) -> i32;
+    unsafe fn LLVMContextSetDiscardValueNames(ctx: *mut u8, discard: i32);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Module
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMModuleCreateWithName: create a module in the global context.
+// LLVMModuleCreateWithNameInContext: create a module in a specific context.
+// LLVMCloneModule: deep-clone a module.
+// LLVMDisposeModule: free a module and all owned values.
+// LLVMGetModuleIdentifier: return the module identifier string (read-only).
+// LLVMSetModuleIdentifier: set the module identifier.
+// LLVMGetDataLayoutStr: return the data-layout string.
+// LLVMSetDataLayout: set the data-layout string.
+// LLVMGetTarget: return the target triple string.
+// LLVMSetTarget: set the target triple.
+// LLVMPrintModuleToString: pretty-print module to a heap string; caller must
+//   call LLVMDisposeMessage on the result.
+// LLVMPrintModuleToFile: write text IR to a file; returns non-zero on error
+//   and sets *error_message (caller must LLVMDisposeMessage).
+// LLVMGetModuleContext: context that owns this module.
+// LLVMGetNamedFunction: look up a function by name; null if not found.
+// LLVMGetFirstFunction: first function in the module's function list.
+// LLVMGetNextFunction: next function after the given one.
+// LLVMGetLastFunction: last function in the module's function list.
+extern "C" {
+    unsafe fn LLVMModuleCreateWithName(module_id: *const u8) -> *mut u8;
+    unsafe fn LLVMModuleCreateWithNameInContext(module_id: *const u8, ctx: *mut u8) -> *mut u8;
+    unsafe fn LLVMCloneModule(m: *mut u8) -> *mut u8;
+    unsafe fn LLVMDisposeModule(m: *mut u8);
+    safe fn LLVMGetModuleIdentifier(m: *mut u8, len: *mut usize) -> *const u8;
+    unsafe fn LLVMSetModuleIdentifier(m: *mut u8, ident: *const u8, len: usize);
+    safe fn LLVMGetDataLayoutStr(m: *mut u8) -> *const u8;
+    unsafe fn LLVMSetDataLayout(m: *mut u8, data_layout_str: *const u8);
+    safe fn LLVMGetTarget(m: *mut u8) -> *const u8;
+    unsafe fn LLVMSetTarget(m: *mut u8, triple: *const u8);
+    unsafe fn LLVMPrintModuleToString(m: *mut u8) -> *mut u8;
+    unsafe fn LLVMPrintModuleToFile(m: *mut u8, filename: *const u8, error_message: *mut *mut u8) -> i32;
+    safe fn LLVMGetModuleContext(m: *mut u8) -> *mut u8;
+    safe fn LLVMGetNamedFunction(m: *mut u8, name: *const u8) -> *mut u8;
+    safe fn LLVMGetFirstFunction(m: *mut u8) -> *mut u8;
+    safe fn LLVMGetNextFunction(val: *mut u8) -> *mut u8;
+    safe fn LLVMGetLastFunction(m: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMGetTypeKind: return the LLVMTypeKind enum value for a type.
+// LLVMTypeIsSized: true (non-zero) if the type has a known size.
+// LLVMGetTypeContext: context that owns this type.
+//
+// Integer types
+// LLVMInt1TypeInContext / LLVMInt1Type: i1 (bool).
+// LLVMInt8TypeInContext / LLVMInt8Type: i8.
+// LLVMInt16TypeInContext / LLVMInt16Type: i16.
+// LLVMInt32TypeInContext / LLVMInt32Type: i32.
+// LLVMInt64TypeInContext / LLVMInt64Type: i64.
+// LLVMIntTypeInContext: arbitrary-width integer type (width in bits).
+//
+// Floating-point types
+// LLVMBFloatTypeInContext / LLVMBFloatType: bfloat16.
+// LLVMFloatTypeInContext  / LLVMFloatType: f32.
+// LLVMDoubleTypeInContext / LLVMDoubleType: f64.
+//
+// Other scalar types
+// LLVMVoidTypeInContext / LLVMVoidType: void.
+// LLVMPointerTypeInContext: opaque pointer type in an address space.
+// LLVMPointerType: typed pointer to element_type in address_space.
+// LLVMPointerTypeIsOpaque: true if the pointer is opaque (no element type).
+//
+// Aggregate and derived types
+// LLVMFunctionType: function type from return type + parameter types.
+// LLVMIsFunctionVarArg: true if the function type is variadic.
+// LLVMGetReturnType: return type of a function type.
+// LLVMCountParamTypes: number of parameter types of a function type.
+// LLVMGetParamTypes: fill an array with the parameter types.
+// LLVMArrayType2: array of element type with 64-bit count.
+// LLVMStructTypeInContext: literal (unnamed) struct type.
+// LLVMStructType: literal struct type in the global context.
+extern "C" {
+    safe fn LLVMGetTypeKind(ty: *mut u8) -> i32;
+    safe fn LLVMTypeIsSized(ty: *mut u8) -> i32;
+    safe fn LLVMGetTypeContext(ty: *mut u8) -> *mut u8;
+    safe fn LLVMInt1TypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMInt8TypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMInt16TypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMInt32TypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMInt64TypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMIntTypeInContext(ctx: *mut u8, num_bits: u32) -> *mut u8;
+    safe fn LLVMInt1Type() -> *mut u8;
+    safe fn LLVMInt8Type() -> *mut u8;
+    safe fn LLVMInt16Type() -> *mut u8;
+    safe fn LLVMInt32Type() -> *mut u8;
+    safe fn LLVMInt64Type() -> *mut u8;
+    safe fn LLVMBFloatTypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMFloatTypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMDoubleTypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMBFloatType() -> *mut u8;
+    safe fn LLVMFloatType() -> *mut u8;
+    safe fn LLVMDoubleType() -> *mut u8;
+    safe fn LLVMVoidTypeInContext(ctx: *mut u8) -> *mut u8;
+    safe fn LLVMVoidType() -> *mut u8;
+    safe fn LLVMPointerTypeInContext(ctx: *mut u8, address_space: u32) -> *mut u8;
+    safe fn LLVMPointerType(element_type: *mut u8, address_space: u32) -> *mut u8;
+    safe fn LLVMPointerTypeIsOpaque(ty: *mut u8) -> i32;
+    safe fn LLVMFunctionType(return_type: *mut u8, param_types: *mut u8, param_count: u32, is_var_arg: i32) -> *mut u8;
+    safe fn LLVMIsFunctionVarArg(function_ty: *mut u8) -> i32;
+    safe fn LLVMGetReturnType(function_ty: *mut u8) -> *mut u8;
+    safe fn LLVMCountParamTypes(function_ty: *mut u8) -> u32;
+    unsafe fn LLVMGetParamTypes(function_ty: *mut u8, dest: *mut u8);
+    safe fn LLVMArrayType2(element_type: *mut u8, element_count: u64) -> *mut u8;
+    unsafe fn LLVMStructTypeInContext(ctx: *mut u8, element_types: *mut u8, element_count: u32, packed: i32) -> *mut u8;
+    unsafe fn LLVMStructType(element_types: *mut u8, element_count: u32, packed: i32) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Values / Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMTypeOf: return the type of a value.
+// LLVMGetValueKind: return the LLVMValueKind enum value.
+// LLVMGetValueName2: return the name and its length (read-only).
+// LLVMSetValueName2: set the name (replaces existing name).
+// LLVMDumpValue: print a value to stderr (debug helper).
+// LLVMPrintValueToString: pretty-print a value; caller must LLVMDisposeMessage.
+// LLVMIsConstant: true if the value is a constant.
+// LLVMIsUndef: true if the value is undef.
+// LLVMGetNumOperands: number of operands of a user value (instruction/const).
+// LLVMGetOperand: i-th operand of a user value.
+//
+// Constant constructors
+// LLVMConstNull: the zero/null constant for a type.
+// LLVMConstAllOnes: all-bits-set constant (integer or vector of integers).
+// LLVMConstPointerNull: null pointer constant for a pointer type.
+// LLVMConstInt: integer constant (value + sign-extension flag).
+// LLVMConstIntGetSExtValue: sign-extend the constant to a 64-bit host integer.
+// LLVMConstIntGetZExtValue: zero-extend the constant to a 64-bit host integer.
+// LLVMConstReal: floating-point constant from a host double.
+// LLVMConstRealGetDouble: read back the constant as a double (sets *loses_info).
+// LLVMConstStringInContext: byte-string constant (not NUL-terminated by default).
+// LLVMConstArray2: constant array from element values (64-bit element count).
+// LLVMConstNamedStruct: constant value for a named struct type.
+extern "C" {
+    safe fn LLVMTypeOf(val: *mut u8) -> *mut u8;
+    safe fn LLVMGetValueKind(val: *mut u8) -> i32;
+    safe fn LLVMGetValueName2(val: *mut u8, length: *mut usize) -> *const u8;
+    unsafe fn LLVMSetValueName2(val: *mut u8, name: *const u8, name_len: usize);
+    unsafe fn LLVMDumpValue(val: *mut u8);
+    unsafe fn LLVMPrintValueToString(val: *mut u8) -> *mut u8;
+    safe fn LLVMIsConstant(val: *mut u8) -> i32;
+    safe fn LLVMIsUndef(val: *mut u8) -> i32;
+    safe fn LLVMGetNumOperands(val: *mut u8) -> i32;
+    safe fn LLVMGetOperand(val: *mut u8, index: u32) -> *mut u8;
+    safe fn LLVMConstNull(ty: *mut u8) -> *mut u8;
+    safe fn LLVMConstAllOnes(ty: *mut u8) -> *mut u8;
+    safe fn LLVMConstPointerNull(ty: *mut u8) -> *mut u8;
+    safe fn LLVMConstInt(int_ty: *mut u8, n: u64, sign_extend: i32) -> *mut u8;
+    safe fn LLVMConstIntGetSExtValue(constant_val: *mut u8) -> i64;
+    safe fn LLVMConstIntGetZExtValue(constant_val: *mut u8) -> u64;
+    safe fn LLVMConstReal(real_ty: *mut u8, n: f64) -> *mut u8;
+    unsafe fn LLVMConstRealGetDouble(constant_val: *mut u8, loses_info: *mut i32) -> f64;
+    unsafe fn LLVMConstStringInContext(ctx: *mut u8, str: *const u8, length: u32, dont_null_terminate: i32) -> *mut u8;
+    unsafe fn LLVMConstArray2(element_ty: *mut u8, constant_vals: *mut u8, length: u64) -> *mut u8;
+    unsafe fn LLVMConstNamedStruct(struct_ty: *mut u8, constant_vals: *mut u8, count: u32) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Global Values (globals, functions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMGetGlobalParent: module that owns this global.
+// LLVMIsDeclaration: true if the global has no definition (external linkage).
+// LLVMGetLinkage: linkage kind (LLVMLinkage enum as i32).
+// LLVMSetLinkage: set linkage.
+// LLVMGetSection: section attribute string.
+// LLVMSetSection: set section attribute.
+// LLVMGetVisibility: visibility (LLVMVisibility enum as i32).
+// LLVMSetVisibility: set visibility.
+//
+// Global variables
+// LLVMAddGlobal: add a global variable to a module (default address space).
+// LLVMAddGlobalInAddressSpace: add a global in a specific address space.
+// LLVMGetInitializer: initializer constant of a global variable.
+// LLVMSetInitializer: set the initializer constant.
+// LLVMIsGlobalConstant: true if the global is marked constant.
+// LLVMSetGlobalConstant: set the global-constant flag.
+//
+// Functions
+// LLVMAddFunction: add a function declaration/definition to a module.
+// LLVMDeleteFunction: erase a function from its module.
+// LLVMGetFunctionCallConv: calling convention of a function.
+// LLVMSetFunctionCallConv: set the calling convention.
+// LLVMGetIntrinsicID: LLVM intrinsic ID for a function (0 if not intrinsic).
+// LLVMLookupIntrinsicID: look up intrinsic ID by name and length.
+// LLVMVerifyFunction: verify a function; returns 0 on success.
+//   failure_action: LLVMVerifierFailureAction enum as i32.
+extern "C" {
+    safe fn LLVMGetGlobalParent(global: *mut u8) -> *mut u8;
+    safe fn LLVMIsDeclaration(global: *mut u8) -> i32;
+    safe fn LLVMGetLinkage(global: *mut u8) -> i32;
+    unsafe fn LLVMSetLinkage(global: *mut u8, linkage: i32);
+    safe fn LLVMGetSection(global: *mut u8) -> *const u8;
+    unsafe fn LLVMSetSection(global: *mut u8, section: *const u8);
+    safe fn LLVMGetVisibility(global: *mut u8) -> i32;
+    unsafe fn LLVMSetVisibility(global: *mut u8, viz: i32);
+    unsafe fn LLVMAddGlobal(m: *mut u8, ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMAddGlobalInAddressSpace(m: *mut u8, ty: *mut u8, name: *const u8, address_space: u32) -> *mut u8;
+    safe fn LLVMGetInitializer(global_var: *mut u8) -> *mut u8;
+    unsafe fn LLVMSetInitializer(global_var: *mut u8, constant_val: *mut u8);
+    safe fn LLVMIsGlobalConstant(global_var: *mut u8) -> i32;
+    unsafe fn LLVMSetGlobalConstant(global_var: *mut u8, is_constant: i32);
+    unsafe fn LLVMAddFunction(m: *mut u8, name: *const u8, function_ty: *mut u8) -> *mut u8;
+    unsafe fn LLVMDeleteFunction(fn_val: *mut u8);
+    safe fn LLVMGetFunctionCallConv(fn_val: *mut u8) -> u32;
+    unsafe fn LLVMSetFunctionCallConv(fn_val: *mut u8, cc: u32);
+    safe fn LLVMGetIntrinsicID(fn_val: *mut u8) -> u32;
+    safe fn LLVMLookupIntrinsicID(name: *const u8, name_len: usize) -> u32;
+    unsafe fn LLVMVerifyFunction(fn_val: *mut u8, action: i32) -> i32;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Function parameters
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMCountParams: number of parameters of a function.
+// LLVMGetParams: fill an array of LLVMValueRef with all params.
+// LLVMGetParam: i-th parameter value.
+// LLVMGetParamParent: function that owns this parameter value.
+// LLVMGetFirstParam: first parameter in the parameter list.
+// LLVMGetNextParam: next parameter after the given one.
+// LLVMGetLastParam: last parameter.
+extern "C" {
+    safe fn LLVMCountParams(fn_val: *mut u8) -> u32;
+    unsafe fn LLVMGetParams(fn_val: *mut u8, params: *mut u8);
+    safe fn LLVMGetParam(fn_val: *mut u8, index: u32) -> *mut u8;
+    safe fn LLVMGetParamParent(inst: *mut u8) -> *mut u8;
+    safe fn LLVMGetFirstParam(fn_val: *mut u8) -> *mut u8;
+    safe fn LLVMGetNextParam(arg: *mut u8) -> *mut u8;
+    safe fn LLVMGetLastParam(fn_val: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Attributes
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMGetEnumAttributeKindForName: look up a named attribute kind by string.
+// LLVMCreateEnumAttribute: create an enum attribute with an optional value.
+// LLVMAddAttributeAtIndex: add an attribute to a function at a parameter index.
+//   index 0 = return value, 1..n = parameter n, LLVMAttributeFunctionIndex = ~0u.
+// LLVMGetAttributeCountAtIndex: number of attributes at an index.
+extern "C" {
+    safe fn LLVMGetEnumAttributeKindForName(name: *const u8, s_len: usize) -> u32;
+    unsafe fn LLVMCreateEnumAttribute(ctx: *mut u8, kind_id: u32, val: u64) -> *mut u8;
+    unsafe fn LLVMAddAttributeAtIndex(fn_val: *mut u8, idx: u32, attr: *mut u8);
+    safe fn LLVMGetAttributeCountAtIndex(fn_val: *mut u8, idx: u32) -> u32;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Basic Blocks
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMBasicBlockAsValue: view a basic block as a value.
+// LLVMValueIsBasicBlock: true if the value is a basic block wrapper.
+// LLVMValueAsBasicBlock: downcast a value to a basic-block reference.
+// LLVMGetBasicBlockName: name of a basic block.
+// LLVMGetBasicBlockParent: function that contains the block.
+// LLVMGetBasicBlockTerminator: terminator instruction of the block (or null).
+// LLVMCountBasicBlocks: number of basic blocks in a function.
+// LLVMGetFirstBasicBlock: first basic block of a function.
+// LLVMGetNextBasicBlock: next basic block in the list.
+// LLVMGetLastBasicBlock: last basic block of a function.
+// LLVMGetEntryBasicBlock: entry (first) basic block of a function.
+// LLVMAppendBasicBlockInContext: append a new basic block in a context.
+// LLVMAppendBasicBlock: append in the global context.
+// LLVMDeleteBasicBlock: detach and free a basic block.
+// LLVMGetInsertBlock: basic block the builder is currently positioned at.
+extern "C" {
+    safe fn LLVMBasicBlockAsValue(bb: *mut u8) -> *mut u8;
+    safe fn LLVMValueIsBasicBlock(val: *mut u8) -> i32;
+    safe fn LLVMValueAsBasicBlock(val: *mut u8) -> *mut u8;
+    safe fn LLVMGetBasicBlockName(bb: *mut u8) -> *const u8;
+    safe fn LLVMGetBasicBlockParent(bb: *mut u8) -> *mut u8;
+    safe fn LLVMGetBasicBlockTerminator(bb: *mut u8) -> *mut u8;
+    safe fn LLVMCountBasicBlocks(fn_val: *mut u8) -> u32;
+    safe fn LLVMGetFirstBasicBlock(fn_val: *mut u8) -> *mut u8;
+    safe fn LLVMGetNextBasicBlock(bb: *mut u8) -> *mut u8;
+    safe fn LLVMGetLastBasicBlock(fn_val: *mut u8) -> *mut u8;
+    safe fn LLVMGetEntryBasicBlock(fn_val: *mut u8) -> *mut u8;
+    unsafe fn LLVMAppendBasicBlockInContext(ctx: *mut u8, fn_val: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMAppendBasicBlock(fn_val: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMDeleteBasicBlock(bb: *mut u8);
+    safe fn LLVMGetInsertBlock(builder: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — Instructions
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMGetFirstInstruction: first instruction in a basic block.
+// LLVMGetNextInstruction: next instruction in the block.
+// LLVMGetInstructionOpcode: opcode (LLVMOpcode enum as i32).
+// LLVMGetInstructionParent: basic block containing the instruction.
+// LLVMInstructionEraseFromParent: remove and free an instruction from its block.
+//
+// PHI nodes
+// LLVMAddIncoming: add (value, pred-block) pairs to a phi node.
+// LLVMCountIncoming: number of incoming edges.
+// LLVMGetIncomingValue: i-th incoming value.
+// LLVMGetIncomingBlock: i-th incoming predecessor block.
+extern "C" {
+    safe fn LLVMGetFirstInstruction(bb: *mut u8) -> *mut u8;
+    safe fn LLVMGetNextInstruction(inst: *mut u8) -> *mut u8;
+    safe fn LLVMGetInstructionOpcode(inst: *mut u8) -> i32;
+    safe fn LLVMGetInstructionParent(inst: *mut u8) -> *mut u8;
+    unsafe fn LLVMInstructionEraseFromParent(inst: *mut u8);
+    unsafe fn LLVMAddIncoming(phi_node: *mut u8, incoming_values: *mut u8, incoming_blocks: *mut u8, count: u32);
+    safe fn LLVMCountIncoming(phi_node: *mut u8) -> u32;
+    safe fn LLVMGetIncomingValue(phi_node: *mut u8, index: u32) -> *mut u8;
+    safe fn LLVMGetIncomingBlock(phi_node: *mut u8, index: u32) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — IRBuilder
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMCreateBuilderInContext: create a builder in a specific context.
+// LLVMCreateBuilder: create a builder in the global context.
+// LLVMPositionBuilderAtEnd: position the builder at the end of a basic block.
+// LLVMDisposeBuilder: free the builder.
+//
+// Terminator instructions
+// LLVMBuildRetVoid: build a ret void instruction.
+// LLVMBuildRet: build a ret <val> instruction.
+// LLVMBuildBr: build an unconditional branch.
+// LLVMBuildCondBr: build a conditional branch.
+//
+// Arithmetic (integer)
+// LLVMBuildAdd, LLVMBuildSub, LLVMBuildMul: integer arithmetic.
+// LLVMBuildUDiv, LLVMBuildSDiv: unsigned / signed division.
+// LLVMBuildURem, LLVMBuildSRem: unsigned / signed remainder.
+// LLVMBuildShl, LLVMBuildLShr, LLVMBuildAShr: shifts.
+// LLVMBuildAnd, LLVMBuildOr, LLVMBuildXor: bitwise.
+// LLVMBuildNeg: integer negation.
+// LLVMBuildNot: bitwise NOT.
+//
+// Arithmetic (floating-point)
+// LLVMBuildFAdd, LLVMBuildFSub, LLVMBuildFMul, LLVMBuildFDiv, LLVMBuildFRem.
+// LLVMBuildFNeg: floating-point negation.
+//
+// Comparison
+// LLVMBuildICmp: integer comparison (LLVMIntPredicate as i32).
+// LLVMBuildFCmp: floating-point comparison (LLVMRealPredicate as i32).
+//
+// Memory
+// LLVMBuildAlloca: stack allocation.
+// LLVMBuildLoad2: load with explicit type (LLVM opaque-pointer API).
+// LLVMBuildStore: store a value to a pointer.
+// LLVMBuildGEP2: getelementptr with explicit type (LLVM opaque-pointer API).
+// LLVMBuildInBoundsGEP2: inbounds getelementptr.
+// LLVMBuildMemSet: memset intrinsic call.
+// LLVMBuildMemCpy: memcpy intrinsic call.
+// LLVMBuildMemMove: memmove intrinsic call.
+//
+// Casts
+// LLVMBuildTrunc, LLVMBuildZExt, LLVMBuildSExt: integer truncate / extend.
+// LLVMBuildFPTrunc, LLVMBuildFPExt: float truncate / extend.
+// LLVMBuildFPToUI, LLVMBuildFPToSI: float to unsigned / signed int.
+// LLVMBuildUIToFP, LLVMBuildSIToFP: unsigned / signed int to float.
+// LLVMBuildPtrToInt, LLVMBuildIntToPtr: pointer ↔ integer.
+// LLVMBuildBitCast: reinterpret-cast with same bit width.
+//
+// Other
+// LLVMBuildCall2: call instruction with explicit function type.
+// LLVMBuildPhi: phi node.
+// LLVMBuildSelect: select instruction (ternary).
+// LLVMBuildExtractElement: extract vector element.
+// LLVMBuildInsertElement: insert vector element.
+// LLVMBuildExtractValue: extract aggregate (struct/array) element.
+// LLVMBuildInsertValue: insert aggregate (struct/array) element.
+extern "C" {
+    unsafe fn LLVMCreateBuilderInContext(ctx: *mut u8) -> *mut u8;
+    unsafe fn LLVMCreateBuilder() -> *mut u8;
+    unsafe fn LLVMPositionBuilderAtEnd(builder: *mut u8, block: *mut u8);
+    unsafe fn LLVMDisposeBuilder(builder: *mut u8);
+    unsafe fn LLVMBuildRetVoid(builder: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildRet(builder: *mut u8, v: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildBr(builder: *mut u8, dest: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildCondBr(builder: *mut u8, cond: *mut u8, then_bb: *mut u8, else_bb: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildAdd(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildSub(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildMul(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildUDiv(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildSDiv(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildURem(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildSRem(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildShl(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildLShr(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildAShr(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildAnd(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildOr(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildXor(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildNeg(builder: *mut u8, v: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildNot(builder: *mut u8, v: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFAdd(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFSub(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFMul(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFDiv(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFRem(builder: *mut u8, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFNeg(builder: *mut u8, v: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildICmp(builder: *mut u8, op: i32, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFCmp(builder: *mut u8, op: i32, lhs: *mut u8, rhs: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildAlloca(builder: *mut u8, ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildLoad2(builder: *mut u8, ty: *mut u8, pointer_val: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildStore(builder: *mut u8, val: *mut u8, ptr: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildGEP2(builder: *mut u8, ty: *mut u8, pointer: *mut u8, indices: *mut u8, num_indices: u32, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildInBoundsGEP2(builder: *mut u8, ty: *mut u8, pointer: *mut u8, indices: *mut u8, num_indices: u32, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildMemSet(builder: *mut u8, ptr: *mut u8, val: *mut u8, len: *mut u8, align: u32) -> *mut u8;
+    unsafe fn LLVMBuildMemCpy(builder: *mut u8, dst: *mut u8, dst_align: u32, src: *mut u8, src_align: u32, size: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildMemMove(builder: *mut u8, dst: *mut u8, dst_align: u32, src: *mut u8, src_align: u32, size: *mut u8) -> *mut u8;
+    unsafe fn LLVMBuildTrunc(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildZExt(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildSExt(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFPTrunc(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFPExt(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFPToUI(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildFPToSI(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildUIToFP(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildSIToFP(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildPtrToInt(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildIntToPtr(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildBitCast(builder: *mut u8, val: *mut u8, dest_ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildCall2(builder: *mut u8, ty: *mut u8, fn_val: *mut u8, args: *mut u8, num_args: u32, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildPhi(builder: *mut u8, ty: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildSelect(builder: *mut u8, cond: *mut u8, then_val: *mut u8, else_val: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildExtractElement(builder: *mut u8, vec_val: *mut u8, index: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildInsertElement(builder: *mut u8, vec_val: *mut u8, elt_val: *mut u8, index: *mut u8, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildExtractValue(builder: *mut u8, agg_val: *mut u8, index: u32, name: *const u8) -> *mut u8;
+    unsafe fn LLVMBuildInsertValue(builder: *mut u8, agg_val: *mut u8, elt_val: *mut u8, index: u32, name: *const u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Analysis.h — Module / Function verification
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMVerifyModule: verify a module; returns 0 on success.
+//   failure_action: LLVMVerifierFailureAction enum as i32.
+//   Sets *out_message (caller must LLVMDisposeMessage if non-null).
+extern "C" {
+    unsafe fn LLVMVerifyModule(m: *mut u8, action: i32, out_message: *mut *mut u8) -> i32;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/BitWriter.h — Bitcode serialization
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMWriteBitcodeToFile: write bitcode to a file path; returns 0 on success.
+// LLVMWriteBitcodeToMemoryBuffer: write bitcode to a memory buffer (caller owns).
+extern "C" {
+    unsafe fn LLVMWriteBitcodeToFile(m: *mut u8, path: *const u8) -> i32;
+    unsafe fn LLVMWriteBitcodeToMemoryBuffer(m: *mut u8) -> *mut u8;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — MemoryBuffer
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMGetBufferStart: pointer to the start of a memory buffer's data.
+// LLVMGetBufferSize: byte length of a memory buffer.
+// LLVMDisposeMemoryBuffer: free a memory buffer returned by the LLVM API.
+extern "C" {
+    safe fn LLVMGetBufferStart(mem_buf: *mut u8) -> *const u8;
+    safe fn LLVMGetBufferSize(mem_buf: *mut u8) -> usize;
+    unsafe fn LLVMDisposeMemoryBuffer(mem_buf: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/Core.h — PassManager (legacy)
+//
+// Note: the legacy pass manager was deprecated in LLVM 15 and the
+// PassManagerBuilder was removed in LLVM 17. These bindings cover the
+// residual subset still present in LLVM 18 (plain function-pass manager
+// and module-pass manager). The new pass manager surface (PassBuilder,
+// NewPM) is deferred to Phase H — it requires callback-heavy registration
+// APIs that benefit from the Phase B FnPtr ABI.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMCreatePassManager: create a module-level pass manager.
+// LLVMCreateFunctionPassManagerForModule: create a function-level pass manager.
+// LLVMCreateFunctionPassManager: create a function-level pass manager for a
+//   module-provider (legacy; prefer ForModule in new code).
+// LLVMRunPassManager: run all passes on a module; returns 1 if modified.
+// LLVMInitializeFunctionPassManager: set up the function pass manager.
+// LLVMRunFunctionPassManager: run passes on a single function.
+// LLVMFinalizeFunctionPassManager: finalize the function pass manager.
+// LLVMDisposePassManager: free the pass manager.
+extern "C" {
+    unsafe fn LLVMCreatePassManager() -> *mut u8;
+    unsafe fn LLVMCreateFunctionPassManagerForModule(m: *mut u8) -> *mut u8;
+    unsafe fn LLVMCreateFunctionPassManager(mp: *mut u8) -> *mut u8;
+    unsafe fn LLVMRunPassManager(pm: *mut u8, m: *mut u8) -> i32;
+    unsafe fn LLVMInitializeFunctionPassManager(fpm: *mut u8) -> i32;
+    unsafe fn LLVMRunFunctionPassManager(fpm: *mut u8, fn_val: *mut u8) -> i32;
+    unsafe fn LLVMFinalizeFunctionPassManager(fpm: *mut u8) -> i32;
+    unsafe fn LLVMDisposePassManager(pm: *mut u8);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// llvm-c/TargetMachine.h — Target + TargetMachine
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LLVMGetDefaultTargetTriple: return a heap string with the default triple;
+//   caller must LLVMDisposeMessage.
+// LLVMGetHostCPUName: return a heap string with the host CPU name;
+//   caller must LLVMDisposeMessage.
+// LLVMGetHostCPUFeatures: return a heap string with the host CPU feature set;
+//   caller must LLVMDisposeMessage.
+// LLVMGetTargetFromName: look up a target by name; null if not found.
+// LLVMGetTargetFromTriple: look up a target by triple; sets *error_message on
+//   failure (caller must LLVMDisposeMessage); returns 0 on success.
+// LLVMCreateTargetMachine: create a target machine from a target + options.
+//   opt_level: LLVMCodeGenOptLevel as i32 (0 = none, 1 = less, 2 = default, 3 = aggressive).
+//   reloc_mode: LLVMRelocMode as i32 (0 = default, 1 = static, 2 = PIC, 3 = dyn-no-pic).
+//   code_model: LLVMCodeModel as i32 (0 = default, 1 = jit-default, 2 = tiny, ...).
+// LLVMDisposeTargetMachine: free a target machine.
+// LLVMGetTargetMachineTriple: return a heap string; caller must LLVMDisposeMessage.
+// LLVMGetTargetMachineCPU: return a heap string; caller must LLVMDisposeMessage.
+// LLVMGetTargetMachineFeatureString: return a heap string; caller must LLVMDisposeMessage.
+// LLVMCreateTargetDataLayout: create a target-data (DataLayout) for the machine.
+// LLVMDisposeTargetData: free a DataLayout.
+// LLVMTargetMachineEmitToFile: emit code to a file.
+//   codegen: LLVMCodeGenFileType as i32 (0 = asm, 1 = object).
+//   Returns 0 on success; sets *error_message on failure.
+// LLVMTargetMachineEmitToMemoryBuffer: emit code to a memory buffer (caller owns).
+//   Returns 0 on success; sets *error_message on failure.
+extern "C" {
+    unsafe fn LLVMGetDefaultTargetTriple() -> *mut u8;
+    unsafe fn LLVMGetHostCPUName() -> *mut u8;
+    unsafe fn LLVMGetHostCPUFeatures() -> *mut u8;
+    safe fn LLVMGetTargetFromName(name: *const u8) -> *mut u8;
+    unsafe fn LLVMGetTargetFromTriple(triple: *const u8, target: *mut *mut u8, error_message: *mut *mut u8) -> i32;
+    unsafe fn LLVMCreateTargetMachine(target: *mut u8, triple: *const u8, cpu: *const u8, features: *const u8, level: i32, reloc: i32, code_model: i32) -> *mut u8;
+    unsafe fn LLVMDisposeTargetMachine(tm: *mut u8);
+    unsafe fn LLVMGetTargetMachineTriple(tm: *mut u8) -> *mut u8;
+    unsafe fn LLVMGetTargetMachineCPU(tm: *mut u8) -> *mut u8;
+    unsafe fn LLVMGetTargetMachineFeatureString(tm: *mut u8) -> *mut u8;
+    unsafe fn LLVMCreateTargetDataLayout(tm: *mut u8) -> *mut u8;
+    unsafe fn LLVMDisposeTargetData(td: *mut u8);
+    unsafe fn LLVMTargetMachineEmitToFile(tm: *mut u8, m: *mut u8, filename: *mut u8, codegen: i32, error_message: *mut *mut u8) -> i32;
+    unsafe fn LLVMTargetMachineEmitToMemoryBuffer(tm: *mut u8, m: *mut u8, codegen: i32, error_message: *mut *mut u8, out_mem_buf: *mut *mut u8) -> i32;
+}
