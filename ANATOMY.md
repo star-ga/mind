@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2587 | **Est. tokens:** ~6,379,852
-**Generated:** 2026-05-21 11:26 UTC
+**Files:** 2587 | **Est. tokens:** ~6,379,869
+**Generated:** 2026-05-21 11:53 UTC
 
 ## Token Budget Guide
 
@@ -368,7 +368,7 @@
 | `src/build/` | 1 | ~4,524 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
-| `src/deps/` | 1 | ~7,909 |
+| `src/deps/` | 1 | ~7,926 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/eval/` | 13 | ~73,494 |
@@ -3560,7 +3560,7 @@
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
 ### `src/deps/`
 
-- `mod.rs` (~7909 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7926 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.

@@ -307,9 +307,10 @@ pub fn run_clean(project_root: &Path, opts: &CleanOpts) -> Result<(), DepError> 
             println!("   Removed {}", target_dir.display());
         }
         if mindenv_cache.exists() {
-            fs::remove_dir_all(&mindenv_cache)
-                .map_err(|e| DepError::Io(format!("cannot remove cache: {e}")))?;
-            println!("   Removed {}", mindenv_cache.display());
+            match fs::remove_dir_all(&mindenv_cache) {
+                Ok(()) => println!("   Removed {}", mindenv_cache.display()),
+                Err(e) => eprintln!("warning: could not fully remove cache ({}): {e}", mindenv_cache.display()),
+            }
         }
         return Ok(());
     }
