@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2584 | **Est. tokens:** ~6,351,634
-**Generated:** 2026-05-21 09:49 UTC
+**Files:** 2585 | **Est. tokens:** ~6,364,576
+**Generated:** 2026-05-21 10:27 UTC
 
 ## Token Budget Guide
 
@@ -41,6 +41,7 @@
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 2 | ~4,452 |
+| `docs/research/` | 1 | ~12,942 |
 | `docs/rfcs/` | 14 | ~40,887 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
@@ -594,6 +595,9 @@
 - `performance.md` (~742 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
+### `docs/research/`
+
+- `2026-05-21-autoresearch-rfc-0009-0011.md` (~12942 tok, huge) — Autoresearch: Innovative Techniques for RFCs 0008E / 0009 / 0010 / 0011
 ### `docs/rfcs/`
 
 - `0000-template.md` (~627 tok, large) — RFC 0000: [Title]
