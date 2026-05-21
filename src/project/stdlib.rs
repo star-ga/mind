@@ -42,7 +42,9 @@ use crate::ast::Module;
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.blas",   include_str!("../../std/blas.mind")),
     ("std.io",     include_str!("../../std/io.mind")),
+    ("std.json",   include_str!("../../std/json.mind")),
     ("std.map",    include_str!("../../std/map.mind")),
+    ("std.regex",  include_str!("../../std/regex.mind")),
     ("std.string", include_str!("../../std/string.mind")),
     ("std.toml",   include_str!("../../std/toml.mind")),
     ("std.vec",    include_str!("../../std/vec.mind")),
@@ -141,6 +143,8 @@ mod tests {
         assert!(names.contains(&"std.map"));
         assert!(names.contains(&"std.io"));
         assert!(names.contains(&"std.toml"));
+        assert!(names.contains(&"std.json"));
+        assert!(names.contains(&"std.regex"));
     }
 
     #[test]
@@ -156,6 +160,8 @@ mod tests {
         assert!(table.resolves(&["std".into(), "map".into()], "map_new"));
         assert!(table.resolves(&["std".into(), "io".into()], "stdout"));
         assert!(table.resolves(&["std".into(), "toml".into()], "toml_parse"));
+        assert!(table.resolves(&["std".into(), "json".into()], "jv_parse"));
+        assert!(table.resolves(&["std".into(), "regex".into()], "rx_compile"));
     }
 
     #[test]
@@ -226,6 +232,8 @@ mod tests {
         assert!(names.contains(&"std.map"));
         assert!(names.contains(&"std.io"));
         assert!(names.contains(&"std.toml"));
+        assert!(names.contains(&"std.json"));
+        assert!(names.contains(&"std.regex"));
     }
 
     #[test]
