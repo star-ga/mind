@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0010 |
 | Title | Memory safety model + C ABI in pure MIND |
-| Status | **Phase C Shipped — Phases D–J planned** |
+| Status | **Phase E Scaffolded — Phase C Shipped, Phase D + Phases F–J planned** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -331,7 +331,7 @@ testable.
 | B | System V AMD64 calling convention lowering for `#[repr(C)]` structs (up to 4 Copy fields, ≤16B); `extern "C" fn(T) -> R` callback function pointer types (`TypeAnn::FnPtr` → `!llvm.ptr`); vararg call lowering with per-position type hints (`vararg_hints: Vec<String>` on `ExternFnDecl`); SysV struct classification (`sysv_classify_struct`). | 17 Phase B tests pass; Phase A tests unchanged; bootstrap fixed-point preserved. | **Shipped** |
 | C | Win64 calling convention lowering (`win64_classify_struct`, `extern_type_to_mlir_multi_win64`, `cconv = #llvm.cconv<win64cc>` attribute on `llvm.func`/`llvm.call`); f32 vararg promotion to f64 (C11 §6.5.2.2p6, audit R-03). | 10 Phase C tests pass; `0 failed` full-suite gate. | **Shipped** |
 | D | AAPCS (AArch64) calling convention lowering. | same round-trip gate on AArch64 Linux. | Planned |
-| E | Hand-written MIND `std.mlir` bindings for the MLIR C API (~150 functions). Authored against the MLIR C API header set. Safety attribution per function: `safe` for pure query functions, `unsafe` for mutation and pointer-passing functions. | std.mlir compiles under mindc; a smoke test exercises round-trip MLIR construction from MIND code. | Planned |
+| E | Hand-written MIND `std.mlir` bindings for the MLIR C API (~150 functions). Authored against the MLIR C API header set. Safety attribution per function: `safe` for pure query functions, `unsafe` for mutation and pointer-passing functions. | std.mlir compiles under mindc; a smoke test exercises round-trip MLIR construction from MIND code. | **Scaffolded** (`std/mlir.mind` — 209 fns, 673 LOC; `tests/std_mlir_bindings_smoke.rs` — 4 tests; Phase F migrates mindc internals) |
 | F | Hand-written MIND `std.llvm` bindings for the LLVM C API. | std.llvm compiles; smoke test exercises IR construction from MIND code. | Planned |
 | G | Migrate mindc's MLIR-glue from `mlir-sys` (Rust) to `std.mlir` (MIND). | mindc self-build smoke test passes end-to-end with the new path. | Planned |
 | H | Migrate mindc's LLVM-glue from `llvm-sys` / `inkwell` (Rust) to `std.llvm` (MIND). | same self-build smoke test. | Planned |
