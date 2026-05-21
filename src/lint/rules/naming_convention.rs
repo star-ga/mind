@@ -176,6 +176,7 @@ fn emit(
         file: ctx.file.to_path_buf(),
         span: SourceSpan { start, end },
         help: Some(format!("rename `{name}` to follow {expected_case}")),
+        auto_fix: None,
     });
 }
 

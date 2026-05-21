@@ -10,16 +10,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Rule `lint::trailing_whitespace` — proof-of-life rule for Phase 3.
+//! Rule `lint::trailing_whitespace`.
 //!
 //! Emits a [`Diagnostic`] for every line that ends with one or more space or
 //! tab characters (before the newline, or at end-of-file without a newline).
 //!
-//! This rule exercises the full Phase 3 pipeline without requiring AST
-//! analysis; it works on raw source bytes only.  Phase 4 will add the five
-//! named AST-level production rules.
+//! This rule supports auto-fix (RFC 0007 Phase 6): the trailing whitespace
+//! bytes are deleted by replacing the span with an empty string.
 
-use crate::lint::rule::{LintCtx, LintRule};
+use crate::lint::rule::{Fix, LintCtx, LintRule};
 use crate::lint::{Diagnostic, SourceSpan};
 use crate::project::RuleSeverity;
 
@@ -73,6 +72,7 @@ impl LintRule for TrailingWhitespace {
                         end: line_end,
                     },
                     help: Some("remove trailing spaces/tabs".to_string()),
+                    auto_fix: None, // populated by auto_fix() below
                 });
             }
 
@@ -84,5 +84,13 @@ impl LintRule for TrailingWhitespace {
         }
 
         diagnostics
+    }
+
+    /// Delete the trailing whitespace bytes (replace span with empty string).
+    fn auto_fix(&self, _ctx: &LintCtx<'_>, diagnostic: &Diagnostic) -> Option<Fix> {
+        Some(Fix {
+            range: diagnostic.span.start..diagnostic.span.end,
+            replacement: String::new(),
+        })
     }
 }

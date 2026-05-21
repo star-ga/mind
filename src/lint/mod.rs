@@ -64,8 +64,14 @@ pub struct Diagnostic {
     pub file: std::path::PathBuf,
     /// Byte span within `file` where the finding was detected.
     pub span: SourceSpan,
-    /// Optional suggested fix description (not machine-applicable in Phase 3).
+    /// Optional suggested fix description.
     pub help: Option<String>,
+    /// Optional machine-applicable source replacement (RFC 0007 Phase 6).
+    ///
+    /// When present, `mindc check --fix` / `mindc lint --fix` will apply this
+    /// edit to the source file automatically.  The edit replaces the bytes
+    /// `source[auto_fix.range]` with `auto_fix.replacement`.
+    pub auto_fix: Option<crate::lint::rule::Fix>,
 }
 
 /// Run all enabled rules against `ctx`, returning diagnostics sorted by
@@ -86,8 +92,13 @@ pub fn run_lint(ctx: &LintCtx<'_>, registry: &RuleRegistry) -> Vec<Diagnostic> {
             // Override the severity on every emitted diagnostic with the
             // resolved value so callers always see the file-local effective
             // severity, not the rule's compile-time default.
+            // Also populate `auto_fix` by calling the rule's fix provider.
+            let rule_ref = rule.as_ref();
             Some(raw.into_iter().map(move |mut d| {
                 d.severity = sev;
+                if d.auto_fix.is_none() {
+                    d.auto_fix = rule_ref.auto_fix(ctx, &d);
+                }
                 d
             }))
         })

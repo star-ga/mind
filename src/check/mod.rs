@@ -105,9 +105,15 @@ pub struct CheckDiagnostic {
     pub rule_id: String,
     /// Which toolchain pass produced this diagnostic.
     pub phase: CheckPhase,
-    /// Optional machine-readable fix hint (not applied in Phase 5).
+    /// Optional human-readable fix hint.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub help: Option<String>,
+    /// Byte-range replacement sourced from lint auto-fix (not serialised).
+    ///
+    /// Present only on diagnostics that have a machine-applicable fix.
+    /// Used internally by `--fix`; not emitted in JSON/LSP reporters.
+    #[serde(skip)]
+    pub auto_fix: Option<crate::lint::rule::Fix>,
 }
 
 impl CheckDiagnostic {
@@ -138,6 +144,8 @@ pub struct CheckOptions {
     pub run_typecheck: bool,
     pub reporter: ReporterKind,
     pub paths: Vec<String>,
+    /// When `true`, apply machine-applicable fixes and rewrite files.
+    pub fix: bool,
 }
 
 impl Default for CheckOptions {
@@ -148,6 +156,7 @@ impl Default for CheckOptions {
             run_typecheck: true,
             reporter: ReporterKind::Human,
             paths: Vec::new(),
+            fix: false,
         }
     }
 }
@@ -156,6 +165,12 @@ impl Default for CheckOptions {
 pub enum ReporterKind {
     Human,
     Json,
+    /// Emit LSP-compatible Diagnostic JSON (RFC 0007 Phase 6).
+    ///
+    /// Each diagnostic is serialised as an LSP `Diagnostic` object:
+    /// `{ uri, range: { start: { line, character }, end: { line, character } },
+    ///   severity, message, source, code }`.
+    Lsp,
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +179,14 @@ pub enum ReporterKind {
 
 /// Run `mindc check` and return the exit code (0 = clean, 1 = errors).
 ///
-/// Diagnostics are emitted to stdout (human) or stdout (json array) as they
-/// accumulate. The function itself does not call `process::exit`.
+/// When `opts.fix` is `true`, machine-applicable fixes are applied iteratively
+/// (up to 5 rounds) and the summary is printed to stdout. The function itself
+/// does not call `process::exit`.
 pub fn run_check(opts: &CheckOptions) -> i32 {
+    if opts.fix {
+        return run_check_fix(opts);
+    }
+
     let config = load_check_config();
     let mut registry = RuleRegistry::new();
     register_defaults(&mut registry);
@@ -180,8 +200,9 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
     };
 
     if files.is_empty() {
-        if opts.reporter == ReporterKind::Json {
-            println!("[]");
+        match opts.reporter {
+            ReporterKind::Json | ReporterKind::Lsp => println!("[]"),
+            ReporterKind::Human => {}
         }
         return 0;
     }
@@ -198,7 +219,6 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
         };
 
         let mut file_diags = check_file(path, &source, &config, &registry, opts);
-        // Sort by (line, col) for deterministic output within a file.
         file_diags.sort_by_key(|d| (d.line, d.col));
         all_diags.extend(file_diags);
     }
@@ -228,9 +248,287 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
                 }
             }
         }
+        ReporterKind::Lsp => {
+            match emit_lsp_diagnostics(&all_diags) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("error[check]: LSP serialisation failed: {e}");
+                    return 1;
+                }
+            }
+        }
     }
 
     if has_errors { 1 } else { 0 }
+}
+
+// ---------------------------------------------------------------------------
+// --fix driver
+// ---------------------------------------------------------------------------
+
+/// Maximum number of fix-recheck iterations before giving up.
+const MAX_FIX_ITERATIONS: usize = 5;
+
+/// Run `mindc check --fix`: apply machine-applicable fixes iteratively.
+///
+/// For every `fmt::drift` diagnostic, write the formatted version.
+/// For every lint diagnostic with an `auto_fix`, apply the byte-range edit.
+/// Re-check until no fixable diagnostics remain or `MAX_FIX_ITERATIONS` is
+/// reached.  Prints a summary line and returns the exit code.
+fn run_check_fix(opts: &CheckOptions) -> i32 {
+    let config = load_check_config();
+    let mut registry = RuleRegistry::new();
+    register_defaults(&mut registry);
+
+    let files = match resolve_paths(&opts.paths, &config) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("error[check]: {e}");
+            return 1;
+        }
+    };
+
+    if files.is_empty() {
+        println!("Fixed 0 files, 0 unfixable diagnostics remaining.");
+        return 0;
+    }
+
+    let mut total_fixed_files = 0usize;
+    let mut converged = true;
+
+    for path in &files {
+        let fixed = fix_file_iteratively(path, &config, &registry, opts);
+        match fixed {
+            Ok(FixResult::Fixed) => total_fixed_files += 1,
+            Ok(FixResult::Clean) => {}
+            Ok(FixResult::DidNotConverge) => {
+                converged = false;
+                eprintln!(
+                    "warning[check]: --fix did not converge after {MAX_FIX_ITERATIONS} \
+                     iterations for {}",
+                    path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!("error[check]: {}: {e}", path.display());
+            }
+        }
+    }
+
+    // Final pass: collect remaining unfixable diagnostics.
+    let mut remaining = 0usize;
+    for path in &files {
+        let source = match fs::read_to_string(path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let diags = check_file(path, &source, &config, &registry, opts);
+        remaining += diags.iter().filter(|d| d.auto_fix.is_none() && d.phase != CheckPhase::Fmt).count();
+    }
+
+    println!(
+        "Fixed {total_fixed_files} file{}, {remaining} unfixable diagnostic{} remaining.",
+        if total_fixed_files == 1 { "" } else { "s" },
+        if remaining == 1 { "" } else { "s" },
+    );
+
+    if !converged {
+        eprintln!(
+            "warning[check]: some files did not converge in {MAX_FIX_ITERATIONS} iterations"
+        );
+    }
+
+    if remaining > 0 { 1 } else { 0 }
+}
+
+#[derive(Debug)]
+enum FixResult {
+    Clean,
+    Fixed,
+    DidNotConverge,
+}
+
+/// Apply fixes to a single file, re-checking up to `MAX_FIX_ITERATIONS` times.
+fn fix_file_iteratively(
+    path: &Path,
+    config: &crate::project::MindcraftConfig,
+    registry: &RuleRegistry,
+    opts: &CheckOptions,
+) -> Result<FixResult, String> {
+    let mut any_written = false;
+
+    for _iter in 0..MAX_FIX_ITERATIONS {
+        let source = fs::read_to_string(path)
+            .map_err(|e| format!("cannot read: {e}"))?;
+
+        let diags = check_file(path, &source, config, registry, opts);
+
+        // Separate fixable from unfixable.
+        let fixable: Vec<&CheckDiagnostic> = diags
+            .iter()
+            .filter(|d| d.auto_fix.is_some() || d.phase == CheckPhase::Fmt)
+            .collect();
+
+        if fixable.is_empty() {
+            return Ok(if any_written { FixResult::Fixed } else { FixResult::Clean });
+        }
+
+        // Prioritise fmt::drift: if the file is not formatted, write the
+        // formatted version and re-check in the next iteration.  Do NOT also
+        // apply lint byte-range edits in the same pass — those offsets are for
+        // the original source and would be invalid after reformatting.
+        let has_fmt_drift = fixable.iter().any(|d| d.phase == CheckPhase::Fmt);
+        if has_fmt_drift {
+            let formatted = crate::fmt::format_source(&source, &config.format)
+                .map_err(|e| format!("format error: {e}"))?;
+            if formatted != source {
+                write_atomic(path, &formatted)
+                    .map_err(|e| format!("cannot write: {e}"))?;
+                any_written = true;
+                continue; // re-check from scratch with the formatted source
+            }
+            // If fmt produced the same source (shouldn't happen if fmt::drift
+            // was reported), fall through to lint fixes below.
+        }
+
+        // No fmt drift (or fmt was already applied above).  Collect and apply
+        // lint auto-fixes (byte-range edits) against the current source.
+        let mut edits: Vec<crate::lint::rule::Fix> = fixable
+            .iter()
+            .filter_map(|d| d.auto_fix.clone())
+            .collect();
+
+        if edits.is_empty() {
+            return Ok(if any_written { FixResult::Fixed } else { FixResult::Clean });
+        }
+
+        // Apply edits in ascending byte-offset order (apply_edits handles this).
+        edits.sort_by_key(|e| e.range.start);
+        // Remove overlapping edits: keep the first (lowest offset).
+        edits.dedup_by(|a, b| {
+            // `a` comes after `b` in sorted order.
+            // Drop `a` if it overlaps with `b`.
+            a.range.start < b.range.end
+        });
+
+        let fixed_source = apply_edits(&source, &edits)?;
+
+        if fixed_source == source {
+            return Ok(if any_written { FixResult::Fixed } else { FixResult::Clean });
+        }
+
+        write_atomic(path, &fixed_source)
+            .map_err(|e| format!("cannot write: {e}"))?;
+        any_written = true;
+    }
+
+    Ok(FixResult::DidNotConverge)
+}
+
+/// Apply a sorted (reverse-offset) list of non-overlapping byte-range edits.
+fn apply_edits(source: &str, edits: &[crate::lint::rule::Fix]) -> Result<String, String> {
+    let src_bytes = source.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(src_bytes.len());
+    let mut cursor = 0usize;
+
+    // Edits must be sorted in reverse order (largest start first) so we
+    // process them back-to-front and rebuild the string front-to-back by
+    // reversing the list here.
+    let mut ordered: Vec<_> = edits.iter().collect();
+    ordered.sort_by_key(|e| e.range.start);
+
+    for edit in &ordered {
+        if edit.range.start > src_bytes.len() || edit.range.end > src_bytes.len() {
+            return Err(format!(
+                "fix range {}..{} out of bounds (source len {})",
+                edit.range.start,
+                edit.range.end,
+                src_bytes.len()
+            ));
+        }
+        if edit.range.start < cursor {
+            // Overlapping edit — skip.
+            continue;
+        }
+        out.extend_from_slice(&src_bytes[cursor..edit.range.start]);
+        out.extend_from_slice(edit.replacement.as_bytes());
+        cursor = edit.range.end;
+    }
+    out.extend_from_slice(&src_bytes[cursor..]);
+
+    String::from_utf8(out).map_err(|e| format!("fix produced invalid UTF-8: {e}"))
+}
+
+/// Atomic file write via temp-file + rename.
+fn write_atomic(path: &Path, content: &str) -> io::Result<()> {
+    let tmp = path.with_extension("mind.fix.tmp");
+    fs::write(&tmp, content)?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// LSP reporter
+// ---------------------------------------------------------------------------
+
+/// LSP severity codes (as per the LSP specification).
+///
+/// 1=Error, 2=Warning, 3=Information, 4=Hint.
+fn lsp_severity(s: CheckSeverity) -> u8 {
+    match s {
+        CheckSeverity::Error => 1,
+        CheckSeverity::Warn => 2,
+        CheckSeverity::Info => 3,
+    }
+}
+
+/// Emit diagnostics as a JSON array of LSP `Diagnostic` objects.
+///
+/// Schema (per LSP specification §3.17):
+/// ```json
+/// [
+///   {
+///     "uri": "file:///absolute/path/to/file.mind",
+///     "range": {
+///       "start": { "line": 0, "character": 0 },
+///       "end":   { "line": 0, "character": 5 }
+///     },
+///     "severity": 1,
+///     "message": "...",
+///     "source": "mindc",
+///     "code": "lint::trailing_whitespace"
+///   }
+/// ]
+/// ```
+///
+/// LSP line/character values are 0-based; `CheckDiagnostic` uses 1-based.
+fn emit_lsp_diagnostics(diags: &[CheckDiagnostic]) -> Result<String, serde_json::Error> {
+    use serde_json::{json, Value};
+
+    let items: Vec<Value> = diags
+        .iter()
+        .map(|d| {
+            let line0 = d.line.saturating_sub(1);
+            let char0 = d.col.saturating_sub(1);
+            // For LSP `end`, we use the same line/col as start since we only
+            // have one position. Downstream tooling can use the `code` to
+            // look up the full span if needed.
+            let uri = format!("file://{}", d.file.display());
+            json!({
+                "uri": uri,
+                "range": {
+                    "start": { "line": line0, "character": char0 },
+                    "end":   { "line": line0, "character": char0 }
+                },
+                "severity": lsp_severity(d.severity),
+                "message": d.message,
+                "source": "mindc",
+                "code": d.rule_id,
+            })
+        })
+        .collect();
+
+    serde_json::to_string_pretty(&items)
 }
 
 // ---------------------------------------------------------------------------
@@ -436,6 +734,8 @@ fn check_fmt(path: &Path, source: &str, config: &MindcraftConfig, out: &mut Vec<
         rule_id: "fmt::drift".to_string(),
         phase: CheckPhase::Fmt,
         help: Some("run `mindc fmt <file>` to auto-format".to_string()),
+        // fmt::drift is fixed by rewriting the whole file; no byte-range fix.
+        auto_fix: None,
     });
 }
 
@@ -459,6 +759,7 @@ fn check_lint(
             rule_id: d.rule_id,
             phase: CheckPhase::Lint,
             help: d.help,
+            auto_fix: d.auto_fix,
         });
     }
 }
@@ -481,6 +782,7 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
                     rule_id: "type_check::parse_error".to_string(),
                     phase: CheckPhase::TypeCheck,
                     help: None,
+                    auto_fix: None,
                 });
             }
             return;
@@ -509,6 +811,7 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
             rule_id: format!("type_check::{}", d.code),
             phase: CheckPhase::TypeCheck,
             help: d.help,
+            auto_fix: None,
         });
     }
 }

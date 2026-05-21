@@ -1,0 +1,70 @@
+name: Mindcraft Check
+
+# Reusable workflow: downstream repos call this to run `mindc check` over
+# their MIND source files.
+#
+# Usage from a downstream repo:
+#   jobs:
+#     mindcraft:
+#       uses: star-ga/mind/.github/workflows/mindcraft.yml@main
+#       with:
+#         paths: "src/ tests/"   # optional; defaults to "." (whole repo)
+#
+# The job checks out the calling repo, builds mindc from source (cached), and
+# runs `mindc check` over the specified paths.  CI fails on any error-severity
+# diagnostic (fmt::drift, type errors, etc.).  Lint warnings do not block.
+
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: "Space-separated list of paths to check (default: whole repo)"
+        required: false
+        type: string
+        default: "."
+  # Allow direct dispatch for testing the workflow itself.
+  workflow_dispatch:
+    inputs:
+      paths:
+        description: "Space-separated list of paths to check"
+        required: false
+        default: "."
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
+jobs:
+  mindcraft:
+    name: Mindcraft check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-mindcraft-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-mindcraft-
+
+      - name: Build mindc
+        run: cargo build --release --no-default-features --bin mindc
+
+      - name: Run mindc check
+        run: |
+          PATHS="${{ inputs.paths }}"
+          cargo run --release --no-default-features --bin mindc -- \
+            check $PATHS
