@@ -327,7 +327,7 @@ testable.
 
 | Phase | Deliverable | Gate | Status |
 |---|---|---|---|
-| A | Parse `extern "C"` blocks; parse `safe`/`unsafe` fn attribution; parse `callconv(.)` tags; parse `...` variadic syntax. Emit parse errors for invalid combinations. Type-check extern signatures (Copy-only rule). Lower `extern "C"` fn calls to `llvm.call`; emit `llvm.func` declarations. | mindc parses all new syntax; existing test suite unchanged; 7 Phase A tests pass. | **Shipped** |
+| A | Parse `extern "C"` blocks; parse `safe`/`unsafe` fn attribution; parse `callconv(.)` tags; parse `...` variadic syntax. Emit parse errors for invalid combinations. Type-check extern signatures (Copy-only rule). Lower `extern "C"` fn calls to `llvm.call`; emit `llvm.func` declarations. | mindc parses all new syntax; existing test suite unchanged; 7 Phase A tests pass. | **Shipped** (`e82b831`) |
 | B | System V AMD64 calling convention lowering. Validates against the platform ABI spec on Linux x86_64. | round-trip test: MIND calls C, C calls MIND, values match. | Planned |
 | C | Win64 calling convention lowering. | same round-trip gate on Windows x86_64. | Planned |
 | D | AAPCS (AArch64) calling convention lowering. | same round-trip gate on AArch64 Linux. | Planned |
