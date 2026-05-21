@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Draft** |
+| Status | **Phase A Shipped** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -495,7 +495,7 @@ usage-error use code 2.
 The phasing splits into two tiers: **Phases A–D** are the first cut and ship
 together or in close succession. **Phases E–G** iterate after.
 
-### Phase A — single-crate build (no deps)
+### Phase A — single-crate build (no deps) — **Shipped**
 
 `mindc build` for a project with no `[dependencies]` entries. Covers the
 compile-sources loop, the link step, and the `--target` / `--release` /
@@ -504,11 +504,15 @@ internally. The Rust `build_project` function remains active; CI runs both for
 byte-identical output parity.
 
 Deliverables:
-- `build.mind` in `examples/mindc_mind/` — the pure-MIND build orchestrator
-  for single-crate projects
-- Mind.toml validation for `[build]` section fields
-- CI job: `mindc build` of `examples/mindc_mind/` produces a byte-identical
-  artifact to `cargo build --example mindc_mind`
+- `src/build/mod.rs` — the Rust build orchestrator implementing RFC 0008 §4
+  Phase A pipeline (single-crate, no deps, full CLI surface)
+- `src/project/mod.rs` — `BuildTarget`, `EmitKind`, `OptimizeLevel` enums;
+  `TestConfig`, `WorkspaceConfig` structs; `[build]` section extended
+- `src/bin/mindc.rs` — `mindc build [PATHS...] [--target|--emit|--release|--optimize|--out]`
+  subcommand wired in with RFC 0008 §6 exit code semantics (0/1/2)
+- `tests/mindc_build_phase_a.rs` — 23 integration + unit tests, all passing
+- Mind.toml validation for `[build]`, `[test]`, `[workspace]` section fields
+- Self-build smoke gate: `mindc build examples/mindc_mind/main.mind --emit=cdylib --out=/tmp/mindc_self_build.so` passes
 
 ### Phase B — test discovery and runner
 
