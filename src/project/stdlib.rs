@@ -40,14 +40,17 @@ use crate::ast::Module;
 /// table's deterministic-insertion contract is preserved when the
 /// project loader prepends these to the user's own modules.
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
-    ("std.blas",   include_str!("../../std/blas.mind")),
-    ("std.io",     include_str!("../../std/io.mind")),
-    ("std.json",   include_str!("../../std/json.mind")),
-    ("std.map",    include_str!("../../std/map.mind")),
-    ("std.regex",  include_str!("../../std/regex.mind")),
-    ("std.string", include_str!("../../std/string.mind")),
-    ("std.toml",   include_str!("../../std/toml.mind")),
-    ("std.vec",    include_str!("../../std/vec.mind")),
+    ("std.blas",    include_str!("../../std/blas.mind")),
+    ("std.fs",      include_str!("../../std/fs.mind")),
+    ("std.io",      include_str!("../../std/io.mind")),
+    ("std.json",    include_str!("../../std/json.mind")),
+    ("std.map",     include_str!("../../std/map.mind")),
+    ("std.net",     include_str!("../../std/net.mind")),
+    ("std.process", include_str!("../../std/process.mind")),
+    ("std.regex",   include_str!("../../std/regex.mind")),
+    ("std.string",  include_str!("../../std/string.mind")),
+    ("std.toml",    include_str!("../../std/toml.mind")),
+    ("std.vec",     include_str!("../../std/vec.mind")),
 ];
 
 /// Parse every bundled std/*.mind source and return the
@@ -145,6 +148,9 @@ mod tests {
         assert!(names.contains(&"std.toml"));
         assert!(names.contains(&"std.json"));
         assert!(names.contains(&"std.regex"));
+        assert!(names.contains(&"std.fs"));
+        assert!(names.contains(&"std.net"));
+        assert!(names.contains(&"std.process"));
     }
 
     #[test]
@@ -162,6 +168,9 @@ mod tests {
         assert!(table.resolves(&["std".into(), "toml".into()], "toml_parse"));
         assert!(table.resolves(&["std".into(), "json".into()], "jv_parse"));
         assert!(table.resolves(&["std".into(), "regex".into()], "rx_compile"));
+        assert!(table.resolves(&["std".into(), "fs".into()], "read_to_string"));
+        assert!(table.resolves(&["std".into(), "net".into()], "tcp_listen"));
+        assert!(table.resolves(&["std".into(), "process".into()], "spawn"));
     }
 
     #[test]
@@ -234,6 +243,9 @@ mod tests {
         assert!(names.contains(&"std.toml"));
         assert!(names.contains(&"std.json"));
         assert!(names.contains(&"std.regex"));
+        assert!(names.contains(&"std.fs"));
+        assert!(names.contains(&"std.net"));
+        assert!(names.contains(&"std.process"));
     }
 
     #[test]

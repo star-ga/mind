@@ -1,0 +1,275 @@
+// std/net.mind — Task #268: POSIX socket surface in pure MIND.
+//
+// Provides IPv4/IPv6 TCP + UDP over libc via extern "C" declarations.
+// All handles (TcpListener, TcpStream, UdpSocket) are heap records:
+//   offset 0: fd (i64)
+//
+// Determinism: all operations are synchronous / blocking POSIX.
+// No async, no TLS (RFC 0011 scope).
+
+// ---------------------------------------------------------------------------
+// POSIX constants
+// ---------------------------------------------------------------------------
+
+pub fn af_inet() -> i64 {
+    2
+}
+
+pub fn af_inet6() -> i64 {
+    10
+}
+
+pub fn sock_stream() -> i64 {
+    1
+}
+
+pub fn sock_dgram() -> i64 {
+    2
+}
+
+pub fn sol_socket() -> i64 {
+    1
+}
+
+pub fn so_reuseaddr() -> i64 {
+    2
+}
+
+// ---------------------------------------------------------------------------
+// libc extern "C" surface
+// ---------------------------------------------------------------------------
+
+extern "C" {
+    unsafe fn socket(domain: i32, type_: i32, protocol: i32) -> i32;
+    unsafe fn bind(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
+    unsafe fn accept(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+    unsafe fn connect(sockfd: i32, addr: *const u8, addrlen: i32) -> i32;
+    unsafe fn send(sockfd: i32, buf: *const u8, len: i64, flags: i32) -> i64;
+    unsafe fn recv(sockfd: i32, buf: *mut u8, len: i64, flags: i32) -> i64;
+    unsafe fn sendto(sockfd: i32, buf: *const u8, len: i64, flags: i32, dest_addr: *const u8, addrlen: i32) -> i64;
+    unsafe fn recvfrom(sockfd: i32, buf: *mut u8, len: i64, flags: i32, src_addr: *mut u8, addrlen: *mut u8) -> i64;
+    unsafe fn close(fd: i32) -> i32;
+    unsafe fn htons(hostshort: i32) -> i32;
+    unsafe fn ntohs(netshort: i32) -> i32;
+    unsafe fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
+    unsafe fn setsockopt(sockfd: i32, level: i32, optname: i32, optval: *const u8, optlen: i32) -> i32;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+}
+
+// ---------------------------------------------------------------------------
+// Internal heap-record helpers
+// ---------------------------------------------------------------------------
+
+fn net_alloc_handle(fd: i64) -> i64 {
+    let h: i64 = __mind_alloc(8);
+    __mind_store_i64(h, fd);
+    h
+}
+
+fn net_handle_fd(h: i64) -> i64 {
+    __mind_load_i64(h)
+}
+
+fn net_build_sockaddr_in(ip_str_addr: i64, port: i64) -> i64 {
+    let sa: i64 = __mind_alloc(16);
+    let _ = memset(sa as *mut u8, 0, 16);
+    __mind_store_i64(sa + 0, 2);
+    __mind_store_i64(sa + 1, 0);
+    let np: i64 = htons(port as i32) as i64;
+    __mind_store_i64(sa + 2, (np >> 8) & 255);
+    __mind_store_i64(sa + 3, np & 255);
+    let inet_buf: i64 = __mind_alloc(4);
+    let _ = inet_pton(2, ip_str_addr as *const u8, inet_buf as *mut u8);
+    __mind_store_i64(sa + 4, __mind_load_i64(inet_buf + 0) & 255);
+    __mind_store_i64(sa + 5, __mind_load_i64(inet_buf + 1) & 255);
+    __mind_store_i64(sa + 6, __mind_load_i64(inet_buf + 2) & 255);
+    __mind_store_i64(sa + 7, __mind_load_i64(inet_buf + 3) & 255);
+    sa
+}
+
+fn net_set_reuseaddr(fd: i64) -> i64 {
+    let optval: i64 = __mind_alloc(4);
+    __mind_store_i64(optval + 0, 1);
+    __mind_store_i64(optval + 1, 0);
+    __mind_store_i64(optval + 2, 0);
+    __mind_store_i64(optval + 3, 0);
+    setsockopt(fd as i32, sol_socket() as i32, so_reuseaddr() as i32, optval as *const u8, 4) as i64
+}
+
+fn net_getsockname_port(fd: i64) -> i64 {
+    let sa: i64 = __mind_alloc(16);
+    let _ = memset(sa as *mut u8, 0, 16);
+    let lenptr: i64 = __mind_alloc(4);
+    __mind_store_i64(lenptr + 0, 16);
+    __mind_store_i64(lenptr + 1, 0);
+    __mind_store_i64(lenptr + 2, 0);
+    __mind_store_i64(lenptr + 3, 0);
+    let _ = getsockname(fd as i32, sa as *mut u8, lenptr as *mut u8);
+    let b0: i64 = __mind_load_i64(sa + 2) & 255;
+    let b1: i64 = __mind_load_i64(sa + 3) & 255;
+    b0 * 256 + b1
+}
+
+// ---------------------------------------------------------------------------
+// Public: TcpListener
+// ---------------------------------------------------------------------------
+
+pub fn tcp_listener_fd(l: i64) -> i64 {
+    net_handle_fd(l)
+}
+
+// tcp_listen — create and bind a TCP server socket.
+// host_addr must be a NUL-terminated address string (e.g. "0.0.0.0\0").
+// Returns a TcpListener handle or 0 on error.
+pub fn tcp_listen(host_addr: i64, port: i64) -> i64 {
+    let fd: i64 = socket(af_inet() as i32, sock_stream() as i32, 0) as i64;
+    if fd < 0 {
+        return 0;
+    }
+    let _ = net_set_reuseaddr(fd);
+    let sa: i64 = net_build_sockaddr_in(host_addr, port);
+    let r: i64 = bind(fd as i32, sa as *const u8, 16) as i64;
+    if r < 0 {
+        let _ = close(fd as i32);
+        return 0;
+    }
+    let r2: i64 = listen(fd as i32, 128) as i64;
+    if r2 < 0 {
+        let _ = close(fd as i32);
+        return 0;
+    }
+    net_alloc_handle(fd)
+}
+
+// tcp_listen_port — returns the actual bound port (useful when port=0).
+pub fn tcp_listen_port(l: i64) -> i64 {
+    net_getsockname_port(net_handle_fd(l))
+}
+
+// tcp_accept — accept a new connection on a TcpListener.
+// Returns a TcpStream handle or 0 on error.
+pub fn tcp_accept(l: i64) -> i64 {
+    let lfd: i64 = net_handle_fd(l);
+    let sa: i64 = __mind_alloc(16);
+    let _ = memset(sa as *mut u8, 0, 16);
+    let lenptr: i64 = __mind_alloc(4);
+    __mind_store_i64(lenptr + 0, 16);
+    __mind_store_i64(lenptr + 1, 0);
+    __mind_store_i64(lenptr + 2, 0);
+    __mind_store_i64(lenptr + 3, 0);
+    let fd: i64 = accept(lfd as i32, sa as *mut u8, lenptr as *mut u8) as i64;
+    if fd < 0 {
+        return 0;
+    }
+    net_alloc_handle(fd)
+}
+
+// ---------------------------------------------------------------------------
+// Public: TcpStream
+// ---------------------------------------------------------------------------
+
+pub fn tcp_stream_fd(s: i64) -> i64 {
+    net_handle_fd(s)
+}
+
+// tcp_connect — connect a TCP client socket to host:port.
+// Returns a TcpStream handle or 0 on error.
+pub fn tcp_connect(host_addr: i64, port: i64) -> i64 {
+    let fd: i64 = socket(af_inet() as i32, sock_stream() as i32, 0) as i64;
+    if fd < 0 {
+        return 0;
+    }
+    let sa: i64 = net_build_sockaddr_in(host_addr, port);
+    let r: i64 = connect(fd as i32, sa as *const u8, 16) as i64;
+    if r < 0 {
+        let _ = close(fd as i32);
+        return 0;
+    }
+    net_alloc_handle(fd)
+}
+
+// tcp_read — read up to `max` bytes from stream into buf_addr.
+// Returns bytes read, 0 on EOF, or -1 on error.
+pub fn tcp_read(s: i64, buf_addr: i64, max: i64) -> i64 {
+    let fd: i64 = net_handle_fd(s);
+    recv(fd as i32, buf_addr as *mut u8, max, 0)
+}
+
+// tcp_write — write `len` bytes from buf_addr to stream.
+// Returns bytes written or -1 on error.
+pub fn tcp_write(s: i64, buf_addr: i64, len: i64) -> i64 {
+    let fd: i64 = net_handle_fd(s);
+    send(fd as i32, buf_addr as *const u8, len, 0)
+}
+
+// tcp_close — close a TcpStream fd.
+pub fn tcp_close(s: i64) {
+    let fd: i64 = net_handle_fd(s);
+    let _ = close(fd as i32);
+}
+
+// tcp_listener_close — close a TcpListener fd.
+pub fn tcp_listener_close(l: i64) {
+    let fd: i64 = net_handle_fd(l);
+    let _ = close(fd as i32);
+}
+
+// ---------------------------------------------------------------------------
+// Public: UdpSocket
+// ---------------------------------------------------------------------------
+
+pub fn udp_socket_fd(s: i64) -> i64 {
+    net_handle_fd(s)
+}
+
+// udp_bind — create a UDP socket bound to host:port.
+// Returns a UdpSocket handle or 0 on error.
+pub fn udp_bind(host_addr: i64, port: i64) -> i64 {
+    let fd: i64 = socket(af_inet() as i32, sock_dgram() as i32, 0) as i64;
+    if fd < 0 {
+        return 0;
+    }
+    let _ = net_set_reuseaddr(fd);
+    let sa: i64 = net_build_sockaddr_in(host_addr, port);
+    let r: i64 = bind(fd as i32, sa as *const u8, 16) as i64;
+    if r < 0 {
+        let _ = close(fd as i32);
+        return 0;
+    }
+    net_alloc_handle(fd)
+}
+
+// udp_socket_port — returns the actual bound port.
+pub fn udp_socket_port(s: i64) -> i64 {
+    net_getsockname_port(net_handle_fd(s))
+}
+
+// udp_send_to — send `len` bytes from buf_addr to dest host:port.
+// Returns bytes sent or -1 on error.
+pub fn udp_send_to(s: i64, dest_addr: i64, port: i64, buf_addr: i64, len: i64) -> i64 {
+    let fd: i64 = net_handle_fd(s);
+    let sa: i64 = net_build_sockaddr_in(dest_addr, port);
+    sendto(fd as i32, buf_addr as *const u8, len, 0, sa as *const u8, 16)
+}
+
+// udp_recv_from — receive up to `max` bytes into buf_addr.
+// Returns bytes_read on success, or -1 on error.
+pub fn udp_recv_from(s: i64, buf_addr: i64, max: i64) -> i64 {
+    let fd: i64 = net_handle_fd(s);
+    let sa: i64 = __mind_alloc(16);
+    let _ = memset(sa as *mut u8, 0, 16);
+    let lenptr: i64 = __mind_alloc(4);
+    __mind_store_i64(lenptr + 0, 16);
+    __mind_store_i64(lenptr + 1, 0);
+    __mind_store_i64(lenptr + 2, 0);
+    __mind_store_i64(lenptr + 3, 0);
+    recvfrom(fd as i32, buf_addr as *mut u8, max, 0, sa as *mut u8, lenptr as *mut u8)
+}
+
+// udp_close — close a UdpSocket fd.
+pub fn udp_close(s: i64) {
+    let fd: i64 = net_handle_fd(s);
+    let _ = close(fd as i32);
+}

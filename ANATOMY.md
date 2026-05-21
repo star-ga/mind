@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2606 | **Est. tokens:** ~6,473,766
-**Generated:** 2026-05-21 21:32 UTC
+**Files:** 2610 | **Est. tokens:** ~6,490,835
+**Generated:** 2026-05-21 22:01 UTC
 
 ## Token Budget Guide
 
@@ -386,7 +386,7 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,360 |
+| `src/project/` | 3 | ~20,534 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
@@ -394,8 +394,8 @@
 | `src/type_checker/` | 1 | ~24,222 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 10 | ~55,755 |
-| `tests/` | 136 | ~199,529 |
+| `std/` | 13 | ~65,351 |
+| `tests/` | 137 | ~206,828 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3679,7 +3679,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~2901 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3075 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3719,11 +3719,14 @@
 ### `std/`
 
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
+- `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~826 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
+- `net.mind` (~2321 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
+- `process.mind` (~2935 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `string.mind` (~875 tok, large) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
@@ -3980,6 +3983,7 @@
 - `std_surface_io_module.rs` (~1571 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~4335 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_map_module.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_net_fs_process.rs` (~7299 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1522 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4309 tok, huge) — Copyright 2025 STARGA Inc.
