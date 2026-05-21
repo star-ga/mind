@@ -90,6 +90,7 @@ pub mod ffi;
 #[cfg(feature = "pkg")]
 pub mod package;
 
+pub mod check;
 pub mod fmt;
 pub mod lint;
 pub mod project;
