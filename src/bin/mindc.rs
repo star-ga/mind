@@ -22,6 +22,7 @@ use clap::{ArgAction, Parser, Subcommand};
 
 use libmind::build::{run_build, BuildOpts};
 use libmind::check::{run_check, CheckOptions, ReporterKind};
+use libmind::deps::{run_clean, run_fetch, run_lock, CleanOpts, FetchOpts, LockOpts};
 use libmind::fmt::cli as mindc_fmt;
 use libmind::test::{run_tests, ReporterKind as TestReporterKind, TestOptions as MindTestOptions};
 use libmind::workspace::{resolve_workspace_members, toposort_members, WorkspaceOpts};
@@ -231,6 +232,35 @@ enum Command {
         #[arg(long, default_value_t = true, action = ArgAction::SetTrue)]
         core_v1: bool,
     },
+    /// Regenerate Mind.lock from the current Mind.toml (RFC 0008 Phase E).
+    ///
+    /// Resolves all path and git dependencies, fetches git deps if needed,
+    /// and writes a fully pinned Mind.lock. Mandatory before `mindc build`.
+    Lock {
+        /// Only verify — do not write Mind.lock; exit 1 if stale.
+        #[arg(long)]
+        check: bool,
+        /// Re-resolve only the named package (update its entry in Mind.lock).
+        #[arg(long, value_name = "PKG")]
+        update: Option<String>,
+    },
+    /// Populate ~/.mindenv/cache/ from Mind.lock (RFC 0008 Phase E).
+    ///
+    /// Idempotent: already-cached deps are not re-fetched unless --update is given.
+    Fetch {
+        /// Re-fetch all git deps even if already cached. Does NOT modify Mind.lock.
+        #[arg(long)]
+        update: bool,
+    },
+    /// Remove build artifacts and/or the dependency cache (RFC 0008 Phase E).
+    Clean {
+        /// Wipe ~/.mindenv/cache/ entries for this project's deps.
+        #[arg(long)]
+        cache: bool,
+        /// Wipe both target/ and the entire ~/.mindenv/cache/.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Parser, Debug, Default)]
@@ -396,6 +426,18 @@ fn main() {
         }
         Some(Command::Ops { .. }) => {
             print_ops(&cli.command);
+            return;
+        }
+        Some(Command::Lock { check, update }) => {
+            run_mindc_lock(*check, update.as_deref());
+            return;
+        }
+        Some(Command::Fetch { update }) => {
+            run_mindc_fetch(*update);
+            return;
+        }
+        Some(Command::Clean { cache, all }) => {
+            run_mindc_clean(*cache, *all);
             return;
         }
         None => {}
@@ -894,6 +936,77 @@ fn run_run_command(release: bool, target: Option<String>, verbose: bool, args: V
         Err(err) => {
             eprintln!("error: {}", err);
             process::exit(1);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RFC 0008 Phase D + E — lock / fetch / clean handlers
+// ---------------------------------------------------------------------------
+
+fn run_mindc_lock(check: bool, update_pkg: Option<&str>) {
+    use libmind::project::{find_project_root, load_manifest};
+    let root = match find_project_root() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error[lock]: cannot find Mind.toml: {e}");
+            process::exit(1);
+        }
+    };
+    let manifest = match load_manifest(&root) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("error[lock]: {e}");
+            process::exit(1);
+        }
+    };
+    let opts = LockOpts {
+        check,
+        update_pkg: update_pkg.map(|s| s.to_string()),
+    };
+    match run_lock(&root, &manifest, &opts) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("error[lock]: {e}");
+            process::exit(e.exit_code());
+        }
+    }
+}
+
+fn run_mindc_fetch(update: bool) {
+    use libmind::project::find_project_root;
+    let root = match find_project_root() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error[fetch]: cannot find Mind.toml: {e}");
+            process::exit(1);
+        }
+    };
+    let opts = FetchOpts { update };
+    match run_fetch(&root, &opts) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("error[fetch]: {e}");
+            process::exit(e.exit_code());
+        }
+    }
+}
+
+fn run_mindc_clean(cache: bool, all: bool) {
+    use libmind::project::find_project_root;
+    let root = match find_project_root() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("error[clean]: cannot find Mind.toml: {e}");
+            process::exit(1);
+        }
+    };
+    let opts = CleanOpts { cache, all };
+    match run_clean(&root, &opts) {
+        Ok(()) => {}
+        Err(e) => {
+            eprintln!("error[clean]: {e}");
+            process::exit(e.exit_code());
         }
     }
 }
