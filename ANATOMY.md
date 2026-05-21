@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2562 | **Est. tokens:** ~6,288,150
-**Generated:** 2026-05-21 00:29 UTC
+**Files:** 2571 | **Est. tokens:** ~6,299,051
+**Generated:** 2026-05-21 01:42 UTC
 
 ## Token Budget Guide
 
@@ -360,11 +360,12 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,200 |
+| `src/` | 7 | ~16,204 |
 | `src/ast/` | 1 | ~4,642 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~11,555 |
+| `src/bin/` | 2 | ~11,943 |
 | `src/cache/` | 4 | ~3,545 |
+| `src/check/` | 3 | ~7,098 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/eval/` | 13 | ~73,494 |
@@ -389,7 +390,7 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,719 |
-| `tests/` | 118 | ~130,621 |
+| `tests/` | 119 | ~133,975 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -398,6 +399,8 @@
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~518 |
+| `tests/mindcraft/check/` | 4 | ~48 |
+| `tests/mindcraft/check/subdir/` | 1 | ~9 |
 | `tests/mindcraft/fmt/` | 14 | ~474 |
 | `tests/mindcraft/lint/` | 2 | ~21 |
 | `tests/mindcraft/lint/naming_convention/` | 4 | ~176 |
@@ -3527,13 +3530,18 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~5512 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~5900 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `fingerprint.rs` (~649 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~964 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
+### `src/check/`
+
+- `gitignore.rs` (~2347 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~4377 tok, huge) — Copyright 2025 STARGA Inc.
+- `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
@@ -3604,7 +3612,7 @@
 - `verify.rs` (~2729 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~915 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~919 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 
@@ -3780,6 +3788,22 @@
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `lint_infrastructure.rs` (~2505 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/check/`
+
+- `clean.mind` (~11 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
+### `tests/`
+
+- `mindcraft_check_cli.rs` (~3354 tok, huge) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/check/`
+
+- `drifted.mind` (~12 tok, tiny) — fn add(a: i64,  b: i64) -> i64 {
+- `ignored.mind` (~9 tok, tiny) — fn ignored_fn() -> i64 {
+### `tests/mindcraft/check/subdir/`
+
+- `nested.mind` (~9 tok, tiny) — fn nested(x: i64) -> i64 {
+### `tests/mindcraft/check/`
+
+- `with_lint.mind` (~16 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
 ### `tests/mindcraft/fmt/`
 
 - `01_indent_if_else.in.mind` (~46 tok, tiny) — fn classify(x: i64) -> i64 {
