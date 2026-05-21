@@ -322,9 +322,15 @@ pub enum Node {
     /// `[reap_threshold(0.5)]` attribute (REAP MoE pruning, arXiv:2510.13999).
     /// `None` means the attribute was absent; `Some(t)` means the function is
     /// annotated for compile-time expert pruning with threshold `t ∈ [0.0, 1.0)`.
+    ///
+    /// `is_test` is set when the function carries a `[test]` attribute
+    /// (RFC 0008 Phase B). A test function must have zero parameters and return
+    /// type `()` or `bool`. The test runner collects all `is_test = true` fns.
     FnDef {
         /// Whether the `pub` visibility modifier was present in source.
         is_pub: bool,
+        /// Whether the `[test]` attribute was present (RFC 0008 Phase B).
+        is_test: bool,
         name: String,
         params: Vec<Param>,
         ret_type: Option<TypeAnn>,

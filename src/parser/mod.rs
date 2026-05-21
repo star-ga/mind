@@ -1022,11 +1022,11 @@ impl<'a> P<'a> {
         }
         if self.at_keyword(b"fn") {
             // Extract `[reap_threshold(t)]` from the attribute list.
-            // Other attributes on `fn` are accepted syntactically but not
-            // stored (public mindc records them in `Node::FnDef::reap_threshold`
-            // when the name matches; all other attrs are dropped).
             let reap = extract_reap_threshold(&attrs);
-            return self.parse_fn_def_with_reap(reap, is_pub);
+            // Extract `[test]` (RFC 0008 Phase B).
+            // Other attributes are accepted syntactically but not stored.
+            let is_test = extract_is_test(&attrs);
+            return self.parse_fn_def_with_attrs(reap, is_test, is_pub);
         }
         Err(self.err(
             "expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into(),
@@ -1418,13 +1418,25 @@ impl<'a> P<'a> {
     }
 
     fn parse_fn_def(&mut self, is_pub: bool) -> Result<Node, ParseError> {
-        self.parse_fn_def_with_reap(None, is_pub)
+        self.parse_fn_def_with_attrs(None, false, is_pub)
     }
 
-    /// Core `fn` parser.  `reap_threshold` is `Some(t)` when a preceding
-    /// `[reap_threshold(t)]` attribute was found by `parse_attributed_item`.
+    /// Core `fn` parser.
+    ///
+    /// `reap_threshold` is `Some(t)` when a preceding `[reap_threshold(t)]`
+    /// attribute was found by `parse_attributed_item`.
+    /// `is_test` is `true` when a `[test]` attribute was present (RFC 0008 Phase B).
     /// `is_pub` is `true` when a `pub` keyword preceded `fn`.
-    fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>, is_pub: bool) -> Result<Node, ParseError> {
+    ///
+    /// For `[test]` functions: the function must have zero parameters. Return
+    /// type must be absent (defaults to `()`) or `bool`. A non-zero arity is a
+    /// parse-time error so that bad test signatures surface before execution.
+    fn parse_fn_def_with_attrs(
+        &mut self,
+        reap_threshold: Option<f64>,
+        is_test: bool,
+        is_pub: bool,
+    ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 2; // "fn"
         self.skip_ws_and_newlines();
@@ -1453,6 +1465,16 @@ impl<'a> P<'a> {
         }
         self.skip_ws_and_newlines();
         self.expect(b')')?;
+
+        // RFC 0008 Phase B: a `[test]` fn must have zero parameters.
+        if is_test && !params.is_empty() {
+            return Err(self.err(format!(
+                "test function '{}' must have zero parameters (found {})",
+                name,
+                params.len()
+            )));
+        }
+
         self.skip_ws_and_newlines();
         // Optional return type
         let ret_type = if self.starts_with(b"->") {
@@ -1471,6 +1493,7 @@ impl<'a> P<'a> {
         let span = Span::new(start, self.pos);
         Ok(Node::FnDef {
             is_pub,
+            is_test,
             name,
             params,
             ret_type,
@@ -1478,6 +1501,12 @@ impl<'a> P<'a> {
             reap_threshold,
             span,
         })
+    }
+
+    /// Kept for back-compat with call sites that do not pass `is_test`.
+    #[allow(dead_code)]
+    fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>, is_pub: bool) -> Result<Node, ParseError> {
+        self.parse_fn_def_with_attrs(reap_threshold, false, is_pub)
     }
 
     fn parse_param(&mut self) -> Result<Param, ParseError> {
@@ -3171,6 +3200,14 @@ fn extract_reap_threshold(attrs: &[crate::ast::Attribute]) -> Option<f64> {
         }
     }
     result
+}
+
+/// Return `true` when the attribute list contains a `[test]` attribute.
+///
+/// RFC 0008 Phase B. Only `[test]` is recognized on `fn` declarations in this
+/// phase; `[bench]`, `[ignore]`, and `[should_panic]` are future work.
+fn extract_is_test(attrs: &[crate::ast::Attribute]) -> bool {
+    attrs.iter().any(|a| a.name == "test")
 }
 
 pub fn parse(input: &str) -> Result<Module, Vec<ParseError>> {

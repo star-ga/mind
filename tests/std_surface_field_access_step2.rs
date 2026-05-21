@@ -103,6 +103,7 @@ fn step2_struct_typed_parameter_resolves_field_access() {
             },
             Node::FnDef {
                 is_pub: false,
+                is_test: false,
                 name: "read".to_string(),
                 params: vec![Param {
                     name: "c".to_string(),
@@ -155,6 +156,7 @@ fn step2_fn_return_receiver_resolves_field_access() {
             },
             Node::FnDef {
                 is_pub: false,
+                is_test: false,
                 name: "make".to_string(),
                 params: vec![],
                 ret_type: Some(TypeAnn::Named("Cfg".to_string())),
@@ -207,6 +209,7 @@ fn step2_fn_with_non_struct_return_does_not_pollute_side_table() {
         items: vec![
             Node::FnDef {
                 is_pub: false,
+                is_test: false,
                 name: "raw".to_string(),
                 params: vec![],
                 ret_type: Some(TypeAnn::Named("i64".to_string())),
