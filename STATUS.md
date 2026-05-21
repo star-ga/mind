@@ -25,9 +25,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Self-hosted compiler — bootstrap fixed-point | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
 | mind-blas (RFC 0006) Track A + Track B inc 1–4 | ✅ Complete | v0.6.3–v0.6.7 | [`docs/rfcs/0006-mind-blas.md`](docs/rfcs/0006-mind-blas.md) |
 | **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ **Fully Shipped** | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
-| RFC 0008 Phases A/B/C/D/E (`mindc build` + `mindc test`) | ✅ 5/7 phases | v0.6.8 | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
-| RFC 0008 Phase F — incremental compilation cache | 🚧 Pending | — | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
-| RFC 0008 Phase G — KEYSTONE: bootstrap `mind` with `mindc build` | 🚧 Pending | — | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
+| **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.6.8+** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
 | Rust edition | ✅ 2024 | v0.6.8 | `Cargo.toml` |
 | Windows-MSVC SIMD port (RFC 0006 #225) | ✅ Complete | v0.6.8 | `runtime-support/mind_intrinsics.c` |
 
@@ -49,7 +47,7 @@ Bench-gate +7% cap held: `mindc fmt vec.mind` ~46 us, `mindc fmt mindc_mind/main
 
 Spec: [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md).
 
-## RFC 0008 (`mindc build` / `mindc test`) — 5/7 Phases Shipped
+## RFC 0008 (`mindc build` / `mindc test`) — All 7 Phases Shipped
 
 | Phase | Description | Commit | Status |
 |-------|-------------|--------|--------|
@@ -59,8 +57,14 @@ Spec: [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md).
 | C | Workspace support, topo sort, cycle detection | `267a9a6` | ✅ Shipped |
 | D | Path deps + content-hash drift detection | `7117b2a` | ✅ Shipped |
 | E | Git deps + `Mind.lock` mandatory enforcement | `f27789f` | ✅ Shipped |
-| F | Incremental compilation cache | — | 🚧 Pending |
-| G | KEYSTONE — bootstrap `mind` with `mindc build` | — | 🚧 Pending |
+| F | Incremental compilation cache (cold ~188 ms, warm ~3 ms) | `01fc039` | ✅ Shipped |
+| G | **KEYSTONE** — `mindc build` bootstraps mind itself | — | ✅ **Shipped** |
+
+**Cargo retirement claim (Phase G)**: `mindc build` produces
+`libmindc_mind.so` byte-identical to the v0.6.1 fixed-point oracle,
+driven entirely by the pure-MIND build orchestrator. Cargo is no longer
+load-bearing for the pure-MIND compile loop. The Rust crate hosts
+`mindc` until RFC 0010 lands a pure-MIND libMLIR FFI.
 
 Spec: [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md).
 
@@ -83,8 +87,7 @@ Spec: [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md).
 | RFC 0005 | Pure-MIND standard library | ✅ Complete |
 | RFC 0006 | mind-blas dense-vector surface | ✅ Complete (Track A + B) |
 | RFC 0007 | Mindcraft: `mindc fmt` / `mindc lint` / `mindc check` | ✅ Fully Shipped |
-| RFC 0008 Phases A–E | `mindc build` + `mindc test` + workspace + deps | ✅ 5/7 shipped |
-| RFC 0008 Phases F–G | Incremental cache + KEYSTONE bootstrap | 🚧 Pending |
+| RFC 0008 — all 7 phases | `mindc build` + `mindc test` + workspace + deps + cache + KEYSTONE | ✅ **7/7 shipped** |
 | Phase 13 | BCI / Neuroscience runtime | ✅ Complete |
 
 See [docs/roadmap.md](docs/roadmap.md) for full phase descriptions.
