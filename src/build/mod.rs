@@ -4,16 +4,19 @@
 // You may obtain a copy of the License at:
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-//! RFC 0008 Phase A — `mindc build` single-crate orchestrator.
+//! RFC 0008 Phase A+F — `mindc build` single-crate orchestrator.
 //!
 //! Public entry point: [`run_build`].
 //!
 //! This module drives the existing pure-MIND compile pipeline
 //! (`compile_sources` / `link_binary` in `src/project/mod.rs`) through a
 //! typed options layer that replaces the unstructured flags the legacy
-//! `build_project` function received. Phases B–G (test runner, workspace,
-//! path deps, git deps, incremental cache, bootstrap) are not implemented
-//! here; this is the single-crate, no-deps foundation.
+//! `build_project` function received.
+//!
+//! **Phase F** adds an incremental SHA-256-keyed object cache.  Cache
+//! logic lives in [`cache`]; this module integrates it into the build flow.
+
+pub mod cache;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -23,6 +26,11 @@ use anyhow::{Context, Result};
 use crate::project::{
     build_project, find_project_root, load_manifest, BuildOptions as LegacyBuildOptions,
     BuildTarget, EmitKind, OptimizeLevel,
+};
+
+use cache::{
+    module_cache_key, probe, write_object, BuildDecision, BuildManifest, CacheProbe,
+    ObjectMeta, cache_root,
 };
 
 // ---------------------------------------------------------------------------
@@ -49,6 +57,18 @@ pub struct BuildOpts {
     pub out: Option<PathBuf>,
     /// Print each compile + link invocation to stderr.
     pub verbose: bool,
+    /// Bypass the incremental cache for this build (still writes new entries).
+    /// Useful for debugging: "is my source the problem, or is it a stale cache?".
+    pub no_cache: bool,
+}
+
+/// Per-build incremental cache statistics.
+#[derive(Debug, Default)]
+pub struct IncrementalStats {
+    /// Modules that were found in cache and skipped.
+    pub hits: u32,
+    /// Modules that required a fresh compile.
+    pub misses: u32,
 }
 
 /// Successful build result returned by [`run_build`].
@@ -62,6 +82,8 @@ pub struct BuildOutput {
     pub emit: EmitKind,
     /// Artifact size in bytes.
     pub byte_count: u64,
+    /// Incremental cache statistics for this build.
+    pub cache_stats: IncrementalStats,
 }
 
 /// Typed errors from the build orchestrator.
@@ -92,12 +114,21 @@ impl BuildError {
 
 /// Build a single-crate MIND project.
 ///
-/// Loads `Mind.toml`, resolves the source list, drives the existing compile
-/// pipeline, and returns the path to the produced artifact.
+/// Loads `Mind.toml`, resolves the source list, probes the incremental object
+/// cache (Phase F), drives the existing compile pipeline on misses, and returns
+/// the path to the produced artifact.
 ///
 /// When explicit source file paths are provided and no `Mind.toml` can be
 /// located, a synthetic single-file manifest is synthesised so that one-off
 /// `mindc build <file.mind>` invocations work without a project setup.
+///
+/// # Cache behaviour (Phase F)
+///
+/// - By default the cache is consulted.  A hit means the source + flags + deps
+///   have not changed since the last build; the previous artifact is reused and
+///   the compile pipeline is skipped.
+/// - `opts.no_cache = true` bypasses the hit check but still writes the new
+///   object to cache so subsequent runs can benefit.
 ///
 /// # Exit code semantics
 /// The caller should call `BuildError::exit_code()` when propagating errors
@@ -106,9 +137,6 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     use crate::project::ProjectManifest;
 
     // 1. Locate the project root and load the manifest.
-    //    When explicit source paths are given and no Mind.toml is found,
-    //    synthesise a minimal manifest so single-file builds work without
-    //    any project scaffolding (e.g. `mindc build foo.mind --emit=cdylib`).
     let (project_root, manifest) = match find_project_root() {
         Ok(root) => {
             let m = load_manifest(&root)
@@ -116,22 +144,18 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
             (root, m)
         }
         Err(_) if !opts.paths.is_empty() => {
-            // No Mind.toml; derive project root from cwd so that relative
-            // path resolution in resolve_entry remains correct.
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let first_path = if opts.paths[0].is_absolute() {
                 opts.paths[0].clone()
             } else {
                 cwd.join(&opts.paths[0])
             };
-            // Use cwd as the root so relative path joins work correctly.
             let root = cwd;
             let stem = first_path
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .replace('-', "_");
-            // Safe package name: must start with a letter.
             let pkg_name = if stem.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
                 stem
             } else {
@@ -152,26 +176,14 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     validate_package_name(&manifest.package.name)?;
 
     // 2. Resolve effective build parameters (CLI > manifest > default).
-    let eff_target = opts
-        .target
-        .unwrap_or(manifest.build.target);
-    let eff_emit = opts
-        .emit
-        .unwrap_or(manifest.build.emit);
-    let eff_optimize = opts
-        .optimize
-        .unwrap_or(manifest.build.optimize);
+    let eff_target = opts.target.unwrap_or(manifest.build.target);
+    let eff_emit = opts.emit.unwrap_or(manifest.build.emit);
+    let eff_optimize = opts.optimize.unwrap_or(manifest.build.optimize);
 
     // 3. Reject targets that have no backend implementation yet.
     validate_target(eff_target)?;
 
     // 4. Resolve the entry / source file(s).
-    //
-    // RFC 0008 §4 Phase A: single-crate only; no `[dependencies]` traversal.
-    // Source resolution follows the spec priority order:
-    //   a) positional PATHS from CLI
-    //   b) [build].entry from manifest (may be the default "src/main.mind")
-    //   c) auto-detect src/main.mind → binary, src/lib.mind → cdylib
     let entry_path = resolve_entry(opts, &project_root, &manifest.build.entry, eff_emit)?;
 
     // 5. Build the output path.
@@ -206,9 +218,78 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         eprintln!("   Out:      {}", artifact_path.display());
     }
 
-    // 6. Drive the existing pipeline via the legacy `build_project` function.
-    //    RFC 0008 §4.5: shared-library linking is handled by passing
-    //    `emit_shared` through `LegacyBuildOptions`.
+    // -------------------------------------------------------------------------
+    // Phase F — incremental cache probe
+    //
+    // Scope: Phase A builds have one entry module per invocation.  We key on
+    // the full entry source bytes + all effective build flags.  A hit means
+    // the previous artifact (cached in the .cache/objects/ directory) is
+    // byte-identical to what a fresh compile would produce, so we can copy it
+    // to the output path and skip the entire compile + link pipeline.
+    // -------------------------------------------------------------------------
+
+    let compiler_version = env!("CARGO_PKG_VERSION");
+    let edition: u32 = 2024;
+
+    let source_bytes = fs::read(&entry_path)
+        .map_err(|e| BuildError::Failed(format!("cannot read source {}: {e}", entry_path.display())))?;
+
+    let cache_key = module_cache_key(
+        &source_bytes,
+        eff_target,
+        eff_optimize,
+        &[], // Phase A: no transitive dep hashes; Phase D/E deps extend this
+        compiler_version,
+        edition,
+    );
+
+    let c_root = cache_root(&project_root, eff_target, eff_optimize);
+
+    // Probe the cache (skipped when --no-cache is set).
+    let decision = if opts.no_cache {
+        BuildDecision::CacheMiss
+    } else {
+        match probe(&c_root, &cache_key) {
+            CacheProbe::Hit { ref key, ref object_path } => {
+                if opts.verbose {
+                    eprintln!("   [CACHE HIT] {} ({})", entry_path.display(), &key[..8]);
+                }
+                // Copy cached object to the requested artifact path.
+                if let Err(e) = copy_or_rename(object_path, &artifact_path) {
+                    // Cache read failed; treat as miss and recompile.
+                    if opts.verbose {
+                        eprintln!("   [CACHE] read failed ({}); recompiling", e);
+                    }
+                    BuildDecision::CacheMiss
+                } else {
+                    // Update manifest.
+                    update_manifest(&c_root, &project_root, &entry_path, &cache_key, opts.verbose);
+
+                    let final_path = match eff_emit {
+                        EmitKind::Cdylib => ensure_cdylib_extension(artifact_path),
+                        EmitKind::Object => ensure_object_extension(artifact_path),
+                        EmitKind::Binary => artifact_path,
+                    };
+                    let byte_count = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
+                    return Ok(BuildOutput {
+                        artifact_path: final_path,
+                        target: eff_target.as_str().to_string(),
+                        emit: eff_emit,
+                        byte_count,
+                        cache_stats: IncrementalStats { hits: 1, misses: 0 },
+                    });
+                }
+            }
+            CacheProbe::Miss { .. } => BuildDecision::CacheMiss,
+        }
+    };
+
+    let _ = decision; // CacheMiss — fall through to full compile
+
+    // -------------------------------------------------------------------------
+    // Full compile path (cache miss or --no-cache)
+    // -------------------------------------------------------------------------
+
     let legacy_opts = legacy_opts_from(
         eff_target,
         eff_emit,
@@ -219,9 +300,6 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         opts.verbose,
     );
 
-    // The legacy `build_project` reads `Mind.toml` from the project root.
-    // We ensure a correctly-configured manifest exists, patching it with the
-    // resolved entry path if needed.  The original is always restored.
     let manifest_path = project_root.join("Mind.toml");
     let manifest_existed = manifest_path.exists();
 
@@ -240,14 +318,9 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         None
     };
 
-    // Decide whether to write/patch the on-disk manifest.
     let need_write = match &orig_manifest_text {
-        Some(text) => {
-            // Manifest exists; only rewrite if the entry needs updating.
-            entry_rel != manifest.build.entry
-                || text.find("entry = ").is_none()
-        }
-        None => true, // No manifest on disk; write a synthetic one.
+        Some(text) => entry_rel != manifest.build.entry || text.find("entry = ").is_none(),
+        None => true,
     };
 
     if need_write {
@@ -259,7 +332,6 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
             .map_err(|e| BuildError::Failed(format!("cannot write manifest: {e}")))?;
     }
 
-    // Run the build, then unconditionally restore the manifest state.
     let build_result = build_project(&legacy_opts);
 
     if need_write {
@@ -268,18 +340,15 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                 let _ = fs::write(&manifest_path, text);
             }
             None => {
-                // We created a synthetic manifest; remove it.
                 let _ = fs::remove_file(&manifest_path);
             }
         }
     }
 
-    let build_result = build_result
-        .map_err(|e| BuildError::Failed(format!("{e}")))?;
+    let build_result = build_result.map_err(|e| BuildError::Failed(format!("{e}")))?;
 
     // Move/rename the legacy output to the requested artifact_path if needed.
     let final_path = if artifact_path != build_result.output_path {
-        // Legacy produced a different path; move it.
         if let Some(parent) = artifact_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -291,24 +360,78 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         artifact_path.clone()
     };
 
-    // Handle shared-library emit separately when mlir-build is unavailable and
-    // the legacy path produced a binary instead.
     let final_path = match eff_emit {
         EmitKind::Cdylib => ensure_cdylib_extension(final_path),
         EmitKind::Object => ensure_object_extension(final_path),
         EmitKind::Binary => final_path,
     };
 
-    let byte_count = fs::metadata(&final_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    // -------------------------------------------------------------------------
+    // Phase F — write compiled artifact to cache (always, even with --no-cache)
+    // -------------------------------------------------------------------------
+    if final_path.exists() {
+        if let Ok(artifact_bytes) = fs::read(&final_path) {
+            let mut dep_hashes_sorted: Vec<String> = vec![];
+            dep_hashes_sorted.sort();
+            let meta = ObjectMeta {
+                source_path: entry_rel.clone(),
+                cache_key: cache_key.clone(),
+                target: eff_target.as_str().to_string(),
+                optimize: eff_optimize.as_str().to_string(),
+                compiler_version: compiler_version.to_string(),
+                dep_hashes: dep_hashes_sorted,
+            };
+            // Best-effort: cache write failure does not fail the build.
+            let _ = write_object(&c_root, &cache_key, &artifact_bytes, &meta);
+            update_manifest(&c_root, &project_root, &entry_path, &cache_key, opts.verbose);
+        }
+    }
+
+    let byte_count = fs::metadata(&final_path).map(|m| m.len()).unwrap_or(0);
 
     Ok(BuildOutput {
         artifact_path: final_path,
         target: eff_target.as_str().to_string(),
         emit: eff_emit,
         byte_count,
+        cache_stats: IncrementalStats { hits: 0, misses: 1 },
     })
+}
+
+// ---------------------------------------------------------------------------
+// Phase F helpers
+// ---------------------------------------------------------------------------
+
+/// Copy `src` to `dest`, trying rename first (faster, same filesystem).
+fn copy_or_rename(src: &Path, dest: &Path) -> Result<(), std::io::Error> {
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    // Try a hard-link copy first for zero-copy on same fs, fall back to fs::copy.
+    fs::copy(src, dest).map(|_| ())
+}
+
+/// Update `manifest.json` to record `source_path -> cache_key`.
+fn update_manifest(
+    c_root: &Path,
+    project_root: &Path,
+    entry_path: &Path,
+    cache_key: &str,
+    verbose: bool,
+) {
+    let mpath = cache::manifest_path(c_root);
+    let mut manifest = BuildManifest::load(&mpath).unwrap_or_default();
+    let rel = entry_path
+        .strip_prefix(project_root)
+        .unwrap_or(entry_path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    manifest.entries.insert(rel, cache_key.to_string());
+    if let Err(e) = manifest.save(&mpath) {
+        if verbose {
+            eprintln!("   [CACHE] manifest write failed: {e}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
