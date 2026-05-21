@@ -85,7 +85,7 @@ mindc build --release --target cuda  # CUDA backend
 mindc run
 mindc run --target cuda              # run with CUDA backend
 
-# Test (discovers tests/*.mind, builds each, reports pass/fail)
+# Test (discovers #[test]-annotated functions, runs in parallel)
 mindc test
 mindc test --filter kv_cache         # run matching suites
 mindc test --target cuda             # GPU tests
@@ -95,6 +95,34 @@ mindc bench
 mindc bench --target cuda            # GPU benchmarks
 mindc bench --filter throughput      # specific benchmark
 ```
+
+### Mindcraft Source Toolchain (RFC 0007 — fully shipped in v0.6.8)
+
+`mindc fmt`, `mindc lint`, and `mindc check` are first-party source-quality
+subcommands shipping in the same `mindc` binary. No external dependencies.
+
+```bash
+# Format: rewrite .mind files to canonical form (idempotent, deterministic)
+mindc fmt src/                       # rewrite in place
+mindc fmt --check src/               # CI gate: exit non-zero if any file would change
+mindc fmt --diff src/                # show unified diff without writing
+mindc fmt --stdin < file.mind        # read from stdin
+
+# Lint: emit diagnostics for named rule violations
+mindc lint src/                      # check with project rules from Mind.toml
+mindc lint --rule q16_overflow src/  # run one rule only
+
+# Check: fmt idempotence + lint + typecheck in one pass
+mindc check                          # full project check (VCS-aware, only dirty files)
+mindc check --fix                    # auto-fix all fixable lint suggestions
+mindc check --reporter=json          # machine-readable output
+```
+
+Named lint rules in v0.6.8: `q16_overflow`, `unused_import`,
+`naming_convention`, `shadowing`, `trailing_whitespace`.
+
+CI integration ships as a reusable GitHub Actions workflow at
+`.github/workflows/mindcraft.yml`. Spec: [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md).
 
 ### Feature Flags
 
