@@ -1287,23 +1287,25 @@ fn lower_expr(
         //
         // Gated to `std-surface` — default builds never construct this.
         #[cfg(feature = "std-surface")]
-        ast::Node::ExternBlock { fns, .. } => {
-            // RFC 0010 Phase B: use the repr_c_structs registry (populated by
+        ast::Node::ExternBlock { fns, callconv, .. } => {
+            // RFC 0010 Phase B/C: use the repr_c_structs registry (populated by
             // any preceding StructDef nodes with `#[repr(C)]`) to emit correct
-            // SysV-classified types for struct-valued parameters.
+            // ABI-classified types for struct-valued parameters.
+            // Phase C: dispatch to Win64 or SysV classifier based on callconv.
             let repr_c_snapshot = ir.repr_c_structs.clone();
+            let effective_callconv = resolve_callconv(*callconv);
             for efn in fns {
-                // Phase B: expand struct params to their SysV-classified MLIR types.
                 let param_types: Vec<String> = efn
                     .params
                     .iter()
-                    .flat_map(|p| extern_type_to_mlir_multi(&p.ty, &repr_c_snapshot))
+                    .flat_map(|p| extern_type_to_mlir_multi_for(
+                        &p.ty, &repr_c_snapshot, effective_callconv,
+                    ))
                     .collect();
                 let ret_type = efn.ret_type.as_ref().map(|t| {
-                    // Return types: structs >8B are returned via a hidden first
-                    // pointer argument; for Phase B we use the first SysV slot
-                    // as the return type (single register return only).
-                    extern_type_to_mlir_multi(t, &repr_c_snapshot)
+                    // Return types: structs >8B returned via hidden pointer;
+                    // use first ABI slot as the declared return type (single register).
+                    extern_type_to_mlir_multi_for(t, &repr_c_snapshot, effective_callconv)
                         .into_iter()
                         .next()
                         .unwrap_or_else(|| "i64".to_string())
@@ -1314,6 +1316,7 @@ fn lower_expr(
                     ret_type,
                     is_varargs: efn.is_varargs,
                     vararg_hints: Vec::new(),
+                    callconv: effective_callconv,
                 });
             }
             let id = ir.fresh();
@@ -1603,5 +1606,147 @@ pub fn sysv_classify_struct(
     } else {
         // Mixed integer + float -> MEMORY class.
         vec!["!llvm.ptr".to_string()]
+    }
+}
+
+/// RFC 0010 Phase C — Win64 struct parameter class.
+/// Used by `win64_classify_struct` and exposed for tests.
+#[cfg(feature = "std-surface")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Win64Class {
+    /// Struct fits in one general-purpose register (size ∈ {1, 2, 4, 8}).
+    Register,
+    /// Struct passed by pointer (caller-allocated; size not in {1,2,4,8}).
+    Memory,
+}
+
+/// RFC 0010 Phase C — Microsoft x64 ABI struct-passing classification.
+///
+/// Microsoft x64 ABI §4 (struct/union passing rules):
+/// - Structs of size exactly 1, 2, 4, or 8 bytes: passed by value in one
+///   general-purpose register as the matching integer type (i8, i16, i32, i64).
+/// - All other sizes: passed by pointer (caller allocates on the stack).
+///   Sizes 3, 5, 6, 7 technically "round up" but since there is no canonical
+///   way to represent a 3-byte integer in LLVM IR, we classify them as MEMORY
+///   (the caller passes a pointer to the aligned copy, which is the safe and
+///   correct ABI implementation).
+///
+/// This function returns the Vec<String> of MLIR type tokens, matching the
+/// calling convention of `sysv_classify_struct`.
+#[cfg(feature = "std-surface")]
+pub fn win64_classify_struct(
+    fields: &[crate::ast::TypeAnn],
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+) -> Vec<String> {
+    if fields.is_empty() {
+        return vec!["i64".to_string()];
+    }
+
+    // Compute total byte size using the same scalar classifier as SysV.
+    let mut total_bytes: usize = 0;
+    for field_ty in fields {
+        match classify_scalar_field(field_ty, repr_c) {
+            (Some(_), sz) => total_bytes += sz,
+            (None, _) => return vec!["!llvm.ptr".to_string()],
+        }
+    }
+
+    // Win64: pass by value only for sizes {1, 2, 4, 8}.
+    match total_bytes {
+        1 => vec!["i8".to_string()],
+        2 => vec!["i16".to_string()],
+        4 => vec!["i32".to_string()],
+        8 => vec!["i64".to_string()],
+        _ => vec!["!llvm.ptr".to_string()],
+    }
+}
+
+/// RFC 0010 Phase C — resolve `CallConv::C` to the platform-default ABI.
+///
+/// On Linux/macOS x86_64: resolves to `CallConv::SysV`.
+/// On Windows x86_64: resolves to `CallConv::Win64`.
+/// `CallConv::Aapcs` is passed through (Phase D will handle it; Phase C
+/// callers fall back to SysV for the MLIR emission).
+#[cfg(feature = "std-surface")]
+pub(crate) fn resolve_callconv(cc: crate::ast::CallConv) -> crate::ast::CallConv {
+    use crate::ast::CallConv;
+    match cc {
+        CallConv::C => {
+            if cfg!(target_os = "windows") {
+                CallConv::Win64
+            } else {
+                CallConv::SysV
+            }
+        }
+        other => other,
+    }
+}
+
+/// RFC 0010 Phase C — ABI-aware type classifier dispatcher.
+///
+/// Routes to `extern_type_to_mlir_multi` (SysV) or
+/// `extern_type_to_mlir_multi_win64` (Win64) based on the resolved callconv.
+/// `CallConv::Aapcs` is not yet implemented (Phase D); it falls back to SysV
+/// with a runtime note so callers can test the dispatch path today.
+#[cfg(feature = "std-surface")]
+pub(crate) fn extern_type_to_mlir_multi_for(
+    ty: &crate::ast::TypeAnn,
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+    callconv: crate::ast::CallConv,
+) -> Vec<String> {
+    use crate::ast::CallConv;
+    match callconv {
+        CallConv::Win64 => extern_type_to_mlir_multi_win64(ty, repr_c),
+        CallConv::SysV | CallConv::C => extern_type_to_mlir_multi(ty, repr_c),
+        CallConv::Aapcs => {
+            // Phase D deferred. Fall back to SysV for now.
+            extern_type_to_mlir_multi(ty, repr_c)
+        }
+    }
+}
+
+/// RFC 0010 Phase C — Win64 variant of `extern_type_to_mlir_multi`.
+///
+/// Maps a MIND `TypeAnn` to the MLIR LLVM type string(s) using the
+/// Microsoft x64 ABI struct-passing rules instead of SysV.
+///
+/// For non-struct types the result is identical to `extern_type_to_mlir_multi`
+/// (scalars, pointers, function pointers all have the same representation
+/// under both ABIs on x86_64). The difference appears only for `#[repr(C)]`
+/// struct types: Win64 passes them by value when they are exactly {1,2,4,8}
+/// bytes, and by pointer otherwise.
+#[cfg(feature = "std-surface")]
+pub fn extern_type_to_mlir_multi_win64(
+    ty: &crate::ast::TypeAnn,
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+) -> Vec<String> {
+    use crate::ast::TypeAnn;
+    match ty {
+        TypeAnn::ScalarF32 => vec!["f32".to_string()],
+        TypeAnn::ScalarF64 => vec!["f64".to_string()],
+        TypeAnn::RawPtr { .. } => vec!["!llvm.ptr".to_string()],
+        TypeAnn::FnPtr { .. } => vec!["!llvm.ptr".to_string()],
+        TypeAnn::Named(name) => {
+            match name.as_str() {
+                "f32" => return vec!["f32".to_string()],
+                "f64" => return vec!["f64".to_string()],
+                "i8" | "u8" => return vec!["i8".to_string()],
+                "i16" | "u16" => return vec!["i16".to_string()],
+                "i32" | "u32" | "bool" => return vec!["i32".to_string()],
+                "i64" | "u64" | "usize" | "isize" => return vec!["i64".to_string()],
+                _ => {}
+            }
+            // Check for repr(C) struct — apply Win64 classification.
+            if let Some(fields) = repr_c.get(name.as_str()) {
+                win64_classify_struct(fields, repr_c)
+            } else {
+                vec!["i64".to_string()]
+            }
+        }
+        TypeAnn::ScalarI32 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
+            vec!["i32".to_string()]
+        }
+        TypeAnn::ScalarI64 => vec!["i64".to_string()],
+        _ => vec!["i64".to_string()],
     }
 }

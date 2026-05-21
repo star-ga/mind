@@ -173,19 +173,22 @@ struct LoweringContext {
     /// Names defined locally (Instr::FnDef) — filter from extern decls.
     #[cfg(feature = "std-surface")]
     defined_fns: std::collections::BTreeSet<String>,
-    /// RFC 0010 Phase A/B: `extern "C"` fn declarations.
+    /// RFC 0010 Phase A/B/C: `extern "C"` fn declarations.
     ///
-    /// name → (param_types, ret_type, is_varargs, vararg_hints)
+    /// name → (param_types, ret_type, is_varargs, vararg_hints, callconv)
     ///
     /// Populated by `Instr::ExternFnDecl`; consulted by the `Instr::Call`
     /// arm to decide whether to emit `llvm.call` or `func.call`, and to
     /// assign MLIR types to each argument position (including varargs).
     /// Phase B adds `vararg_hints` for precise per-position typing of extra
-    /// variadic arguments beyond the declared parameter list. Gated.
+    /// variadic arguments beyond the declared parameter list.
+    /// Phase C adds `callconv` so the `llvm.func` / `llvm.call` emitter can
+    /// attach `cconv = #llvm.cconv<win64cc>` for Win64 declarations. Gated.
     #[cfg(feature = "std-surface")]
     extern_c_fns: std::collections::BTreeMap<
         String,
-        (Vec<String>, Option<String>, bool, Vec<String>), // (param_types, ret_type, is_varargs, vararg_hints)
+        // (param_types, ret_type, is_varargs, vararg_hints, callconv)
+        (Vec<String>, Option<String>, bool, Vec<String>, crate::ast::CallConv),
     >,
 }
 
@@ -458,17 +461,19 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
-                // RFC 0010 Phase A/B: if the callee was declared via an
+                // RFC 0010 Phase A/B/C: if the callee was declared via an
                 // `extern "C"` block, emit `llvm.call` with the declared
                 // signature; otherwise fall back to the existing `func.call`
                 // i64-ABI path used by the std-surface runtime bridge.
-                if let Some((param_types, ret_type, is_varargs, vararg_hints)) =
+                if let Some((param_types, ret_type, is_varargs, vararg_hints, callconv)) =
                     self.extern_c_fns.get(name).cloned()
                 {
                     // Build arg list with declared types for concrete params;
                     // for varargs extras: use vararg_hints by offset index,
-                    // then fall back to "i64" (Phase B: precise per-position
-                    // typing for common printf arg types).
+                    // then fall back to "i64".
+                    // RFC 0010 Phase C / R-03: f32 in a varargs position must
+                    // be promoted to f64 per C11 §6.5.2.2p6 default argument
+                    // promotions. Vararg positions are indices >= n_concrete.
                     let arg_refs: Vec<String> =
                         args.iter().map(|a| format!("%{}", a.0)).collect();
                     let n_concrete = param_types.len();
@@ -479,20 +484,26 @@ impl LoweringContext {
                             if i < n_concrete {
                                 param_types[i].clone()
                             } else {
-                                // varargs position: use hint if available
+                                // varargs position: use hint if available,
+                                // then fall back to "i64". Promote f32→f64.
                                 let vidx = i - n_concrete;
-                                vararg_hints
+                                let hint = vararg_hints
                                     .get(vidx)
                                     .cloned()
-                                    .unwrap_or_else(|| "i64".to_string())
+                                    .unwrap_or_else(|| "i64".to_string());
+                                // R-03: f32 in vararg position → f64.
+                                if hint == "f32" { "f64".to_string() } else { hint }
                             }
                         })
                         .collect();
                     let call_ret_ty = ret_type.as_deref().unwrap_or("i64");
                     let varargs_suffix = if is_varargs { ", ..." } else { "" };
+                    // RFC 0010 Phase C: emit cconv attribute for Win64 calls.
+                    let cconv_attr = cconv_attr_for(callconv);
                     self.emit_line(&format!(
-                        "    %{} = llvm.call @{}({}) : ({}{}) -> {}",
+                        "    %{} = llvm.call{} @{}({}) : ({}{}) -> {}",
                         dst.0,
+                        cconv_attr,
                         name,
                         arg_refs.join(", "),
                         param_type_str.join(", "),
@@ -500,9 +511,6 @@ impl LoweringContext {
                         call_ret_ty,
                     ));
                     self.values.insert(*dst, ValueKind::ScalarI64);
-                    // Track in extern_c_fns so the module-level emitter
-                    // knows to emit the llvm.func declaration.
-                    // (Already present — no action needed.)
                 } else {
                 let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
                 let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
@@ -1098,6 +1106,7 @@ impl LoweringContext {
                 ret_type,
                 is_varargs,
                 vararg_hints,
+                callconv,
             } => {
                 self.extern_c_fns.insert(
                     name.clone(),
@@ -1106,6 +1115,7 @@ impl LoweringContext {
                         ret_type.clone(),
                         *is_varargs,
                         vararg_hints.clone(),
+                        *callconv,
                     ),
                 );
             }
@@ -2038,12 +2048,14 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     #[cfg(feature = "std-surface")]
     out.push_str(&ctx.user_fns);
 
-    // RFC 0010 Phase A: one `llvm.func @name(type...) -> type` declaration
+    // RFC 0010 Phase A/C: one `llvm.func @name(type...) -> type` declaration
     // per `extern "C"` symbol referenced via `Instr::ExternFnDecl`. Emitted
     // before `@main` so `llvm.call` ops resolve. Sorted (BTreeMap) for
-    // deterministic MLIR text. Gated; default build emits none.
+    // deterministic MLIR text.
+    // Phase C: attach `cconv = #llvm.cconv<win64cc>` for Win64 declarations.
+    // Gated; default build emits none.
     #[cfg(feature = "std-surface")]
-    for (name, (param_types, ret_type, is_varargs, _vararg_hints)) in &ctx.extern_c_fns {
+    for (name, (param_types, ret_type, is_varargs, _vararg_hints, callconv)) in &ctx.extern_c_fns {
         let params_str = if param_types.is_empty() {
             String::new()
         } else {
@@ -2055,8 +2067,9 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
             String::new()
         };
         let ret_str = ret_type.as_deref().unwrap_or("i64");
+        let cconv_attr = cconv_attr_for(*callconv);
         out.push_str(&format!(
-            "  llvm.func @{name}({params_str}{varargs_suffix}) -> {ret_str}\n"
+            "  llvm.func{cconv_attr} @{name}({params_str}{varargs_suffix}) -> {ret_str}\n"
         ));
     }
 
@@ -2082,6 +2095,24 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     out.push_str("}\n");
 
     Ok(MlirModule { text: out })
+}
+
+/// RFC 0010 Phase C — return the MLIR `cconv` attribute string for a calling
+/// convention, including the leading space separator for inline use.
+///
+/// For Win64: `" cconv = #llvm.cconv<win64cc>"` (space-prefixed for use in
+/// `llvm.func cconv = ... @name(...)` and `llvm.call cconv = ... @name(...)`).
+/// For all other conventions (SysV, C, Aapcs): empty string (no attribute,
+/// which is the MLIR LLVM dialect default i.e. C calling convention / SysV
+/// on x86_64 Linux/macOS).
+#[cfg(feature = "std-surface")]
+fn cconv_attr_for(callconv: crate::ast::CallConv) -> &'static str {
+    use crate::ast::CallConv;
+    match callconv {
+        CallConv::Win64 => " cconv = #llvm.cconv<win64cc>",
+        // SysV, C (platform default), Aapcs (Phase D) — no cconv attribute.
+        _ => "",
+    }
 }
 
 /// Convenience helper: verify, canonicalize, and lower into MLIR text.
