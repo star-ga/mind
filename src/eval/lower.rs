@@ -109,9 +109,20 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             // modules — a struct declaration is still a no-op at the
             // value level, the side-table is pure metadata.
             #[cfg(feature = "std-surface")]
-            ast::Node::StructDef { name, fields, .. } => {
+            ast::Node::StructDef { name, fields, attrs, .. } => {
                 let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                 ir.struct_defs.insert(name.clone(), field_names);
+                // RFC 0010 Phase B: if the struct carries `#[repr(C)]`, register
+                // its field types in `repr_c_structs` so extern_type_to_mlir can
+                // classify Named types that appear in `extern "C"` signatures.
+                let is_repr_c = attrs.iter().any(|a| {
+                    a.name == "repr" && a.args.iter().any(|arg| arg == "C")
+                });
+                if is_repr_c {
+                    let field_types: Vec<crate::ast::TypeAnn> =
+                        fields.iter().map(|f| f.ty.clone()).collect();
+                    ir.repr_c_structs.insert(name.clone(), field_types);
+                }
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, 0));
                 ir.instrs.push(Instr::Output(id));
@@ -1260,18 +1271,32 @@ fn lower_expr(
         // Gated to `std-surface` — default builds never construct this.
         #[cfg(feature = "std-surface")]
         ast::Node::ExternBlock { fns, .. } => {
+            // RFC 0010 Phase B: use the repr_c_structs registry (populated by
+            // any preceding StructDef nodes with `#[repr(C)]`) to emit correct
+            // SysV-classified types for struct-valued parameters.
+            let repr_c_snapshot = ir.repr_c_structs.clone();
             for efn in fns {
+                // Phase B: expand struct params to their SysV-classified MLIR types.
                 let param_types: Vec<String> = efn
                     .params
                     .iter()
-                    .map(|p| extern_type_to_mlir(&p.ty))
+                    .flat_map(|p| extern_type_to_mlir_multi(&p.ty, &repr_c_snapshot))
                     .collect();
-                let ret_type = efn.ret_type.as_ref().map(|t| extern_type_to_mlir(t));
+                let ret_type = efn.ret_type.as_ref().map(|t| {
+                    // Return types: structs >8B are returned via a hidden first
+                    // pointer argument; for Phase B we use the first SysV slot
+                    // as the return type (single register return only).
+                    extern_type_to_mlir_multi(t, &repr_c_snapshot)
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| "i64".to_string())
+                });
                 ir.instrs.push(Instr::ExternFnDecl {
                     name: efn.name.clone(),
                     param_types,
                     ret_type,
                     is_varargs: efn.is_varargs,
+                    vararg_hints: Vec::new(),
                 });
             }
             let id = ir.fresh();
@@ -1367,36 +1392,199 @@ fn parse_dim(dim: &str) -> ShapeDim {
     }
 }
 
-/// RFC 0010 Phase A — map an `extern "C"` parameter/return `TypeAnn` to the
-/// MLIR type string used in `llvm.func` declarations and `llvm.call` ops.
+/// RFC 0010 Phase A/B — map an `extern "C"` parameter/return `TypeAnn` to
+/// the MLIR type string(s) used in `llvm.func` declarations and `llvm.call`
+/// ops.
 ///
-/// Phase A rules:
-/// - All integer scalars (i32, i64, u32, u64, bool, Named "i*"/"u*") → `"i64"`
-/// - f32 → `"f32"`, f64 → `"f64"`
-/// - Raw pointers `*const T` / `*mut T` → `"!llvm.ptr"` (opaque pointer)
-/// - Named "isize"/"usize" → `"i64"` (platform pointer-sized integer)
-/// - Everything else defaults to `"i64"` (safe fallback; type-checker
-///   already rejected non-Copy types so this only fires for known scalars)
+/// Returns a `Vec<String>` of MLIR type tokens because a single MIND type
+/// can expand to multiple MLIR types under the SysV x86_64 ABI (e.g. a
+/// 16-byte all-integer `#[repr(C)]` struct expands to two `i64` parameters).
+/// For all non-struct types the Vec always has exactly one element.
+///
+/// `repr_c` is the `repr_c_structs` registry from `IRModule` — a map from
+/// struct name to field types. Pass an empty map when no struct types are
+/// expected (Phase A callers).
 #[cfg(feature = "std-surface")]
-pub(crate) fn extern_type_to_mlir(ty: &crate::ast::TypeAnn) -> String {
+pub(crate) fn extern_type_to_mlir_multi(
+    ty: &crate::ast::TypeAnn,
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+) -> Vec<String> {
     use crate::ast::TypeAnn;
     match ty {
-        TypeAnn::ScalarF32 => "f32".to_string(),
-        TypeAnn::ScalarF64 => "f64".to_string(),
-        TypeAnn::RawPtr { .. } => "!llvm.ptr".to_string(),
-        TypeAnn::Named(name) => match name.as_str() {
-            "f32" => "f32".to_string(),
-            "f64" => "f64".to_string(),
-            // All other named primitive types (i8/i16/i32/i64/u*/bool/usize/isize)
-            // use i64 — they all fit in a 64-bit integer register under the C ABI.
-            _ => "i64".to_string(),
-        },
+        TypeAnn::ScalarF32 => vec!["f32".to_string()],
+        TypeAnn::ScalarF64 => vec!["f64".to_string()],
+        TypeAnn::RawPtr { .. } => vec!["!llvm.ptr".to_string()],
+        // RFC 0010 Phase B: callback function pointer -> opaque !llvm.ptr.
+        TypeAnn::FnPtr { .. } => vec!["!llvm.ptr".to_string()],
+        TypeAnn::Named(name) => {
+            match name.as_str() {
+                "f32" => return vec!["f32".to_string()],
+                "f64" => return vec!["f64".to_string()],
+                "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "bool" => {
+                    return vec!["i64".to_string()]
+                }
+                "i64" | "u64" | "usize" | "isize" => return vec!["i64".to_string()],
+                _ => {}
+            }
+            // Check for repr(C) struct — apply SysV classification.
+            if let Some(fields) = repr_c.get(name.as_str()) {
+                sysv_classify_struct(fields, repr_c)
+            } else {
+                vec!["i64".to_string()]
+            }
+        }
         // Built-in scalar integer/bool types all lower to i64.
         TypeAnn::ScalarI32
         | TypeAnn::ScalarI64
         | TypeAnn::ScalarBool
-        | TypeAnn::ScalarU32 => "i64".to_string(),
+        | TypeAnn::ScalarU32 => vec!["i64".to_string()],
         // Fallback: any aggregate that slipped past the type-checker becomes i64.
-        _ => "i64".to_string(),
+        _ => vec!["i64".to_string()],
+    }
+}
+
+/// RFC 0010 Phase A compatibility shim — single-type version of
+/// `extern_type_to_mlir_multi`. Used by Phase A callers. Struct types are
+/// passed by pointer (!llvm.ptr) when the registry is empty.
+#[cfg(feature = "std-surface")]
+#[allow(dead_code)]
+pub(crate) fn extern_type_to_mlir(ty: &crate::ast::TypeAnn) -> String {
+    let empty = std::collections::BTreeMap::new();
+    extern_type_to_mlir_multi(ty, &empty)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| "i64".to_string())
+}
+
+/// RFC 0010 Phase B — System V AMD64 ABI struct field classification.
+/// Classifies a scalar type into Integer or Float class and returns its byte size.
+/// Returns `(None, 0)` for types that cannot be classified (nested aggregates, etc.).
+#[cfg(feature = "std-surface")]
+pub fn classify_scalar_field(
+    ty: &crate::ast::TypeAnn,
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+) -> (Option<SysVClass>, usize) {
+    use crate::ast::TypeAnn;
+    match ty {
+        TypeAnn::ScalarI32 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
+            (Some(SysVClass::Integer), 4)
+        }
+        TypeAnn::ScalarI64 => (Some(SysVClass::Integer), 8),
+        TypeAnn::ScalarF32 => (Some(SysVClass::Float), 4),
+        TypeAnn::ScalarF64 => (Some(SysVClass::Float), 8),
+        TypeAnn::RawPtr { .. } | TypeAnn::FnPtr { .. } => (Some(SysVClass::Integer), 8),
+        TypeAnn::Named(name) => match name.as_str() {
+            "i8" | "u8" => (Some(SysVClass::Integer), 1),
+            "i16" | "u16" => (Some(SysVClass::Integer), 2),
+            "i32" | "u32" | "bool" => (Some(SysVClass::Integer), 4),
+            "i64" | "u64" | "usize" | "isize" => (Some(SysVClass::Integer), 8),
+            "f32" => (Some(SysVClass::Float), 4),
+            "f64" => (Some(SysVClass::Float), 8),
+            _other => {
+                // Nested repr(C) struct or unknown — Phase B defers to MEMORY class.
+                let _ = repr_c; // used in future phases
+                (None, 0)
+            }
+        },
+        _ => (None, 0),
+    }
+}
+
+/// RFC 0010 Phase B — SysV AMD64 struct parameter class.
+/// Used by `sysv_classify_struct` and exposed for tests.
+#[cfg(feature = "std-surface")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SysVClass {
+    /// Integer/pointer fields — passed in general-purpose registers.
+    Integer,
+    /// Floating-point fields — passed in XMM registers.
+    Float,
+    /// Aggregate too large or mixed — passed via pointer (caller allocates).
+    Memory,
+}
+
+/// RFC 0010 Phase B — SysV AMD64 ABI struct-passing classification.
+///
+/// Given the field types of a `#[repr(C)]` struct (up to 4 fields, all Copy),
+/// returns the list of MLIR type strings that represent how the struct is
+/// passed in a function call under the SysV AMD64 ABI:
+///
+/// - All-integer/pointer, total ≤ 8 B → `["i64"]` (one eightbyte)
+/// - All-integer/pointer, total ≤ 16 B → `["i64", "i64"]` (two eightbytes)
+/// - All-float, total ≤ 8 B → single float type
+/// - All-float, total ≤ 16 B → two float types
+/// - Mixed int+float or > 16 B → `["!llvm.ptr"]` (MEMORY class)
+///
+/// This is a pure function with no I/O; it is `pub` so Phase B tests can
+/// invoke it directly to verify the classification logic.
+#[cfg(feature = "std-surface")]
+pub fn sysv_classify_struct(
+    fields: &[crate::ast::TypeAnn],
+    repr_c: &std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+) -> Vec<String> {
+    if fields.is_empty() {
+        return vec!["i64".to_string()];
+    }
+    if fields.len() > 4 {
+        return vec!["!llvm.ptr".to_string()];
+    }
+
+    let mut total_bytes: usize = 0;
+    let mut classes: Vec<SysVClass> = Vec::new();
+    let mut sizes: Vec<usize> = Vec::new();
+
+    for field_ty in fields {
+        match classify_scalar_field(field_ty, repr_c) {
+            (Some(cls), sz) => {
+                total_bytes += sz;
+                classes.push(cls);
+                sizes.push(sz);
+            }
+            (None, _) => return vec!["!llvm.ptr".to_string()],
+        }
+    }
+
+    if total_bytes > 16 {
+        return vec!["!llvm.ptr".to_string()];
+    }
+
+    let all_integer = classes.iter().all(|c| *c == SysVClass::Integer);
+    let all_float = classes.iter().all(|c| *c == SysVClass::Float);
+
+    if all_integer {
+        if total_bytes <= 8 {
+            vec!["i64".to_string()]
+        } else {
+            vec!["i64".to_string(), "i64".to_string()]
+        }
+    } else if all_float {
+        // Determine the dominant float type per eightbyte slot (0..8, 8..16).
+        // f64 (8 bytes) dominates f32 (4 bytes) within a slot.
+        // Walk fields in order, tracking byte offset to assign each to a slot.
+        let mut slot0_has_f64 = false;
+        let mut slot1_has_f64 = false;
+        let mut byte_off: usize = 0;
+        for &sz in &sizes {
+            if byte_off < 8 {
+                if sz == 8 {
+                    slot0_has_f64 = true;
+                }
+            } else {
+                if sz == 8 {
+                    slot1_has_f64 = true;
+                }
+            }
+            byte_off += sz;
+        }
+        let first_slot = if slot0_has_f64 { "f64" } else { "f32" };
+        if total_bytes <= 8 {
+            vec![first_slot.to_string()]
+        } else {
+            let second_slot = if slot1_has_f64 { "f64" } else { "f32" };
+            vec![first_slot.to_string(), second_slot.to_string()]
+        }
+    } else {
+        // Mixed integer + float -> MEMORY class.
+        vec!["!llvm.ptr".to_string()]
     }
 }

@@ -173,14 +173,19 @@ struct LoweringContext {
     /// Names defined locally (Instr::FnDef) — filter from extern decls.
     #[cfg(feature = "std-surface")]
     defined_fns: std::collections::BTreeSet<String>,
-    /// RFC 0010 Phase A: `extern "C"` fn declarations — name → (param_types,
-    /// ret_type, is_varargs). Populated by `Instr::ExternFnDecl`; consulted
-    /// by the `Instr::Call` arm to decide whether to emit `llvm.call` or
-    /// `func.call`. Gated to std-surface.
+    /// RFC 0010 Phase A/B: `extern "C"` fn declarations.
+    ///
+    /// name → (param_types, ret_type, is_varargs, vararg_hints)
+    ///
+    /// Populated by `Instr::ExternFnDecl`; consulted by the `Instr::Call`
+    /// arm to decide whether to emit `llvm.call` or `func.call`, and to
+    /// assign MLIR types to each argument position (including varargs).
+    /// Phase B adds `vararg_hints` for precise per-position typing of extra
+    /// variadic arguments beyond the declared parameter list. Gated.
     #[cfg(feature = "std-surface")]
     extern_c_fns: std::collections::BTreeMap<
         String,
-        (Vec<String>, Option<String>, bool), // (param_types, ret_type, is_varargs)
+        (Vec<String>, Option<String>, bool, Vec<String>), // (param_types, ret_type, is_varargs, vararg_hints)
     >,
 }
 
@@ -453,39 +458,36 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
-                // RFC 0010 Phase A: if the callee was declared via an
+                // RFC 0010 Phase A/B: if the callee was declared via an
                 // `extern "C"` block, emit `llvm.call` with the declared
                 // signature; otherwise fall back to the existing `func.call`
                 // i64-ABI path used by the std-surface runtime bridge.
-                if let Some((param_types, ret_type, is_varargs)) =
+                if let Some((param_types, ret_type, is_varargs, vararg_hints)) =
                     self.extern_c_fns.get(name).cloned()
                 {
-                    // Build arg list with declared types (or i64 for extras
-                    // beyond the declared arity, which covers varargs).
+                    // Build arg list with declared types for concrete params;
+                    // for varargs extras: use vararg_hints by offset index,
+                    // then fall back to "i64" (Phase B: precise per-position
+                    // typing for common printf arg types).
                     let arg_refs: Vec<String> =
                         args.iter().map(|a| format!("%{}", a.0)).collect();
-                    let arg_type_pairs: Vec<String> = args
-                        .iter()
-                        .enumerate()
-                        .map(|(i, a)| {
-                            let ty = param_types
-                                .get(i)
-                                .map(String::as_str)
-                                .unwrap_or("i64");
-                            format!("%{} : {}", a.0, ty)
-                        })
-                        .collect();
+                    let n_concrete = param_types.len();
                     let param_type_str: Vec<String> = args
                         .iter()
                         .enumerate()
                         .map(|(i, _)| {
-                            param_types
-                                .get(i)
-                                .cloned()
-                                .unwrap_or_else(|| "i64".to_string())
+                            if i < n_concrete {
+                                param_types[i].clone()
+                            } else {
+                                // varargs position: use hint if available
+                                let vidx = i - n_concrete;
+                                vararg_hints
+                                    .get(vidx)
+                                    .cloned()
+                                    .unwrap_or_else(|| "i64".to_string())
+                            }
                         })
                         .collect();
-                    let _ = arg_type_pairs; // used in signature comment
                     let call_ret_ty = ret_type.as_deref().unwrap_or("i64");
                     let varargs_suffix = if is_varargs { ", ..." } else { "" };
                     self.emit_line(&format!(
@@ -1095,10 +1097,16 @@ impl LoweringContext {
                 param_types,
                 ret_type,
                 is_varargs,
+                vararg_hints,
             } => {
                 self.extern_c_fns.insert(
                     name.clone(),
-                    (param_types.clone(), ret_type.clone(), *is_varargs),
+                    (
+                        param_types.clone(),
+                        ret_type.clone(),
+                        *is_varargs,
+                        vararg_hints.clone(),
+                    ),
                 );
             }
             _ => {
@@ -2035,7 +2043,7 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     // before `@main` so `llvm.call` ops resolve. Sorted (BTreeMap) for
     // deterministic MLIR text. Gated; default build emits none.
     #[cfg(feature = "std-surface")]
-    for (name, (param_types, ret_type, is_varargs)) in &ctx.extern_c_fns {
+    for (name, (param_types, ret_type, is_varargs, _vararg_hints)) in &ctx.extern_c_fns {
         let params_str = if param_types.is_empty() {
             String::new()
         } else {

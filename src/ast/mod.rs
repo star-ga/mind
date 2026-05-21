@@ -197,6 +197,17 @@ pub enum TypeAnn {
         mutable: bool,
         pointee: Box<TypeAnn>,
     },
+    /// Callback function pointer: `extern "C" fn(T, U) -> R`.
+    ///
+    /// RFC 0010 Phase B — used to declare callback parameters in `extern "C"`
+    /// function signatures, e.g. the `compar` parameter of `qsort`.
+    /// Lowered to `!llvm.ptr` (opaque function pointer) in the MLIR emission.
+    /// The parameter types and return type are stored for type-checking that
+    /// callback signatures obey Phase B rules (all-Copy params + return).
+    FnPtr {
+        params: Vec<TypeAnn>,
+        ret: Option<Box<TypeAnn>>,
+    },
 }
 
 /// Calling convention tag for an `extern "C"` block (RFC 0010 Phase A).
