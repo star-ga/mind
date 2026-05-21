@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2542 | **Est. tokens:** ~6,275,555
-**Generated:** 2026-05-20 15:00 UTC
+**Files:** 2562 | **Est. tokens:** ~6,288,150
+**Generated:** 2026-05-21 00:29 UTC
 
 ## Token Budget Guide
 
@@ -376,7 +376,7 @@
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
 | `src/lint/` | 2 | ~3,584 |
-| `src/lint/rules/` | 2 | ~1,099 |
+| `src/lint/rules/` | 6 | ~8,972 |
 | `src/mlir/` | 3 | ~26,259 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
@@ -389,7 +389,7 @@
 | `src/type_checker/` | 1 | ~22,584 |
 | `src/types/` | 4 | ~3,179 |
 | `std/` | 5 | ~5,719 |
-| `tests/` | 113 | ~126,452 |
+| `tests/` | 118 | ~130,621 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -400,6 +400,10 @@
 | `tests/mindcraft/` | 1 | ~518 |
 | `tests/mindcraft/fmt/` | 14 | ~474 |
 | `tests/mindcraft/lint/` | 2 | ~21 |
+| `tests/mindcraft/lint/naming_convention/` | 4 | ~176 |
+| `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
+| `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
+| `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
@@ -3608,8 +3612,12 @@
 - `rule.rs` (~2411 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/rules/`
 
-- `mod.rs` (~304 tok, medium) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~454 tok, medium) — Copyright 2025 STARGA Inc.
+- `naming_convention.rs` (~1862 tok, huge) — Copyright 2025 STARGA Inc.
+- `q16_overflow.rs` (~2400 tok, huge) — Copyright 2025 STARGA Inc.
+- `shadowing.rs` (~1757 tok, huge) — Copyright 2025 STARGA Inc.
 - `trailing_whitespace.rs` (~795 tok, large) — Copyright 2025 STARGA Inc.
+- `unused_import.rs` (~1704 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `main.rs` (~6507 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3792,10 +3800,42 @@
 
 - `mindcraft_fmt_cli.rs` (~2942 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt_fixtures.rs` (~1302 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/lint/naming_convention/`
+
+- `negative.mind` (~61 tok, small) — Negative fixture: all names follow canonical conventions.
+- `positive_bad_const.mind` (~39 tok, tiny) — Positive fixture: const name violates SCREAMING_SNAKE_CASE.
+- `positive_bad_fn.mind` (~37 tok, tiny) — Positive fixture: function name violates lower_snake_case.
+- `positive_bad_struct.mind` (~39 tok, tiny) — Positive fixture: struct name violates UpperCamelCase.
+### `tests/`
+
+- `mindcraft_lint_naming_convention.rs` (~1103 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/lint/q16_overflow/`
+
+- `edge_constant.mind` (~54 tok, small) — Edge case: i32 * literal constant still triggers if no >>16 shift.
+- `negative.mind` (~67 tok, small) — Negative fixture: proper Q16.16 multiply with >>16 narrowing.
+- `positive.mind` (~70 tok, small) — Positive fixture: bare i32 * i32 without >>16 narrowing.
+### `tests/`
+
+- `mindcraft_lint_q16_overflow.rs` (~858 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/mindcraft/lint/shadowing/`
+
+- `negative.mind` (~34 tok, tiny) — Negative fixture: two different names — no shadowing.
+- `positive.mind` (~53 tok, small) — Positive fixture: two `let x` bindings in the same function body.
+### `tests/`
+
+- `mindcraft_lint_shadowing.rs` (~971 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/lint/`
 
 - `trailing_ws_clean.mind` (~10 tok, tiny) — fn foo() -> i64 {
 - `trailing_ws_dirty.mind` (~11 tok, tiny) — fn foo() -> i64 {
+### `tests/mindcraft/lint/unused_import/`
+
+- `negative.mind` (~53 tok, small) — Negative fixture: `use std.vec` is declared AND the `vec` identifier
+- `positive.mind` (~46 tok, tiny) — Positive fixture: `use std.vec` is declared but no symbol from vec
+### `tests/`
+
+- `mindcraft_lint_unused_import.rs` (~700 tok, large) — Copyright 2025 STARGA Inc.
+- `mindcraft_lint_vec_check.rs` (~537 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/`
 
 - `STABILITY_SKIP_LIST.md` (~518 tok, large) — Formatter Stability Skip List

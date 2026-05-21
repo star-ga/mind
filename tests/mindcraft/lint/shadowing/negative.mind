@@ -1,0 +1,7 @@
+// Negative fixture: two different names — no shadowing.
+
+fn no_shadow() -> i32 {
+    let a: i32 = 1
+    let b: i32 = 2
+    a + b
+}
