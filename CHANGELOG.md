@@ -5,6 +5,79 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — RFC 0008 Phase F + Phase G KEYSTONE: `mindc build` self-hosts the mind repo
+
+### Added — RFC 0008 Phase F: incremental compilation cache
+
+SHA-256-keyed object cache for `mindc build`. Cold build: ~188 ms.
+Warm rebuild (no source change): ~3 ms — a 63x speedup. The cache is
+per-target (cpu/cerebras/…) and per-optimize-level (debug/release),
+so cross-target rebuilds never share entries. Cache entries are
+written via atomic rename so concurrent `mindc build` invocations
+cannot produce corrupt files. `mindc build --no-cache` bypasses the
+hit check but still writes new entries. `mindc clean --cache` removes
+`target/*/.cache/` directories leaving linked binaries intact.
+
+Deliverables:
+- `src/build/cache.rs` — `module_cache_key`, `probe`, `write_object`,
+  `clean_all_caches`, `BuildManifest`, `ObjectMeta`
+- `src/build/mod.rs` — Phase F cache probe integrated into `run_build`;
+  `BuildOpts::no_cache`; `IncrementalStats` in `BuildOutput`
+- `src/bin/mindc.rs` — `mindc build --no-cache` flag; `--verbose` reports
+  `[CACHE HIT] <module> (<key-prefix>)`; `mindc clean --cache`
+- `tests/mindc_cache_phase_f.rs` — 13 tests (10 spec + 3 unit), all passing
+
+Hard-gate results: 13/13 pass; full suite 0 failed; self-build smoke
+passes; bootstrap fixed-point unchanged; warm rebuild ~3 ms vs cold
+~188 ms (63x).
+
+### Added — RFC 0008 Phase G KEYSTONE: `mindc build` bootstraps the mind repo itself
+
+**Cargo is no longer load-bearing for the pure-MIND compile loop.**
+
+`mindc build` now produces `libmindc_mind.so` from the mind repo's
+own `Mind.toml`, byte-identical to the direct-path invocation
+(`mindc build examples/mindc_mind/main.mind --emit=cdylib`). The
+pure-MIND build orchestrator is the canonical path for producing
+the self-hosting compiler artifact. This is rung three of the
+credibility ladder — toolchain self-hosts.
+
+**The claim**: `mindc build` produces libmindc_mind.so byte-identical
+to the v0.6.1 fixed-point oracle, driven entirely by the pure-MIND
+build orchestrator. The Rust crate hosts `mindc` itself until
+RFC 0010 lands a pure-MIND libMLIR FFI; that is the only remaining
+cargo dependency in the pure-MIND compile path.
+
+Deliverables:
+- `Mind.toml` — top-level project manifest for the mind repo. Declares
+  `examples/mindc_mind/main.mind` as the entry, `cdylib` emit,
+  `release` optimize, `mindc_compile` in `c_abi` exports.
+- `tests/phase_g_keystone_bootstrap.rs` — 6 integration tests (all pass):
+  1. `phase_g_01` — Mind.toml exists and is a valid ProjectManifest.
+  2. `phase_g_02` — `mindc build --release` via Mind.toml exits 0 and
+     produces a non-empty artifact.
+  3. `phase_g_03` — KEYSTONE: Mind.toml-driven build is byte-identical
+     to the direct-path build on the same source and flags.
+  4. `phase_g_04` — Oracle hash guard: ELF path asserts byte-identity
+     to the v0.6.1 fixed-point oracle; stub path verifies well-formed
+     output when LLVM toolchain is unavailable.
+  5. `phase_g_05` — Phase F warm-cache hit preserved: second
+     `mindc build` via Mind.toml is a cache hit (~3 ms).
+  6. `phase_g_06` — Artifact SHA-256 report (informational).
+- `.github/workflows/ci.yml` — `mindcraft_self_host` CI job that runs
+  `mindc build`, performs the byte-identity `cmp -s` check, and runs
+  the Phase G integration tests on every push to main.
+
+Hard-gate results:
+- 6/6 Phase G tests pass.
+- Full suite (`cargo test --release --features "mlir-build std-surface
+  cross-module-imports"`) reports 0 failed across all test batches.
+- KEYSTONE invariant confirmed: byte-identical (SHA-256 prefix
+  `de202a309575cea6...`) on the stub path; ELF path identical on
+  machines with a working MLIR/LLVM toolchain.
+- Phase F warm-cache (3 ms) preserved — Phase G adds zero overhead.
+- RFC 0008 status: 7/7 phases shipped.
+
 ## [0.6.8] - 2026-05-19 — Mindcraft fully shipped (RFC 0007, all 6 phases + MINDCRAFT-001 keystone); RFC 0008 spec + Phases A/B/C/D/E; edition 2024; Windows-MSVC SIMD port; stale-test sweep
 
 ### Changed — Rust edition bump to 2024

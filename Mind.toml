@@ -1,0 +1,22 @@
+[package]
+name = "mind"
+version = "0.6.8"
+authors = ["STARGA Inc."]
+license = "Apache-2.0"
+description = "The native language for intelligent systems"
+repository = "https://github.com/star-ga/mind"
+
+[build]
+target = "cpu"
+emit = "cdylib"
+optimize = "release"
+entry = "examples/mindc_mind/main.mind"
+
+[exports]
+c_abi = ["mindc_compile"]
+
+[mindcraft]
+[mindcraft.format]
+indent_width = 4
+max_line_length = 100
+trailing_comma = true

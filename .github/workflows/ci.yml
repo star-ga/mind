@@ -225,6 +225,71 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
         run: cargo doc --no-default-features --document-private-items
 
+  mindcraft_self_host:
+    name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-mindcraft-self-host-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-mindcraft-self-host-
+
+      - name: Build mindc
+        run: cargo build --release --no-default-features --bin mindc
+
+      - name: Self-host bootstrap via mindc build (Mind.toml)
+        run: |
+          ./target/release/mindc build --release --emit=cdylib \
+            --out=/tmp/libmindc_mind_self_host.so
+        working-directory: ${{ github.workspace }}
+
+      - name: Verify artifact is non-empty
+        run: |
+          if [ ! -f /tmp/libmindc_mind_self_host.so ]; then
+            echo "ERROR: artifact not produced by mindc build"
+            exit 1
+          fi
+          SZ=$(stat -c%s /tmp/libmindc_mind_self_host.so)
+          echo "Artifact size: ${SZ} bytes"
+          if [ "$SZ" -eq 0 ]; then
+            echo "ERROR: artifact is empty"
+            exit 1
+          fi
+
+      - name: Byte-identity check (Mind.toml-driven vs direct-path)
+        run: |
+          ./target/release/mindc build \
+            examples/mindc_mind/main.mind \
+            --release --emit=cdylib \
+            --out=/tmp/libmindc_mind_direct.so
+          if cmp -s /tmp/libmindc_mind_self_host.so /tmp/libmindc_mind_direct.so; then
+            echo "KEYSTONE PASS: byte-identical"
+            sha256sum /tmp/libmindc_mind_self_host.so
+          else
+            echo "KEYSTONE FAIL: Mind.toml-driven and direct-path artifacts differ"
+            sha256sum /tmp/libmindc_mind_self_host.so /tmp/libmindc_mind_direct.so
+            exit 1
+          fi
+
+      - name: Run Phase G integration tests
+        run: |
+          cargo test --release --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test phase_g_keystone_bootstrap -- --nocapture
+
   mindcraft_check:
     name: Mindcraft check (RFC 0007 Phase 6)
     runs-on: ubuntu-latest

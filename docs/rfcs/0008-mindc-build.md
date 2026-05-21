@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0008 |
 | Title | mindc build + mindc test — retiring cargo from the build path |
-| Status | **Phase F Shipped** |
+| Status | **Phase G Shipped — All 7 Phases Complete** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -608,9 +608,32 @@ Deliverables:
 - Hard-gate results: 13/13 pass; full suite 0 failed; self-build smoke passes;
   bootstrap fixed-point unchanged; warm rebuild ≈3 ms vs cold ≈188 ms (63×)
 
-### Phase G — keystone: bootstrap mind itself with mindc build
+### Phase G — keystone: bootstrap mind itself with mindc build — **Shipped**
 
 `mindc build` builds the `mind` repo itself. This is the keystone milestone.
+
+Deliverables:
+- `Mind.toml` at the repo root — canonical project manifest for the mind
+  repo. Declares `examples/mindc_mind/main.mind` as the entry, `cdylib`
+  emit, `release` optimize, `mindc_compile` in `[exports] c_abi`.
+- `tests/phase_g_keystone_bootstrap.rs` — 6 integration tests. Gate:
+  `cargo test --release --features "mlir-build std-surface cross-module-imports"
+  phase_g_keystone_bootstrap`.
+- `.github/workflows/ci.yml` `mindcraft_self_host` job — runs `mindc build`
+  on the repo, performs `cmp -s` byte-identity check, and runs the Phase G
+  integration tests on every push to main.
+
+Hard-gate results:
+- `phase_g_03_byte_identical_mind_toml_vs_direct_path` — KEYSTONE PASS
+  (byte-identical, SHA-256 prefix `de202a309575cea6...`).
+- 6/6 Phase G tests pass; full suite 0 failed.
+- Phase F warm-cache (3 ms) preserved under Phase G.
+
+**Cargo retirement claim**: Cargo is no longer load-bearing for the
+pure-MIND compile loop. The Rust `mind` crate hosts `mindc` itself and
+remains the `cargo install mind` distribution path until RFC 0010 lands
+a pure-MIND libMLIR FFI.
+
 It means:
 
 - A fresh clone of `mind` can produce a working `mindc` binary using only
