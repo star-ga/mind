@@ -504,6 +504,29 @@ pub enum Instr {
         /// Statically known SIMD lane count of `src`.
         lanes: usize,
     },
+    /// RFC 0010 Phase A — declare an `extern "C"` function symbol.
+    ///
+    /// Carries the function signature for MLIR lowering: the name, arity
+    /// (number of concrete parameters), whether the last argument is a
+    /// varargs sentinel, and a simple type-tag vector for the parameters
+    /// and return type. Phase A supports only i64 (covers all integers and
+    /// pointer-as-i64) and f64 scalars in the MLIR emission path; the
+    /// caller is responsible for inserting any necessary bitcasts.
+    ///
+    /// This instruction carries no SSA `dst`; it is a pure declaration.
+    /// Gated to `std-surface` — default builds never construct this variant.
+    #[cfg(feature = "std-surface")]
+    ExternFnDecl {
+        /// The C symbol name (used verbatim in `llvm.func @name`).
+        name: String,
+        /// MLIR type strings for each concrete parameter.
+        /// Phase A uses `"i64"` for all integer/pointer types and `"f64"` for f64.
+        param_types: Vec<String>,
+        /// MLIR type string for the return type, or `None` for void.
+        ret_type: Option<String>,
+        /// `true` when `...` varargs were declared.
+        is_varargs: bool,
+    },
 }
 
 pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
@@ -530,6 +553,8 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Param { dst, .. }
         | Instr::SparseAttr { dst, .. } => Some(*dst),
         Instr::Output(_) | Instr::FnDef { .. } | Instr::Return { .. } => None,
+        #[cfg(feature = "std-surface")]
+        Instr::ExternFnDecl { .. } => None,
         #[cfg(feature = "std-surface")]
         Instr::While { .. } => None,
         #[cfg(feature = "std-surface")]

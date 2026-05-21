@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0010 |
 | Title | Memory safety model + C ABI in pure MIND |
-| Status | **Draft — implementation deferred, awaiting RFC 0008 Phase G land + community review window** |
+| Status | **Phase A Shipped — Phases B–J planned** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -325,18 +325,18 @@ against the platform ABI specifications during Phase B–D.
 The implementation is staged to keep each phase independently shippable and
 testable.
 
-| Phase | Deliverable | Gate |
-|---|---|---|
-| A | Parse `extern "C"` blocks; parse `safe`/`unsafe` fn attribution; parse `callconv(.)` tags; parse `...` variadic syntax. Emit parse errors for invalid combinations. | mindc parses all new syntax; existing test suite unchanged. |
-| B | System V AMD64 calling convention lowering. Validates against the platform ABI spec on Linux x86_64. | round-trip test: MIND calls C, C calls MIND, values match. |
-| C | Win64 calling convention lowering. | same round-trip gate on Windows x86_64. |
-| D | AAPCS (AArch64) calling convention lowering. | same round-trip gate on AArch64 Linux. |
-| E | Hand-written MIND `std.mlir` bindings for the MLIR C API (~150 functions). Authored against the MLIR C API header set. Safety attribution per function: `safe` for pure query functions, `unsafe` for mutation and pointer-passing functions. | std.mlir compiles under mindc; a smoke test exercises round-trip MLIR construction from MIND code. |
-| F | Hand-written MIND `std.llvm` bindings for the LLVM C API. | std.llvm compiles; smoke test exercises IR construction from MIND code. |
-| G | Migrate mindc's MLIR-glue from `mlir-sys` (Rust) to `std.mlir` (MIND). | mindc self-build smoke test passes end-to-end with the new path. |
-| H | Migrate mindc's LLVM-glue from `llvm-sys` / `inkwell` (Rust) to `std.llvm` (MIND). | same self-build smoke test. |
-| I (KEYSTONE) | Remove `mlir-sys` and `inkwell` from `Cargo.toml`. The Rust crate becomes a thin distribution shim. Pure-MIND mindc owns the full compile path. | The Rust dependency tree shows no mlir-sys or inkwell transitive deps; mindc produces a byte-identical result to the Phase G build. |
-| J | Implement the three-tier memory model in mindc: parse `region { }` blocks, type-check region escape, lower region alloc/free, lower `GenRef<T>` with generation counter. | existing MIND programs compile unchanged; new tests exercise region and GenRef semantics. |
+| Phase | Deliverable | Gate | Status |
+|---|---|---|---|
+| A | Parse `extern "C"` blocks; parse `safe`/`unsafe` fn attribution; parse `callconv(.)` tags; parse `...` variadic syntax. Emit parse errors for invalid combinations. Type-check extern signatures (Copy-only rule). Lower `extern "C"` fn calls to `llvm.call`; emit `llvm.func` declarations. | mindc parses all new syntax; existing test suite unchanged; 7 Phase A tests pass. | **Shipped** |
+| B | System V AMD64 calling convention lowering. Validates against the platform ABI spec on Linux x86_64. | round-trip test: MIND calls C, C calls MIND, values match. | Planned |
+| C | Win64 calling convention lowering. | same round-trip gate on Windows x86_64. | Planned |
+| D | AAPCS (AArch64) calling convention lowering. | same round-trip gate on AArch64 Linux. | Planned |
+| E | Hand-written MIND `std.mlir` bindings for the MLIR C API (~150 functions). Authored against the MLIR C API header set. Safety attribution per function: `safe` for pure query functions, `unsafe` for mutation and pointer-passing functions. | std.mlir compiles under mindc; a smoke test exercises round-trip MLIR construction from MIND code. | Planned |
+| F | Hand-written MIND `std.llvm` bindings for the LLVM C API. | std.llvm compiles; smoke test exercises IR construction from MIND code. | Planned |
+| G | Migrate mindc's MLIR-glue from `mlir-sys` (Rust) to `std.mlir` (MIND). | mindc self-build smoke test passes end-to-end with the new path. | Planned |
+| H | Migrate mindc's LLVM-glue from `llvm-sys` / `inkwell` (Rust) to `std.llvm` (MIND). | same self-build smoke test. | Planned |
+| I (KEYSTONE) | Remove `mlir-sys` and `inkwell` from `Cargo.toml`. The Rust crate becomes a thin distribution shim. Pure-MIND mindc owns the full compile path. | The Rust dependency tree shows no mlir-sys or inkwell transitive deps; mindc produces a byte-identical result to the Phase G build. | Planned |
+| J | Implement the three-tier memory model in mindc: parse `region { }` blocks, type-check region escape, lower region alloc/free, lower `GenRef<T>` with generation counter. | existing MIND programs compile unchanged; new tests exercise region and GenRef semantics. | Planned |
 
 Phase A is the prerequisite for all subsequent phases. Phases B–D are
 independent of each other and may be implemented in any order. Phases E–I are

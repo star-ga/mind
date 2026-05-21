@@ -186,6 +186,46 @@ pub enum TypeAnn {
         element: Box<TypeAnn>,
         shape: Vec<ShapeDim>,
     },
+    /// Raw C pointer: `*const T` or `*mut T`.
+    ///
+    /// RFC 0010 Phase A — extern "C" ABI surface. Raw pointers are only
+    /// constructible inside `unsafe` blocks; in Phase A they are accepted
+    /// in `extern "C"` function signatures and lowered to `!llvm.ptr`.
+    /// The pointee type is recorded for documentation/future phases but is
+    /// not used in Phase A lowering (all pointers lower to opaque `!llvm.ptr`).
+    RawPtr {
+        mutable: bool,
+        pointee: Box<TypeAnn>,
+    },
+}
+
+/// Calling convention tag for an `extern "C"` block (RFC 0010 Phase A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallConv {
+    /// Platform-default C ABI — resolves to `.sysv` on Linux/macOS x86_64
+    /// and `.win64` on Windows x86_64 when no explicit tag is present.
+    C,
+    /// System V AMD64 ABI.
+    SysV,
+    /// Microsoft x64 calling convention.
+    Win64,
+    /// ARM Architecture Procedure Call Standard (AArch64).
+    Aapcs,
+}
+
+/// A single function declaration inside an `extern "C"` block.
+///
+/// RFC 0010 Phase A. The body is absent — extern declarations have no
+/// body. `is_unsafe` mirrors the `unsafe fn` vs `safe fn` annotation;
+/// `is_varargs` is set when `...` appears after the last concrete parameter.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternFn {
+    pub is_unsafe: bool,
+    pub name: String,
+    pub params: Vec<Param>,
+    pub ret_type: Option<TypeAnn>,
+    pub is_varargs: bool,
+    pub span: Span,
 }
 
 /// Function parameter: `name: type`
@@ -538,6 +578,16 @@ pub enum Node {
         inner: Box<Node>,
         span: Span,
     },
+    /// `extern "C" [callconv(.x)] { fn decls... }` block (RFC 0010 Phase A).
+    ///
+    /// Phase A accepts the syntax, stores the AST, type-checks signatures
+    /// for Copy-only types, and lowers calls to `llvm.call`. Win64 and
+    /// AAPCS parse but reuse the default `.c` lowering until Phase C/D.
+    ExternBlock {
+        callconv: CallConv,
+        fns: Vec<ExternFn>,
+        span: Span,
+    },
 }
 
 /// One arm of a `match` expression: `pattern => body`.
@@ -662,7 +712,8 @@ impl Node {
             | Node::Logical { span, .. }
             | Node::Bitwise { span, .. }
             | Node::Match { span, .. }
-            | Node::Ref { span, .. } => *span,
+            | Node::Ref { span, .. }
+            | Node::ExternBlock { span, .. } => *span,
             #[cfg(feature = "std-surface")]
             Node::While { span, .. } => *span,
         }

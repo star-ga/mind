@@ -1246,6 +1246,38 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+        // RFC 0010 Phase A — `extern "C" { fn decls }` block.
+        //
+        // Emits one `Instr::ExternFnDecl` per declared symbol so the MLIR
+        // lowerer knows to emit `llvm.func @name(...)` declarations and to
+        // use `llvm.call` (not `func.call`) for calls to those names.
+        //
+        // Phase A lowers all integer/pointer parameter types to `i64` and
+        // f64 to `f64`; raw pointer types lower to `i64` (opaque address
+        // under the Option-C ABI convention already in use across the
+        // std-surface runtime bridge).
+        //
+        // Gated to `std-surface` — default builds never construct this.
+        #[cfg(feature = "std-surface")]
+        ast::Node::ExternBlock { fns, .. } => {
+            for efn in fns {
+                let param_types: Vec<String> = efn
+                    .params
+                    .iter()
+                    .map(|p| extern_type_to_mlir(&p.ty))
+                    .collect();
+                let ret_type = efn.ret_type.as_ref().map(|t| extern_type_to_mlir(t));
+                ir.instrs.push(Instr::ExternFnDecl {
+                    name: efn.name.clone(),
+                    param_types,
+                    ret_type,
+                    is_varargs: efn.is_varargs,
+                });
+            }
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
         _ => {
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
@@ -1332,5 +1364,39 @@ fn parse_dim(dim: &str) -> ShapeDim {
         ShapeDim::Known(n)
     } else {
         ShapeDim::Sym(crate::types::intern::intern_str(dim))
+    }
+}
+
+/// RFC 0010 Phase A — map an `extern "C"` parameter/return `TypeAnn` to the
+/// MLIR type string used in `llvm.func` declarations and `llvm.call` ops.
+///
+/// Phase A rules:
+/// - All integer scalars (i32, i64, u32, u64, bool, Named "i*"/"u*") → `"i64"`
+/// - f32 → `"f32"`, f64 → `"f64"`
+/// - Raw pointers `*const T` / `*mut T` → `"!llvm.ptr"` (opaque pointer)
+/// - Named "isize"/"usize" → `"i64"` (platform pointer-sized integer)
+/// - Everything else defaults to `"i64"` (safe fallback; type-checker
+///   already rejected non-Copy types so this only fires for known scalars)
+#[cfg(feature = "std-surface")]
+pub(crate) fn extern_type_to_mlir(ty: &crate::ast::TypeAnn) -> String {
+    use crate::ast::TypeAnn;
+    match ty {
+        TypeAnn::ScalarF32 => "f32".to_string(),
+        TypeAnn::ScalarF64 => "f64".to_string(),
+        TypeAnn::RawPtr { .. } => "!llvm.ptr".to_string(),
+        TypeAnn::Named(name) => match name.as_str() {
+            "f32" => "f32".to_string(),
+            "f64" => "f64".to_string(),
+            // All other named primitive types (i8/i16/i32/i64/u*/bool/usize/isize)
+            // use i64 — they all fit in a 64-bit integer register under the C ABI.
+            _ => "i64".to_string(),
+        },
+        // Built-in scalar integer/bool types all lower to i64.
+        TypeAnn::ScalarI32
+        | TypeAnn::ScalarI64
+        | TypeAnn::ScalarBool
+        | TypeAnn::ScalarU32 => "i64".to_string(),
+        // Fallback: any aggregate that slipped past the type-checker becomes i64.
+        _ => "i64".to_string(),
     }
 }

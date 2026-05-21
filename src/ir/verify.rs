@@ -288,6 +288,9 @@ fn validate_operands(
         Instr::VecReduceAddI64 { src, .. } => {
             check_defined(*src)?;
         }
+        // RFC 0010 Phase A: extern declaration — no SSA operands to verify.
+        #[cfg(feature = "std-surface")]
+        Instr::ExternFnDecl { .. } => {}
     }
 
     Ok(())
