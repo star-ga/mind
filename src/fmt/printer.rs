@@ -283,14 +283,14 @@ fn strip_for_lines(src: &str) -> String {
 
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
-        Node::FnDef { name, params, ret_type, body, reap_threshold, .. } => {
-            emit_fn_def(p, name, params, ret_type, body, *reap_threshold);
+        Node::FnDef { is_pub, name, params, ret_type, body, reap_threshold, .. } => {
+            emit_fn_def(p, *is_pub, name, params, ret_type, body, *reap_threshold);
         }
-        Node::StructDef { name, fields, attrs, .. } => {
-            emit_struct_def(p, name, fields, attrs);
+        Node::StructDef { is_pub, name, fields, attrs, .. } => {
+            emit_struct_def(p, *is_pub, name, fields, attrs);
         }
-        Node::EnumDef { name, variants, attrs, .. } => {
-            emit_enum_def(p, name, variants, attrs);
+        Node::EnumDef { is_pub, name, variants, attrs, .. } => {
+            emit_enum_def(p, *is_pub, name, variants, attrs);
         }
         Node::Const { name, ty, value, attrs, .. } => {
             emit_const(p, name, ty, value, attrs);
@@ -356,6 +356,7 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
 
 fn emit_fn_def(
     p: &mut Printer,
+    is_pub: bool,
     name: &str,
     params: &[Param],
     ret_type: &Option<TypeAnn>,
@@ -364,6 +365,9 @@ fn emit_fn_def(
 ) {
     let ind = p.indent_str();
     p.push(&ind);
+    if is_pub {
+        p.push("pub ");
+    }
     p.push("fn ");
     p.push(name);
     p.push("(");
@@ -389,7 +393,7 @@ fn emit_fn_def(
     p.push("}");
 }
 
-fn emit_struct_def(p: &mut Printer, name: &str, fields: &[Field], attrs: &[Attribute]) {
+fn emit_struct_def(p: &mut Printer, is_pub: bool, name: &str, fields: &[Field], attrs: &[Attribute]) {
     for attr in attrs {
         let ind = p.indent_str();
         p.push(&ind);
@@ -404,6 +408,9 @@ fn emit_struct_def(p: &mut Printer, name: &str, fields: &[Field], attrs: &[Attri
     }
     let ind = p.indent_str();
     p.push(&ind);
+    if is_pub {
+        p.push("pub ");
+    }
     p.push("struct ");
     p.push(name);
     p.push(" {\n");
@@ -411,6 +418,9 @@ fn emit_struct_def(p: &mut Printer, name: &str, fields: &[Field], attrs: &[Attri
     for field in fields {
         let ind = p.indent_str();
         p.push(&ind);
+        if field.is_pub {
+            p.push("pub ");
+        }
         p.push(&field.name);
         p.push(": ");
         emit_type_ann(p, &field.ty);
@@ -422,7 +432,7 @@ fn emit_struct_def(p: &mut Printer, name: &str, fields: &[Field], attrs: &[Attri
     p.push("}");
 }
 
-fn emit_enum_def(p: &mut Printer, name: &str, variants: &[EnumVariant], attrs: &[Attribute]) {
+fn emit_enum_def(p: &mut Printer, is_pub: bool, name: &str, variants: &[EnumVariant], attrs: &[Attribute]) {
     for attr in attrs {
         let ind = p.indent_str();
         p.push(&ind);
@@ -437,6 +447,9 @@ fn emit_enum_def(p: &mut Printer, name: &str, variants: &[EnumVariant], attrs: &
     }
     let ind = p.indent_str();
     p.push(&ind);
+    if is_pub {
+        p.push("pub ");
+    }
     p.push("enum ");
     p.push(name);
     p.push(" {\n");
@@ -586,8 +599,8 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
                 p.push("}\n");
             }
             // FnDef nested inside a body (uncommon but valid in MIND)
-            Node::FnDef { name, params, ret_type, body, reap_threshold, .. } => {
-                emit_fn_def(p, name, params, ret_type, body, *reap_threshold);
+            Node::FnDef { is_pub, name, params, ret_type, body, reap_threshold, .. } => {
+                emit_fn_def(p, *is_pub, name, params, ret_type, body, *reap_threshold);
                 p.push("\n");
             }
             // Statements with mandatory semicolons regardless of position.

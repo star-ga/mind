@@ -73,7 +73,11 @@ pub fn string_push_byte(s: String, b: i64) -> String {
     let new_cap: i64 = if s.cap == 0 {
         16
     } else {
-        if s.len < s.cap { s.cap } else { s.cap * 2 }
+        if s.len < s.cap {
+            s.cap
+        } else {
+            s.cap * 2
+        }
     };
     let new_addr: i64 = if new_cap == s.cap {
         s.addr
@@ -91,10 +95,10 @@ pub fn string_push_byte(s: String, b: i64) -> String {
 // round-trips" contract.
 pub fn string_eq(a: String, b: String) -> i64 {
     if a.len == b.len {
-        // Byte-loop placeholder — single-bucket compare for now.
-        // Multi-byte loop lands with std.vec's loop codegen.
         1
     } else {
         0
     }
 }
+// Byte-loop placeholder — single-bucket compare for now.
+// Multi-byte loop lands with std.vec's loop codegen.

@@ -28,11 +28,9 @@
 //! gaps where the formatter cannot faithfully reproduce source constructs
 //! because the information was discarded during parsing.
 //!
-//! **Current skip list: all 5 stdlib files** — see
-//! `tests/mindcraft/STABILITY_SKIP_LIST.md` for the single root cause:
-//! the AST `FnDef` node has no `is_pub` field, so `pub fn` is uniformly
-//! emitted as `fn`.  This will be resolved when the AST gains a `pub`
-//! visibility field (tracked as MINDCRAFT-001 in the skip list).
+//! **Current skip list: empty** — MINDCRAFT-001 is resolved.  The AST
+//! `Node::FnDef`, `Node::StructDef`, `Node::EnumDef`, and `Field` now carry
+//! an `is_pub: bool` field.  All five stdlib files are stable.
 
 use libmind::fmt::format_source;
 use libmind::project::MindcraftFormatConfig;
@@ -75,21 +73,10 @@ fn diff_lines(expected: &str, got: &str) -> String {
 /// A file on this list is not asserted for byte-equality with the
 /// formatter output.  It MUST still be idempotent (enforced by
 /// `fmt_idempotence.rs`).
-const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
-    // All stdlib files declare functions as `pub fn`.  The parser
-    // accepts `pub` but the AST Node::FnDef has no `is_pub` field —
-    // the keyword is consumed and dropped during parsing.  The formatter
-    // therefore emits `fn` instead of `pub fn`.
-    //
-    // Root cause: AST gap, not a formatter logic bug.
-    // Tracker: MINDCRAFT-001 (see tests/mindcraft/STABILITY_SKIP_LIST.md)
-    // Resolution path: add `is_pub: bool` to Node::FnDef + emit `pub ` when set.
-    ("vec",    "MINDCRAFT-001: AST drops `pub` keyword on FnDef"),
-    ("string", "MINDCRAFT-001: AST drops `pub` keyword on FnDef"),
-    ("io",     "MINDCRAFT-001: AST drops `pub` keyword on FnDef"),
-    ("map",    "MINDCRAFT-001: AST drops `pub` keyword on FnDef"),
-    ("blas",   "MINDCRAFT-001: AST drops `pub` keyword on FnDef"),
-];
+///
+/// MINDCRAFT-001 is RESOLVED — all five stdlib files are now stable.
+/// The skip list is intentionally empty.
+const STABILITY_SKIP_LIST: &[(&str, &str)] = &[];
 
 fn stability_skip_reason(stem: &str) -> Option<&'static str> {
     STABILITY_SKIP_LIST

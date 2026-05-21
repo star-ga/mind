@@ -34,6 +34,7 @@ fn sp() -> Span {
 
 fn field(name: &str) -> Field {
     Field {
+        is_pub: false,
         name: name.to_string(),
         ty: TypeAnn::Named("i64".to_string()),
         span: sp(),
@@ -67,6 +68,7 @@ fn count_calls(instrs: &[Instr], name: &str) -> usize {
 fn module_with_field_reads(read_fields: &[&str]) -> Module {
     let mut items: Vec<Node> = vec![
         Node::StructDef {
+            is_pub: false,
             name: "Vec".to_string(),
             fields: vec![field("addr"), field("len"), field("cap")],
             attrs: vec![],
@@ -250,6 +252,7 @@ fn field_access_unknown_struct_field_falls_back_to_placeholder() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Pair".to_string(),
                 fields: vec![field("a"), field("b")],
                 attrs: vec![],
@@ -299,6 +302,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Cfg".to_string(),
                 fields: vec![field("max")],
                 attrs: vec![],
@@ -315,6 +319,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
                 span: sp(),
             },
             Node::FnDef {
+                is_pub: false,
                 name: "read".to_string(),
                 params: vec![],
                 ret_type: None,

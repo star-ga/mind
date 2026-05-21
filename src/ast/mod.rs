@@ -323,6 +323,8 @@ pub enum Node {
     /// `None` means the attribute was absent; `Some(t)` means the function is
     /// annotated for compile-time expert pruning with threshold `t ∈ [0.0, 1.0)`.
     FnDef {
+        /// Whether the `pub` visibility modifier was present in source.
+        is_pub: bool,
         name: String,
         params: Vec<Param>,
         ret_type: Option<TypeAnn>,
@@ -426,6 +428,8 @@ pub enum Node {
     /// Struct declaration: `struct Name { f: T, g: U }`
     /// Phase 10.5 Tier-2.
     StructDef {
+        /// Whether the `pub` visibility modifier was present in source.
+        is_pub: bool,
         name: String,
         fields: Vec<Field>,
         attrs: Vec<Attribute>,
@@ -434,6 +438,8 @@ pub enum Node {
     /// Enum declaration: `enum Name { Variant, Variant(T) }`
     /// Phase 10.5 Tier-2.
     EnumDef {
+        /// Whether the `pub` visibility modifier was present in source.
+        is_pub: bool,
         name: String,
         variants: Vec<EnumVariant>,
         attrs: Vec<Attribute>,
@@ -584,6 +590,8 @@ pub struct Attribute {
 /// Field of a struct declaration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Field {
+    /// Whether the `pub` visibility modifier was present in source.
+    pub is_pub: bool,
     pub name: String,
     pub ty: TypeAnn,
     pub span: Span,

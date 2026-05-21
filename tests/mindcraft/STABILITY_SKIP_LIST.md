@@ -11,38 +11,24 @@ tests.  A stale entry (file is now stable) triggers a warning from
 
 ---
 
-## MINDCRAFT-001 — AST drops `pub` keyword on `FnDef`
+## MINDCRAFT-001 — RESOLVED
 
-**Affects:** `std/vec.mind`, `std/string.mind`, `std/io.mind`, `std/map.mind`, `std/blas.mind`
+**Status:** RESOLVED.  All five stdlib files are now stable.
 
-**Root cause:** The parser recognises and consumes the `pub` visibility
+**Root cause (closed):** The parser recognised and consumed the `pub` visibility
 modifier on function definitions (`pub fn foo() { ... }`) but the AST
-`Node::FnDef` struct has no `is_pub: bool` field.  The information is
-silently dropped.  The formatter therefore always emits `fn foo() { ... }`
+`Node::FnDef` struct had no `is_pub: bool` field.  The information was
+silently dropped.  The formatter therefore always emitted `fn foo() { ... }`
 regardless of whether `pub` was present in the source.
 
-All five stdlib files use `pub fn` for their public API surface.  Every
-function declaration in those files drifts from the canonical source.
+**Resolution:** Added `is_pub: bool` to `Node::FnDef`, `Node::StructDef`,
+`Node::EnumDef`, and `Field` in `src/ast/mod.rs`.  Updated the parser to
+capture the `pub` keyword and store it.  Updated `src/fmt/printer.rs` to
+emit `pub ` when the flag is set.  Reformatted all five stdlib files to
+canonical form (the inline `if/else` and multi-line fn-signature style used
+in `vec.mind`, `string.mind`, `map.mind`, and `blas.mind` was also
+canonicalised at the same time — those were pre-existing minor drifts that
+the MINDCRAFT-001 skip had masked).
 
-**Drift example:**
-```
-source:    pub fn vec_new() -> Vec {
-formatted: fn vec_new() -> Vec {
-```
-
-**Resolution path:**
-1. Add `is_pub: bool` to `Node::FnDef` in `src/ast/mod.rs`.
-2. Update `parse_fn_def` in `src/parser/mod.rs` to store the flag.
-3. Update `emit_fn_def` in `src/fmt/printer.rs` to emit `pub ` when `is_pub`.
-4. Update IR lowering if the flag affects symbol visibility in the IR.
-5. Remove this entry and the five skip-list entries in `fmt_stdlib_stability.rs`.
-
-**Note:** The `pub` keyword also appears on functions in `examples/`
-(`examples/parser/main.mind`, `examples/typecheck/main.mind`,
-`examples/emit_ir/main.mind`, `examples/mindc_mind/main.mind`) but those
-files are not in the stdlib stability gate scope.  They are subject to
-idempotence only.
-
-**Note:** `blas.mind` also has one non-`pub` function (`matmul_rmajor_q16_v_row`)
-which is correctly emitted as `fn` — only the `pub fn` → `fn` drift is
-covered by this entry.
+All five skip-list entries have been removed from `tests/fmt_stdlib_stability.rs`.
+The `stability_summary` gate now passes with 5 files stable, 0 skipped.

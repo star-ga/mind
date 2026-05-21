@@ -39,6 +39,7 @@ fn sp() -> Span {
 
 fn field(name: &str) -> Field {
     Field {
+        is_pub: false,
         name: name.to_string(),
         ty: TypeAnn::Named("i64".to_string()),
         span: sp(),
@@ -94,12 +95,14 @@ fn step2_struct_typed_parameter_resolves_field_access() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Cfg".to_string(),
                 fields: vec![field("max")],
                 attrs: vec![],
                 span: sp(),
             },
             Node::FnDef {
+                is_pub: false,
                 name: "read".to_string(),
                 params: vec![Param {
                     name: "c".to_string(),
@@ -144,12 +147,14 @@ fn step2_fn_return_receiver_resolves_field_access() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Cfg".to_string(),
                 fields: vec![field("max")],
                 attrs: vec![],
                 span: sp(),
             },
             Node::FnDef {
+                is_pub: false,
                 name: "make".to_string(),
                 params: vec![],
                 ret_type: Some(TypeAnn::Named("Cfg".to_string())),
@@ -201,6 +206,7 @@ fn step2_fn_with_non_struct_return_does_not_pollute_side_table() {
     let module = Module {
         items: vec![
             Node::FnDef {
+                is_pub: false,
                 name: "raw".to_string(),
                 params: vec![],
                 ret_type: Some(TypeAnn::Named("i64".to_string())),
@@ -257,6 +263,7 @@ fn step2_chained_access_falls_through_when_inner_field_is_scalar() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Pair".to_string(),
                 fields: vec![field("a"), field("b")],
                 attrs: vec![],
@@ -323,6 +330,7 @@ fn step1_path_still_used_when_receiver_is_bound_ident() {
     let module = Module {
         items: vec![
             Node::StructDef {
+                is_pub: false,
                 name: "Vec".to_string(),
                 fields: vec![field("addr"), field("len"), field("cap")],
                 attrs: vec![],
