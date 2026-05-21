@@ -476,6 +476,19 @@ pub struct TargetConfig {
 pub enum DependencySpec {
     /// Simple version string: `foo = "1.0"`.
     Simple(String),
+    /// Inline table with a `git` field (Phase E):
+    /// `foo = { git = "https://...", rev = "abc123" }`.
+    Git {
+        git: String,
+        #[serde(default)]
+        rev: Option<String>,
+        #[serde(default)]
+        tag: Option<String>,
+        #[serde(default)]
+        branch: Option<String>,
+        #[serde(default)]
+        features: Vec<String>,
+    },
     /// Inline table with a `path` field (Phase C / Phase D):
     /// `foo = { path = "../foo" }`.
     Path {
