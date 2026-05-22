@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2620 | **Est. tokens:** ~6,483,101
-**Generated:** 2026-05-22 11:19 UTC
+**Files:** 2621 | **Est. tokens:** ~6,489,201
+**Generated:** 2026-05-22 13:39 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 141 | ~221,289 |
+| `tests/` | 142 | ~227,389 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3808,6 +3808,7 @@
 - `fmt_idempotence.rs` (~1987 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_stdlib_stability.rs` (~2164 tok, huge) — Copyright 2025 STARGA Inc.
+- `g2_differential_mlir.rs` (~6100 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `genref_phase_jb.rs` (~3303 tok, huge) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
