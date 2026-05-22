@@ -878,6 +878,12 @@ fn emit_gather(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId, indices: V
 fn dtype_to_mlir(dtype: &DType) -> &str {
     match dtype {
         DType::I32 => "i32",
+        // RFC 0012 Phase A — new dtypes. Q16 stores as i32 (same backing
+        // representation; the dtype tag is compile-time-only per §3.4).
+        // I64 and F64 lower to their MLIR counterparts.
+        DType::Q16 => "i32",
+        DType::I64 => "i64",
+        DType::F64 => "f64",
         DType::F32 => "f32",
         DType::BF16 => "bf16",
         DType::F16 => "f16",
