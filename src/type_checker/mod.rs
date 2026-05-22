@@ -52,6 +52,16 @@ const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
 const SHAPE_INNER_DIM_CODE: &str = "E2103";
 
+/// True for the RFC 0012 shape-diagnostic codes. Used to keep the
+/// additive FnDef-body shape pass from contributing non-shape errors
+/// (see the FnDef arm in `check_module_types_in_file`).
+fn is_shape_diag_code(code: &str) -> bool {
+    matches!(
+        code,
+        "E2101" | "E2102" | "E2103" | "shape::matmul_mismatch" | "shape::broadcast_mismatch"
+    ) || code.starts_with("shape::")
+}
+
 fn dtype_name(dtype: &DType) -> &'static str {
     match dtype {
         DType::I32 => "i32",
@@ -2610,7 +2620,19 @@ pub fn check_module_types_in_file(
                 };
                 let body_errs =
                     check_module_types_in_file(&body_module, src, file, &fn_env);
-                errs.extend(body_errs);
+                // RFC 0012 Phase A is PURELY ADDITIVE: this recursion exists
+                // solely to fire `shape::*` diagnostics on tensor `let`
+                // bindings inside fn bodies. It must NOT contribute generic
+                // type errors — the fn body is already type-checked by the
+                // main pass, and the mini-module env here defaults non-tensor
+                // params (e.g. `&Point` refs) to ScalarI64, which produces
+                // false positives on `&expr` / match-block / struct-arg
+                // constructs that have nothing to do with shapes. Keep only
+                // shape diagnostics so a valid program never fails to compile
+                // because of Phase A. (Regression fix 2026-05-22: this
+                // recursion previously extended ALL body errors, breaking
+                // ref-expr + match-block parsing tests in parse_match_and_ref.)
+                errs.extend(body_errs.into_iter().filter(|d| is_shape_diag_code(d.code)));
 
                 // RFC 0010 Phase J-A/B: safety passes over the fn node.
                 #[cfg(feature = "std-surface")]
