@@ -5,6 +5,57 @@ All notable changes to the MIND compiler project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added — RFC 0012 tensor-native surface syntax (the differentiation layer)
+
+- **Phase A — shape-typed tensors.** `Tensor<dtype,[dims]>` carries shape and
+  dtype in the type. Matmul inner-dimension, broadcast compatibility, and rank
+  mismatches are caught at type-check time with structured `shape::` /
+  `E2101`/`E2102`/`E2103` diagnostics through the same surface as `mindc check`
+  — never at runtime.
+- **Phase B — tensor operators.** `@` (matmul), `.+ .- .* ./` (elementwise),
+  `.T` (transpose), and reductions, all desugaring to the existing `std.blas`
+  surface so the Q16.16 byte-identity guarantee carries through unchanged. Ships
+  a strict broadcast subset (scalar + last-dimension rank-1); full prefix-rank
+  broadcasting and raw-intrinsic byte-identity are Phase B.2 (deferred).
+- **Phase C.0 — function-attribute threading (inert).** The parser now records
+  the full attribute list on `Node::FnDef` (`attrs`) so later phases can
+  interpret `[deterministic]`, `[target(...)]`, and `[q16]`. **Inert: nothing
+  reads `attrs` yet** — lowering is unchanged and the bootstrap byte-identity
+  oracle is preserved. The annotation *checks* (determinism call-graph, target
+  validity, q16-dtype) are Phase C.1 and are not yet enforced.
+
+### Added — post-0.7.0 RFC progress
+
+- **RFC 0010 Phase J-A** — `region { }` blocks: the region-interior memory tier
+  (unrestricted aliasing within a bounded lifetime, freed at region exit), with
+  escape checks routed through the type-checker `safety::` diagnostic surface.
+- **RFC 0010 Phase J-B** — `GenRef`: generation-checked region-exterior
+  references; a stale-handle deref returns `None` instead of use-after-free UB.
+- **RFC 0010 G1** — dropped the vestigial `melior`/`inkwell` optional deps
+  (never load-bearing; `mindc` emits MLIR text and shells to the C++ backend).
+- **RFC 0010 G2.1** — pure-MIND vs Rust MLIR-text differential coverage harness.
+- **RFC 0011 Phase A** — `std.async` (12th gated stdlib module): Scheduler-
+  injection API, Sender/Receiver composition, and a deterministic
+  `ReplayScheduler` with a byte-stable FNV-1a `trace_hash`, in pure MIND with
+  synchronous execution.
+
+### Fixed
+
+- **RFC 0012 Phase A regressions (purely-additive guarantee restored).**
+  Phase A's new `ScalarI64`/`ScalarF64` types broke `i64 + i64` (and f64/bool)
+  scalar binary ops (`type_check::E2001`) and the fn-body shape pass over-
+  reported on `&expr`/match/struct-arg expressions. Both fixed; the shape pass
+  now emits only `shape::*` diagnostics on genuinely shape-wrong code and never
+  makes previously-compiling code fail.
+- **Three latent full-workspace failures** surfaced by running the suite with no
+  feature flags: a test target that did not compile under default features
+  (missing `#![cfg(feature = "mlir-build")]` guard); a diagnostic-code reroute
+  of the legacy `tensor.matmul(a,b)` intrinsic off `E2103` (Phase B classifier
+  too broad — narrowed to the `@`-operator marker); and a formatter
+  stability test that panicked parsing a `std-surface`-gated stdlib file.
+
 ## [0.7.0] - 2026-05-21 — Credibility-ladder rung 3 graduation: Mindcraft + RFC 0008 KEYSTONE + RFC 0010 foundations + 13 stdlib modules + mindc doc + standalone binary release
 
 ### Added — Standalone binary distribution (task #265)
