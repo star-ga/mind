@@ -1246,8 +1246,28 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         } => {
             let (lt, _) = infer_expr(left, env)?;
             let (rt, _) = infer_expr(right, env)?;
-            if matches!((&lt, &rt), (ValueType::ScalarI32, ValueType::ScalarI32)) {
-                return Ok((ValueType::ScalarI32, *span));
+            // Same-type scalar binary op returns that scalar type. Pre-RFC-0012
+            // only ScalarI32 was fast-pathed here (i64 annotations resolved to
+            // ScalarI32). RFC 0012 Phase A introduced ScalarI64/ScalarF64 as
+            // distinct types; without these arms `i64 + i64` (and f64/bool)
+            // fell through to the `_ => incompatible types` catch-all (E2001).
+            match (&lt, &rt) {
+                (ValueType::ScalarI32, ValueType::ScalarI32) => {
+                    return Ok((ValueType::ScalarI32, *span))
+                }
+                (ValueType::ScalarI64, ValueType::ScalarI64) => {
+                    return Ok((ValueType::ScalarI64, *span))
+                }
+                (ValueType::ScalarF32, ValueType::ScalarF32) => {
+                    return Ok((ValueType::ScalarF32, *span))
+                }
+                (ValueType::ScalarF64, ValueType::ScalarF64) => {
+                    return Ok((ValueType::ScalarF64, *span))
+                }
+                (ValueType::ScalarBool, ValueType::ScalarBool) => {
+                    return Ok((ValueType::ScalarBool, *span))
+                }
+                _ => {}
             }
 
             match (&lt, &rt) {
