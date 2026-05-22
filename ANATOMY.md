@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2624 | **Est. tokens:** ~6,513,253
-**Generated:** 2026-05-22 17:18 UTC
+**Files:** 2625 | **Est. tokens:** ~6,513,432
+**Generated:** 2026-05-22 18:18 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 31 | ~20,087 |
+| `./` | 32 | ~20,087 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 144 | ~238,230 |
+| `tests/` | 144 | ~238,409 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -443,6 +443,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
 - `.gitignore` (~262 tok, medium) — # Rust
+- `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
@@ -3808,7 +3809,7 @@
 
 - `fmt_idempotence.rs` (~1987 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_stdlib_stability.rs` (~2164 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2257 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6100 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `genref_phase_jb.rs` (~3303 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3836,7 +3837,7 @@
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `lint_infrastructure.rs` (~2505 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
-- `mindc_build_phase_a.rs` (~4493 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_build_phase_a.rs` (~4579 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5106 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6195 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_doc_phase1.rs` (~2558 tok, huge) — Copyright 2025 STARGA Inc.

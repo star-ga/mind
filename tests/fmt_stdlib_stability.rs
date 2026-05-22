@@ -176,8 +176,14 @@ fn stability_summary() {
         }
         let src = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-        let formatted = format_source(&src, &cfg)
-            .unwrap_or_else(|e| panic!("format failed for {name}: {e}"));
+        // A skip-list file may require features (e.g. `std-surface` for `while`
+        // loops in toml.mind) that this build does not enable. If it cannot be
+        // parsed under the active feature set it is, by definition, not "now
+        // stable", so the stale-entry check does not apply — skip it. Under the
+        // full-feature CI run the parse succeeds and the check is meaningful.
+        let Ok(formatted) = format_source(&src, &cfg) else {
+            continue;
+        };
         // If a file in the skip list is now stable, it should be removed.
         // We don't fail here — the file being stable is good news — but
         // the test prints a warning so the skip list can be pruned.
