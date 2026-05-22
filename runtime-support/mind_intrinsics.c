@@ -1015,3 +1015,210 @@ MIND_EXPORT int64_t __mind_region_exit(void) {
     f->cap  = 0;
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// RFC 0010 Phase J-B — GenRef generation-checked references (Tier 3).
+//
+// A GenRef<T> is a 64-bit opaque handle that packs a slot index and a
+// generation counter, giving safe access to long-lived heap allocations
+// that can outlive the scope that created them.
+//
+// Handle encoding (little-endian):
+//   bits [63:32] — slot index  (uint32_t, zero-based into genref_table)
+//   bits [31: 0] — generation  (uint32_t, increments on every gen_free)
+//
+// This packing fits comfortably in the i64 ABI (RFC 0005 Option C) and
+// keeps both fields accessible with a single i64 extraction.
+//
+// Generation table layout:
+//   A growable array of GenRefSlot structs.  Initial capacity 16; doubles
+//   on overflow.  The table itself uses direct malloc/realloc — it is NOT
+//   tracked by __mind_region_track so the frame storage sits outside the
+//   region model.
+//
+// Wrap-around (RFC 0010 §7):
+//   The generation counter is 32 bits.  After 2^32 frees of a single slot
+//   the counter wraps to 0.  On wrap, the runtime aborts deterministically
+//   (abort()) rather than silently passing a stale-gen check.  In practice,
+//   exhausting a 32-bit counter at a single slot would require sustained
+//   allocation+free at >1 GHz for over 4 seconds — unreachable in any real
+//   workload.  Choosing 32 bits (not 64) keeps the packed handle within a
+//   single i64 with no side table, which matches the i64 ABI throughout.
+//
+// Thread safety: none required.  MIND programs are single-threaded until
+// RFC 0011 (async).  The table is a plain static pointer.
+// ---------------------------------------------------------------------------
+
+#define MIND_GENREF_INIT_CAP 16
+
+typedef struct {
+    void    *ptr;        /* live allocation, or NULL when the slot is free */
+    uint32_t generation; /* bumped on every gen_free of this slot          */
+    int      in_use;     /* 1 if the slot holds a live allocation          */
+} GenRefSlot;
+
+static GenRefSlot *genref_table   = NULL;
+static uint32_t    genref_cap     = 0;
+static uint32_t    genref_len     = 0;
+
+// Lazy initialise the table on first use.
+//
+// Generation counters are initialised to 1, not 0.  This ensures that the
+// packed handle for slot 0 at its first allocation is genref_pack(0, 1) = 1,
+// which is non-zero and distinguishable from the null handle (0).
+// The invariant is: a valid live handle is always non-zero.
+static void genref_ensure_init(void) {
+    if (genref_table != NULL) return;
+    genref_table = (GenRefSlot *)malloc(
+        (size_t)MIND_GENREF_INIT_CAP * sizeof(GenRefSlot));
+    if (!genref_table) abort();
+    for (uint32_t i = 0; i < MIND_GENREF_INIT_CAP; ++i) {
+        genref_table[i].ptr        = NULL;
+        genref_table[i].generation = 1; /* start at 1 so pack(slot,gen)!=0 */
+        genref_table[i].in_use     = 0;
+    }
+    genref_cap = MIND_GENREF_INIT_CAP;
+    genref_len = 0;
+}
+
+// Pack (slot, gen) into a single i64 handle.
+// bits [63:32] = slot index, bits [31:0] = generation.
+static inline int64_t genref_pack(uint32_t slot, uint32_t gen) {
+    return (int64_t)(((uint64_t)slot << 32) | (uint64_t)gen);
+}
+
+// Unpack slot index from a handle.
+static inline uint32_t genref_slot(int64_t handle) {
+    return (uint32_t)((uint64_t)(unsigned long long)handle >> 32);
+}
+
+// Unpack generation from a handle.
+static inline uint32_t genref_gen(int64_t handle) {
+    return (uint32_t)((uint64_t)(unsigned long long)handle & 0xFFFFFFFFu);
+}
+
+// __mind_gen_alloc(bytes) — allocate `bytes` bytes on the heap and return a
+// packed (slot, generation) handle.
+//
+// On success: returns a non-zero handle that encodes the slot and its current
+// generation counter.  The slot is reused from the free-list when available;
+// a new slot is appended when the table is full.
+//
+// On allocation failure: aborts deterministically — MIND does not model OOM
+// as a recoverable condition at the GenRef tier (matching region OOM policy).
+//
+// Returns 0 on invalid input (bytes <= 0) — callers should treat handle 0
+// as a null/invalid GenRef.
+MIND_EXPORT int64_t __mind_gen_alloc(int64_t bytes) {
+    if (bytes <= 0) return 0;
+
+    genref_ensure_init();
+
+    void *p = malloc((size_t)bytes);
+    if (!p) abort(); /* deterministic OOM panic */
+
+    /* Scan for a free slot first (reuse freed slots). */
+    uint32_t slot;
+    int found_free = 0;
+    for (uint32_t i = 0; i < genref_len; ++i) {
+        if (!genref_table[i].in_use) {
+            slot = i;
+            found_free = 1;
+            break;
+        }
+    }
+
+    if (!found_free) {
+        /* No free slot — grow the table or append a new slot. */
+        if (genref_len >= genref_cap) {
+            uint32_t new_cap = genref_cap * 2;
+            GenRefSlot *t = (GenRefSlot *)realloc(
+                genref_table, (size_t)new_cap * sizeof(GenRefSlot));
+            if (!t) abort();
+            /* Initialise new slots with generation = 1 (not 0) so that
+             * genref_pack(slot, 1) is always non-zero for any slot index. */
+            for (uint32_t k = genref_cap; k < new_cap; ++k) {
+                t[k].ptr        = NULL;
+                t[k].generation = 1;
+                t[k].in_use     = 0;
+            }
+            genref_table = t;
+            genref_cap   = new_cap;
+        }
+        slot = genref_len++;
+    }
+
+    /* Populate the slot.  The generation counter is NOT reset on reuse —
+     * it retains the value it had when the slot was last freed, so stale
+     * handles (that hold the old generation) continue to return 0 on deref.
+     */
+    genref_table[slot].ptr    = p;
+    genref_table[slot].in_use = 1;
+
+    return genref_pack(slot, genref_table[slot].generation);
+}
+
+// __mind_gen_deref(handle) — check the handle's generation against the slot's
+// current generation.
+//
+// Returns the live pointer as i64 when the generations match (the allocation
+// is still live), or 0 when they differ (the allocation was freed, or the
+// handle is stale from a slot reuse).
+//
+// Returning 0 (not panicking) matches the Phase J-B design: the caller's
+// match/if guard branches on zero and handles the dangling case safely.
+// The type-checker emits `safety::genref_unchecked_deref` when the return
+// value of gen_deref is used without such a guard.
+MIND_EXPORT int64_t __mind_gen_deref(int64_t handle) {
+    if (handle == 0) return 0;
+
+    uint32_t slot = genref_slot(handle);
+    uint32_t gen  = genref_gen(handle);
+
+    if (genref_table == NULL || slot >= genref_len) return 0;
+    if (genref_table[slot].generation != gen) return 0;
+    if (!genref_table[slot].in_use)           return 0;
+
+    return (int64_t)(uintptr_t)genref_table[slot].ptr;
+}
+
+// __mind_gen_free(handle) — free the allocation at `slot` and increment the
+// generation counter so that any surviving handles with the old generation
+// return 0 from __mind_gen_deref.
+//
+// Calling gen_free on an already-freed handle (generation mismatch) is a
+// no-op — double-free is silently ignored rather than aborting, because the
+// MIND programmer may not be able to prevent a duplicate free in all code
+// paths (the type-checker's genref_unchecked_deref diagnostic is the
+// compile-time signal; the runtime makes the double-free harmless).
+//
+// Generation wrap-around (RFC 0010 §7): after 2^32 frees of a single slot
+// the 32-bit counter wraps to 0.  The runtime aborts on wrap rather than
+// silently creating a window where a 4-billion-calls-stale handle passes the
+// check.  This condition is unreachable in practice.
+MIND_EXPORT int64_t __mind_gen_free(int64_t handle) {
+    if (handle == 0) return 0;
+
+    uint32_t slot = genref_slot(handle);
+    uint32_t gen  = genref_gen(handle);
+
+    if (genref_table == NULL || slot >= genref_len) return 0;
+
+    /* Only free if the handle's generation matches the slot's current gen
+     * AND the slot is in use.  Stale-handle free is a no-op. */
+    if (genref_table[slot].generation != gen) return 0;
+    if (!genref_table[slot].in_use)           return 0;
+
+    free(genref_table[slot].ptr);
+    genref_table[slot].ptr    = NULL;
+    genref_table[slot].in_use = 0;
+
+    /* Increment generation.  Wrap-around guard: abort on overflow rather
+     * than silently cycling back to a previously-valid generation. */
+    if (genref_table[slot].generation == 0xFFFFFFFFu) {
+        abort(); /* generation counter wrap — RFC 0010 §7 */
+    }
+    genref_table[slot].generation++;
+
+    return 0;
+}
