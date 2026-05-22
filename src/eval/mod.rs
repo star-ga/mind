@@ -1209,6 +1209,43 @@ pub(crate) fn eval_value_expr_mode(
         // expressions. The interpreter returns a unit placeholder; the
         // actual call site is handled by the MLIR lowering path.
         Node::ExternBlock { .. } => Ok(Value::Int(0)),
+        // RFC 0010 Phase J-A: `region { ... }` block.
+        //
+        // The interpreter evaluates the body in a local scope that inherits
+        // the outer environment and propagates `let`/`assign` bindings within
+        // the region. Returns the last expression's value. The interpreter
+        // does not call `__mind_region_enter` / `__mind_region_exit` (it
+        // manages no real heap) but maintains semantic parity with the
+        // codegen path: a region evaluates to its last expression.
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            let mut region_env = env.clone();
+            let mut result = Value::Int(0);
+            for stmt in body {
+                match stmt {
+                    Node::Let { name, value, .. } => {
+                        let val = eval_value_expr_mode(
+                            value, &region_env, tensor_env, mode.clone(),
+                        )?;
+                        region_env.insert(name.clone(), val.clone());
+                        result = val;
+                    }
+                    Node::Assign { name, value, .. } => {
+                        let val = eval_value_expr_mode(
+                            value, &region_env, tensor_env, mode.clone(),
+                        )?;
+                        region_env.insert(name.clone(), val.clone());
+                        result = val;
+                    }
+                    _ => {
+                        result = eval_value_expr_mode(
+                            stmt, &region_env, tensor_env, mode.clone(),
+                        )?;
+                    }
+                }
+            }
+            Ok(result)
+        }
     }
 }
 

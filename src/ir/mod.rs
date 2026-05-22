@@ -504,6 +504,42 @@ pub enum Instr {
         /// Statically known SIMD lane count of `src`.
         lanes: usize,
     },
+    /// RFC 0010 Phase J-A — region-interior allocation scope.
+    ///
+    /// Encapsulates the lowered body of a `region { ... }` block. The MLIR
+    /// backend emits:
+    ///   1. `func.call @__mind_region_enter()` — push a new tracking frame.
+    ///   2. Each body instruction in sequence. Every `Instr::Call { name:
+    ///      "__mind_alloc" }` in the body is followed immediately by a
+    ///      `func.call @__mind_region_track(ptr)` to record the allocation.
+    ///   3. `func.call @__mind_region_exit()` — free the frame's allocations.
+    ///
+    /// `result` is the SSA id of the value produced by the last body
+    /// instruction (the implicit return value of the region expression).
+    ///
+    /// `enter_id` / `exit_id` are globally-unique SSA ids used for the
+    /// `__mind_region_enter()` / `__mind_region_exit()` call results so
+    /// that nested regions emit distinct MLIR value names.
+    ///
+    /// `alloc_ids` is the set of SSA ids produced by `__mind_alloc` calls
+    /// inside the body; the escape checker uses this to detect when a
+    /// region-interior pointer is returned as the region result.
+    ///
+    /// Gated to `std-surface`.
+    #[cfg(feature = "std-surface")]
+    Region {
+        /// Lowered instructions forming the region body.
+        body: Vec<Instr>,
+        /// SSA id of the region's result value (last body value).
+        result: ValueId,
+        /// Globally unique SSA id for the `__mind_region_enter()` result.
+        enter_id: ValueId,
+        /// Globally unique SSA id for the `__mind_region_exit()` result.
+        exit_id: ValueId,
+        /// SSA ids produced by `__mind_alloc` calls inside the body
+        /// (used by the escape checker).
+        alloc_ids: Vec<ValueId>,
+    },
     /// RFC 0010 Phase A — declare an `extern "C"` function symbol.
     ///
     /// Carries the function signature for MLIR lowering: the name, arity
@@ -590,8 +626,11 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::VecLoadI32 { dst, .. }
         | Instr::VecMulAddQ16 { dst, .. }
         | Instr::VecReduceAddI64 { dst, .. } => Some(*dst),
+        #[cfg(feature = "std-surface")]
+        Instr::Region { result, .. } => Some(*result),
     }
 }
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {

@@ -336,7 +336,9 @@ testable.
 | G | Migrate mindc's MLIR-glue from `mlir-sys` (Rust) to `std.mlir` (MIND). | mindc self-build smoke test passes end-to-end with the new path. | Planned |
 | H | Migrate mindc's LLVM-glue from `llvm-sys` / `inkwell` (Rust) to `std.llvm` (MIND). | same self-build smoke test. | Planned |
 | I (KEYSTONE) | Remove `mlir-sys` and `inkwell` from `Cargo.toml`. The Rust crate becomes a thin distribution shim. Pure-MIND mindc owns the full compile path. | The Rust dependency tree shows no mlir-sys or inkwell transitive deps; mindc produces a byte-identical result to the Phase G build. | Planned |
-| J | Implement the three-tier memory model in mindc: parse `region { }` blocks, type-check region escape, lower region alloc/free, lower `GenRef<T>` with generation counter. | existing MIND programs compile unchanged; new tests exercise region and GenRef semantics. | Planned |
+| J | Implement the three-tier memory model in mindc: parse `region { }` blocks, type-check region escape, lower region alloc/free, lower `GenRef<T>` with generation counter. | existing MIND programs compile unchanged; new tests exercise region and GenRef semantics. | **Phase J-A (region-interior) Shipped** |
+| J-A | Parse `region { }` blocks; `Node::Region` AST variant; `Instr::Region` IR variant; lowering to `__mind_region_enter/track/exit` runtime helpers; `safety::region_escape` diagnostic (direct-return case); interpreter evaluation; formatter; 11 tests. | `phase_g_04` oracle unchanged; 11 `region_phase_ja` tests pass; 0 failed (excl. pre-existing 6 blas_vec_q16_smoke). | **Shipped** |
+| J-B | Full escape analysis (aliasing through struct fields, function-return pointers); `GenRef<T>` with generation counter. | Phase J-A shipped; GenRef + full escape = Phase J-B. | Planned |
 
 Phase A is the prerequisite for all subsequent phases. Phases B–D are
 independent of each other and may be implemented in any order. Phases E–I are

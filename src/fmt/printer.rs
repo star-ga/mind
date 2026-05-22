@@ -329,6 +329,10 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         Node::While { cond, body, .. } => {
             emit_while(p, cond, body);
         }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            emit_region(p, body);
+        }
         Node::Assert { cond, msg, .. } => {
             emit_assert(p, cond, msg.as_deref());
         }
@@ -579,6 +583,13 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
                 let ind = p.indent_str();
                 p.push(&ind);
                 emit_while_inline(p, cond, body);
+                p.push("\n");
+            }
+            #[cfg(feature = "std-surface")]
+            Node::Region { body, .. } => {
+                let ind = p.indent_str();
+                p.push(&ind);
+                emit_region_inline(p, body);
                 p.push("\n");
             }
             Node::Match { scrutinee, arms, .. } => {
@@ -844,6 +855,24 @@ fn emit_while_inline(p: &mut Printer, cond: &Node, body: &[Node]) {
     p.push("while ");
     emit_expr(p, cond);
     p.push(" {\n");
+    p.indent += 1;
+    emit_body_stmts(p, body);
+    p.indent -= 1;
+    let ind = p.indent_str();
+    p.push(&ind);
+    p.push("}");
+}
+
+#[cfg(feature = "std-surface")]
+fn emit_region(p: &mut Printer, body: &[Node]) {
+    let ind = p.indent_str();
+    p.push(&ind);
+    emit_region_inline(p, body);
+}
+
+#[cfg(feature = "std-surface")]
+fn emit_region_inline(p: &mut Printer, body: &[Node]) {
+    p.push("region {\n");
     p.indent += 1;
     emit_body_stmts(p, body);
     p.indent -= 1;
@@ -1204,6 +1233,10 @@ fn emit_expr(p: &mut Printer, node: &Node) {
         #[cfg(feature = "std-surface")]
         Node::While { cond, body, .. } => {
             emit_while_inline(p, cond, body);
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            emit_region_inline(p, body);
         }
         // RFC 0010 Phase A: emit the extern "C" block in canonical form.
         Node::ExternBlock { callconv, fns, .. } => {

@@ -910,6 +910,12 @@ impl<'a> P<'a> {
         if self.at_keyword(b"while") {
             return self.parse_while();
         }
+        // RFC 0010 Phase J-A: `region { }` block — gated to std-surface so
+        // the default-build hot path stays byte-identical.
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"region") {
+            return self.parse_region();
+        }
         // Expression or assignment
         let start = self.pos;
         let expr = self.parse_expr()?;
@@ -1995,6 +2001,24 @@ impl<'a> P<'a> {
         })
     }
 
+    /// Parse `region { <stmts> }` (RFC 0010 Phase J-A).
+    ///
+    /// A region block is an expression that evaluates to the last statement
+    /// in its body. Allocations made via `__mind_alloc` inside the block are
+    /// tracked and freed automatically when the block exits.
+    #[cfg(feature = "std-surface")]
+    fn parse_region(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 6; // consume "region"
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let body = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::Region { body, span })
+    }
+
     /// Pratt operator-precedence parser for expressions (mindc 0.2.5).
     ///
     /// Replaces the recursive-descent chain
@@ -2348,6 +2372,13 @@ impl<'a> P<'a> {
         // (the full `at_keyword` is a 5-byte compare + boundary check).
         if self.at(b'm') && self.at_keyword(b"match") {
             return self.parse_match_expr();
+        }
+        // RFC 0010 Phase J-A: `region { }` as a primary expression.
+        // Gated to std-surface; fires when a region appears on the RHS of
+        // a `let` binding or as a bare expression statement.
+        #[cfg(feature = "std-surface")]
+        if self.at(b'r') && self.at_keyword(b"region") {
+            return self.parse_region();
         }
         let start = self.pos;
         let ident = self

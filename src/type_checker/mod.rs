@@ -1464,6 +1464,18 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // RFC 0010 Phase A: `extern "C"` blocks are declarations; they do not
         // produce a typed value. Return ScalarI32 placeholder for compatibility.
         Node::ExternBlock { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        // RFC 0010 Phase J-A: `region { ... }` has the type of its last
+        // expression. For now return ScalarI64 (the typical region result is
+        // an i64 scalar extracted from heap-allocated data). Full type
+        // inference for the region result is Phase J-B.
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, span, .. } => {
+            if let Some(last) = body.last() {
+                infer_expr(last, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
     }
 }
 

@@ -291,6 +291,11 @@ fn validate_operands(
         // RFC 0010 Phase A: extern declaration — no SSA operands to verify.
         #[cfg(feature = "std-surface")]
         Instr::ExternFnDecl { .. } => {}
+        // RFC 0010 Phase J-A: region block — body instructions reside in
+        // their own sub-stream (separate SSA namespace from the outer scope).
+        // The outer verifier treats the node as an opaque unit. Gated.
+        #[cfg(feature = "std-surface")]
+        Instr::Region { .. } => {}
     }
 
     Ok(())
