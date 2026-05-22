@@ -120,6 +120,7 @@ fn step2_struct_typed_parameter_resolves_field_access() {
                     span: sp(),
                 }],
                 reap_threshold: None,
+                attrs: Vec::new(),
                 span: sp(),
             },
         ],
@@ -169,6 +170,7 @@ fn step2_fn_return_receiver_resolves_field_access() {
                     span: sp(),
                 }],
                 reap_threshold: None,
+                attrs: Vec::new(),
                 span: sp(),
             },
             Node::Let {
@@ -218,6 +220,7 @@ fn step2_fn_with_non_struct_return_does_not_pollute_side_table() {
                     span: sp(),
                 }],
                 reap_threshold: None,
+                attrs: Vec::new(),
                 span: sp(),
             },
             Node::Let {

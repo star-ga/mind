@@ -362,6 +362,7 @@ fn symbolic_dim_same_n_no_conflict() {
         ret_type: Some(TypeAnn::ScalarI32),
         body: vec![Node::Return { value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))), span: sp() }],
         reap_threshold: None,
+        attrs: Vec::new(),
         span: sp(),
     };
     // Let x = Tensor<f32,[4,8]>, y = Tensor<f32,[4,16]> — N matches (4 == 4)
@@ -437,6 +438,7 @@ fn symbolic_dim_mismatch_n_conflict() {
         ret_type: Some(TypeAnn::ScalarI32),
         body: vec![Node::Return { value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))), span: sp() }],
         reap_threshold: None,
+        attrs: Vec::new(),
         span: sp(),
     };
     // x: Tensor<f32,[4,8]>, y: Tensor<f32,[8,16]> — N=4 from x, N=8 from y → conflict
@@ -541,6 +543,7 @@ fn shape_check_inside_fn_body() {
             Node::Return { value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))), span: sp() },
         ],
         reap_threshold: None,
+        attrs: Vec::new(),
         span: sp(),
     };
     let module = Module { items: vec![fn_node] };

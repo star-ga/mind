@@ -333,6 +333,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
                     span: sp(),
                 }],
                 reap_threshold: None,
+                attrs: Vec::new(),
                 span: sp(),
             },
         ],

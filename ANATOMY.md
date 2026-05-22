@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2625 | **Est. tokens:** ~6,513,432
-**Generated:** 2026-05-22 18:18 UTC
+**Files:** 2625 | **Est. tokens:** ~6,513,631
+**Generated:** 2026-05-22 18:31 UTC
 
 ## Token Budget Guide
 
@@ -362,7 +362,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,223 |
-| `src/ast/` | 1 | ~6,000 |
+| `src/ast/` | 1 | ~6,144 |
 | `src/autodiff/` | 3 | ~4,256 |
 | `src/bin/` | 2 | ~17,022 |
 | `src/build/` | 2 | ~10,769 |
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 144 | ~238,409 |
+| `tests/` | 144 | ~238,464 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3540,7 +3540,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~6000 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6144 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3957,7 +3957,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `rfc0012_phase_a_shape_types.rs` (~6408 tok, huge) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_a_shape_types.rs` (~6428 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4433 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
@@ -3990,8 +3990,8 @@
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cdylib_link.rs` (~1423 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access.rs` (~2863 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access_step2.rs` (~3318 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access.rs` (~2872 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access_step2.rs` (~3344 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_if_statement.rs` (~3275 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2087 tok, huge) — Copyright 2025 STARGA Inc.

@@ -1129,9 +1129,12 @@ impl<'a> P<'a> {
             // Extract `[reap_threshold(t)]` from the attribute list.
             let reap = extract_reap_threshold(&attrs);
             // Extract `[test]` (RFC 0008 Phase B).
-            // Other attributes are accepted syntactically but not stored.
             let is_test = extract_is_test(&attrs);
-            return self.parse_fn_def_with_attrs(reap, is_test, is_pub);
+            // RFC 0012 Phase C.0: also record the raw attribute list on the
+            // FnDef so later phases can interpret `[deterministic]`,
+            // `[target(...)]`, and `[q16]`. `reap`/`is_test` stay as the typed
+            // fast-path; `attrs` is the full record.
+            return self.parse_fn_def_with_attrs(reap, is_test, is_pub, attrs);
         }
         Err(self.err(
             "expected `module`, `const`, `type`, `struct`, `enum`, or `fn` after attributes".into(),
@@ -1523,7 +1526,7 @@ impl<'a> P<'a> {
     }
 
     fn parse_fn_def(&mut self, is_pub: bool) -> Result<Node, ParseError> {
-        self.parse_fn_def_with_attrs(None, false, is_pub)
+        self.parse_fn_def_with_attrs(None, false, is_pub, Vec::new())
     }
 
     /// Core `fn` parser.
@@ -1541,6 +1544,7 @@ impl<'a> P<'a> {
         reap_threshold: Option<f64>,
         is_test: bool,
         is_pub: bool,
+        attrs: Vec<crate::ast::Attribute>,
     ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 2; // "fn"
@@ -1604,6 +1608,7 @@ impl<'a> P<'a> {
             ret_type,
             body,
             reap_threshold,
+            attrs,
             span,
         })
     }
@@ -1611,7 +1616,7 @@ impl<'a> P<'a> {
     /// Kept for back-compat with call sites that do not pass `is_test`.
     #[allow(dead_code)]
     fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>, is_pub: bool) -> Result<Node, ParseError> {
-        self.parse_fn_def_with_attrs(reap_threshold, false, is_pub)
+        self.parse_fn_def_with_attrs(reap_threshold, false, is_pub, Vec::new())
     }
 
     /// Parse `extern "C" [callconv(.x)] { fn_decls... }` (RFC 0010 Phase A).
