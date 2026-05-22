@@ -16,8 +16,6 @@ categories = ["compilers", "science"]
 exclude = ["assets/", "benchmarks/", "examples/"]
 
 [dependencies]
-melior = { version = "0.21", optional = true }
-inkwell = { version = "0.8.0", features = ["llvm21-1"], optional = true }
 clap = { version = "4.4", features = ["derive"] }
 colored = "2.0"
 anyhow = "1.0"
@@ -118,8 +116,10 @@ cpu-exec = ["cpu-buffers"]
 cpu-conv = ["cpu-exec"]
 mlir = []
 mlir-lowering = []
-mlir_backend = ["melior"]
-llvm = ["inkwell"]
+# mlir_backend / llvm: removed 2026-05-21. The melior + inkwell crates
+# were declared optional but never imported by any compiled code (the
+# production codegen path emits MLIR text and shells to mlir-opt/llc/clang
+# subprocesses — see docs/mindcraft/rfc0010-phase-ghi-migration-plan.md §0).
 mlir-subprocess = ["which"]
 mlir-exec = ["mlir-subprocess"]
 mlir-jit = ["libloading"]
