@@ -424,6 +424,15 @@ pub enum Node {
         body: Vec<Node>,
         /// `[reap_threshold(t)]` annotation — `None` when absent.
         reap_threshold: Option<f64>,
+        /// Raw attribute list as written in source (RFC 0012 Phase C).
+        ///
+        /// Phase C.0 records the attributes verbatim so later phases can
+        /// interpret `[deterministic]`, `[target(...)]`, and `[q16]` without
+        /// another AST change. `is_test`/`reap_threshold` remain the typed
+        /// fast-path for their respective attributes; this list is the full
+        /// record. Empty when no attributes were present. Recording these does
+        /// not change lowering — the byte-identity oracle is unaffected.
+        attrs: Vec<Attribute>,
         span: Span,
     },
     /// Return statement: `return expr`
