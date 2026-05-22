@@ -381,6 +381,14 @@ MIND_EXPORT int64_t string_get_byte(int64_t s, int64_t i) {
 // call (matches std/string.mind's non-mutating semantics).  The backing
 // store is reused when len < cap and reallocated (doubling) when len == cap.
 // Growth: cap 0 → 16, then doubles.
+//
+// Allocation size: new_cap + 7 bytes.  The byte at logical position i is
+// written via __mind_store_i64(base + i, …) which copies 8 bytes starting
+// at byte offset i.  At the last valid position (i = new_cap − 1) that
+// write needs bytes [new_cap−1 .. new_cap+6], so the backing store must be
+// at least new_cap + 7 bytes.  The extra 7 bytes are never part of the
+// logical string content (cap field controls the logical boundary); they
+// exist purely to make the 8-byte i64 store safe at every position.
 MIND_EXPORT int64_t string_push_byte(int64_t s, int64_t b) {
     int64_t base    = __mind_load_i64(s);
     int64_t len     = __mind_load_i64(s + 8);
@@ -394,7 +402,10 @@ MIND_EXPORT int64_t string_push_byte(int64_t s, int64_t b) {
         new_base = base;
     } else {
         new_cap  = (cap == 0) ? 16 : cap * 2;
-        new_base = __mind_alloc(new_cap);
+        // Allocate new_cap + 7 bytes: the 7-byte pad ensures that a
+        // __mind_store_i64 at any byte offset in [0, new_cap) writes
+        // entirely within the allocated region (see comment above).
+        new_base = __mind_alloc(new_cap + 7);
         if (len > 0 && base != 0) {
             memcpy((void *)(uintptr_t)new_base,
                    (void *)(uintptr_t)base,
