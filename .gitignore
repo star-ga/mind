@@ -63,3 +63,7 @@ Cargo.lock
 # are tracked individually below the wildcard.
 audits/*-audit.md
 audits/*-review.md
+
+# mindc doc smoke-test artifacts (canonical output is target/doc/)
+std/**/*.html
+examples/**/*.html
