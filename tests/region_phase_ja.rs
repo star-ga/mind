@@ -36,6 +36,7 @@ use libmind::fmt::format_source;
 use libmind::ir::Instr;
 use libmind::parser::parse;
 use libmind::project::MindcraftFormatConfig;
+use libmind::type_checker::{check_module_types, TypeEnv};
 
 fn default_cfg() -> MindcraftFormatConfig {
     MindcraftFormatConfig::default()
@@ -389,5 +390,114 @@ fn region_formatter_closing_brace_at_region_level() {
         close_found,
         "closing brace of region must appear at indentation level {region_indent}\n\
          formatted output:\n{formatted}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — Structured diagnostic: escape via binding produces
+//           `safety::region_escape` through check_module_types
+// ---------------------------------------------------------------------------
+//
+// RFC 0010 Phase J-A cleanup: the escape check was moved from an `eprintln!`
+// in the lowering path to a proper `diag_from_span` diagnostic emitted by the
+// type-checker.  This test asserts the structured surface works end-to-end.
+
+#[test]
+fn region_escape_via_binding_emits_structured_diagnostic() {
+    // A region that allocates with `__mind_alloc` and binds it to `ptr`,
+    // then returns `ptr` as the region result — a direct binding escape.
+    let src = r#"
+fn direct_escape() -> i64 {
+    region {
+        let ptr = __mind_alloc(24)
+        ptr
+    }
+}
+"#;
+    let module = parse(src).expect("parse should succeed");
+    let diags = check_module_types(&module, src, &TypeEnv::new());
+
+    // There must be at least one safety::region_escape diagnostic.
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic for a direct-binding region escape; got none"
+    );
+    let combined: String = diags.iter().map(|d| format!("{d:?}")).collect();
+    assert!(
+        combined.contains("region_escape"),
+        "diagnostic code must be `safety::region_escape`; got: {combined}"
+    );
+}
+
+#[test]
+fn region_escape_direct_alloc_result_emits_structured_diagnostic() {
+    // A region whose last expression IS the __mind_alloc call directly.
+    let src = r#"
+fn inline_escape() -> i64 {
+    region {
+        __mind_alloc(16)
+    }
+}
+"#;
+    let module = parse(src).expect("parse should succeed");
+    let diags = check_module_types(&module, src, &TypeEnv::new());
+
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic for a direct-return region escape; got none"
+    );
+    let combined: String = diags.iter().map(|d| format!("{d:?}")).collect();
+    assert!(
+        combined.contains("region_escape"),
+        "diagnostic code must be `safety::region_escape`; got: {combined}"
+    );
+}
+
+#[test]
+fn region_escape_scalar_result_no_diagnostic() {
+    // A region returning a scalar — must NOT produce any escape diagnostic.
+    let src = r#"
+fn scalar_ok() -> i64 {
+    region {
+        let x = 42
+        x
+    }
+}
+"#;
+    let module = parse(src).expect("parse should succeed");
+    let diags = check_module_types(&module, src, &TypeEnv::new());
+
+    let escape_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| format!("{d:?}").contains("region_escape"))
+        .collect();
+    assert!(
+        escape_diags.is_empty(),
+        "scalar result must NOT trigger safety::region_escape; got: {escape_diags:?}"
+    );
+}
+
+#[test]
+fn region_escape_vec_new_binding_emits_structured_diagnostic() {
+    // A region that binds a vec_new() result and returns it.
+    let src = r#"
+fn vec_escape() -> i64 {
+    region {
+        let v = vec_new()
+        v
+    }
+}
+"#;
+    let module = parse(src).expect("parse should succeed");
+    let diags = check_module_types(&module, src, &TypeEnv::new());
+
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic for a vec_new binding escape; got none"
+    );
+    let combined: String = diags.iter().map(|d| format!("{d:?}")).collect();
+    assert!(
+        combined.contains("region_escape"),
+        "diagnostic code must be `safety::region_escape`; got: {combined}"
     );
 }
