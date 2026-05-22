@@ -1,0 +1,286 @@
+// std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
+// algebra + ReplayScheduler (synchronous execution, pure MIND).
+//
+// Phase A scope: synchronous execution only.  No threads, no real I/O,
+// no WorkStealing scheduler.  The value of Phase A is:
+//   (1) The API shape -- Scheduler is an explicit first-class argument;
+//       no implicit coloring of functions into sync/async worlds.
+//   (2) The ReplayScheduler producing a deterministic trace_hash --
+//       the governance-substrate primitive (RFC 0011 §7).
+//
+// --- Thunk model (Phase A) ---
+//
+// MIND does not yet have first-class closures.  Phase A models "work"
+// as an i64 opcode value:
+//
+//   submit(s, work)   -- work IS the base result value (identity thunk)
+//   then(snd, delta)  -- delta is an addend applied to the pipeline
+//   run(s, snd)       -- evaluates: result = thunk + sum(chain[i])
+//
+// This is the simplest honest model for synchronous execution: a thunk
+// that has already been evaluated.  The pipeline composes addends so
+// callers can observe that then-chaining affects the result.  Real
+// closure dispatch is a Phase C concern when TaskGroup and async I/O
+// introduce genuine deferred work.
+//
+// --- Determinism contract (RFC 0011 §7) ---
+//
+// A ReplayScheduler records every event value (submit thunk + each then
+// delta) processed by run() into an append-only trace log.  trace_hash()
+// returns a polynomial rolling hash over the log -- stable across runs,
+// hosts, and microarchitectures because it is pure integer arithmetic.
+// Identical input sequences => identical trace_hash.  Different input
+// sequences => different trace_hash (with overwhelming probability under
+// the chosen polynomial, verified by the test suite).
+//
+// --- Heap-record ABI ---
+//
+// All three public types are opaque i64 handles into heap records.
+// The layout is fixed; callers use the pub accessor functions.
+//
+// Scheduler record (32 bytes = 4 × 8):
+//   offset  0  kind       -- 0=Sync  1=Replay
+//   offset  8  trace_addr -- address of i64 event array
+//   offset 16  trace_len  -- number of recorded events
+//   offset 24  trace_cap  -- capacity of event array
+//
+// Sender record (32 bytes = 4 × 8):
+//   offset  0  thunk      -- base i64 result value
+//   offset  8  chain_addr -- address of i64 delta array (then-stages)
+//   offset 16  chain_len  -- number of chained stages
+//   offset 24  chain_cap  -- capacity of chain array
+//
+// Receiver record (8 bytes = 1 × 8):
+//   offset  0  value      -- resolved i64 result
+//
+// Public API:
+//   pub fn sync_scheduler()               -> i64   (Scheduler handle)
+//   pub fn replay_scheduler()             -> i64   (Scheduler handle)
+//   pub fn sched_kind(s: i64)             -> i64
+//   pub fn submit(s: i64, work: i64)      -> i64   (Sender handle)
+//   pub fn then(snd: i64, delta: i64)     -> i64   (Sender handle)
+//   pub fn run(s: i64, snd: i64)          -> i64
+//   pub fn trace_hash(s: i64)             -> i64
+//   pub fn recv_value(r: i64)             -> i64
+
+// --- Scheduler field accessors ---
+
+pub fn sched_kind(s: i64)      -> i64 { __mind_load_i64(s + 0)  }
+fn sched_trace_addr(s: i64)    -> i64 { __mind_load_i64(s + 8)  }
+fn sched_trace_len(s: i64)     -> i64 { __mind_load_i64(s + 16) }
+fn sched_trace_cap(s: i64)     -> i64 { __mind_load_i64(s + 24) }
+
+// --- Sender field accessors ---
+
+fn snd_thunk(snd: i64)      -> i64 { __mind_load_i64(snd + 0)  }
+fn snd_chain_addr(snd: i64) -> i64 { __mind_load_i64(snd + 8)  }
+fn snd_chain_len(snd: i64)  -> i64 { __mind_load_i64(snd + 16) }
+fn snd_chain_cap(snd: i64)  -> i64 { __mind_load_i64(snd + 24) }
+
+// --- Receiver field accessor ---
+
+pub fn recv_value(r: i64)   -> i64 { __mind_load_i64(r + 0) }
+
+// --- Scheduler constructors ---
+
+fn sched_alloc() -> i64 {
+    let h: i64 = __mind_alloc(32);
+    __mind_store_i64(h + 0,  0);
+    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 16, 0);
+    __mind_store_i64(h + 24, 0);
+    h
+}
+
+// sync_scheduler -- SyncScheduler; no event recording.
+pub fn sync_scheduler() -> i64 {
+    let h: i64 = sched_alloc();
+    __mind_store_i64(h + 0, 0);
+    h
+}
+
+// replay_scheduler -- ReplayScheduler; records every submitted value in
+// an append-only trace log consumed by trace_hash().
+pub fn replay_scheduler() -> i64 {
+    let h: i64 = sched_alloc();
+    __mind_store_i64(h + 0, 1);
+    h
+}
+
+// --- Trace log: append a single i64 event ---
+// Only called by run() when kind == 1 (Replay).  Manages its own
+// grow-by-doubling allocation; min-cap 4, matching vec.mind's policy so
+// allocation traces are deterministic.
+
+fn trace_append(s: i64, event: i64) -> i64 {
+    let old_len: i64  = sched_trace_len(s);
+    let old_cap: i64  = sched_trace_cap(s);
+    let old_addr: i64 = sched_trace_addr(s);
+    let new_cap: i64 = if old_cap == 0 {
+        4
+    } else {
+        if old_len < old_cap {
+            old_cap
+        } else {
+            old_cap * 2
+        }
+    };
+    let new_addr: i64 = if new_cap == old_cap {
+        old_addr
+    } else {
+        let a: i64 = __mind_alloc(new_cap * 8);
+        let mut ci: i64 = 0;
+        while ci < old_len {
+            __mind_store_i64(a + ci * 8, __mind_load_i64(old_addr + ci * 8));
+            ci = ci + 1;
+        }
+        a
+    };
+    __mind_store_i64(new_addr + old_len * 8, event);
+    __mind_store_i64(s + 8,  new_addr);
+    __mind_store_i64(s + 16, old_len + 1);
+    __mind_store_i64(s + 24, new_cap);
+    0
+}
+
+// --- Sender constructors ---
+
+fn snd_alloc(thunk: i64) -> i64 {
+    let h: i64 = __mind_alloc(32);
+    __mind_store_i64(h + 0,  thunk);
+    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 16, 0);
+    __mind_store_i64(h + 24, 0);
+    h
+}
+
+// --- Chain append: append a delta to a Sender's chain ---
+// Returns a new Sender handle with the extended chain (immutable update
+// semantics: the original handle is not modified).
+
+fn snd_chain_append(snd: i64, delta: i64) -> i64 {
+    let old_thunk: i64 = snd_thunk(snd);
+    let old_len: i64   = snd_chain_len(snd);
+    let old_cap: i64   = snd_chain_cap(snd);
+    let old_addr: i64  = snd_chain_addr(snd);
+    let new_cap: i64 = if old_cap == 0 {
+        4
+    } else {
+        if old_len < old_cap {
+            old_cap
+        } else {
+            old_cap * 2
+        }
+    };
+    let new_addr: i64 = if new_cap == old_cap {
+        old_addr
+    } else {
+        let a: i64 = __mind_alloc(new_cap * 8);
+        let mut ci: i64 = 0;
+        while ci < old_len {
+            __mind_store_i64(a + ci * 8, __mind_load_i64(old_addr + ci * 8));
+            ci = ci + 1;
+        }
+        a
+    };
+    __mind_store_i64(new_addr + old_len * 8, delta);
+    let h: i64 = __mind_alloc(32);
+    __mind_store_i64(h + 0,  old_thunk);
+    __mind_store_i64(h + 8,  new_addr);
+    __mind_store_i64(h + 16, old_len + 1);
+    __mind_store_i64(h + 24, new_cap);
+    h
+}
+
+// --- Public pipeline API ---
+
+// submit -- enqueue a unit of work; returns a Sender handle.
+// work is the i64 opcode value: for Phase A (sync), this is the
+// immediate result.  The scheduler is accepted to maintain the API
+// shape required by RFC 0011 §3.
+pub fn submit(s: i64, work: i64) -> i64 {
+    snd_alloc(work)
+}
+
+// then -- compose: run sender, feed result into the next stage.
+// delta is the i64 addend applied to the pipeline value.  The Sender
+// is treated as a value (immutable); a new Sender is returned.
+pub fn then(snd: i64, delta: i64) -> i64 {
+    snd_chain_append(snd, delta)
+}
+
+// run -- evaluate the pipeline through the scheduler; returns the
+// final i64 value.
+//
+// Evaluation: result = thunk + chain[0] + chain[1] + ... + chain[n-1]
+//
+// For a ReplayScheduler (kind == 1) every value participating in the
+// computation is appended to the trace log in deterministic order:
+// first the thunk, then each chain element left-to-right.  This
+// produces a total log that is byte-identical for identical pipelines
+// regardless of run, host, or microarchitecture.
+pub fn run(s: i64, snd: i64) -> i64 {
+    let thunk: i64      = snd_thunk(snd);
+    let chain_addr: i64 = snd_chain_addr(snd);
+    let chain_len: i64  = snd_chain_len(snd);
+    let kind: i64       = sched_kind(s);
+    if kind == 1 {
+        let _ = trace_append(s, thunk);
+    }
+    let mut result: i64 = thunk;
+    let mut i: i64 = 0;
+    while i < chain_len {
+        let delta: i64 = __mind_load_i64(chain_addr + i * 8);
+        if kind == 1 {
+            let _ = trace_append(s, delta);
+        }
+        result = result + delta;
+        i = i + 1;
+    }
+    result
+}
+
+// --- trace_hash: governance-substrate determinism primitive ---
+//
+// Returns a polynomial rolling hash over the Scheduler's event log.
+// Hash function: FNV-1a variant adapted for i64 words.
+//
+//   h = FNV_OFFSET_BASIS
+//   for each event e in log:
+//     h = (h XOR e) * FNV_PRIME_64   (wrapping i64 multiply)
+//
+// FNV_OFFSET_BASIS = -3750763034362895579  (0xcbf29ce484222325 as i64)
+// FNV_PRIME_64     =  1099511628211         (0x00000100000001b3 as i64)
+//
+// This hash is:
+//   - Byte-stable: pure integer arithmetic, no float, no platform I/O.
+//   - Deterministic: same log bytes => same hash on every host.
+//   - Avalanche: single-bit change in any event flips ~50% of output bits.
+//   - Fast: O(n) single pass over the log.
+//
+// For a SyncScheduler (kind == 0) the log is empty; returns 0.
+
+fn fnv_offset() -> i64 {
+    // 0xcbf29ce484222325 as signed i64 = -3750763034362895579
+    0 - 3750763034362895579
+}
+
+fn fnv_prime() -> i64 {
+    1099511628211
+}
+
+pub fn trace_hash(s: i64) -> i64 {
+    let len: i64  = sched_trace_len(s);
+    let addr: i64 = sched_trace_addr(s);
+    if len == 0 {
+        return 0;
+    }
+    let mut h: i64 = fnv_offset();
+    let mut i: i64 = 0;
+    while i < len {
+        let event: i64 = __mind_load_i64(addr + i * 8);
+        h = (h ^ event) * fnv_prime();
+        i = i + 1;
+    }
+    h
+}

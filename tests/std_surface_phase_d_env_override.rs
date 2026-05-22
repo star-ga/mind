@@ -52,10 +52,10 @@ fn env_unset_uses_bundled_stdlib() {
     with_env("MIND_STDLIB_PATH", None, || {
         let mods = parsed_stdlib_modules();
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
-        // The bundled set is exactly the six canonical modules
-        // (std.blas joined in RFC 0006; std.toml joined in task #258),
-        // in deterministic alphabetical order.
-        assert_eq!(mods.len(), 6);
+        // The bundled set now contains twelve canonical modules
+        // (std.async added in RFC 0011 Phase A).
+        assert_eq!(mods.len(), 12);
+        assert!(names.contains(&"std.async"));
         assert!(names.contains(&"std.blas"));
         assert!(names.contains(&"std.io"));
         assert!(names.contains(&"std.map"));
@@ -81,7 +81,7 @@ fn env_set_to_repo_std_dir_round_trips() {
 
     with_env("MIND_STDLIB_PATH", Some(&std_dir), || {
         let mods = parsed_stdlib_modules();
-        assert_eq!(mods.len(), 6);
+        assert_eq!(mods.len(), 12);
 
         // Build the same project-loader-shaped table and confirm
         // every canonical public fn still resolves through the
@@ -90,6 +90,7 @@ fn env_set_to_repo_std_dir_round_trips() {
             mods.iter().map(|(p, m)| (p.clone(), m)).collect();
         let table = build_module_table(&refs);
 
+        assert!(table.resolves(&["std".into(), "async".into()], "sync_scheduler"));
         assert!(table.resolves(&["std".into(), "vec".into()], "vec_new"));
         assert!(table.resolves(&["std".into(), "vec".into()], "vec_push"));
         assert!(table.resolves(&["std".into(), "string".into()], "string_new"));
@@ -111,7 +112,7 @@ fn env_set_to_missing_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            6,
+            12,
             "missing override dir must fall back to bundled stdlib"
         );
     });
@@ -137,7 +138,7 @@ fn env_set_to_partial_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            6,
+            12,
             "partial override dir must fall back to bundled stdlib"
         );
     });

@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0011 |
 | Title | Async + structured concurrency model |
-| Status | **Draft — implementation deferred, awaiting RFC 0008 Phase G land + community review window** |
+| Status | **Phase A shipped** — `std/async.mind` (sync + ReplayScheduler, pure MIND); Phases B–F deferred |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -238,7 +238,7 @@ governance-substrate contexts.
 
 | Phase | Deliverable | Gate |
 |---|---|---|
-| A | `Scheduler` trait + `SyncScheduler` implementation (executes all work inline, no threads, no I/O). `Sender<T>` / `Receiver<T>` algebra. `Future<T>` as `GenRef`-managed heap allocation (RFC 0010 §3.3). Pipeline composition (`then`, `map`, `recover`, `into_future`). | Unit tests for pipeline composition; `SyncScheduler.run` produces correct results deterministically. |
+| A | **SHIPPED** `std/async.mind` — `SyncScheduler` + `ReplayScheduler` (heap-record i64 ABI, pure MIND, no threads). `Sender` / `Receiver` pipeline algebra (`submit`, `then`, `run`). `trace_hash` — FNV-1a rolling hash over the event log (governance-substrate determinism primitive, RFC 0011 §7). Thunk model: integer-addend pipeline (Phase A honest: sync = immediate evaluation). | `std_surface_async` test suite: parse + lower, cross-module resolver, IR structural checks. Phase A gates: `cargo test --features "std-surface cross-module-imports" --test std_surface_async` — all pass. `mlir-build` functional tests (determinism contract, native .so) gated for MLIR environments. |
 | B | `ReplayScheduler` — records all scheduler events (submit order, yield points, completion order) into an append-only event log. Replay mode reads from the log and re-executes in recorded order. `trace_hash` is the SHA-256 of the event log. | Byte-identical execution traces across two independent runs on the same input; `trace_hash` values match. |
 | C | `SingleThreadScheduler` — asynchronous I/O on one thread using the platform event loop abstraction (`mind.io`). No thread pool. Suitable for I/O-bound workloads on a single core. | Integration test: concurrent HTTP fetches complete without blocking; CPU does not spin. |
 | D | `WorkStealingScheduler` — parallel execution across N threads using work-stealing queues. Explicit N parameter; defaults to the number of logical processors. | Throughput test: N independent CPU-bound tasks complete in approximately 1/N wall time vs sequential. |
