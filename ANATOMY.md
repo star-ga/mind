@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2621 | **Est. tokens:** ~6,489,201
-**Generated:** 2026-05-22 13:39 UTC
+**Files:** 2623 | **Est. tokens:** ~6,506,994
+**Generated:** 2026-05-22 16:25 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 17 | ~60,855 |
+| `docs/rfcs/` | 18 | ~72,010 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -372,7 +372,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,190 |
-| `src/eval/` | 13 | ~80,070 |
+| `src/eval/` | 13 | ~80,143 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -392,10 +392,10 @@
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
-| `src/types/` | 4 | ~3,179 |
+| `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 142 | ~227,389 |
+| `tests/` | 143 | ~233,797 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -618,6 +618,7 @@
 - `000-template.md` (~1 tok, tiny)
 - `0010-memory-safety-and-c-abi.md` (~7359 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
+- `0012-tensor-native-syntax.md` (~11155 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -3592,7 +3593,7 @@
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower.rs` (~20368 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4154 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_export.rs` (~8312 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_export.rs` (~8385 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
@@ -3716,7 +3717,7 @@
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
 - `intern.rs` (~1554 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~880 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/workspace/`
 
@@ -3955,6 +3956,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_a_shape_types.rs` (~6408 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution

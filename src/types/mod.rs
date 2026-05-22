@@ -31,18 +31,31 @@ pub use value::ValueType;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DType {
     I32,
+    /// 64-bit signed integer.
+    I64,
     F32,
+    /// IEEE-754 double precision.
+    F64,
     BF16,
     F16,
+    /// Q16.16 fixed-point — first-class dtype (RFC 0012 §3.2).
+    ///
+    /// Representation: `i32` (two's-complement with 16 integer + 16 fractional
+    /// bits). Storage is the same as `DType::I32` in the runtime; the dtype tag
+    /// is the compile-time signal that byte-identity semantics (task #57) apply.
+    Q16,
 }
 
 impl DType {
     fn parse_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "i32" => Some(DType::I32),
+            "i64" => Some(DType::I64),
             "f32" => Some(DType::F32),
+            "f64" => Some(DType::F64),
             "bf16" => Some(DType::BF16),
             "f16" => Some(DType::F16),
+            "q16" => Some(DType::Q16),
             _ => None,
         }
     }
@@ -54,9 +67,12 @@ impl DType {
     pub fn as_str(&self) -> &'static str {
         match self {
             DType::I32 => "i32",
+            DType::I64 => "i64",
             DType::F32 => "f32",
+            DType::F64 => "f64",
             DType::BF16 => "bf16",
             DType::F16 => "f16",
+            DType::Q16 => "q16",
         }
     }
 }

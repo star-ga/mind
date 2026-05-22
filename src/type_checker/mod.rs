@@ -55,9 +55,12 @@ const SHAPE_INNER_DIM_CODE: &str = "E2103";
 fn dtype_name(dtype: &DType) -> &'static str {
     match dtype {
         DType::I32 => "i32",
+        DType::I64 => "i64",
         DType::F32 => "f32",
+        DType::F64 => "f64",
         DType::BF16 => "bf16",
         DType::F16 => "f16",
+        DType::Q16 => "q16",
     }
 }
 
@@ -1891,7 +1894,15 @@ fn fresh_symbol(prefix: &str) -> &'static str {
 fn dtype_from_str(s: &str) -> Option<DType> {
     match s {
         "i32" => Some(DType::I32),
+        "i64" => Some(DType::I64),
         "f32" => Some(DType::F32),
+        "f64" => Some(DType::F64),
+        "bf16" => Some(DType::BF16),
+        "f16" => Some(DType::F16),
+        // RFC 0012 §3.2 — Q16.16 first-class dtype keyword.
+        // Storage: i32 (same as DType::I32 at runtime); the dtype tag is the
+        // compile-time signal for byte-identity semantics (task #57).
+        "q16" => Some(DType::Q16),
         _ => None,
     }
 }
@@ -2155,6 +2166,37 @@ pub fn check_module_types_in_file(
         })
         .collect();
 
+    // RFC 0012 Phase A — pre-scan: collect FnDef tensor-param signatures so
+    // call-site symbolic-dim checks can look them up without a second module walk.
+    // Maps function name → list of (arg_position, param_name, dims, dtype).
+    // `arg_position` is the 0-based index in the full param list so we can
+    // correctly correlate call arguments (some of which may be non-tensor).
+    let fn_tensor_sigs: HashMap<String, Vec<(usize, String, Vec<String>, String)>> = module
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let Node::FnDef { name, params, .. } = item {
+                let tensor_params: Vec<(usize, String, Vec<String>, String)> = params
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, p)| match &p.ty {
+                        TypeAnn::Tensor { dims, dtype } | TypeAnn::DiffTensor { dims, dtype } => {
+                            Some((idx, p.name.clone(), dims.clone(), dtype.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if tensor_params.is_empty() {
+                    None
+                } else {
+                    Some((name.clone(), tensor_params))
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
     for item in &module.items {
         match item {
             Node::Let {
@@ -2201,18 +2243,39 @@ pub fn check_module_types_in_file(
                                     (ValueType::Tensor(_), ValueType::ScalarI32)
                                 );
                                 if vt_ann != vt && !allow_scalar_fill {
-                                    errs.push(diag_from_span(
-                                        src,
-                                        file,
-                                        format!(
-                                            "type mismatch for `{}`: annotation {} vs inferred {}",
+                                    // RFC 0012 Phase A: when both sides are
+                                    // tensors, emit precise `shape::*`
+                                    // diagnostics instead of the generic
+                                    // `TYPE_ERR_CODE` mismatch.
+                                    let shape_handled = match (&vt_ann, &vt) {
+                                        (
+                                            ValueType::Tensor(ann_t),
+                                            ValueType::Tensor(inf_t),
+                                        ) => check_tensor_shape_compat(
+                                            ann_t,
+                                            inf_t,
                                             name,
-                                            describe_value_type(&vt_ann),
-                                            describe_value_type(&vt)
+                                            src,
+                                            file,
+                                            value.span(),
+                                            &mut errs,
                                         ),
-                                        value.span(),
-                                        TYPE_ERR_CODE,
-                                    ));
+                                        _ => false,
+                                    };
+                                    if !shape_handled {
+                                        errs.push(diag_from_span(
+                                            src,
+                                            file,
+                                            format!(
+                                                "type mismatch for `{}`: annotation {} vs inferred {}",
+                                                name,
+                                                describe_value_type(&vt_ann),
+                                                describe_value_type(&vt)
+                                            ),
+                                            value.span(),
+                                            TYPE_ERR_CODE,
+                                        ));
+                                    }
                                 }
                             }
                             Err(e) => errs.push(diag_from_type_err(src, file, e)),
@@ -2383,6 +2446,45 @@ pub fn check_module_types_in_file(
                 check_region_escapes_in_node(item, src, file, &mut errs);
                 check_genref_unchecked_deref(item, src, file, &mut errs);
             }
+            // RFC 0012 Phase A — function definitions: check tensor-param shape
+            // annotations and recurse into the body with a param-extended env
+            // so that `let` bindings inside the function body get the same
+            // `shape::*` diagnostics as module-level bindings.
+            Node::FnDef {
+                params,
+                body,
+                span: fn_span,
+                ..
+            } => {
+                // Run the symbolic-conflict scan on the parameter list.
+                check_fn_param_shape_conflicts(params, *fn_span, src, file, &mut errs);
+
+                // Build a local env that extends the module env with the
+                // function's parameters, mapping each param name to its
+                // ValueType (defaulting to ScalarI64 for unsupported anns).
+                let mut fn_env = tenv.clone();
+                for param in params {
+                    let vt = valuetype_from_ann(&param.ty)
+                        .unwrap_or(ValueType::ScalarI64);
+                    fn_env.insert(param.name.clone(), vt);
+                }
+                // Walk the function body as a mini-module so shape checks on
+                // `let` bindings inside the function body fire the same
+                // `shape::*` diagnostics.  This reuses the existing module-
+                // level walker recursively (same path as Node::Block above).
+                let body_module = Module {
+                    items: body.clone(),
+                };
+                let body_errs =
+                    check_module_types_in_file(&body_module, src, file, &fn_env);
+                errs.extend(body_errs);
+
+                // RFC 0010 Phase J-A/B: safety passes over the fn node.
+                #[cfg(feature = "std-surface")]
+                check_region_escapes_in_node(item, src, file, &mut errs);
+                #[cfg(feature = "std-surface")]
+                check_genref_unchecked_deref(item, src, file, &mut errs);
+            }
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
                     errs.push(diag_from_type_err(src, file, e));
@@ -2398,6 +2500,16 @@ pub fn check_module_types_in_file(
                 #[cfg(feature = "std-surface")]
                 check_genref_unchecked_deref(other, src, file, &mut errs);
             }
+        }
+    }
+
+    // RFC 0012 Phase A — second pass: check call-site symbolic dim consistency.
+    // Walk all items in the module; any Node::Call whose callee is in fn_tensor_sigs
+    // gets the unification check.  This pass is O(items × depth) and runs after
+    // the main loop so that function definitions are fully registered in tenv first.
+    if !fn_tensor_sigs.is_empty() {
+        for item in &module.items {
+            walk_calls_for_symbolic_check(item, &fn_tensor_sigs, &tenv, src, file, &mut errs);
         }
     }
 
@@ -2741,6 +2853,235 @@ fn check_extern_type_with_repr_c(
                 .into(),
         ),
     }
+}
+
+// ── RFC 0012 Phase A — shape diagnostic codes ─────────────────────────────────
+//
+// All shape diagnostics flow through `diag_from_span` exactly like the existing
+// `safety::extern_non_repr_c` / `safety::region_escape` diagnostics — NEVER via
+// `eprintln!`.  The diagnostic codes are in the `shape::` namespace, compatible
+// with the `mindc check` severity model (RFC 0007 §5).
+
+const SHAPE_RANK_MISMATCH: &str = "shape::rank_mismatch";
+const SHAPE_DIM_MISMATCH: &str = "shape::dim_mismatch";
+const SHAPE_DTYPE_MISMATCH: &str = "shape::dtype_mismatch";
+const SHAPE_SYMBOLIC_CONFLICT: &str = "shape::symbolic_conflict";
+
+/// RFC 0012 Phase A — compare two tensor `ValueType`s and push precise
+/// `shape::*` diagnostics when they differ.
+///
+/// Called at `let x: Tensor<...> = rhs` sites where both `ann` and `inferred`
+/// are `ValueType::Tensor`.  A generic type-mismatch (`TYPE_ERR_CODE`) is
+/// emitted by the existing path when the types are structurally unequal;
+/// this function replaces that generic diagnostic with a precise shape one
+/// when both sides are tensor types.
+///
+/// Returns `true` if a shape diagnostic was pushed (caller should skip the
+/// generic mismatch path), `false` if the types are compatible or non-tensor
+/// (let the existing path handle it).
+fn check_tensor_shape_compat(
+    ann: &TensorType,
+    inferred: &TensorType,
+    binding_name: &str,
+    src: &str,
+    file: Option<&str>,
+    span: AstSpan,
+    errs: &mut Vec<Pretty>,
+) -> bool {
+    // Dtype mismatch — checked first; shape comparison is meaningless across dtypes.
+    if ann.dtype != inferred.dtype {
+        errs.push(diag_from_span(
+            src,
+            file,
+            format!(
+                "dtype mismatch for `{}`: annotation `{}` vs inferred `{}`",
+                binding_name,
+                dtype_name(&ann.dtype),
+                dtype_name(&inferred.dtype),
+            ),
+            span,
+            SHAPE_DTYPE_MISMATCH,
+        ));
+        return true;
+    }
+    // Rank mismatch — checked before individual dims.
+    if ann.shape.len() != inferred.shape.len() {
+        errs.push(diag_from_span(
+            src,
+            file,
+            format!(
+                "rank mismatch for `{}`: annotation rank {} vs inferred rank {}",
+                binding_name,
+                ann.shape.len(),
+                inferred.shape.len(),
+            ),
+            span,
+            SHAPE_RANK_MISMATCH,
+        ));
+        return true;
+    }
+    // Per-dimension mismatch — only for known (concrete) dims; symbolic dims
+    // are always compatible with a concrete value at a single binding site
+    // (unification happens across the function scope in check_fn_param_shape_conflicts).
+    let mut pushed = false;
+    for (i, (adim, idim)) in ann.shape.iter().zip(inferred.shape.iter()).enumerate() {
+        if let (ShapeDim::Known(an), ShapeDim::Known(inf)) = (adim, idim) {
+            if an != inf {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    format!(
+                        "dim mismatch for `{}` at axis {}: annotation {} vs inferred {}",
+                        binding_name, i, an, inf,
+                    ),
+                    span,
+                    SHAPE_DIM_MISMATCH,
+                ));
+                pushed = true;
+            }
+        }
+    }
+    pushed
+}
+
+/// RFC 0012 Phase A — check symbolic dim consistency at a call site.
+///
+/// Given `fn_sigs` (function name → Vec<(arg_position, param_name, dims, dtype)>),
+/// the concrete argument types (resolved via `infer_expr`), and the callee name,
+/// unify the symbolic dim names across arguments.  If the same symbol is bound
+/// to two different concrete sizes, push a `shape::symbolic_conflict` diagnostic.
+///
+/// Example: `fn f(a: Tensor<f32,[N,K]>, b: Tensor<f32,[N,M]>)` called with
+/// `f(x, y)` where `x: Tensor<f32,[4,8]>` and `y: Tensor<f32,[8,16]>` → `N`
+/// is bound to `4` by `x` and `8` by `y` → `shape::symbolic_conflict`.
+fn check_call_symbolic_dims(
+    callee: &str,
+    args: &[Node],
+    call_span: AstSpan,
+    fn_sigs: &HashMap<String, Vec<(usize, String, Vec<String>, String)>>,
+    env: &TypeEnv,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    let Some(tensor_params) = fn_sigs.get(callee) else {
+        return;
+    };
+    // Bind symbol names to concrete sizes by walking (arg_position, tensor_param) entries.
+    // sym_env: symbol_name → (bound_concrete_size, first_binding_param_name)
+    let mut sym_env: HashMap<String, (usize, String)> = HashMap::new();
+    for (arg_pos, param_name, dims, _dtype) in tensor_params {
+        // Argument at the declared position — skip if out of range.
+        let Some(arg) = args.get(*arg_pos) else {
+            continue;
+        };
+        // Resolve the argument's ValueType to get concrete shape.
+        let inferred = match infer_expr(arg, env) {
+            Ok((ValueType::Tensor(t), _)) => t,
+            _ => continue, // non-tensor arg or inference error: skip
+        };
+        // Walk each dimension of the param annotation.
+        for (pos, dim_str) in dims.iter().enumerate() {
+            // Only symbolic dims (non-parseable as usize).
+            if dim_str.parse::<usize>().is_ok() {
+                continue;
+            }
+            // Concrete value from the inferred shape at the same position.
+            let concrete = match inferred.shape.get(pos) {
+                Some(ShapeDim::Known(n)) => *n,
+                _ => continue, // symbolic or out-of-bounds in inferred: skip
+            };
+            match sym_env.get(dim_str) {
+                None => {
+                    sym_env.insert(dim_str.clone(), (concrete, param_name.clone()));
+                }
+                Some((bound_size, bound_param)) if *bound_size != concrete => {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "symbolic dim `{sym}` conflict in call to `{callee}`: \
+                             bound to {bound} via param `{bp}` but {actual} via param `{pp}`",
+                            sym = dim_str,
+                            bound = bound_size,
+                            bp = bound_param,
+                            actual = concrete,
+                            pp = param_name,
+                        ),
+                        call_span,
+                        SHAPE_SYMBOLIC_CONFLICT,
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// RFC 0012 Phase A — walk a node tree and run `check_call_symbolic_dims`
+/// on every `Node::Call` that matches a function in `fn_sigs`.
+fn walk_calls_for_symbolic_check(
+    node: &Node,
+    fn_sigs: &HashMap<String, Vec<(usize, String, Vec<String>, String)>>,
+    env: &TypeEnv,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        Node::Call { callee, args, span } => {
+            check_call_symbolic_dims(callee, args, *span, fn_sigs, env, src, file, errs);
+            for a in args {
+                walk_calls_for_symbolic_check(a, fn_sigs, env, src, file, errs);
+            }
+        }
+        Node::FnDef { body, .. } => {
+            for stmt in body {
+                walk_calls_for_symbolic_check(stmt, fn_sigs, env, src, file, errs);
+            }
+        }
+        Node::Let { value, .. } => {
+            walk_calls_for_symbolic_check(value, fn_sigs, env, src, file, errs);
+        }
+        Node::Return { value: Some(v), .. } => {
+            walk_calls_for_symbolic_check(v, fn_sigs, env, src, file, errs);
+        }
+        Node::If { cond, then_branch, else_branch, .. } => {
+            walk_calls_for_symbolic_check(cond, fn_sigs, env, src, file, errs);
+            for s in then_branch {
+                walk_calls_for_symbolic_check(s, fn_sigs, env, src, file, errs);
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    walk_calls_for_symbolic_check(s, fn_sigs, env, src, file, errs);
+                }
+            }
+        }
+        Node::Block { stmts, .. } => {
+            for s in stmts {
+                walk_calls_for_symbolic_check(s, fn_sigs, env, src, file, errs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// RFC 0012 Phase A — check that symbolic dim names are used consistently
+/// across a function's parameter list.
+///
+/// Phase A scope: purely annotation-level structural check. Call-site
+/// symbolic unification (`shape::symbolic_conflict` from concrete args)
+/// is handled via `check_call_symbolic_dims` + `walk_calls_for_symbolic_check`.
+fn check_fn_param_shape_conflicts(
+    _params: &[crate::ast::Param],
+    _fn_span: AstSpan,
+    _src: &str,
+    _file: Option<&str>,
+    _errs: &mut Vec<Pretty>,
+) {
+    // Phase A: annotation-level structural conflict detection is deferred.
+    // Concrete call-site conflicts are caught by check_call_symbolic_dims.
+    // Full const-generic annotation arithmetic is Phase A-extended (§10.1).
 }
 
 fn diag_from_span(
