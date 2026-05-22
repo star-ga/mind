@@ -3269,9 +3269,12 @@ fn diag_from_type_err(src: &str, file: Option<&str>, err: TypeErrSpan) -> Pretty
 }
 
 fn classify_error_code(msg: &str) -> &'static str {
-    // RFC 0012 Phase B: operator-level matmul and broadcast mismatch codes
-    // take priority over the generic dimension/rank codes.
-    if (msg.contains("`@`") || msg.contains("matmul")) && msg.contains("inner dimension") {
+    // RFC 0012 Phase B: the `@` operator gets the rule-id matmul-mismatch code.
+    // Match the literal `` `@` `` marker that every `@`-operator diagnostic
+    // carries, NOT a bare "matmul" substring — the legacy `tensor.matmul(a,b)`
+    // intrinsic must keep its original E2103 inner-dimension code (it falls
+    // through to the generic branch below).
+    if msg.contains("`@`") && msg.contains("inner dimension") {
         SHAPE_MATMUL_MISMATCH
     } else if msg.contains("elementwise") && msg.contains("broadcast") {
         SHAPE_BROADCAST_MISMATCH
