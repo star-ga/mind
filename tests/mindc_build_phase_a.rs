@@ -8,6 +8,12 @@
 //!
 //! Gate: `cargo test --release --features "mlir-build std-surface cross-module-imports" mindc_build_phase_a`
 
+// The build orchestrator under test resolves the external MLIR toolchain, which
+// is only re-exported under `mlir-build` (see src/eval/mod.rs). Compile this
+// suite to an empty binary when the feature is off, matching cli_build.rs /
+// mlir_build.rs, so `cargo test --workspace` (no features) stays green.
+#![cfg(feature = "mlir-build")]
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
