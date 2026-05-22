@@ -2668,6 +2668,12 @@ pub fn check_module_types_in_file(
         }
     }
 
+    // RFC 0012 Phase C.1 — function-annotation checks: `[deterministic]`,
+    // `[target(...)]`, and `[q16]`, reading the attribute list recorded inert
+    // by Phase C.0. Purely additive — only functions that opt in are checked;
+    // un-annotated code and foreign attributes are untouched.
+    check_determinism_annotations(module, src, file, &mut errs);
+
     errs
 }
 
@@ -3223,6 +3229,225 @@ fn walk_calls_for_symbolic_check(
             }
         }
         _ => {}
+    }
+}
+
+// ── RFC 0012 Phase C.1 — function-annotation checks ───────────────────
+//
+// Reads the attribute list recorded inert on `FnDef` by Phase C.0 and
+// enforces the determinism / target / q16 contracts of RFC 0012 §5.1-5.4.
+// Purely additive: only functions that opt in via `[deterministic]`,
+// `[target(...)]`, or `[q16]` are checked. Un-annotated code and foreign
+// attributes are untouched, so no previously-compiling program can fail.
+
+/// Backend-target vocabulary accepted by `[target(...)]`. Mirrors the
+/// mindc CLI `parse_target` set (canonical names + documented aliases)
+/// plus `q16`, the RFC 0012 §5.3 deterministic fixed-point pseudo-target.
+const VALID_TARGET_NAMES: &[&str] = &[
+    "cpu", "gpu", "cuda", "rocm", "metal", "webgpu", "tpu", "npu", "ane",
+    "hexagon", "lpu", "groq", "dpu", "smartnic", "bluefield", "fpga", "hls",
+    "cerebras", "wse", "wse2", "wse3", "q16",
+];
+
+const DET_NONDET_CODE: &str = "determinism::nondeterministic_in_deterministic";
+const DET_UNKNOWN_TARGET_CODE: &str = "determinism::unknown_target";
+const DET_FLOAT_IN_Q16_CODE: &str = "determinism::float_in_q16_fn";
+
+/// A function's RFC 0012 annotation state, derived from its `attrs`.
+#[derive(Default)]
+struct FnAnnot {
+    deterministic: bool,
+    q16: bool,
+}
+
+/// `[q16]` is shorthand for `[deterministic] [target(q16)]` (§5.3), so a
+/// `[q16]` function is deterministic by construction.
+fn fn_annot(attrs: &[crate::ast::Attribute]) -> FnAnnot {
+    let mut a = FnAnnot::default();
+    for at in attrs {
+        match at.name.as_str() {
+            "deterministic" => a.deterministic = true,
+            "q16" => {
+                a.q16 = true;
+                a.deterministic = true;
+            }
+            _ => {}
+        }
+    }
+    a
+}
+
+/// Collect every `Call` callee name (with its span) reachable in `node`.
+/// Mirrors the arm coverage of `walk_calls_for_symbolic_check` plus the
+/// common expression positions. Under-collection is sound — it can only
+/// miss a violation, never invent one.
+fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
+    match node {
+        Node::Call { callee, args, span } => {
+            out.push((callee.clone(), *span));
+            for a in args {
+                collect_call_targets(a, out);
+            }
+        }
+        Node::MethodCall { receiver, args, .. } => {
+            collect_call_targets(receiver, out);
+            for a in args {
+                collect_call_targets(a, out);
+            }
+        }
+        Node::Binary { left, right, .. } => {
+            collect_call_targets(left, out);
+            collect_call_targets(right, out);
+        }
+        Node::Let { value, .. } => collect_call_targets(value, out),
+        Node::Return { value: Some(v), .. } => collect_call_targets(v, out),
+        Node::If { cond, then_branch, else_branch, .. } => {
+            collect_call_targets(cond, out);
+            for s in then_branch {
+                collect_call_targets(s, out);
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    collect_call_targets(s, out);
+                }
+            }
+        }
+        Node::Block { stmts, .. } => {
+            for s in stmts {
+                collect_call_targets(s, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// RFC 0012 Phase C.1 — enforce the function-annotation contracts.
+fn check_determinism_annotations(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    // Pre-scan: every user-defined function's annotation state, so the
+    // determinism call-graph check can resolve callees within this module.
+    let mut annots: HashMap<&str, FnAnnot> = HashMap::new();
+    for item in &module.items {
+        if let Node::FnDef { name, attrs, .. } = item {
+            annots.insert(name.as_str(), fn_annot(attrs));
+        }
+    }
+
+    for item in &module.items {
+        let Node::FnDef {
+            name,
+            params,
+            ret_type,
+            body,
+            attrs,
+            span,
+            ..
+        } = item
+        else {
+            continue;
+        };
+        let a = fn_annot(attrs);
+
+        // Check 1 — `[target(...)]` / `[q16]` name validity. Local, no call
+        // graph: a malformed or unknown backend name is unambiguously wrong.
+        for at in attrs {
+            if at.name == "target" {
+                match at.args.first() {
+                    None => errs.push(diag_from_span(
+                        src,
+                        file,
+                        "`[target(...)]` requires a backend name, e.g. `[target(cpu)]`"
+                            .to_string(),
+                        *span,
+                        DET_UNKNOWN_TARGET_CODE,
+                    )),
+                    Some(t) if !VALID_TARGET_NAMES.contains(&t.as_str()) => {
+                        errs.push(diag_from_span(
+                            src,
+                            file,
+                            format!(
+                                "unknown target `{t}` on `{name}` (expected one of \
+                                 cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras|q16)"
+                            ),
+                            *span,
+                            DET_UNKNOWN_TARGET_CODE,
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Check 2 — a `[q16]` function may only declare q16 tensors. Checked
+        // on declared parameter and return types (sound: declared types are
+        // unambiguous; expression-level dtype tracking is Phase C.2).
+        if a.q16 {
+            for p in params {
+                if let TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. } = &p.ty {
+                    if dtype != "q16" {
+                        errs.push(diag_from_span(
+                            src,
+                            file,
+                            format!(
+                                "parameter `{}` of `#[q16]` fn `{name}` is `Tensor<{dtype},..>`; \
+                                 a `#[q16]` function requires q16 tensors",
+                                p.name
+                            ),
+                            p.span,
+                            DET_FLOAT_IN_Q16_CODE,
+                        ));
+                    }
+                }
+            }
+            if let Some(TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. }) = ret_type
+            {
+                if dtype != "q16" {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "`#[q16]` fn `{name}` returns `Tensor<{dtype},..>`; a `#[q16]` \
+                             function requires q16 tensors"
+                        ),
+                        *span,
+                        DET_FLOAT_IN_Q16_CODE,
+                    ));
+                }
+            }
+        }
+
+        // Check 3 — a `[deterministic]` function may only call functions that
+        // are themselves deterministic. Conservative resolution: flag only
+        // callees that resolve to a user-defined function in THIS module that
+        // is not annotated. Calls to intrinsics / std / cross-module symbols
+        // are not flagged in C.1 — the std.blas-q16 implicit-determinism
+        // predicate (RFC §5.1 pt 3) is Phase C.2.
+        if a.deterministic {
+            let mut calls = Vec::new();
+            for stmt in body {
+                collect_call_targets(stmt, &mut calls);
+            }
+            for (callee, cspan) in calls {
+                if let Some(callee_annot) = annots.get(callee.as_str()) {
+                    if !callee_annot.deterministic {
+                        errs.push(diag_from_span(
+                            src,
+                            file,
+                            format!(
+                                "`{name}` is `#[deterministic]` but calls `{callee}`, which is \
+                                 not; annotate `{callee}` `#[deterministic]` or remove the call"
+                            ),
+                            cspan,
+                            DET_NONDET_CODE,
+                        ));
+                    }
+                }
+            }
+        }
     }
 }
 
