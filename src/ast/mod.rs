@@ -101,6 +101,19 @@ pub enum LogicalOp {
     Or,
 }
 
+/// Elementwise tensor binary operator (RFC 0012 Phase B).
+///
+/// Dot-prefix convention (`.+`, `.-`, `.*`, `./`) distinguishes these from
+/// the scalar arithmetic operators. The dot is part of the token, not a
+/// method-call separator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TensorElemOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
 /// Bitwise binary operator (Phase 10.5 Tier-1).
 /// Held separate from `BinOp` for the same matching-stability reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -338,6 +351,29 @@ pub enum Node {
     CallMatMul {
         a: Box<Node>,
         b: Box<Node>,
+        span: Span,
+    },
+    /// RFC 0012 Phase B — `A @ B` matmul operator.
+    ///
+    /// Desugars in `lower_expr` to `Instr::MatMul { a, b }` — the same
+    /// IR node that `CallMatMul` (the explicit `tensor.matmul(A, B)` form)
+    /// produces. MLIR-level byte-identity with `matmul_rmajor_f32_v` (the
+    /// std.blas target) requires shape-dimension threading deferred to
+    /// Phase B.2.
+    TensorMatmul {
+        lhs: Box<Node>,
+        rhs: Box<Node>,
+        span: Span,
+    },
+    /// RFC 0012 Phase B — elementwise `.+ .- .* ./` operators.
+    ///
+    /// Desugars in `lower_expr` to `Instr::BinOp { op, lhs, rhs }` —
+    /// the same IR node that `Node::Binary` (the scalar operator form)
+    /// produces for tensor operands.
+    TensorElemwise {
+        op: TensorElemOp,
+        lhs: Box<Node>,
+        rhs: Box<Node>,
         span: Span,
     },
     CallTensorRelu {
@@ -711,6 +747,8 @@ impl Node {
             | Node::CallGather { span, .. }
             | Node::CallDot { span, .. }
             | Node::CallMatMul { span, .. }
+            | Node::TensorMatmul { span, .. }
+            | Node::TensorElemwise { span, .. }
             | Node::CallTensorRelu { span, .. }
             | Node::CallTensorRand { span, .. }
             | Node::CallTensorConv2d { span, .. }

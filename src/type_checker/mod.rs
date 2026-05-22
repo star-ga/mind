@@ -982,6 +982,119 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
+        // RFC 0012 Phase B — `A @ B` matmul operator.
+        //
+        // Type rule: A: Tensor<T,[M,K]>, B: Tensor<T,[K,N]> → Tensor<T,[M,N]>.
+        // Inner-dimension mismatch → `shape::matmul_mismatch`.
+        // Uses the same shape machinery as `CallMatMul` above.
+        Node::TensorMatmul { lhs, rhs, span } => {
+            let (lt, _) = infer_expr(lhs, env)?;
+            let (rt, _) = infer_expr(rhs, env)?;
+            match (&lt, &rt) {
+                (ValueType::Tensor(tl), ValueType::Tensor(tr)) => {
+                    if tl.dtype != tr.dtype {
+                        return Err(TypeErrSpan {
+                            msg: format!(
+                                "`@` dtype mismatch: left {} vs right {}",
+                                describe_tensor(tl),
+                                describe_tensor(tr)
+                            ),
+                            span: *span,
+                        });
+                    }
+                    // Inner-dimension check: A[M,K] @ B[K,N] requires K matches.
+                    if let (Some(lhs_shape), Some(rhs_shape)) =
+                        (concrete_shape(&tl.shape), concrete_shape(&tr.shape))
+                    {
+                        match engine::infer_output_shape("tensor.matmul", &[&lhs_shape, &rhs_shape])
+                        {
+                            Ok(out) => {
+                                return Ok((
+                                    ValueType::Tensor(TensorType::new(
+                                        tl.dtype.clone(),
+                                        shape_from_usize(&out),
+                                    )),
+                                    *span,
+                                ))
+                            }
+                            Err(_) => {
+                                // Inner-dimension mismatch: K on lhs vs K on rhs.
+                                let lhs_k = lhs_shape.get(1).copied().unwrap_or(lhs_shape[0]);
+                                let rhs_k = rhs_shape[0];
+                                return Err(TypeErrSpan {
+                                    msg: format!(
+                                        "`@` inner dimension mismatch: \
+                                         lhs inner dim {} vs rhs outer dim {}",
+                                        lhs_k, rhs_k
+                                    ),
+                                    span: *span,
+                                });
+                            }
+                        }
+                    }
+                    // Symbolic shapes: use linalg helper.
+                    let info = linalg::compute_matmul_shape_info(&tl.shape, &tr.shape)
+                        .map_err(|msg| TypeErrSpan {
+                            msg: format!("`@` shape error: {msg}"),
+                            span: *span,
+                        })?;
+                    Ok((
+                        ValueType::Tensor(TensorType::new(tl.dtype.clone(), info.result_shape)),
+                        *span,
+                    ))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "`@` requires tensor operands on both sides".to_string(),
+                    span: *span,
+                }),
+            }
+        }
+        // RFC 0012 Phase B — elementwise `.+ .- .* ./` operators.
+        //
+        // Type rule: same shape and dtype → same shape; scalar broadcast
+        // is the strict subset supported in Phase B (full prefix-rank
+        // broadcasting deferred to Phase B.2).
+        // Shape mismatch → `shape::broadcast_mismatch`.
+        Node::TensorElemwise { lhs, rhs, span, .. } => {
+            let (lt, _) = infer_expr(lhs, env)?;
+            let (rt, _) = infer_expr(rhs, env)?;
+            match (&lt, &rt) {
+                (ValueType::Tensor(tl), ValueType::Tensor(tr)) => {
+                    if tl.dtype != tr.dtype {
+                        return Err(TypeErrSpan {
+                            msg: format!(
+                                "elementwise operator dtype mismatch: left {} vs right {}",
+                                describe_tensor(tl),
+                                describe_tensor(tr)
+                            ),
+                            span: *span,
+                        });
+                    }
+                    if let Some(shape) = broadcast_shapes(&tl.shape, &tr.shape) {
+                        Ok((ValueType::Tensor(TensorType::new(tl.dtype.clone(), shape)), *span))
+                    } else {
+                        Err(TypeErrSpan {
+                            msg: format!(
+                                "elementwise operator shape mismatch: \
+                                 cannot broadcast {} and {}",
+                                format_shape(&tl.shape),
+                                format_shape(&tr.shape),
+                            ),
+                            span: *span,
+                        })
+                    }
+                }
+                // Scalar broadcast: tensor .op scalar or scalar .op tensor.
+                (ValueType::Tensor(t), ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarF32 | ValueType::ScalarF64)
+                | (ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarF32 | ValueType::ScalarF64, ValueType::Tensor(t)) => {
+                    Ok((ValueType::Tensor(t.clone()), *span))
+                }
+                _ => Err(TypeErrSpan {
+                    msg: "elementwise operator requires tensor operands".to_string(),
+                    span: *span,
+                }),
+            }
+        }
         Node::CallTensorRelu { x, span } => {
             let (arg_ty, _) = infer_expr(x, env)?;
             match arg_ty {
@@ -2857,6 +2970,11 @@ fn check_extern_type_with_repr_c(
 
 // ── RFC 0012 Phase A — shape diagnostic codes ─────────────────────────────────
 //
+// RFC 0012 Phase B diagnostic codes — tensor operator shape errors.
+// All flow through `diag_from_span`, never via `eprintln!`.
+const SHAPE_MATMUL_MISMATCH: &str = "shape::matmul_mismatch";
+const SHAPE_BROADCAST_MISMATCH: &str = "shape::broadcast_mismatch";
+
 // All shape diagnostics flow through `diag_from_span` exactly like the existing
 // `safety::extern_non_repr_c` / `safety::region_escape` diagnostics — NEVER via
 // `eprintln!`.  The diagnostic codes are in the `shape::` namespace, compatible
@@ -3109,7 +3227,13 @@ fn diag_from_type_err(src: &str, file: Option<&str>, err: TypeErrSpan) -> Pretty
 }
 
 fn classify_error_code(msg: &str) -> &'static str {
-    if msg.contains("inner") && msg.contains("dimension") {
+    // RFC 0012 Phase B: operator-level matmul and broadcast mismatch codes
+    // take priority over the generic dimension/rank codes.
+    if (msg.contains("`@`") || msg.contains("matmul")) && msg.contains("inner dimension") {
+        SHAPE_MATMUL_MISMATCH
+    } else if msg.contains("elementwise") && msg.contains("broadcast") {
+        SHAPE_BROADCAST_MISMATCH
+    } else if msg.contains("inner") && msg.contains("dimension") {
         SHAPE_INNER_DIM_CODE
     } else if msg.contains("broadcast") {
         SHAPE_BROADCAST_CODE
