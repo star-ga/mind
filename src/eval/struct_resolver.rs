@@ -230,6 +230,14 @@ fn walk_expr(
                 walk_expr(&f.value, vars, fn_returns, struct_defs, types);
             }
         }
+        // RFC 0010 Phase J-A: region body — same walk as Block.
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, .. } => {
+            let mut local = vars.clone();
+            for stmt in body {
+                walk_stmt(stmt, &mut local, fn_returns, struct_defs, types);
+            }
+        }
         // Other nodes either don't contain expressions or are
         // declaration-shaped (StructDef, EnumDef, …) — nothing to walk.
         _ => {}

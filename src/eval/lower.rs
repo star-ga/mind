@@ -1323,12 +1323,135 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+        // RFC 0010 Phase J-A — `region { ... }` block lowering.
+        //
+        // Strategy:
+        //   1. Lower the body statements into a scratch sub-IRModule so that
+        //      alloc ids are collected in a fresh SSA namespace.
+        //   2. Walk the sub-module's instructions to record every SSA id that
+        //      was produced by a `__mind_alloc` call (region-interior allocs).
+        //   3. Perform the escape check: if the body's result value (last SSA
+        //      id) is in `alloc_ids`, emit a `safety::region_escape` diagnostic
+        //      and continue (we don't abort — diagnostics are advisory at the
+        //      IR level; the runtime will safely free the ptr at region exit).
+        //   4. Emit `Instr::Region { body, result, alloc_ids }` into the
+        //      parent IR. The MLIR backend emits the enter/track/exit calls.
+        //
+        // Gated to `std-surface`.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Region { body, .. } => {
+            let mut body_ir = sub_ir_from(ir);
+            let mut body_env = env.clone();
+            let mut last_id = None;
+            let mut alloc_ids: Vec<crate::ir::ValueId> = Vec::new();
+
+            for stmt in body {
+                match stmt {
+                    ast::Node::Let { name, ann, value, .. } => {
+                        let id = match ann {
+                            Some(TypeAnn::Tensor { dtype, dims })
+                            | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
+                                &mut body_ir,
+                                value,
+                                dtype,
+                                dims,
+                                &body_env,
+                                struct_env,
+                                receiver_types,
+                            ),
+                            _ => lower_expr(
+                                value,
+                                &mut body_ir,
+                                &body_env,
+                                struct_env,
+                                receiver_types,
+                            ),
+                        };
+                        // Track allocs introduced by this binding.
+                        collect_alloc_ids(&body_ir.instrs, &mut alloc_ids);
+                        body_env.insert(name.clone(), id);
+                        last_id = Some(id);
+                    }
+                    ast::Node::Assign { name, value, .. } => {
+                        let id = lower_expr(
+                            value, &mut body_ir, &body_env, struct_env, receiver_types,
+                        );
+                        collect_alloc_ids(&body_ir.instrs, &mut alloc_ids);
+                        body_env.insert(name.clone(), id);
+                        last_id = Some(id);
+                    }
+                    other => {
+                        let id = lower_expr(
+                            other, &mut body_ir, &body_env, struct_env, receiver_types,
+                        );
+                        collect_alloc_ids(&body_ir.instrs, &mut alloc_ids);
+                        last_id = Some(id);
+                    }
+                }
+            }
+
+            // Determine the result value (last expression in body).
+            let result = last_id.unwrap_or_else(|| {
+                let id = body_ir.fresh();
+                body_ir.instrs.push(Instr::ConstI64(id, 0));
+                id
+            });
+
+            // Region-escape check (Phase J-A minimal: direct-return case).
+            // Scalars (i64 constants, i64 arithmetic results) are safe.
+            // Only flag when the result was produced by `__mind_alloc`.
+            if alloc_ids.contains(&result) {
+                eprintln!(
+                    "safety::region_escape: region-interior allocation escapes \
+                     region block (RFC 0010 §3.2)"
+                );
+            }
+
+            // Advance the parent IR's next_id past everything allocated in
+            // the body sub-module so all SSA ids remain globally unique.
+            ir.next_id = body_ir.next_id;
+
+            // Allocate unique SSA ids for the enter/exit call results.
+            // These must be globally unique (from the parent IR's counter)
+            // so that nested regions do not emit duplicate MLIR value names.
+            let enter_id = ir.fresh();
+            let exit_id = ir.fresh();
+
+            ir.instrs.push(Instr::Region {
+                body: body_ir.instrs,
+                result,
+                enter_id,
+                exit_id,
+                alloc_ids,
+            });
+
+            result
+        }
         _ => {
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
+        }
+    }
+}
+
+/// Collect all SSA ids produced by `__mind_alloc` calls in `instrs` into
+/// `out`. Called after lowering each region body statement so that alloc
+/// sites introduced by nested calls (vec_new, struct literals, etc.) are
+/// also recorded.
+///
+/// Only looks one level deep — the Phase J-A escape check is conservative
+/// (flags direct-return of an alloc result; aliasing through fields is
+/// Phase J-B).
+#[cfg(feature = "std-surface")]
+fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
+    for instr in instrs {
+        if let Instr::Call { dst, name, .. } = instr {
+            if name == "__mind_alloc" && !out.contains(dst) {
+                out.push(*dst);
+            }
         }
     }
 }
