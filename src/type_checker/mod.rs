@@ -2381,6 +2381,7 @@ pub fn check_module_types_in_file(
             #[cfg(feature = "std-surface")]
             Node::Region { .. } => {
                 check_region_escapes_in_node(item, src, file, &mut errs);
+                check_genref_unchecked_deref(item, src, file, &mut errs);
             }
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
@@ -2392,6 +2393,10 @@ pub fn check_module_types_in_file(
                 // return a region-interior allocation.
                 #[cfg(feature = "std-surface")]
                 check_region_escapes_in_node(other, src, file, &mut errs);
+                // RFC 0010 Phase J-B: flag `gen_deref` results used without
+                // a zero-check guard (`safety::genref_unchecked_deref`).
+                #[cfg(feature = "std-surface")]
+                check_genref_unchecked_deref(other, src, file, &mut errs);
             }
         }
     }
@@ -2485,6 +2490,184 @@ fn is_allocating_call(node: &Node) -> bool {
     } else {
         false
     }
+}
+
+/// RFC 0010 Phase J-B — GenRef unchecked-deref checker.
+///
+/// Walks `node` recursively to find every `gen_deref(handle)` call that is
+/// used without a zero-check guard, and emits `safety::genref_unchecked_deref`
+/// through the `diag_from_span` channel (NEVER via `eprintln!`).
+///
+/// The safe patterns are:
+/// ```mind
+/// let p = gen_deref(r)
+/// match p { 0 => { /* dangling */ }, _ => { /* live */ } }
+/// ```
+/// ```mind
+/// let p = gen_deref(r)
+/// if p == 0 { /* dangling */ }
+/// ```
+///
+/// The unsafe pattern — flagged — is a `let name = gen_deref(…)` binding
+/// whose bound name is NOT the direct scrutinee of the immediately following
+/// `match` or `if` in the same statement sequence.  A bare expression-statement
+/// `gen_deref(…)` (not bound to any name) is also always flagged.
+///
+/// Conservative Phase J-B scope:
+///   - `let x = gen_deref(r)` without a guard on `x` in the next stmt → flag.
+///   - `gen_deref(r)` as a bare statement expression → flag.
+///   - Does NOT perform full data-flow analysis across multiple bindings or
+///     function returns.  Full aliasing is Phase J-C.
+///
+/// Emits through `diag_from_span` exactly like `safety::region_escape` and
+/// `safety::extern_non_repr_c`.
+#[cfg(feature = "std-surface")]
+fn check_genref_unchecked_deref(
+    node: &Node,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        // Walk function bodies: analyse each statement sequence then recurse.
+        Node::FnDef { body, .. } => {
+            check_genref_in_stmt_seq(body, src, file, errs);
+            for stmt in body {
+                check_genref_unchecked_deref(stmt, src, file, errs);
+            }
+        }
+        Node::Block { stmts, .. } => {
+            check_genref_in_stmt_seq(stmts, src, file, errs);
+            for stmt in stmts {
+                check_genref_unchecked_deref(stmt, src, file, errs);
+            }
+        }
+        Node::Region { body, .. } => {
+            check_genref_in_stmt_seq(body, src, file, errs);
+            for stmt in body {
+                check_genref_unchecked_deref(stmt, src, file, errs);
+            }
+        }
+        // Let bindings are handled by check_genref_in_stmt_seq above; do NOT
+        // recurse here or we would double-count / misattribute the diagnostic.
+        // Recursing into if/match/while bodies for nested fn-level seq checks.
+        Node::If { then_branch, else_branch, .. } => {
+            check_genref_in_stmt_seq(then_branch, src, file, errs);
+            for stmt in then_branch {
+                check_genref_unchecked_deref(stmt, src, file, errs);
+            }
+            if let Some(eb) = else_branch {
+                check_genref_in_stmt_seq(eb, src, file, errs);
+                for stmt in eb {
+                    check_genref_unchecked_deref(stmt, src, file, errs);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Check a statement sequence for unguarded `gen_deref` patterns.
+///
+/// Two cases are handled:
+///
+/// 1. `let name = gen_deref(…)` where the next statement is NOT an
+///    `if`/`match` whose scrutinee is `name` → emit diagnostic.
+///
+/// 2. A bare expression-statement that IS a `gen_deref(…)` call (not bound
+///    to any name, so no guard is possible) → emit diagnostic.
+///
+/// Iterates in O(n) — one pass over the statement list.
+#[cfg(feature = "std-surface")]
+fn check_genref_in_stmt_seq(
+    stmts: &[Node],
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt {
+            // Case 1: let binding of a gen_deref result.
+            Node::Let { name, value, span, .. } if is_genderef_call(value) => {
+                let next = stmts.get(i + 1);
+                let guarded = next.map_or(false, |n| is_zero_guard_on(n, name));
+                if !guarded {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "`{name}` is the result of `gen_deref` and is used without \
+                             a zero-check guard (RFC 0010 §3.3); the allocation may \
+                             have been freed — add `match {name} \
+                             {{ 0 => {{ /* dangling */ }}, _ => {{ /* live */ }} }}`"
+                        ),
+                        *span,
+                        "safety::genref_unchecked_deref",
+                    ));
+                }
+            }
+            // Case 2: bare gen_deref expression statement — no guard possible.
+            Node::Call { callee, span, .. } if callee == "gen_deref" => {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    "result of `gen_deref` is used without a zero-check guard \
+                     (RFC 0010 §3.3); the allocation may have been freed — \
+                     bind the result and check for 0: \
+                     `match gen_deref(r) { 0 => { /* dangling */ }, p => { /* live */ } }`"
+                        .to_string(),
+                    *span,
+                    "safety::genref_unchecked_deref",
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Return `true` when `node` is a direct `gen_deref(…)` call.
+#[cfg(feature = "std-surface")]
+fn is_genderef_call(node: &Node) -> bool {
+    matches!(node, Node::Call { callee, .. } if callee == "gen_deref")
+}
+
+/// Return `true` when `node` is an `if`/`match` whose scrutinee is `binding`.
+///
+/// Covers:
+///   - `match <binding> { … }` — the scrutinee is `Lit(Ident(binding))`.
+///   - `if <binding> { … }` / `if <binding> == 0 { … }` — the condition
+///     starts with an ident equal to `binding`.
+///
+/// This is a conservative surface-level check: it does not track aliases or
+/// evaluate the condition deeply.  Phase J-C can refine this.
+#[cfg(feature = "std-surface")]
+fn is_zero_guard_on(node: &Node, binding: &str) -> bool {
+    match node {
+        Node::Match { scrutinee, .. } => is_ident_node(scrutinee, binding),
+        Node::If { cond, .. } => is_ident_or_cmp_node(cond, binding),
+        _ => false,
+    }
+}
+
+/// Return `true` when `node` is `Lit(Ident(name))` with the given name.
+#[cfg(feature = "std-surface")]
+fn is_ident_node(node: &Node, name: &str) -> bool {
+    matches!(node, Node::Lit(Literal::Ident(n), _) if n == name)
+}
+
+/// Return `true` when `node` is an identifier or a binary comparison
+/// (`==`, `!=`, `<`, `>`) whose left-hand side is the named identifier.
+/// This covers `if p { }`, `if p == 0 { }`, `if p != 0 { }`.
+#[cfg(feature = "std-surface")]
+fn is_ident_or_cmp_node(node: &Node, name: &str) -> bool {
+    if is_ident_node(node, name) {
+        return true;
+    }
+    // Binary: check whether either operand is the named identifier.
+    if let Node::Binary { left, right, .. } = node {
+        return is_ident_node(left, name) || is_ident_node(right, name);
+    }
+    false
 }
 
 /// RFC 0010 Phase A — verify that a type used in an `extern "C"` signature is
