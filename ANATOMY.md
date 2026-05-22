@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2618 | **Est. tokens:** ~6,487,849
-**Generated:** 2026-05-21 22:57 UTC
+**Files:** 2617 | **Est. tokens:** ~6,484,537
+**Generated:** 2026-05-22 03:58 UTC
 
 ## Token Budget Guide
 
@@ -56,10 +56,10 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~9,251 |
+| `.github/workflows/` | 7 | ~6,344 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~8,780 |
-| `scripts/` | 4 | ~5,766 |
+| `runtime-support/` | 1 | ~8,963 |
+| `scripts/` | 4 | ~5,178 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/node_modules/` | 1 | ~13,764 |
@@ -736,7 +736,6 @@
 - `ci.yml` (~2703 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
-- `release-binary.yml` (~2907 tok, huge) — name: Release Binary
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
 - `release.yml` (~1579 tok, huge) — name: Release
 ### `mind/std/cognitive/`
@@ -747,13 +746,13 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~8780 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~8963 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
 - `anatomy.sh` (~2010 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
-- `install.sh` (~1642 tok, huge) — install.sh — mindc one-line installer for Linux and macOS
+- `install.sh` (~1054 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
 ### `sdk/ts/mic-map/dist/`
 
 - `errors.d.ts` (~209 tok, medium)
