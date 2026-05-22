@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0010 |
 | Title | Memory safety model + C ABI in pure MIND |
-| Status | **Phases A/B/C Shipped; E/F Scaffolded** — milestone v0.7.0; Phase D + Phases G–J planned |
+| Status | **Phases A/B/C Shipped; E/F Scaffolded; J-A/J-B Shipped** — milestone v0.7.0; Phase D + Phases G–I + J-C planned |
 | Authors | STARGA Inc. |
 | Created | 2026-05-21 |
 | Supersedes | — |
@@ -338,7 +338,7 @@ testable.
 | I (KEYSTONE) | Remove `mlir-sys` and `inkwell` from `Cargo.toml`. The Rust crate becomes a thin distribution shim. Pure-MIND mindc owns the full compile path. | The Rust dependency tree shows no mlir-sys or inkwell transitive deps; mindc produces a byte-identical result to the Phase G build. | Planned |
 | J | Implement the three-tier memory model in mindc: parse `region { }` blocks, type-check region escape, lower region alloc/free, lower `GenRef<T>` with generation counter. | existing MIND programs compile unchanged; new tests exercise region and GenRef semantics. | **Phase J-A (region-interior) Shipped** |
 | J-A | Parse `region { }` blocks; `Node::Region` AST variant; `Instr::Region` IR variant; lowering to `__mind_region_enter/track/exit` runtime helpers; `safety::region_escape` diagnostic (direct-return case); interpreter evaluation; formatter; 11 tests. | `phase_g_04` oracle unchanged; 11 `region_phase_ja` tests pass; 0 failed (excl. pre-existing 6 blas_vec_q16_smoke). | **Shipped** |
-| J-B | Full escape analysis (aliasing through struct fields, function-return pointers); `GenRef<T>` with generation counter. | Phase J-A shipped; GenRef + full escape = Phase J-B. | Planned |
+| J-B | `GenRef<T>` generation-checked references (Tier 3 — region-exterior heap): `gen_alloc(bytes) -> i64`, `gen_deref(handle) -> i64`, `gen_free(handle) -> i64` runtime helpers; `__mind_gen_alloc/deref/free` C helpers in `runtime-support/mind_intrinsics.c`; `safety::genref_unchecked_deref` diagnostic (unguarded `gen_deref` result); 9 `genref_phase_jb` tests. Full escape analysis (aliasing through struct fields, function-return pointers) deferred to Phase J-C. | `phase_g_04` oracle unchanged; 9 `genref_phase_jb` tests pass; 0 failed (excl. pre-existing 6 blas_vec_q16_smoke). | **Shipped** |
 
 Phase A is the prerequisite for all subsequent phases. Phases B–D are
 independent of each other and may be implemented in any order. Phases E–I are
@@ -518,6 +518,7 @@ namespaces (RFC 0007 §6).
 | `safety::raw_ptr_in_safe_context` | `error` (not configurable) | A `*const T` or `*mut T` is constructed outside an `unsafe { }` block or the body of an `unsafe fn`. |
 | `safety::unsafe_call_in_safe_fn` | `error` (not configurable) | A function declared `unsafe fn` in an `extern "C"` block is called outside an `unsafe { }` block. |
 | `safety::extern_missing_callconv` | `info` | An `extern "C"` block does not declare an explicit `callconv(.)` tag. Informational only; the platform default is used. |
+| `safety::genref_unchecked_deref` | `error` (not configurable) | A `gen_deref(handle)` result is used without a zero-check guard (`match`/`if`) on the returned pointer. Phase J-B conservative scope: flags `let x = gen_deref(…)` where `x` is not the direct scrutinee of the immediately following `match`/`if`, and bare expression-statement `gen_deref(…)`. Full data-flow alias tracking (through struct fields and function returns) is Phase J-C. |
 
 ### Runtime diagnostics (mindc runtime)
 
