@@ -427,6 +427,11 @@ impl<'a> P<'a> {
             (b"F64", "f64"),
             (b"i32", "i32"),
             (b"I32", "i32"),
+            // RFC 0012 §3.2 — additional dtypes
+            (b"i64", "i64"),
+            (b"I64", "i64"),
+            (b"q16", "q16"),
+            (b"Q16", "q16"),
         ] {
             if self.at_keyword(kw) {
                 self.pos += kw.len();
