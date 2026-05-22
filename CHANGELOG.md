@@ -19,12 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   surface so the Q16.16 byte-identity guarantee carries through unchanged. Ships
   a strict broadcast subset (scalar + last-dimension rank-1); full prefix-rank
   broadcasting and raw-intrinsic byte-identity are Phase B.2 (deferred).
-- **Phase C.0 — function-attribute threading (inert).** The parser now records
-  the full attribute list on `Node::FnDef` (`attrs`) so later phases can
-  interpret `[deterministic]`, `[target(...)]`, and `[q16]`. **Inert: nothing
-  reads `attrs` yet** — lowering is unchanged and the bootstrap byte-identity
-  oracle is preserved. The annotation *checks* (determinism call-graph, target
-  validity, q16-dtype) are Phase C.1 and are not yet enforced.
+- **Phase C.0 — function-attribute threading (inert).** The parser records the
+  full attribute list on `Node::FnDef` (`attrs`) so later phases can interpret
+  `[deterministic]`, `[target(...)]`, and `[q16]`. Inert by itself — lowering is
+  unchanged and the bootstrap byte-identity oracle is preserved.
+- **Phase C.1 — annotation checks (enforced).** A purely-additive type-checker
+  pass reads those attributes and enforces three `determinism::*` contracts:
+  `unknown_target` (a `[target(x)]`/`[q16]` whose `x` is not in the backend
+  vocabulary, or `[target]` with no name), `float_in_q16_fn` (a `[q16]` function
+  declaring a non-q16 tensor parameter or return), and
+  `nondeterministic_in_deterministic` (a `[deterministic]`/`[q16]` function
+  calling a non-annotated user function in the same module). Only functions that
+  opt in are checked; un-annotated code never regresses. The std.blas-q16
+  implicit-determinism predicate and expression-level dtype tracking are
+  deferred to Phase C.2. (MIND attribute surface is `[name]`, as for `[test]`.)
 
 ### Added — post-0.7.0 RFC progress
 
