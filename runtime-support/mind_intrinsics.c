@@ -920,3 +920,98 @@ MIND_EXPORT int64_t __mind_blas_dot_l1_q16(int64_t a_addr, int64_t b_addr, int64
 #endif
     return mind_blas_dot_l1_q16_scalar(a, b, len);
 }
+
+// ---------------------------------------------------------------------------
+// RFC 0010 Phase J-A — region-interior allocation tracking
+//
+// Three helper functions implement the enter/track/exit lifecycle for
+// `region { }` blocks (Tier 2 — region-interior heap, §3.2).
+//
+// Data structure: a fixed-depth stack of frames.  Each frame holds a
+// dynamic array of i64 (opaque heap addresses) allocated inside one region.
+// `__mind_region_enter` pushes a fresh frame; `__mind_region_track` appends
+// to the top frame; `__mind_region_exit` frees every recorded address then
+// pops the frame.
+//
+// Design choices:
+//   - MIND_REGION_STACK_DEPTH 64: 64 nested `region { }` levels is well
+//     beyond any plausible MIND program; a stack overflow panics via abort().
+//   - Initial frame capacity 8: doubles on overflow (doubling policy).
+//   - All allocations use malloc/realloc/free directly (no __mind_alloc
+//     indirection) so that region-interior ptrs are NOT themselves tracked
+//     as region allocations — the frame storage is outside the region model.
+//
+// Thread safety: not required.  MIND programs are single-threaded until
+// RFC 0011 (async).  The stack is a plain static array.
+// ---------------------------------------------------------------------------
+
+#define MIND_REGION_STACK_DEPTH 64
+#define MIND_REGION_FRAME_INIT_CAP 8
+
+typedef struct {
+    int64_t *ptrs;   /* heap addresses tracked in this frame */
+    int64_t  len;    /* number of live entries             */
+    int64_t  cap;    /* allocated capacity of ptrs[]       */
+} MindRegionFrame;
+
+static MindRegionFrame mind_region_stack[MIND_REGION_STACK_DEPTH];
+static int             mind_region_depth = 0;
+
+// __mind_region_enter() — push a new allocation-tracking frame.
+//
+// Returns 0 (unit i64). Called at the entry of every `region { }` block.
+MIND_EXPORT int64_t __mind_region_enter(void) {
+    if (mind_region_depth >= MIND_REGION_STACK_DEPTH) {
+        /* region nesting overflow — abort deterministically */
+        abort();
+    }
+    MindRegionFrame *f = &mind_region_stack[mind_region_depth];
+    f->ptrs = (int64_t *)malloc((size_t)MIND_REGION_FRAME_INIT_CAP * sizeof(int64_t));
+    f->len  = 0;
+    f->cap  = MIND_REGION_FRAME_INIT_CAP;
+    mind_region_depth++;
+    return 0;
+}
+
+// __mind_region_track(ptr) — record an allocation made inside a region.
+//
+// `ptr` is the i64 opaque address returned by `__mind_alloc`. Appended to
+// the top frame's list. Returns `ptr` unchanged (so the call can be
+// composed with the alloc result in a single SSA chain).
+//
+// No-ops when called outside a region (mind_region_depth == 0) so that
+// user code that calls `__mind_alloc` directly from outside any region does
+// not fault.
+MIND_EXPORT int64_t __mind_region_track(int64_t ptr) {
+    if (mind_region_depth == 0 || ptr == 0) return ptr;
+    MindRegionFrame *f = &mind_region_stack[mind_region_depth - 1];
+    if (f->len >= f->cap) {
+        int64_t new_cap = f->cap * 2;
+        f->ptrs = (int64_t *)realloc(f->ptrs, (size_t)new_cap * sizeof(int64_t));
+        f->cap  = new_cap;
+    }
+    f->ptrs[f->len++] = ptr;
+    return ptr;
+}
+
+// __mind_region_exit() — free every allocation in the top frame, then pop.
+//
+// Returns 0 (unit i64). Called at the exit of every `region { }` block.
+// The order of freeing is LIFO (last allocated, first freed) — deterministic
+// and consistent with the evidence-chain contract.
+MIND_EXPORT int64_t __mind_region_exit(void) {
+    if (mind_region_depth == 0) return 0;
+    mind_region_depth--;
+    MindRegionFrame *f = &mind_region_stack[mind_region_depth];
+    /* Free in reverse insertion order — LIFO */
+    for (int64_t i = f->len - 1; i >= 0; --i) {
+        if (f->ptrs[i] != 0) {
+            free((void *)(uintptr_t)f->ptrs[i]);
+        }
+    }
+    free(f->ptrs);
+    f->ptrs = NULL;
+    f->len  = 0;
+    f->cap  = 0;
+    return 0;
+}

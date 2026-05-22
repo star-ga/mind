@@ -1119,6 +1119,89 @@ impl LoweringContext {
                     ),
                 );
             }
+            // RFC 0010 Phase J-A — region-interior allocation scope.
+            //
+            // Emits the enter/track/exit call sandwich around the body:
+            //   func.call @__mind_region_enter() : () -> i64
+            //   <body instructions, with __mind_region_track after each alloc>
+            //   func.call @__mind_region_exit()  : () -> i64
+            //
+            // Every `func.call @__mind_alloc` in the body is immediately
+            // followed by `func.call @__mind_region_track(%ptr)` to register
+            // the allocation with the active region frame.
+            //
+            // Gated to `std-surface`.
+            #[cfg(feature = "std-surface")]
+            Instr::Region { body, result, enter_id, exit_id, alloc_ids } => {
+                // Register the three region helpers as extern_calls so the
+                // module-level MLIR emitter generates `func.func private`
+                // declarations for them, exactly as for __mind_alloc etc.
+                self.extern_calls.insert(("__mind_region_enter".to_string(), 0));
+                self.extern_calls.insert(("__mind_region_track".to_string(), 1));
+                self.extern_calls.insert(("__mind_region_exit".to_string(), 0));
+
+                // Enter: push a new region frame. Use the globally-unique
+                // enter_id allocated by the IR lowering pass so that nested
+                // regions emit distinct MLIR value names.
+                self.emit_line(&format!(
+                    "    %{} = func.call @__mind_region_enter() : () -> i64",
+                    enter_id.0
+                ));
+                self.values.insert(*enter_id, ValueKind::ScalarI64);
+
+                // Lower body instructions; wrap alloc calls with track.
+                let mut body_sub = LoweringContext::new();
+                for (vid, kind) in &self.values {
+                    body_sub.values.insert(*vid, kind.clone());
+                }
+                for (k, v) in &self.extern_c_fns {
+                    body_sub.extern_c_fns.insert(k.clone(), v.clone());
+                }
+                for (idx, bi) in body.iter().enumerate() {
+                    body_sub.emit_instr(idx, bi)?;
+                    // After any `__mind_alloc` call, emit a track call.
+                    // The track-call dst uses a synthetic id derived from
+                    // the alloc dst + region enter_id to remain unique
+                    // across nested regions and multiple allocs.
+                    if let Instr::Call { dst: alloc_dst, name, .. } = bi {
+                        if name == "__mind_alloc" && alloc_ids.contains(alloc_dst) {
+                            // Combine alloc_dst and enter_id to get a unique
+                            // key that won't collide with other instructions
+                            // or other region levels.
+                            let track_dst = ValueId(
+                                enter_id.0
+                                    .wrapping_add(alloc_dst.0)
+                                    .wrapping_add(idx + 1)
+                            );
+                            body_sub.emit_line(&format!(
+                                "    %{} = func.call @__mind_region_track(%{}) \
+                                 : (i64) -> i64",
+                                track_dst.0, alloc_dst.0
+                            ));
+                            body_sub.values.insert(track_dst, ValueKind::ScalarI64);
+                        }
+                    }
+                }
+                self.body.push_str(&body_sub.body);
+                for (vid, kind) in body_sub.values {
+                    self.values.insert(vid, kind);
+                }
+                for ec in body_sub.extern_calls {
+                    self.extern_calls.insert(ec);
+                }
+
+                // Exit: free the region frame's allocations. Use the globally
+                // unique exit_id for the same reason as enter_id above.
+                self.emit_line(&format!(
+                    "    %{} = func.call @__mind_region_exit() : () -> i64",
+                    exit_id.0
+                ));
+                self.values.insert(*exit_id, ValueKind::ScalarI64);
+
+                // The region's result value was already registered by the
+                // body sub-context. Ensure the parent sees it.
+                self.values.insert(*result, ValueKind::ScalarI64);
+            }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
                     instr_index,

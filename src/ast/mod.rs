@@ -599,6 +599,24 @@ pub enum Node {
         fns: Vec<ExternFn>,
         span: Span,
     },
+    /// Region block: `region { <stmts> }` (RFC 0010 Phase J-A).
+    ///
+    /// Introduces a lexical allocation scope (Tier 2 — region-interior heap).
+    /// Heap allocations made via `__mind_alloc` inside the block are tracked
+    /// by the runtime (`__mind_region_enter` / `__mind_region_track` /
+    /// `__mind_region_exit`) and freed automatically when control leaves the
+    /// block. Aliasing within a region is unrestricted.
+    ///
+    /// A region is an expression: it evaluates to the last expression in its
+    /// body, exactly like a block. The escape check (`safety::region_escape`)
+    /// fires when the result is a pointer that was allocated inside the region.
+    ///
+    /// Gated to `std-surface` — default builds never construct this variant.
+    #[cfg(feature = "std-surface")]
+    Region {
+        body: Vec<Node>,
+        span: Span,
+    },
 }
 
 /// One arm of a `match` expression: `pattern => body`.
@@ -727,6 +745,8 @@ impl Node {
             | Node::ExternBlock { span, .. } => *span,
             #[cfg(feature = "std-surface")]
             Node::While { span, .. } => *span,
+            #[cfg(feature = "std-surface")]
+            Node::Region { span, .. } => *span,
         }
     }
 
