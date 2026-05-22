@@ -1008,6 +1008,35 @@ pub fn build_graph_loss(
                 };
                 Ok(tape.push(node_info))
             }
+            // RFC 0012 Phase B: `A @ B` has the same autodiff semantics as
+            // `tensor.matmul(A, B)` — delegate to the CallMatMul arm via a
+            // synthetic node rather than duplicating the implementation.
+            ast::Node::TensorMatmul { lhs, rhs, span } => {
+                let synthetic = ast::Node::CallMatMul {
+                    a: lhs.clone(),
+                    b: rhs.clone(),
+                    span: *span,
+                };
+                rec(&synthetic, tenv, tape, vars, var_nodes, expanding)
+            }
+            // RFC 0012 Phase B: elementwise operators share autodiff
+            // semantics with scalar binary operators on tensors.
+            ast::Node::TensorElemwise { op, lhs, rhs, span } => {
+                use crate::ast::TensorElemOp;
+                let scalar_op = match op {
+                    TensorElemOp::Add => crate::ast::BinOp::Add,
+                    TensorElemOp::Sub => crate::ast::BinOp::Sub,
+                    TensorElemOp::Mul => crate::ast::BinOp::Mul,
+                    TensorElemOp::Div => crate::ast::BinOp::Div,
+                };
+                let synthetic = ast::Node::Binary {
+                    op: scalar_op,
+                    left: lhs.clone(),
+                    right: rhs.clone(),
+                    span: *span,
+                };
+                rec(&synthetic, tenv, tape, vars, var_nodes, expanding)
+            }
             _ => Err("unsupported node in autodiff".to_string()),
         }
     }

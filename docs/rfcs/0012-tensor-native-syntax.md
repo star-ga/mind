@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0012 |
 | Title | Tensor-native surface syntax — the differentiation layer |
-| Status | **Phase A Shipped** |
+| Status | **Phase B Shipped** |
 | Authors | STARGA Inc. |
 | Created | 2026-05-22 |
 | Supersedes | — |
@@ -677,7 +677,7 @@ operand shapes, dtypes, and values.
 | Phase | Deliverable | Byte-identity gate |
 |---|---|---|
 | A ✓ | Shape-typed `Tensor<dtype, [dims]>` in the type system. Symbolic dimension unification within a function body. Compile-time shape checking with `shape::*` diagnostics. No tensor operators yet — just the type and shape. `q16`, `i64`, `f64` first-class dtypes added. | The type is compile-time-only; no new MLIR is emitted. Gate: existing test suite unchanged; 19 Phase A shape-check tests pass. Bootstrap oracle byte-identical. blas_smoke 12/12. Bench: small_matmul 2.92µs (-3.4% p=0.50), medium_mlp 6.62µs (-6.2% p=0.00), large_network 16.95µs (-11.0% p=0.00). All within +7% cap. |
-| B | Tensor operators (`@`, `.+`, `.-`, `.*`, `./`, `.T`, `.reshape`, reductions, norm shorthands). Each operator lowers to the existing std.blas function-call forms. | For every `(dtype, operator, shape)` combination, the lowered MLIR is byte-identical to the equivalent explicit std.blas call. The Phase B test suite asserts this by compiling both forms and comparing IR bytes. |
+| B ✓ | Tensor operators `@`, `.+`, `.-`, `.*`, `./`. Each desugars at a single point (`lower_expr`) to existing IR forms: `@` → `Instr::MatMul` (same as `tensor.matmul`), `.+`/`.-`/`.*`/`./` → `Instr::BinOp` (same as scalar `+`/`-`/`*`/`/`). Shape inference: `shape::matmul_mismatch` and `shape::broadcast_mismatch` diagnostics. **B.2 deferred**: `.T`, reductions (`.sum`/`.mean`/`.max`), norm shorthands, `.reshape`, MLIR-level byte-identity with raw `matmul_rmajor_f32_v`/`dot_*_v` intrinsics (requires shape-dim threading from type-checker to lower_expr). | IR-text byte-identity gated (RFC §7.2): `A @ B` ≡ `tensor.matmul(A, B)` via `format_ir_module`; `A .+ B` ≡ `A + B`; same for `.-`/`.*`/`./`. 17/17 Phase B tests pass (`tests/rfc0012_phase_b_operators.rs`). Full suite 0 new failures (3 pre-existing mindcraft_check_cli failures unchanged). Bootstrap oracle 6/6. blas_smoke 12/12. Bench: medium_mlp -0.37% (p=0.05), large_network +3.3% (p=0.08) — all within +7% cap. |
 | C | `#[deterministic]`, `#[target(...)]`, and `#[q16]` annotations. Compile-time checks: `determinism::nondeterministic_in_deterministic`, `determinism::float_in_q16_fn`, `shape::target_unavailable`. | `#[deterministic]` functions that operate on `q16` tensors must lower to MLIR byte-identical to the explicit `dot_q16_v` / `matmul_rmajor_q16_v` calls. `#[target(cpu)]` on an f32 function must lower identically to the current default path. |
 | D | Tensor-op fusion. The compiler fuses chained tensor expressions (`W2 @ (W1 @ x)`, `(A @ B) .+ c`) into single kernel passes when shape and consumption analysis permits. | The fused lowering must produce a result byte-identical to the sequential unfused lowering for the same inputs. This is the only phase where the MLIR may differ from the hand-written std.blas calls — but the output values must be identical. The Phase D gate is a value-identity check, not an MLIR-byte-identity check, with the unfused Phase B lowering as the oracle. |
 

@@ -24,6 +24,7 @@ use crate::ast::Module;
 
 use crate::ast::Node;
 
+use crate::ast::TensorElemOp;
 use crate::ast::TypeAnn;
 use crate::runtime_interface::{MindRuntime, NoOpRuntime};
 
@@ -885,6 +886,33 @@ pub(crate) fn eval_value_expr_mode(
                 }
                 _ => Err(EvalError::Unsupported),
             }
+        }
+        // RFC 0012 Phase B: `A @ B` evaluates identically to
+        // `tensor.matmul(A, B)` — delegate to the same implementation.
+        Node::TensorMatmul { lhs, rhs, span } => {
+            let synthetic = Node::CallMatMul {
+                a: lhs.clone(),
+                b: rhs.clone(),
+                span: *span,
+            };
+            eval_value_expr_mode(&synthetic, env, tensor_env, mode)
+        }
+        // RFC 0012 Phase B: elementwise `.+ .- .* ./` evaluate identically
+        // to scalar `+ - * /` on tensor operands.
+        Node::TensorElemwise { op, lhs, rhs, span } => {
+            let scalar_op = match op {
+                TensorElemOp::Add => BinOp::Add,
+                TensorElemOp::Sub => BinOp::Sub,
+                TensorElemOp::Mul => BinOp::Mul,
+                TensorElemOp::Div => BinOp::Div,
+            };
+            let synthetic = Node::Binary {
+                op: scalar_op,
+                left: lhs.clone(),
+                right: rhs.clone(),
+                span: *span,
+            };
+            eval_value_expr_mode(&synthetic, env, tensor_env, mode)
         }
         Node::CallTensorRelu { x, .. } => {
             let value = eval_value_expr_mode(x, env, tensor_env, mode.clone())?;

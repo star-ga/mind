@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2623 | **Est. tokens:** ~6,506,994
-**Generated:** 2026-05-22 16:25 UTC
+**Files:** 2624 | **Est. tokens:** ~6,513,253
+**Generated:** 2026-05-22 17:18 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 18 | ~72,010 |
+| `docs/rfcs/` | 18 | ~72,162 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -362,7 +362,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,223 |
-| `src/ast/` | 1 | ~5,678 |
+| `src/ast/` | 1 | ~6,000 |
 | `src/autodiff/` | 3 | ~4,256 |
 | `src/bin/` | 2 | ~17,022 |
 | `src/build/` | 2 | ~10,769 |
@@ -372,11 +372,11 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,190 |
-| `src/eval/` | 13 | ~80,143 |
+| `src/eval/` | 13 | ~81,335 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~16,258 |
+| `src/fmt/` | 3 | ~16,418 |
 | `src/ir/` | 3 | ~13,767 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 143 | ~233,797 |
+| `tests/` | 144 | ~238,230 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -618,7 +618,7 @@
 - `000-template.md` (~1 tok, tiny)
 - `0010-memory-safety-and-c-abi.md` (~7359 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
-- `0012-tensor-native-syntax.md` (~11155 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
+- `0012-tensor-native-syntax.md` (~11307 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -3539,7 +3539,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~5678 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6000 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3588,17 +3588,17 @@
 - `mod.rs` (~6582 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
+- `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~20368 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~20915 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4154 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8385 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~19470 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~19758 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
@@ -3621,7 +3621,7 @@
 
 - `cli.rs` (~3852 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~11812 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~11972 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3957,6 +3957,7 @@
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6408 tok, huge) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_b_operators.rs` (~4433 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
