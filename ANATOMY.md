@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2618 | **Est. tokens:** ~6,493,636
-**Generated:** 2026-05-22 08:27 UTC
+**Files:** 2618 | **Est. tokens:** ~6,495,895
+**Generated:** 2026-05-22 09:15 UTC
 
 ## Token Budget Guide
 
@@ -372,7 +372,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,190 |
-| `src/eval/` | 13 | ~79,821 |
+| `src/eval/` | 13 | ~80,070 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
@@ -392,11 +392,11 @@
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
-| `src/type_checker/` | 1 | ~24,358 |
+| `src/type_checker/` | 1 | ~25,480 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 13 | ~65,351 |
-| `tests/` | 139 | ~212,741 |
+| `tests/` | 139 | ~213,629 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3591,7 +3591,7 @@
 - `autodiff.rs` (~13911 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~20119 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~20368 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4154 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8312 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3715,7 +3715,7 @@
 - `mod.rs` (~5810 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `mod.rs` (~24358 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~25480 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3952,7 +3952,7 @@
 - `reap_threshold.rs` (~2045 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `region_phase_ja.rs` (~3355 tok, huge) — Copyright 2025 STARGA Inc.
+- `region_phase_ja.rs` (~4243 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
