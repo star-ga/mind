@@ -2374,15 +2374,117 @@ pub fn check_module_types_in_file(
                     errs.extend(inner_errs);
                 }
             }
+            // RFC 0010 Phase J-A: `region { ... }` at module level.
+            // Delegate to the recursive region-escape checker so that the
+            // diagnostic flows through the structured surface (consistent
+            // with the Phase A/B `safety::extern_non_repr_c` pattern).
+            #[cfg(feature = "std-surface")]
+            Node::Region { .. } => {
+                check_region_escapes_in_node(item, src, file, &mut errs);
+            }
             other => {
                 if let Err(e) = infer_expr(other, &tenv) {
                     errs.push(diag_from_type_err(src, file, e));
                 }
+                // RFC 0010 Phase J-A: recurse into fn bodies and other
+                // compound nodes to find embedded `region { }` blocks and
+                // emit `safety::region_escape` diagnostics for any that
+                // return a region-interior allocation.
+                #[cfg(feature = "std-surface")]
+                check_region_escapes_in_node(other, src, file, &mut errs);
             }
         }
     }
 
     errs
+}
+
+/// RFC 0010 Phase J-A — `region { }` escape checker.
+///
+/// Walks `node` recursively to find every `Node::Region` and checks whether
+/// its result expression is a region-interior allocation (a direct call to a
+/// known allocating function, or an identifier bound to such a call).  When
+/// an escape is detected, a `safety::region_escape` diagnostic is appended to
+/// `errs` using the same `diag_from_span` surface as Phase A/B.
+///
+/// Conservative (Phase J-A): only the direct-return and simple-binding cases
+/// are flagged.  Aliasing through struct fields is Phase J-B.  Scalar results
+/// (i64 / f64 / bool literals and arithmetic) are never flagged.
+#[cfg(feature = "std-surface")]
+fn check_region_escapes_in_node(
+    node: &Node,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        Node::Region { body, span } => {
+            // Collect names bound to known allocating calls inside the body.
+            // Known allocating functions: __mind_alloc and any *_new constructor.
+            let mut alloc_bound: std::collections::BTreeSet<String> = Default::default();
+            for stmt in body {
+                if let Node::Let { name, value, .. } = stmt {
+                    if is_allocating_call(value) {
+                        alloc_bound.insert(name.clone());
+                    }
+                }
+                // Recurse into nested regions within the body.
+                check_region_escapes_in_node(stmt, src, file, errs);
+            }
+            // Check the result expression (the last item in body).
+            if let Some(last) = body.last() {
+                let escapes = match last {
+                    Node::Lit(Literal::Ident(name), _) => {
+                        alloc_bound.contains(name.as_str())
+                    }
+                    other => is_allocating_call(other),
+                };
+                if escapes {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        "region-interior allocation escapes region block \
+                         (RFC 0010 §3.2); the pointer will be freed at \
+                         region exit — use a scalar result or copy the data \
+                         out before the region closes"
+                            .to_string(),
+                        *span,
+                        "safety::region_escape",
+                    ));
+                }
+            }
+        }
+        // Recurse into fn bodies.
+        Node::FnDef { body, .. } => {
+            for stmt in body {
+                check_region_escapes_in_node(stmt, src, file, errs);
+            }
+        }
+        // Recurse into block nodes (unwrapped module declarations).
+        Node::Block { stmts, .. } => {
+            for stmt in stmts {
+                check_region_escapes_in_node(stmt, src, file, errs);
+            }
+        }
+        // Recurse into let bindings whose RHS might contain a region.
+        Node::Let { value, .. } => {
+            check_region_escapes_in_node(value, src, file, errs);
+        }
+        _ => {}
+    }
+}
+
+/// Return `true` when `node` is a direct call to a known heap-allocating
+/// function.  The set covers `__mind_alloc` and all `*_new` constructors
+/// that return a heap handle (`vec_new`, `string_new`, `map_new`, etc.).
+/// Scalars and arithmetic nodes always return `false`.
+#[cfg(feature = "std-surface")]
+fn is_allocating_call(node: &Node) -> bool {
+    if let Node::Call { callee, .. } = node {
+        callee == "__mind_alloc" || callee.ends_with("_new")
+    } else {
+        false
+    }
 }
 
 /// RFC 0010 Phase A — verify that a type used in an `extern "C"` signature is

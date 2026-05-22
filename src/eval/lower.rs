@@ -616,7 +616,15 @@ fn lower_expr(
                 param_pairs.push((param.name.clone(), param_id));
             }
 
-            // Lower function body
+            // Lower function body.
+            //
+            // `Return` is unique to fn scope and handled inline.
+            // `Let` / `Assign` / expression stmts share the same
+            // Let→tensor-binding + Assign→bind + expr pattern that is
+            // extracted in `lower_stmt_seq` (used by `Node::Region`).
+            // FnDef-specific extras — P0f struct-env tracking and Gap-C
+            // branch-binding propagation — are layered on top after each
+            // stmt is lowered.
             let mut ret_id = None;
             for stmt in body {
                 match stmt {
@@ -1342,53 +1350,21 @@ fn lower_expr(
         ast::Node::Region { body, .. } => {
             let mut body_ir = sub_ir_from(ir);
             let mut body_env = env.clone();
-            let mut last_id = None;
             let mut alloc_ids: Vec<crate::ir::ValueId> = Vec::new();
 
-            for stmt in body {
-                match stmt {
-                    ast::Node::Let { name, ann, value, .. } => {
-                        let id = match ann {
-                            Some(TypeAnn::Tensor { dtype, dims })
-                            | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
-                                &mut body_ir,
-                                value,
-                                dtype,
-                                dims,
-                                &body_env,
-                                struct_env,
-                                receiver_types,
-                            ),
-                            _ => lower_expr(
-                                value,
-                                &mut body_ir,
-                                &body_env,
-                                struct_env,
-                                receiver_types,
-                            ),
-                        };
-                        // Track allocs introduced by this binding.
-                        collect_alloc_ids(&body_ir.instrs, &mut alloc_ids);
-                        body_env.insert(name.clone(), id);
-                        last_id = Some(id);
-                    }
-                    ast::Node::Assign { name, value, .. } => {
-                        let id = lower_expr(
-                            value, &mut body_ir, &body_env, struct_env, receiver_types,
-                        );
-                        collect_alloc_ids(&body_ir.instrs, &mut alloc_ids);
-                        body_env.insert(name.clone(), id);
-                        last_id = Some(id);
-                    }
-                    other => {
-                        let id = lower_expr(
-                            other, &mut body_ir, &body_env, struct_env, receiver_types,
-                        );
-                        collect_alloc_ids(&body_ir.instrs, &mut alloc_ids);
-                        last_id = Some(id);
-                    }
-                }
-            }
+            // Lower the body using the shared statement-sequence helper.
+            // It handles Let / Assign / expression statements and appends
+            // every __mind_alloc call id to `alloc_ids` so the runtime
+            // track-calls and the type-checker escape check can both act on
+            // the same information.
+            let last_id = lower_stmt_seq(
+                body,
+                &mut body_ir,
+                &mut body_env,
+                struct_env,
+                receiver_types,
+                Some(&mut alloc_ids),
+            );
 
             // Determine the result value (last expression in body).
             let result = last_id.unwrap_or_else(|| {
@@ -1397,15 +1373,11 @@ fn lower_expr(
                 id
             });
 
-            // Region-escape check (Phase J-A minimal: direct-return case).
-            // Scalars (i64 constants, i64 arithmetic results) are safe.
-            // Only flag when the result was produced by `__mind_alloc`.
-            if alloc_ids.contains(&result) {
-                eprintln!(
-                    "safety::region_escape: region-interior allocation escapes \
-                     region block (RFC 0010 §3.2)"
-                );
-            }
+            // The escape check (safety::region_escape) is now performed at
+            // the type-checker level (Node::Region arm in
+            // check_module_types_in_file) so that it flows through the
+            // structured diagnostic surface (--reporter json / lsp) and is
+            // consistent with the Phase A/B pattern.  No eprintln here.
 
             // Advance the parent IR's next_id past everything allocated in
             // the body sub-module so all SSA ids remain globally unique.
@@ -1454,6 +1426,58 @@ fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
             }
         }
     }
+}
+
+/// Lower a sequence of `Let` / `Assign` / expression body statements into
+/// `ir`, updating `env` with new name→id bindings.
+///
+/// Returns the `ValueId` of the last statement, or `None` when `stmts` is
+/// empty.  Callers that need a unit value (region, fn body) synthesise a
+/// `ConstI64(0)` when `None` is returned.
+///
+/// When `alloc_ids` is `Some`, every `__mind_alloc` call id produced during
+/// lowering is appended to it (used by `Node::Region` to build the escape-
+/// check set passed to `Instr::Region`).
+///
+/// This is the shared body-lowering core used by both `Node::Region` and
+/// `Node::FnDef`.  The `FnDef` arm adds `Return`-statement handling and
+/// `std-surface`-gated struct-env / branch-binding tracking on top.
+#[cfg(feature = "std-surface")]
+fn lower_stmt_seq(
+    stmts: &[ast::Node],
+    ir: &mut IRModule,
+    env: &mut HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+    mut alloc_ids: Option<&mut Vec<ValueId>>,
+) -> Option<ValueId> {
+    let mut last_id: Option<ValueId> = None;
+    for stmt in stmts {
+        let id = match stmt {
+            ast::Node::Let { name, ann, value, .. } => {
+                let id = match ann {
+                    Some(TypeAnn::Tensor { dtype, dims })
+                    | Some(TypeAnn::DiffTensor { dtype, dims }) => {
+                        lower_tensor_binding(ir, value, dtype, dims, env, struct_env, receiver_types)
+                    }
+                    _ => lower_expr(value, ir, env, struct_env, receiver_types),
+                };
+                env.insert(name.clone(), id);
+                id
+            }
+            ast::Node::Assign { name, value, .. } => {
+                let id = lower_expr(value, ir, env, struct_env, receiver_types);
+                env.insert(name.clone(), id);
+                id
+            }
+            other => lower_expr(other, ir, env, struct_env, receiver_types),
+        };
+        if let Some(ref mut out) = alloc_ids {
+            collect_alloc_ids(&ir.instrs, out);
+        }
+        last_id = Some(id);
+    }
+    last_id
 }
 
 /// Extract a compile-time i64 value from a literal expression node.
