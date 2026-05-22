@@ -40,6 +40,7 @@ use crate::ast::Module;
 /// table's deterministic-insertion contract is preserved when the
 /// project loader prepends these to the user's own modules.
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
+    ("std.async",   include_str!("../../std/async.mind")),
     ("std.blas",    include_str!("../../std/blas.mind")),
     ("std.fs",      include_str!("../../std/fs.mind")),
     ("std.io",      include_str!("../../std/io.mind")),
@@ -141,6 +142,7 @@ mod tests {
             STDLIB_MIND_SOURCES.len()
         );
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(names.contains(&"std.async"));
         assert!(names.contains(&"std.vec"));
         assert!(names.contains(&"std.string"));
         assert!(names.contains(&"std.map"));
@@ -161,6 +163,11 @@ mod tests {
         let mods = parsed_stdlib_modules();
         let refs: Vec<(String, &Module)> = mods.iter().map(|(p, m)| (p.clone(), m)).collect();
         let table = build_module_table(&refs);
+        assert!(table.resolves(&["std".into(), "async".into()], "sync_scheduler"));
+        assert!(table.resolves(&["std".into(), "async".into()], "replay_scheduler"));
+        assert!(table.resolves(&["std".into(), "async".into()], "submit"));
+        assert!(table.resolves(&["std".into(), "async".into()], "run"));
+        assert!(table.resolves(&["std".into(), "async".into()], "trace_hash"));
         assert!(table.resolves(&["std".into(), "vec".into()], "vec_new"));
         assert!(table.resolves(&["std".into(), "string".into()], "string_new"));
         assert!(table.resolves(&["std".into(), "map".into()], "map_new"));
@@ -236,6 +243,7 @@ mod tests {
 
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
         assert_eq!(mods.len(), STDLIB_MIND_SOURCES.len());
+        assert!(names.contains(&"std.async"));
         assert!(names.contains(&"std.vec"));
         assert!(names.contains(&"std.string"));
         assert!(names.contains(&"std.map"));

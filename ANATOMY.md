@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2618 | **Est. tokens:** ~6,476,062
-**Generated:** 2026-05-22 10:14 UTC
+**Files:** 2620 | **Est. tokens:** ~6,483,101
+**Generated:** 2026-05-22 11:19 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 17 | ~60,776 |
+| `docs/rfcs/` | 17 | ~60,855 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -387,15 +387,15 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,534 |
+| `src/project/` | 3 | ~20,672 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,179 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 13 | ~65,351 |
-| `tests/` | 140 | ~216,932 |
+| `std/` | 14 | ~67,816 |
+| `tests/` | 141 | ~221,289 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -617,7 +617,7 @@
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
 - `000-template.md` (~1 tok, tiny)
 - `0010-memory-safety-and-c-abi.md` (~7359 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
-- `0011-async-and-structured-concurrency.md` (~4812 tok, huge) — RFC 0011: Async + Structured Concurrency Model
+- `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -3687,7 +3687,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3075 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3213 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3723,6 +3723,7 @@
 - `mod.rs` (~4948 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
+- `async.mind` (~2465 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
@@ -3980,6 +3981,7 @@
 - `std_llvm_bindings_smoke.rs` (~2647 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4821 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~1334 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_async.rs` (~4341 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cdylib_link.rs` (~1423 tok, large) — Copyright 2025 STARGA Inc.
@@ -3993,7 +3995,7 @@
 - `std_surface_map_module.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~7299 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_phase_d_env_override.rs` (~1522 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_d_env_override.rs` (~1538 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4309 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2034 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2686 tok, huge) — Copyright 2025 STARGA Inc.
