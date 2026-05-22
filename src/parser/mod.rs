@@ -20,7 +20,7 @@
 //! ```
 
 use crate::ast::{
-    BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TypeAnn,
+    BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TensorElemOp, TypeAnn,
 };
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
@@ -59,6 +59,13 @@ enum PrattOp {
     /// `expr as type` postfix cast (right operand is a `TypeAnn`,
     /// not an expression).
     AsCast,
+    /// RFC 0012 Phase B: `A @ B` tensor matmul. Precedence: between
+    /// elementwise-mul/div and elementwise-add/sub (tighter than add,
+    /// same group as ordinary multiplication).
+    TensorMatmul,
+    /// RFC 0012 Phase B: `A .+ B`, `A .- B`, `A .* B`, `A ./ B`
+    /// elementwise tensor operators.
+    TensorElem(TensorElemOp),
 }
 
 impl<'a> P<'a> {
@@ -2140,6 +2147,20 @@ impl<'a> P<'a> {
                     span,
                 },
                 PrattOp::AsCast => unreachable!(),
+                // RFC 0012 Phase B: tensor operators desugar in parse_pratt
+                // to their dedicated AST nodes. lower_expr handles both at
+                // a single well-defined desugar point.
+                PrattOp::TensorMatmul => Node::TensorMatmul {
+                    lhs: Box::new(left),
+                    rhs: Box::new(right),
+                    span,
+                },
+                PrattOp::TensorElem(elem_op) => Node::TensorElemwise {
+                    op: elem_op,
+                    lhs: Box::new(left),
+                    rhs: Box::new(right),
+                    span,
+                },
             };
         }
         Ok(left)
@@ -2168,6 +2189,16 @@ impl<'a> P<'a> {
             (b'>', b'=') => return Some((PrattOp::Cmp(BinOp::Ge), 5, 6, 2)),
             (b'<', b'<') => return Some((PrattOp::Bit(crate::ast::BitOp::Shl), 11, 12, 2)),
             (b'>', b'>') => return Some((PrattOp::Bit(crate::ast::BitOp::Shr), 11, 12, 2)),
+            // RFC 0012 Phase B: dot-prefix elementwise operators `.+ .- .* ./`.
+            // Precedence mirrors the RFC 0012 §4.7 table:
+            //   .* and ./ bind tighter than .+ and .- (levels 13/14 and 9/10).
+            // These MUST be checked before the one-char `.` fall-through in
+            // `parse_atom` (which looks for `is_ident_start` after the dot and
+            // won't match `+/-/*//`).
+            (b'.', b'+') => return Some((PrattOp::TensorElem(TensorElemOp::Add), 9, 10, 2)),
+            (b'.', b'-') => return Some((PrattOp::TensorElem(TensorElemOp::Sub), 9, 10, 2)),
+            (b'.', b'*') => return Some((PrattOp::TensorElem(TensorElemOp::Mul), 13, 14, 2)),
+            (b'.', b'/') => return Some((PrattOp::TensorElem(TensorElemOp::Div), 13, 14, 2)),
             _ => {}
         }
 
@@ -2192,6 +2223,11 @@ impl<'a> P<'a> {
             b'*' => Some((PrattOp::Arith(BinOp::Mul), 13, 14, 1)),
             b'/' => Some((PrattOp::Arith(BinOp::Div), 13, 14, 1)),
             b'%' => Some((PrattOp::Arith(BinOp::Mod), 13, 14, 1)),
+            // RFC 0012 Phase B: `@` matmul. Precedence between elementwise
+            // mul/div (13) and add/sub (9): use 11 (left) / 12 (right) —
+            // same slot as bitwise, tighter than elementwise-add, looser
+            // than elementwise-mul.
+            b'@' => Some((PrattOp::TensorMatmul, 11, 12, 1)),
             _ => None,
         }
     }

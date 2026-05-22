@@ -1127,6 +1127,24 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             emit_expr(p, b);
             p.push(")");
         }
+        // RFC 0012 Phase B — tensor operator pretty-printing.
+        Node::TensorMatmul { lhs, rhs, .. } => {
+            emit_expr(p, lhs);
+            p.push(" @ ");
+            emit_expr(p, rhs);
+        }
+        Node::TensorElemwise { op, lhs, rhs, .. } => {
+            use crate::ast::TensorElemOp;
+            emit_expr(p, lhs);
+            let op_str = match op {
+                TensorElemOp::Add => " .+ ",
+                TensorElemOp::Sub => " .- ",
+                TensorElemOp::Mul => " .* ",
+                TensorElemOp::Div => " ./ ",
+            };
+            p.push(op_str);
+            emit_expr(p, rhs);
+        }
         Node::CallTensorRelu { x, .. } => {
             p.push("tensor.relu(");
             emit_expr(p, x);
