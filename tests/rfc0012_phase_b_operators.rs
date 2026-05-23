@@ -403,7 +403,6 @@ fn ir_text_dot_div_byte_identical_to_scalar_div() {
 /// `Instr::Call { "__mind_blas_transpose_f32_v", ... }`.
 /// Not implemented in Phase B.
 #[test]
-#[ignore = "Phase B.2 deferred: .T transpose operator not yet implemented"]
 fn phase_b2_transpose_operator() {
     let _ = ir_text("let t = a.T");
 }

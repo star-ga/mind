@@ -2318,6 +2318,18 @@ impl<'a> P<'a> {
                             span,
                         };
                         continue;
+                    } else if method == "T" {
+                        // RFC 0012 Phase B.2: `a.T` is the transpose operator,
+                        // desugared to the existing CallTranspose node (which
+                        // already type-checks and lowers to Instr::Transpose).
+                        // `T` is reserved as a postfix op, not a field name.
+                        let span = Span::new(node.span_start(), self.pos);
+                        node = Node::CallTranspose {
+                            x: Box::new(node),
+                            axes: None,
+                            span,
+                        };
+                        continue;
                     } else {
                         let span = Span::new(node.span_start(), self.pos);
                         node = Node::FieldAccess {
