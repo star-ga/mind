@@ -175,6 +175,33 @@ fn deterministic_calling_unknown_external_is_not_flagged() {
     );
 }
 
+// ── Phase C.2: checks reach functions inside module { } blocks ───────
+
+#[test]
+fn deterministic_check_descends_into_module_block() {
+    // A `#[deterministic]` fn nested in a `module { }` block calling a plain
+    // fn (also nested) must be flagged — the pass descends into module blocks.
+    let c = codes(
+        "module m {\n#[deterministic]\nfn f() -> i64 { g() }\nfn g() -> i64 { 0 }\n}\n",
+    );
+    assert!(
+        c.contains(&"determinism::nondeterministic_in_deterministic"),
+        "determinism check must reach fns inside module blocks; saw {c:?}"
+    );
+}
+
+#[test]
+fn module_block_deterministic_calling_deterministic_is_ok() {
+    let c = codes(
+        "module m {\n#[deterministic]\nfn helper() -> i64 { 1 }\n\
+         #[deterministic]\nfn f() -> i64 { helper() }\n}\n",
+    );
+    assert!(
+        !c.contains(&"determinism::nondeterministic_in_deterministic"),
+        "both annotated in a module block → no flag; saw {c:?}"
+    );
+}
+
 // ── Additivity: un-annotated code is never touched ───────────────────
 
 #[test]
