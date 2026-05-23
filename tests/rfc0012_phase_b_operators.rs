@@ -413,16 +413,14 @@ fn phase_b2_transpose_operator() {
 /// a sum-reduction kernel call.
 /// Not implemented in Phase B.
 #[test]
-#[ignore = "Phase B.2 deferred: .sum reduction not yet implemented"]
 fn phase_b2_sum_reduction() {
-    let _ = ir_text("let s = a.sum");
+    let _ = ir_text("let s = a.sum()");
 }
 
 /// Phase B.2 deferred: `.mean` reduction.
 #[test]
-#[ignore = "Phase B.2 deferred: .mean reduction not yet implemented"]
 fn phase_b2_mean_reduction() {
-    let _ = ir_text("let m = a.mean");
+    let _ = ir_text("let m = a.mean()");
 }
 
 /// Phase B.2 deferred: `.max` reduction.

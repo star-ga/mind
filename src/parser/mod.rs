@@ -2311,6 +2311,21 @@ impl<'a> P<'a> {
                         self.skip_ws_and_newlines();
                         self.expect(b')')?;
                         let span = Span::new(node.span_start(), self.pos);
+                        // RFC 0012 Phase B.2: `a.sum()` / `a.mean()` (no args)
+                        // are tensor reductions over all axes, desugared to the
+                        // existing CallTensorSum / CallTensorMean nodes (which
+                        // type-check via reduce_shape and lower to the reduction
+                        // IR). `sum`/`mean` are reserved as zero-arg reduction
+                        // methods; axis-specified and `.max` are future work.
+                        if args.is_empty() && (method == "sum" || method == "mean") {
+                            let x = Box::new(node);
+                            node = if method == "sum" {
+                                Node::CallTensorSum { x, axes: Vec::new(), keepdims: false, span }
+                            } else {
+                                Node::CallTensorMean { x, axes: Vec::new(), keepdims: false, span }
+                            };
+                            continue;
+                        }
                         node = Node::MethodCall {
                             receiver: Box::new(node),
                             method,
