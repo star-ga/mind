@@ -21,18 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   broadcasting and raw-intrinsic byte-identity are Phase B.2 (deferred).
 - **Phase C.0 — function-attribute threading (inert).** The parser records the
   full attribute list on `Node::FnDef` (`attrs`) so later phases can interpret
-  `[deterministic]`, `[target(...)]`, and `[q16]`. Inert by itself — lowering is
-  unchanged and the bootstrap byte-identity oracle is preserved.
+  `#[deterministic]`, `#[target(...)]`, and `#[q16]`. Inert by itself — lowering
+  is unchanged and the bootstrap byte-identity oracle is preserved.
 - **Phase C.1 — annotation checks (enforced).** A purely-additive type-checker
   pass reads those attributes and enforces three `determinism::*` contracts:
-  `unknown_target` (a `[target(x)]`/`[q16]` whose `x` is not in the backend
-  vocabulary, or `[target]` with no name), `float_in_q16_fn` (a `[q16]` function
-  declaring a non-q16 tensor parameter or return), and
-  `nondeterministic_in_deterministic` (a `[deterministic]`/`[q16]` function
+  `unknown_target` (a `#[target(x)]`/`#[q16]` whose `x` is not in the backend
+  vocabulary, or `#[target]` with no name), `float_in_q16_fn` (a `#[q16]`
+  function declaring a non-q16 tensor parameter or return), and
+  `nondeterministic_in_deterministic` (a `#[deterministic]`/`#[q16]` function
   calling a non-annotated user function in the same module). Only functions that
   opt in are checked; un-annotated code never regresses. The std.blas-q16
   implicit-determinism predicate and expression-level dtype tracking are
-  deferred to Phase C.2. (MIND attribute surface is `[name]`, as for `[test]`.)
+  deferred to Phase C.2.
+- **Attribute surface resolved to canonical `#[name]`.** RFC 0012 §5 adopts
+  Rust-style `#[name]` (the `#` disambiguates attributes from the `@` operator).
+  The parser now accepts both `#[name]` and the legacy bare `[name]`; `mindc fmt`
+  normalizes to `#[name]`. Fixed a latent formatter bug that silently *erased*
+  function attributes (`emit_fn_def` dropped them) — `#[test]`/`#[deterministic]`
+  now round-trip through `mindc fmt`.
 
 ### Added — post-0.7.0 RFC progress
 
