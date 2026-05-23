@@ -18,13 +18,13 @@ use libmind::ir::{canonicalize_module, Instr};
 use libmind::parser;
 
 // ---------------------------------------------------------------------------
-// Parser: [reap_threshold(t)] attribute on fn
+// Parser: #[reap_threshold(t)] attribute on fn
 // ---------------------------------------------------------------------------
 
 #[test]
 fn parse_reap_threshold_on_fn() {
     let src = r#"
-        [reap_threshold(0.5)]
+        #[reap_threshold(0.5)]
         fn expert_a(x: i32) -> i32 { return x; }
     "#;
     let m = parser::parse(src).expect("parse failed");
@@ -38,7 +38,7 @@ fn parse_reap_threshold_on_fn() {
             assert_eq!(name, "expert_a");
             assert!(
                 reap_threshold.is_some(),
-                "reap_threshold should be Some after parsing [reap_threshold(0.5)]"
+                "reap_threshold should be Some after parsing #[reap_threshold(0.5)]"
             );
             let t = reap_threshold.unwrap();
             assert!((t - 0.5).abs() < 1e-9, "expected 0.5, got {t}");
@@ -50,7 +50,7 @@ fn parse_reap_threshold_on_fn() {
 #[test]
 fn parse_reap_threshold_zero() {
     let src = r#"
-        [reap_threshold(0.0)]
+        #[reap_threshold(0.0)]
         fn expert_b(x: i32) -> i32 { return x; }
     "#;
     let m = parser::parse(src).expect("parse failed");
@@ -66,7 +66,7 @@ fn parse_reap_threshold_zero() {
 #[test]
 fn parse_reap_threshold_high_value() {
     let src = r#"
-        [reap_threshold(0.9)]
+        #[reap_threshold(0.9)]
         fn expert_c(x: i32) -> i32 { return x; }
     "#;
     let m = parser::parse(src).expect("parse failed");
@@ -99,7 +99,7 @@ fn parse_fn_without_reap_threshold() {
 fn parse_reap_threshold_out_of_range_rejected() {
     // threshold >= 1.0 must be silently ignored (treated as absent).
     let src = r#"
-        [reap_threshold(1.0)]
+        #[reap_threshold(1.0)]
         fn expert_d(x: i32) -> i32 { return x; }
     "#;
     let m = parser::parse(src).expect("parse succeeded (attribute is syntactically valid)");
@@ -121,7 +121,7 @@ fn parse_reap_threshold_out_of_range_rejected() {
 #[test]
 fn lower_reap_threshold_propagated_to_ir() {
     let src = r#"
-        [reap_threshold(0.5)]
+        #[reap_threshold(0.5)]
         fn expert_a(x: i32) -> i32 { return x; }
     "#;
     let m = parser::parse(src).expect("parse failed");
@@ -156,7 +156,7 @@ fn dce_prunes_unreachable_expert() {
     // expert_a is declared with reap_threshold but never called.
     // After canonicalization its body should be replaced with a tombstone.
     let src = r#"
-        [reap_threshold(0.5)]
+        #[reap_threshold(0.5)]
         fn expert_a(x: i32) -> i32 { return x; }
     "#;
     let m = parser::parse(src).expect("parse failed");
@@ -189,7 +189,7 @@ fn dce_prunes_unreachable_expert() {
 fn dce_preserves_called_expert() {
     // expert_a is declared with reap_threshold AND is called — must survive.
     let src = r#"
-        [reap_threshold(0.5)]
+        #[reap_threshold(0.5)]
         fn expert_a(x: i32) -> i32 { return x; }
 
         fn router() -> i32 {

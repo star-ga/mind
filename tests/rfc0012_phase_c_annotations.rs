@@ -6,12 +6,12 @@
 
 //! RFC 0012 Phase C.1 — function-annotation checks.
 //!
-//! `[deterministic]`, `[target(...)]`, and `[q16]` are recorded inert on the
+//! `#[deterministic]`, `#[target(...)]`, and `#[q16]` are recorded inert on the
 //! AST by Phase C.0 and enforced here. The checks are purely additive — only
 //! functions that opt in are checked, so un-annotated code never regresses.
 //!
-//! MIND attribute surface syntax is `[attr]` (not `#[attr]`), matching the
-//! existing `[test]` / `[protection]` / `[reap_threshold(..)]` attributes.
+//! MIND attribute surface syntax is Rust-style `#[attr]` (RFC 0012 §5; the
+//! `#` disambiguates attributes from the `@` operator and bare `[` arrays).
 
 use libmind::pipeline::{compile_source_with_name, CompileError, CompileOptions};
 use libmind::runtime::types::BackendTarget;
@@ -47,23 +47,23 @@ fn expect_ok(src: &str) {
         .expect("program should compile without annotation errors");
 }
 
-// ── [target(...)] name validity ──────────────────────────────────────
+// ── #[target(...)] name validity ──────────────────────────────────────
 
 #[test]
 fn valid_target_compiles() {
-    expect_ok("[target(cpu)]\nfn f() -> i64 { 0 }\n");
+    expect_ok("#[target(cpu)]\nfn f() -> i64 { 0 }\n");
 }
 
 #[test]
 fn valid_target_q16_compiles() {
-    expect_ok("[target(q16)]\nfn f() -> i64 { 0 }\n");
+    expect_ok("#[target(q16)]\nfn f() -> i64 { 0 }\n");
 }
 
 #[test]
 fn unknown_target_reports_code() {
     // `cebras` is a typo for `cerebras`.
     expect_code(
-        "[target(cebras)]\nfn f() -> i64 { 0 }\n",
+        "#[target(cebras)]\nfn f() -> i64 { 0 }\n",
         "determinism::unknown_target",
     );
 }
@@ -71,18 +71,18 @@ fn unknown_target_reports_code() {
 #[test]
 fn target_without_name_reports_code() {
     expect_code(
-        "[target()]\nfn f() -> i64 { 0 }\n",
+        "#[target()]\nfn f() -> i64 { 0 }\n",
         "determinism::unknown_target",
     );
 }
 
-// ── [deterministic] call-graph ───────────────────────────────────────
+// ── #[deterministic] call-graph ───────────────────────────────────────
 
 #[test]
 fn deterministic_calling_deterministic_compiles() {
     expect_ok(
-        "[deterministic]\nfn helper() -> i64 { 1 }\n\
-         [deterministic]\nfn f() -> i64 { helper() }\n",
+        "#[deterministic]\nfn helper() -> i64 { 1 }\n\
+         #[deterministic]\nfn f() -> i64 { helper() }\n",
     );
 }
 
@@ -90,32 +90,32 @@ fn deterministic_calling_deterministic_compiles() {
 fn deterministic_calling_plain_reports_code() {
     expect_code(
         "fn helper() -> i64 { 1 }\n\
-         [deterministic]\nfn f() -> i64 { helper() }\n",
+         #[deterministic]\nfn f() -> i64 { helper() }\n",
         "determinism::nondeterministic_in_deterministic",
     );
 }
 
-// ── [q16] dtype contract ─────────────────────────────────────────────
+// ── #[q16] dtype contract ─────────────────────────────────────────────
 
 #[test]
 fn q16_with_q16_tensor_compiles() {
-    expect_ok("[q16]\nfn f(x: Tensor[q16,(4)]) -> i64 { 0 }\n");
+    expect_ok("#[q16]\nfn f(x: Tensor[q16,(4)]) -> i64 { 0 }\n");
 }
 
 #[test]
 fn q16_with_f32_param_reports_code() {
     expect_code(
-        "[q16]\nfn f(x: Tensor[f32,(4)]) -> i64 { 0 }\n",
+        "#[q16]\nfn f(x: Tensor[f32,(4)]) -> i64 { 0 }\n",
         "determinism::float_in_q16_fn",
     );
 }
 
 #[test]
 fn q16_implies_deterministic_call_check() {
-    // `[q16]` ⇒ `[deterministic]`, so calling a plain fn is still flagged.
+    // `#[q16]` ⇒ `#[deterministic]`, so calling a plain fn is still flagged.
     expect_code(
         "fn helper() -> i64 { 1 }\n\
-         [q16]\nfn f() -> i64 { helper() }\n",
+         #[q16]\nfn f() -> i64 { helper() }\n",
         "determinism::nondeterministic_in_deterministic",
     );
 }
