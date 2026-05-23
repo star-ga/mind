@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2627 | **Est. tokens:** ~6,516,764
-**Generated:** 2026-05-23 11:53 UTC
+**Files:** 2627 | **Est. tokens:** ~6,516,745
+**Generated:** 2026-05-23 12:07 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 146 | ~241,669 |
+| `tests/` | 146 | ~241,650 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3959,7 +3959,7 @@
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1173 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6428 tok, huge) — Copyright 2025 STARGA Inc.
-- `rfc0012_phase_b_operators.rs` (~4433 tok, huge) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_b_operators.rs` (~4414 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_c_annotations.rs` (~2026 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
