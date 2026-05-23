@@ -29,10 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   vocabulary, or `#[target]` with no name), `float_in_q16_fn` (a `#[q16]`
   function declaring a non-q16 tensor parameter or return), and
   `nondeterministic_in_deterministic` (a `#[deterministic]`/`#[q16]` function
-  calling a non-annotated user function in the same module). Only functions that
-  opt in are checked; un-annotated code never regresses. The std.blas-q16
-  implicit-determinism predicate and expression-level dtype tracking are
-  deferred to Phase C.2.
+  calling a non-deterministic function). Only functions that opt in are checked;
+  un-annotated code never regresses.
+- **Phase C.2 — implicit determinism + module-block coverage.** The determinism
+  call-graph now judges external (std/imported/intrinsic) callees by the
+  dtype-suffix convention: `_q16` and `__mind_*` are implicitly deterministic,
+  `_f32`/`_f64` floating reductions are not (flagged), unknown is unflagged (no
+  false positive). So a `#[deterministic]` fn may call `dot_q16(..)` but not
+  `dot_f32(..)`. The pass also descends into `module { }` blocks. Expression-
+  level dtype tracking, per-`#[target]` MLIR routing, and f32 fixed-reduction
+  order remain for C.2+/Phase D.
 - **Attribute surface unified on `#[name]` (single form).** RFC 0012 §5 adopts
   Rust-style `#[name]` (the `#` disambiguates attributes from the `@` operator
   and from a bare `[` array literal). `#[name]` is now the **only** attribute
