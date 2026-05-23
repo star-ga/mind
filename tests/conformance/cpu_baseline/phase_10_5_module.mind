@@ -2,7 +2,7 @@ module governance {
     const VERSION: i32 = 1
 }
 
-[protection]
+#[protection]
 fn checked() -> i32 {
     return 1
 }

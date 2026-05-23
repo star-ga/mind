@@ -44,7 +44,7 @@ fn read_fixture(name: &str) -> String {
 #[test]
 fn parse_test_attribute_sets_is_test() {
     let src = r#"
-[test]
+#[test]
 fn test_simple() {
     let x: i64 = 1
 }
@@ -75,10 +75,10 @@ fn parse_fn_without_test_attr_has_is_test_false() {
 
 #[test]
 fn parse_test_fn_with_nonzero_arity_is_parse_error() {
-    // RFC 0008 Phase B: a [test] fn must have zero parameters.
+    // RFC 0008 Phase B: a #[test] fn must have zero parameters.
     // This should be a parse-time error.
     let src = r#"
-[test]
+#[test]
 fn test_invalid(x: i64) {
     let y: i64 = x + 1
 }
@@ -86,7 +86,7 @@ fn test_invalid(x: i64) {
     let result = libmind::parser::parse(src);
     assert!(
         result.is_err(),
-        "expected parse error for [test] fn with non-zero arity"
+        "expected parse error for #[test] fn with non-zero arity"
     );
     let errs = result.unwrap_err();
     let msg = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(" ");
@@ -98,9 +98,9 @@ fn test_invalid(x: i64) {
 
 #[test]
 fn parse_pub_test_fn_is_allowed() {
-    // [test] pub fn is syntactically valid (is_pub + is_test both true).
+    // #[test] pub fn is syntactically valid (is_pub + is_test both true).
     let src = r#"
-[test]
+#[test]
 pub fn test_pub_fn() {
     let x: i64 = 42
 }
@@ -136,12 +136,12 @@ fn is_pub_field_preserved_on_non_test_fn() {
 #[test]
 fn discover_finds_test_fns_in_source() {
     let src = r#"
-[test]
+#[test]
 fn test_alpha() { let x: i64 = 1 }
 
 fn helper() -> i64 { 99 }
 
-[test]
+#[test]
 fn test_beta() { let y: i64 = 2 }
 "#;
     let path = PathBuf::from("dummy.mind");
@@ -149,13 +149,13 @@ fn test_beta() { let y: i64 = 2 }
     assert_eq!(entries.len(), 2, "should find exactly 2 test fns");
     assert!(entries.iter().any(|e| e.name == "dummy::test_alpha"));
     assert!(entries.iter().any(|e| e.name == "dummy::test_beta"));
-    // helper() has no [test] — must not appear.
+    // helper() has no #[test] — must not appear.
     assert!(!entries.iter().any(|e| e.name.contains("helper")));
 }
 
 #[test]
 fn discover_returns_correct_source_line() {
-    let src = "// line 1\n[test]\nfn test_here() { let x: i64 = 0 }\n";
+    let src = "// line 1\n#[test]\nfn test_here() { let x: i64 = 0 }\n";
     let path = PathBuf::from("linetest.mind");
     let entries = discover_tests_in_source(&path, src).expect("discover ok");
     assert_eq!(entries.len(), 1);
@@ -322,7 +322,7 @@ fn threads_1_sequential_both_tests_run() {
 }
 
 // ---------------------------------------------------------------------------
-// Directory walk: discovery picks up [test] fns from nested files
+// Directory walk: discovery picks up #[test] fns from nested files
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -376,9 +376,9 @@ fn parallel_execution_with_multiple_threads() {
 
 #[test]
 fn reap_threshold_and_is_test_coexist() {
-    // A fn with [reap_threshold] but no [test] should still work.
+    // A fn with [reap_threshold] but no #[test] should still work.
     let src = r#"
-[reap_threshold(0.3)]
+#[reap_threshold(0.3)]
 fn expert_fn() -> i64 { 1 }
 "#;
     let module = libmind::parser::parse(src).expect("parse ok");
