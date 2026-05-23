@@ -3321,6 +3321,26 @@ fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
     }
 }
 
+/// RFC 0012 §5.1 pt 3 (Phase C.2) — implicit determinism of a callee that is
+/// NOT a user-defined function in the current module (std / imported /
+/// intrinsic). Keyed on the dtype-suffix convention shared by std.blas and the
+/// tensor surface:
+///   `Some(true)`  — implicitly deterministic: `_q16` is the Q16.16
+///                   byte-identical fixed-point path; `__mind_*` are integer
+///                   intrinsics. A `#[deterministic]` caller may use these.
+///   `Some(false)` — implicitly NON-deterministic: `_f32`/`_f64` floating
+///                   reductions are not order-fixed under SIMD.
+///   `None`        — unknown surface: conservatively NOT flagged.
+fn implicit_external_determinism(callee: &str) -> Option<bool> {
+    if callee.starts_with("__mind_") || callee.contains("_q16") {
+        Some(true)
+    } else if callee.contains("_f32") || callee.contains("_f64") {
+        Some(false)
+    } else {
+        None
+    }
+}
+
 /// RFC 0012 Phase C.1 — enforce the function-annotation contracts.
 ///
 /// Scope (Phase C.1): operates on the top-level items of `module`. Functions
@@ -3428,30 +3448,43 @@ fn check_determinism_annotations(
         }
 
         // Check 3 — a `[deterministic]` function may only call functions that
-        // are themselves deterministic. Conservative resolution: flag only
-        // callees that resolve to a user-defined function in THIS module that
-        // is not annotated. Calls to intrinsics / std / cross-module symbols
-        // are not flagged in C.1 — the std.blas-q16 implicit-determinism
-        // predicate (RFC §5.1 pt 3) is Phase C.2.
+        // are themselves deterministic. A callee that resolves to a user fn in
+        // THIS module is deterministic iff it is annotated. A callee outside
+        // the module (std / imported / intrinsic) is judged by the implicit
+        // predicate (RFC §5.1 pt 3): `_q16`/`__mind_*` are deterministic;
+        // `_f32`/`_f64` floating reductions are not; anything else is unknown
+        // and conservatively NOT flagged (no false positives).
         if a.deterministic {
             let mut calls = Vec::new();
             for stmt in body {
                 collect_call_targets(stmt, &mut calls);
             }
             for (callee, cspan) in calls {
-                if let Some(callee_annot) = annots.get(callee.as_str()) {
-                    if !callee_annot.deterministic {
-                        errs.push(diag_from_span(
-                            src,
-                            file,
-                            format!(
-                                "`{name}` is `#[deterministic]` but calls `{callee}`, which is \
-                                 not; annotate `{callee}` `#[deterministic]` or remove the call"
-                            ),
-                            cspan,
-                            DET_NONDET_CODE,
-                        ));
+                let (nondeterministic, hint) = match annots.get(callee.as_str()) {
+                    Some(an) if !an.deterministic => {
+                        (true, "annotate it `#[deterministic]` or remove the call")
                     }
+                    Some(_) => (false, ""),
+                    None => match implicit_external_determinism(&callee) {
+                        Some(false) => (
+                            true,
+                            "its floating-point reductions are not deterministic — \
+                             use the q16 variant or remove the call",
+                        ),
+                        _ => (false, ""),
+                    },
+                };
+                if nondeterministic {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "`{name}` is `#[deterministic]` but calls non-deterministic \
+                             `{callee}`; {hint}"
+                        ),
+                        cspan,
+                        DET_NONDET_CODE,
+                    ));
                 }
             }
         }

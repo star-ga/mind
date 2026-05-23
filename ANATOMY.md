@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2627 | **Est. tokens:** ~6,515,801
-**Generated:** 2026-05-23 04:32 UTC
+**Files:** 2627 | **Est. tokens:** ~6,516,356
+**Generated:** 2026-05-23 07:03 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 146 | ~240,706 |
+| `tests/` | 146 | ~241,261 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3960,7 +3960,7 @@
 - `rfc0012_attribute_syntax.rs` (~1173 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6428 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4433 tok, huge) — Copyright 2025 STARGA Inc.
-- `rfc0012_phase_c_annotations.rs` (~1063 tok, large) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_c_annotations.rs` (~1618 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
