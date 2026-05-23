@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2626 | **Est. tokens:** ~6,514,689
-**Generated:** 2026-05-22 22:56 UTC
+**Files:** 2627 | **Est. tokens:** ~6,515,757
+**Generated:** 2026-05-23 03:56 UTC
 
 ## Token Budget Guide
 
@@ -376,7 +376,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~16,418 |
+| `src/fmt/` | 3 | ~16,344 |
 | `src/ir/` | 3 | ~13,767 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 145 | ~239,522 |
+| `tests/` | 146 | ~240,664 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~170 |
@@ -3622,7 +3622,7 @@
 
 - `cli.rs` (~3852 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~11972 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~11898 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3957,6 +3957,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
+- `rfc0012_attribute_syntax.rs` (~1142 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6428 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4433 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_c_annotations.rs` (~1058 tok, large) — Copyright 2025 STARGA Inc.

@@ -1034,14 +1034,25 @@ impl<'a> P<'a> {
         let mut attrs = Vec::new();
         loop {
             self.skip_ws_and_newlines();
+            // RFC 0012: an attribute may be written Rust-style `#[name]`
+            // (canonical) or bare `[name]`. Accept an optional leading `#`,
+            // but ONLY when immediately followed by `[` — a lone `#` is not an
+            // attribute and must not be consumed. `save`/`attr_start` is set
+            // BEFORE the `#` so the array-literal backout restores the whole
+            // `#[`/`[` for the expression path.
+            let attr_start = self.pos;
+            if self.at(b'#') && self.b.get(self.pos + 1).copied() == Some(b'[') {
+                self.pos += 1; // consume '#'
+            }
             if !self.at(b'[') {
+                self.pos = attr_start;
                 break;
             }
             // Lookahead: the bracketed content must be a single ident
             // optionally followed by `(...)` and a closing `]`. If the
             // bracketed expression looks like an array literal (numbers,
             // commas, etc.), back out and let the expression path consume.
-            let save = self.pos;
+            let save = attr_start;
             self.pos += 1; // consume '['
             self.skip_ws();
             let name_pos = self.pos;
