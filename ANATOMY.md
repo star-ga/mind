@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2627 | **Est. tokens:** ~6,517,078
-**Generated:** 2026-05-23 21:09 UTC
+**Files:** 2627 | **Est. tokens:** ~6,517,434
+**Generated:** 2026-05-23 21:11 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 146 | ~241,886 |
+| `tests/` | 146 | ~242,242 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3948,7 +3948,7 @@
 - `parse_phase10_surface.rs` (~3881 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2672 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
-- `phase_g_keystone_bootstrap.rs` (~4508 tok, huge) — Copyright 2025 STARGA Inc.
+- `phase_g_keystone_bootstrap.rs` (~4864 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1467 tok, large) — Copyright 2025 STARGA Inc.
 - `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.

@@ -72,6 +72,32 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Guard the self-host bootstrap fixed point: the pure-MIND parser in
+/// `examples/mindc_mind/main.mind` is attribute-BLIND and fails OPEN (it would
+/// consume `#[` as a stray token, desyncing). The byte-identity oracle holds
+/// only because no bootstrap-path source carries an attribute. If the compiler
+/// ever annotates its own source with `#[deterministic]`/`#[target]`/`#[q16]`,
+/// the Rust mindc (which understands `#[`) and the self-hosted parser would
+/// produce different IR → the `.so` would diverge and the oracle would break
+/// silently. This converts that latent landmine into a loud, toolchain-free
+/// precondition (recommended by the architecture audit, 2026-05-23). Remove
+/// this guard only when the pure-MIND `parse_item` learns to parse attributes.
+#[test]
+fn bootstrap_source_is_attribute_free() {
+    for name in ["main.mind", "fixture.mind"] {
+        let path = repo_root().join("examples/mindc_mind").join(name);
+        if let Ok(src) = std::fs::read_to_string(&path) {
+            assert!(
+                !src.contains("#["),
+                "examples/mindc_mind/{name} contains an attribute `#[` but the \
+                 pure-MIND self-host parser is attribute-blind — this would break \
+                 the byte-identity bootstrap oracle. Teach `parse_item` to parse \
+                 attributes before annotating the compiler's own source."
+            );
+        }
+    }
+}
+
 /// Return a hex-encoded SHA-256 of `bytes` using the same FIPS 180-4
 /// implementation that `src/build/cache.rs` uses — self-contained, no dep.
 fn sha256_hex(bytes: &[u8]) -> String {
