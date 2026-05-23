@@ -3341,30 +3341,46 @@ fn implicit_external_determinism(callee: &str) -> Option<bool> {
     }
 }
 
-/// RFC 0012 Phase C.1 — enforce the function-annotation contracts.
+/// Collect every `FnDef` node reachable as a top-level item or nested inside a
+/// `module NAME { ... }` block. Module blocks parse to a transparent
+/// `Node::Block` item (the module name is not a scope for call resolution —
+/// the rest of the compiler treats it as a flat item list), so determinism
+/// checks descend into them. Returns the `FnDef` nodes in source order.
+fn collect_module_fndefs<'a>(items: &'a [Node], out: &mut Vec<&'a Node>) {
+    for item in items {
+        match item {
+            Node::FnDef { .. } => out.push(item),
+            Node::Block { stmts, .. } => collect_module_fndefs(stmts, out),
+            _ => {}
+        }
+    }
+}
+
+/// RFC 0012 Phase C.1/C.2 — enforce the function-annotation contracts.
 ///
-/// Scope (Phase C.1): operates on the top-level items of `module`. Functions
-/// nested inside a `module NAME { ... }` block (parsed as a `Node::Block`
-/// item) are NOT yet visited, so their annotations are unchecked. This is a
-/// soundness *gap* (missed violations), never a false positive — top-level
-/// annotated functions are checked exactly. Recursing into module blocks with
-/// correct cross-block call resolution is Phase C.2.
+/// Visits every `FnDef` at the top level AND inside `module { }` blocks
+/// (Phase C.2 closed the prior module-block coverage gap). Purely additive:
+/// only functions that opt in via annotations are checked.
 fn check_determinism_annotations(
     module: &Module,
     src: &str,
     file: Option<&str>,
     errs: &mut Vec<Pretty>,
 ) {
+    // Flatten all FnDefs (top-level + module-block-nested) once.
+    let mut fndefs: Vec<&Node> = Vec::new();
+    collect_module_fndefs(&module.items, &mut fndefs);
+
     // Pre-scan: every user-defined function's annotation state, so the
     // determinism call-graph check can resolve callees within this module.
     let mut annots: HashMap<&str, FnAnnot> = HashMap::new();
-    for item in &module.items {
+    for item in &fndefs {
         if let Node::FnDef { name, attrs, .. } = item {
             annots.insert(name.as_str(), fn_annot(attrs));
         }
     }
 
-    for item in &module.items {
+    for item in &fndefs {
         let Node::FnDef {
             name,
             params,
