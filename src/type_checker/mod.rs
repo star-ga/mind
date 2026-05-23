@@ -3322,6 +3322,13 @@ fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
 }
 
 /// RFC 0012 Phase C.1 — enforce the function-annotation contracts.
+///
+/// Scope (Phase C.1): operates on the top-level items of `module`. Functions
+/// nested inside a `module NAME { ... }` block (parsed as a `Node::Block`
+/// item) are NOT yet visited, so their annotations are unchecked. This is a
+/// soundness *gap* (missed violations), never a false positive — top-level
+/// annotated functions are checked exactly. Recursing into module blocks with
+/// correct cross-block call resolution is Phase C.2.
 fn check_determinism_annotations(
     module: &Module,
     src: &str,
