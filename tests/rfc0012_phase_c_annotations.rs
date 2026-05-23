@@ -175,6 +175,26 @@ fn deterministic_calling_unknown_external_is_not_flagged() {
     );
 }
 
+// ── Phase C.2+: #[q16] body-local let bindings must be q16 too ────────
+
+#[test]
+fn q16_f32_let_binding_reports_code() {
+    let c = codes("#[q16]\nfn f() -> i64 {\n    let x: Tensor[f32,(4)] = 0\n    0\n}\n");
+    assert!(
+        c.contains(&"determinism::float_in_q16_fn"),
+        "an f32 let in a #[q16] fn must be flagged; saw {c:?}"
+    );
+}
+
+#[test]
+fn q16_q16_let_binding_is_ok() {
+    let c = codes("#[q16]\nfn f() -> i64 {\n    let x: Tensor[q16,(4)] = 0\n    0\n}\n");
+    assert!(
+        !c.contains(&"determinism::float_in_q16_fn"),
+        "a q16 let in a #[q16] fn must not be flagged; saw {c:?}"
+    );
+}
+
 // ── Phase C.2: checks reach functions inside module { } blocks ───────
 
 #[test]

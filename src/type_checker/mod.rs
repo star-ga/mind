@@ -3281,44 +3281,60 @@ fn fn_annot(attrs: &[crate::ast::Attribute]) -> FnAnnot {
 /// Mirrors the arm coverage of `walk_calls_for_symbolic_check` plus the
 /// common expression positions. Under-collection is sound — it can only
 /// miss a violation, never invent one.
-fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
+/// Pre-order walk of a function body: invokes `f` on `node` and every node
+/// structurally reachable through the statement/expression positions a fn body
+/// uses. The descent is defined ONCE here; the determinism call-graph and the
+/// `#[q16]` dtype scans are thin closures over it (under-collection of an
+/// unmodelled position is sound — it can only miss a violation, never invent
+/// one). Module-level item collection uses `collect_module_fndefs`, which has a
+/// different scope (top-level items + module blocks, not fn-body internals).
+fn for_each_body_node<'a>(node: &'a Node, f: &mut impl FnMut(&'a Node)) {
+    f(node);
     match node {
-        Node::Call { callee, args, span } => {
-            out.push((callee.clone(), *span));
+        Node::Call { args, .. } => {
             for a in args {
-                collect_call_targets(a, out);
+                for_each_body_node(a, f);
             }
         }
         Node::MethodCall { receiver, args, .. } => {
-            collect_call_targets(receiver, out);
+            for_each_body_node(receiver, f);
             for a in args {
-                collect_call_targets(a, out);
+                for_each_body_node(a, f);
             }
         }
         Node::Binary { left, right, .. } => {
-            collect_call_targets(left, out);
-            collect_call_targets(right, out);
+            for_each_body_node(left, f);
+            for_each_body_node(right, f);
         }
-        Node::Let { value, .. } => collect_call_targets(value, out),
-        Node::Return { value: Some(v), .. } => collect_call_targets(v, out),
+        Node::Let { value, .. } => for_each_body_node(value, f),
+        Node::Return { value: Some(v), .. } => for_each_body_node(v, f),
         Node::If { cond, then_branch, else_branch, .. } => {
-            collect_call_targets(cond, out);
+            for_each_body_node(cond, f);
             for s in then_branch {
-                collect_call_targets(s, out);
+                for_each_body_node(s, f);
             }
             if let Some(eb) = else_branch {
                 for s in eb {
-                    collect_call_targets(s, out);
+                    for_each_body_node(s, f);
                 }
             }
         }
         Node::Block { stmts, .. } => {
             for s in stmts {
-                collect_call_targets(s, out);
+                for_each_body_node(s, f);
             }
         }
         _ => {}
     }
+}
+
+/// Collect every `Call` callee name (with its span) reachable in `node`.
+fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
+    for_each_body_node(node, &mut |n| {
+        if let Node::Call { callee, span, .. } = n {
+            out.push((callee.clone(), *span));
+        }
+    });
 }
 
 /// RFC 0012 §5.1 pt 3 (Phase C.2) — implicit determinism of a callee that is
@@ -3354,6 +3370,23 @@ fn collect_module_fndefs<'a>(items: &'a [Node], out: &mut Vec<&'a Node>) {
             _ => {}
         }
     }
+}
+
+/// Collect `(name, dtype, span)` for every `let` binding with a tensor type
+/// annotation reachable in `node` (recursing into if/block bodies). Used by the
+/// `#[q16]` dtype check to extend coverage from params/return to body locals.
+fn collect_let_tensor_dtypes<'a>(node: &'a Node, out: &mut Vec<(&'a str, &'a str, AstSpan)>) {
+    for_each_body_node(node, &mut |n| {
+        if let Node::Let {
+            name,
+            ann: Some(TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. }),
+            span,
+            ..
+        } = n
+        {
+            out.push((name.as_str(), dtype.as_str(), *span));
+        }
+    });
 }
 
 /// RFC 0012 Phase C.1/C.2 — enforce the function-annotation contracts.
@@ -3457,6 +3490,27 @@ fn check_determinism_annotations(
                              function requires q16 tensors"
                         ),
                         *span,
+                        DET_FLOAT_IN_Q16_CODE,
+                    ));
+                }
+            }
+            // C.2+: body-local `let` bindings with a tensor annotation must also
+            // be q16 (declared types are unambiguous; full expression-level
+            // dtype inference is future work).
+            let mut lets = Vec::new();
+            for stmt in body {
+                collect_let_tensor_dtypes(stmt, &mut lets);
+            }
+            for (lname, dtype, lspan) in lets {
+                if dtype != "q16" {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "`let {lname}` in `#[q16]` fn `{name}` is `Tensor<{dtype},..>`; \
+                             a `#[q16]` function requires q16 tensors"
+                        ),
+                        lspan,
                         DET_FLOAT_IN_Q16_CODE,
                     ));
                 }
