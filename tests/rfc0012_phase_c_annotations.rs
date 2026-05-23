@@ -120,6 +120,61 @@ fn q16_implies_deterministic_call_check() {
     );
 }
 
+// ── Phase C.2: implicit determinism of external (std/intrinsic) calls ─
+
+/// Diagnostic codes from compiling `src` (empty on success). Tolerates other
+/// diagnostics so we can assert presence/absence of a specific code on a
+/// program that calls undefined external symbols.
+fn codes(src: &str) -> Vec<&'static str> {
+    match compile_source_with_name(src, Some("annot.mind"), &opts()) {
+        Ok(_) => Vec::new(),
+        Err(CompileError::TypeError(diags)) => diags.iter().map(|d| d.code).collect(),
+        Err(_) => vec!["<non-type-error>"],
+    }
+}
+
+#[test]
+fn deterministic_calling_q16_blas_is_ok() {
+    // `dot_q16` is a Q16.16 byte-identical std.blas fn → implicitly
+    // deterministic, so a `#[deterministic]` caller must NOT be flagged.
+    let c = codes("#[deterministic]\nfn f() -> i64 { dot_q16(0, 0, 0) }\n");
+    assert!(
+        !c.contains(&"determinism::nondeterministic_in_deterministic"),
+        "q16 std.blas call must be implicitly deterministic; saw {c:?}"
+    );
+}
+
+#[test]
+fn deterministic_calling_f32_blas_reports_code() {
+    // `dot_f32` reorders its reduction under SIMD → not deterministic.
+    let c = codes("#[deterministic]\nfn f() -> i64 { dot_f32(0, 0, 0) }\n");
+    assert!(
+        c.contains(&"determinism::nondeterministic_in_deterministic"),
+        "f32 std.blas call must be flagged in a #[deterministic] fn; saw {c:?}"
+    );
+}
+
+#[test]
+fn deterministic_calling_mind_intrinsic_is_ok() {
+    // Integer intrinsics (`__mind_*`) are deterministic by construction.
+    let c = codes("#[deterministic]\nfn f() -> i64 { __mind_load_i64(0) }\n");
+    assert!(
+        !c.contains(&"determinism::nondeterministic_in_deterministic"),
+        "integer intrinsic must be implicitly deterministic; saw {c:?}"
+    );
+}
+
+#[test]
+fn deterministic_calling_unknown_external_is_not_flagged() {
+    // An external callee with no dtype-suffix signal is unknown → conservative
+    // (NOT flagged), so no false positive.
+    let c = codes("#[deterministic]\nfn f() -> i64 { mystery_helper(0) }\n");
+    assert!(
+        !c.contains(&"determinism::nondeterministic_in_deterministic"),
+        "unknown external call must not be flagged (no false positive); saw {c:?}"
+    );
+}
+
 // ── Additivity: un-annotated code is never touched ───────────────────
 
 #[test]
