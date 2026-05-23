@@ -423,7 +423,15 @@ fn emit_tensor_reduce(
     let dtype = src_info.dtype.clone();
     let dtype_str = dtype_to_mlir(&dtype);
     let src_ty = tensor_type(&src_info.shape, dtype_str);
-    let axes_norm = normalize_axes(axes, src_info.shape.len());
+    // Empty axes means "reduce over ALL axes" (→ scalar), matching the
+    // type-checker's `normalize_reduce_axes`. Without this, `a.sum()` /
+    // `a.mean()` (which carry empty axes) would emit MLIR reducing nothing and
+    // return the full tensor, contradicting the scalar result type.
+    let axes_norm = if axes.is_empty() {
+        (0..src_info.shape.len()).collect()
+    } else {
+        normalize_axes(axes, src_info.shape.len())
+    };
     let out_shape = reduce_shape(&src_info.shape, &axes_norm, keepdims);
     let out_ty = tensor_type(&out_shape, dtype_str);
     let dims_attr = format_dimensions(&axes_norm);
