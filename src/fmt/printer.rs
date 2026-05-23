@@ -283,8 +283,8 @@ fn strip_for_lines(src: &str) -> String {
 
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
-        Node::FnDef { is_pub, name, params, ret_type, body, reap_threshold, .. } => {
-            emit_fn_def(p, *is_pub, name, params, ret_type, body, *reap_threshold);
+        Node::FnDef { is_pub, name, params, ret_type, body, attrs, .. } => {
+            emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs);
         }
         Node::StructDef { is_pub, name, fields, attrs, .. } => {
             emit_struct_def(p, *is_pub, name, fields, attrs);
@@ -358,6 +358,24 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
 // Top-level item emitters
 // ---------------------------------------------------------------------------
 
+/// Emit an attribute list in canonical Rust-style `#[name]` / `#[name(args)]`
+/// form (RFC 0012 §5), one per line at the current indent. Shared by every
+/// item emitter so the canonical form lives in exactly one place.
+fn emit_attrs(p: &mut Printer, attrs: &[Attribute]) {
+    for attr in attrs {
+        let ind = p.indent_str();
+        p.push(&ind);
+        p.push("#[");
+        p.push(&attr.name);
+        if !attr.args.is_empty() {
+            p.push("(");
+            p.push(&attr.args.join(", "));
+            p.push(")");
+        }
+        p.push("]\n");
+    }
+}
+
 fn emit_fn_def(
     p: &mut Printer,
     is_pub: bool,
@@ -365,8 +383,12 @@ fn emit_fn_def(
     params: &[Param],
     ret_type: &Option<TypeAnn>,
     body: &[Node],
-    _reap: Option<f64>,
+    attrs: &[Attribute],
 ) {
+    // Previously fn attributes were parsed then silently dropped by the
+    // formatter; emit them so `[test]` / `[deterministic]` / `[reap_threshold]`
+    // round-trip through `mindc fmt` instead of being erased.
+    emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
     if is_pub {
@@ -398,18 +420,7 @@ fn emit_fn_def(
 }
 
 fn emit_struct_def(p: &mut Printer, is_pub: bool, name: &str, fields: &[Field], attrs: &[Attribute]) {
-    for attr in attrs {
-        let ind = p.indent_str();
-        p.push(&ind);
-        p.push("[");
-        p.push(&attr.name);
-        if !attr.args.is_empty() {
-            p.push("(");
-            p.push(&attr.args.join(", "));
-            p.push(")");
-        }
-        p.push("]\n");
-    }
+    emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
     if is_pub {
@@ -437,18 +448,7 @@ fn emit_struct_def(p: &mut Printer, is_pub: bool, name: &str, fields: &[Field], 
 }
 
 fn emit_enum_def(p: &mut Printer, is_pub: bool, name: &str, variants: &[EnumVariant], attrs: &[Attribute]) {
-    for attr in attrs {
-        let ind = p.indent_str();
-        p.push(&ind);
-        p.push("[");
-        p.push(&attr.name);
-        if !attr.args.is_empty() {
-            p.push("(");
-            p.push(&attr.args.join(", "));
-            p.push(")");
-        }
-        p.push("]\n");
-    }
+    emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
     if is_pub {
@@ -487,18 +487,7 @@ fn emit_const(
     value: &Node,
     attrs: &[Attribute],
 ) {
-    for attr in attrs {
-        let ind = p.indent_str();
-        p.push(&ind);
-        p.push("[");
-        p.push(&attr.name);
-        if !attr.args.is_empty() {
-            p.push("(");
-            p.push(&attr.args.join(", "));
-            p.push(")");
-        }
-        p.push("]\n");
-    }
+    emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
     p.push("const ");
@@ -512,18 +501,7 @@ fn emit_const(
 }
 
 fn emit_type_alias(p: &mut Printer, name: &str, target: &TypeAnn, attrs: &[Attribute]) {
-    for attr in attrs {
-        let ind = p.indent_str();
-        p.push(&ind);
-        p.push("[");
-        p.push(&attr.name);
-        if !attr.args.is_empty() {
-            p.push("(");
-            p.push(&attr.args.join(", "));
-            p.push(")");
-        }
-        p.push("]\n");
-    }
+    emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
     p.push("type ");
@@ -610,8 +588,8 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
                 p.push("}\n");
             }
             // FnDef nested inside a body (uncommon but valid in MIND)
-            Node::FnDef { is_pub, name, params, ret_type, body, reap_threshold, .. } => {
-                emit_fn_def(p, *is_pub, name, params, ret_type, body, *reap_threshold);
+            Node::FnDef { is_pub, name, params, ret_type, body, attrs, .. } => {
+                emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs);
                 p.push("\n");
             }
             // Statements with mandatory semicolons regardless of position.
