@@ -4,16 +4,17 @@
 // You may obtain a copy of the License at:
 //     http://www.apache.org/licenses/LICENSE-2.0
 
-//! RFC 0012 — attribute surface syntax resolution.
+//! RFC 0012 §5 — attribute surface syntax.
 //!
-//! MIND attributes may be written Rust-style `#[name]` (CANONICAL) or bare
-//! `[name]` (legacy, still accepted). The parser accepts both; `mindc fmt`
-//! normalizes to the canonical `#[name]` form. This suite locks in:
-//!   1. the parser accepts both forms,
-//!   2. the formatter normalizes bare `[name]` → `#[name]`,
-//!   3. function attributes are NOT erased by the formatter (regression guard
-//!      for the prior `emit_fn_def` attribute-drop bug),
-//!   4. `#[name]` output is idempotent.
+//! MIND has exactly ONE attribute form: Rust-style `#[name]`. The `#` is
+//! required — it disambiguates an attribute from the `@` matmul operator and
+//! from a bare `[` array literal. Bare `[name]` is NOT an attribute. This
+//! suite locks in:
+//!   1. `#[name]` parses and the Phase C.1 checks fire,
+//!   2. a bare `[name]` at item position is NOT treated as an attribute,
+//!   3. a lone `#` is not an attribute,
+//!   4. the formatter emits `#[name]` and round-trips function attributes
+//!      (regression guard for the prior `emit_fn_def` attribute-drop bug).
 
 use libmind::fmt::format_source;
 use libmind::pipeline::{compile_source_with_name, CompileError, CompileOptions};
@@ -33,71 +34,82 @@ fn opts() -> CompileOptions {
     }
 }
 
-// ── parser accepts both forms ────────────────────────────────────────
-
-#[test]
-fn parser_accepts_hash_style_attribute() {
-    // Rust-style `#[deterministic]` must parse and the C.1 determinism check
-    // must fire exactly as it does for the bare form.
-    let err = compile_source_with_name(
-        "#[deterministic]\nfn f() -> i64 { g() }\nfn g() -> i64 { 0 }\n",
-        Some("a.mind"),
-        &opts(),
-    )
-    .expect_err("deterministic fn calling a plain fn should fail");
-    match err {
-        CompileError::TypeError(diags) => {
-            let codes: Vec<&str> = diags.iter().map(|d| d.code).collect();
-            assert!(
-                codes.contains(&"determinism::nondeterministic_in_deterministic"),
-                "saw {codes:?}"
-            );
-        }
-        other => panic!("unexpected error variant: {other:?}"),
+/// All diagnostic codes from compiling `src` (empty if it compiled).
+fn codes(src: &str) -> Vec<&'static str> {
+    match compile_source_with_name(src, Some("a.mind"), &opts()) {
+        Ok(_) => Vec::new(),
+        Err(CompileError::TypeError(diags)) => diags.iter().map(|d| d.code).collect(),
+        Err(_) => vec!["<non-type-error>"],
     }
 }
 
+// ── #[name] is the canonical (and only) attribute form ───────────────
+
 #[test]
-fn parser_accepts_bare_style_attribute() {
-    // The legacy bare `[target(cpu)]` form still parses and validates.
-    compile_source_with_name("[target(cpu)]\nfn f() -> i64 { 0 }\n", Some("a.mind"), &opts())
-        .expect("bare [target(cpu)] should still compile");
+fn hash_attribute_parses_and_checks_fire() {
+    // `#[deterministic]` calling a plain fn must trip the C.1 determinism check.
+    assert!(
+        codes("#[deterministic]\nfn f() -> i64 { g() }\nfn g() -> i64 { 0 }\n")
+            .contains(&"determinism::nondeterministic_in_deterministic")
+    );
+}
+
+#[test]
+fn hash_target_unknown_reports_code() {
+    assert!(codes("#[target(cebras)]\nfn f() -> i64 { 0 }\n").contains(&"determinism::unknown_target"));
+}
+
+#[test]
+fn hash_q16_float_param_reports_code() {
+    assert!(
+        codes("#[q16]\nfn f(x: Tensor[f32,(4)]) -> i64 { 0 }\n")
+            .contains(&"determinism::float_in_q16_fn")
+    );
+}
+
+// ── bare [name] is NOT an attribute (hard-cut to one form) ───────────
+
+#[test]
+fn bare_bracket_is_not_an_attribute() {
+    // With only `#[name]` recognized, a bare `[target(cebras)]` is never
+    // parsed as an attribute, so the annotation checks must NOT fire on it.
+    let c = codes("[target(cebras)]\nfn f() -> i64 { 0 }\n");
+    assert!(
+        !c.contains(&"determinism::unknown_target"),
+        "bare [target] must not be treated as an attribute; saw {c:?}"
+    );
+}
+
+#[test]
+fn bare_q16_does_not_apply_q16_check() {
+    let c = codes("[q16]\nfn f(x: Tensor[f32,(4)]) -> i64 { 0 }\n");
+    assert!(
+        !c.contains(&"determinism::float_in_q16_fn"),
+        "bare [q16] must not be treated as an attribute; saw {c:?}"
+    );
 }
 
 #[test]
 fn lone_hash_is_not_an_attribute() {
-    // A `#` not immediately followed by `[` must NOT be consumed as an
-    // attribute sigil (it would otherwise corrupt the following item).
-    // `#` is not a valid item/expression start, so this must error in parse —
-    // NOT silently swallow the `#` and accept the fn.
+    // A `#` not immediately followed by `[` must error, not silently parse.
     let r = compile_source_with_name("#\nfn f() -> i64 { 0 }\n", Some("a.mind"), &opts());
-    assert!(r.is_err(), "a lone `#` token must not parse as an attribute");
+    assert!(r.is_err(), "a lone `#` must not parse");
 }
 
-// ── formatter normalizes to canonical #[name] ────────────────────────
+// ── formatter emits canonical #[name] ────────────────────────────────
 
 #[test]
-fn formatter_normalizes_bare_to_hash() {
-    let out = fmt("[target(cpu)]\nfn f() -> i64 {\n    0\n}\n");
-    assert!(
-        out.contains("#[target(cpu)]"),
-        "bare [target(cpu)] should normalize to #[target(cpu)]; got:\n{out}"
-    );
-    assert!(
-        !out.contains("\n[target") && !out.starts_with("[target"),
-        "no bare [target should remain; got:\n{out}"
-    );
+fn formatter_emits_hash_attribute() {
+    let out = fmt("#[target(cpu)]\nfn f() -> i64 {\n    0\n}\n");
+    assert!(out.contains("#[target(cpu)]"), "got:\n{out}");
 }
 
 #[test]
 fn formatter_does_not_erase_function_attributes() {
     // Regression guard: emit_fn_def previously dropped attributes entirely,
-    // so `mindc fmt` silently erased `[deterministic]` on functions.
-    let out = fmt("[deterministic]\nfn f() -> i64 {\n    0\n}\n");
-    assert!(
-        out.contains("#[deterministic]"),
-        "function attribute must survive formatting; got:\n{out}"
-    );
+    // so `mindc fmt` silently erased `#[deterministic]` on functions.
+    let out = fmt("#[deterministic]\nfn f() -> i64 {\n    0\n}\n");
+    assert!(out.contains("#[deterministic]"), "fn attribute must survive fmt; got:\n{out}");
 }
 
 #[test]
@@ -109,9 +121,7 @@ fn formatter_hash_attribute_is_idempotent() {
 }
 
 #[test]
-fn formatter_normalizes_struct_attribute() {
-    // The shared emit_attrs helper must canonicalize struct/enum/const/alias
-    // attributes too, not just function ones.
-    let out = fmt("[repr(C)]\nstruct S {\n    x: i64,\n}\n");
-    assert!(out.contains("#[repr(C)]"), "struct attr should normalize; got:\n{out}");
+fn formatter_emits_struct_attribute() {
+    let out = fmt("#[repr(C)]\nstruct S {\n    x: i64,\n}\n");
+    assert!(out.contains("#[repr(C)]"), "struct attr; got:\n{out}");
 }

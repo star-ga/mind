@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2627 | **Est. tokens:** ~6,515,757
-**Generated:** 2026-05-23 04:03 UTC
+**Files:** 2627 | **Est. tokens:** ~6,515,801
+**Generated:** 2026-05-23 04:31 UTC
 
 ## Token Budget Guide
 
@@ -395,12 +395,12 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 14 | ~67,816 |
-| `tests/` | 146 | ~240,664 |
+| `tests/` | 146 | ~240,706 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/conformance/cpu_baseline/` | 9 | ~170 |
+| `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
-| `tests/fixtures/` | 6 | ~190 |
+| `tests/fixtures/` | 6 | ~191 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~408 |
@@ -3769,7 +3769,7 @@
 - `autodiff_pairwise.runtime` (~1 tok, tiny) — 0
 - `phase_10_5_const.mind` (~34 tok, tiny) — fn main() {
 - `phase_10_5_logical.mind` (~32 tok, tiny) — fn main() {
-- `phase_10_5_module.mind` (~30 tok, tiny) — module governance {
+- `phase_10_5_module.mind` (~31 tok, tiny) — module governance {
 - `phase_10_5_struct.mind` (~29 tok, tiny) — fn main() {
 - `simple_arith.ir` (~15 tok, tiny) — module {
 - `simple_arith.mind` (~3 tok, tiny)
@@ -3804,7 +3804,7 @@
 - `invalid.mind` (~6 tok, tiny)
 - `simple.mind` (~3 tok, tiny)
 - `test_phase_b_all_pass.mind` (~67 tok, small) — RFC 0008 Phase B test fixture — both tests pass.
-- `test_phase_b_one_fail.mind` (~79 tok, small) — RFC 0008 Phase B test fixture — one pass, one fail.
+- `test_phase_b_one_fail.mind` (~80 tok, small) — RFC 0008 Phase B test fixture — one pass, one fail.
 ### `tests/`
 
 - `fmt_idempotence.rs` (~1987 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3928,7 +3928,7 @@
 ### `tests/`
 
 - `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_test_phase_b.rs` (~3466 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_test_phase_b.rs` (~3469 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4121 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
@@ -3945,22 +3945,22 @@
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2699 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse_phase10_surface.rs` (~3880 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parse_phase10_surface.rs` (~3881 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2672 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `phase_g_keystone_bootstrap.rs` (~4508 tok, huge) — Copyright 2025 STARGA Inc.
 - `pipeline.rs` (~1467 tok, large) — Copyright 2025 STARGA Inc.
-- `reap_threshold.rs` (~2045 tok, huge) — Copyright 2025 STARGA Inc.
+- `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `region_phase_ja.rs` (~4243 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `rfc0012_attribute_syntax.rs` (~1142 tok, large) — Copyright 2025 STARGA Inc.
+- `rfc0012_attribute_syntax.rs` (~1173 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6428 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4433 tok, huge) — Copyright 2025 STARGA Inc.
-- `rfc0012_phase_c_annotations.rs` (~1058 tok, large) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_c_annotations.rs` (~1063 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution

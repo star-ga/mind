@@ -96,16 +96,16 @@ fn parses_module_unwrap_with_fn() {
 #[test]
 fn parses_attribute_on_module() {
     assert!(
-        parses("[protection]\nmodule foo {}\n"),
-        "[protection] on module must parse"
+        parses("#[protection]\nmodule foo {}\n"),
+        "#[protection] on module must parse"
     );
 }
 
 #[test]
 fn parses_attribute_on_fn() {
     assert!(
-        parses("[test]\nfn t() -> i32 { 1 }\n"),
-        "[test] on fn must parse"
+        parses("#[test]\nfn t() -> i32 { 1 }\n"),
+        "#[test] on fn must parse"
     );
 }
 
