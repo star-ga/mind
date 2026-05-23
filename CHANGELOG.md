@@ -33,12 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opt in are checked; un-annotated code never regresses. The std.blas-q16
   implicit-determinism predicate and expression-level dtype tracking are
   deferred to Phase C.2.
-- **Attribute surface resolved to canonical `#[name]`.** RFC 0012 §5 adopts
-  Rust-style `#[name]` (the `#` disambiguates attributes from the `@` operator).
-  The parser now accepts both `#[name]` and the legacy bare `[name]`; `mindc fmt`
-  normalizes to `#[name]`. Fixed a latent formatter bug that silently *erased*
+- **Attribute surface unified on `#[name]` (single form).** RFC 0012 §5 adopts
+  Rust-style `#[name]` (the `#` disambiguates attributes from the `@` operator
+  and from a bare `[` array literal). `#[name]` is now the **only** attribute
+  form — bare `[name]` at item position is no longer an attribute. (Pre-1.0,
+  no external code: a clean one-true-way cut rather than carrying two forms;
+  the few internal `[test]`/`[protection]`/`[reap_threshold]` uses were migrated
+  to `#[...]`.) Also fixed a latent formatter bug that silently *erased*
   function attributes (`emit_fn_def` dropped them) — `#[test]`/`#[deterministic]`
-  now round-trip through `mindc fmt`.
+  now round-trip through `mindc fmt`, which emits the canonical `#[name]`.
 
 ### Added — post-0.7.0 RFC progress
 
