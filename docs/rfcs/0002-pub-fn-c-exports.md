@@ -201,8 +201,8 @@ mean regression on the three headline benches (the existing
 - `mind build --lib` cdylib emit and AOT lowering — covered by the
   upcoming RFC 0003 alongside `mindc` v0.3.0.
 - `Mind.toml [protection]` action transforms — replaces the hand-rolled
-  `build.sh`-driven FORTRESS post-processing in `mind-mem-protected` /
-  `mind-nerve-protected`. Covered by RFC 0004 with v0.3.0.
+  `build.sh`-driven post-processing in the protected build variants.
+  Covered by RFC 0004 with v0.3.0.
 
 ## Open questions
 
