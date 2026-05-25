@@ -81,3 +81,65 @@ pub fn eprint_bytes(buf_addr: i64, count: i64) -> i64 {
 pub fn read_stdin_bytes(buf_addr: i64, count: i64) -> i64 {
     __mind_read(0, buf_addr, count, 0 - 1)
 }
+
+// ---------------------------------------------------------------------------
+// RFC 0013 Tier 1 — TTY detection + ANSI SGR vocabulary.
+//
+// `isatty` lets a CLI decide whether to emit ANSI escape sequences;
+// the SGR constants are the colour / style codes those sequences carry
+// (the literal numbers inside `ESC [ N m`).  Higher-level escape
+// composition (e.g. an `ansi_color_fg(s, code)` writer) lands once
+// std.string ships an integer-to-decimal `itoa` helper; for now,
+// callers compose their own escape bytes using std.string's byte-push
+// surface and the constants below.
+//
+// Constants are typed as zero-arg pub fns rather than `const N: i64 =
+// ...` so the type-checker side table treats them uniformly with the
+// rest of the public surface.  The codes themselves are ECMA-48 §8.3.117.
+// ---------------------------------------------------------------------------
+
+extern "C" {
+    unsafe fn isatty(fd: i32) -> i32;
+}
+
+// io_isatty — does `f` refer to a terminal device?  Returns 1 if so,
+// 0 otherwise.  Maps libc `isatty(3)` 1/0 (and -1 on EBADF, which we
+// fold to 0 — a bad fd is not a terminal).
+pub fn io_isatty(f: File) -> i64 {
+    let r: i32 = isatty(f.fd as i32);
+    if r == 1 { 1 } else { 0 }
+}
+
+// --- ANSI SGR codes (ECMA-48 §8.3.117) ---
+//
+// Style:
+pub fn sgr_reset()       -> i64 { 0  }
+pub fn sgr_bold()        -> i64 { 1  }
+pub fn sgr_dim()         -> i64 { 2  }
+pub fn sgr_italic()      -> i64 { 3  }
+pub fn sgr_underline()   -> i64 { 4  }
+pub fn sgr_blink()       -> i64 { 5  }
+pub fn sgr_reverse()     -> i64 { 7  }
+pub fn sgr_strikethrough() -> i64 { 9 }
+
+// Foreground colour (standard 8):
+pub fn sgr_fg_black()    -> i64 { 30 }
+pub fn sgr_fg_red()      -> i64 { 31 }
+pub fn sgr_fg_green()    -> i64 { 32 }
+pub fn sgr_fg_yellow()   -> i64 { 33 }
+pub fn sgr_fg_blue()     -> i64 { 34 }
+pub fn sgr_fg_magenta()  -> i64 { 35 }
+pub fn sgr_fg_cyan()     -> i64 { 36 }
+pub fn sgr_fg_white()    -> i64 { 37 }
+pub fn sgr_fg_default()  -> i64 { 39 }
+
+// Background colour (standard 8):
+pub fn sgr_bg_black()    -> i64 { 40 }
+pub fn sgr_bg_red()      -> i64 { 41 }
+pub fn sgr_bg_green()    -> i64 { 42 }
+pub fn sgr_bg_yellow()   -> i64 { 43 }
+pub fn sgr_bg_blue()     -> i64 { 44 }
+pub fn sgr_bg_magenta()  -> i64 { 45 }
+pub fn sgr_bg_cyan()     -> i64 { 46 }
+pub fn sgr_bg_white()    -> i64 { 47 }
+pub fn sgr_bg_default()  -> i64 { 49 }
