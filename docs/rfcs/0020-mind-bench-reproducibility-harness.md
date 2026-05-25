@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0020 |
 | Title | mind-bench Public Reproducibility Harness |
-| Status | **Draft** — design only; no phase shipped |
+| Status | **Partial** — internal gate (§10) first slice shipped; public CLI (§3) + signing (§5.3) pending std-crypto |
 | Authors | STARGA Inc. |
 | Created | 2026-05-25 |
 | Related | RFC 0006 (mind-blas Q16.16 cross-arch baseline), RFC 0013 §8 (FFI discipline + refuse-list), RFC 0014 (per-substrate lowering tiers), RFC 0015 (cross-substrate bit-identity proof obligation), RFC 0016 (#288 evidence-chain MAP key — wedge-score embedding site), RFC 0019 (#294 agent-state-replay reference workload — future) |

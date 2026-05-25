@@ -1,0 +1,20 @@
+# mind-bench reference hashes — RFC 0020 §5.
+#
+# sha256 of the canonical output (manifest `output_encoding`) for each
+# substrate. Per RFC 0015 §3.1 a Q16.16 workload MUST yield the SAME content
+# hash on every substrate — the two lines below carry one identical hash, which
+# IS the cross-substrate bit-identity claim made inspectable. The reduction is
+# exact integer arithmetic, so the result is architecture-independent by
+# construction; any divergence is a real lowering bug and a release-blocker.
+#
+# Provenance:
+#   avx2 — verified on x86_64 (this gate, 2026-05-25).
+#   neon — asserted identical per RFC 0015 §3.1; enforced on the aarch64 CI
+#          runner (RFC 0020 §10). A mismatch there blocks the release tag.
+#
+# Re-bless only on an intentional lowering change (RFC 0020 §13): run the gate
+# with MIND_BENCH_BLESS=1 and commit the new hash. Ed25519 signing of these
+# lines (RFC 0020 §5.3) lands with the pure-MIND CLI once std-crypto exists.
+
+avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+neon = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
