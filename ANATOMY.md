@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2646 | **Est. tokens:** ~6,555,864
-**Generated:** 2026-05-25 22:06 UTC
+**Files:** 2647 | **Est. tokens:** ~6,559,350
+**Generated:** 2026-05-25 22:30 UTC
 
 ## Token Budget Guide
 
@@ -376,7 +376,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~16,379 |
+| `src/fmt/` | 3 | ~17,167 |
 | `src/ir/` | 3 | ~13,767 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 16 | ~74,930 |
-| `tests/` | 154 | ~251,776 |
+| `tests/` | 155 | ~254,474 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3629,7 +3629,7 @@
 
 - `cli.rs` (~3852 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~11933 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~12721 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3830,6 +3830,7 @@
 - `test_phase_b_one_fail.mind` (~80 tok, small) — RFC 0008 Phase B test fixture — one pass, one fail.
 ### `tests/`
 
+- `fmt_comment_placement.rs` (~2698 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_idempotence.rs` (~2191 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_stdlib_stability.rs` (~2560 tok, huge) — Copyright 2025 STARGA Inc.
