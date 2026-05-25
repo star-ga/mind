@@ -74,6 +74,13 @@ pub fn map_value_at(m: Map, i: i64) -> i64 {
 // preserves insertion order for every input trace.
 //
 // Growth: cap 0 → 4, otherwise doubles.  Matches std.vec exactly.
+//
+// Grow-and-preserve via __mind_realloc (realloc(NULL,n) === malloc(n)
+// on the cap-0 path, copies existing entries on the doubling path).
+// The plain __mind_alloc this used to call lost all m.len existing
+// keys/vals when the doubling kicked in (5th insert past the
+// 4-element init) — the same latent bug fixed for string_push_byte /
+// vec_push in 3c2294c, here for the map keys + vals arrays.
 pub fn map_insert(m: Map, key: i64, value: i64) -> Map {
     let new_len: i64 = m.len + 1;
     let new_cap: i64 = if m.cap == 0 {
@@ -85,12 +92,6 @@ pub fn map_insert(m: Map, key: i64, value: i64) -> Map {
             m.cap * 2
         }
     };
-    // Grow-and-preserve via __mind_realloc (realloc(NULL,n) === malloc(n) on
-    // the cap-0 path, copies existing entries on the doubling path). The plain
-    // __mind_alloc this used to call lost all m.len existing keys/vals when the
-    // doubling kicked in (5th insert past the 4-element init) — the same latent
-    // bug fixed for string_push_byte / vec_push in 3c2294c, here for the map
-    // keys + vals arrays.
     let new_keys: i64 = if new_cap == m.cap {
         m.keys_addr
     } else {

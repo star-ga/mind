@@ -52,6 +52,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.regex",   include_str!("../../std/regex.mind")),
     ("std.string",  include_str!("../../std/string.mind")),
     ("std.toml",    include_str!("../../std/toml.mind")),
+    ("std.tui",     include_str!("../../std/tui.mind")),
     ("std.vec",     include_str!("../../std/vec.mind")),
 ];
 
@@ -154,6 +155,7 @@ mod tests {
         assert!(names.contains(&"std.fs"));
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.process"));
+        assert!(names.contains(&"std.tui"));
     }
 
     #[test]
@@ -179,6 +181,8 @@ mod tests {
         assert!(table.resolves(&["std".into(), "fs".into()], "read_to_string"));
         assert!(table.resolves(&["std".into(), "net".into()], "tcp_listen"));
         assert!(table.resolves(&["std".into(), "process".into()], "spawn"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_cursor_to"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_clear_screen"));
     }
 
     #[test]

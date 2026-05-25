@@ -90,9 +90,11 @@ fn idempotence_stdlib() {
     let mut passed = 0usize;
     let mut skipped = 0usize;
 
-    // The five files below use only if/let/expression syntax — no while loops —
-    // and must parse under the default build.
-    for name in &["vec", "string", "io", "map", "blas"] {
+    // The four files below use only if/let/expression syntax — no while loops —
+    // and must parse under the default build. `string.mind` and `toml.mind`
+    // use `while` loops and are tested separately under std-surface
+    // (idempotence_stdlib_string / idempotence_stdlib_toml).
+    for name in &["vec", "io", "map", "blas"] {
         let path = base.join(format!("{name}.mind"));
         let src = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
@@ -104,7 +106,22 @@ fn idempotence_stdlib() {
     }
 
     assert_eq!(skipped, 0, "unexpected parse failures in std/ ({skipped} file(s))");
-    assert_eq!(passed, 5, "expected 5 stdlib files, got {passed}");
+    assert_eq!(passed, 4, "expected 4 stdlib files, got {passed}");
+}
+
+/// `string.mind` uses `while` loops (the byte-compare bodies of
+/// `string_eq` / `string_starts_with`), which require the `std-surface`
+/// feature for the formatter's parser. Gated separately, like toml.
+#[test]
+#[cfg(feature = "std-surface")]
+fn idempotence_stdlib_string() {
+    let base = manifest_dir().join("std");
+    let cfg = default_cfg();
+    let path = base.join("string.mind");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let exercised = check_idempotence("string", &src, &cfg);
+    assert!(exercised, "string.mind failed to parse under std-surface — unexpected");
 }
 
 /// `toml.mind` uses `while` loops, which require the `std-surface` feature to
