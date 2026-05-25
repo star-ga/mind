@@ -79,10 +79,15 @@ pub fn string_push_byte(s: String, b: i64) -> String {
             s.cap * 2
         }
     };
+    // Grow-and-preserve: __mind_realloc(NULL, size) === malloc(size)
+    // on the cap-0 path, and copies existing bytes on the doubling path.
+    // The plain __mind_alloc this used to call lost the old bytes; that
+    // worked while strings stayed ≤16 bytes but silently corrupted any
+    // longer push sequence.  Fixed alongside the vec_push twin.
     let new_addr: i64 = if new_cap == s.cap {
         s.addr
     } else {
-        __mind_alloc(new_cap)
+        __mind_realloc(s.addr, new_cap)
     };
     __mind_store_i64(new_addr + s.len, b);
     String { addr: new_addr, len: new_len, cap: new_cap }
