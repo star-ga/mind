@@ -304,8 +304,8 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         Node::Export { names, .. } => {
             emit_export(p, names);
         }
-        Node::Let { name, ann, value, .. } => {
-            emit_let(p, name, ann, value);
+        Node::Let { name, mutable, ann, value, .. } => {
+            emit_let(p, name, *mutable, ann, value);
         }
         Node::Assign { name, value, .. } => {
             emit_assign(p, name, value);
@@ -627,8 +627,8 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
     let ind = p.indent_str();
     p.push(&ind);
     match node {
-        Node::Let { name, ann, value, .. } => {
-            emit_let_inline(p, name, ann, value);
+        Node::Let { name, mutable, ann, value, .. } => {
+            emit_let_inline(p, name, *mutable, ann, value);
         }
         Node::Assign { name, value, .. } => {
             p.push(name);
@@ -682,14 +682,17 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
     }
 }
 
-fn emit_let(p: &mut Printer, name: &str, ann: &Option<TypeAnn>, value: &Node) {
+fn emit_let(p: &mut Printer, name: &str, mutable: bool, ann: &Option<TypeAnn>, value: &Node) {
     let ind = p.indent_str();
     p.push(&ind);
-    emit_let_inline(p, name, ann, value);
+    emit_let_inline(p, name, mutable, ann, value);
 }
 
-fn emit_let_inline(p: &mut Printer, name: &str, ann: &Option<TypeAnn>, value: &Node) {
+fn emit_let_inline(p: &mut Printer, name: &str, mutable: bool, ann: &Option<TypeAnn>, value: &Node) {
     p.push("let ");
+    if mutable {
+        p.push("mut ");
+    }
     p.push(name);
     if let Some(t) = ann {
         p.push(": ");
@@ -1164,8 +1167,8 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(&ind);
             p.push("}");
         }
-        Node::Let { name, ann, value, .. } => {
-            emit_let_inline(p, name, ann, value);
+        Node::Let { name, mutable, ann, value, .. } => {
+            emit_let_inline(p, name, *mutable, ann, value);
         }
         Node::Match { scrutinee, arms, .. } => {
             emit_match_inline(p, scrutinee, arms);

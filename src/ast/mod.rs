@@ -394,6 +394,11 @@ pub enum Node {
     },
     Let {
         name: String,
+        /// `true` when the binding was written `let mut`. mindc treats
+        /// mut as informational (the eval/codegen path mutates the local
+        /// env regardless), but it is carried on the AST so the formatter
+        /// round-trips the keyword instead of silently dropping it.
+        mutable: bool,
         ann: Option<TypeAnn>,
         value: Box<Node>,
         span: Span,

@@ -2347,6 +2347,7 @@ pub fn check_module_types_in_file(
                 ann,
                 value,
                 span,
+                ..
             } => match ann {
                 // RFC 0005 Phase 6.2b Gap 2 — fixed-size array annotation
                 // `[T; N]`.  Check that the RHS array literal has exactly N

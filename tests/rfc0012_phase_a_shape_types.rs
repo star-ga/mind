@@ -73,6 +73,7 @@ fn let_tensor(
 ) -> Node {
     Node::Let {
         name: name.to_string(),
+        mutable: false,
         ann: Some(TypeAnn::Tensor {
             dtype: ann_dtype.to_string(),
             dims: ann_dims.iter().map(|s| s.to_string()).collect(),
@@ -368,12 +369,14 @@ fn symbolic_dim_same_n_no_conflict() {
     // Let x = Tensor<f32,[4,8]>, y = Tensor<f32,[4,16]> — N matches (4 == 4)
     let let_x = Node::Let {
         name: "x".to_string(),
+        mutable: false,
         ann: None,
         value: Box::new(Node::Lit(Literal::Ident("x_src".to_string()), sp())),
         span: sp(),
     };
     let let_y = Node::Let {
         name: "y".to_string(),
+        mutable: false,
         ann: None,
         value: Box::new(Node::Lit(Literal::Ident("y_src".to_string()), sp())),
         span: sp(),
@@ -444,12 +447,14 @@ fn symbolic_dim_mismatch_n_conflict() {
     // x: Tensor<f32,[4,8]>, y: Tensor<f32,[8,16]> — N=4 from x, N=8 from y → conflict
     let let_x = Node::Let {
         name: "x".to_string(),
+        mutable: false,
         ann: None,
         value: Box::new(Node::Lit(Literal::Ident("x_src".to_string()), sp())),
         span: sp(),
     };
     let let_y = Node::Let {
         name: "y".to_string(),
+        mutable: false,
         ann: None,
         value: Box::new(Node::Lit(Literal::Ident("y_src".to_string()), sp())),
         span: sp(),
@@ -592,6 +597,7 @@ fn shape_annotation_does_not_change_value_type() {
     let module_unannotated = Module {
         items: vec![Node::Let {
             name: "y".to_string(),
+            mutable: false,
             ann: None,
             value: Box::new(Node::Lit(Literal::Ident("src".to_string()), sp())),
             span: sp(),
