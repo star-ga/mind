@@ -103,6 +103,49 @@ pub fn string_eq(a: String, b: String) -> i64 {
 // Byte-loop placeholder — single-bucket compare for now.
 // Multi-byte loop lands with std.vec's loop codegen.
 
+// string_push_str — append every byte of `src` to `dst`, returning
+// the new String.  Grows-and-copies semantics: when the existing
+// capacity is insufficient, allocates a new buffer sized at the
+// next power-of-two ≥ the required length, copies all existing
+// bytes of `dst` into it, then appends `src`'s bytes at the tail.
+//
+// Note: the existing `string_push_byte` (above) does NOT copy
+// existing bytes on growth — a known limitation that holds while
+// strings stay ≤16 bytes.  `string_push_str` is written correctly
+// for arbitrary lengths so concatenation works for the agent-CLI
+// text-output paths that drive it (ANSI sequences, multi-arg
+// command-line strings, JSON payloads).  The fix-string_push_byte
+// follow-up tracks separately.
+pub fn string_push_str(dst: String, src: String) -> String {
+    let needed: i64 = dst.len + src.len;
+    let new_cap: i64 = if needed <= dst.cap {
+        dst.cap
+    } else {
+        let mut c: i64 = if dst.cap == 0 { 16 } else { dst.cap };
+        while c < needed {
+            c = c * 2;
+        }
+        c
+    };
+    let new_addr: i64 = if new_cap == dst.cap {
+        dst.addr
+    } else {
+        let a: i64 = __mind_alloc(new_cap);
+        let mut i: i64 = 0;
+        while i < dst.len {
+            __mind_store_i64(a + i, __mind_load_i64(dst.addr + i));
+            i = i + 1;
+        }
+        a
+    };
+    let mut j: i64 = 0;
+    while j < src.len {
+        __mind_store_i64(new_addr + dst.len + j, __mind_load_i64(src.addr + j));
+        j = j + 1;
+    }
+    String { addr: new_addr, len: needed, cap: new_cap }
+}
+
 // string_push_i64 — append the decimal ASCII representation of `n`
 // to `s`, returning the new String.  Most-significant-digit-first
 // emission: a power-of-10 divisor is established by repeated /10
