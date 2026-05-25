@@ -377,6 +377,55 @@ The byte-identity test is the proof.
   to ecosystem-friendliness arguments — every cosine-tolerance once was
   ecosystem-friendliness too.
 
+### 8.8 Implicit nondeterminism gotchas (third-round LLM convergence)
+
+The third multi-LLM consult (3/4 convergence across deepseek-v4-pro, mistral-
+large, glm-5) named three implicit-nondeterminism sources the §8.1–§8.4 ban
+list doesn't cover by itself. These are gotchas the discipline must explicitly
+address.
+
+**Address-dependent compute.** `malloc` returns nondeterministic addresses
+(ASLR + allocator order). Any computation whose output depends on a pointer
+value — `ptr as i64`, `ptr::eq`-style identity comparison, address-as-hash-
+key — breaks the wedge even when every numeric op is deterministic. A
+`#[deterministic]` body MUST NOT branch on, hash, compare, or otherwise
+incorporate a raw address value. Mindcraft lint catches the pattern; the
+compile-time call-graph check rejects any reachable `as i64` from a raw
+pointer inside a deterministic body.
+
+**Transitive dynamic linking.** Even with no explicit `extern "C"` block,
+the final linked binary may dynamic-link `libstdc++` (`std::sort` un-stable
+order, `std::hash` randomized seed), `libgomp` (OpenMP scheduling), `libmvec`
+(vectorized math whose reduction order varies per arch). The libc allowlist
+covers the syscall interface, not transitive runtime closures. **Static link
+is mandatory for the determinism boundary.** Dynamic loading is admitted
+only when the exact SONAME + every transitively-reachable symbol is named
+in §8.5 with the same byte-identity gate.
+
+**Binary symbol-table scan.** The §8.6 CI enforcement adds a third sub-step:
+after link, scan the final binary's symbol table (e.g., `nm -D` on ELF,
+`dumpbin /exports` on PE) and reject any nondeterministic symbol that is
+reachable from a `#[deterministic]` entry point. Examples to ban by default:
+`drand48`, `srandom`, `time`, `clock_gettime` outside the std.async clock
+abstraction, `__cxa_atexit` initialization-order hazards. The reject set is
+maintained as a normative appendix to this RFC, updated when new
+nondeterministic libc symbols are encountered.
+
+**Vendor definition drift** (glm-5 named the failure mode, 4/4 round-three
+agreement on the risk shape): a vendor's "deterministic mode" is not a static
+contract. A driver / microcode / library patch can silently change behavior.
+A wedge split — node A on old driver, node B on new driver — produces
+divergent hashes for the same input with no code change on STARGA's side.
+The §8.4 condition-4 sunset clause is the structural response: re-validate
+on every upstream patch bump, not only major. CI gates on the
+`(binding, vendor-version, driver-version, microcode-rev)` 4-tuple, and any
+field change forces re-admission through §8.4 from scratch.
+
+The combined principle: the determinism boundary is not the source code — it
+is the final binary's reachable-from-deterministic-body symbol set, statically
+linked, with every dependency version-pinned and every behavior-affecting
+vendor-side parameter pinned alongside it.
+
 ---
 
 ## 9. Timeline
