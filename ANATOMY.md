@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2645 | **Est. tokens:** ~6,555,164
-**Generated:** 2026-05-25 22:03 UTC
+**Files:** 2646 | **Est. tokens:** ~6,555,864
+**Generated:** 2026-05-25 22:06 UTC
 
 ## Token Budget Guide
 
@@ -400,6 +400,7 @@
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
+| `tests/cross_substrate_identity/` | 1 | ~700 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~287 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
 | `tests/fixtures/` | 6 | ~191 |
@@ -3804,6 +3805,9 @@
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
 - `reference_hashes.toml` (~281 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+### `tests/cross_substrate_identity/`
+
+- `README.md` (~700 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
 - `cross_substrate_identity.rs` (~2616 tok, huge) — Copyright 2025 STARGA Inc.
