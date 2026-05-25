@@ -72,10 +72,16 @@ pub fn vec_push(v: Vec, value: i64) -> Vec {
             v.cap * 2
         }
     };
+    // Grow-and-preserve: __mind_realloc(NULL, n) === malloc(n) on the
+    // cap-0 path, and copies existing bytes on the doubling path.  The
+    // plain __mind_alloc this used to call lost the old elements when
+    // the doubling kicked in; for the 4-element-init Vec this happened
+    // on the 5th push, silently corrupting every longer sequence.
+    // Fixed alongside the string_push_byte twin.
     let new_addr: i64 = if new_cap == v.cap {
         v.addr
     } else {
-        __mind_alloc(new_cap * 8)
+        __mind_realloc(v.addr, new_cap * 8)
     };
     __mind_store_i64(new_addr + v.len * 8, value);
     Vec { addr: new_addr, len: new_len, cap: new_cap }

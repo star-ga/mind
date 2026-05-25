@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2635 | **Est. tokens:** ~6,537,970
-**Generated:** 2026-05-25 03:21 UTC
+**Files:** 2635 | **Est. tokens:** ~6,538,165
+**Generated:** 2026-05-25 03:24 UTC
 
 ## Token Budget Guide
 
@@ -394,7 +394,7 @@
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 15 | ~71,200 |
+| `std/` | 15 | ~71,395 |
 | `tests/` | 150 | ~245,826 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -3740,9 +3740,9 @@
 - `net.mind` (~2321 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~2935 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
-- `string.mind` (~1595 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `string.mind` (~1686 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
-- `vec.mind` (~662 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
+- `vec.mind` (~766 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
