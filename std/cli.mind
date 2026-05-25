@@ -147,8 +147,11 @@ pub fn args_has_flag(a: Args, long: String, short: String) -> i64 {
 }
 
 // args_flag_value_idx — index of the *value* argument that follows
-// `--long` or `-short`.  Returns -1 if the flag is absent or appears
-// as the last token before `--` (no value to consume).
+// `--long` or `-short` in **separate-arg form** (`--name value`).
+// Returns -1 if the flag is absent, appears as the last token before
+// `--` (no value to consume), or appears only in equals form
+// (`--name=value`) — equals form has no value-index, callers should
+// use `args_flag_value` which handles both.
 pub fn args_flag_value_idx(a: Args, long: String, short: String) -> i64 {
     let end: i64 = args_flag_end_idx(a);
     let mut i: i64 = 0;
@@ -177,15 +180,92 @@ pub fn args_flag_value_idx(a: Args, long: String, short: String) -> i64 {
     return -1;
 }
 
-// args_flag_value — the value String following `--long` / `-short`,
-// or an empty String if absent.  Convenience over args_flag_value_idx
-// + args_get for the common case.
-pub fn args_flag_value(a: Args, long: String, short: String) -> String {
-    let idx: i64 = args_flag_value_idx(a, long, short);
-    if idx < 0 {
+// equals_value — if `entry` begins with `flag` followed by `=`,
+// return a String view of everything after the `=`; otherwise return
+// the empty sentinel (cap=0, len=0).  `flag.len == 0` short-circuits
+// to empty so callers can skip either the long or short check by
+// passing `string_new()`.
+fn equals_value(entry: String, flag: String) -> String {
+    if flag.len == 0 {
         return string_new();
     }
-    return args_get(a, idx);
+    if string_starts_with(entry, flag) == 0 {
+        return string_new();
+    }
+    if entry.len <= flag.len {
+        return string_new();
+    }
+    if string_get_byte(entry, flag.len) != 61 {  // '='
+        return string_new();
+    }
+    string_slice_from(entry, flag.len + 1)
+}
+
+// args_flag_value — the value String associated with `--long` or
+// `-short`, supporting both forms:
+//   - separate-arg: `--name value` -> "value"
+//   - equals form:  `--name=value` -> "value"
+// Returns an empty String (cap=0, len=0) if the flag is absent or
+// appears in separate-arg form with no following value.  First-match
+// wins on duplicates.  Equals form takes precedence over separate-arg
+// form at the same argv position (the entry IS the value).
+pub fn args_flag_value(a: Args, long: String, short: String) -> String {
+    let end: i64 = args_flag_end_idx(a);
+    let mut i: i64 = 0;
+    while i < end {
+        let s: String = args_get(a, i);
+        // Whole-string match (separate-arg form): next entry is the value.
+        let mut matched: i64 = 0;
+        if long.len > 0 {
+            if string_eq(s, long) == 1 {
+                matched = 1;
+            }
+        }
+        if short.len > 0 {
+            if string_eq(s, short) == 1 {
+                matched = 1;
+            }
+        }
+        if matched == 1 {
+            let value_idx: i64 = i + 1;
+            if value_idx < end {
+                return args_get(a, value_idx);
+            }
+            return string_new();
+        }
+        // Equals form: entry starts with `flag=`.
+        let lv: String = equals_value(s, long);
+        if lv.len > 0 {
+            return lv;
+        }
+        let sv: String = equals_value(s, short);
+        if sv.len > 0 {
+            return sv;
+        }
+        // Edge case: equals form with empty value (`--name=`) — the
+        // prefix matches but `lv.len == 0` short-circuits above.
+        // Detect explicitly and return the empty view.
+        if long.len > 0 {
+            if string_starts_with(s, long) == 1 {
+                if s.len == long.len + 1 {
+                    if string_get_byte(s, long.len) == 61 {
+                        return string_new();
+                    }
+                }
+            }
+        }
+        if short.len > 0 {
+            if string_starts_with(s, short) == 1 {
+                if s.len == short.len + 1 {
+                    if string_get_byte(s, short.len) == 61 {
+                        return string_new();
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return string_new();
 }
 
 // args_first_positional_idx — index of the first argv entry that is
