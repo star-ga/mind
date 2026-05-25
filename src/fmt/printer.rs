@@ -17,7 +17,7 @@
 
 use crate::ast::{
     Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, Literal, LogicalOp,
-    MatchArm, Module, Node, Param, Pattern, SparseLayout, StructLitField, TypeAnn,
+    MatchArm, Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TypeAnn,
 };
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
@@ -283,8 +283,8 @@ fn strip_for_lines(src: &str) -> String {
 
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
-        Node::FnDef { is_pub, name, params, ret_type, body, attrs, .. } => {
-            emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs);
+        Node::FnDef { is_pub, name, params, ret_type, body, attrs, span, .. } => {
+            emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
         }
         Node::StructDef { is_pub, name, fields, attrs, .. } => {
             emit_struct_def(p, *is_pub, name, fields, attrs);
@@ -319,19 +319,19 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         Node::Return { value, .. } => {
             emit_return(p, value.as_deref());
         }
-        Node::If { cond, then_branch, else_branch, .. } => {
-            emit_if(p, cond, then_branch, else_branch.as_deref());
+        Node::If { cond, then_branch, else_branch, span } => {
+            emit_if(p, cond, then_branch, else_branch.as_deref(), *span);
         }
-        Node::For { var, start, end, body, .. } => {
-            emit_for(p, var, start, end, body);
-        }
-        #[cfg(feature = "std-surface")]
-        Node::While { cond, body, .. } => {
-            emit_while(p, cond, body);
+        Node::For { var, start, end, body, span } => {
+            emit_for(p, var, start, end, body, *span);
         }
         #[cfg(feature = "std-surface")]
-        Node::Region { body, .. } => {
-            emit_region(p, body);
+        Node::While { cond, body, span } => {
+            emit_while(p, cond, body, *span);
+        }
+        #[cfg(feature = "std-surface")]
+        Node::Region { body, span } => {
+            emit_region(p, body, *span);
         }
         Node::Assert { cond, msg, .. } => {
             emit_assert(p, cond, msg.as_deref());
@@ -339,8 +339,9 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         Node::Print { args, .. } => {
             emit_print(p, args);
         }
-        Node::Block { stmts, .. } => {
-            emit_block_stmts(p, stmts);
+        Node::Block { stmts, span } => {
+            let close_line = p.stripped_idx.line_of(span.end());
+            emit_block_stmts(p, stmts, close_line);
         }
         Node::Match { scrutinee, arms, .. } => {
             emit_match(p, scrutinee, arms);
@@ -384,6 +385,7 @@ fn emit_fn_def(
     ret_type: &Option<TypeAnn>,
     body: &[Node],
     attrs: &[Attribute],
+    span: Span,
 ) {
     // Previously fn attributes were parsed then silently dropped by the
     // formatter; emit them so `[test]` / `[deterministic]` / `[reap_threshold]`
@@ -412,7 +414,12 @@ fn emit_fn_def(
     }
     p.push(" {\n");
     p.indent += 1;
-    emit_body_stmts(p, body);
+    // The close_line is the line of the `}` that ends this function body.
+    // Passing it lets emit_body_stmts flush any trailing body comments
+    // (after the last statement, before `}`) at the correct indent level
+    // rather than letting them float to after the `}`.
+    let close_line = p.stripped_idx.line_of(span.end());
+    emit_body_stmts(p, body, close_line);
     p.indent -= 1;
     let ind = p.indent_str();
     p.push(&ind);
@@ -533,41 +540,53 @@ fn emit_export(p: &mut Printer, names: &[String]) {
 /// Emit a list of statements that form a fn body, with collapse of excess
 /// blank lines (max 1) and stripping leading/trailing blank lines.
 ///
+/// `close_line` is the line number (in the stripped source) of the `}` that
+/// closes this block.  It is used to flush any comments that appear after the
+/// last statement but before the closing brace, so they are emitted at the
+/// correct indent level rather than floating past the `}`.
+///
 /// Semicolon policy (canonical MIND style — matches std/*.mind):
 /// - `let` bindings, `return`, `assign`, `assert`, `print` → always `;`
 /// - Block-structured nodes (`if`, `for`, `while`, `match`, inner blocks) → no `;`
 /// - Bare expression-statements that are the LAST statement → no `;`
 ///   (implicit return expression; adding `;` is valid but not canonical)
 /// - Bare expression-statements that are NOT last → `;`
-fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
+fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
     let len = stmts.len();
     for (i, stmt) in stmts.iter().enumerate() {
         let is_last = i + 1 == len;
+        // Flush any comments (and blank lines) that appear in the source
+        // before this statement.  This covers leading body comments, comments
+        // between statements, and trailing same-line comments from the
+        // preceding statement (which live on the preceding line and are
+        // consumed here as "leading trivia" of the current statement).
+        let stmt_line = p.stripped_idx.line_of(stmt.span_start());
+        p.emit_leading_trivia(stmt_line);
         match stmt {
-            Node::If { cond, then_branch, else_branch, .. } => {
+            Node::If { cond, then_branch, else_branch, span } => {
                 let ind = p.indent_str();
                 p.push(&ind);
-                emit_if_inline(p, cond, then_branch, else_branch.as_deref());
+                emit_if_inline(p, cond, then_branch, else_branch.as_deref(), *span);
                 p.push("\n");
             }
-            Node::For { var, start, end, body, .. } => {
+            Node::For { var, start, end, body, span } => {
                 let ind = p.indent_str();
                 p.push(&ind);
-                emit_for_inline(p, var, start, end, body);
-                p.push("\n");
-            }
-            #[cfg(feature = "std-surface")]
-            Node::While { cond, body, .. } => {
-                let ind = p.indent_str();
-                p.push(&ind);
-                emit_while_inline(p, cond, body);
+                emit_for_inline(p, var, start, end, body, *span);
                 p.push("\n");
             }
             #[cfg(feature = "std-surface")]
-            Node::Region { body, .. } => {
+            Node::While { cond, body, span } => {
                 let ind = p.indent_str();
                 p.push(&ind);
-                emit_region_inline(p, body);
+                emit_while_inline(p, cond, body, *span);
+                p.push("\n");
+            }
+            #[cfg(feature = "std-surface")]
+            Node::Region { body, span } => {
+                let ind = p.indent_str();
+                p.push(&ind);
+                emit_region_inline(p, body, *span);
                 p.push("\n");
             }
             Node::Match { scrutinee, arms, .. } => {
@@ -576,20 +595,21 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
                 emit_match_inline(p, scrutinee, arms);
                 p.push("\n");
             }
-            Node::Block { stmts: inner, .. } => {
+            Node::Block { stmts: inner, span } => {
                 let ind = p.indent_str();
                 p.push(&ind);
                 p.push("{\n");
                 p.indent += 1;
-                emit_body_stmts(p, inner);
+                let inner_close = p.stripped_idx.line_of(span.end());
+                emit_body_stmts(p, inner, inner_close);
                 p.indent -= 1;
                 let ind = p.indent_str();
                 p.push(&ind);
                 p.push("}\n");
             }
             // FnDef nested inside a body (uncommon but valid in MIND)
-            Node::FnDef { is_pub, name, params, ret_type, body, attrs, .. } => {
-                emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs);
+            Node::FnDef { is_pub, name, params, ret_type, body, attrs, span, .. } => {
+                emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
                 p.push("\n");
             }
             // Statements with mandatory semicolons regardless of position.
@@ -617,10 +637,14 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node]) {
             }
         }
     }
+    // Flush any comments that appear after the last statement but before the
+    // closing `}`.  Without this flush they would escape into the enclosing
+    // scope and appear after the `}` instead of inside the block.
+    p.emit_leading_trivia(close_line);
 }
 
-fn emit_block_stmts(p: &mut Printer, stmts: &[Node]) {
-    emit_body_stmts(p, stmts);
+fn emit_block_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
+    emit_body_stmts(p, stmts, close_line);
 }
 
 fn emit_stmt(p: &mut Printer, node: &Node) {
@@ -770,10 +794,11 @@ fn emit_if(
     cond: &Node,
     then_branch: &[Node],
     else_branch: Option<&[Node]>,
+    span: Span,
 ) {
     let ind = p.indent_str();
     p.push(&ind);
-    emit_if_inline(p, cond, then_branch, else_branch);
+    emit_if_inline(p, cond, then_branch, else_branch, span);
 }
 
 fn emit_if_inline(
@@ -781,12 +806,26 @@ fn emit_if_inline(
     cond: &Node,
     then_branch: &[Node],
     else_branch: Option<&[Node]>,
+    span: Span,
 ) {
     p.push("if ");
     emit_expr(p, cond);
     p.push(" {\n");
     p.indent += 1;
-    emit_body_stmts(p, then_branch);
+    // The If parser calls `skip_ws_and_newlines()` after consuming the then-`}`
+    // before setting `span.end()`, so `span.end()` may point to the first token
+    // of the NEXT statement (a different line).  To avoid consuming trivia that
+    // belongs outside this block we derive `then_close` from the last statement
+    // inside the branch rather than from `span.end()`.
+    //
+    // For If-with-else the parser does NOT skip after the else-`}`, so
+    // `span.end()` correctly points just past the else-`}` and is safe to use
+    // as `else_close`.
+    let then_close = then_branch
+        .last()
+        .map(|s| p.stripped_idx.line_of(s.span_end()))
+        .unwrap_or_else(|| p.stripped_idx.line_of(span.start()));
+    emit_body_stmts(p, then_branch, then_close);
     p.indent -= 1;
     let ind = p.indent_str();
     p.push(&ind);
@@ -794,7 +833,9 @@ fn emit_if_inline(
     if let Some(eb) = else_branch {
         p.push(" else {\n");
         p.indent += 1;
-        emit_body_stmts(p, eb);
+        // For the else branch, span.end() is just after the else-`}` — correct.
+        let else_close = p.stripped_idx.line_of(span.end());
+        emit_body_stmts(p, eb, else_close);
         p.indent -= 1;
         let ind = p.indent_str();
         p.push(&ind);
@@ -802,13 +843,13 @@ fn emit_if_inline(
     }
 }
 
-fn emit_for(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &[Node]) {
+fn emit_for(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &[Node], span: Span) {
     let ind = p.indent_str();
     p.push(&ind);
-    emit_for_inline(p, var, start, end, body);
+    emit_for_inline(p, var, start, end, body, span);
 }
 
-fn emit_for_inline(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &[Node]) {
+fn emit_for_inline(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &[Node], span: Span) {
     p.push("for ");
     p.push(var);
     p.push(" in ");
@@ -817,7 +858,8 @@ fn emit_for_inline(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &
     emit_expr(p, end);
     p.push(" {\n");
     p.indent += 1;
-    emit_body_stmts(p, body);
+    let close_line = p.stripped_idx.line_of(span.end());
+    emit_body_stmts(p, body, close_line);
     p.indent -= 1;
     let ind = p.indent_str();
     p.push(&ind);
@@ -825,19 +867,20 @@ fn emit_for_inline(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &
 }
 
 #[cfg(feature = "std-surface")]
-fn emit_while(p: &mut Printer, cond: &Node, body: &[Node]) {
+fn emit_while(p: &mut Printer, cond: &Node, body: &[Node], span: Span) {
     let ind = p.indent_str();
     p.push(&ind);
-    emit_while_inline(p, cond, body);
+    emit_while_inline(p, cond, body, span);
 }
 
 #[cfg(feature = "std-surface")]
-fn emit_while_inline(p: &mut Printer, cond: &Node, body: &[Node]) {
+fn emit_while_inline(p: &mut Printer, cond: &Node, body: &[Node], span: Span) {
     p.push("while ");
     emit_expr(p, cond);
     p.push(" {\n");
     p.indent += 1;
-    emit_body_stmts(p, body);
+    let close_line = p.stripped_idx.line_of(span.end());
+    emit_body_stmts(p, body, close_line);
     p.indent -= 1;
     let ind = p.indent_str();
     p.push(&ind);
@@ -845,17 +888,18 @@ fn emit_while_inline(p: &mut Printer, cond: &Node, body: &[Node]) {
 }
 
 #[cfg(feature = "std-surface")]
-fn emit_region(p: &mut Printer, body: &[Node]) {
+fn emit_region(p: &mut Printer, body: &[Node], span: Span) {
     let ind = p.indent_str();
     p.push(&ind);
-    emit_region_inline(p, body);
+    emit_region_inline(p, body, span);
 }
 
 #[cfg(feature = "std-surface")]
-fn emit_region_inline(p: &mut Printer, body: &[Node]) {
+fn emit_region_inline(p: &mut Printer, body: &[Node], span: Span) {
     p.push("region {\n");
     p.indent += 1;
-    emit_body_stmts(p, body);
+    let close_line = p.stripped_idx.line_of(span.end());
+    emit_body_stmts(p, body, close_line);
     p.indent -= 1;
     let ind = p.indent_str();
     p.push(&ind);
@@ -880,10 +924,11 @@ fn emit_match_inline(p: &mut Printer, scrutinee: &Node, arms: &[MatchArm]) {
         p.push(" => ");
         // arm body: if it's a block, inline it; otherwise expression
         match &arm.body {
-            Node::Block { stmts, .. } => {
+            Node::Block { stmts, span } => {
                 p.push("{\n");
                 p.indent += 1;
-                emit_body_stmts(p, stmts);
+                let close_line = p.stripped_idx.line_of(span.end());
+                emit_body_stmts(p, stmts, close_line);
                 p.indent -= 1;
                 let ind = p.indent_str();
                 p.push(&ind);
@@ -1155,13 +1200,14 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(")");
         }
         // Statements that can appear as expressions in certain contexts
-        Node::If { cond, then_branch, else_branch, .. } => {
-            emit_if_inline(p, cond, then_branch, else_branch.as_deref());
+        Node::If { cond, then_branch, else_branch, span } => {
+            emit_if_inline(p, cond, then_branch, else_branch.as_deref(), *span);
         }
-        Node::Block { stmts, .. } => {
+        Node::Block { stmts, span } => {
             p.push("{\n");
             p.indent += 1;
-            emit_body_stmts(p, stmts);
+            let close_line = p.stripped_idx.line_of(span.end());
+            emit_body_stmts(p, stmts, close_line);
             p.indent -= 1;
             let ind = p.indent_str();
             p.push(&ind);
@@ -1226,16 +1272,16 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(" = ");
             emit_expr(p, value);
         }
-        Node::For { var, start, end, body, .. } => {
-            emit_for_inline(p, var, start, end, body);
+        Node::For { var, start, end, body, span } => {
+            emit_for_inline(p, var, start, end, body, *span);
         }
         #[cfg(feature = "std-surface")]
-        Node::While { cond, body, .. } => {
-            emit_while_inline(p, cond, body);
+        Node::While { cond, body, span } => {
+            emit_while_inline(p, cond, body, *span);
         }
         #[cfg(feature = "std-surface")]
-        Node::Region { body, .. } => {
-            emit_region_inline(p, body);
+        Node::Region { body, span } => {
+            emit_region_inline(p, body, *span);
         }
         // RFC 0010 Phase A: emit the extern "C" block in canonical form.
         Node::ExternBlock { callconv, fns, .. } => {
