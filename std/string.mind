@@ -156,7 +156,11 @@ pub fn string_slice_from(s: String, start: i64) -> String {
         return string_new();
     }
     if start < 0 {
-        return s;
+        // Clamp negative start to 0 — return a cap=0 VIEW of the whole string,
+        // never the input unchanged. Returning `s` would carry its original
+        // cap, so a later push against the slice would believe it owns the
+        // backing store and clobber `s`. cap=0 forces a fresh alloc on push.
+        return String { addr: s.addr, len: s.len, cap: 0 };
     }
     String { addr: s.addr + start, len: s.len - start, cap: 0 }
 }

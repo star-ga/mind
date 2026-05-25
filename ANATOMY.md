@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2638 | **Est. tokens:** ~6,547,692
-**Generated:** 2026-05-25 08:01 UTC
+**Files:** 2638 | **Est. tokens:** ~6,547,935
+**Generated:** 2026-05-25 08:04 UTC
 
 ## Token Budget Guide
 
@@ -394,7 +394,7 @@
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 15 | ~72,947 |
+| `std/` | 15 | ~73,190 |
 | `tests/` | 152 | ~247,493 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -3733,15 +3733,15 @@
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2800 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
-- `io.mind` (~1694 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
+- `io.mind` (~1734 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
-- `map.mind` (~826 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
+- `map.mind` (~940 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `net.mind` (~2321 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~2935 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
-- `string.mind` (~2236 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `string.mind` (~2325 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `vec.mind` (~766 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
