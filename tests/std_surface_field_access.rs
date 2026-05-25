@@ -76,6 +76,7 @@ fn module_with_field_reads(read_fields: &[&str]) -> Module {
         },
         Node::Let {
             name: "v".to_string(),
+            mutable: false,
             ann: None,
             value: Box::new(Node::StructLit {
                 name: "Vec".to_string(),
@@ -224,6 +225,7 @@ fn field_access_unknown_receiver_falls_back_to_placeholder() {
             // bare ident, no StructLit, no struct_env entry
             Node::Let {
                 name: "x".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(lit_int(99)),
                 span: sp(),
@@ -260,6 +262,7 @@ fn field_access_unknown_struct_field_falls_back_to_placeholder() {
             },
             Node::Let {
                 name: "p".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Pair".to_string(),
@@ -310,6 +313,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
             },
             Node::Let {
                 name: "cfg".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Cfg".to_string(),

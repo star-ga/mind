@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2638 | **Est. tokens:** ~6,547,935
-**Generated:** 2026-05-25 08:04 UTC
+**Files:** 2640 | **Est. tokens:** ~6,551,523
+**Generated:** 2026-05-25 21:22 UTC
 
 ## Token Budget Guide
 
@@ -362,7 +362,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,223 |
-| `src/ast/` | 1 | ~6,144 |
+| `src/ast/` | 1 | ~6,223 |
 | `src/autodiff/` | 3 | ~4,256 |
 | `src/bin/` | 2 | ~17,022 |
 | `src/build/` | 2 | ~10,769 |
@@ -376,7 +376,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
-| `src/fmt/` | 3 | ~16,344 |
+| `src/fmt/` | 3 | ~16,379 |
 | `src/ir/` | 3 | ~13,767 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 6 | ~15,796 |
@@ -387,15 +387,15 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,686 |
+| `src/project/` | 3 | ~20,753 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 15 | ~73,190 |
-| `tests/` | 152 | ~247,493 |
+| `std/` | 16 | ~74,930 |
+| `tests/` | 153 | ~249,160 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3544,7 +3544,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~6144 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6223 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3626,7 +3626,7 @@
 
 - `cli.rs` (~3852 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~11898 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~11933 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3693,7 +3693,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3227 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3294 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3733,17 +3733,18 @@
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2800 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
-- `io.mind` (~1734 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
+- `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
-- `map.mind` (~940 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
+- `map.mind` (~935 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `net.mind` (~2321 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~2935 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `string.mind` (~2325 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
-- `vec.mind` (~766 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
+- `tui.mind` (~1792 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
+- `vec.mind` (~765 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -3812,9 +3813,9 @@
 - `test_phase_b_one_fail.mind` (~80 tok, small) — RFC 0008 Phase B test fixture — one pass, one fail.
 ### `tests/`
 
-- `fmt_idempotence.rs` (~1987 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~2191 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_stdlib_stability.rs` (~2257 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2560 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6100 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `genref_phase_jb.rs` (~3303 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3963,7 +3964,7 @@
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1173 tok, large) — Copyright 2025 STARGA Inc.
-- `rfc0012_phase_a_shape_types.rs` (~6428 tok, huge) — Copyright 2025 STARGA Inc.
+- `rfc0012_phase_a_shape_types.rs` (~6465 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4381 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_c_annotations.rs` (~2026 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/runtime/`
@@ -4000,8 +4001,8 @@
 - `std_surface_cli_equals_form.rs` (~871 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1002 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_subcommand.rs` (~796 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access.rs` (~2872 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access_step2.rs` (~3344 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access.rs` (~2903 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access_step2.rs` (~3384 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_if_statement.rs` (~3275 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2087 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4016,8 +4017,9 @@
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2034 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_push_str.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_struct_lowering.rs` (~2686 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_struct_lowering.rs` (~2717 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_toml.rs` (~4127 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_tui.rs` (~1021 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1753 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1859 tok, huge) — Copyright 2025 STARGA Inc.
