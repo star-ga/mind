@@ -46,7 +46,14 @@ pub fn string_addr(s: String) -> i64 {
 // i64-load.  Bounds-checks are the caller's responsibility at this
 // layer (std.option will wrap them once enum payloads are wired).
 pub fn string_get_byte(s: String, i: i64) -> i64 {
-    __mind_load_i64(s.addr + i)
+    // Bytes are stored one-per-offset via __mind_store_i64 (no i8 store
+    // intrinsic exists), so a load at offset `i` returns an i64 whose
+    // LOW byte is byte[i] and whose high 7 bytes are the neighbouring
+    // bytes i+1..i+7. Mask to the low byte to read a single byte
+    // correctly — without this, every byte comparison (is_double_dash,
+    // string_starts_with, equals-form flag detection) sees packed
+    // neighbour bytes and mis-compares on any non-final offset.
+    __mind_load_i64(s.addr + i) & 255
 }
 
 // string_validate_utf8 — minimal UTF-8 well-formedness pass over a
@@ -99,14 +106,24 @@ pub fn string_push_byte(s: String, b: i64) -> String {
 // equality — consistent with the Tier-3 floor's "every input
 // round-trips" contract.
 pub fn string_eq(a: String, b: String) -> i64 {
-    if a.len == b.len {
-        1
-    } else {
-        0
+    // Length first, then a real byte-by-byte compare via the masked
+    // string_get_byte. The previous body returned 1 on equal length
+    // regardless of contents — a stub that made every std.cli flag
+    // query (args_has_flag, args_subcommand_eq, equals-form lookup)
+    // a length-only check, so "--foo" matched "--bar" and
+    // args_subcommand_eq(a, "build") matched any 5-byte argv slot.
+    if a.len != b.len {
+        return 0;
     }
+    let mut i: i64 = 0;
+    while i < a.len {
+        if string_get_byte(a, i) != string_get_byte(b, i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
 }
-// Byte-loop placeholder — single-bucket compare for now.
-// Multi-byte loop lands with std.vec's loop codegen.
 
 // string_starts_with — does `haystack` begin with `needle` (byte
 // equality, no Unicode normalisation)?  Returns 1 if so, 0 otherwise.
