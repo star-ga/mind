@@ -85,6 +85,9 @@ fn diff_lines(expected: &str, got: &str) -> String {
 /// in `fmt_idempotence.rs` (runs under `std-surface`).
 const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
     ("toml", "TOML-001: while-loop + whitespace alignment; std-surface required"),
+    ("string", "STRING-001: while-loop body (string_eq / string_starts_with byte \
+                 compares); the default-build formatter parser needs std-surface to \
+                 parse `while`. Idempotence enforced by idempotence_stdlib_string."),
 ];
 
 fn stability_skip_reason(stem: &str) -> Option<&'static str> {
@@ -152,8 +155,18 @@ fn stability_summary() {
         let path = base.join(format!("{name}.mind"));
         let src = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-        let formatted = format_source(&src, &cfg)
-            .unwrap_or_else(|e| panic!("format failed for {name}: {e}"));
+        let formatted = match format_source(&src, &cfg) {
+            Ok(f) => f,
+            Err(e) => {
+                // Parse failure on a skip-list file (e.g. `while` loops needing
+                // std-surface) is the documented gap; otherwise a real bug.
+                if let Some(reason) = stability_skip_reason(name) {
+                    skipped.push((name, reason));
+                    continue;
+                }
+                panic!("format failed for {name}: {e}");
+            }
+        };
 
         if formatted == src {
             passed += 1;
@@ -212,8 +225,21 @@ fn check_or_skip(stem: &str) {
     let path = base.join(format!("{stem}.mind"));
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    let formatted = format_source(&src, &cfg)
-        .unwrap_or_else(|e| panic!("format failed for {stem}: {e}"));
+    let formatted = match format_source(&src, &cfg) {
+        Ok(f) => f,
+        Err(e) => {
+            // A skip-list file may use syntax (e.g. `while` loops in
+            // string.mind / toml.mind) the default-build formatter parser
+            // can't read without `std-surface`. A parse failure on such a
+            // file is the documented gap, not a stability failure — its
+            // idempotence is enforced separately under std-surface. A parse
+            // failure on a NON-skip file is a real bug.
+            if stability_skip_reason(stem).is_some() {
+                return;
+            }
+            panic!("format failed for {stem}: {e}");
+        }
+    };
 
     if formatted == src {
         // File is stable — great.

@@ -1,0 +1,196 @@
+// std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
+//
+// The third leg of the Tier 1 CLI floor, on top of std.cli (argv
+// parsing) and std.io (TTY detection + SGR colour vocabulary). Where
+// std.io's `string_push_ansi_sgr` composes a *colour/style* escape,
+// this module composes the *cursor* and *screen* control escapes a
+// full-screen terminal app needs: positioning, erase, alternate
+// screen buffer, cursor visibility, and scroll.
+//
+// Same shape as the rest of the std string-building surface: every
+// function takes a `String`, appends the escape bytes, and returns a
+// fresh `String` (non-mutating). Callers compose a frame as one
+// String value and emit it through `file_write` / `print_bytes` in a
+// single syscall — no per-escape write, so the on-wire byte trace is
+// deterministic and the cursor never tears between escapes.
+//
+// All sequences are ECMA-48 CSI (`ESC [ ... final`) except the
+// DEC-private mode sets (`ESC [ ? n h|l`) for the alternate screen
+// buffer and cursor visibility, which every modern terminal honours.
+// Numeric parameters are emitted via `string_push_i64` so row/col and
+// repeat-counts carry their full decimal form. Byte literals below are
+// the ASCII codes of the final characters named in each doc comment
+// (e.g. 72 = 'H', 65 = 'A', 74 = 'J', 75 = 'K').
+
+import std.string;
+
+// --- private helpers -------------------------------------------------------
+
+// csi — append the Control Sequence Introducer `ESC [` (bytes 27, 91).
+// Every public escape below begins here, so the two framing bytes live
+// in one place rather than being open-coded per function.
+fn csi(s: String) -> String {
+    let out: String = string_push_byte(s, 27);
+    string_push_byte(out, 91)
+}
+
+// csi_n — `ESC [ <n> <final>`: a CSI with a single decimal parameter
+// and a final byte. Covers cursor up/down/left/right, column-absolute,
+// erase-display / erase-line, and scroll up/down.
+fn csi_n(s: String, n: i64, final_byte: i64) -> String {
+    let out: String = csi(s);
+    let out2: String = string_push_i64(out, n);
+    string_push_byte(out2, final_byte)
+}
+
+// csi_priv — `ESC [ ? <n> <final>`: a DEC-private mode set/reset.
+// `final` is 'h' (104, set) or 'l' (108, reset). Used for the
+// alternate screen buffer (1049) and cursor visibility (25). The 63 is
+// the '?' that marks the private parameter.
+fn csi_priv(s: String, n: i64, final_byte: i64) -> String {
+    let out: String = csi(s);
+    let out2: String = string_push_byte(out, 63);
+    let out3: String = string_push_i64(out2, n);
+    string_push_byte(out3, final_byte)
+}
+
+// --- cursor positioning ----------------------------------------------------
+
+// tui_cursor_to — `ESC [ <row> ; <col> H` (CUP). Move the cursor to an
+// absolute 1-based (row, col). Row 1 / col 1 is the top-left cell. The
+// 59 is ';' and the 72 is the final 'H'.
+pub fn tui_cursor_to(s: String, row: i64, col: i64) -> String {
+    let out: String = csi(s);
+    let out2: String = string_push_i64(out, row);
+    let out3: String = string_push_byte(out2, 59);
+    let out4: String = string_push_i64(out3, col);
+    string_push_byte(out4, 72)
+}
+
+// tui_cursor_home — `ESC [ H`. Move to the top-left cell (row 1, col 1)
+// without spelling out the parameters.
+pub fn tui_cursor_home(s: String) -> String {
+    let out: String = csi(s);
+    string_push_byte(out, 72)
+}
+
+// tui_cursor_up — `ESC [ <n> A` (CUU): move up n rows.
+pub fn tui_cursor_up(s: String, n: i64) -> String {
+    csi_n(s, n, 65)
+}
+
+// tui_cursor_down — `ESC [ <n> B` (CUD): move down n rows.
+pub fn tui_cursor_down(s: String, n: i64) -> String {
+    csi_n(s, n, 66)
+}
+
+// tui_cursor_forward — `ESC [ <n> C` (CUF): move right n columns.
+pub fn tui_cursor_forward(s: String, n: i64) -> String {
+    csi_n(s, n, 67)
+}
+
+// tui_cursor_back — `ESC [ <n> D` (CUB): move left n columns.
+pub fn tui_cursor_back(s: String, n: i64) -> String {
+    csi_n(s, n, 68)
+}
+
+// tui_cursor_col — `ESC [ <col> G` (CHA): move to an absolute 1-based
+// column on the current row.
+pub fn tui_cursor_col(s: String, col: i64) -> String {
+    csi_n(s, col, 71)
+}
+
+// tui_cursor_save — `ESC [ s` (SCP): save the current cursor position.
+// The 115 is the final 's'.
+pub fn tui_cursor_save(s: String) -> String {
+    let out: String = csi(s);
+    string_push_byte(out, 115)
+}
+
+// tui_cursor_restore — `ESC [ u` (RCP): restore the saved cursor
+// position. The 117 is the final 'u'.
+pub fn tui_cursor_restore(s: String) -> String {
+    let out: String = csi(s);
+    string_push_byte(out, 117)
+}
+
+// --- cursor visibility (DEC private mode 25) -------------------------------
+
+// tui_cursor_hide — `ESC [ ? 25 l`: hide the text cursor (108 = 'l').
+pub fn tui_cursor_hide(s: String) -> String {
+    csi_priv(s, 25, 108)
+}
+
+// tui_cursor_show — `ESC [ ? 25 h`: show the text cursor (104 = 'h').
+pub fn tui_cursor_show(s: String) -> String {
+    csi_priv(s, 25, 104)
+}
+
+// --- erase -----------------------------------------------------------------
+
+// tui_clear_screen — `ESC [ 2 J` (ED 2): erase the whole display (74 =
+// 'J'). Leaves the cursor where it is; pair with tui_cursor_home for a
+// full reset to the top-left.
+pub fn tui_clear_screen(s: String) -> String {
+    csi_n(s, 2, 74)
+}
+
+// tui_clear_below — `ESC [ 0 J` (ED 0): erase from the cursor to the
+// end of the display.
+pub fn tui_clear_below(s: String) -> String {
+    csi_n(s, 0, 74)
+}
+
+// tui_clear_above — `ESC [ 1 J` (ED 1): erase from the start of the
+// display to the cursor.
+pub fn tui_clear_above(s: String) -> String {
+    csi_n(s, 1, 74)
+}
+
+// tui_clear_line — `ESC [ 2 K` (EL 2): erase the entire current line
+// (75 = 'K').
+pub fn tui_clear_line(s: String) -> String {
+    csi_n(s, 2, 75)
+}
+
+// tui_clear_line_right — `ESC [ 0 K` (EL 0): erase from the cursor to
+// the end of the line.
+pub fn tui_clear_line_right(s: String) -> String {
+    csi_n(s, 0, 75)
+}
+
+// tui_clear_line_left — `ESC [ 1 K` (EL 1): erase from the start of
+// the line to the cursor.
+pub fn tui_clear_line_left(s: String) -> String {
+    csi_n(s, 1, 75)
+}
+
+// --- alternate screen buffer (DEC private mode 1049) -----------------------
+
+// tui_enter_alt_screen — `ESC [ ? 1049 h`: switch to the alternate
+// screen buffer (the full-screen mode `vim`/`less` use). The prior
+// screen contents are restored on leave, so a TUI app does not scroll
+// the user's scrollback.
+pub fn tui_enter_alt_screen(s: String) -> String {
+    csi_priv(s, 1049, 104)
+}
+
+// tui_leave_alt_screen — `ESC [ ? 1049 l`: restore the primary screen
+// buffer and the contents that were there before enter.
+pub fn tui_leave_alt_screen(s: String) -> String {
+    csi_priv(s, 1049, 108)
+}
+
+// --- scroll ----------------------------------------------------------------
+
+// tui_scroll_up — `ESC [ <n> S` (SU): scroll the page up n lines; new
+// blank lines appear at the bottom (83 = 'S').
+pub fn tui_scroll_up(s: String, n: i64) -> String {
+    csi_n(s, n, 83)
+}
+
+// tui_scroll_down — `ESC [ <n> T` (SD): scroll the page down n lines;
+// new blank lines appear at the top (84 = 'T').
+pub fn tui_scroll_down(s: String, n: i64) -> String {
+    csi_n(s, n, 84)
+}
