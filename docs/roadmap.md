@@ -775,6 +775,125 @@ MIND programs and the AI-era efficiency claim.
 
 ---
 
+## Phase 16 — CLI Agent Harness Stack
+
+### Goals
+
+Bring the MIND stdlib + runtime to the point where a Rust-class CLI
+agent harness (claw-code / OpenClaw / claude-code class — streaming
+LLM client, MCP protocol, tool execution, terminal UI) can be built
+in pure MIND end-to-end. This is a credibility target like the
+mindc self-host: a non-tensor system that exercises general-purpose
+capability the way Rust+tokio+reqwest+ratatui does today.
+
+### Motivation
+
+The v0.7.0 stdlib already ships the boring half (string/vec/map,
+json/toml/regex, fs/process, cross-platform binary releases). What's
+missing is the *network and concurrency* half — and a CLI agent is
+the cleanest external dogfood target for that work. Each piece below
+also unlocks downstream consumers independently: TLS unlocks any
+secure I/O, async I/O unlocks mind-inference's serving layer, MCP
+client unlocks tool-using MIND programs, TUI primitives unlock
+operator-facing MIND tools.
+
+### Design Decisions
+
+**Pure-MIND, not FFI.** The whole point of this phase is to exercise
+MIND's general-purpose surface. FFI-wrapping `libcurl`/`tokio`/`rustls`
+would satisfy the demo but skip the language work. The acceptance bar
+is the same as Phase 15 self-host: byte-identical builds, no
+`unsafe` outside named FFI boundaries (libc syscalls only).
+
+**Sequencing is dependency-driven.** TLS gates HTTP-as-anything-real;
+async I/O gates streaming; both gate the agent. CLI parser, TUI, and
+MCP impl are independent and parallelizable once those land.
+
+### Current Status (verified against HEAD, v0.7.0)
+
+| Capability                | Status                                  | Gap |
+|---------------------------|-----------------------------------------|-----|
+| CLI parser                | `std.string`/`std.vec`/`std.map` shipped; no `std.cli` | Build `std.cli` (arg parsing, subcommands, env binding) |
+| JSON / TOML / regex       | `std.json`/`std.toml`/`std.regex` shipped (RFC 0005 Phase 2) | None |
+| FS / process              | `std.fs`/`std.process` shipped          | None |
+| Cross-platform binary     | Linux musl + macOS universal + Windows MSVC shipped (#225 closed) | None |
+| `std.io`                  | Bare `stdin`/`stdout`/`stderr` only     | No ANSI / no TTY detection / no color |
+| `std.net`                 | Raw POSIX TCP/UDP only (IPv4/IPv6)      | **No HTTP, no TLS, no HTTPS** |
+| Async I/O                 | RFC 0011 Phase A shipped (sync `ReplayScheduler` only) | Phases B–F deferred; real async I/O is the long pole |
+| Streaming (SSE / chunked) | n/a                                     | Requires async + HTTP framing first |
+| MCP protocol              | Not in tree                             | Build from scratch in MIND |
+| TUI / ANSI / coloring     | Not in tree                             | Build `std.tui` (sequences + termios) |
+
+### Deliverables
+
+**Tier 1 — CLI surface & terminal control (parallelizable, ~1–2 weeks):**
+- `std.cli` — flag parsing, subcommand dispatch, env-var binding, help generation; deterministic argv ordering
+- `std.io` extensions — TTY detection (`isatty`), ANSI escape sequences (color, cursor, clear), `winsize` ioctl wrapper
+- `std.tui` — termios raw-mode toggle, key-event reader, line editor primitive, frame buffer (minimal — no full ratatui clone)
+
+**Tier 2 — TLS layer (the long pole, ~6–10 weeks):**
+- Decision gate: pure-MIND TLS 1.3 vs FFI to a minimal crypto core (`ring` / `BoringSSL`). Pure-MIND fits the "exercise the language" goal but is a multi-quarter project; FFI to a named C crypto lib is a defensible compromise if scoped as the *only* FFI exception
+- `std.tls` — TLS 1.3 client (server-auth only at first), ALPN, SNI, session resumption
+- Acceptance: connects to a public HTTPS endpoint, verifies cert against system trust store, performs round-trip with byte-identical handshake transcript across runs given the same `ReplayScheduler` seed
+
+**Tier 3 — HTTP client (~2–3 weeks after TLS):**
+- `std.http` — HTTP/1.1 request builder, response parser, header handling, **chunked transfer-encoding decoder** (SSE rides on this)
+- `std.http.sse` — `text/event-stream` parser sitting on chunked transfer; deterministic event emission
+- Acceptance: streams a chunked response (e.g., an Anthropic/OpenAI-compatible `chat/completions` with `stream:true`) end-to-end without buffering the full body
+
+**Tier 4 — Async I/O (RFC 0011 Phases B–D, the actual blocker behind Tier 2/3):**
+- Phase B — real executor (work-stealing or fixed-pool), still under the `Scheduler` first-class-value model from Phase A
+- Phase C — async I/O primitives (epoll/kqueue/IOCP), `Future<T>` allocated via `GenRef<T>` per RFC 0010 §3.3
+- Phase D — `Sender`/`Receiver` channels, `select`/`race`, structured task supervision
+- Acceptance: a `ReplayScheduler` run of the agent reproduces byte-identical transcript across machines
+
+**Tier 5 — MCP protocol (~3–4 weeks, can start after Tier 1):**
+- `std.mcp.client` — JSON-RPC framing, capability negotiation, tool listing, tool invocation
+- `std.mcp.server` — same surface from the server side, for MIND programs that *expose* MCP tools (mind-mem / mind-nerve become candidates)
+- Acceptance: a MIND CLI calls a stdio MCP server (claudeai-flavored), invokes a tool, and parses results — round-trip in pure MIND
+
+**Tier 6 — Demo target: `mindcraft-agent`:**
+- A claw-code-class CLI: streaming LLM client (HTTPS + SSE), MCP client, tool execution (`std.process` sandbox + `std.fs` scoped to a workdir), terminal UI, `--replay` flag using `ReplayScheduler` for deterministic playback
+- Acceptance: byte-identical transcript across machines under `ReplayScheduler`; loads a remote LLM endpoint and an MCP server; works on Linux/macOS/Windows from the shipped cross-platform binaries
+
+### Sequencing
+
+Tier 1 + RFC 0011 Phase B start in parallel — both independent. Tier
+2 (TLS) is the load-bearing long pole: nothing in Tier 3 ships
+without it. Tier 4 Phases C/D are pre-req for the *deterministic*
+streaming claim in Tier 3 acceptance. Tier 5 (MCP) can start as soon
+as Tier 1 is in, but its acceptance test needs Tiers 2+3 for a real
+HTTPS-backed MCP. Tier 6 is the integration sprint after all five
+land.
+
+Realistic earliest end-to-end: **mid-to-late 2027**, gated by the
+Phase 15 self-host work landing first and the TLS scope decision.
+
+### Acceptance Gates
+
+- Every Tier deliverable ships with conformance tests in `tests/`
+  and a worked example in `examples/`
+- The mindcraft-agent demo runs on Linux musl, macOS universal, and
+  Windows MSVC from a single source tree, with byte-identical
+  `ReplayScheduler` traces verified in CI across all three OSes
+- No FFI outside libc syscalls *unless* the Tier 2 TLS decision
+  explicitly approves a named C crypto library, in which case that
+  library is the only exception, named and version-pinned in the RFC
+- Frontend µs benchmarks: <±2% drift across all Phase 16 work
+  (same gate as Phase 15)
+
+### Out of Scope
+
+- Full ratatui-class TUI framework (a minimal one is in Tier 1; rich
+  widgets are a separate later effort)
+- HTTP server (this phase is client-only; server is mind-inference's
+  concern in Phase 12)
+- WebSocket (not required for the SSE-based MCP/LLM demo; future RFC)
+- HTTP/2 / HTTP/3 (HTTP/1.1 is sufficient for SSE; defer)
+- Generic certificate-issuance / ACME / let's-encrypt automation
+
+---
+
 ## AGI Integration
 
 This repo is part of the broader STARGA AGI stack. The downstream
