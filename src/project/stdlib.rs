@@ -42,6 +42,7 @@ use crate::ast::Module;
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.async",   include_str!("../../std/async.mind")),
     ("std.blas",    include_str!("../../std/blas.mind")),
+    ("std.cli",     include_str!("../../std/cli.mind")),
     ("std.fs",      include_str!("../../std/fs.mind")),
     ("std.io",      include_str!("../../std/io.mind")),
     ("std.json",    include_str!("../../std/json.mind")),
