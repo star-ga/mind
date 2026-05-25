@@ -268,6 +268,34 @@ pub fn args_flag_value(a: Args, long: String, short: String) -> String {
     return string_new();
 }
 
+// args_subcommand — the first positional argv entry as a String,
+// the canonical "what verb did the user invoke?" shape for an agent
+// CLI dispatch.  Returns an empty String if every entry before `--`
+// is a flag or the program was invoked bare.
+//
+// Builds on `args_first_positional_idx` so the same definition of
+// "positional" applies — entries after `--` count, and the heuristic
+// is "doesn't start with `-`."  Known limitation: callers that pass
+// known flags expecting separate-arg values must pre-consume them,
+// otherwise the value (which doesn't start with `-` for most cases)
+// will be mis-identified as the subcommand.
+pub fn args_subcommand(a: Args) -> String {
+    let idx: i64 = args_first_positional_idx(a);
+    if idx < 0 {
+        return string_new();
+    }
+    args_get(a, idx)
+}
+
+// args_subcommand_eq — convenience: does the first positional argv
+// entry exactly equal `name`?  Returns 1 if so, 0 otherwise.  Empty
+// `name` matches an empty subcommand (the bare-invocation case).
+// Saves one args_get + string_eq at every dispatch site.
+pub fn args_subcommand_eq(a: Args, name: String) -> i64 {
+    let sub: String = args_subcommand(a);
+    string_eq(sub, name)
+}
+
 // args_first_positional_idx — index of the first argv entry that is
 // neither a flag nor a flag value, useful for subcommand dispatch
 // ("the program name's first argument that isn't a global flag").
