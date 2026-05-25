@@ -1,0 +1,223 @@
+// std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+//
+// `Args` is a deterministic snapshot of a program's argument vector,
+// indexable by position and queryable by flag name (long `--foo` or
+// short `-f`).  This is the *parsing-and-query* core; the subcommand
+// dispatcher, env-var binding, and help-text generator are Phase 2
+// follow-ups (RFC 0013 §4.1, Tier 1 second pass).
+//
+// Storage layout: three parallel `Vec<i64>` arrays hold the String
+// fields (addr / len / cap) at the same index.  This sidesteps a
+// "Vec of struct String" surface that the Phase 2 type-checker side
+// table did not stabilise for, and keeps the storage identical to
+// std.vec's primitive contract.  Reconstructing the i-th argv as a
+// String is three indexed loads.
+//
+// Determinism: argv ordering is preserved byte-for-byte.  The query
+// helpers below return the *first* match in argv order; a flag that
+// appears twice resolves to the first occurrence.  Callers that want
+// last-wins semantics walk the vector manually.
+//
+// Flag-parsing rules (the v1.0 subset):
+//   - Long flags  begin with `--` (e.g. `--output`)
+//   - Short flags begin with `-`  (single character, e.g. `-o`)
+//   - The literal `--` token terminates flag parsing; every later
+//     entry is positional even if it starts with `-`.
+//   - `--flag value` (separate-arg form) is supported in Phase 1.
+//     `--flag=value` (equals form) and `-abc` (bundled-shorts form)
+//     are Phase 2.
+
+use std.vec;
+use std.string;
+
+// ---------------------------------------------------------------------------
+// Args — argv container.
+// ---------------------------------------------------------------------------
+
+struct Args {
+    // Parallel storage for the String fields at each argv index.
+    addrs: Vec,
+    lens:  Vec,
+    caps:  Vec,
+}
+
+// args_new — empty Args, zero allocation.
+pub fn args_new() -> Args {
+    Args {
+        addrs: vec_new(),
+        lens:  vec_new(),
+        caps:  vec_new(),
+    }
+}
+
+// args_len — number of argv entries.
+pub fn args_len(a: Args) -> i64 {
+    vec_len(a.addrs)
+}
+
+// args_push — append a String entry.  Each call writes to all three
+// parallel arrays in lockstep; the three vectors are length-invariant.
+pub fn args_push(a: Args, s: String) -> Args {
+    Args {
+        addrs: vec_push(a.addrs, s.addr),
+        lens:  vec_push(a.lens,  s.len),
+        caps:  vec_push(a.caps,  s.cap),
+    }
+}
+
+// args_get — reconstruct the i-th argv entry as a String value.
+// Returns `string_new()` (empty) if `i` is out of range — callers
+// check `args_len` first for the strict-bounds shape.
+pub fn args_get(a: Args, i: i64) -> String {
+    if i < 0 {
+        return string_new();
+    }
+    if i >= vec_len(a.addrs) {
+        return string_new();
+    }
+    String {
+        addr: vec_get(a.addrs, i),
+        len:  vec_get(a.lens,  i),
+        cap:  vec_get(a.caps,  i),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Flag query helpers.
+//
+// Internally these scan argv linearly, stopping at the `--` separator
+// (anything later is positional, never a flag).  They compare entries
+// to the long/short flag names byte-by-byte via std.string equality.
+// ---------------------------------------------------------------------------
+
+// is_double_dash — does `s` exactly equal `--` (the flag-end sentinel)?
+fn is_double_dash(s: String) -> i64 {
+    if s.len != 2 {
+        return 0;
+    }
+    if string_get_byte(s, 0) != 45 {  // '-'
+        return 0;
+    }
+    if string_get_byte(s, 1) != 45 {  // '-'
+        return 0;
+    }
+    return 1;
+}
+
+// args_flag_end_idx — index of the `--` separator, or args_len() if
+// no separator is present.  Every entry at index `< end` is in the
+// flag-parsing scope; everything at `>= end` is positional.
+pub fn args_flag_end_idx(a: Args) -> i64 {
+    let n: i64 = args_len(a);
+    let mut i: i64 = 0;
+    while i < n {
+        let s: String = args_get(a, i);
+        if is_double_dash(s) == 1 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+// args_has_flag — does argv contain `--long` or `-short` anywhere
+// before the `--` separator?  Returns 1 on match, 0 otherwise.
+//
+// Either `long` or `short` may be empty (`string_new()`) to skip
+// that half of the lookup; callers asking for "only long" pass an
+// empty short.
+pub fn args_has_flag(a: Args, long: String, short: String) -> i64 {
+    let end: i64 = args_flag_end_idx(a);
+    let mut i: i64 = 0;
+    while i < end {
+        let s: String = args_get(a, i);
+        if long.len > 0 {
+            if string_eq(s, long) == 1 {
+                return 1;
+            }
+        }
+        if short.len > 0 {
+            if string_eq(s, short) == 1 {
+                return 1;
+            }
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// args_flag_value_idx — index of the *value* argument that follows
+// `--long` or `-short`.  Returns -1 if the flag is absent or appears
+// as the last token before `--` (no value to consume).
+pub fn args_flag_value_idx(a: Args, long: String, short: String) -> i64 {
+    let end: i64 = args_flag_end_idx(a);
+    let mut i: i64 = 0;
+    while i < end {
+        let s: String = args_get(a, i);
+        let mut matched: i64 = 0;
+        if long.len > 0 {
+            if string_eq(s, long) == 1 {
+                matched = 1;
+            }
+        }
+        if short.len > 0 {
+            if string_eq(s, short) == 1 {
+                matched = 1;
+            }
+        }
+        if matched == 1 {
+            let value_idx: i64 = i + 1;
+            if value_idx < end {
+                return value_idx;
+            }
+            return -1;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// args_flag_value — the value String following `--long` / `-short`,
+// or an empty String if absent.  Convenience over args_flag_value_idx
+// + args_get for the common case.
+pub fn args_flag_value(a: Args, long: String, short: String) -> String {
+    let idx: i64 = args_flag_value_idx(a, long, short);
+    if idx < 0 {
+        return string_new();
+    }
+    return args_get(a, idx);
+}
+
+// args_first_positional_idx — index of the first argv entry that is
+// neither a flag nor a flag value, useful for subcommand dispatch
+// ("the program name's first argument that isn't a global flag").
+//
+// Phase 1 heuristic: an entry is a flag iff it starts with `-` and
+// is not the `--` separator.  Anything after `--` is positional.
+// This conflates short flags with their values (caller must
+// pre-consume known flags), but matches the standard argv-walk shape
+// of e.g. `getopt(3)` in flag-then-positional mode.
+pub fn args_first_positional_idx(a: Args) -> i64 {
+    let n: i64 = args_len(a);
+    let mut i: i64 = 0;
+    let mut after_sep: i64 = 0;
+    while i < n {
+        let s: String = args_get(a, i);
+        if after_sep == 1 {
+            return i;
+        }
+        if is_double_dash(s) == 1 {
+            after_sep = 1;
+            i = i + 1;
+            continue;
+        }
+        if s.len == 0 {
+            return i;
+        }
+        if string_get_byte(s, 0) != 45 {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2630 | **Est. tokens:** ~6,530,988
-**Generated:** 2026-05-25 01:12 UTC
+**Files:** 2632 | **Est. tokens:** ~6,533,802
+**Generated:** 2026-05-25 03:11 UTC
 
 ## Token Budget Guide
 
@@ -387,15 +387,15 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,672 |
+| `src/project/` | 3 | ~20,686 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 14 | ~67,816 |
-| `tests/` | 146 | ~242,242 |
+| `std/` | 15 | ~69,614 |
+| `tests/` | 147 | ~243,244 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3692,7 +3692,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3213 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3227 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3730,6 +3730,7 @@
 
 - `async.mind` (~2465 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
+- `cli.mind` (~1798 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~828 tok, large) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
@@ -3995,6 +3996,7 @@
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cdylib_link.rs` (~1423 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_cli.rs` (~1002 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access.rs` (~2872 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3344 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
