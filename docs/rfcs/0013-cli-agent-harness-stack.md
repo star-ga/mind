@@ -203,9 +203,10 @@ the shipped cross-platform binaries (no external runtime required).
 - The `mindcraft-agent` demo runs on Linux musl, macOS universal, and
   Windows MSVC from a single source tree, with byte-identical
   `ReplayScheduler` traces verified in CI across all three OSes.
-- **No FFI outside libc syscalls** unless the Tier 2 scope decision (§4.2)
-  explicitly approves a named C crypto library, in which case that library
-  is the only exception, named and version-pinned in §7 of this RFC.
+- **No FFI outside libc syscalls** unless admitted under the §8 FFI Discipline
+  table. The Tier 2 scope decision (§4.2) is the first admission-path test
+  case: a named, version-pinned C crypto subset enters §8.5 only after the
+  cross-substrate byte-identity CI gate passes.
 - Frontend µs benchmarks: `<±2%` drift across all Phase 16 work — same
   anti-regression gate as Phase 15.
 
@@ -246,9 +247,139 @@ the shipped cross-platform binaries (no external runtime required).
    in Tier 1 design block: the `KeyEvent` type is the cross-platform
    abstraction; per-OS readers normalize into it.*
 
+4. **FFI surface discipline.** See §8 for the normative refuse-list,
+   admission path, and CI enforcement. The two questions §8 leaves
+   underspecified (MLIR-lowered vendor calls, drift-revocation
+   procedure) are resolved inside §8.7.
+
 ---
 
-## 8. Timeline
+## 8. FFI Discipline
+
+> **The runtime's execution predicate is: "produces the identical trace on
+> every run." No per-call override exists. Bindings are admitted to the trace,
+> not exempted from it.**
+
+The wedge is cross-substrate bit-identity. Any nondeterministic surface anywhere
+inside the runtime kills it — Rust f32 reorders under `-O2`, CUDA tensor cores
+are nondeterministic by API contract, NumPy auto-promotes to f64 at the FFI
+boundary. This section locks the discipline that keeps the wedge intact.
+
+Backed by two unanimous multi-LLM consults (2026-05-24): 4/4 against
+Python/NumPy/PyTorch FFI bridges and 3/3 against opt-in throughput-mode escape
+hatches. Combined finding: any path through nondeterministic numerics — even an
+opt-in flag — fractures the trust property because any undefined behavior can
+then be blamed on the optional path.
+
+### 8.1 Forbidden FFI symbols
+
+The libc syscall allowlist (named in §5) is the only default-admitted surface
+for `extern "C"` calls. Any other binding is forbidden by default, including
+but not limited to:
+
+- Python C-API (`Py_*`, `PyObject_*`)
+- NumPy C-API (auto-promotes to f64 at the boundary)
+- PyTorch ATen (`at::*`, `torch::*`)
+- cuBLAS / cuDNN default mode (nondeterministic by API contract)
+- oneDNN, Intel MKL default mode
+- OpenBLAS default reduction order
+- Any libm transcendental called outside the `std.math.det` wrapper
+
+Catch-all: any `extern "C"` block whose symbol resolves outside the libc
+allowlist + the §8.5 admitted-bindings table is forbidden.
+
+### 8.2 Forbidden compiler / runtime flags
+
+- `--unsafe-fast`, `--ffast-math` equivalent
+- `-ffp-contract=fast` and equivalent FMA-reorder flags
+- Any compile flag mutating IEEE-754 rounding or reduction order
+- Runtime feature flags that select a nondeterministic codegen path
+
+### 8.3 Forbidden annotation surfaces
+
+- `#[allow(nondeterministic)]` — does not exist; will not be added
+- `unsafe { ... }` numeric pragma allowing reorder — forbidden
+- `#[trusted_unverified]` — forbidden (admission goes through §8.4 only)
+- Per-call escape attribute — forbidden
+
+The execution predicate is monolithic: deterministic or refused.
+
+### 8.4 Admission path for deterministic-by-contract bindings
+
+A non-libc binding may be admitted to the trace if and only if **all four**
+conditions hold:
+
+1. **Named symbol subset, not library.** The admission annotation is
+   `#[trusted_deterministic(binding = "<symbol>", version = "<x.y.z>")]`.
+   It admits a specific symbol at a specific version. A sibling nondeterministic
+   entry point in the same library is independently rejected unless separately
+   admitted.
+
+2. **Cross-substrate byte-identity CI gate.** A test in the default
+   `cargo test --workspace --no-fail-fast` surface (no feature flags) asserts
+   byte equality across every RFC 0015 substrate the wedge claims:
+   ```
+   assert_byte_identical(avx2_ref, neon_ref, admitted_binding_output);
+   ```
+   No cosine-similarity gate (`≥ 0.9999`) is accepted — byte-equality only.
+   Tolerance is the A15 trap.
+
+3. **Named explicitly in §8.5 admitted-bindings table.** The annotation alone
+   is not sufficient. The RFC text records each admission ADR-style: motivation,
+   alternatives considered, byte-identity test path, sunset trigger.
+
+4. **Reversible / sunset.** Admission re-validates on every major MIND release
+   AND on every upstream patch bump (firmware, driver, library). NVIDIA Hopper+
+   deterministic-tensor-core firmware revs are the live threat — admit at
+   firmware X, silently drift at firmware X+1; the sunset clause forces
+   re-validation as a precondition to continued admission.
+
+### 8.5 Admitted-bindings table
+
+| Binding | Version | Admitted | Sunset trigger | Byte-identity test |
+| --- | --- | --- | --- | --- |
+| _(empty today; first entry expected from §4.2 Tier 2 TLS scope decision — a named C crypto subset such as a ring or BoringSSL primitive set, only after the §8.4 CI gate passes)_ | — | — | — | — |
+
+### 8.6 CI enforcement
+
+Three layers, all required:
+
+1. **Mindcraft lint rule** (RFC 0007). Scans `extern "C"` blocks; flags any
+   symbol not in the libc allowlist + admitted-bindings table. Fast feedback
+   on `mindc lint`.
+
+2. **Compile-time call-graph check.** `mindc` resolves every call site
+   reachable from a `#[deterministic]` body; any reachable symbol outside
+   libc + the admitted set is a hard compile error with the offending symbol
+   named.
+
+3. **Cross-substrate byte-identity test** (the §8.4 condition 2 test). Lives
+   in the default test surface — never behind a feature flag. The full-
+   workspace-no-features standing gate ensures this runs on every CI green
+   check.
+
+The Mindcraft rule is convenience. The compile-time check is the contract.
+The byte-identity test is the proof.
+
+### 8.7 Resolved sub-questions
+
+- **MLIR-lowered vendor calls** count as FFI by another name. A `#[deterministic]`
+  fn whose MLIR lowering links against cuBLAS / cuDNN / oneDNN is rejected
+  identically to an explicit `extern "C"` call. RFC 0014 per-substrate lowering
+  tier descriptors carry the bindings-set explicitly so this is enforceable at
+  the IR level, not only at the source level.
+- **Equivalence-proof ownership.** STARGA owns the byte-identity test against
+  the AVX2/NEON reference. A binding vendor passes the gate or does not get
+  admitted; no vendor is asked to provide the proof itself.
+- **Revocation procedure when an admitted binding drifts.** Hard-break next
+  release, no deprecation window. Drift is always STARGA's call, not the
+  binding vendor's. The discipline that keeps the wedge intact must not bend
+  to ecosystem-friendliness arguments — every cosine-tolerance once was
+  ecosystem-friendliness too.
+
+---
+
+## 9. Timeline
 
 Realistic earliest end-to-end: **mid-to-late 2027**, gated by:
 - Phase 15 self-host landing first (so the agent CLI compiles under
