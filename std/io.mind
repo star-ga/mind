@@ -133,6 +133,31 @@ pub fn sgr_fg_cyan()     -> i64 { 36 }
 pub fn sgr_fg_white()    -> i64 { 37 }
 pub fn sgr_fg_default()  -> i64 { 39 }
 
+// string_push_ansi_sgr — append a complete SGR escape sequence
+// (`ESC [ <code> m`) to `s`.  Composes string_push_i64 with the
+// ECMA-48 framing so callers can build coloured output as a single
+// String value and emit it through `file_write` / `print_bytes`.
+//
+// Usage:
+//   use std.string;
+//   use std.io;
+//   let buf: String = string_new();
+//   let buf2: String = string_push_ansi_sgr(buf,  sgr_fg_red());
+//   // ... push payload bytes via string_push_byte ...
+//   let buf3: String = string_push_ansi_sgr(buf2, sgr_reset());
+//
+// The helper takes the SGR code as an i64 (not a typed style enum)
+// so callers can supply any ECMA-48 parameter — including 256-color
+// and 24-bit truecolor codes (38;5;n / 38;2;r;g;b) once those
+// compose-multiple-params writers land.
+pub fn string_push_ansi_sgr(s: String, code: i64) -> String {
+    let mut out: String = string_push_byte(s, 27);   // ESC
+    out = string_push_byte(out, 91);                 // '['
+    out = string_push_i64(out, code);
+    out = string_push_byte(out, 109);                // 'm'
+    out
+}
+
 // Background colour (standard 8):
 pub fn sgr_bg_black()    -> i64 { 40 }
 pub fn sgr_bg_red()      -> i64 { 41 }
