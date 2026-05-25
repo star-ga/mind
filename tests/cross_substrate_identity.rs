@@ -67,6 +67,9 @@ const SRC: &str = r#"
 pub fn dotq(a: i64, b: i64, n: i64) -> i64 {
     __mind_blas_dot_q16_v(a, b, n)
 }
+pub fn dotl1q(a: i64, b: i64, n: i64) -> i64 {
+    __mind_blas_dot_l1_q16_v(a, b, n)
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
@@ -145,24 +148,44 @@ fn ref_dot_q16_scalar(a: &[i32], b: &[i32]) -> i64 {
     (acc as i32) as i64
 }
 
-/// Workload spec, mirroring tests/cross_substrate_identity/dot-l2-q16/manifest.toml.
-/// (A full TOML reader lands with the pure-MIND CLI; the internal gate pins the
-/// values here and the manifest documents them for the public consumer.)
-const WORKLOAD_ID: &str = "dot-l2-q16";
-const SEED: u64 = 0xDEADBEEF;
-const LENGTH: usize = 65536;
+/// Track A scalar oracle for Q16.16 L1, byte-for-byte
+/// (`mind_blas_dot_l1_q16_scalar`): `d=|a-b|` accumulated, then `(i64)(i32)acc`.
+fn ref_dot_l1_q16_scalar(a: &[i32], b: &[i32]) -> i64 {
+    let mut acc: i64 = 0;
+    for i in 0..a.len() {
+        let mut d = (a[i] as i64) - (b[i] as i64);
+        if d < 0 {
+            d = -d;
+        }
+        acc += d;
+    }
+    (acc as i32) as i64
+}
 
-fn workload_dir() -> PathBuf {
+/// A dot-style workload, mirroring tests/cross_substrate_identity/<id>/manifest.toml.
+/// (A full TOML reader lands with the pure-MIND CLI; the internal gate pins the
+/// values here and the manifest documents them for the public consumer.) Every
+/// field except `oracle` is also stated in the manifest — single source of truth.
+struct DotWorkload {
+    id: &'static str,
+    symbol: &'static [u8],
+    seed: u64,
+    length: usize,
+    /// Independent scalar reference the vector path must match within a run.
+    oracle: fn(&[i32], &[i32]) -> i64,
+}
+
+fn workload_dir(id: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("cross_substrate_identity")
-        .join(WORKLOAD_ID)
+        .join(id)
 }
 
 /// Read the committed reference hash for a substrate from reference_hashes.toml.
 /// Format: `<substrate> = "<sha256>"` lines (minimal parse — no toml dep).
-fn reference_hash(substrate: &str) -> Option<String> {
-    let path = workload_dir().join("reference_hashes.toml");
+fn reference_hash(id: &str, substrate: &str) -> Option<String> {
+    let path = workload_dir(id).join("reference_hashes.toml");
     let text = std::fs::read_to_string(&path).ok()?;
     for line in text.lines() {
         let line = line.trim();
@@ -186,47 +209,73 @@ fn canonical_hash(result: i64) -> String {
     format!("{:x}", h.finalize())
 }
 
-#[test]
-fn dot_l2_q16_reproducibility_gate() {
+/// Run one dot-style workload: build/dlopen the kernel, regenerate the seeded
+/// input, run the vector path, cross-check the scalar oracle (within-run
+/// exactness — the integer reduction is associative, so this is exact), then
+/// pin the canonical output hash to the committed per-substrate reference
+/// (across-build / across-machine / across-time byte-identity). Self-skips
+/// without the MLIR toolchain.
+fn run_dot_workload(w: &DotWorkload) {
     let Some(so) = build_dot_so() else {
         return; // toolchain shadowed — self-skip
     };
     let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
-    let dotq: Symbol<DotFn> = unsafe { lib.get(b"dotq").expect("dotq symbol") };
+    let dot: Symbol<DotFn> = unsafe { lib.get(w.symbol).expect("workload symbol") };
 
-    let (a, b) = make_pair_q16(LENGTH, SEED);
+    let (a, b) = make_pair_q16(w.length, w.seed);
 
-    // 1. Vector path == scalar oracle (within-run exactness; integer
-    //    reduction is associative so this is exact, not approximate).
-    let vec_result = unsafe { dotq(a.as_ptr() as i64, b.as_ptr() as i64, LENGTH as i64) };
-    let oracle = ref_dot_q16_scalar(&a, &b);
+    let vec_result = unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, w.length as i64) };
+    let oracle = (w.oracle)(&a, &b);
     assert_eq!(
         vec_result, oracle,
-        "{WORKLOAD_ID}: vector path diverged from scalar oracle within a single run"
+        "{}: vector path diverged from scalar oracle within a single run",
+        w.id
     );
 
-    // 2. Canonical hash pinned to the committed per-substrate reference
-    //    (across-build / across-machine / across-time byte-identity).
     let computed = canonical_hash(vec_result);
     let substrate = host_substrate();
 
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
-        println!("BLESS {WORKLOAD_ID} {substrate} {computed}");
+        println!("BLESS {} {substrate} {computed}", w.id);
         return;
     }
 
-    match reference_hash(substrate) {
+    match reference_hash(w.id, substrate) {
         Some(expected) => assert_eq!(
             computed, expected,
-            "{WORKLOAD_ID} [{substrate}]: output hash drifted from the committed reference.\n\
+            "{} [{substrate}]: output hash drifted from the committed reference.\n\
              computed={computed}\n expected={expected}\n result_i64={vec_result}\n\
              If this is an intentional lowering change (RFC 0020 §13), re-bless with \
-             MIND_BENCH_BLESS=1 and commit the new reference_hashes.toml."
+             MIND_BENCH_BLESS=1 and commit the new reference_hashes.toml.",
+            w.id
         ),
         None => panic!(
-            "{WORKLOAD_ID}: no reference hash for substrate '{substrate}' in \
-             reference_hashes.toml. Computed hash is {computed} (result_i64={vec_result}); \
-             bless it with MIND_BENCH_BLESS=1 if this host is canonical."
+            "{}: no reference hash for substrate '{substrate}' in reference_hashes.toml. \
+             Computed hash is {computed} (result_i64={vec_result}); bless it with \
+             MIND_BENCH_BLESS=1 if this host is canonical.",
+            w.id
         ),
     }
+}
+
+#[test]
+fn dot_l2_q16_reproducibility_gate() {
+    run_dot_workload(&DotWorkload {
+        id: "dot-l2-q16",
+        symbol: b"dotq",
+        seed: 0xDEADBEEF,
+        length: 65536,
+        oracle: ref_dot_q16_scalar,
+    });
+}
+
+#[test]
+fn dot_l1_q16_reproducibility_gate() {
+    run_dot_workload(&DotWorkload {
+        id: "dot-l1-q16",
+        symbol: b"dotl1q",
+        seed: 0xDEADBEEF,
+        length: 65536,
+        oracle: ref_dot_l1_q16_scalar,
+    });
 }

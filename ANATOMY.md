@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2643 | **Est. tokens:** ~6,554,548
-**Generated:** 2026-05-25 22:01 UTC
+**Files:** 2645 | **Est. tokens:** ~6,555,164
+**Generated:** 2026-05-25 22:03 UTC
 
 ## Token Budget Guide
 
@@ -395,11 +395,12 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 16 | ~74,930 |
-| `tests/` | 154 | ~251,447 |
+| `tests/` | 154 | ~251,776 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
+| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~287 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
 | `tests/fixtures/` | 6 | ~191 |
 | `tests/ir_verification/` | 2 | ~108 |
@@ -3795,13 +3796,17 @@
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/dot-l1-q16/`
+
+- `manifest.toml` (~157 tok, small) — version = "1"
+- `reference_hashes.toml` (~130 tok, small) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
 ### `tests/cross_substrate_identity/dot-l2-q16/`
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
 - `reference_hashes.toml` (~281 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~2287 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~2616 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
