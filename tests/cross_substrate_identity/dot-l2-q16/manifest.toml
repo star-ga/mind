@@ -1,0 +1,35 @@
+# mind-bench workload manifest — RFC 0020 §4.3.
+#
+# Single source of truth, two consumers:
+#   1. tests/cross_substrate_identity.rs  — the internal merge-gate (RFC 0020 §10),
+#      which produces the very hash the public reference manifest publishes.
+#   2. bin/mind-bench (future, pure-MIND CLI) — the public one-command verify path.
+#
+# The workload is deterministic by construction: the input is regenerated from
+# `seed` via the shared LCG (the same generator blas_vec_q16_smoke.rs uses), so
+# no input.bin blob is committed — the seed IS the input spec. Output is the
+# single Q16.16 dot result serialised as 8 little-endian bytes; its sha256 is
+# the reference hash in reference_hashes.toml.
+
+version = "1"
+name = "dot-l2-q16"
+description = "Q16.16 L2 dot reduction over two len-65536 vectors (RFC 0006 dot_q16_v); exact integer reduction, the proven cross-substrate bit-identity primitive."
+weight = 1.0
+
+# Substrates this workload is defined for. Per RFC 0015 §3.1 every listed
+# substrate MUST share the same content hash for a Q16.16 workload — that
+# shared hash IS the cross-substrate bit-identity claim, made inspectable.
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec (consumed by the shared LCG).
+[input]
+generator = "lcg"          # x' = x*1664525 + 1013904223; sample = (x>>16 as i32) >> 12
+seed = 3735928559          # 0xDEADBEEF — RFC 0020 §4.1 canonical seed
+length = 65536
+dtype = "q16_16"           # two parallel i32 Q16.16 arrays, a and b
+
+# Kernel under test (mindc native vector-dialect lowering, no C shim).
+[kernel]
+symbol = "__mind_blas_dot_q16_v"
+returns = "i64"            # truncate-to-low-32 of the Q16.16 accumulator
+output_encoding = "i64_le" # 8 little-endian bytes, then sha256

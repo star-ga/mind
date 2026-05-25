@@ -38,6 +38,7 @@ criterion = "0.5"
 proptest = "1.4"
 which = "6"
 libloading = "0.8"
+sha2 = "0.10"
 
 [lib]
 name = "libmind"
