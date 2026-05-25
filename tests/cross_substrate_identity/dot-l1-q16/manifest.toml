@@ -1,0 +1,20 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes; this workload exercises the Q16.16 L1 (sum of
+# absolute differences) reduction, the second exact-integer bit-identity path.
+
+version = "1"
+name = "dot-l1-q16"
+description = "Q16.16 L1 reduction (sum |a-b|) over two len-65536 vectors (RFC 0006 dot_l1_q16_v); exact integer reduction."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"
+seed = 3735928559          # 0xDEADBEEF
+length = 65536
+dtype = "q16_16"
+
+[kernel]
+symbol = "__mind_blas_dot_l1_q16_v"
+returns = "i64"
+output_encoding = "i64_le"

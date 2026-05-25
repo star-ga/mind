@@ -1,0 +1,9 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes. Q16.16 L1 reduction is exact integer
+# arithmetic, so avx2 == neon by construction (RFC 0015 §3.1).
+#
+#   avx2 — verified on x86_64 (this gate, 2026-05-25).
+#   neon — asserted identical per RFC 0015 §3.1; enforced on the aarch64 CI runner.
+
+avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
+neon = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
