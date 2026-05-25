@@ -118,6 +118,7 @@ fn struct_lit_emits_alloc_plus_n_stores() {
             },
             Node::Let {
                 name: "v".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Vec".to_string(),
@@ -165,6 +166,7 @@ fn struct_lit_reorders_out_of_order_fields_into_canonical_order() {
             },
             Node::Let {
                 name: "v".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Vec".to_string(),
@@ -224,6 +226,7 @@ fn struct_lit_without_struct_def_falls_back_to_literal_order() {
     let module = Module {
         items: vec![Node::Let {
             name: "v".to_string(),
+            mutable: false,
             ann: None,
             value: Box::new(Node::StructLit {
                 name: "Unknown".to_string(),
@@ -262,6 +265,7 @@ fn struct_lit_alloc_uses_8_times_field_count_bytes() {
             },
             Node::Let {
                 name: "t".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Triple".to_string(),

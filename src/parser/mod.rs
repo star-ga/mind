@@ -1864,12 +1864,16 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         // Phase 10.6: accept `let mut name = ...`. mindc semantics treat
         // mut as informational — the eval/codegen path mutates the binding
-        // in the local env regardless of the marker; the parser accepts
-        // it for surface-syntax parity with mutable-accumulator idioms.
-        if self.at_keyword(b"mut") {
+        // in the local env regardless of the marker; the parser records
+        // it so the formatter can round-trip the keyword (it is otherwise
+        // not load-bearing for type-checking or codegen).
+        let mutable = if self.at_keyword(b"mut") {
             self.pos += 3;
             self.skip_ws_and_newlines();
-        }
+            true
+        } else {
+            false
+        };
         let name = self
             .word()
             .ok_or_else(|| self.err("expected variable name".into()))?
@@ -1889,6 +1893,7 @@ impl<'a> P<'a> {
         let span = Span::new(start, self.pos);
         Ok(Node::Let {
             name,
+            mutable,
             ann,
             value: Box::new(value),
             span,

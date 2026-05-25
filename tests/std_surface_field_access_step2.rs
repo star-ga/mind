@@ -175,6 +175,7 @@ fn step2_fn_return_receiver_resolves_field_access() {
             },
             Node::Let {
                 name: "v".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::FieldAccess {
                     receiver: Box::new(Node::Call {
@@ -225,6 +226,7 @@ fn step2_fn_with_non_struct_return_does_not_pollute_side_table() {
             },
             Node::Let {
                 name: "v".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::FieldAccess {
                     receiver: Box::new(Node::Call {
@@ -277,6 +279,7 @@ fn step2_chained_access_falls_through_when_inner_field_is_scalar() {
             },
             Node::Let {
                 name: "p".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Pair".to_string(),
@@ -290,6 +293,7 @@ fn step2_chained_access_falls_through_when_inner_field_is_scalar() {
             },
             Node::Let {
                 name: "v".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::FieldAccess {
                     receiver: Box::new(Node::FieldAccess {
@@ -344,6 +348,7 @@ fn step1_path_still_used_when_receiver_is_bound_ident() {
             },
             Node::Let {
                 name: "v".to_string(),
+                mutable: false,
                 ann: None,
                 value: Box::new(Node::StructLit {
                     name: "Vec".to_string(),
