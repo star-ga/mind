@@ -108,6 +108,42 @@ pub fn string_eq(a: String, b: String) -> i64 {
 // Byte-loop placeholder — single-bucket compare for now.
 // Multi-byte loop lands with std.vec's loop codegen.
 
+// string_starts_with — does `haystack` begin with `needle` (byte
+// equality, no Unicode normalisation)?  Returns 1 if so, 0 otherwise.
+// An empty `needle` is a prefix of every String (returns 1); a needle
+// longer than haystack always returns 0.
+pub fn string_starts_with(haystack: String, needle: String) -> i64 {
+    if needle.len > haystack.len {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    while i < needle.len {
+        let h: i64 = string_get_byte(haystack, i);
+        let n: i64 = string_get_byte(needle, i);
+        if h != n {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// string_slice_from — substring view starting at byte index `start`.
+// Returns a String that shares the underlying buffer (zero-copy view)
+// with cap=0 so any subsequent push_byte / push_str / push_i64 against
+// the result allocates a fresh buffer instead of writing into the
+// shared region.  `start` clamps: `start >= len` returns an empty
+// String, `start < 0` returns the input unchanged.
+pub fn string_slice_from(s: String, start: i64) -> String {
+    if start >= s.len {
+        return string_new();
+    }
+    if start < 0 {
+        return s;
+    }
+    String { addr: s.addr + start, len: s.len - start, cap: 0 }
+}
+
 // string_push_str — append every byte of `src` to `dst`, returning
 // the new String.  Grows-and-copies semantics: when the existing
 // capacity is insufficient, allocates a new buffer sized at the
