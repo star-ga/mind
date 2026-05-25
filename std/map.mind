@@ -85,15 +85,21 @@ pub fn map_insert(m: Map, key: i64, value: i64) -> Map {
             m.cap * 2
         }
     };
+    // Grow-and-preserve via __mind_realloc (realloc(NULL,n) === malloc(n) on
+    // the cap-0 path, copies existing entries on the doubling path). The plain
+    // __mind_alloc this used to call lost all m.len existing keys/vals when the
+    // doubling kicked in (5th insert past the 4-element init) — the same latent
+    // bug fixed for string_push_byte / vec_push in 3c2294c, here for the map
+    // keys + vals arrays.
     let new_keys: i64 = if new_cap == m.cap {
         m.keys_addr
     } else {
-        __mind_alloc(new_cap * 8)
+        __mind_realloc(m.keys_addr, new_cap * 8)
     };
     let new_vals: i64 = if new_cap == m.cap {
         m.vals_addr
     } else {
-        __mind_alloc(new_cap * 8)
+        __mind_realloc(m.vals_addr, new_cap * 8)
     };
     __mind_store_i64(new_keys + m.len * 8, key);
     __mind_store_i64(new_vals + m.len * 8, value);

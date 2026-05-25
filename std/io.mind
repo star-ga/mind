@@ -107,7 +107,9 @@ extern "C" {
 // fold to 0 — a bad fd is not a terminal).
 pub fn io_isatty(f: File) -> i64 {
     let r: i32 = isatty(f.fd as i32);
-    if r == 1 { 1 } else { 0 }
+    // Any non-zero return is a TTY (POSIX returns 1; Windows console shims may
+    // return other truthy values). -1/EBADF (a bad fd) is 0 — not a terminal.
+    if r != 0 { 1 } else { 0 }
 }
 
 // --- ANSI SGR codes (ECMA-48 §8.3.117) ---
