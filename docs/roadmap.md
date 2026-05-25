@@ -777,6 +777,8 @@ MIND programs and the AI-era efficiency claim.
 
 ## Phase 16 — CLI Agent Harness Stack
 
+> **Full design: [`docs/rfcs/0013-cli-agent-harness-stack.md`](rfcs/0013-cli-agent-harness-stack.md)** (Draft). This section is the roadmap surface; per-tier design — including the Tier 2 TLS scope decision (pure-MIND vs named-C-crypto FFI) — lives in the RFC.
+
 ### Goals
 
 Bring the MIND stdlib + runtime to the point where a Rust-class CLI

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2627 | **Est. tokens:** ~6,519,276
-**Generated:** 2026-05-25 01:02 UTC
+**Files:** 2628 | **Est. tokens:** ~6,522,559
+**Generated:** 2026-05-25 01:05 UTC
 
 ## Token Budget Guide
 
@@ -36,13 +36,13 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 23 | ~27,981 |
+| `docs/` | 23 | ~28,047 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 18 | ~72,155 |
+| `docs/rfcs/` | 19 | ~75,372 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -620,11 +620,12 @@
 - `0010-memory-safety-and-c-abi.md` (~7359 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `0012-tensor-native-syntax.md` (~11307 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
+- `0013-cli-agent-harness-stack.md` (~3217 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~12074 tok, huge) — Roadmap
+- `roadmap.md` (~12140 tok, huge) — Roadmap
 - `security.md` (~753 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
