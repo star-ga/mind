@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2636 | **Est. tokens:** ~6,540,051
-**Generated:** 2026-05-25 03:27 UTC
+**Files:** 2637 | **Est. tokens:** ~6,541,148
+**Generated:** 2026-05-25 03:29 UTC
 
 ## Token Budget Guide
 
@@ -394,8 +394,8 @@
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 15 | ~72,410 |
-| `tests/` | 151 | ~246,697 |
+| `std/` | 15 | ~72,711 |
+| `tests/` | 152 | ~247,493 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3730,7 +3730,7 @@
 
 - `async.mind` (~2465 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
-- `cli.mind` (~2499 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+- `cli.mind` (~2800 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~1694 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
@@ -3998,6 +3998,7 @@
 - `std_surface_cdylib_link.rs` (~1423 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~871 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1002 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_cli_subcommand.rs` (~796 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access.rs` (~2872 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3344 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
