@@ -102,3 +102,41 @@ pub fn string_eq(a: String, b: String) -> i64 {
 }
 // Byte-loop placeholder — single-bucket compare for now.
 // Multi-byte loop lands with std.vec's loop codegen.
+
+// string_push_i64 — append the decimal ASCII representation of `n`
+// to `s`, returning the new String.  Most-significant-digit-first
+// emission: a power-of-10 divisor is established by repeated /10
+// then digits are extracted high-to-low so no temporary buffer or
+// reversal step is needed.  The 64-bit signed range emits as many as
+// 20 bytes (e.g. -9223372036854775808 = `-` + 19 digits).
+//
+// Edge cases:
+//   - `n == 0`  emits the single byte `'0'`
+//   - `n < 0`   emits `'-'` then |n|
+//   - `i64::MIN` is documented as undefined: the `0 - n` negation
+//     overflows.  Callers needing the absolute extreme should mask
+//     it off at their layer; the agent-CLI text-output paths that
+//     drive this helper never hit that boundary.
+pub fn string_push_i64(s: String, n: i64) -> String {
+    if n == 0 {
+        return string_push_byte(s, 48);
+    }
+    let mut out: String = s;
+    let mut nn: i64 = n;
+    if n < 0 {
+        out = string_push_byte(out, 45);
+        nn = 0 - n;
+    }
+    let mut div: i64 = 1;
+    let mut tmp: i64 = nn;
+    while tmp >= 10 {
+        div = div * 10;
+        tmp = tmp / 10;
+    }
+    while div > 0 {
+        let digit: i64 = (nn / div) % 10;
+        out = string_push_byte(out, 48 + digit);
+        div = div / 10;
+    }
+    out
+}
