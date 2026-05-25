@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2640 | **Est. tokens:** ~6,551,523
-**Generated:** 2026-05-25 21:22 UTC
+**Files:** 2643 | **Est. tokens:** ~6,554,548
+**Generated:** 2026-05-25 22:01 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~20,090 |
+| `./` | 32 | ~20,094 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 22 | ~90,109 |
+| `docs/rfcs/` | 22 | ~90,126 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -395,11 +395,12 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 16 | ~74,930 |
-| `tests/` | 153 | ~249,160 |
+| `tests/` | 154 | ~251,447 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
+| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
 | `tests/fixtures/` | 6 | ~191 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -434,7 +435,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~865 tok, large) — [package]
+- `Cargo.toml` (~869 tok, large) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -623,7 +624,7 @@
 - `0013-cli-agent-harness-stack.md` (~5466 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~4898 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0020-mind-bench-reproducibility-harness.md` (~4059 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
+- `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -3794,6 +3795,13 @@
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/dot-l2-q16/`
+
+- `manifest.toml` (~436 tok, medium) — version = "1"
+- `reference_hashes.toml` (~281 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+### `tests/`
+
+- `cross_substrate_identity.rs` (~2287 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
