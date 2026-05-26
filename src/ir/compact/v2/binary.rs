@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
-use super::types::{DType, Graph, Opcode, TensorType, Value};
+use super::types::{DType, Graph, Map, MapValue, Opcode, TensorType, Value};
 use super::varint::{sleb128_read, sleb128_write, uleb128_read, uleb128_write};
 use super::{MICB_MAGIC, MICB_VERSION};
 
@@ -91,6 +91,7 @@ impl<'a> MicbEncoder<'a> {
         // 1. Symbols
         // 2. Type dimension tokens
         // 3. Value names
+        // 4. MAP keys and string values (canonical order, §3.4)
 
         for sym in &self.graph.symbols {
             self.intern(sym);
@@ -112,6 +113,12 @@ impl<'a> MicbEncoder<'a> {
                 }
                 _ => {}
             }
+        }
+
+        // MAP strings appended after graph strings in canonical order.
+        let canonical_map = self.graph.map.canonicalize();
+        if !canonical_map.is_empty() {
+            self.intern_map_strings(&canonical_map);
         }
     }
 
@@ -158,6 +165,66 @@ impl<'a> MicbEncoder<'a> {
         // Output
         uleb128_write(w, self.graph.output as u64)?;
 
+        // MAP section (§3.4): only emit when non-empty (§5 rule 10 / §2 rule 3).
+        // String table was already populated by build_string_table() above.
+        let canonical_map = self.graph.map.canonicalize();
+        if !canonical_map.is_empty() {
+            uleb128_write(w, 0x4D)?; // map_marker
+            self.encode_map_entries(w, &canonical_map)?;
+        }
+
+        Ok(())
+    }
+
+    /// Intern all keys and string values in canonical order so the string table
+    /// is stable before encoding MAP entries.
+    fn intern_map_strings(&mut self, map: &Map) {
+        for (key, value) in map.iter_canonical() {
+            self.intern(key);
+            match value {
+                MapValue::String(s) => {
+                    self.intern(s);
+                }
+                MapValue::Nested(inner) => {
+                    self.intern_map_strings(inner);
+                }
+                MapValue::Int(_) | MapValue::Bytes(_) => {}
+            }
+        }
+    }
+
+    /// Encode MAP entries: count then each entry recursively.
+    fn encode_map_entries<W: Write>(&self, w: &mut W, map: &Map) -> Result<(), MicbError> {
+        uleb128_write(w, map.len() as u64)?;
+        for (key, value) in map.iter_canonical() {
+            let key_idx = self.string_map[key];
+            uleb128_write(w, key_idx as u64)?;
+            self.encode_map_value(w, value)?;
+        }
+        Ok(())
+    }
+
+    fn encode_map_value<W: Write>(&self, w: &mut W, value: &MapValue) -> Result<(), MicbError> {
+        match value {
+            MapValue::String(s) => {
+                w.write_all(&[0])?; // value_tag = 0
+                let idx = self.string_map[s.as_str()];
+                uleb128_write(w, idx as u64)?;
+            }
+            MapValue::Int(i) => {
+                w.write_all(&[1])?; // value_tag = 1
+                sleb128_write(w, *i)?;
+            }
+            MapValue::Bytes(b) => {
+                w.write_all(&[2])?; // value_tag = 2
+                uleb128_write(w, b.len() as u64)?;
+                w.write_all(b)?;
+            }
+            MapValue::Nested(inner) => {
+                w.write_all(&[3])?; // value_tag = 3
+                self.encode_map_entries(w, inner)?;
+            }
+        }
         Ok(())
     }
 
@@ -329,11 +396,16 @@ impl MicbDecoder {
             });
         }
 
+        // §3.4 detection rule: after output varint, peek one byte.
+        // EOF → no MAP (empty). 0x4D → MAP follows. Any other → parse error.
+        let map = self.decode_map_section(r)?;
+
         Ok(Graph {
             symbols,
             types,
             values,
             output,
+            map,
         })
     }
 
@@ -391,6 +463,80 @@ impl MicbDecoder {
             }
             _ => Err(MicbError {
                 message: format!("unknown value tag: {}", tag[0]),
+            }),
+        }
+    }
+
+    /// §3.4 detection rule: peek one byte after output varint.
+    /// EOF → empty MAP. 0x4D → MAP section follows. Any other → parse error.
+    fn decode_map_section<R: Read>(&self, r: &mut R) -> Result<Map, MicbError> {
+        let mut sentinel = [0u8; 1];
+        match r.read_exact(&mut sentinel) {
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                // EOF = no MAP section (§2 rule 3, §3.4).
+                return Ok(Map::new());
+            }
+            Err(e) => return Err(MicbError { message: e.to_string() }),
+            Ok(()) => {}
+        }
+        if sentinel[0] != 0x4D {
+            return Err(MicbError {
+                message: format!(
+                    "unexpected byte 0x{:02X} after output varint: expected 0x4D (MAP) or EOF",
+                    sentinel[0]
+                ),
+            });
+        }
+        // MAP marker confirmed — read entries.
+        self.decode_map_entries(r)
+    }
+
+    fn decode_map_entries<R: Read>(&self, r: &mut R) -> Result<Map, MicbError> {
+        let count = uleb128_read(r)? as usize;
+        let mut map = Map::new();
+        for _ in 0..count {
+            let key_idx = uleb128_read(r)? as usize;
+            if key_idx >= self.strings.len() {
+                return Err(MicbError {
+                    message: format!("MAP key string index {key_idx} out of bounds"),
+                });
+            }
+            let key = self.strings[key_idx].clone();
+            let value = self.decode_map_value(r)?;
+            map.insert_unique(key, value).map_err(|e| MicbError { message: e })?;
+        }
+        Ok(map)
+    }
+
+    fn decode_map_value<R: Read>(&self, r: &mut R) -> Result<MapValue, MicbError> {
+        let mut tag = [0u8; 1];
+        r.read_exact(&mut tag)?;
+        match tag[0] {
+            0 => {
+                let idx = uleb128_read(r)? as usize;
+                if idx >= self.strings.len() {
+                    return Err(MicbError {
+                        message: format!("MAP string value index {idx} out of bounds"),
+                    });
+                }
+                Ok(MapValue::String(self.strings[idx].clone()))
+            }
+            1 => {
+                let i = sleb128_read(r)?;
+                Ok(MapValue::Int(i))
+            }
+            2 => {
+                let len = uleb128_read(r)? as usize;
+                let mut buf = vec![0u8; len];
+                r.read_exact(&mut buf)?;
+                Ok(MapValue::Bytes(buf))
+            }
+            3 => {
+                let inner = self.decode_map_entries(r)?;
+                Ok(MapValue::Nested(inner))
+            }
+            other => Err(MicbError {
+                message: format!("unknown MAP value tag: {other}"),
             }),
         }
     }

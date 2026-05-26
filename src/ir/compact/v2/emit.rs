@@ -9,7 +9,7 @@
 //! - No trailing newline after final output line
 //! - Sections in order: header, symbols, types, values, output
 
-use super::types::{Graph, Opcode, Value};
+use super::types::{Graph, Map, MapValue, Opcode, Value};
 use super::MIC2_HEADER;
 
 /// Emit a Graph as canonical mic@2 text.
@@ -65,12 +65,86 @@ impl Mic2Emitter {
             self.output.push('\n');
         }
 
-        // Output (no trailing newline - canonical)
+        // Output (no trailing newline before optional MAP block)
         self.output.push('O');
         self.output.push(' ');
         self.output.push_str(&graph.output.to_string());
 
+        // MAP section (§3.2 / §5 rule 7 / §5 rule 10): omit entirely when empty.
+        let canonical_map = graph.map.canonicalize();
+        if !canonical_map.is_empty() {
+            self.output.push('\n');
+            self.emit_map_block(&canonical_map, 0);
+        }
+
         self.output.clone()
+    }
+
+    fn emit_map_block(&mut self, map: &Map, _depth: usize) {
+        self.output.push_str("map {\n");
+        for (key, value) in map.iter_canonical() {
+            self.output.push_str("  ");
+            self.output.push_str(key);
+            self.output.push_str(" = ");
+            self.emit_map_value(value, 1);
+            self.output.push('\n');
+        }
+        self.output.push('}');
+    }
+
+    fn emit_map_value(&mut self, value: &MapValue, depth: usize) {
+        match value {
+            MapValue::String(s) => {
+                self.output.push('"');
+                for ch in s.chars() {
+                    match ch {
+                        '"' => self.output.push_str("\\\""),
+                        '\\' => self.output.push_str("\\\\"),
+                        '\n' => self.output.push_str("\\n"),
+                        '\t' => self.output.push_str("\\t"),
+                        c if c.is_ascii() && (c as u8) < 0x20 => {
+                            // Control characters: \uXXXX
+                            self.output.push_str(&format!("\\u{:04X}", c as u32));
+                        }
+                        c if !c.is_ascii() && !is_printable_nonascii(c) => {
+                            // Non-printable non-ASCII: encode each code unit as \uXXXX
+                            for unit in c.encode_utf16(&mut [0u16; 2]) {
+                                self.output.push_str(&format!("\\u{:04X}", unit));
+                            }
+                        }
+                        c => self.output.push(c),
+                    }
+                }
+                self.output.push('"');
+            }
+            MapValue::Int(i) => {
+                // §5 rule 13: no leading zeros, no `+`, `-0` → `0`.
+                let n = if *i == 0 { 0i64 } else { *i };
+                self.output.push_str(&n.to_string());
+            }
+            MapValue::Bytes(b) => {
+                // §5 rule 11: lowercase hex.
+                self.output.push_str("bytes(0x");
+                for byte in b {
+                    self.output.push_str(&format!("{:02x}", byte));
+                }
+                self.output.push(')');
+            }
+            MapValue::Nested(inner) => {
+                self.output.push_str("{\n");
+                let indent = "  ".repeat(depth + 1);
+                for (key, val) in inner.iter_canonical() {
+                    self.output.push_str(&indent);
+                    self.output.push_str(key);
+                    self.output.push_str(" = ");
+                    self.emit_map_value(val, depth + 1);
+                    self.output.push('\n');
+                }
+                let close_indent = "  ".repeat(depth);
+                self.output.push_str(&close_indent);
+                self.output.push('}');
+            }
+        }
     }
 
     fn emit_value(&mut self, value: &Value) {
@@ -141,6 +215,14 @@ impl Default for Mic2Emitter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Returns `true` for non-ASCII codepoints that are considered printable
+/// (i.e. they can appear unescaped in a MAP string value per §5 rule 12).
+/// We treat all non-ASCII Unicode as printable unless it is a control
+/// character (general category Cc) or a surrogate.
+fn is_printable_nonascii(c: char) -> bool {
+    !c.is_control()
 }
 
 #[cfg(test)]

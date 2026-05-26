@@ -3,7 +3,7 @@
 
 //! mic@2 text format parser with implicit value IDs.
 
-use super::types::{DType, Graph, Opcode, TensorType, Value};
+use super::types::{DType, Graph, Map, MapValue, Opcode, TensorType, Value};
 use super::MIC2_HEADER;
 
 /// Maximum input size in bytes (10 MB).
@@ -123,7 +123,12 @@ impl<'a> Mic2Parser<'a> {
             // Dispatch by first token
             match first {
                 "S" => self.parse_symbol(&tokens)?,
-                "O" => self.parse_output(&tokens)?,
+                "O" => {
+                    self.parse_output(&tokens)?;
+                    // After O, only a MAP block is permitted (§3.2).
+                    self.parse_map_block_if_present()?;
+                    break;
+                }
                 "a" => self.parse_arg(&tokens)?,
                 "p" => self.parse_param(&tokens)?,
                 _ if first.starts_with('T') => self.parse_type(first, &tokens[1..])?,
@@ -339,6 +344,288 @@ impl<'a> Mic2Parser<'a> {
         self.current_value_id += 1;
         Ok(())
     }
+
+    // -----------------------------------------------------------------------
+    // MAP section parsing (mic@2.1 §3.2)
+    // -----------------------------------------------------------------------
+
+    /// Consume the optional `map { ... }` block if the next non-empty line
+    /// starts with "map".  Leaves the parser positioned after `}`.
+    fn parse_map_block_if_present(&mut self) -> Result<(), Mic2ParseError> {
+        // Scan ahead for a non-empty, non-comment line.
+        while self.line_num < self.lines.len() {
+            let line = self.lines[self.line_num].trim();
+            if line.is_empty() || line.starts_with('#') {
+                self.line_num += 1;
+                continue;
+            }
+            if !line.starts_with("map") {
+                // Not a MAP block — no problem, just return.
+                return Ok(());
+            }
+            // Consume the "map {" line.
+            self.line_num += 1;
+            // Expect the line to be `map {`
+            let rest = line["map".len()..].trim();
+            if rest != "{" {
+                return Err(self.error(format!(
+                    "expected 'map {{', got 'map {}'",
+                    rest
+                )));
+            }
+            let map = self.parse_map_entries(0)?;
+            // §5 rule 10: empty MAP is valid from the wire but canonically
+            // absent — we store it as empty.
+            self.graph.map = map;
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    /// Parse `map_entry*` until the matching `}` line, returning the Map.
+    /// `depth` is used for §3.5 nesting limit.
+    fn parse_map_entries(&mut self, depth: usize) -> Result<Map, Mic2ParseError> {
+        // §3.5: max nesting depth 4.
+        const MAX_NESTING: usize = 4;
+        const MAX_TOTAL_ENTRIES: usize = 4096;
+
+        let mut map = Map::new();
+
+        loop {
+            if self.line_num >= self.lines.len() {
+                return Err(self.error("unterminated map block: missing '}'"));
+            }
+            let line = self.lines[self.line_num];
+            self.line_num += 1;
+
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            // Closing brace.
+            if trimmed == "}" {
+                return Ok(map);
+            }
+
+            // §3.5 total entry count.
+            if map.recursive_entry_count() >= MAX_TOTAL_ENTRIES {
+                return Err(self.error(format!(
+                    "MAP entry count exceeds limit {}",
+                    MAX_TOTAL_ENTRIES
+                )));
+            }
+
+            // Parse `key = value`
+            let eq_pos = trimmed.find('=').ok_or_else(|| {
+                self.error(format!("MAP entry missing '=': {trimmed}"))
+            })?;
+
+            let key_raw = trimmed[..eq_pos].trim();
+            let value_raw = trimmed[eq_pos + 1..].trim();
+
+            // Validate key (dotted idents, §3.2 `map_key`).
+            validate_map_key(key_raw)
+                .map_err(|e| self.error(format!("invalid MAP key '{key_raw}': {e}")))?;
+
+            // §3.5: key length limit 256 bytes.
+            if key_raw.len() > 256 {
+                return Err(self.error(format!(
+                    "MAP key too long ({} bytes, max 256): {}",
+                    key_raw.len(),
+                    key_raw
+                )));
+            }
+
+            // §3.5: key depth (dotted segments) ≤ 8.
+            if key_raw.split('.').count() > 8 {
+                return Err(self.error(format!("MAP key depth exceeds 8 segments: {key_raw}")));
+            }
+
+            let value = if value_raw.starts_with('"') {
+                self.parse_map_string_value(value_raw)?
+            } else if value_raw.starts_with("bytes(") {
+                parse_map_bytes_value(value_raw)
+                    .map_err(|e| self.error(format!("invalid MAP bytes value: {e}")))?
+            } else if value_raw == "{" {
+                // Nested map.
+                if depth >= MAX_NESTING {
+                    return Err(self.error(format!(
+                        "MAP nesting depth exceeds limit {}",
+                        MAX_NESTING
+                    )));
+                }
+                let inner = self.parse_map_entries(depth + 1)?;
+                MapValue::Nested(inner)
+            } else {
+                // Integer.
+                parse_map_int_value(value_raw)
+                    .map_err(|e| self.error(format!("invalid MAP int value: {e}")))?
+            };
+
+            map.insert_unique(key_raw, value)
+                .map_err(|e| self.error(e))?;
+        }
+    }
+
+    fn parse_map_string_value(&self, raw: &str) -> Result<MapValue, Mic2ParseError> {
+        // raw starts with `"` and must end with `"`.
+        if !raw.ends_with('"') || raw.len() < 2 {
+            return Err(self.error(format!("unterminated MAP string: {raw}")));
+        }
+        let inner = &raw[1..raw.len() - 1];
+        // §3.5: string ≤ 64 KiB.
+        if inner.len() > 64 * 1024 {
+            return Err(self.error(format!(
+                "MAP string value exceeds 64 KiB: {} bytes",
+                inner.len()
+            )));
+        }
+        let s = unescape_json_string(inner)
+            .map_err(|e| self.error(format!("invalid MAP string escape: {e}")))?;
+        Ok(MapValue::String(s))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MAP parsing helpers
+// ---------------------------------------------------------------------------
+
+/// Validate that `key` matches `ident ("." ident)*` per §3.2.
+fn validate_map_key(key: &str) -> Result<(), String> {
+    if key.is_empty() {
+        return Err("key is empty".into());
+    }
+    for segment in key.split('.') {
+        if segment.is_empty() {
+            return Err("key segment is empty (double dot or leading/trailing dot)".into());
+        }
+        let mut chars = segment.chars();
+        match chars.next() {
+            Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+            Some(c) => return Err(format!("segment '{segment}' starts with invalid char '{c}'")),
+            None => return Err("empty segment".into()),
+        }
+        for c in chars {
+            if !c.is_ascii_alphanumeric() && c != '_' {
+                return Err(format!(
+                    "segment '{segment}' contains invalid char '{c}'"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Parse `bytes(0xHEXHEX...)` per §3.2.
+fn parse_map_bytes_value(raw: &str) -> Result<MapValue, String> {
+    let inner = raw
+        .strip_prefix("bytes(0x")
+        .and_then(|s| s.strip_suffix(')'))
+        .ok_or_else(|| format!("expected bytes(0xHEX...), got: {raw}"))?;
+
+    // Empty hex (bytes(0x)) is valid: zero bytes.
+    if inner.is_empty() {
+        return Ok(MapValue::Bytes(vec![]));
+    }
+    if inner.len() % 2 != 0 {
+        return Err(format!("bytes() hex must be even-length, got {} chars", inner.len()));
+    }
+    // §3.5: bytes ≤ 1 MiB.
+    const MAX_BYTES: usize = 1024 * 1024;
+    if inner.len() / 2 > MAX_BYTES {
+        return Err(format!(
+            "bytes() value exceeds 1 MiB: {} bytes",
+            inner.len() / 2
+        ));
+    }
+    if !inner.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("bytes() contains non-hex chars: {raw}"));
+    }
+    // §5 rule 11: canonical is lowercase; parse accepts both cases.
+    let bytes: Vec<u8> = inner
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            let hi = hex_nibble(chunk[0]).unwrap();
+            let lo = hex_nibble(chunk[1]).unwrap();
+            (hi << 4) | lo
+        })
+        .collect();
+    Ok(MapValue::Bytes(bytes))
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Parse a decimal signed integer per §3.2.
+fn parse_map_int_value(raw: &str) -> Result<MapValue, String> {
+    // §5 rule 13: no leading zeros, `-0` → `0`.
+    let (negative, digits) = if let Some(d) = raw.strip_prefix('-') {
+        (true, d)
+    } else {
+        (false, raw)
+    };
+
+    if digits.is_empty() {
+        return Err(format!("expected integer, got: {raw}"));
+    }
+
+    // Leading zero check (allow "0" itself, but not "00", "01", etc.)
+    if digits.len() > 1 && digits.starts_with('0') {
+        return Err(format!("integer has leading zero: {raw}"));
+    }
+
+    let n: i64 = raw
+        .parse()
+        .map_err(|_| format!("invalid integer '{raw}'"))?;
+
+    // Normalise -0 → 0.
+    let _ = negative; // used implicitly by parse
+    Ok(MapValue::Int(if n == 0 { 0 } else { n }))
+}
+
+/// Unescape a JSON-style string body (between the outer quotes).
+fn unescape_json_string(s: &str) -> Result<String, String> {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('"') => out.push('"'),
+                Some('\\') => out.push('\\'),
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some('u') => {
+                    // \uXXXX
+                    let mut hex = String::with_capacity(4);
+                    for _ in 0..4 {
+                        match chars.next() {
+                            Some(h) => hex.push(h),
+                            None => return Err("incomplete \\uXXXX escape".into()),
+                        }
+                    }
+                    let code = u32::from_str_radix(&hex, 16)
+                        .map_err(|_| format!("invalid \\u escape: \\u{hex}"))?;
+                    let ch = char::from_u32(code)
+                        .ok_or_else(|| format!("invalid Unicode code point U+{:04X}", code))?;
+                    out.push(ch);
+                }
+                Some(other) => return Err(format!("unknown escape \\{other}")),
+                None => return Err("trailing backslash in string".into()),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
