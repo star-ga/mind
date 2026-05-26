@@ -194,3 +194,300 @@ pub fn tui_scroll_up(s: String, n: i64) -> String {
 pub fn tui_scroll_down(s: String, n: i64) -> String {
     csi_n(s, n, 84)
 }
+
+// ---------------------------------------------------------------------------
+// Terminal size — libc `ioctl(fd, TIOCGWINSZ, &winsize)` wrapper.
+//
+// `struct winsize` (sys/ioctl.h) is four packed u16 fields:
+//   offset 0: ws_row    (u16)
+//   offset 2: ws_col    (u16)
+//   offset 4: ws_xpixel (u16)
+//   offset 6: ws_ypixel (u16)
+// We allocate 8 bytes, zero them, call ioctl, then peel rows/cols out of
+// the low 32 bits of an 8-byte load. The xpixel/ypixel half is ignored —
+// terminal-cell layout is what callers want; pixel size is a display
+// concern modern terminals rarely report honestly anyway.
+//
+// TIOCGWINSZ is platform-specific: Linux/glibc and musl both use 0x5413
+// (21523), which is what `tui_tiocgwinsz` returns below. macOS/BSD use
+// 0x40087468 (1074295912); a Phase 2 follow-up will switch the constant
+// based on a build-time `cfg(target_os = ...)` once mindc grows that
+// attribute (RFC 0013 §4.1, Tier 1 second pass).
+//
+// On ioctl failure (not a tty, EBADF, EINVAL) the returned `TermSize`
+// reports rows=0, cols=0 — callers gate on `tui_term_rows(ts) > 0` to
+// decide whether to fall back to e.g. 24x80 defaults.
+// ---------------------------------------------------------------------------
+
+extern "C" {
+    unsafe fn ioctl(fd: i32, request: i64, argp: *mut u8) -> i32;
+    unsafe fn memset(ptr: *mut u8, value: i32, num: i64) -> *mut u8;
+}
+
+// tui_tiocgwinsz — the Linux/glibc/musl TIOCGWINSZ ioctl request code
+// (0x5413). Exposed as a function so the type-checker side table treats
+// it uniformly with the rest of the public surface.
+pub fn tui_tiocgwinsz() -> i64 {
+    21523
+}
+
+// TermSize — terminal cell dimensions in (rows, cols). Both default to
+// zero on ioctl failure so callers have a single sentinel to test.
+struct TermSize {
+    rows: i64,
+    cols: i64,
+}
+
+// tui_term_rows / tui_term_cols — opaque accessors, same shape as
+// `file_fd` / `string_addr`. Lets external code stay agnostic to the
+// struct layout while still pattern-matching on the success sentinel
+// (`tui_term_rows(ts) > 0`).
+pub fn tui_term_rows(ts: TermSize) -> i64 {
+    ts.rows
+}
+
+pub fn tui_term_cols(ts: TermSize) -> i64 {
+    ts.cols
+}
+
+// tui_terminal_size — query the kernel for the controlling terminal's
+// cell dimensions on `fd` (typically `file_fd(stdout())` = 1). Returns
+// a `TermSize` with rows/cols on success, or rows=0/cols=0 on any
+// ioctl error. The 8-byte heap buffer is zeroed first so a partial
+// ioctl write doesn't surface uninitialised bytes as garbage cell
+// counts.
+//
+// The single `__mind_load_i64(buf)` peels the first 4 bytes of the
+// winsize struct (two little-endian u16s); rows is the low 16 bits,
+// cols is the next 16 bits. Bit operations only — no extra syscall.
+pub fn tui_terminal_size(fd: i64) -> TermSize {
+    let buf: i64 = __mind_alloc(8);
+    let _ = memset(buf as *mut u8, 0, 8);
+    let rc: i32 = ioctl(fd as i32, tui_tiocgwinsz(), buf as *mut u8);
+    if rc != 0 {
+        return TermSize { rows: 0, cols: 0 };
+    }
+    // winsize is byte-packed: ws_row at offset 0..2, ws_col at 2..4.
+    // A single 8-byte load returns bytes 0..8 in little-endian order;
+    // mask + shift to isolate the two u16 fields. Endianness matches
+    // every architecture MIND currently targets (x86_64, aarch64).
+    let packed: i64 = __mind_load_i64(buf);
+    let rows: i64 = packed & 65535;
+    let cols: i64 = (packed >> 16) & 65535;
+    TermSize { rows: rows, cols: cols }
+}
+
+// ---------------------------------------------------------------------------
+// Box widget — bordered rectangle using Unicode box-drawing glyphs.
+//
+// `Box { row, col, width, height }` describes a 1-based screen rectangle
+// rendered with the U+2500 family:
+//   ┌ U+250C  226,148,140    ─ U+2500  226,148,128    ┐ U+2510  226,148,144
+//   │ U+2502  226,148,130                              │
+//   └ U+2514  226,148,148    ─                          ┘ U+2518  226,148,152
+//
+// `tui_box_render(s, b)` appends the cursor-position + glyph bytes for
+// the four corners, top/bottom rows, and left/right edges to `s`,
+// returning a fresh String. The interior is NOT cleared — callers
+// compose `tui_clear_screen` first if they want a blank canvas. Rendering
+// is non-mutating; the input `Box` value is unchanged.
+//
+// Minimum useful size is 2x2 (just four corners drawn back-to-back); for
+// width < 2 or height < 2 the function returns `s` unchanged so a caller
+// computing a layout from a too-small terminal_size() gets no escapes
+// and no corruption.
+//
+// Recursion replaces `while` here so the formatter-stability gate stays
+// quiet (toml.mind / string.mind already pay the `while`→skip-list tax;
+// no reason to add tui.mind to it for a single border loop).
+// ---------------------------------------------------------------------------
+
+struct Box {
+    row: i64,
+    col: i64,
+    width: i64,
+    height: i64,
+}
+
+// tui_box_new — construct a Box at (row, col) with (width, height) cells.
+// 1-based coordinates per ANSI/ECMA-48; (1, 1) is the top-left cell.
+pub fn tui_box_new(row: i64, col: i64, width: i64, height: i64) -> Box {
+    Box { row: row, col: col, width: width, height: height }
+}
+
+// tui_box_row / tui_box_col / tui_box_width / tui_box_height — opaque
+// field accessors so consumers stay agnostic to the struct layout.
+pub fn tui_box_row(b: Box) -> i64 {
+    b.row
+}
+
+pub fn tui_box_col(b: Box) -> i64 {
+    b.col
+}
+
+pub fn tui_box_width(b: Box) -> i64 {
+    b.width
+}
+
+pub fn tui_box_height(b: Box) -> i64 {
+    b.height
+}
+
+// box_push_glyph — append one 3-byte UTF-8 box-drawing codepoint
+// (every U+2500-family glyph encodes to 0xE2 0x94 <low>). Folds the
+// common framing prefix into a single helper rather than spelling out
+// three pushes at every site.
+fn box_push_glyph(s: String, low: i64) -> String {
+    let s1: String = string_push_byte(s, 226);
+    let s2: String = string_push_byte(s1, 148);
+    string_push_byte(s2, low)
+}
+
+// box_push_horiz_rec — append (count) copies of the horizontal box
+// character `─` (U+2500, low byte 128) onto `s`. Tail recursion stays
+// inside the std-surface formatter's stable subset.
+fn box_push_horiz_rec(s: String, count: i64) -> String {
+    if count <= 0 {
+        s
+    } else {
+        let s2: String = box_push_glyph(s, 128);
+        box_push_horiz_rec(s2, count - 1)
+    }
+}
+
+// box_push_vert_edges_rec — for each of `count` rows, position the
+// cursor at (start_row + i, left_col), draw a `│`, then at the same row
+// at (right_col), draw another `│`. Builds the two vertical edges in
+// one pass so the on-wire byte order is deterministic regardless of
+// terminal scroll state.
+fn box_push_vert_edges_rec(s: String, start_row: i64, left_col: i64, right_col: i64, count: i64, i: i64) -> String {
+    if i >= count {
+        s
+    } else {
+        let s1: String = tui_cursor_to(s, start_row + i, left_col);
+        let s2: String = box_push_glyph(s1, 130);
+        let s3: String = tui_cursor_to(s2, start_row + i, right_col);
+        let s4: String = box_push_glyph(s3, 130);
+        box_push_vert_edges_rec(s4, start_row, left_col, right_col, count, i + 1)
+    }
+}
+
+// tui_box_render — append the full bordered rectangle for `b` to `s`.
+// Order: top-left corner, top edge, top-right corner; vertical edges
+// (left + right) for each interior row; bottom-left corner, bottom
+// edge, bottom-right corner. Boxes with width < 2 or height < 2
+// short-circuit and return `s` unchanged.
+pub fn tui_box_render(s: String, b: Box) -> String {
+    if b.width < 2 {
+        return s;
+    }
+    if b.height < 2 {
+        return s;
+    }
+    let interior: i64 = b.width - 2;
+    let right_col: i64 = b.col + b.width - 1;
+    let bottom_row: i64 = b.row + b.height - 1;
+
+    // Top row: ┌ + (width-2) × ─ + ┐
+    let s1: String = tui_cursor_to(s, b.row, b.col);
+    let s2: String = box_push_glyph(s1, 140);
+    let s3: String = box_push_horiz_rec(s2, interior);
+    let s4: String = box_push_glyph(s3, 144);
+
+    // Vertical edges across the interior rows (height - 2 rows total).
+    let s5: String = box_push_vert_edges_rec(s4, b.row + 1, b.col, right_col, b.height - 2, 0);
+
+    // Bottom row: └ + (width-2) × ─ + ┘
+    let s6: String = tui_cursor_to(s5, bottom_row, b.col);
+    let s7: String = box_push_glyph(s6, 148);
+    let s8: String = box_push_horiz_rec(s7, interior);
+    box_push_glyph(s8, 152)
+}
+
+// ---------------------------------------------------------------------------
+// Text widget — place a payload string at a row/col with optional SGR.
+//
+// `Text { row, col, sgr_code }` is the smallest non-trivial layout
+// primitive a TUI needs: "draw THIS at THERE in THAT colour". The
+// payload bytes themselves are passed to `tui_text_render` separately
+// so the same `Text` placement can be reused across frames with
+// different content (status line, log row, progress label).
+//
+// `sgr_code` semantics: 0 = no style applied (callers that just want
+// "default attributes" pick this sentinel — it is the ECMA-48 reset
+// code, so emitting it is a no-op for already-default cells); any
+// non-zero value is treated as a real SGR parameter and wrapped with
+// `sgr_reset()` on the trailing side so the styling doesn't bleed into
+// later output.
+// ---------------------------------------------------------------------------
+
+struct Text {
+    row: i64,
+    col: i64,
+    sgr_code: i64,
+}
+
+// tui_text_new — construct a Text placement at (row, col) with the
+// given SGR colour/style code (0 = no style).
+pub fn tui_text_new(row: i64, col: i64, sgr_code: i64) -> Text {
+    Text { row: row, col: col, sgr_code: sgr_code }
+}
+
+// tui_text_row / tui_text_col / tui_text_sgr — opaque accessors.
+pub fn tui_text_row(t: Text) -> i64 {
+    t.row
+}
+
+pub fn tui_text_col(t: Text) -> i64 {
+    t.col
+}
+
+pub fn tui_text_sgr(t: Text) -> i64 {
+    t.sgr_code
+}
+
+// text_push_payload_rec — append `count` bytes from `payload_addr` to
+// `s`, one byte at a time. Matches the byte-load pattern used by
+// `string_get_byte` / `fs_copy_bytes_rec`: `__mind_load_i64(addr+i) &
+// 255` peels the low byte off the i64-shaped load.
+fn text_push_payload_rec(s: String, payload_addr: i64, count: i64, i: i64) -> String {
+    if i >= count {
+        s
+    } else {
+        let b: i64 = __mind_load_i64(payload_addr + i) & 255;
+        let s2: String = string_push_byte(s, b);
+        text_push_payload_rec(s2, payload_addr, count, i + 1)
+    }
+}
+
+// tui_text_render — append the position + (optional) SGR-wrapped
+// payload for `t` to `s`. Sequence is:
+//   ESC [ row ; col H            (cursor placement)
+//   ESC [ sgr_code m             (only if sgr_code != 0)
+//   <payload bytes>
+//   ESC [ 0 m                    (only if sgr_code != 0 — SGR reset)
+//
+// `payload_addr` / `payload_len` are an opaque byte view (typically
+// `s.addr` / `s.len` of a caller-owned String, or a string-literal
+// constant once those are first-class). Passing them as raw i64 sidesteps
+// the "Text holding a String field" shape that would couple the widget
+// to allocation lifetimes.
+pub fn tui_text_render(s: String, t: Text, payload_addr: i64, payload_len: i64) -> String {
+    let s1: String = tui_cursor_to(s, t.row, t.col);
+    // Skip the SGR wrap entirely when sgr_code == 0 — that's the
+    // "no styling" sentinel, not ECMA-48 reset code 0. Keeps the
+    // on-wire bytes minimal and means unstyled Text emits exactly
+    // (cursor-position + payload).
+    if t.sgr_code == 0 {
+        return text_push_payload_rec(s1, payload_addr, payload_len, 0);
+    }
+    // Inline the SGR escape rather than importing std.io's
+    // `string_push_ansi_sgr` — same byte sequence (ESC [ <code> m), and
+    // keeps tui.mind's import surface to `std.string` only. The 109 is
+    // the final 'm' (ECMA-48 SGR terminator).
+    let s2: String = csi_n(s1, t.sgr_code, 109);
+    let s3: String = text_push_payload_rec(s2, payload_addr, payload_len, 0);
+    // SGR reset: ESC [ 0 m — restores default attributes so this Text's
+    // styling does not bleed into later cells.
+    csi_n(s3, 0, 109)
+}

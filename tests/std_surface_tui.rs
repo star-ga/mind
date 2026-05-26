@@ -97,3 +97,125 @@ fn tui_phase_b_rejects_wrong_arity() {
         "Phase B arity check must reject tui_cursor_to(s0)"
     );
 }
+
+#[test]
+fn tui_terminal_size_resolves_and_carries_accessors() {
+    // Phase 1 add-on: `tui_terminal_size(fd) -> TermSize` plus the
+    // tui_term_rows / tui_term_cols accessors must resolve as a unit
+    // through the bundled stdlib's cross-module resolver. The integer
+    // `fd` is the same opaque i64 `file_fd(stdout())` returns.
+    let table = build_table_with_stdlib();
+    let consumer = "use std.io\n\
+                    use std.tui\n\
+                    let fd = file_fd(stdout())\n\
+                    let ts = tui_terminal_size(fd)\n\
+                    let r = tui_term_rows(ts)\n\
+                    let c = tui_term_cols(ts)\n\
+                    let req = tui_tiocgwinsz()\n";
+    let ast = parser::parse(consumer).expect("consumer must parse");
+    let env = TypeEnv::new();
+    let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
+    assert!(
+        diags.is_empty(),
+        "tui_terminal_size + accessors must resolve via bundled std.tui; got {:?}",
+        diags
+    );
+
+    // Phase B signatures: 1 param for tui_terminal_size, 0 for the constant.
+    let term_size = table
+        .lookup_imported_fn("tui_terminal_size")
+        .expect("tui_terminal_size must be in the bundled stdlib");
+    assert_eq!(
+        term_size.param_types.len(),
+        1,
+        "tui_terminal_size takes (fd: i64)"
+    );
+    let tiocgwinsz = table
+        .lookup_imported_fn("tui_tiocgwinsz")
+        .expect("tui_tiocgwinsz must be in the bundled stdlib");
+    assert!(
+        tiocgwinsz.param_types.is_empty(),
+        "tui_tiocgwinsz is a () -> i64 constant"
+    );
+}
+
+#[test]
+fn tui_box_widget_constructs_and_renders() {
+    // Phase 1 add-on: the Box widget (struct + tui_box_new constructor +
+    // tui_box_render composer) must round-trip through the resolver and
+    // compose with the existing cursor/escape surface so a caller can
+    // build a frame as one String value.
+    let table = build_table_with_stdlib();
+    let consumer = "use std.string\n\
+                    use std.tui\n\
+                    let buf = string_new()\n\
+                    let b = tui_box_new(2, 4, 20, 8)\n\
+                    let frame = tui_box_render(buf, b)\n\
+                    let w = tui_box_width(b)\n\
+                    let h = tui_box_height(b)\n";
+    let ast = parser::parse(consumer).expect("consumer must parse");
+    let env = TypeEnv::new();
+    let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
+    assert!(
+        diags.is_empty(),
+        "Box widget + render must resolve through bundled std.tui; got {:?}",
+        diags
+    );
+
+    // Phase B signature: tui_box_new takes (row, col, width, height).
+    let box_new = table
+        .lookup_imported_fn("tui_box_new")
+        .expect("tui_box_new must be in the bundled stdlib");
+    assert_eq!(
+        box_new.param_types.len(),
+        4,
+        "tui_box_new takes (row, col, width, height)"
+    );
+
+    // tui_box_render takes (s: String, b: Box) — two params.
+    let box_render = table
+        .lookup_imported_fn("tui_box_render")
+        .expect("tui_box_render must be in the bundled stdlib");
+    assert_eq!(
+        box_render.param_types.len(),
+        2,
+        "tui_box_render takes (String, Box)"
+    );
+}
+
+#[test]
+fn tui_text_widget_renders_with_and_without_style() {
+    // Phase 1 add-on: the Text widget composes a cursor-position + (optional)
+    // SGR-wrapped payload. Verifies the four-arg shape resolves against the
+    // bundled stdlib and that the unstyled (sgr_code == 0) and styled paths
+    // both pass the cross-module resolver.
+    let table = build_table_with_stdlib();
+    let consumer = "use std.string\n\
+                    use std.io\n\
+                    use std.tui\n\
+                    let buf = string_new()\n\
+                    let payload = string_new()\n\
+                    let plain = tui_text_new(1, 1, 0)\n\
+                    let red = tui_text_new(2, 5, sgr_fg_red())\n\
+                    let frame0 = tui_text_render(buf, plain, payload.addr, payload.len)\n\
+                    let frame1 = tui_text_render(frame0, red, payload.addr, payload.len)\n\
+                    let sgr = tui_text_sgr(red)\n";
+    let ast = parser::parse(consumer).expect("consumer must parse");
+    let env = TypeEnv::new();
+    let diags = check_module_types_with_modules(&ast, consumer, None, &env, &table);
+    assert!(
+        diags.is_empty(),
+        "Text widget + render must resolve through bundled std.tui; got {:?}",
+        diags
+    );
+
+    // Phase B signature: tui_text_render takes (String, Text, addr, len).
+    let text_render = table
+        .lookup_imported_fn("tui_text_render")
+        .expect("tui_text_render must be in the bundled stdlib");
+    assert_eq!(
+        text_render.param_types.len(),
+        4,
+        "tui_text_render takes (String, Text, payload_addr, payload_len)"
+    );
+}

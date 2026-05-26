@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2649 | **Est. tokens:** ~6,562,119
-**Generated:** 2026-05-26 02:28 UTC
+**Files:** 2649 | **Est. tokens:** ~6,566,470
+**Generated:** 2026-05-26 07:45 UTC
 
 ## Token Budget Guide
 
@@ -387,15 +387,15 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,753 |
+| `src/project/` | 3 | ~20,855 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 16 | ~74,930 |
-| `tests/` | 155 | ~256,803 |
+| `std/` | 16 | ~77,952 |
+| `tests/` | 155 | ~258,030 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3697,7 +3697,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3294 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3396 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3747,7 +3747,7 @@
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `string.mind` (~2325 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
-- `tui.mind` (~1792 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
+- `tui.mind` (~4814 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~765 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
@@ -4042,7 +4042,7 @@
 - `std_surface_string_push_str.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2717 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_toml.rs` (~4127 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_tui.rs` (~1021 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_tui.rs` (~2248 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1753 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1859 tok, huge) — Copyright 2025 STARGA Inc.
