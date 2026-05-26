@@ -1,0 +1,345 @@
+// std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+//
+// u32 arithmetic is emulated on i64: every intermediate result is masked
+// with `& 4294967295` (= 0xFFFFFFFF) to discard the high 32 bits.
+// Logical right-shift: `(x >> n) & 4294967295`.
+// Rotation: `rotr32(x, n)`.
+//
+// Memory layout:
+//   - Input / output byte buffers: one byte per offset (byte i lives at
+//     base + i), matching std.string discipline.
+//     `__mind_store_i64(base + i, b)` writes byte b;
+//     `__mind_load_i64(base + i) & 255` reads it back.
+//   - W schedule (64 words): word k lives at base + k*8 (stride-8, like Vec).
+//   - H state (8 words): same stride-8 layout, 8*8=64 bytes.
+//
+// Public API:
+//   pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64
+//     Reads in_len bytes at in_addr, writes 32-byte big-endian digest to
+//     out_addr (one byte per offset, H0 high byte first), returns 0.
+//
+// Determinism: pure integer arithmetic, no floats, no external calls.
+
+// ---------------------------------------------------------------------------
+// u32-on-i64 primitives
+// ---------------------------------------------------------------------------
+
+// mask32 — discard bits above bit 31.  4294967295 = 0xFFFF_FFFF.
+fn mask32(x: i64) -> i64 {
+    x & 4294967295
+}
+
+// rotr32 — right-rotate in the 32-bit domain.
+fn rotr32(x: i64, n: i64) -> i64 {
+    ((x >> n) | (x << (32 - n))) & 4294967295
+}
+
+// shr32 — logical right-shift in the 32-bit domain.
+fn shr32(x: i64, n: i64) -> i64 {
+    (x >> n) & 4294967295
+}
+
+// ---------------------------------------------------------------------------
+// FIPS 180-4 §4.1.2 Boolean functions
+// ---------------------------------------------------------------------------
+
+// ch(x,y,z) = (x AND y) XOR (NOT x AND z).
+// NOT x in the 32-bit domain: 4294967295 - (x & 4294967295).
+fn ch(x: i64, y: i64, z: i64) -> i64 {
+    let notx: i64 = 4294967295 - (x & 4294967295);
+    mask32((x & y) ^ (notx & z))
+}
+
+// maj(x,y,z) = (x AND y) XOR (x AND z) XOR (y AND z).
+fn maj(x: i64, y: i64, z: i64) -> i64 {
+    mask32((x & y) ^ (x & z) ^ (y & z))
+}
+
+// Σ0(a) = ROTR2(a) XOR ROTR13(a) XOR ROTR22(a).
+fn bsig0(x: i64) -> i64 {
+    mask32(rotr32(x, 2) ^ rotr32(x, 13) ^ rotr32(x, 22))
+}
+
+// Σ1(e) = ROTR6(e) XOR ROTR11(e) XOR ROTR25(e).
+fn bsig1(x: i64) -> i64 {
+    mask32(rotr32(x, 6) ^ rotr32(x, 11) ^ rotr32(x, 25))
+}
+
+// σ0(w) = ROTR7(w) XOR ROTR18(w) XOR SHR3(w).
+fn ssig0(x: i64) -> i64 {
+    mask32(rotr32(x, 7) ^ rotr32(x, 18) ^ shr32(x, 3))
+}
+
+// σ1(w) = ROTR17(w) XOR ROTR19(w) XOR SHR10(w).
+fn ssig1(x: i64) -> i64 {
+    mask32(rotr32(x, 17) ^ rotr32(x, 19) ^ shr32(x, 10))
+}
+
+// ---------------------------------------------------------------------------
+// Round constants K[0..63] — FIPS 180-4 §4.2.2
+//
+// First 32 bits of the fractional parts of the cube roots of the first
+// 64 primes, expressed in decimal.  k_word(i) returns K[i].
+// ---------------------------------------------------------------------------
+
+fn k_word(i: i64) -> i64 {
+    if i == 0  { return 1116352408; }
+    if i == 1  { return 1899447441; }
+    if i == 2  { return 3049323471; }
+    if i == 3  { return 3921009573; }
+    if i == 4  { return 961987163; }
+    if i == 5  { return 1508970993; }
+    if i == 6  { return 2453635748; }
+    if i == 7  { return 2870763221; }
+    if i == 8  { return 3624381080; }
+    if i == 9  { return 310598401; }
+    if i == 10 { return 607225278; }
+    if i == 11 { return 1426881987; }
+    if i == 12 { return 1925078388; }
+    if i == 13 { return 2162078206; }
+    if i == 14 { return 2614888103; }
+    if i == 15 { return 3248222580; }
+    if i == 16 { return 3835390401; }
+    if i == 17 { return 4022224774; }
+    if i == 18 { return 264347078; }
+    if i == 19 { return 604807628; }
+    if i == 20 { return 770255983; }
+    if i == 21 { return 1249150122; }
+    if i == 22 { return 1555081692; }
+    if i == 23 { return 1996064986; }
+    if i == 24 { return 2554220882; }
+    if i == 25 { return 2821834349; }
+    if i == 26 { return 2952996808; }
+    if i == 27 { return 3210313671; }
+    if i == 28 { return 3336571891; }
+    if i == 29 { return 3584528711; }
+    if i == 30 { return 113926993; }
+    if i == 31 { return 338241895; }
+    if i == 32 { return 666307205; }
+    if i == 33 { return 773529912; }
+    if i == 34 { return 1294757372; }
+    if i == 35 { return 1396182291; }
+    if i == 36 { return 1695183700; }
+    if i == 37 { return 1986661051; }
+    if i == 38 { return 2177026350; }
+    if i == 39 { return 2456956037; }
+    if i == 40 { return 2730485921; }
+    if i == 41 { return 2820302411; }
+    if i == 42 { return 3259730800; }
+    if i == 43 { return 3345764771; }
+    if i == 44 { return 3516065817; }
+    if i == 45 { return 3600352804; }
+    if i == 46 { return 4094571909; }
+    if i == 47 { return 275423344; }
+    if i == 48 { return 430227734; }
+    if i == 49 { return 506948616; }
+    if i == 50 { return 659060556; }
+    if i == 51 { return 883997877; }
+    if i == 52 { return 958139571; }
+    if i == 53 { return 1322822218; }
+    if i == 54 { return 1537002063; }
+    if i == 55 { return 1747873779; }
+    if i == 56 { return 1955562222; }
+    if i == 57 { return 2024104815; }
+    if i == 58 { return 2227730452; }
+    if i == 59 { return 2361852424; }
+    if i == 60 { return 2428436474; }
+    if i == 61 { return 2756734187; }
+    if i == 62 { return 3204031479; }
+    3329325298
+}
+
+// ---------------------------------------------------------------------------
+// Initial hash values H0..H7 — FIPS 180-4 §5.3.3
+//
+// First 32 bits of the fractional parts of the square roots of primes 2..19,
+// expressed in decimal.
+// ---------------------------------------------------------------------------
+
+fn h_init(i: i64) -> i64 {
+    if i == 0 { return 1779033703; }
+    if i == 1 { return 3144134277; }
+    if i == 2 { return 1013904242; }
+    if i == 3 { return 2773480762; }
+    if i == 4 { return 1359893119; }
+    if i == 5 { return 2600822924; }
+    if i == 6 { return 528734635; }
+    1541459225
+}
+
+// ---------------------------------------------------------------------------
+// W-schedule helpers — 64-word schedule stored stride-8 (like Vec elements).
+// ---------------------------------------------------------------------------
+
+fn w_get(w_addr: i64, i: i64) -> i64 {
+    __mind_load_i64(w_addr + i * 8)
+}
+
+fn w_set(w_addr: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(w_addr + i * 8, v)
+}
+
+// ---------------------------------------------------------------------------
+// compress_block — process one 64-byte block.
+//
+// block_addr: pointer to 64 bytes of message (one byte per offset).
+// h_addr: pointer to 8*8=64-byte heap region holding h[0..7] stride-8.
+// Returns 0.
+// ---------------------------------------------------------------------------
+
+fn compress_block(block_addr: i64, h_addr: i64) -> i64 {
+    // Allocate W schedule: 64 words, stride-8 → 512 bytes.
+    let w_addr: i64 = __mind_alloc(512);
+
+    // W[0..15]: pack four consecutive message bytes (big-endian) into each
+    // 32-bit word.
+    let mut wi: i64 = 0;
+    while wi < 16 {
+        let base: i64 = wi * 4;
+        let b0: i64 = __mind_load_i64(block_addr + base + 0) & 255;
+        let b1: i64 = __mind_load_i64(block_addr + base + 1) & 255;
+        let b2: i64 = __mind_load_i64(block_addr + base + 2) & 255;
+        let b3: i64 = __mind_load_i64(block_addr + base + 3) & 255;
+        let word: i64 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+        w_set(w_addr, wi, word);
+        wi = wi + 1;
+    }
+
+    // W[16..63]: message schedule extension.
+    let mut wj: i64 = 16;
+    while wj < 64 {
+        let s0: i64 = ssig0(w_get(w_addr, wj - 15));
+        let s1: i64 = ssig1(w_get(w_addr, wj - 2));
+        let val: i64 = mask32(w_get(w_addr, wj - 16) + s0 + w_get(w_addr, wj - 7) + s1);
+        w_set(w_addr, wj, val);
+        wj = wj + 1;
+    }
+
+    // Initialise working variables from h[0..7].
+    let mut wa: i64 = __mind_load_i64(h_addr + 0 * 8);
+    let mut wb: i64 = __mind_load_i64(h_addr + 1 * 8);
+    let mut wc: i64 = __mind_load_i64(h_addr + 2 * 8);
+    let mut wd: i64 = __mind_load_i64(h_addr + 3 * 8);
+    let mut we: i64 = __mind_load_i64(h_addr + 4 * 8);
+    let mut wf: i64 = __mind_load_i64(h_addr + 5 * 8);
+    let mut wg: i64 = __mind_load_i64(h_addr + 6 * 8);
+    let mut wh: i64 = __mind_load_i64(h_addr + 7 * 8);
+
+    // 64-round compression loop.
+    let mut rnd: i64 = 0;
+    while rnd < 64 {
+        let t1: i64 = mask32(wh + bsig1(we) + ch(we, wf, wg) + k_word(rnd) + w_get(w_addr, rnd));
+        let t2: i64 = mask32(bsig0(wa) + maj(wa, wb, wc));
+        wh = wg;
+        wg = wf;
+        wf = we;
+        we = mask32(wd + t1);
+        wd = wc;
+        wc = wb;
+        wb = wa;
+        wa = mask32(t1 + t2);
+        rnd = rnd + 1;
+    }
+
+    // Add compressed chunk back into H.
+    __mind_store_i64(h_addr + 0 * 8, mask32(__mind_load_i64(h_addr + 0 * 8) + wa));
+    __mind_store_i64(h_addr + 1 * 8, mask32(__mind_load_i64(h_addr + 1 * 8) + wb));
+    __mind_store_i64(h_addr + 2 * 8, mask32(__mind_load_i64(h_addr + 2 * 8) + wc));
+    __mind_store_i64(h_addr + 3 * 8, mask32(__mind_load_i64(h_addr + 3 * 8) + wd));
+    __mind_store_i64(h_addr + 4 * 8, mask32(__mind_load_i64(h_addr + 4 * 8) + we));
+    __mind_store_i64(h_addr + 5 * 8, mask32(__mind_load_i64(h_addr + 5 * 8) + wf));
+    __mind_store_i64(h_addr + 6 * 8, mask32(__mind_load_i64(h_addr + 6 * 8) + wg));
+    __mind_store_i64(h_addr + 7 * 8, mask32(__mind_load_i64(h_addr + 7 * 8) + wh));
+
+    0
+}
+
+// ---------------------------------------------------------------------------
+// sha256 — public entry point.
+//
+// Pads the message (FIPS 180-4 §5.1.1), processes all 64-byte blocks,
+// then serialises the 8-word digest big-endian into out_addr.
+//
+// Padding:
+//   1. Append byte 0x80 (= 128).
+//   2. Append zero bytes until total ≡ 56 (mod 64).
+//   3. Append the 64-bit big-endian bit-count (in_len * 8).
+//
+// The padded length is always a multiple of 64.
+// For in_len = 0 → 64 bytes.
+// For in_len = 55 → 64 bytes (0x80 + 0 pad + 8-byte length fits exactly).
+// For in_len = 56 → 128 bytes (0x80 pushes past the 56-mod-64 mark).
+// ---------------------------------------------------------------------------
+
+pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    // Compute the number of zero-padding bytes needed.
+    let tail: i64 = in_len % 64;
+    let pad_zeros: i64 = if tail < 56 {
+        55 - tail
+    } else {
+        119 - tail
+    };
+    let padded_len: i64 = in_len + 1 + pad_zeros + 8;
+
+    // Allocate scratch buffer and copy input bytes (one byte per offset).
+    let buf: i64 = __mind_alloc(padded_len);
+    let mut ci: i64 = 0;
+    while ci < in_len {
+        __mind_store_i64(buf + ci, __mind_load_i64(in_addr + ci) & 255);
+        ci = ci + 1;
+    }
+
+    // Append the 0x80 byte (= 128).
+    __mind_store_i64(buf + in_len, 128);
+
+    // Zero-fill the padding region.
+    let mut zi: i64 = in_len + 1;
+    while zi < in_len + 1 + pad_zeros {
+        __mind_store_i64(buf + zi, 0);
+        zi = zi + 1;
+    }
+
+    // Append the 64-bit big-endian message bit-length.
+    let bit_len: i64 = in_len * 8;
+    let len_off: i64 = padded_len - 8;
+    // High 32 bits (zero for messages < 2^29 bytes, but written correctly).
+    let blen_hi: i64 = (bit_len >> 32) & 4294967295;
+    let blen_lo: i64 = bit_len & 4294967295;
+    __mind_store_i64(buf + len_off + 0, (blen_hi >> 24) & 255);
+    __mind_store_i64(buf + len_off + 1, (blen_hi >> 16) & 255);
+    __mind_store_i64(buf + len_off + 2, (blen_hi >> 8)  & 255);
+    __mind_store_i64(buf + len_off + 3, blen_hi          & 255);
+    __mind_store_i64(buf + len_off + 4, (blen_lo >> 24) & 255);
+    __mind_store_i64(buf + len_off + 5, (blen_lo >> 16) & 255);
+    __mind_store_i64(buf + len_off + 6, (blen_lo >> 8)  & 255);
+    __mind_store_i64(buf + len_off + 7, blen_lo          & 255);
+
+    // Initialise the 8-word H state (stride-8, 64 bytes).
+    let h_addr: i64 = __mind_alloc(64);
+    let mut hi: i64 = 0;
+    while hi < 8 {
+        __mind_store_i64(h_addr + hi * 8, h_init(hi));
+        hi = hi + 1;
+    }
+
+    // Process each 64-byte block.
+    let num_blocks: i64 = padded_len / 64;
+    let mut blk: i64 = 0;
+    while blk < num_blocks {
+        compress_block(buf + blk * 64, h_addr);
+        blk = blk + 1;
+    }
+
+    // Serialise digest: 8 words × 4 bytes big-endian = 32 bytes.
+    let mut di: i64 = 0;
+    while di < 8 {
+        let word: i64 = __mind_load_i64(h_addr + di * 8);
+        __mind_store_i64(out_addr + di * 4 + 0, (word >> 24) & 255);
+        __mind_store_i64(out_addr + di * 4 + 1, (word >> 16) & 255);
+        __mind_store_i64(out_addr + di * 4 + 2, (word >> 8)  & 255);
+        __mind_store_i64(out_addr + di * 4 + 3, word          & 255);
+        di = di + 1;
+    }
+
+    0
+}
