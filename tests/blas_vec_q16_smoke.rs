@@ -79,6 +79,14 @@ pub fn matmul(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
 }
 "#;
 
+/// Track B (increment 4) Q16.16 matmul source — compiled separately so
+/// that the existing dot/.so is not disturbed.
+const SRC_MATMUL_Q16: &str = r#"
+pub fn matmul_q16(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
+    __mind_blas_matmul_rmajor_q16_v(w, x, y, rows, cols)
+}
+"#;
+
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 
@@ -136,6 +144,39 @@ fn build_vec_so() -> Option<&'static PathBuf> {
         assert!(
             status.success(),
             "mindc --emit-shared failed for the Track B increment-2 vector source"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Compile `SRC_MATMUL_Q16` to a temporary `.so`, exactly once per test run.
+fn build_matmul_q16_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                println!("blas_vec_q16_smoke(matmul_q16): {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+
+        let dir = std::env::temp_dir();
+        let src_path = dir.join("mind_blas_vec_matmul_q16_smoke.mind");
+        let so_path = dir.join("mind_blas_vec_matmul_q16_smoke.so");
+        std::fs::write(&src_path, SRC_MATMUL_Q16).expect("write Q16 matmul test .mind source");
+
+        let status = Command::new(mindc_path())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc for Q16 matmul");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the Track B Q16 matmul source"
         );
         Some(so_path)
     })
@@ -469,6 +510,126 @@ fn vec_matmul_rmajor_f32_within_1e4_rel_of_f64_oracle() {
                 rel < 1e-4,
                 "matmul({rows},{cols}) row {r}: got={got} truth={truth} rel={rel:e} \
                  (must be within 1e-4 relative of f64 oracle)"
+            );
+        }
+    }
+}
+
+/// Scalar Rust oracle for Q16.16 matmul: apply ref_dot_q16_scalar to each row.
+fn ref_matmul_q16_oracle(w: &[i32], x: &[i32], rows: usize, cols: usize) -> Vec<i64> {
+    (0..rows)
+        .map(|r| ref_dot_q16_scalar(&w[r * cols..(r + 1) * cols], x))
+        .collect()
+}
+
+/// RFC 0006 Track B (increment 4) — Q16.16 matmul bit-identity gate.
+///
+/// `__mind_blas_matmul_rmajor_q16_v` must produce a result for each row
+/// that is byte-identical to `ref_dot_q16_scalar(W[r,:], x)` at every
+/// required shape. This is exact (not a tolerance) because Q16.16 integer
+/// reduction is associative and the per-element arithmetic `>> 16` is
+/// replicated exactly in both paths.
+///
+/// Shapes exercised:
+/// * `(1,1)` — degenerate single element
+/// * `(2,3)` — non-square, non-multiple-of-8 cols
+/// * `(4,4)` — square non-multiple-of-8
+/// * `(8,16)` — exact multiple of lane width
+/// * `(16,9)` — cols = 8+1 (one scalar tail element per row)
+/// * `(3,65)` — cols = 64+1 (many lanes + one scalar tail element)
+#[test]
+fn vec_matmul_q16_byte_identical_to_scalar_oracle_required_shapes() {
+    let Some(so) = build_matmul_q16_so() else {
+        return;
+    };
+    let lib = unsafe { Library::new(&so).expect("dlopen Q16 matmul .so") };
+    let matmul_q16: libloading::Symbol<MatmulFn> = unsafe {
+        lib.get(b"matmul_q16\0")
+            .expect("symbol 'matmul_q16' missing from Q16 matmul .so")
+    };
+
+    let shapes: &[(usize, usize)] = &[(1, 1), (2, 3), (4, 4), (8, 16), (16, 9), (3, 65)];
+
+    for &(rows, cols) in shapes {
+        let mut g = Lcg::new(0xBEEF_CAFE_0000_0000 + (rows * 65537 + cols) as u64);
+        let w: Vec<i32> = (0..rows * cols).map(|_| g.next_q16()).collect();
+        let x: Vec<i32> = (0..cols).map(|_| g.next_q16()).collect();
+        let mut y = vec![0i32; rows];
+
+        let ret = unsafe {
+            matmul_q16(
+                w.as_ptr() as i64,
+                x.as_ptr() as i64,
+                y.as_mut_ptr() as i64,
+                rows as i64,
+                cols as i64,
+            )
+        };
+        assert_eq!(ret, 0, "matmul_q16({rows},{cols}) must return 0");
+
+        let expected = ref_matmul_q16_oracle(&w, &x, rows, cols);
+        for r in 0..rows {
+            // y[r] is stored as i32; sign-extend to i64 to match oracle ABI.
+            let got = y[r] as i64;
+            assert_eq!(
+                got, expected[r],
+                "matmul_q16({rows},{cols}) row {r}: got={got} expected={} \
+                 (must be byte-identical to scalar oracle — cross-arch bit-identity gate, \
+                 task #57)",
+                expected[r]
+            );
+        }
+    }
+}
+
+/// Additional bit-identity check: each y[r] must also equal the output of
+/// the existing `dot_q16_v` intrinsic applied to that row and x.
+/// This verifies that the matmul is structurally equivalent to calling
+/// `__mind_blas_dot_q16_v(W+r*cols, x, cols)` per row.
+#[test]
+fn vec_matmul_q16_matches_dot_q16_per_row() {
+    let Some(matmul_so) = build_matmul_q16_so() else {
+        return;
+    };
+    let Some(dot_so) = build_vec_so() else {
+        return;
+    };
+    let matmul_lib = unsafe { Library::new(&matmul_so).expect("dlopen Q16 matmul .so") };
+    let dot_lib = unsafe { Library::new(&dot_so).expect("dlopen dot .so") };
+    let matmul_q16: libloading::Symbol<MatmulFn> = unsafe {
+        matmul_lib
+            .get(b"matmul_q16\0")
+            .expect("symbol 'matmul_q16' missing")
+    };
+
+    // shapes with cols not a multiple of 8 to exercise scalar tail
+    let shapes: &[(usize, usize)] = &[(2, 3), (4, 4), (8, 16), (16, 9), (3, 65)];
+
+    for &(rows, cols) in shapes {
+        let mut g = Lcg::new(0xF00D_FEED_0000_0000 + (rows * 65537 + cols) as u64);
+        let w: Vec<i32> = (0..rows * cols).map(|_| g.next_q16()).collect();
+        let x: Vec<i32> = (0..cols).map(|_| g.next_q16()).collect();
+        let mut y = vec![0i32; rows];
+
+        let ret = unsafe {
+            matmul_q16(
+                w.as_ptr() as i64,
+                x.as_ptr() as i64,
+                y.as_mut_ptr() as i64,
+                rows as i64,
+                cols as i64,
+            )
+        };
+        assert_eq!(ret, 0, "matmul_q16({rows},{cols}) must return 0");
+
+        for r in 0..rows {
+            let row_ptr = w[r * cols..].as_ptr() as i64;
+            let dot_result = call3(&dot_lib, b"dotq\0", row_ptr, x.as_ptr() as i64, cols as i64);
+            let got = y[r] as i64;
+            assert_eq!(
+                got, dot_result,
+                "matmul_q16({rows},{cols}) row {r}: got={got} dot_q16_v={dot_result} \
+                 (matmul row must equal dot_q16_v of that row and x)"
             );
         }
     }

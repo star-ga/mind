@@ -1726,6 +1726,15 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // (8-lane FMA + scalar tail) inlined per row, stores to caller-allocated
     // y buffer, returns 0.  Same arity (5) and i64 ABI as Track A.
     ("__mind_blas_matmul_rmajor_f32_v", 5),
+    // RFC 0006 Track B (increment 4): native MLIR vector-dialect row-major
+    // Q16.16 matmul.  Outer scf.for over rows, inner Q16.16 dot reduction
+    // from emit_vec_dot_q16 (widen i32→i64, >> 16, i64-lane accumulate,
+    // vector.reduction <add>, scalar tail, trunc+extsi) inlined per row,
+    // stores i32 to caller-allocated y buffer, returns 0.  Byte-identical
+    // to the scalar oracle __mind_blas_dot_q16 applied per row (cross-arch
+    // bit-identity gate, task #57).  Track B vector-dialect only — there is
+    // no Track A q16 matmul extern; the per-row oracle is __mind_blas_dot_q16.
+    ("__mind_blas_matmul_rmajor_q16_v", 5),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
     ("__mind_read", 4),

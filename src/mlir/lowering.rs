@@ -74,6 +74,22 @@ const VEC_DOT_LINF_F32_INTRINSIC: &str = "__mind_blas_dot_linf_f32_v";
 #[cfg(feature = "std-surface")]
 const VEC_MATMUL_RMAJOR_F32_INTRINSIC: &str = "__mind_blas_matmul_rmajor_f32_v";
 
+/// RFC 0006 Track B (increment 4) — native MLIR vector-dialect
+/// row-major Q16.16 matrix-vector multiply surface name.
+///
+/// Signature: `(w_addr, x_addr, y_addr, rows, cols) -> i64` (returns 0).
+/// W is a rows×cols row-major Q16.16 matrix (i32 elements, pointer packed
+/// as i64), x is a cols-element Q16.16 vector (i32), y is a
+/// caller-allocated rows-element Q16.16 output (i32).  The kernel
+/// computes `y[r] = dot_q16(W[r,:], x)` for each row r — identically to
+/// calling `__mind_blas_dot_q16_v` on each row — using the proven Q16.16
+/// reduction from `emit_vec_dot_q16` (widen i32→i64, multiply, arith
+/// `>> 16`, i64-lane accumulate, associative `vector.reduction <add>`,
+/// scalar tail, `trunc i64→i32` + `extsi i32→i64`).  Byte-identical to
+/// the Track A scalar oracle `__mind_blas_dot_q16` applied per row.
+#[cfg(feature = "std-surface")]
+const VEC_MATMUL_RMAJOR_Q16_INTRINSIC: &str = "__mind_blas_matmul_rmajor_q16_v";
+
 /// RFC 0006 Track B (increment 2) — Q16.16 vector lane count. The
 /// scalar Q16.16 oracle widens each `i32` product to `i64` before the
 /// arithmetic `>> 16`; the vector path mirrors that with
@@ -456,6 +472,22 @@ impl LoweringContext {
                 // `__mind_blas_matmul_rmajor_f32` extern path is untouched.
                 if name == VEC_MATMUL_RMAJOR_F32_INTRINSIC && args.len() == 5 {
                     self.emit_vec_matmul_rmajor_f32(
+                        *dst, args[0], args[1], args[2], args[3], args[4],
+                    );
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // RFC 0006 Track B (increment 4) — row-major Q16.16 matmul.
+                // Lowers to a native MLIR outer `scf.for` over rows, with
+                // the proven Q16.16 reduction from `emit_vec_dot_q16`
+                // (widen i32→i64, `>> 16`, i64-lane accumulate, associative
+                // `vector.reduction <add>`, scalar tail, trunc+extsi) inlined
+                // per row.  Byte-identical to the Track A scalar oracle
+                // `__mind_blas_dot_q16` applied to each row independently.
+                // Track A's `__mind_blas_matmul_rmajor_q16` extern path is
+                // untouched.
+                if name == VEC_MATMUL_RMAJOR_Q16_INTRINSIC && args.len() == 5 {
+                    self.emit_vec_matmul_rmajor_q16(
                         *dst, args[0], args[1], args[2], args[3], args[4],
                     );
                     self.values.insert(*dst, ValueKind::ScalarI64);
@@ -2048,6 +2080,255 @@ impl LoweringContext {
         ));
         self.emit_line(&format!(
             "      llvm.store %vmm_ts_{d}, %vmm_yel_{d} : f32, !llvm.ptr"
+        ));
+
+        self.emit_line("    }"); // end outer scf.for
+
+        // The intrinsic returns 0 (i64) — matches the Track A C oracle.
+        self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
+    }
+
+    /// RFC 0006 Track B (increment 4) — emit a native MLIR
+    /// `vector`-dialect row-major Q16.16 matrix-vector multiply.
+    ///
+    /// Computes `y[r] = dot_q16(W[r,:], x)` for each row `r` in `0..rows`.
+    /// W is a rows×cols row-major Q16.16 matrix (i32 elements, base address
+    /// packed as i64), x is a cols-element Q16.16 input vector (i32, packed
+    /// i64), y is a caller-allocated rows-element Q16.16 output (i32).
+    ///
+    /// Structure mirrors `emit_vec_matmul_rmajor_f32` exactly, swapping the
+    /// f32 inner reduction for the Q16.16 one from `emit_vec_dot_q16`:
+    ///
+    /// ```text
+    ///   outer loop : scf.for r = 0..rows step 1 (no iter_args — stores to y)
+    ///     inner main : scf.for step 8, widen i32→i64, mul, >> 16,
+    ///                  i64-lane accumulate (vector<8xi64>)
+    ///     horizontal : vector.reduction <add> over vector<8xi64>
+    ///     inner tail : scf.for step 1, identical per-element op in scalar i64
+    ///     pack       : trunc i64→i32, sext i32→i64
+    ///     store      : llvm.store i32 result to y[r]
+    ///   return 0
+    /// ```
+    ///
+    /// The outer `scf.for` carries **no iter_args** — each row result is
+    /// stored directly to the caller-allocated output buffer, mirroring the
+    /// f32 matmul design to avoid phi-wiring ambiguity.
+    ///
+    /// Bit-identity contract: `y[r]` equals the return value of
+    /// `__mind_blas_dot_q16_v(W+r*cols, x, cols)` byte-for-byte at every
+    /// (rows, cols), including non-multiples of the SIMD width (task #57).
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_vec_matmul_rmajor_q16(
+        &mut self,
+        dst: ValueId,
+        w_addr: ValueId,
+        x_addr: ValueId,
+        y_addr: ValueId,
+        rows: ValueId,
+        cols: ValueId,
+    ) {
+        let d = dst.0;
+        let l = VEC_Q16_LANES;
+        // Q16.16 elements are i32 (4 bytes).
+        let elem_bytes = std::mem::size_of::<i32>() as i64;
+
+        // ── constants (emitted once, before the outer loop) ──────────────────
+        self.emit_line(&format!("    %vmmq_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vmmq_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vmmq_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vmmq_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!("    %vmmq_s16_{d} = arith.constant 16 : i64"));
+        self.emit_line(&format!(
+            "    %vmmq_s16v_{d} = arith.constant dense<16> : vector<{l}xi64>"
+        ));
+
+        // ── pointer setup ─────────────────────────────────────────────────────
+        self.emit_line(&format!(
+            "    %vmmq_wp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            w_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmq_xp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            x_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmq_yp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            y_addr.0
+        ));
+
+        // ── loop bounds (cols-derived, invariant across rows) ─────────────────
+        // rows as index for the outer loop bound
+        self.emit_line(&format!(
+            "    %vmmq_rows_{d} = arith.index_cast %{} : i64 to index",
+            rows.0
+        ));
+        // byte stride per W row = cols * sizeof(i32)
+        self.emit_line(&format!(
+            "    %vmmq_colsb_{d} = arith.muli %{}, %vmmq_eb_{d} : i64",
+            cols.0
+        ));
+        // inner loop bounds — same for every row (cols is loop-invariant)
+        self.emit_line(&format!(
+            "    %vmmq_len_{d} = arith.index_cast %{} : i64 to index",
+            cols.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmq_nv_{d} = arith.divui %vmmq_len_{d}, %vmmq_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmmq_ve_{d} = arith.muli %vmmq_nv_{d}, %vmmq_cl_{d} : index"
+        ));
+        // zero accumulator vector for inner loop initialisation
+        self.emit_line(&format!(
+            "    %vmmq_zv_{d} = arith.constant dense<0> : vector<{l}xi64>"
+        ));
+
+        // ── outer loop over rows (no iter_args — stores directly to y) ────────
+        self.emit_line(&format!(
+            "    scf.for %vmmq_r_{d} = %vmmq_c0_{d} to %vmmq_rows_{d} step %vmmq_c1_{d} {{"
+        ));
+
+        // row index as i64 for pointer arithmetic
+        self.emit_line(&format!(
+            "      %vmmq_ri_{d} = arith.index_cast %vmmq_r_{d} : index to i64"
+        ));
+        // byte offset into W for row r: r * cols * sizeof(i32)
+        self.emit_line(&format!(
+            "      %vmmq_roff_{d} = arith.muli %vmmq_ri_{d}, %vmmq_colsb_{d} : i64"
+        ));
+        // pointer to W[r, 0]
+        self.emit_line(&format!(
+            "      %vmmq_wrow_{d} = llvm.getelementptr %vmmq_wp_{d}[%vmmq_roff_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+
+        // ── inner vector main loop: 8-lane widening MAC over W[r,:] · x ──────
+        self.emit_line(&format!(
+            "      %vmmq_vacc_{d} = scf.for %vmmq_i_{d} = %vmmq_c0_{d} to %vmmq_ve_{d} \
+             step %vmmq_cl_{d} iter_args(%vmmq_acc_{d} = %vmmq_zv_{d}) -> (vector<{l}xi64>) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_ii_{d} = arith.index_cast %vmmq_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_bo_{d} = arith.muli %vmmq_ii_{d}, %vmmq_eb_{d} : i64"
+        ));
+        // pointer into W[r, i..i+8]
+        self.emit_line(&format!(
+            "        %vmmq_ai_{d} = llvm.getelementptr %vmmq_wrow_{d}[%vmmq_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        // pointer into x[i..i+8]
+        self.emit_line(&format!(
+            "        %vmmq_bi_{d} = llvm.getelementptr %vmmq_xp_{d}[%vmmq_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        // alignment=4: W rows are not guaranteed 8×4-byte aligned (row r starts
+        // at r*cols*4 bytes; only the base is guaranteed).
+        self.emit_line(&format!(
+            "        %vmmq_av_{d} = llvm.load %vmmq_ai_{d} {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{l}xi32>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_bv_{d} = llvm.load %vmmq_bi_{d} {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{l}xi32>"
+        ));
+        // widen i32 → i64 for both operands before multiply
+        self.emit_line(&format!(
+            "        %vmmq_aw_{d} = arith.extsi %vmmq_av_{d} : vector<{l}xi32> to vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_bw_{d} = arith.extsi %vmmq_bv_{d} : vector<{l}xi32> to vector<{l}xi64>"
+        ));
+        // i64 product then arithmetic >> 16 — mirrors the scalar oracle's `(a*b)>>16`
+        self.emit_line(&format!(
+            "        %vmmq_pr_{d} = arith.muli %vmmq_aw_{d}, %vmmq_bw_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_sh_{d} = arith.shrsi %vmmq_pr_{d}, %vmmq_s16v_{d} : vector<{l}xi64>"
+        ));
+        // accumulate into i64 lane vector
+        self.emit_line(&format!(
+            "        %vmmq_na_{d} = arith.addi %vmmq_acc_{d}, %vmmq_sh_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line(&format!(
+            "        scf.yield %vmmq_na_{d} : vector<{l}xi64>"
+        ));
+        self.emit_line("      }");
+
+        // ── horizontal lane reduction (associative — bit-identical regardless
+        //    of lane grouping, exactly like emit_vec_dot_q16) ─────────────────
+        self.emit_line(&format!(
+            "      %vmmq_vs_{d} = vector.reduction <add>, %vmmq_vacc_{d} : \
+             vector<{l}xi64> into i64"
+        ));
+
+        // ── scalar tail for cols % LANES remainder ────────────────────────────
+        self.emit_line(&format!(
+            "      %vmmq_ts_{d} = scf.for %vmmq_j_{d} = %vmmq_ve_{d} to %vmmq_len_{d} \
+             step %vmmq_c1_{d} iter_args(%vmmq_s_{d} = %vmmq_vs_{d}) -> (i64) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_jj_{d} = arith.index_cast %vmmq_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_jb_{d} = arith.muli %vmmq_jj_{d}, %vmmq_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_aj_{d} = llvm.getelementptr %vmmq_wrow_{d}[%vmmq_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_bj_{d} = llvm.getelementptr %vmmq_xp_{d}[%vmmq_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_as_{d} = llvm.load %vmmq_aj_{d} : !llvm.ptr -> i32"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_bs_{d} = llvm.load %vmmq_bj_{d} : !llvm.ptr -> i32"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_asw_{d} = arith.extsi %vmmq_as_{d} : i32 to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_bsw_{d} = arith.extsi %vmmq_bs_{d} : i32 to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_p_{d} = arith.muli %vmmq_asw_{d}, %vmmq_bsw_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_psh_{d} = arith.shrsi %vmmq_p_{d}, %vmmq_s16_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmq_ns_{d} = arith.addi %vmmq_s_{d}, %vmmq_psh_{d} : i64"
+        ));
+        self.emit_line(&format!("        scf.yield %vmmq_ns_{d} : i64"));
+        self.emit_line("      }");
+
+        // ── pack result: trunc i64→i32 + sext i32→i64 ────────────────────────
+        // Identical to emit_vec_dot_q16's final pack: `(i64)(i32)acc`.
+        self.emit_line(&format!(
+            "      %vmmq_lo_{d} = arith.trunci %vmmq_ts_{d} : i64 to i32"
+        ));
+        self.emit_line(&format!(
+            "      %vmmq_ext_{d} = arith.extsi %vmmq_lo_{d} : i32 to i64"
+        ));
+
+        // ── store i32 to y[r] ─────────────────────────────────────────────────
+        // y is an i32 array; store the low 32 bits of the Q16.16 result.
+        self.emit_line(&format!(
+            "      %vmmq_yoff_{d} = arith.muli %vmmq_ri_{d}, %vmmq_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vmmq_yel_{d} = llvm.getelementptr %vmmq_yp_{d}[%vmmq_yoff_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      llvm.store %vmmq_lo_{d}, %vmmq_yel_{d} : i32, !llvm.ptr"
         ));
 
         self.emit_line("    }"); // end outer scf.for
