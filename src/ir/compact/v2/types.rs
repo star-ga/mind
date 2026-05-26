@@ -346,6 +346,114 @@ impl Value {
     }
 }
 
+// ---------------------------------------------------------------------------
+// MAP section types (mic@2.1)
+// ---------------------------------------------------------------------------
+
+/// A value in the MAP section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MapValue {
+    /// UTF-8 string.
+    String(std::string::String),
+    /// Signed 64-bit integer.
+    Int(i64),
+    /// Byte array.
+    Bytes(Vec<u8>),
+    /// Nested map (ordered key → value).
+    Nested(Map),
+}
+
+/// Ordered key→value metadata map (mic@2.1 MAP section).
+///
+/// Keys are dotted-ident strings (e.g. `evidence_chain.substrate`).
+/// Order of insertion is preserved; canonical output sorts by key (§5 rule 8).
+/// Duplicate keys at the same nesting level are a hard parse error.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Map {
+    /// Entries in insertion order; emit sorts them canonically.
+    entries: Vec<(std::string::String, MapValue)>,
+}
+
+impl Map {
+    /// Create an empty map.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    /// Returns `true` if the map has no entries (recursively — an empty nested
+    /// map is still empty).
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Number of top-level entries.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Insert or overwrite a key.  Returns `Err` if the key duplicates an
+    /// existing key at this level (parse-path uses this to enforce §4 rule).
+    pub fn insert_unique(
+        &mut self,
+        key: impl Into<std::string::String>,
+        value: MapValue,
+    ) -> Result<(), std::string::String> {
+        let k = key.into();
+        if self.entries.iter().any(|(ek, _)| ek == &k) {
+            return Err(format!("duplicate MAP key: {k}"));
+        }
+        self.entries.push((k, value));
+        Ok(())
+    }
+
+    /// Insert, panicking on duplicate (convenience for programmatic construction).
+    pub fn insert(&mut self, key: impl Into<std::string::String>, value: MapValue) {
+        self.insert_unique(key, value).expect("duplicate MAP key");
+    }
+
+    /// Iterate entries in their stored order.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &MapValue)> {
+        self.entries.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Iterate entries in canonical (lexicographic) order without consuming.
+    pub fn iter_canonical(&self) -> impl Iterator<Item = (&str, &MapValue)> {
+        let mut sorted: Vec<&(std::string::String, MapValue)> = self.entries.iter().collect();
+        sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        sorted.into_iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Return a canonically-sorted clone (§5 rules 8/9).
+    pub fn canonicalize(&self) -> Self {
+        let mut sorted: Vec<(std::string::String, MapValue)> = self
+            .entries
+            .iter()
+            .map(|(k, v)| {
+                let canonical_value = match v {
+                    MapValue::Nested(inner) => MapValue::Nested(inner.canonicalize()),
+                    other => other.clone(),
+                };
+                (k.clone(), canonical_value)
+            })
+            .collect();
+        sorted.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
+        Self { entries: sorted }
+    }
+
+    /// Total entry count, summing nested maps recursively.
+    pub fn recursive_entry_count(&self) -> usize {
+        self.entries.iter().fold(0, |acc, (_, v)| {
+            acc + 1
+                + match v {
+                    MapValue::Nested(inner) => inner.recursive_entry_count(),
+                    _ => 0,
+                }
+        })
+    }
+}
+
 /// Computation graph.
 #[derive(Debug, Clone)]
 pub struct Graph {
@@ -357,6 +465,9 @@ pub struct Graph {
     pub values: Vec<Value>,
     /// Output value ID
     pub output: usize,
+    /// Optional metadata map (mic@2.1 MAP section).
+    /// Empty by default; empty map emits no bytes (§2 rule 3, §5 rule 10).
+    pub map: Map,
 }
 
 impl Graph {
@@ -367,6 +478,7 @@ impl Graph {
             types: Vec::new(),
             values: Vec::new(),
             output: 0,
+            map: Map::new(),
         }
     }
 
@@ -490,7 +602,12 @@ impl GraphEq for Graph {
         }
 
         // Compare output
-        self.output == other.output
+        if self.output != other.output {
+            return false;
+        }
+
+        // Compare MAP
+        self.map == other.map
     }
 }
 

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2650 | **Est. tokens:** ~6,572,182
-**Generated:** 2026-05-26 09:38 UTC
+**Files:** 2651 | **Est. tokens:** ~6,583,564
+**Generated:** 2026-05-26 09:52 UTC
 
 ## Token Budget Guide
 
@@ -379,7 +379,7 @@
 | `src/fmt/` | 3 | ~17,167 |
 | `src/ir/` | 3 | ~13,767 |
 | `src/ir/compact/` | 3 | ~14,184 |
-| `src/ir/compact/v2/` | 6 | ~15,796 |
+| `src/ir/compact/v2/` | 7 | ~27,178 |
 | `src/lint/` | 2 | ~3,995 |
 | `src/lint/rules/` | 6 | ~9,076 |
 | `src/mlir/` | 2 | ~1,967 |
@@ -3639,11 +3639,12 @@
 - `parse.rs` (~7446 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
-- `binary.rs` (~4502 tok, huge) — Copyright 2025 STARGA Inc.
-- `emit.rs` (~1581 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1208 tok, large) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~3132 tok, huge) — Copyright 2025 STARGA Inc.
-- `types.rs` (~3774 tok, huge) — Copyright 2025 STARGA Inc.
+- `binary.rs` (~5888 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
+- `map_tests.rs` (~5514 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1219 tok, large) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~5749 tok, huge) — Copyright 2025 STARGA Inc.
+- `types.rs` (~4764 tok, huge) — Copyright 2025 STARGA Inc.
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
