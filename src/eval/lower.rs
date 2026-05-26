@@ -737,6 +737,23 @@ fn lower_expr(
                                 fn_env.insert(bname, bid);
                             }
                         }
+                        // RFC 0005 Gap 1: if the emitted statement was an
+                        // `Instr::While`, thread live_vars back into `fn_env`
+                        // so code after the loop uses the post-loop SSA ids.
+                        // The While emitter appends a trailing ConstI64(unit,0)
+                        // after the While instr itself, so we check the
+                        // second-to-last instruction for the While node.
+                        #[cfg(feature = "std-surface")]
+                        {
+                            let n = fn_ir.instrs.len();
+                            if n >= 2 {
+                                if let Instr::While { live_vars, .. } = &fn_ir.instrs[n - 2] {
+                                    for (vname, vid) in live_vars.clone() {
+                                        fn_env.insert(vname, vid);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1045,6 +1062,16 @@ fn lower_expr(
             // parent IR stream.  The resulting ValueIds are local to the
             // sub-module; MLIR lowering re-emits them verbatim in the header
             // block so the numbering is stable.
+            //
+            // Use sub_ir_from so the condition sub-module's ValueIds start
+            // above the parent's current next_id.  Without this, a constant
+            // emitted in the condition (e.g. ConstI64(ValueId(0), 16)) would
+            // collide with the function's first parameter (%0: i64) when both
+            // are serialised into the same MLIR func.func body — the same
+            // fix already applied to Instr::If (see sub_ir_from comment).
+            #[cfg(feature = "std-surface")]
+            let mut cond_ir = sub_ir_from(ir);
+            #[cfg(not(feature = "std-surface"))]
             let mut cond_ir = IRModule::new();
             // Seed the condition sub-module's env with the current bindings
             // so identifiers in the condition (e.g. `i`, `n`) resolve.
@@ -1054,13 +1081,49 @@ fn lower_expr(
             // Lower the body into a scratch sub-module.  Track every Assign
             // target — those are the variables that are live across the
             // back-edge and must become block arguments in MLIR.
+            //
+            // Chain from cond_ir so body ValueIds are disjoint from both
+            // parent scope and condition scope (mirrors sub_ir_from_after
+            // in the Instr::If path).
+            #[cfg(feature = "std-surface")]
+            let mut body_ir = sub_ir_from_after(&cond_ir, ir);
+            #[cfg(not(feature = "std-surface"))]
             let mut body_ir = IRModule::new();
             let mut body_env = env.clone();
             let mut mutated: Vec<(String, ValueId)> = Vec::new();
+            // Pre-loop ValueId for each mutated variable (parallel to mutated).
+            // Captures the ValueId from env BEFORE the while loop so the MLIR
+            // emitter can produce `cf.br ^while_header(init_0, init_1, ...)`.
+            let mut init_ids: Vec<ValueId> = Vec::new();
 
             for stmt in body {
                 match stmt {
+                    ast::Node::Let { name, value, .. } => {
+                        // `let` inside the loop body introduces a new SSA binding
+                        // scoped to the body.  Emit the RHS and update body_env so
+                        // subsequent body statements can reference the binding.
+                        // These are NOT live_vars (they don't survive across the
+                        // back-edge) unless a later Assign overwrites them.
+                        let new_id =
+                            lower_expr(value, &mut body_ir, &body_env, struct_env, receiver_types);
+                        body_env.insert(name.clone(), new_id);
+                    }
                     ast::Node::Assign { name, value, .. } => {
+                        // Record the pre-loop init ValueId the first time we
+                        // see this variable being assigned (subsequent assigns
+                        // in the same body update the post-body id only).
+                        if !mutated.iter().any(|(n, _)| n == name) {
+                            // The init ValueId is whatever `name` resolves to
+                            // in body_env right now (i.e. the pre-loop value).
+                            if let Some(&init_id) = body_env.get(name.as_str()) {
+                                init_ids.push(init_id);
+                            } else {
+                                // Variable not in env yet (declared inside the
+                                // loop body before being assigned) — use a
+                                // dummy that the emitter will ignore.
+                                init_ids.push(ValueId(usize::MAX));
+                            }
+                        }
                         let new_id =
                             lower_expr(value, &mut body_ir, &body_env, struct_env, receiver_types);
                         body_env.insert(name.clone(), new_id);
@@ -1077,17 +1140,25 @@ fn lower_expr(
                 }
             }
 
-            // After the loop, the parent env sees the post-body bindings of
-            // mutated variables so that code after the while statement uses
-            // the correct SSA ids.  Gap 1 full implementation will thread
-            // them via block arguments; the `env.insert` is deferred until
-            // `lower_expr` accepts `&mut env` (a Gap 1 follow-on).
+            // Note: we cannot update the parent `env` here because `lower_expr`
+            // takes `env: &HashMap` (immutable).  The FnDef body loop detects
+            // the emitted `Instr::While` and propagates `live_vars` back to its
+            // own mutable `fn_env`, mirroring the `branch_bindings` pattern used
+            // for `Instr::If`.  See the `other =>` arm in the FnDef lowering.
+
+            // Advance the parent next_id past all IDs used in cond and body
+            // so subsequent instructions in the parent fn body stay disjoint.
+            #[cfg(feature = "std-surface")]
+            {
+                ir.next_id = ir.next_id.max(cond_ir.next_id).max(body_ir.next_id);
+            }
 
             ir.instrs.push(Instr::While {
                 cond_id,
                 cond_instrs: cond_ir.instrs,
                 body: body_ir.instrs,
                 live_vars: mutated,
+                init_ids,
             });
 
             // `while` is a statement; produce a unit i64 placeholder.

@@ -206,6 +206,18 @@ struct LoweringContext {
         // (param_types, ret_type, is_varargs, vararg_hints, callconv)
         (Vec<String>, Option<String>, bool, Vec<String>, crate::ast::CallConv),
     >,
+    /// RFC 0005 Gap 1 (dominance fix): after-block substitutions registered
+    /// by the While emitter so that subsequent fn-body instructions emitted
+    /// into `^while_after_N` reference the correct block-arg names instead
+    /// of SSA values defined inside the (non-dominating) body block.
+    ///
+    /// Each entry is `(post_id, waft_name)` where `post_id` is the raw SSA
+    /// id defined inside `^while_body_N` and `waft_name` is the block-arg
+    /// name declared in `^while_after_N` (e.g. `"waft_51_0"`).  The
+    /// substitution is applied by `emit_line` to every line pushed after
+    /// the While instruction completes. Gated.
+    #[cfg(feature = "std-surface")]
+    pending_after_subs: Vec<(usize, String)>,
 }
 
 impl LoweringContext {
@@ -222,10 +234,26 @@ impl LoweringContext {
             defined_fns: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             extern_c_fns: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            pending_after_subs: Vec::new(),
         }
     }
 
     fn emit_line(&mut self, line: &str) {
+        #[cfg(feature = "std-surface")]
+        if !self.pending_after_subs.is_empty() {
+            // Apply after-block substitutions: replace %{post_id} with
+            // %{waft_name} so dominance holds in ^while_after_N.
+            // Sort descending by post_id length to avoid partial matches.
+            let mut subs = self.pending_after_subs.clone();
+            subs.sort_by(|a, b| b.0.cmp(&a.0));
+            let mut text = line.to_owned();
+            for (post_id, waft_name) in &subs {
+                text = substitute_one(&text, *post_id, waft_name);
+            }
+            writeln!(&mut self.body, "{text}").expect("write to string cannot fail");
+            return;
+        }
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
     }
 
@@ -668,18 +696,105 @@ impl LoweringContext {
             // ^while_after_N:
             //
             // N = instr_index for uniqueness across nested whiles. Gated.
+            //
+            // MLIR structure emitted (cf dialect, block-argument form so
+            // mutable loop variables are correctly threaded across iterations):
+            //
+            //   cf.br ^while_header_N(%init_0: i64, %init_1: i64, ...)
+            // ^while_header_N(%wbl_N_0: i64, %wbl_N_1: i64, ...):
+            //   <cond_instrs, with init_ids substituted by wbl names>
+            //   cf.cond_br %cond, ^while_body_N(%wbl_N_0, ...), ^while_after_N
+            // ^while_body_N(%wbl_N_0: i64, ...):
+            //   <body_instrs, with init_ids substituted by wbl names>
+            //   cf.br ^while_header_N(%post_body_0: i64, ...)
+            // ^while_after_N:
+            //
+            // When there are no live vars (no mutations in the body), the
+            // blocks carry no arguments and behave like the original stub.
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_id,
                 cond_instrs,
                 body,
-                ..
+                live_vars,
+                init_ids,
             } => {
                 let lbl = instr_index;
-                // Fall into the header from the entry block.
-                self.emit_line(&format!("    cf.br ^while_header_{lbl}"));
-                // Header block: evaluate condition.
-                self.emit_line(&format!("  ^while_header_{lbl}:"));
+
+                // Build two arg-substitution tables.
+                //
+                // MLIR SSA values are unique per function, not per block.
+                // Both the header block and the body block need block-argument
+                // declarations; they MUST use distinct names even though they
+                // represent the same conceptual "loop variable at iteration N".
+                //
+                //   header args:  %wbl_{lbl}_{k}   — declared in ^while_header
+                //   body   args:  %wbod_{lbl}_{k}  — declared in ^while_body
+                //
+                // The condition instructions run in the header block so they
+                // are substituted with header arg names.  The body instructions
+                // run in the body block so they are substituted with body arg
+                // names.  The back-edge passes %post_id (computed by the body)
+                // back to the header.
+                //
+                // Entries whose init_id is usize::MAX (variable declared
+                // inside the loop body) are skipped — they have no pre-loop
+                // value to thread.
+                struct LoopArg {
+                    init_id: usize,
+                    head_name: String, // %wbl_{lbl}_{k}
+                    body_name: String, // %wbod_{lbl}_{k}
+                    post_id: usize,
+                }
+                let mut loop_args: Vec<LoopArg> = Vec::new();
+                for (k, ((_vname, post_vid), init_vid)) in
+                    live_vars.iter().zip(init_ids.iter()).enumerate()
+                {
+                    if init_vid.0 == usize::MAX {
+                        continue;
+                    }
+                    loop_args.push(LoopArg {
+                        init_id: init_vid.0,
+                        head_name: format!("wbl_{lbl}_{k}"),
+                        body_name: format!("wbod_{lbl}_{k}"),
+                        post_id: post_vid.0,
+                    });
+                }
+
+                // Build arg-triple slices consumed by substitute_ids.
+                let head_args: Vec<(usize, String, usize)> = loop_args
+                    .iter()
+                    .map(|a| (a.init_id, a.head_name.clone(), a.post_id))
+                    .collect();
+                let body_args: Vec<(usize, String, usize)> = loop_args
+                    .iter()
+                    .map(|a| (a.init_id, a.body_name.clone(), a.post_id))
+                    .collect();
+
+                // Entry branch: carry initial values into the header.
+                {
+                    let init_vals: Vec<String> = loop_args
+                        .iter()
+                        .map(|a| format!("%{}", a.init_id))
+                        .collect();
+                    let arg_pass = fmt_block_args(&init_vals);
+                    self.emit_line(&format!("    cf.br ^while_header_{lbl}{arg_pass}"));
+                }
+
+                // Header block declaration (block args named wbl_*).
+                if loop_args.is_empty() {
+                    self.emit_line(&format!("  ^while_header_{lbl}:"));
+                } else {
+                    let arg_decls: String = loop_args
+                        .iter()
+                        .map(|a| format!("%{}: i64", a.head_name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.emit_line(&format!("  ^while_header_{lbl}({arg_decls}):"));
+                }
+
+                // Emit condition instructions. Substitute init_ids with header
+                // block arg names (wbl_*) since cond runs in the header block.
                 let mut cond_sub = LoweringContext::new();
                 for (vid, kind) in &self.values {
                     cond_sub.values.insert(*vid, kind.clone());
@@ -687,25 +802,79 @@ impl LoweringContext {
                 for (idx, ci) in cond_instrs.iter().enumerate() {
                     cond_sub.emit_instr(idx, ci)?;
                 }
-                self.body.push_str(&cond_sub.body);
+                let cond_text = substitute_ids(&cond_sub.body, &head_args);
+                self.body.push_str(&cond_text);
                 for (vid, kind) in cond_sub.values {
                     self.values.insert(vid, kind);
                 }
-                // Bubble up extern_calls from the condition sub-context.
                 #[cfg(feature = "std-surface")]
                 for ec in cond_sub.extern_calls {
                     self.extern_calls.insert(ec);
                 }
-                // i64 condition → i1 for cf.cond_br.
-                self.emit_line(&format!(
-                    "    %cond_bool_{lbl} = arith.trunci %{} : i64 to i1",
-                    cond_id.0
-                ));
-                self.emit_line(&format!(
-                    "    cf.cond_br %cond_bool_{lbl}, ^while_body_{lbl}, ^while_after_{lbl}"
-                ));
-                // Body block.
-                self.emit_line(&format!("  ^while_body_{lbl}:"));
+
+                // Determine whether condition is already i1 (comparison op).
+                let cond_already_i1 = cond_instrs
+                    .last()
+                    .map(|last| {
+                        matches!(
+                            last,
+                            Instr::BinOp {
+                                op: BinOp::Lt
+                                    | BinOp::Le
+                                    | BinOp::Gt
+                                    | BinOp::Ge
+                                    | BinOp::Eq
+                                    | BinOp::Ne,
+                                ..
+                            }
+                        )
+                    })
+                    .unwrap_or(false);
+
+                // The cond_br passes the HEADER args into the body block AND
+                // the after block.  Both receive the same live-var values so
+                // that ^while_after_N can expose them as block args to code
+                // that follows the loop (fixing the SSA dominance error where
+                // %post_id, defined in ^while_body_N, was referenced in the
+                // non-dominated ^while_after_N block).
+                let head_name_vals: Vec<String> = loop_args
+                    .iter()
+                    .map(|a| format!("%{}", a.head_name))
+                    .collect();
+                let body_arg_pass = fmt_block_args(&head_name_vals);
+                // The after block gets the same arg list (header args).
+                let after_arg_pass = body_arg_pass.clone();
+
+                if cond_already_i1 {
+                    let cond_name = substitute_single_id(cond_id.0, &head_args);
+                    self.emit_line(&format!(
+                        "    cf.cond_br {cond_name}, ^while_body_{lbl}{body_arg_pass}, ^while_after_{lbl}{after_arg_pass}"
+                    ));
+                } else {
+                    let cond_name = substitute_single_id(cond_id.0, &head_args);
+                    self.emit_line(&format!(
+                        "    %cond_bool_{lbl} = arith.trunci {cond_name} : i64 to i1"
+                    ));
+                    self.emit_line(&format!(
+                        "    cf.cond_br %cond_bool_{lbl}, ^while_body_{lbl}{body_arg_pass}, ^while_after_{lbl}{after_arg_pass}"
+                    ));
+                }
+
+                // Body block declaration (block args named wbod_*, distinct
+                // from the header's wbl_* to avoid SSA redefinition).
+                if loop_args.is_empty() {
+                    self.emit_line(&format!("  ^while_body_{lbl}:"));
+                } else {
+                    let arg_decls: String = loop_args
+                        .iter()
+                        .map(|a| format!("%{}: i64", a.body_name))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.emit_line(&format!("  ^while_body_{lbl}({arg_decls}):"));
+                }
+
+                // Emit body instructions. Substitute init_ids with body block
+                // arg names (wbod_*) since body runs in the body block.
                 let mut body_sub = LoweringContext::new();
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
@@ -713,19 +882,80 @@ impl LoweringContext {
                 for (idx, bi) in body.iter().enumerate() {
                     body_sub.emit_instr(idx, bi)?;
                 }
-                self.body.push_str(&body_sub.body);
+                let body_text = substitute_ids(&body_sub.body, &body_args);
+                self.body.push_str(&body_text);
                 for (vid, kind) in body_sub.values {
                     self.values.insert(vid, kind);
                 }
-                // Bubble up extern_calls from the body sub-context.
                 #[cfg(feature = "std-surface")]
                 for ec in body_sub.extern_calls {
                     self.extern_calls.insert(ec);
                 }
-                // Back-edge: loop back to the header.
-                self.emit_line(&format!("    cf.br ^while_header_{lbl}"));
-                // After block: execution continues here when the condition is false.
-                self.emit_line(&format!("  ^while_after_{lbl}:"));
+
+                // Back-edge: pass post-body values (computed in the body block
+                // using wbod_* args as inputs) back to the header.
+                //
+                // For each slot k, the post_id is the final SSA id assigned to
+                // the variable after all its assignments in the body IR.
+                //
+                // Special case: assignments of the form `x = y` (where y is
+                // another loop variable) produce post_id[x] == init_id[y].
+                // In the body block, `%init_id[y]` is the pre-loop value from
+                // the entry block, but the correct CURRENT-iteration value of y
+                // is the body-block arg `%wbod_{lbl}_{j}`.  We must pass the
+                // body arg, not the stale pre-loop init value, so that later
+                // iterations receive the right values on the back-edge.
+                //
+                // Mapping: if post_id[k] == init_id[j], use body_name[j].
+                // Otherwise (post_id is a fresh computation), use %post_id.
+                {
+                    let post_vals: Vec<String> = loop_args
+                        .iter()
+                        .map(|a| {
+                            // Check if this post_id matches the init_id of
+                            // another (or the same) loop arg.
+                            if let Some(src) = loop_args
+                                .iter()
+                                .find(|other| other.init_id == a.post_id)
+                            {
+                                // Pass the body-block arg for that source variable.
+                                format!("%{}", src.body_name)
+                            } else {
+                                // Fresh computation in the body — pass directly.
+                                format!("%{}", a.post_id)
+                            }
+                        })
+                        .collect();
+                    let back_pass = fmt_block_args(&post_vals);
+                    self.emit_line(&format!("    cf.br ^while_header_{lbl}{back_pass}"));
+                }
+
+                // After block: block args %waft_{lbl}_{k}: i64 carry the
+                // loop-variable values from the header into the successor
+                // block (dominance fix: header dominates both body and after,
+                // so threading header args into after is always valid).
+                //
+                // Register pending_after_subs so subsequent emit_line calls
+                // (for fn-body instructions in ^while_after_{lbl}) rewrite
+                // %post_id → %waft_{lbl}_{k}, preserving SSA dominance.
+                if loop_args.is_empty() {
+                    self.emit_line(&format!("  ^while_after_{lbl}:"));
+                } else {
+                    // Declare after-block args %waft_{lbl}_{k}: i64.
+                    let after_arg_decls: String = loop_args
+                        .iter()
+                        .enumerate()
+                        .map(|(k, _a)| format!("%waft_{lbl}_{k}: i64"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    self.emit_line(&format!("  ^while_after_{lbl}({after_arg_decls}):"));
+                    // Register substitutions: %post_id → %waft_{lbl}_{k}.
+                    // These are applied by emit_line to all subsequent output.
+                    for (k, a) in loop_args.iter().enumerate() {
+                        self.pending_after_subs
+                            .push((a.post_id, format!("waft_{lbl}_{k}")));
+                    }
+                }
             }
             // RFC 0005 Phase 6.2b Gap 2 — `const NAME: [i64; N] = [...]`
             // lowers to an MLIR `arith.constant` dense attribute that is
@@ -2687,4 +2917,89 @@ fn format_number(n: f64) -> String {
     } else {
         n.to_string()
     }
+}
+
+/// Format a MLIR block-argument pass list for `cf.br` / `cf.cond_br`.
+///
+/// MLIR 18 (and later) requires a combined type annotation for the
+/// complete value list, NOT per-value annotations:
+///   n=0 → ``  (no parens)
+///   n=1 → `(%v0 : i64)`
+///   n>1 → `(%v0, %v1, ... : i64, i64, ...)`
+///
+/// The `values` slice is a list of `%name` strings (already percent-prefixed).
+#[cfg(feature = "std-surface")]
+fn fmt_block_args(values: &[String]) -> String {
+    match values.len() {
+        0 => String::new(),
+        1 => format!("({} : i64)", values[0]),
+        _ => {
+            let vals = values.join(", ");
+            let types = vec!["i64"; values.len()].join(", ");
+            format!("({vals} : {types})")
+        }
+    }
+}
+
+/// Replace every occurrence of `%{init_id}` with `%{arg_name}` in `text`
+/// for each `(init_id, arg_name, _post_id)` triple.
+///
+/// Boundary rule: a match is valid only when the character immediately
+/// after the digit run is NOT another ASCII digit.  This prevents `%1`
+/// from being substituted inside `%10`, `%11`, etc.
+///
+/// The substitution is applied from largest init_id to smallest so that
+/// multi-digit ids (e.g. `%12`) are processed before single-digit ones
+/// (e.g. `%1`) and thus can never be partially clobbered.
+#[cfg(feature = "std-surface")]
+fn substitute_ids(text: &str, args: &[(usize, String, usize)]) -> String {
+    // Sort descending by init_id so longer numeric ids are replaced first.
+    let mut sorted: Vec<&(usize, String, usize)> = args.iter().collect();
+    sorted.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut result = text.to_owned();
+    for (init_id, arg_name, _) in &sorted {
+        result = substitute_one(&result, *init_id, arg_name);
+    }
+    result
+}
+
+/// Return `%{arg_name}` if `id` matches any `init_id` in `args`, otherwise
+/// return `%{id}`.
+#[cfg(feature = "std-surface")]
+fn substitute_single_id(id: usize, args: &[(usize, String, usize)]) -> String {
+    for (init_id, arg_name, _) in args {
+        if *init_id == id {
+            return format!("%{arg_name}");
+        }
+    }
+    format!("%{id}")
+}
+
+/// Replace all boundary-safe occurrences of `%{id}` in `text` with
+/// `%{replacement}`.  A match is boundary-safe when the character
+/// immediately following the digit run is not an ASCII digit.
+fn substitute_one(text: &str, id: usize, replacement: &str) -> String {
+    let needle = format!("%{id}");
+    let mut out = String::with_capacity(text.len());
+    let bytes = text.as_bytes();
+    let nlen = needle.len();
+    let mut pos = 0usize;
+    while pos < bytes.len() {
+        // Fast check: does the slice starting here begin with needle?
+        if bytes.len() - pos >= nlen && &bytes[pos..pos + nlen] == needle.as_bytes() {
+            // Boundary check: char after the needle must not be an ASCII digit.
+            let after = pos + nlen;
+            let next_is_digit = after < bytes.len() && bytes[after].is_ascii_digit();
+            if !next_is_digit {
+                out.push('%');
+                out.push_str(replacement);
+                pos += nlen;
+                continue;
+            }
+        }
+        out.push(bytes[pos] as char);
+        pos += 1;
+    }
+    out
 }
