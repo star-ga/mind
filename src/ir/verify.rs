@@ -190,6 +190,16 @@ fn validate_operands(
                 if let Some(dst) = crate::ir::instruction_dst(body_instr) {
                     body_defined.insert(dst);
                 }
+                // RFC 0005 Gap 1: While loops output their live_vars post-body
+                // values into the enclosing scope.  The MLIR emitter threads
+                // them as block arguments; the IR verifier must treat those
+                // post-body ValueIds as defined in the fn body after the While.
+                #[cfg(feature = "std-surface")]
+                if let Instr::While { live_vars, .. } = body_instr {
+                    for (_name, post_id) in live_vars {
+                        body_defined.insert(*post_id);
+                    }
+                }
                 // Check operand references within body scope
                 if let Instr::BinOp { lhs, rhs, .. } = body_instr {
                     if !body_defined.contains(lhs) {
@@ -227,6 +237,11 @@ fn validate_operands(
         // own sub-module (separate SSA namespaces).  The outer verifier treats
         // the node as an opaque control-flow unit; no use-before-def check
         // at the module level is applicable. Gated.
+        //
+        // NOTE: This arm is called from the FnDef body-verifier loop (which
+        // uses body_defined, not the outer `defined`). We do NOT check operands
+        // here because the while body has its own SSA namespace.  The outer
+        // check_defined closure references the wrong scope.
         #[cfg(feature = "std-surface")]
         Instr::While { .. } => {}
         // RFC 0005 Phase 6.2b Gap 2: array constant — values are literals,

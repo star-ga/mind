@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2651 | **Est. tokens:** ~6,583,737
-**Generated:** 2026-05-26 09:54 UTC
+**Files:** 2653 | **Est. tokens:** ~6,590,320
+**Generated:** 2026-05-26 22:26 UTC
 
 ## Token Budget Guide
 
@@ -372,12 +372,12 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,190 |
-| `src/eval/` | 13 | ~81,432 |
+| `src/eval/` | 13 | ~82,512 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
 | `src/fmt/` | 3 | ~17,167 |
-| `src/ir/` | 3 | ~13,767 |
+| `src/ir/` | 3 | ~14,096 |
 | `src/ir/compact/` | 3 | ~14,184 |
 | `src/ir/compact/v2/` | 7 | ~27,178 |
 | `src/lint/` | 2 | ~3,995 |
@@ -387,15 +387,15 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,259 |
-| `src/project/` | 3 | ~20,855 |
+| `src/project/` | 3 | ~20,913 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,051 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,810 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
-| `std/` | 16 | ~77,952 |
-| `tests/` | 155 | ~258,030 |
+| `std/` | 17 | ~81,159 |
+| `tests/` | 156 | ~259,939 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3601,7 +3601,7 @@
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~20915 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~21995 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4154 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8482 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3648,9 +3648,9 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `mod.rs` (~7487 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7594 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3435 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~2845 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~3067 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -3699,7 +3699,7 @@
 
 - `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3396 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3454 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
@@ -3747,6 +3747,7 @@
 - `net.mind` (~2321 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~2935 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
+- `sha256.mind` (~3207 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `string.mind` (~2325 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4814 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
@@ -3838,9 +3839,9 @@
 ### `tests/`
 
 - `fmt_comment_placement.rs` (~2698 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_idempotence.rs` (~2191 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~2340 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1931 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_stdlib_stability.rs` (~2560 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_stdlib_stability.rs` (~2674 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6100 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `genref_phase_jb.rs` (~3303 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3998,6 +3999,7 @@
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
 ### `tests/`
 
+- `sha256_smoke.rs` (~1639 tok, huge) — Copyright 2025 STARGA Inc.
 - `shape_integration.rs` (~416 tok, medium)
 - `shape_ops_preview.rs` (~302 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/shapes/`
@@ -4048,7 +4050,7 @@
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1753 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1859 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_while_statement.rs` (~3186 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_while_statement.rs` (~3193 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
