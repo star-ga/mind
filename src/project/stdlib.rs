@@ -183,6 +183,11 @@ mod tests {
         assert!(table.resolves(&["std".into(), "process".into()], "spawn"));
         assert!(table.resolves(&["std".into(), "tui".into()], "tui_cursor_to"));
         assert!(table.resolves(&["std".into(), "tui".into()], "tui_clear_screen"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_terminal_size"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_box_new"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_box_render"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_text_new"));
+        assert!(table.resolves(&["std".into(), "tui".into()], "tui_text_render"));
     }
 
     #[test]
