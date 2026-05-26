@@ -1,0 +1,28 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# This is a Q16.16 row-major matrix x VECTOR (gemv): y = W . x, where W is a
+# 256x256 Q16.16 matrix and x a 256-vector, via __mind_blas_matmul_rmajor_q16_v
+# (RFC 0006 Track B). Exact integer reduction per row (the proven dot_q16
+# sequence), so the whole gemv is bit-identical across substrates. The output
+# is the 256-element Q16.16 result vector; its canonical encoding is each i32
+# little-endian, then sha256. (Full square GEMM is future work once a
+# matmul-matmul kernel lands; the bit-identity property is identical.)
+
+version = "1"
+name = "gemv-q16-256x256"
+description = "Q16.16 row-major gemv y = W.x, W 256x256, x 256-vector (RFC 0006 matmul_rmajor_q16_v); exact integer reduction per row."
+weight = 2.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"
+seed = 3735928559          # 0xDEADBEEF
+rows = 256
+cols = 256
+dtype = "q16_16"           # W is rows*cols row-major i32; x is cols i32
+
+[kernel]
+symbol = "__mind_blas_matmul_rmajor_q16_v"
+returns = "i64"            # status (0 ok); result written to caller y buffer
+output_encoding = "i32_le_vector"  # rows i32, each little-endian, then sha256
