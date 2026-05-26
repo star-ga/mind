@@ -50,6 +50,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.net",     include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
     ("std.regex",   include_str!("../../std/regex.mind")),
+    ("std.sha256",  include_str!("../../std/sha256.mind")),
     ("std.string",  include_str!("../../std/string.mind")),
     ("std.toml",    include_str!("../../std/toml.mind")),
     ("std.tui",     include_str!("../../std/tui.mind")),
@@ -155,6 +156,7 @@ mod tests {
         assert!(names.contains(&"std.fs"));
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.process"));
+        assert!(names.contains(&"std.sha256"));
         assert!(names.contains(&"std.tui"));
     }
 
@@ -188,6 +190,7 @@ mod tests {
         assert!(table.resolves(&["std".into(), "tui".into()], "tui_box_render"));
         assert!(table.resolves(&["std".into(), "tui".into()], "tui_text_new"));
         assert!(table.resolves(&["std".into(), "tui".into()], "tui_text_render"));
+        assert!(table.resolves(&["std".into(), "sha256".into()], "sha256"));
     }
 
     #[test]
@@ -263,6 +266,7 @@ mod tests {
         assert!(names.contains(&"std.regex"));
         assert!(names.contains(&"std.fs"));
         assert!(names.contains(&"std.net"));
+        assert!(names.contains(&"std.sha256"));
         assert!(names.contains(&"std.process"));
     }
 

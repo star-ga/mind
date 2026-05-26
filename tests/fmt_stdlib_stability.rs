@@ -88,6 +88,9 @@ const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
     ("string", "STRING-001: while-loop body (string_eq / string_starts_with byte \
                  compares); the default-build formatter parser needs std-surface to \
                  parse `while`. Idempotence enforced by idempotence_stdlib_string."),
+    ("sha256", "SHA256-001: while-loop bodies (compress_block / sha256 padding); \
+                 std-surface required for `while`. Idempotence enforced by \
+                 idempotence_stdlib_sha256."),
 ];
 
 fn stability_skip_reason(stem: &str) -> Option<&'static str> {
@@ -124,6 +127,14 @@ fn stability_map() {
 #[test]
 fn stability_blas() {
     check_or_skip("blas");
+}
+
+/// `sha256.mind` uses `while` loops in compress_block and sha256, which require
+/// the `std-surface` feature to be recognised by the formatter's parser.
+#[test]
+#[cfg(feature = "std-surface")]
+fn stability_sha256() {
+    check_or_skip("sha256");
 }
 
 /// `toml.mind` uses `while` loops, which require the `std-surface` feature to
