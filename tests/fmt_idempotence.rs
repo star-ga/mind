@@ -124,6 +124,20 @@ fn idempotence_stdlib_string() {
     assert!(exercised, "string.mind failed to parse under std-surface — unexpected");
 }
 
+/// `sha256.mind` uses `while` loops in compress_block and sha256, which require
+/// the `std-surface` feature for the formatter's parser.
+#[test]
+#[cfg(feature = "std-surface")]
+fn idempotence_stdlib_sha256() {
+    let base = manifest_dir().join("std");
+    let cfg = default_cfg();
+    let path = base.join("sha256.mind");
+    let src = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let exercised = check_idempotence("sha256", &src, &cfg);
+    assert!(exercised, "sha256.mind failed to parse under std-surface — unexpected");
+}
+
 /// `toml.mind` uses `while` loops, which require the `std-surface` feature to
 /// be recognised by the formatter's parser.  This test is separately gated.
 #[test]
