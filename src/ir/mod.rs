@@ -311,8 +311,14 @@ pub enum Instr {
         /// Instructions forming the loop body (emitted into the body block).
         body: Vec<Instr>,
         /// SSA ids of variables that are mutated in the body and must be
-        /// live across the back-edge (threaded as block arguments).
+        /// live across the back-edge.  Each pair is (name, post_body_id).
         live_vars: Vec<(String, ValueId)>,
+        /// Pre-loop SSA ids parallel to `live_vars`.  `init_ids[i]` is the
+        /// ValueId of `live_vars[i].0` BEFORE the loop begins — required to
+        /// emit the initial `cf.br ^while_header(init...)` and to substitute
+        /// block-argument names in the header / body blocks.  Populated by
+        /// `lower.rs`; parallel vec always has the same length as `live_vars`.
+        init_ids: Vec<ValueId>,
     },
     /// Conditional branch (Phase 6.5 Stage 1a).
     ///
