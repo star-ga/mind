@@ -1,0 +1,9 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes. Q16.16 gemv is exact integer arithmetic
+# (per-row dot_q16), so avx2 == neon by construction (RFC 0015 §3.1).
+#
+#   avx2 — verified on x86_64 (this gate, 2026-05-25).
+#   neon — asserted identical per RFC 0015 §3.1; enforced on the aarch64 CI runner.
+
+avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+neon = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"

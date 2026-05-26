@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2647 | **Est. tokens:** ~6,560,897
-**Generated:** 2026-05-26 02:27 UTC
+**Files:** 2649 | **Est. tokens:** ~6,562,119
+**Generated:** 2026-05-26 02:28 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 16 | ~74,930 |
-| `tests/` | 155 | ~256,021 |
+| `tests/` | 155 | ~256,803 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -403,6 +403,7 @@
 | `tests/cross_substrate_identity/` | 1 | ~700 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~287 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
+| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~440 |
 | `tests/fixtures/` | 6 | ~191 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -3805,12 +3806,16 @@
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
 - `reference_hashes.toml` (~281 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+### `tests/cross_substrate_identity/gemv-q16-256x256/`
+
+- `manifest.toml` (~308 tok, medium) — version = "1"
+- `reference_hashes.toml` (~132 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
 ### `tests/cross_substrate_identity/`
 
 - `README.md` (~700 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~2616 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~3398 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.

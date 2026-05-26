@@ -70,9 +70,13 @@ pub fn dotq(a: i64, b: i64, n: i64) -> i64 {
 pub fn dotl1q(a: i64, b: i64, n: i64) -> i64 {
     __mind_blas_dot_l1_q16_v(a, b, n)
 }
+pub fn mmq(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
+    __mind_blas_matmul_rmajor_q16_v(w, x, y, rows, cols)
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
+type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 
 fn mindc_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -278,4 +282,82 @@ fn dot_l1_q16_reproducibility_gate() {
         length: 65536,
         oracle: ref_dot_l1_q16_scalar,
     });
+}
+
+// --- gemv-q16 workload (matrix x vector) -----------------------------------
+// The output is a `rows`-length Q16.16 vector (i32 each), not a scalar, so the
+// canonical encoding is the y buffer's bytes (rows * 4 LE) → sha256.
+
+/// Regenerate the gemv inputs from a seed: a rows*cols Q16.16 matrix W
+/// (row-major) and a cols-length Q16.16 vector x.
+fn make_gemv_q16(rows: usize, cols: usize, seed: u64) -> (Vec<i32>, Vec<i32>) {
+    let mut g = Lcg::new(seed);
+    let w: Vec<i32> = (0..rows * cols).map(|_| g.next_q16()).collect();
+    let x: Vec<i32> = (0..cols).map(|_| g.next_q16()).collect();
+    (w, x)
+}
+
+/// Scalar Q16.16 gemv oracle: y[r] = dot_q16(W row r, x).
+fn ref_gemv_q16_scalar(w: &[i32], x: &[i32], rows: usize, cols: usize) -> Vec<i32> {
+    (0..rows)
+        .map(|r| ref_dot_q16_scalar(&w[r * cols..(r + 1) * cols], x) as i32)
+        .collect()
+}
+
+/// Canonical hash of a Q16.16 vector: each i32 little-endian, then sha256.
+fn canonical_hash_i32s(v: &[i32]) -> String {
+    let mut h = Sha256::new();
+    for &e in v {
+        h.update(e.to_le_bytes());
+    }
+    format!("{:x}", h.finalize())
+}
+
+#[test]
+fn gemv_q16_reproducibility_gate() {
+    let id = "gemv-q16-256x256";
+    let (rows, cols, seed) = (256usize, 256usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let mmq: Symbol<MatmulFn> = unsafe { lib.get(b"mmq").expect("mmq symbol") };
+
+    let (w, x) = make_gemv_q16(rows, cols, seed);
+    let mut y = vec![0i32; rows];
+    let rc = unsafe {
+        mmq(
+            w.as_ptr() as i64,
+            x.as_ptr() as i64,
+            y.as_mut_ptr() as i64,
+            rows as i64,
+            cols as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: kernel returned {rc} (expected 0)");
+
+    // 1. Within-run exactness vs the scalar gemv oracle.
+    let oracle = ref_gemv_q16_scalar(&w, &x, rows, cols);
+    assert_eq!(y, oracle, "{id}: gemv vector path diverged from the scalar oracle");
+
+    // 2. Canonical hash pinned to the committed per-substrate reference.
+    let computed = canonical_hash_i32s(&y);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
+             bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
 }
