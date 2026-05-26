@@ -229,7 +229,16 @@ MAP and rooted in one signer.
    `parent` and — for a Q16.16 graph — equal `trace_hash` (RFC 0015 §3.1 made
    inspectable in-band).
 3. Bootstrap byte-identity (Phase G keystone) is preserved with evidence emission
-   on — the graph proper is unchanged; only the trailing MAP grows.
+   on. **Two distinct byte-identity domains — neither is threatened:**
+   (a) the Phase G keystone compares the compiled **cdylib `.so`** (MLIR→LLVM
+   output), which carries no mic MAP, so evidence emission into the mic@2/MIC-B
+   serialization cannot perturb it; (b) the RFC 0015 cross-substrate property is
+   measured on the **graph / `trace_hash`** (MAP-stripped, mic@2.1 §3.1's
+   separable epilogue). The `evidence_chain.substrate` field intentionally
+   *differs* between an avx2 and a neon artifact — that is the recorded fact, not
+   a violation; the graph and (for a Q16.16 graph) the `trace_hash` are identical
+   across them. "On by default" (§5.1) governs mic-artifact emission, a different
+   output than the cdylib the bootstrap pins.
 4. `mindc verify --evidence` recomputes `trace_hash` and validates the §6 signature
    on a release artifact; a single flipped byte anywhere fails verification.
 5. A `#[nondeterministic]` graph emits `determinism = "nondeterministic"` and omits
