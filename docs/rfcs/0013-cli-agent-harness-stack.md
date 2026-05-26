@@ -107,16 +107,62 @@ target OSes.
 
 Effort: 6–10 weeks. Gates Tier 3 entirely.
 
-**Open scope decision** (the load-bearing call in this RFC):
+**Scope decision — RESOLVED (2026-05-25): Option B-hybrid.** Backed by an
+architecture stress-test (mind-architect) that confirmed the load-bearing
+premise: crypto primitives are **deterministic-by-standard** — `AES(k,p)`,
+`SHA256(m)`, `X25519(s,p)` produce byte-identical output on AVX2 / NEON / every
+conforming substrate *by definition of the cipher* (AES-NI vs bitsliced
+software differ in timing, not bytes). They therefore discharge the §8.4
+cross-substrate byte-identity proof obligation **trivially** (the NIST CAVP /
+RFC 8439 / RFC 7748 known-answer vectors already prove it), which is exactly
+what nondeterministic numeric FFI (NumPy f64, CUDA tensor cores, OpenBLAS
+reduction order) can never do. Crypto FFI does **not** fracture the wedge the
+way numeric FFI does. The options weighed:
 
-| Option                  | Pros                                                                                              | Cons |
-|-------------------------|---------------------------------------------------------------------------------------------------|------|
-| **A — pure-MIND TLS 1.3** | Matches the "exercise the language" credibility target; no FFI exception; full audit chain in MIND | Multi-quarter project; cryptographic primitives are a known-hazardous surface; reviewer-cost is high |
-| **B — FFI to a named C crypto core** | Ships in weeks not quarters; uses a battle-tested constant-time core (`ring` / `BoringSSL`); reviewer-cost is bounded | Introduces the first non-libc FFI surface; named and version-pinned in *this* RFC if approved |
+| Option | Verdict |
+|---|---|
+| **A — pure-MIND TLS 1.3 incl. hand-rolled primitives** | **Deferred, not rejected.** Multi-quarter; hand-rolling constant-time crypto is the #1 security anti-pattern. Re-opened later as a separate long-horizon RFC: a Q16.16/deterministic-integer constant-time bignum *showcase*, graduating primitive-by-primitive behind the same §8.4 gate. Does NOT gate Tier 3. |
+| **B-hybrid — MIND protocol + FFI to a named C crypto core** | **CHOSEN.** Ships in weeks; battle-tested constant-time core; bounded reviewer cost. |
 
-The acceptance gate (§5) forbids any FFI outside libc syscalls **unless this
-RFC names the exception**. The decision is recorded in §7 and supersedes the
-default no-FFI rule for the named library only.
+**The FFI boundary** ("MIND owns bytes-in/bytes-out + parsing + policy; C owns
+every operation whose *internals* must be constant-time; the wall clock and RNG
+are explicit MIND-owned inputs threaded from the call site"):
+
+- **In MIND:** handshake state machine, record-layer framing, alert protocol,
+  ALPN/SNI encoding, AEAD nonce construction (counter⊕IV, deterministic),
+  **X.509 parse + chain path-building + name/SAN/validity/EKU policy checks**
+  (byte-deterministic parsing/comparison — genuine language-exercise), trust-store
+  *loading* (libc file/registry I/O).
+- **In the C core (all constant-time internals):** AEAD seal/**open** (AES-128/256-GCM,
+  ChaCha20-Poly1305) — incl. the constant-time tag **verify** (a MIND `==` on a MAC
+  tag is a textbook timing oracle and is **banned**; tag checks go through the C
+  `*_open`/`*_verify` only); SHA-256/384; **HKDF-Extract/Expand + HKDF-Expand-Label
+  + HMAC** (no MIND HMAC around a C hash — that re-introduces a const-time surface
+  for zero credibility gain); X25519 + P-256 ECDH; signature **VERIFY-ONLY**:
+  Ed25519, ECDSA-P256, RSA-PKCS1v1.5 + PSS. **Signing / keygen / the core's own RNG
+  entry points are NOT admitted** — they are nonce-randomized (ECDSA `k`, RSA-PSS
+  salt) and out of scope; mutual-TLS client-cert *signing* is a separate future
+  §8.4 admission, never a free extension of this one.
+- **Cert-validation time** is an explicit `ValidationTime` input to `tls_connect`,
+  sourced from the `std.async` clock at the call site and recorded in the
+  ReplayScheduler trace — **never** an ambient `clock_gettime` inside a
+  `#[deterministic]` body (§8.8).
+
+**RNG / entropy — no mode flag.** `std.tls` owns a seeded CSPRNG (ChaCha20/HKDF-DRBG
+built on the admitted C primitives). The client-random + ephemeral keyshare scalar
+are drawn from it; the seed is a property of the `&Scheduler` (RFC 0011 §10 —
+"the type signature is the audit trail") passed at the call site. There is exactly
+**one** code path — no `replay` vs `production` flag (that *is* the opt-in escape
+hatch §8 forbids). **Production:** the scheduler seed is drawn once at the
+entropy-collection boundary from a newly §5-allowlisted OS CSPRNG syscall
+(`getrandom` Linux / `getentropy` macOS / `BCryptGenRandom` Windows), called
+outside every `#[deterministic]` body; the trace records the seed-*derivation
+event + `H(seed)`, **never the raw seed** (a production seed is a secret — logging
+it would be a session-key-disclosure oracle). **Replay** is for fixed-seed test
+fixtures only; replaying a real production session is structurally impossible.
+
+The decision is recorded in §7 (Q1, resolved) and §8.5 (admitted-bindings table);
+it supersedes the default no-FFI rule for the named aws-lc symbol subset only.
 
 Once the scope decision lands, `std.tls` exposes:
 - TLS 1.3 client (server-auth only at first; mutual-TLS deferred)
@@ -205,8 +251,13 @@ the shipped cross-platform binaries (no external runtime required).
   `ReplayScheduler` traces verified in CI across all three OSes.
 - **No FFI outside libc syscalls** unless admitted under the §8 FFI Discipline
   table. The Tier 2 scope decision (§4.2) is the first admission-path test
-  case: a named, version-pinned C crypto subset enters §8.5 only after the
-  cross-substrate byte-identity CI gate passes.
+  case: the named, version-pinned **aws-lc** C crypto subset enters §8.5 only
+  after the cross-substrate byte-identity CI gate passes.
+- **OS CSPRNG seed syscalls** (`getrandom`/`getentropy`/`BCryptGenRandom`) are
+  added to the allowlist as the single sanctioned entropy seam for the Tier 2
+  `std.tls` production RNG seed — explicitly non-deterministic, fenced outside
+  every `#[deterministic]` body, recorded in §8.5 for traceability (not a §8.4
+  deterministic binding).
 - Frontend µs benchmarks: `<±2%` drift across all Phase 16 work — same
   anti-regression gate as Phase 15.
 
@@ -227,10 +278,14 @@ the shipped cross-platform binaries (no external runtime required).
 
 ## 7. Open questions
 
-1. **Tier 2 TLS scope** (the load-bearing decision). Pure-MIND TLS 1.3 vs
-   FFI to a named version-pinned C crypto core. The default rule is no FFI
-   outside libc; this RFC is the only mechanism that can name an exception.
-   *Decision deferred until the Tier 2 design block is written.*
+1. **Tier 2 TLS scope** (the load-bearing decision). **RESOLVED (2026-05-25):
+   Option B-hybrid** — pure-MIND TLS 1.3 protocol/parsing/policy + FFI to the
+   **aws-lc** C crypto primitive subset (verify-only signatures), admitted via
+   §8.4 because crypto primitives are deterministic-by-standard and discharge
+   the byte-identity gate trivially. Full rationale + FFI boundary + RNG design
+   in §4.2; admitted-bindings entries in §8.5; OS-CSPRNG seed syscalls added to
+   the §5 libc allowlist. Pure-MIND primitives deferred to a separate
+   long-horizon RFC (not a Tier-3 blocker).
 
 2. **Tier 4 sequencing.** RFC 0011 Phases B–F are "deferred" today. Phase B
    alone is enough for non-streaming HTTP; Phases C + D are required for
@@ -338,7 +393,8 @@ conditions hold:
 
 | Binding | Version | Admitted | Sunset trigger | Byte-identity test |
 | --- | --- | --- | --- | --- |
-| _(empty today; first entry expected from §4.2 Tier 2 TLS scope decision — a named C crypto subset such as a ring or BoringSSL primitive set, only after the §8.4 CI gate passes)_ | — | — | — | — |
+| **aws-lc** C crypto core — admitted symbol subset ONLY: `EVP_AEAD_CTX` (AES-128/256-GCM, ChaCha20-Poly1305) incl. constant-time `*_open`/`*_seal` tag verify; SHA-256/SHA-384; `HKDF_extract`/`HKDF_expand` + HKDF-Expand-Label + HMAC; X25519 + P-256 `ECDH`; signature **VERIFY-ONLY**: `ED25519_verify`, `ECDSA_verify` (P-256), `RSA_verify` (PKCS1v1.5 + PSS). Signing / keygen / the core's own RNG entry points are **NOT** admitted. | aws-lc — pin a specific GA/FIPS release tag at admission time; **static-linked**; runtime CPU-dispatch (AES-NI vs bitslice) noted as timing-only, output-invariant | _(date the §8.4 gate first passes — Tier 2 build)_ | (a) any aws-lc patch/minor/major bump; (b) FIPS-module revision; (c) any admitted symbol's CAVP/RFC test-vector set changes upstream → re-run §8.4 from scratch | `tests/cross_substrate_identity/tls_primitives.rs` — byte-identical AEAD/hash/HKDF/X25519/P-256-ECDH/verify output across avx2 + neon vs RFC 8439 / NIST CAVP / RFC 7748 known-answer vectors; byte-equality only, no tolerance |
+| **OS CSPRNG seed syscalls** (`getrandom` Linux / `getentropy` macOS / `BCryptGenRandom` Windows) — a §5 libc/platform-allowlist extension recorded here for traceability, **NOT** a §8.4 deterministic binding | platform-versioned | _(Tier 2 build)_ | new platform target; or syscall semantics change (e.g. `getrandom` flag default) | N/A — explicitly non-deterministic; the single sanctioned entropy seam, fenced OUTSIDE every `#[deterministic]` body; §8.8 binary-scan allowlists these three symbols by name; a negative test asserts they are unreachable from any `#[deterministic]` entry point |
 
 ### 8.6 CI enforcement
 
@@ -433,8 +489,9 @@ vendor-side parameter pinned alongside it.
 Realistic earliest end-to-end: **mid-to-late 2027**, gated by:
 - Phase 15 self-host landing first (so the agent CLI compiles under
   self-hosted `mindc`)
-- The Tier 2 TLS scope decision (the 4–6 week swing between pure-MIND and
-  FFI-to-named-C-crypto is the largest unknown in the schedule)
+- ~~The Tier 2 TLS scope decision~~ **RESOLVED (§4.2): B-hybrid on aws-lc** —
+  Tier 2 is now a bounded ~6–10 week build (MIND protocol + aws-lc primitive
+  FFI), no longer a multi-quarter pure-crypto unknown
 - RFC 0011 Phases B + C + D landing (Tier 4 gate)
 
 Tiers 1 + 5 start can begin against the v0.7.0 baseline; everything else
