@@ -883,7 +883,12 @@ fn sha256_compress(state: &mut [u32; 8], block: &[u8; 64]) {
     }
 }
 
-fn mini_sha256(data: &[u8]) -> [u8; 32] {
+/// FIPS 180-4 SHA-256 of raw bytes. Used by the dependency-lock machinery
+/// (`sha256_bytes`) and by RFC 0016 evidence-chain `trace_hash` computation
+/// (`crate::ir::compact::v2::evidence`). The pure-MIND `std.sha256` runs the
+/// identical algorithm over the identical bytes, so the two are bit-identical
+/// — that equivalence is what makes the trace_hash substrate-portable.
+pub(crate) fn mini_sha256(data: &[u8]) -> [u8; 32] {
     let mut state = SHA256_H0;
     let bit_len = (data.len() as u64) * 8;
 

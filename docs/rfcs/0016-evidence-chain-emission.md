@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0016 |
 | Title | Compile-Time Evidence-Chain Emission |
-| Status | **Draft** — design only; no phase shipped |
+| Status | **Partial** — Phase A shipped (Rust-bootstrap emit, inert/unsigned); Phases A.5/B/C/D/E pending |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 |
 | Task | #288 |
@@ -216,7 +216,12 @@ MAP and rooted in one signer.
 
 ## 8. Phased plan
 
-- **Phase A — schema + emit (inert, unsigned), Rust bootstrap.** Define the
+- **Phase A — schema + emit (inert, unsigned), Rust bootstrap. ✅ SHIPPED**
+  (`src/ir/compact/v2/evidence.rs`: `attach_evidence_chain` /
+  `compute_trace_hash` / `remove_evidence_chain` / `Determinism`; `trace_hash`
+  hashes `emit_micb` bytes via the `crate::deps::mini_sha256` seam; 15 tests
+  incl. the frozen FIPS 180-4 conformance vector + a pinned residual-block
+  `trace_hash`; bootstrap byte-identity 7/7 preserved.) Define the
   `evidence_chain.*` keys (§3) in `mind/src/ir/compact/v2/` MAP support; the **Rust
   bootstrap `mindc`** emits `trace_hash`/`substrate`/`parent`/`determinism`/`toolchain`
   for deterministic graphs. `trace_hash` = SHA-256 of `emit_micb(MAP-stripped per
