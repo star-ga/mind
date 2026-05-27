@@ -28,6 +28,20 @@ claim, made inspectable in `reference_hashes.toml`.
 
 The harness is `tests/cross_substrate_identity.rs`.
 
+## Workloads
+
+| id | shape | kernel | output |
+|----|-------|--------|--------|
+| `dot-l2-q16` | dot product, len 65536 | `__mind_blas_dot_q16_v` | scalar i64 |
+| `dot-l1-q16` | L1 distance, len 65536 | `__mind_blas_dot_l1_q16_v` | scalar i64 |
+| `gemv-q16-256x256` | matrix×vector, 256×256 | `__mind_blas_matmul_rmajor_q16_v` | 256-vector |
+| `gemm-q16-64x64x64` | matrix×matrix, 64×64×64 | composed (M gemv calls over Bᵀ) | 64×64 matrix |
+
+The GEMM is the first matmul-MATMUL workload; it composes the proven gemv
+intrinsic (`C[i,:] = gemv(Bᵀ, A[i,:])`), so its byte-identity is inherited from
+`gemv-q16-256x256` — no new arithmetic, only an exact transpose + deterministic
+row loop.
+
 ## Running
 
 ```
