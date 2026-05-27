@@ -60,10 +60,12 @@
 mod emit;
 mod parse;
 pub mod v2;
+pub mod v3;
 
 pub use emit::{emit_mic, MicEmitter};
 pub use parse::{parse_mic, MicParseError};
 pub use v2::{detect_format, MicFormat};
+pub use v3::{emit_mic3, parse_mic3, Mic3Error};
 
 /// MIC format version.
 pub const MIC_VERSION: u32 = 1;

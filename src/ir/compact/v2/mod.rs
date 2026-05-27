@@ -78,13 +78,20 @@ pub enum MicFormat {
     Mic2,
     /// MIC-B v2 binary format
     MicB,
+    /// MIC@3 binary format (RFC 0021)
+    Mic3,
     /// Unknown format
     Unknown,
 }
 
 /// Detect the format of input bytes.
 pub fn detect_format(data: &[u8]) -> MicFormat {
-    // Check for binary magic first
+    // MIC@3 binary magic "MIC3"
+    if data.len() >= 5 && data[0..4] == *b"MIC3" {
+        return MicFormat::Mic3;
+    }
+
+    // MIC-B v2 binary magic "MICB"
     if data.len() >= 5 && data[0..4] == MICB_MAGIC {
         return MicFormat::MicB;
     }
