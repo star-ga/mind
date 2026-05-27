@@ -1,0 +1,31 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The first matmul-MATMUL workload: a square Q16.16 GEMM C[M,N] = A[M,K] . B[K,N],
+# M = K = N = 64, row-major. The kernel COMPOSES the proven gemv intrinsic
+# __mind_blas_matmul_rmajor_q16_v (RFC 0006 Track B): for each output row i,
+# C[i,:] = gemv(Bᵀ, A[i,:]) where Bᵀ is N×K. The reduction per output element is
+# the exact dot_q16 integer sequence already proven bit-identical across
+# substrates (gemv-q16-256x256); the transpose is exact data movement and the
+# row loop is deterministic ascending, so the whole GEMM is bit-identical across
+# substrates by construction (RFC 0015 §3.1). The output is the M×N Q16.16
+# result matrix; its canonical encoding is each i32 little-endian, then sha256.
+
+version = "1"
+name = "gemm-q16-64x64x64"
+description = "Q16.16 square GEMM C = A.B, A 64x64, B 64x64 (composed on RFC 0006 matmul_rmajor_q16_v per row over Bᵀ); exact integer reduction per output element."
+weight = 2.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"
+seed = 3735928559          # 0xDEADBEEF; A (m*k i32) generated before B (k*n i32)
+m = 64
+k = 64
+n = 64
+dtype = "q16_16"           # A is m*k row-major i32; B is k*n row-major i32; Bᵀ is n*k
+
+[kernel]
+symbol = "gemmq"           # composed: M calls to __mind_blas_matmul_rmajor_q16_v over Bᵀ
+returns = "i64"            # status (0 ok); result written to caller C buffer
+output_encoding = "i32_le_matrix"  # m*n i32, row-major, each little-endian, then sha256
