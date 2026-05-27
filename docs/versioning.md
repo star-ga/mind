@@ -53,6 +53,12 @@ MIND Core currently publishes 0.y.z versions with the following rules:
 - New feature flags exposed by the CLI or libraries.
 - Concrete GPU or accelerator backend implementations and device-specific
   lowering pipelines.
+- **Provenance metadata** (`mic@2.1` MAP epilogue: `evidence_chain.*` per
+  RFC 0016, `signature.*` Ed25519). Additive and back-compatible by omission
+  (empty MAP ⇒ byte-identical to `mic@2`/`MIC-B`); the epilogue is versioned
+  independently of the IR grammar (`evidence_chain.schema`). The canonical IR
+  + provenance architecture is being unified onto `mic@1` per RFC 0021
+  (`mic@1e` epilogue); see [`docs/ir-stability.md`](ir-stability.md).
 
 ## References
 

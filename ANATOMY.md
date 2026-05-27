@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2658 | **Est. tokens:** ~6,606,066
-**Generated:** 2026-05-27 06:08 UTC
+**Files:** 2658 | **Est. tokens:** ~6,606,424
+**Generated:** 2026-05-27 06:42 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 23 | ~28,047 |
+| `docs/` | 23 | ~28,405 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
@@ -591,7 +591,7 @@
 - `install.md` (~841 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
-- `ir-stability.md` (~1023 tok, large) — IR stability contract
+- `ir-stability.md` (~1269 tok, large) — IR stability contract
 ### `docs/mindcraft/`
 
 - `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
@@ -646,7 +646,7 @@
 ### `docs/`
 
 - `type-system.md` (~947 tok, large) — Type System
-- `versioning.md` (~630 tok, large) — MIND Core Stability & Versioning
+- `versioning.md` (~742 tok, large) — MIND Core Stability & Versioning
 - `whitepaper.md` (~2844 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
