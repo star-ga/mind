@@ -56,7 +56,10 @@ pub(super) fn apply_rule(
                 // differentiable. Fail loudly (like Div/Mod) rather than emit a
                 // silent zero gradient — a bitwise op in an autodiff graph is
                 // almost certainly an error, and a silent zero would mask it
-                // (the silent-wrong-training trap).
+                // (the silent-wrong-training trap). These BinOp variants are
+                // `std-surface`-gated, so the arm carries the same cfg — without
+                // it the variants don't exist and the match is already complete.
+                #[cfg(feature = "std-surface")]
                 BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                     return Err(AutodiffError::UnsupportedOp { op: "bitwise/shift" });
                 }
