@@ -171,6 +171,12 @@ pub fn remove_evidence_chain(graph: &mut Graph) {
 /// with a MAP stripped of `signature.*` and `evidence_chain.trace_hash`.
 ///
 /// The graph must already have all other `evidence_chain.*` keys populated.
+///
+/// # Panics
+///
+/// Panics if MIC-B serialization fails. Serialization here writes into an
+/// in-memory `Vec<u8>`, which is infallible, so this cannot fire on a valid
+/// graph — but the panic is documented because this is a `pub` entry point.
 pub fn compute_trace_hash(graph: &Graph) -> [u8; 32] {
     let stripped_map = strip_keys_for_hash(&graph.map);
     let temp_graph = Graph {
@@ -548,6 +554,18 @@ mod tests {
         let has_ec = g.map.iter().any(|(k, _)| k.starts_with("evidence_chain."));
         assert!(!has_ec, "remove_evidence_chain must clear all evidence_chain.* keys");
         assert!(g.map.is_empty(), "map must be empty after removing only evidence keys");
+    }
+
+    /// Double-attach without an intervening `remove_evidence_chain` must trip
+    /// the guard (the §3.2 self-reference would otherwise hash a graph that
+    /// already carries a stale `trace_hash` from the prior attach).
+    #[test]
+    #[should_panic(expected = "already present")]
+    fn double_attach_without_remove_panics() {
+        let mut g = base_graph();
+        attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
+        // Second attach on the same graph — must panic, not silently re-hash.
+        attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
     }
 
     // -----------------------------------------------------------------------
