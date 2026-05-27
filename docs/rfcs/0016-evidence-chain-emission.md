@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0016 |
 | Title | Compile-Time Evidence-Chain Emission |
-| Status | **Partial** — Phase A shipped (Rust-bootstrap emit, inert/unsigned); Phases A.5/B/C/D/E pending |
+| Status | **Partial** — Phase A shipped (Rust-bootstrap emit, inert/unsigned) + Phase B verifier core (lib); Phases A.5/B-CLI/C/D/E pending |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 |
 | Task | #288 |
@@ -239,7 +239,14 @@ MAP and rooted in one signer.
   MIND-self-host duality as the lexer/parser). Tracked, not omitted.
 - **Phase B — verify.** `mindc verify --evidence <artifact>` recomputes `trace_hash`
   (§3.2 self-reference rule), folds the chain (§4), reports root + determinism +
-  substrate. Shares the RFC 0017 verifier surface.
+  substrate. Shares the RFC 0017 verifier surface. **Library core SHIPPED**
+  (`verify_evidence_chain` → `EvidenceReport`/`EvidenceError` in
+  `src/ir/compact/v2/evidence.rs`): recomputes §3.2, flips `trace_hash_valid`
+  on any post-seal mutation, decodes substrate/determinism/toolchain/parent and
+  reports `is_root()`; survives a MIC-B round-trip; 5 tests incl. tamper
+  detection. The CLI wrapper + cross-artifact chain *walk* (following `parent`)
+  + §6 signature check layer on top, and land with the RFC 0017 `mindc verify`
+  subcommand (#290).
 - **Phase C — sign (release path).** Wire mic@2.1 §6 signing into the RFC 0015
   canonical CI runner; release artifacts ship signed evidence. The RFC 0020
   wedge-score receipt becomes a sibling `verify.*` block.
