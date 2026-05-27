@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0021 |
 | Title | Canonical IR Unification (mic@3 binary `IRModule` + embedded MAP; model-exchange demotion) |
-| Status | **Partial** — design locked; **step 1 (mic@3 binary `IRModule` codec) SHIPPED** mind@5c29f0d; steps 2–6 pending (§4). Arch-validated 2026-05-27 (proceed; "demote v2" re-scoped as a cross-repo migration, §4.5). |
+| Status | **Partial** — design locked + 5/5 cross-model validated (§3.2). **Steps 1–2 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b); step 3 (CLI emit) in progress; steps 4–6 pending (§4). "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 (rev. 2026-05-27) |
 | Supersedes-in-part | RFC 0016 §3.2/§5.4 (evidence anchor + carrier), RFC 0015 (enforcement seam) |
@@ -181,11 +181,17 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    `MicFormat::Mic3`/`LoadError::Mic3`; mic@1, mic@2/MIC-B, std, and the self-host
    bootstrap are byte-untouched (verified: builds 0 warnings, full workspace 0 failures,
    bootstrap byte-identity 7/7).
-2. **Attach the MAP epilogue to mic@3**, reusing the `v2/` MAP / canonical-sort /
-   Ed25519 machinery verbatim (it already operates on the binary value table + MAP).
-   `trace_hash` is taken over the canonical mic@3 IR body (MAP-stripped, §3.2 rule).
+2. **(SHIPPED, c64bd0b)** Evidence MAP epilogue on mic@3 — `src/ir/compact/v3/evidence.rs`:
+   `emit_mic3_with_evidence` appends a self-contained, lexicographically-sorted MAP
+   (`evidence_chain.{determinism,schema=1,substrate,toolchain,trace_hash[,parent]}`) after
+   the canonical mic@3 body; `mic3_evidence_report` peels the body, recomputes
+   `ir_trace_hash` (canonical mic@1), and verifies. Reuses v2 `Determinism`/`EvidenceReport`/
+   `EvidenceError` (one vocabulary). 12 differential-fuzz/canonical-gate tests
+   (byte-determinism, round-trip, tamper-detection, sorted-keys); no-evidence bytes
+   byte-identical; verified v3 33/45, full workspace green, bootstrap 7/7. `trace_hash` is
+   over the canonical mic@1 IR (the §3.1 anchor), MAP excluded per §3.2.
 3. **Wire** `mindc build --emit=evidence` to emit a mic@3 artifact with the embedded
-   `evidence_chain` block (unsigned local; Ed25519 at release-tag time).
+   `evidence_chain` block (unsigned local; Ed25519 at release-tag time). *(in progress)*
 4. **`mindc verify --evidence`** reads a mic@3 artifact, recomputes `trace_hash` over its
    IR body, compares, validates the signature (shares the RFC 0017 surface, #290).
 5. **Demote** v2 `Graph` → `mind-model@2`. ⚠️ **This is a byte-preserving cross-repo
