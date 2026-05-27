@@ -190,8 +190,12 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    (byte-determinism, round-trip, tamper-detection, sorted-keys); no-evidence bytes
    byte-identical; verified v3 33/45, full workspace green, bootstrap 7/7. `trace_hash` is
    over the canonical mic@1 IR (the §3.1 anchor), MAP excluded per §3.2.
-3. **Wire** `mindc build --emit=evidence` to emit a mic@3 artifact with the embedded
-   `evidence_chain` block (unsigned local; Ed25519 at release-tag time). *(in progress)*
+3. **(SHIPPED, 7fc10d2)** `mindc <file> --emit-mic3 <path>` / `--emit-evidence <path>` emit
+   a mic@3 artifact (the latter with the embedded `evidence_chain` MAP: substrate =
+   `--target` id, toolchain = mindc version, determinism = Deterministic w/ TODO(#289),
+   trace_hash = `ir_trace_hash`). 6 CLI round-trip tests (emit → `mic3_evidence_report`
+   verifies). Additive — default build + `--emit-mic`/`--emit-obj`/`--emit-shared`
+   byte-unchanged; bootstrap 7/7. (Ed25519 signing at release-tag time still pending §3.4.)
 4. **`mindc verify --evidence`** reads a mic@3 artifact, recomputes `trace_hash` over its
    IR body, compares, validates the signature (shares the RFC 0017 surface, #290).
 5. **Demote** v2 `Graph` → `mind-model@2`. ⚠️ **This is a byte-preserving cross-repo
