@@ -14,7 +14,7 @@
 
 //! MIC@3 binary format — compact, deterministic binary encoding of [`IRModule`].
 //!
-//! # Wire layout
+//! # Wire layout (IR body)
 //!
 //! ```text
 //! [0..4)  magic  "MIC3"
@@ -33,6 +33,21 @@
 //! N × (varint name-idx, varint elem-count, M × zigzag-i64)
 //! varint  repr_c_structs count
 //! N × (varint name-idx, varint field-count, M × type-ann bytes)
+//! ```
+//!
+//! # Optional MAP epilogue (RFC 0021 §4.2)
+//!
+//! When an artifact is emitted with evidence, a MAP epilogue immediately follows
+//! the last IR body byte.  Its format is documented in [`evidence`].  A reader
+//! that does not understand the epilogue can still parse the IR body by passing
+//! `bytes[..body_end]` to [`parse_mic3`].
+//!
+//! ```text
+//! 0x4D                      -- MAP sentinel ('M')
+//! ULEB128 entry_count
+//! For each entry (lexicographic key order):
+//!   ULEB128 key_len + key_bytes
+//!   value_tag (0=String, 1=Int, 2=Bytes) + encoded value
 //! ```
 //!
 //! # Opcode table
@@ -77,11 +92,15 @@
 //! | 0x24 | Region (std-surface) |
 //! | 0x25 | ExternFnDecl (std-surface) |
 
+pub mod evidence;
 mod emit;
 mod parse;
 
 pub use emit::emit_mic3;
 pub use parse::{parse_mic3, Mic3Error};
+pub use evidence::{emit_mic3_with_evidence, mic3_evidence_report};
+// Re-export the evidence vocabulary at the v3 level for convenience.
+pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport};
 
 /// Magic header bytes for MIC@3 binary format.
 pub const MIC3_MAGIC: [u8; 4] = [b'M', b'I', b'C', b'3'];
