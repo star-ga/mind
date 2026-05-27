@@ -219,6 +219,129 @@ fn strip_prefixes(map: &Map, prefixes: &[&str]) -> Map {
 }
 
 // ---------------------------------------------------------------------------
+// §3.2 / §4 verification (Phase B core)
+// ---------------------------------------------------------------------------
+
+/// The decoded, validated contents of an artifact's `evidence_chain` block —
+/// the reusable core a `mindc verify --evidence` CLI (RFC 0016 Phase B) wraps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceReport {
+    /// RFC 0014 substrate tier id (`evidence_chain.substrate`).
+    pub substrate: String,
+    /// Declared determinism (`evidence_chain.determinism`).
+    pub determinism: Determinism,
+    /// Toolchain version string (`evidence_chain.toolchain`).
+    pub toolchain: String,
+    /// Predecessor `trace_hash`, or `None` for a root artifact (§4).
+    pub parent: Option<[u8; 32]>,
+    /// The stored `trace_hash` exactly as carried in the MAP.
+    pub trace_hash: [u8; 32],
+    /// `true` iff a §3.2 recomputation reproduces `trace_hash` (i.e. the
+    /// artifact has not been tampered with). The whole point of the chain.
+    pub trace_hash_valid: bool,
+}
+
+impl EvidenceReport {
+    /// A root artifact has no parent (§4).
+    pub fn is_root(&self) -> bool {
+        self.parent.is_none()
+    }
+}
+
+/// Why an `evidence_chain` block failed to decode for verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EvidenceError {
+    /// No `evidence_chain.*` keys are present — the artifact is unattested.
+    Missing,
+    /// A required key is absent (substrate / determinism / toolchain / trace_hash).
+    MissingKey(&'static str),
+    /// A key has the wrong MAP value type, or a bytes field is not 32 bytes.
+    Malformed(&'static str),
+    /// `determinism` is neither `"deterministic"` nor `"nondeterministic"`.
+    UnknownDeterminism(String),
+}
+
+fn map_get<'a>(map: &'a Map, key: &str) -> Option<&'a MapValue> {
+    map.iter().find(|(k, _)| *k == key).map(|(_, v)| v)
+}
+
+/// Verify the §3.2 self-reference of `graph`'s `evidence_chain` block and
+/// decode it into an [`EvidenceReport`]. Recomputes `trace_hash` over the
+/// canonical MIC-B bytes (MAP minus `signature.*` and the stored `trace_hash`)
+/// and records whether it matches — a single flipped byte anywhere in the
+/// attested graph flips `trace_hash_valid` to `false`.
+///
+/// This is the verifier core; the chain *walk* (following `parent` across
+/// artifacts) and signature checks (§6) are layered on top by the CLI.
+pub fn verify_evidence_chain(graph: &Graph) -> Result<EvidenceReport, EvidenceError> {
+    // An artifact with no evidence_chain.* keys is unattested, not invalid.
+    let has_any = graph
+        .map
+        .iter()
+        .any(|(k, _)| k.starts_with("evidence_chain."));
+    if !has_any {
+        return Err(EvidenceError::Missing);
+    }
+
+    let substrate = match map_get(&graph.map, "evidence_chain.substrate") {
+        Some(MapValue::String(s)) => s.clone(),
+        Some(_) => return Err(EvidenceError::Malformed("evidence_chain.substrate")),
+        None => return Err(EvidenceError::MissingKey("evidence_chain.substrate")),
+    };
+
+    let toolchain = match map_get(&graph.map, "evidence_chain.toolchain") {
+        Some(MapValue::String(s)) => s.clone(),
+        Some(_) => return Err(EvidenceError::Malformed("evidence_chain.toolchain")),
+        None => return Err(EvidenceError::MissingKey("evidence_chain.toolchain")),
+    };
+
+    let determinism = match map_get(&graph.map, "evidence_chain.determinism") {
+        Some(MapValue::String(s)) => match s.as_str() {
+            "deterministic" => Determinism::Deterministic,
+            "nondeterministic" => Determinism::Nondeterministic,
+            other => return Err(EvidenceError::UnknownDeterminism(other.to_owned())),
+        },
+        Some(_) => return Err(EvidenceError::Malformed("evidence_chain.determinism")),
+        None => return Err(EvidenceError::MissingKey("evidence_chain.determinism")),
+    };
+
+    // parent is optional (root has none).
+    let parent = match map_get(&graph.map, "evidence_chain.parent") {
+        Some(MapValue::Bytes(b)) => {
+            let arr: [u8; 32] = b
+                .clone()
+                .try_into()
+                .map_err(|_| EvidenceError::Malformed("evidence_chain.parent"))?;
+            Some(arr)
+        }
+        Some(_) => return Err(EvidenceError::Malformed("evidence_chain.parent")),
+        None => None,
+    };
+
+    let trace_hash: [u8; 32] = match map_get(&graph.map, "evidence_chain.trace_hash") {
+        Some(MapValue::Bytes(b)) => b
+            .clone()
+            .try_into()
+            .map_err(|_| EvidenceError::Malformed("evidence_chain.trace_hash"))?,
+        Some(_) => return Err(EvidenceError::Malformed("evidence_chain.trace_hash")),
+        None => return Err(EvidenceError::MissingKey("evidence_chain.trace_hash")),
+    };
+
+    // §3.2: recompute over the MAP-stripped canonical bytes and compare.
+    let recomputed = compute_trace_hash(graph);
+    let trace_hash_valid = recomputed == trace_hash;
+
+    Ok(EvidenceReport {
+        substrate,
+        determinism,
+        toolchain,
+        parent,
+        trace_hash,
+        trace_hash_valid,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -628,6 +751,73 @@ mod tests {
             h2.to_vec(),
             "recomputed trace_hash of the round-tripped link must equal the stored one"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // verify_evidence_chain (Phase B core)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn verify_accepts_a_valid_attested_graph() {
+        let mut g = base_graph();
+        attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
+
+        let report = verify_evidence_chain(&g).expect("valid evidence must verify");
+        assert!(report.trace_hash_valid, "untampered graph must verify");
+        assert_eq!(report.substrate, "x86_avx2");
+        assert_eq!(report.determinism, Determinism::Deterministic);
+        assert_eq!(report.toolchain, "0.7.0");
+        assert!(report.is_root(), "no parent ⇒ root artifact");
+        assert_eq!(report.trace_hash, compute_trace_hash(&g));
+    }
+
+    #[test]
+    fn verify_detects_tampering() {
+        let mut g = base_graph();
+        attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
+        // Mutate the attested graph AFTER the hash was sealed, without
+        // re-attaching. The §3.2 recompute now covers the new key, so the
+        // stored trace_hash no longer matches.
+        g.map.insert("stage", MapValue::String("tampered".to_owned()));
+
+        let report = verify_evidence_chain(&g).expect("decodes, but must report invalid");
+        assert!(
+            !report.trace_hash_valid,
+            "post-seal mutation must flip trace_hash_valid to false"
+        );
+    }
+
+    #[test]
+    fn verify_reports_missing_evidence() {
+        let g = base_graph(); // no evidence attached
+        assert_eq!(verify_evidence_chain(&g), Err(EvidenceError::Missing));
+    }
+
+    #[test]
+    fn verify_reports_parent_and_nonroot() {
+        let parent_hash = [0x7eu8; 32];
+        let mut g = base_graph();
+        attach(&mut g, "arm_neon", Some(parent_hash), Determinism::Nondeterministic);
+
+        let report = verify_evidence_chain(&g).expect("valid evidence must verify");
+        assert!(report.trace_hash_valid);
+        assert_eq!(report.parent, Some(parent_hash));
+        assert!(!report.is_root(), "an artifact with a parent is not a root");
+        assert_eq!(report.determinism, Determinism::Nondeterministic);
+    }
+
+    #[test]
+    fn verify_survives_micb_roundtrip() {
+        let mut g = base_graph();
+        attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
+
+        let mut bin: Vec<u8> = Vec::new();
+        emit_micb(&g, &mut bin).expect("emit_micb failed");
+        let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse_micb failed");
+
+        let report = verify_evidence_chain(&parsed).expect("round-tripped evidence must verify");
+        assert!(report.trace_hash_valid, "evidence must verify after a MIC-B round-trip");
+        assert_eq!(report.substrate, "x86_avx2");
     }
 
     // -----------------------------------------------------------------------
