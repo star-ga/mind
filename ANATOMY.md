@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2662 | **Est. tokens:** ~6,641,373
-**Generated:** 2026-05-27 09:15 UTC
+**Files:** 2663 | **Est. tokens:** ~6,644,556
+**Generated:** 2026-05-27 09:19 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 24 | ~100,916 |
+| `docs/rfcs/` | 24 | ~101,065 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -364,7 +364,7 @@
 | `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~6,223 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~17,022 |
+| `src/bin/` | 2 | ~17,640 |
 | `src/build/` | 2 | ~10,769 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
@@ -378,7 +378,7 @@
 | `src/ffi/` | 3 | ~3,910 |
 | `src/fmt/` | 3 | ~17,167 |
 | `src/ir/` | 4 | ~15,575 |
-| `src/ir/compact/` | 3 | ~14,199 |
+| `src/ir/compact/` | 3 | ~14,226 |
 | `src/ir/compact/v2/` | 8 | ~36,239 |
 | `src/ir/compact/v3/` | 4 | ~33,314 |
 | `src/lint/` | 2 | ~3,995 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 17 | ~81,159 |
-| `tests/` | 156 | ~261,024 |
+| `tests/` | 157 | ~263,413 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -631,7 +631,7 @@
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~5715 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~3754 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~3903 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
@@ -3561,7 +3561,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~10979 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~11597 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5055 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3638,7 +3638,7 @@
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2347 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2374 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~7446 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
@@ -3884,6 +3884,7 @@
 - `linalg_preview.rs` (~291 tok, medium) — Copyright 2025 STARGA Inc.
 - `lint_infrastructure.rs` (~2505 tok, huge) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
+- `mic3_cli_emit.rs` (~2389 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4579 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5106 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6195 tok, huge) — Copyright 2025 STARGA Inc.
