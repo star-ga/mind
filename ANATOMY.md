@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2656 | **Est. tokens:** ~6,599,957
-**Generated:** 2026-05-27 04:46 UTC
+**Files:** 2656 | **Est. tokens:** ~6,602,097
+**Generated:** 2026-05-27 04:49 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 23 | ~96,714 |
+| `docs/rfcs/` | 23 | ~96,849 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -379,7 +379,7 @@
 | `src/fmt/` | 3 | ~17,167 |
 | `src/ir/` | 3 | ~14,096 |
 | `src/ir/compact/` | 3 | ~14,184 |
-| `src/ir/compact/v2/` | 8 | ~34,191 |
+| `src/ir/compact/v2/` | 8 | ~36,196 |
 | `src/lint/` | 2 | ~3,995 |
 | `src/lint/rules/` | 6 | ~9,076 |
 | `src/mlir/` | 2 | ~1,967 |
@@ -628,7 +628,7 @@
 - `0013-cli-agent-harness-stack.md` (~6787 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~4898 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~5267 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0016-evidence-chain-emission.md` (~5402 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3642,9 +3642,9 @@
 
 - `binary.rs` (~5888 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
-- `evidence.rs` (~6983 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~8974 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_tests.rs` (~5514 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1249 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1263 tok, large) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~5749 tok, huge) — Copyright 2025 STARGA Inc.
 - `types.rs` (~4764 tok, huge) — Copyright 2025 STARGA Inc.
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
