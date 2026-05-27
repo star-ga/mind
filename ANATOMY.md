@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2653 | **Est. tokens:** ~6,590,920
-**Generated:** 2026-05-27 04:22 UTC
+**Files:** 2654 | **Est. tokens:** ~6,597,229
+**Generated:** 2026-05-27 04:32 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~20,094 |
+| `./` | 32 | ~20,115 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 23 | ~96,611 |
+| `docs/rfcs/` | 23 | ~96,714 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -368,7 +368,7 @@
 | `src/build/` | 2 | ~10,769 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
-| `src/deps/` | 1 | ~7,926 |
+| `src/deps/` | 1 | ~8,024 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,190 |
@@ -379,7 +379,7 @@
 | `src/fmt/` | 3 | ~17,167 |
 | `src/ir/` | 3 | ~14,096 |
 | `src/ir/compact/` | 3 | ~14,184 |
-| `src/ir/compact/v2/` | 7 | ~27,178 |
+| `src/ir/compact/v2/` | 8 | ~33,265 |
 | `src/lint/` | 2 | ~3,995 |
 | `src/lint/rules/` | 6 | ~9,076 |
 | `src/mlir/` | 2 | ~1,967 |
@@ -446,7 +446,7 @@
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~262 tok, medium) — # Rust
+- `.gitignore` (~283 tok, medium) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -627,7 +627,7 @@
 - `0013-cli-agent-harness-stack.md` (~6787 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~4898 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~5164 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0016-evidence-chain-emission.md` (~5267 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3579,7 +3579,7 @@
 - `conformance.rs` (~1847 tok, huge) — The autodiff_pairwise conformance entry was removed 2026-05-20 — its
 ### `src/deps/`
 
-- `mod.rs` (~7926 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8024 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/diagnostics/`
 
 - `mod.rs` (~2230 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3641,8 +3641,9 @@
 
 - `binary.rs` (~5888 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~6057 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_tests.rs` (~5514 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1219 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1249 tok, large) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~5749 tok, huge) — Copyright 2025 STARGA Inc.
 - `types.rs` (~4764 tok, huge) — Copyright 2025 STARGA Inc.
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.

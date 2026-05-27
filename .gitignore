@@ -67,3 +67,6 @@ audits/*-review.md
 # mindc doc smoke-test artifacts (canonical output is target/doc/)
 std/**/*.html
 examples/**/*.html
+
+# Agent worktree isolation (local sub-agent infrastructure, never tracked)
+.claude/
