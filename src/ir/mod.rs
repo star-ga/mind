@@ -19,10 +19,12 @@ use crate::types::ShapeDim;
 use std::fmt;
 
 pub mod compact;
+mod evidence;
 mod print;
 mod verify;
 
 pub use crate::opt::ir_canonical::canonicalize_module;
+pub use evidence::ir_trace_hash;
 pub use print::format_ir_module;
 pub use verify::{verify_module, IrVerifyError};
 
