@@ -6,8 +6,8 @@
 # (RFC 0006 Track B). Exact integer reduction per row (the proven dot_q16
 # sequence), so the whole gemv is bit-identical across substrates. The output
 # is the 256-element Q16.16 result vector; its canonical encoding is each i32
-# little-endian, then sha256. (Full square GEMM is future work once a
-# matmul-matmul kernel lands; the bit-identity property is identical.)
+# little-endian, then sha256. (Square matrix-matrix GEMM is the sibling
+# gemm-q16-64x64x64 workload, which composes this gemv per row over Bᵀ.)
 
 version = "1"
 name = "gemv-q16-256x256"

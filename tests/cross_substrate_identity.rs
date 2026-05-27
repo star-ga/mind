@@ -73,10 +73,24 @@ pub fn dotl1q(a: i64, b: i64, n: i64) -> i64 {
 pub fn mmq(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
     __mind_blas_matmul_rmajor_q16_v(w, x, y, rows, cols)
 }
+fn gemmq_row(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64, i: i64) -> i64 {
+    if i >= m {
+        return 0;
+    }
+    // Q16.16 elements are i32 (4 bytes); row strides are in i32 units.
+    let a_i: i64 = a + i * k * 4;
+    let c_i: i64 = c + i * n * 4;
+    __mind_blas_matmul_rmajor_q16_v(bt, a_i, c_i, n, k);
+    gemmq_row(a, bt, c, m, k, n, i + 1)
+}
+pub fn gemmq(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
+    gemmq_row(a, bt, c, m, k, n, 0)
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
+type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
 
 fn mindc_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -343,6 +357,98 @@ fn gemv_q16_reproducibility_gate() {
 
     // 2. Canonical hash pinned to the committed per-substrate reference.
     let computed = canonical_hash_i32s(&y);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
+             bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- gemm-q16 workload (square matrix x matrix) ----------------------------
+// The first matmul-SHAPED workload that is matrix x matrix, not matrix x
+// vector. C[M,N] = A[M,K] · B[K,N] in Q16.16. The kernel composes the
+// already-proven gemv intrinsic: C[i,:] = gemv(Bᵀ, A[i,:]) where Bᵀ is N×K,
+// so byte-identity is inherited from `gemv_q16_reproducibility_gate` — no new
+// arithmetic, only a deterministic transpose (exact data movement, done in the
+// harness) plus a deterministic ascending row loop. The output is the M×N
+// Q16.16 matrix; canonical encoding is its i32 LE bytes → sha256.
+
+/// Regenerate the gemm inputs from a seed: an M×K matrix A and a K×N matrix B,
+/// both row-major Q16.16, A generated before B (order is part of the seed
+/// contract). Returns (A, B, Bᵀ) where Bᵀ (N×K, row-major) is the exact
+/// transpose the kernel consumes.
+fn make_gemm_q16(m: usize, k: usize, n: usize, seed: u64) -> (Vec<i32>, Vec<i32>, Vec<i32>) {
+    let mut g = Lcg::new(seed);
+    let a: Vec<i32> = (0..m * k).map(|_| g.next_q16()).collect();
+    let b: Vec<i32> = (0..k * n).map(|_| g.next_q16()).collect();
+    // Bᵀ[j, kk] = B[kk, j] — exact data movement, no arithmetic.
+    let mut bt = vec![0i32; n * k];
+    for kk in 0..k {
+        for j in 0..n {
+            bt[j * k + kk] = b[kk * n + j];
+        }
+    }
+    (a, b, bt)
+}
+
+/// Scalar Q16.16 GEMM oracle, expressed as M·N scalar dot products over Bᵀ —
+/// byte-for-byte the same accumulation the kernel performs via gemv, so the
+/// within-run cross-check is exact (integer reduction is associative).
+fn ref_gemm_q16_scalar(a: &[i32], bt: &[i32], m: usize, k: usize, n: usize) -> Vec<i32> {
+    let mut c = vec![0i32; m * n];
+    for i in 0..m {
+        let a_row = &a[i * k..(i + 1) * k];
+        for j in 0..n {
+            let bt_row = &bt[j * k..(j + 1) * k];
+            c[i * n + j] = ref_dot_q16_scalar(a_row, bt_row) as i32;
+        }
+    }
+    c
+}
+
+#[test]
+fn gemm_q16_reproducibility_gate() {
+    let id = "gemm-q16-64x64x64";
+    let (m, k, n, seed) = (64usize, 64usize, 64usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let gemmq: Symbol<GemmFn> = unsafe { lib.get(b"gemmq").expect("gemmq symbol") };
+
+    let (a, _b, bt) = make_gemm_q16(m, k, n, seed);
+    let mut c = vec![0i32; m * n];
+    let rc = unsafe {
+        gemmq(
+            a.as_ptr() as i64,
+            bt.as_ptr() as i64,
+            c.as_mut_ptr() as i64,
+            m as i64,
+            k as i64,
+            n as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: kernel returned {rc} (expected 0)");
+
+    // 1. Within-run exactness vs the scalar GEMM oracle.
+    let oracle = ref_gemm_q16_scalar(&a, &bt, m, k, n);
+    assert_eq!(c, oracle, "{id}: gemm vector path diverged from the scalar oracle");
+
+    // 2. Canonical hash pinned to the committed per-substrate reference.
+    let computed = canonical_hash_i32s(&c);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
         println!("BLESS {id} {substrate} {computed}");

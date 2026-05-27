@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2654 | **Est. tokens:** ~6,597,442
-**Generated:** 2026-05-27 04:36 UTC
+**Files:** 2656 | **Est. tokens:** ~6,599,244
+**Generated:** 2026-05-27 04:44 UTC
 
 ## Token Budget Guide
 
@@ -395,15 +395,16 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 17 | ~81,159 |
-| `tests/` | 156 | ~259,939 |
+| `tests/` | 156 | ~261,024 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
-| `tests/cross_substrate_identity/` | 1 | ~700 |
+| `tests/cross_substrate_identity/` | 1 | ~875 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~287 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
-| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~440 |
+| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~540 |
+| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~442 |
 | `tests/fixtures/` | 6 | ~191 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -3810,16 +3811,20 @@
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
 - `reference_hashes.toml` (~281 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+### `tests/cross_substrate_identity/gemm-q16-64x64x64/`
+
+- `manifest.toml` (~391 tok, medium) — version = "1"
+- `reference_hashes.toml` (~149 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemv-q16-256x256/`
 
-- `manifest.toml` (~308 tok, medium) — version = "1"
+- `manifest.toml` (~310 tok, medium) — version = "1"
 - `reference_hashes.toml` (~132 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
 ### `tests/cross_substrate_identity/`
 
-- `README.md` (~700 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
+- `README.md` (~875 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~3398 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~4483 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
