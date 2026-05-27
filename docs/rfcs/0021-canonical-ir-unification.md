@@ -110,8 +110,30 @@ need no separate sidecar"), *and* able to represent real programs.
 - **mic@1 text is retained** as the human-readable/auditable view (a *feature* for an
   auditable language) and the debug/round-trip format — not deprecated, just no longer
   the shipped binary artifact.
-- **Determinism is the gate.** `mic@3` emit must be canonical + RFC-0001-deterministic
-  with its own `save→load→save` fixed-point test before it can carry a `trace_hash`.
+- **Determinism is the gate — and it lives in a PUBLISHED canonical-encoding spec,
+  not in the format choice.** `mic@3` emit must be byte-canonical with an explicit,
+  documented ruleset: **sorted/lexicographic map keys, fixed-width length prefixes, no
+  padding, deterministic float encoding (`to_bits`), and a fixed depth-first/pre-order
+  traversal of nested control-flow regions.** The acceptance gate is **differential
+  fuzzing**: a single reference encoder/decoder, fuzzed against the mic@1 text IR, until
+  `SHA-256(canonical mic@3) == embedded trace_hash` holds for all semantically-equivalent
+  modules. RFC-0001 `save→load→save` fixed-point is necessary but **not sufficient** —
+  the published canonical ruleset is what makes the hash reproducible *across independent
+  encoder implementations* (the self-host endpoint being a second one), which is the
+  cross-substrate bit-identity wedge restated.
+
+> **Cross-model validation (2026-05-27, 5/5 unanimous: deepseek-v4-pro / mistral-large /
+> grok-4.3 / glm-5 / kimi).** mic@3 is the right call; both alternatives are rejected on
+> auditability grounds — text-only fails bit-identity (formatting is non-canonical) and a
+> detached SLSA/in-toto/Sigstore sidecar introduces a separable trust root with
+> **desync risk** (signature survives while its binding to the artifact drifts). The
+> unanimous principle: *evidence must be inseparable from the exact bytes the compiler
+> emits.* The unanimous caveat is the canonical-spec + differential-fuzz gate above. One
+> dissent worth weighing (glm-5): prefer a **schema-driven serializer over hand-rolled
+> bit-packing** to guarantee cross-implementation reproducibility — though off-the-shelf
+> protobuf is not canonical by default, so the same canonicalization discipline still
+> applies. Q3 was also unanimous: **converge to two formats** (text mic@1 + binary mic@3);
+> the weak dataflow binary is demoted, never a first-class third format (§3.3).
 
 This is more work than a text epilogue (a full binary `IRModule` encoding incl.
 control-flow regions), but it is the correct endpoint and avoids a throwaway mechanism.
