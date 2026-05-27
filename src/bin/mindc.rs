@@ -324,6 +324,20 @@ struct CompileArgs {
     /// Only verify the pipeline without emitting artifacts.
     #[arg(long)]
     verify_only: bool,
+    /// Emit MIC@3 binary artifact to the specified path (RFC 0021 step 3).
+    ///
+    /// Writes the binary mic@3 encoding of the compiled IR module.  The output
+    /// is identical to calling `compact::v3::emit_mic3` on the compiled IR.
+    #[arg(long, value_name = "PATH")]
+    emit_mic3: Option<String>,
+    /// Emit MIC@3 binary artifact with RFC 0021 evidence MAP to the specified path.
+    ///
+    /// Equivalent to `--emit-mic3` plus an appended `evidence_chain.*` MAP
+    /// epilogue containing substrate, toolchain, determinism declaration, and
+    /// a SHA-256 trace hash of the canonical IR.  Use `mic3_evidence_report`
+    /// to verify the artifact offline.
+    #[arg(long, value_name = "PATH")]
+    emit_evidence: Option<String>,
     /// Emit object file (.o) to the specified path.
     #[arg(long, value_name = "PATH")]
     emit_obj: Option<String>,
@@ -548,7 +562,11 @@ fn main() {
     }
 
     let emit_ir = cli.compile.emit_ir
-        || (!cli.compile.emit_grad_ir && !cli.compile.emit_mlir && !cli.compile.emit_mic);
+        || (!cli.compile.emit_grad_ir
+            && !cli.compile.emit_mlir
+            && !cli.compile.emit_mic
+            && cli.compile.emit_mic3.is_none()
+            && cli.compile.emit_evidence.is_none());
     if emit_ir {
         println!("{}", products.ir);
     }
@@ -557,6 +575,9 @@ fn main() {
         let mic = libmind::ir::compact::emit_mic(&products.ir);
         println!("{}", mic);
     }
+
+    emit_mic3_if_requested(&cli.compile, &products);
+    emit_evidence_if_requested(&cli.compile, &products);
 
     #[cfg(feature = "autodiff")]
     if cli.compile.autodiff && cli.compile.emit_grad_ir {
@@ -1207,6 +1228,43 @@ fn emit_mlir_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::Comp
         );
         process::exit(1);
     }
+}
+
+fn emit_mic3_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
+    let path = match &cli.emit_mic3 {
+        Some(p) => p,
+        None => return,
+    };
+    let bytes = libmind::ir::compact::emit_mic3(&products.ir);
+    if let Err(err) = fs::write(path, &bytes) {
+        eprintln!("error[emit-mic3]: failed to write {path}: {err}");
+        process::exit(1);
+    }
+    eprintln!("Wrote mic@3 artifact: {path} ({} bytes)", bytes.len());
+}
+
+fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::CompileProducts) {
+    let path = match &cli.emit_evidence {
+        Some(p) => p,
+        None => return,
+    };
+    let substrate = cli.target.as_str();
+    // TODO(#289): flip to Nondeterministic when the #[nondeterministic] attr is
+    // propagated through the IR; for now the declaration defaults to Deterministic.
+    let determinism = libmind::ir::compact::Determinism::Deterministic;
+    let toolchain = env!("CARGO_PKG_VERSION");
+    let bytes = libmind::ir::compact::emit_mic3_with_evidence(
+        &products.ir,
+        substrate,
+        None,
+        determinism,
+        toolchain,
+    );
+    if let Err(err) = fs::write(path, &bytes) {
+        eprintln!("error[emit-evidence]: failed to write {path}: {err}");
+        process::exit(1);
+    }
+    eprintln!("Wrote mic@3 evidence artifact: {path} ({} bytes)", bytes.len());
 }
 
 fn parse_target(raw: &str) -> Result<BackendTarget, String> {

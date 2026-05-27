@@ -65,7 +65,8 @@ pub mod v3;
 pub use emit::{emit_mic, MicEmitter};
 pub use parse::{parse_mic, MicParseError};
 pub use v2::{detect_format, MicFormat};
-pub use v3::{emit_mic3, parse_mic3, Mic3Error};
+pub use v3::{emit_mic3, emit_mic3_with_evidence, mic3_evidence_report, parse_mic3, Mic3Error};
+pub use v3::{Determinism, EvidenceError, EvidenceReport};
 
 /// MIC format version.
 pub const MIC_VERSION: u32 = 1;

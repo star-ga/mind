@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2663 | **Est. tokens:** ~6,644,556
-**Generated:** 2026-05-27 09:19 UTC
+**Files:** 2663 | **Est. tokens:** ~6,644,532
+**Generated:** 2026-05-27 09:22 UTC
 
 ## Token Budget Guide
 
@@ -364,7 +364,7 @@
 | `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~6,223 |
 | `src/autodiff/` | 3 | ~4,256 |
-| `src/bin/` | 2 | ~17,640 |
+| `src/bin/` | 2 | ~17,616 |
 | `src/build/` | 2 | ~10,769 |
 | `src/cache/` | 4 | ~3,545 |
 | `src/check/` | 3 | ~9,753 |
@@ -3561,7 +3561,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~11597 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~11573 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5055 tok, huge) — Copyright 2025 STARGA Inc.
