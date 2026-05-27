@@ -67,7 +67,7 @@ artifact. It records, for the graph it is attached to:
 
 | Key | Type | Meaning |
 |---|---|---|
-| `evidence_chain.trace_hash` | `bytes` (32) | The deterministic production hash of THIS artifact: BLAKE3/SHA-256 of the canonical mic@2.1 **binary** of the graph (MAP minus `signature.*` and minus `evidence_chain.trace_hash` itself — §3.2). For an *executed* artifact it additionally folds the RFC 0011 `ReplayScheduler` trace-hash (§3.3). |
+| `evidence_chain.trace_hash` | `bytes` (32) | The deterministic production hash of THIS artifact: **SHA-256** (FIPS 180-4) of the canonical mic@2.1 **binary** of the graph (MAP minus `signature.*` and minus `evidence_chain.trace_hash` itself — §3.2). SHA-256 is fixed (not BLAKE3) so the bootstrap's Rust hash and pure-MIND `std.sha256` are bit-identical (§10 Q1). For an *executed* artifact it additionally folds the RFC 0011 `ReplayScheduler` trace-hash (§3.3). |
 | `evidence_chain.substrate` | `string` | The RFC 0014 canonical lowering-tier id this artifact was produced for/on (`x86_avx2`, `arm_neon`, `nvptx_sm80`, `portable_scalar`, …). The bit-identity claim is *per-substrate-set*; this names the member. |
 | `evidence_chain.parent` | `bytes` (32) | The `trace_hash` of the predecessor artifact in the transformation chain (source-parse → typecheck → IR → lowered → binary), or absent for a root. Forms the DAG (§4). |
 | `evidence_chain.determinism` | `string` | `"deterministic"` (default) or `"nondeterministic"`. Set by the §5 emission rule from the graph's determinism attribute (RFC 0012 Phase C / #289). A `nondeterministic` link is a *refusal-to-attest-identity* marker, not a silent omission. |
@@ -159,11 +159,25 @@ language-native output (the 4/4 finding). Rules:
    canonical artifact (`mindc build`'s IR-emit, then per-substrate lower) sets
    `parent` to the prior step's `trace_hash`. The driver owns the threading; the
    passes stay pure.
-4. **Signing is a release-pipeline step**, not every local build. `mindc build`
-   emits the unsigned `evidence_chain`; the RFC 0015 canonical CI runner (the same
+4. **Signing is a release-pipeline step**, not every local build. **The Rust
+   bootstrap `mindc`** emits the unsigned `evidence_chain` (the self-host MIND
+   compiler emits MLIR-text today and has no mic backend; it gains mic-emit +
+   evidence parity at Phase A.5 — §8). The RFC 0015 canonical CI runner (the same
    one that produces RFC 0020's `wedge-reference-hashes`) signs at release-tag time
    via mic@2.1 §6. Unsigned local artifacts carry evidence; signed release artifacts
    carry evidence + `signature.*`.
+   - **Codec-agnostic trace_hash (load-bearing — keeps the pure-MIND endpoint open).**
+     `trace_hash` is computed over the **canonical mic@2.1 binary serialization
+     bytes** (`emit_micb` of the graph with its MAP stripped of `signature.*` and
+     `evidence_chain.trace_hash` per §3.2), hashed as a flat byte string with the
+     FIPS-180-4 primitive. It is NEVER a walk of an in-memory codec struct. Because
+     the input is canonical bytes and the hash is FIPS-180-4, the value is
+     **bit-identical** whether computed by the bootstrap's Rust SHA-256
+     (`src/deps/mod.rs`) or by pure-MIND `std.sha256` at the self-host endpoint —
+     the same duality already shipped for the lexer/parser (Rust mindc + MIND
+     self-host, both legitimate). The hash call site is a thin one-function seam so
+     swapping Rust→`std.sha256` is a one-line change. A frozen FIPS conformance
+     vector pins the byte definition for the future MIND emitter.
 5. **Determinism of emission itself.** The `evidence_chain` block is canonical
    (mic@2.1 §5 sorts keys); emitting it must not perturb byte-identity of the graph
    proper (MAP is a trailing epilogue, mic@2.1 §3.1). Re-emitting an artifact
@@ -202,12 +216,22 @@ MAP and rooted in one signer.
 
 ## 8. Phased plan
 
-- **Phase A — schema + emit (inert, unsigned).** Define the `evidence_chain.*`
-  keys (§3) in `mind/src/ir/compact/v2/` MAP support; `mindc build` emits
-  `trace_hash`/`substrate`/`parent`/`determinism`/`toolchain` for deterministic
-  graphs. No signing yet. Gate: `emit(parse(emit(G))) == emit(G)` with evidence
-  present (mic@2.1 §5 byte-identity), and the existing bootstrap stays
-  byte-identical (evidence is a trailing epilogue, must not perturb the graph).
+- **Phase A — schema + emit (inert, unsigned), Rust bootstrap.** Define the
+  `evidence_chain.*` keys (§3) in `mind/src/ir/compact/v2/` MAP support; the **Rust
+  bootstrap `mindc`** emits `trace_hash`/`substrate`/`parent`/`determinism`/`toolchain`
+  for deterministic graphs. `trace_hash` = SHA-256 of `emit_micb(MAP-stripped per
+  §3.2)` **bytes** (NOT a struct walk — Risk 1), via a thin one-function seam over
+  the existing Rust `src/deps/mod.rs` SHA-256. No signing yet. Gates:
+  `emit(parse(emit(G))) == emit(G)` with evidence present (mic@2.1 §5); the cdylib
+  bootstrap stays byte-identical (evidence is a mic-epilogue, the `.so` carries no
+  MAP — §9.3); **and a frozen FIPS conformance vector** pins the canonical-byte
+  definition so the future MIND emitter has an exact target.
+- **Phase A.5 — self-host mic-emit + evidence parity (deferred endpoint).** The
+  self-host MIND compiler emits MLIR-text today and has no mic backend. When it
+  gains one, it emits the identical `evidence_chain` using pure-MIND `std.sha256`
+  over the same canonical bytes — bit-identical to Phase A by FIPS spec. This is
+  the pure-MIND endpoint; it is NOT a precondition for Phase A (same Rust-bootstrap /
+  MIND-self-host duality as the lexer/parser). Tracked, not omitted.
 - **Phase B — verify.** `mindc verify --evidence <artifact>` recomputes `trace_hash`
   (§3.2 self-reference rule), folds the chain (§4), reports root + determinism +
   substrate. Shares the RFC 0017 verifier surface.
@@ -249,10 +273,14 @@ MAP and rooted in one signer.
 
 ## 10. Open questions
 
-1. **`trace_hash` function: BLAKE3 vs SHA-256.** mind-mem `model_signing` and
-   512-mind use SHA-256/Hash256 today; reuse SHA-256 for unification unless a
-   throughput profile justifies BLAKE3 (defer — content hashing is not the
-   critical path, and unification > speed here).
+1. **`trace_hash` function — RESOLVED: SHA-256, not BLAKE3.** mind-mem
+   `model_signing` and 512-mind use SHA-256/Hash256, the Rust bootstrap has a
+   FIPS-180-4 SHA-256 (`src/deps/mod.rs`), and `std.sha256` shipped pure-MIND
+   FIPS-180-4. SHA-256 is now **load-bearing for the Rust↔MIND duality**: the
+   bootstrap and the self-host endpoint must compute bit-identical `trace_hash`
+   over the same canonical bytes, which only holds if both run the same FIPS
+   algorithm. The cross-implementation-identity requirement outranks any BLAKE3
+   throughput argument; content hashing is not the critical path. BLAKE3 dropped.
 2. **Chain depth ceiling.** mic@2.1 §3.5 caps MAP size; a deep transformation DAG
    could exceed it via accumulated `parent` history. Resolution: a link carries
    only its *immediate* `parent` (one hash), not the transitive history — the DAG
