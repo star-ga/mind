@@ -42,6 +42,8 @@ pub enum LoadError {
     Mic2NotSupportedByLoad,
     /// Binary MIC-B was detected; use `compact::v2::parse_micb` directly.
     MicBNotSupportedByLoad,
+    /// MIC@3 binary parse error (RFC 0021).
+    Mic3(compact::Mic3Error),
 }
 
 impl std::fmt::Display for LoadError {
@@ -56,6 +58,7 @@ impl std::fmt::Display for LoadError {
             LoadError::MicBNotSupportedByLoad => {
                 f.write_str("MIC-B detected — use compact::v2::parse_micb directly")
             }
+            LoadError::Mic3(e) => write!(f, "mic@3 parse error: {}", e),
         }
     }
 }
@@ -76,12 +79,25 @@ impl std::error::Error for LoadError {}
 /// The mic@1 textual form is part of the v0.2.x stability surface — see
 /// `docs/versioning.md` and `docs/ir-stability.md`.
 pub fn load(data: &[u8]) -> Result<IRModule, LoadError> {
-    let text = std::str::from_utf8(data).map_err(LoadError::InvalidUtf8)?;
     match compact::detect_format(data) {
-        compact::MicFormat::Mic1 => compact::parse_mic(text).map_err(LoadError::Mic1),
+        compact::MicFormat::Mic1 => {
+            let text = std::str::from_utf8(data).map_err(LoadError::InvalidUtf8)?;
+            compact::parse_mic(text).map_err(LoadError::Mic1)
+        }
         compact::MicFormat::Mic2 => Err(LoadError::Mic2NotSupportedByLoad),
         compact::MicFormat::MicB => Err(LoadError::MicBNotSupportedByLoad),
-        compact::MicFormat::Unknown => Err(LoadError::UnknownFormat),
+        compact::MicFormat::Mic3 => compact::parse_mic3(data).map_err(LoadError::Mic3),
+        compact::MicFormat::Unknown => {
+            // Not a recognised binary magic (mic@3 / MIC-B). If the bytes are
+            // not valid UTF-8 either, the input is malformed binary, not a
+            // text format we failed to recognise — surface that as
+            // `InvalidUtf8` (the text formats mic@1/mic@2 are UTF-8). Valid
+            // UTF-8 with an unknown header is a genuine `UnknownFormat`.
+            match std::str::from_utf8(data) {
+                Err(e) => Err(LoadError::InvalidUtf8(e)),
+                Ok(_) => Err(LoadError::UnknownFormat),
+            }
+        }
     }
 }
 
