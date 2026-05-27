@@ -101,15 +101,33 @@ checks the §6 signature over MAP-minus-`signature.*` (which *includes* the
 now-populated `trace_hash`). Two nested exclusions, two checks — mirrors mic@2.1
 §6.1's signature-omits-itself discipline.
 
-### 3.3 Relationship to the RFC 0011 trace-hash
+### 3.3 What `trace_hash` covers — the canonical mic@1 IR (GAP-1 correction)
+
+> **Correction (architecture audit 2026-05-26).** Phase A/B computed `trace_hash`
+> over the v2 compact [`Graph`](../../src/ir/compact/v2) (mic@2.1). But the
+> compile pipeline never produces that graph for a real program — it has 22
+> pure-dataflow opcodes (no control flow / functions / SIMD) and the only
+> non-test `Graph` is a hardcoded fixture, so that hash attested a toy, not the
+> shipped artifact. **For a compiled artifact the attested object is the
+> canonical mic@1 IR text** (`ir::save(&IRModule)`), computed by
+> [`ir::ir_trace_hash`](../../src/ir/evidence.rs). mic@1 is the documented stable
+> contract (`docs/ir-stability.md`), RFC-0001 deterministic (`save → load → save`
+> is a byte-identical fixed point across runs and platforms), and *loadable
+> back* — it is the substrate-independent **IR link** of the §4 DAG and the
+> object whose cross-substrate equality RFC 0015 asserts. The mic@2.1 `Graph`
+> path is the **model-exchange** carrier (rfn-mind / MindLLM tensor graphs that
+> *are* expressible in the v2 opcodes) and the evidence **container** (the MAP
+> holds `evidence_chain.*` + the §6 signature); it is not the general
+> compiled-artifact anchor.
 
 For a *compiled* artifact the production is pure (parse/lower are deterministic
-functions of source + toolchain), so `trace_hash` = canonical-binary hash. For an
-artifact that has been *executed* under the RFC 0011 `ReplayScheduler` (e.g. a
-mind-bench workload, an agent step), the executed trace-hash (`std.async.trace_hash`)
-is folded in: `trace_hash = H(canonical_binary_hash || replay_trace_hash)`. This
-is the seam where compile-time evidence meets runtime evidence — and where RFC
-0019's `agent.*` links attach (§7).
+functions of source + toolchain), so `trace_hash = SHA-256(canonical mic@1 text)`
+via the FIPS-180-4 seam (§5.4). For an artifact that has been *executed* under
+the RFC 0011 `ReplayScheduler` (e.g. a mind-bench workload, an agent step), the
+executed trace-hash (`std.async.trace_hash`) is folded in:
+`trace_hash = H(mic1_ir_hash || replay_trace_hash)`. This is the seam where
+compile-time evidence meets runtime evidence — and where RFC 0019's `agent.*`
+links attach (§7).
 
 ## 4. The chain — a per-artifact Merkle DAG
 
