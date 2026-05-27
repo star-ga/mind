@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0021 |
 | Title | Canonical IR Unification (mic@3 binary `IRModule` + embedded MAP; model-exchange demotion) |
-| Status | **Draft** — design locked (mic@1e epilogue rejected 2026-05-27, see §3.0); implementation pending |
+| Status | **Partial** — design locked; **step 1 (mic@3 binary `IRModule` codec) SHIPPED** mind@5c29f0d; steps 2–6 pending (§4). Arch-validated 2026-05-27 (proceed; "demote v2" re-scoped as a cross-repo migration, §4.5). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 (rev. 2026-05-27) |
 | Supersedes-in-part | RFC 0016 §3.2/§5.4 (evidence anchor + carrier), RFC 0015 (enforcement seam) |
@@ -150,11 +150,15 @@ today; convergence is a tracked deliverable**, not a shipped fact.
 0. **(SHIPPED, db5cb76)** `ir::ir_trace_hash` anchors `trace_hash` on canonical mic@1
    IR bytes — immediate correctness for "evidence attests the real IR," independent of
    the container work below.
-1. **`mic@3` binary encoding of the full `IRModule`** in `src/ir/compact/` — extend the
-   mic@2/MIC-B value/instruction section to all ~39 `IRModule` instructions incl.
-   control-flow regions. Canonical + RFC-0001-deterministic, with a `save→load→save`
-   fixed-point test. mic@1 text and the self-host bootstrap output are **unchanged** by
-   this addition (mic@3 is a new emit target, not a replacement of mic@1).
+1. **(SHIPPED, 5c29f0d)** `mic@3` binary encoding of the full `IRModule`
+   (`src/ir/compact/v3/`: `emit_mic3`/`parse_mic3`/`Mic3Error`) — all 37 `Instr`
+   variants incl. nested control-flow regions + the std-surface registries. Canonical +
+   RFC-0001-deterministic (string table fixed traversal order, exports sorted, BTreeMap
+   registries, f64 via `to_bits`); tests cover per-variant round-trip, save→load→save
+   fixed point, byte-determinism, and a mic@1-decode cross-check. Additive `MIC3` magic +
+   `MicFormat::Mic3`/`LoadError::Mic3`; mic@1, mic@2/MIC-B, std, and the self-host
+   bootstrap are byte-untouched (verified: builds 0 warnings, full workspace 0 failures,
+   bootstrap byte-identity 7/7).
 2. **Attach the MAP epilogue to mic@3**, reusing the `v2/` MAP / canonical-sort /
    Ed25519 machinery verbatim (it already operates on the binary value table + MAP).
    `trace_hash` is taken over the canonical mic@3 IR body (MAP-stripped, §3.2 rule).
@@ -162,8 +166,15 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    `evidence_chain` block (unsigned local; Ed25519 at release-tag time).
 4. **`mindc verify --evidence`** reads a mic@3 artifact, recomputes `trace_hash` over its
    IR body, compares, validates the signature (shares the RFC 0017 surface, #290).
-5. **Demote** v2 `Graph` → `mind-model@2` in `docs/ir-stability.md` + `versioning.md`;
-   resolve the `MICB_VERSION`/`Mind.toml` drift (#308).
+5. **Demote** v2 `Graph` → `mind-model@2`. ⚠️ **This is a byte-preserving cross-repo
+   migration, NOT a doc rename** (arch review 2026-05-27). The v2 `Graph`/MIC-B is a
+   published `mind-spec` wire contract with live external consumers: **512-mind** hashes
+   over the MIC-B byte layout (`canonical_ir.mind:142` `SPEC_HASH`), **mind-mem** ships a
+   second implementation (`src/mind_mem/mic_map.py`, `MICB_VERSION=0x02`), **mind-nerve**
+   uses mic@2-text IPC. The rename must **not** change `MICB_VERSION` or byte layout, and
+   must land as a coordinated `mind-spec` version bump with 512-mind's `SPEC_HASH` +
+   mind-mem's pin updated in lockstep — tracked as cross-repo deliverables. Resolve the
+   `MICB_VERSION`/`Mind.toml` drift first (#308).
 6. **`oracle.rs`** + CI wiring for the bit-identity gate (#307).
 
 Each step is independently testable and additive; mic@1 text byte-output and the
