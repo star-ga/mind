@@ -52,6 +52,14 @@ pub(super) fn apply_rule(
                 BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne => {
                     // No gradient contribution from comparison operations
                 }
+                // Bitwise / shift ops are integer bit-manipulation, not
+                // differentiable. Fail loudly (like Div/Mod) rather than emit a
+                // silent zero gradient — a bitwise op in an autodiff graph is
+                // almost certainly an error, and a silent zero would mask it
+                // (the silent-wrong-training trap).
+                BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
+                    return Err(AutodiffError::UnsupportedOp { op: "bitwise/shift" });
+                }
             }
             Ok(())
         }
