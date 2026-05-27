@@ -568,6 +568,68 @@ mod tests {
         attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
     }
 
+    /// Helper: read the stored `trace_hash` from a graph's evidence block.
+    fn stored_trace_hash(g: &Graph) -> [u8; 32] {
+        let v = g
+            .map
+            .iter()
+            .find(|(k, _)| *k == "evidence_chain.trace_hash")
+            .map(|(_, v)| v.clone())
+            .expect("trace_hash missing");
+        match v {
+            MapValue::Bytes(b) => b.try_into().expect("trace_hash must be 32 bytes"),
+            other => panic!("expected Bytes, got {other:?}"),
+        }
+    }
+
+    /// §4 Merkle-DAG: a chained artifact (parse → IR) carries the prior link's
+    /// `trace_hash` as its `parent`, and the whole chain survives a MIC-B
+    /// round-trip — the load-bearing claim a `mindc verify` chain walk relies
+    /// on (Phase B). This exercises the chain end-to-end through serialization,
+    /// not just a single link in memory.
+    #[test]
+    fn evidence_chain_links_survive_micb_roundtrip() {
+        // Link 1 — root (no parent). A distinct graph stands in for the
+        // "source-parse" stage artifact.
+        let mut g1 = base_graph();
+        attach(&mut g1, "x86_avx2", None, Determinism::Deterministic);
+        let h1 = stored_trace_hash(&g1);
+
+        // Link 2 — the "IR" stage. A different graph, with parent = h1.
+        let mut g2 = Graph::residual_block();
+        // Perturb g2's MAP so it is a genuinely different artifact from g1
+        // (otherwise the only difference would be the parent key).
+        g2.map.insert("stage", MapValue::String("ir".to_owned()));
+        attach(&mut g2, "x86_avx2", Some(h1), Determinism::Deterministic);
+        let h2 = stored_trace_hash(&g2);
+        assert_ne!(h1, h2, "distinct artifacts must have distinct trace_hash");
+
+        // Round-trip link 2 through MIC-B and re-parse.
+        let mut bin: Vec<u8> = Vec::new();
+        emit_micb(&g2, &mut bin).expect("emit_micb failed");
+        let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse_micb failed");
+
+        // (a) The parent pointer survived and equals link 1's trace_hash.
+        let parent = parsed
+            .map
+            .iter()
+            .find(|(k, _)| *k == "evidence_chain.parent")
+            .map(|(_, v)| match v {
+                MapValue::Bytes(b) => b.clone(),
+                other => panic!("expected Bytes, got {other:?}"),
+            })
+            .expect("parent missing after round-trip");
+        assert_eq!(parent, h1.to_vec(), "round-tripped parent must equal link 1 trace_hash");
+
+        // (b) A verifier recomputing §3.2 over the parsed graph reproduces the
+        //     stored trace_hash — the chain link is independently checkable.
+        assert_eq!(
+            compute_trace_hash(&parsed).to_vec(),
+            h2.to_vec(),
+            "recomputed trace_hash of the round-tripped link must equal the stored one"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // (g) FIPS 180-4 conformance — the Rust↔MIND SHA-256 duality is frozen here.
     //
