@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2658 | **Est. tokens:** ~6,607,098
-**Generated:** 2026-05-27 07:51 UTC
+**Files:** 2661 | **Est. tokens:** ~6,631,520
+**Generated:** 2026-05-27 08:11 UTC
 
 ## Token Budget Guide
 
@@ -377,9 +377,10 @@
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,910 |
 | `src/fmt/` | 3 | ~17,167 |
-| `src/ir/` | 4 | ~15,376 |
-| `src/ir/compact/` | 3 | ~14,184 |
-| `src/ir/compact/v2/` | 8 | ~36,196 |
+| `src/ir/` | 4 | ~15,575 |
+| `src/ir/compact/` | 3 | ~14,199 |
+| `src/ir/compact/v2/` | 8 | ~36,239 |
+| `src/ir/compact/v3/` | 3 | ~24,165 |
 | `src/lint/` | 2 | ~3,995 |
 | `src/lint/rules/` | 6 | ~9,076 |
 | `src/mlir/` | 2 | ~1,967 |
@@ -3637,7 +3638,7 @@
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~2332 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~2347 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~7446 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
@@ -3645,14 +3646,19 @@
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~8974 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_tests.rs` (~5514 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1263 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1306 tok, large) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~5749 tok, huge) — Copyright 2025 STARGA Inc.
 - `types.rs` (~4764 tok, huge) — Copyright 2025 STARGA Inc.
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
+### `src/ir/compact/v3/`
+
+- `emit.rs` (~9469 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7723 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~6973 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1268 tok, large) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7606 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7805 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3435 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~3067 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
