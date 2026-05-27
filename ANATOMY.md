@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2653 | **Est. tokens:** ~6,590,320
-**Generated:** 2026-05-26 22:26 UTC
+**Files:** 2653 | **Est. tokens:** ~6,590,920
+**Generated:** 2026-05-27 04:22 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 23 | ~96,011 |
+| `docs/rfcs/` | 23 | ~96,611 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -627,7 +627,7 @@
 - `0013-cli-agent-harness-stack.md` (~6787 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~4898 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~4564 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0016-evidence-chain-emission.md` (~5164 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
