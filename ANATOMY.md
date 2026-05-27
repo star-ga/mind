@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2658 | **Est. tokens:** ~6,606,424
-**Generated:** 2026-05-27 06:42 UTC
+**Files:** 2658 | **Est. tokens:** ~6,607,098
+**Generated:** 2026-05-27 07:51 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 24 | ~99,538 |
+| `docs/rfcs/` | 24 | ~100,212 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -630,7 +630,7 @@
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~5715 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~2376 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~3050 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
