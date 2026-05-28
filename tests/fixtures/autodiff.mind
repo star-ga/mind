@@ -1,1 +1,7 @@
-tensor.zeros(f32, ()) * tensor.zeros(f32, ()) + tensor.ones(f32, ())
+// Minimal differentiable program for the --emit-grad-ir CLI test.
+// f(x) = x*x + x  (a clean, lowerable diff-tensor expression).
+fn main() {
+    let x: diff tensor<f32> = 3.0;
+    let y = x * x + x;
+    print(y);
+}
