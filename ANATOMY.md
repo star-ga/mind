@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2664 | **Est. tokens:** ~6,647,732
-**Generated:** 2026-05-28 07:09 UTC
+**Files:** 2664 | **Est. tokens:** ~6,647,878
+**Generated:** 2026-05-28 11:47 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 24 | ~30,537 |
+| `docs/` | 24 | ~30,683 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
@@ -593,7 +593,7 @@
 - `install.md` (~841 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
-- `ir-stability.md` (~1269 tok, large) — IR stability contract
+- `ir-stability.md` (~1415 tok, large) — IR stability contract
 ### `docs/mindcraft/`
 
 - `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
