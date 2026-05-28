@@ -135,14 +135,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   canonical `diff tensor<f32>` form. The feature compiles and tests green under
   both `--no-default-features --features autodiff` and the full feature set.
 
+### Docs (cross-ecosystem alignment, `#308` closed)
+
+- **`docs/byte-store-migration.md`** (new) — reproducible execution playbook
+  for closing `#306` (the std byte-store landmine): per-file inventory of
+  the call sites, the toml.mind mixed-case guard (byte stores vs i64-aligned
+  struct ABI), and the keystone re-bless procedure. Includes the
+  stub-tolerant-test trap caveat surfaced when I tried to execute the
+  playbook from a non-MLIR-provisioned environment.
+- **`docs/ir-stability.md`, `docs/versioning.md`** — rewrote the prior
+  "`mic@1e` epilogue" framing to the actual shipped `mic@3` design (steps
+  1–3) + steps 4–6 in flight, with the rename rationale (mic@1e would
+  have collided with the binary-attestation use case once mic@2/2.1
+  shipped).
+- **mind-spec alignment** (`STATUS.md`, `spec/v1.0/ir-stability.md`,
+  `spec/mic/mic2.1-spec.md`, `design/rfcs/0001-mindir-compact.md`,
+  `docs/changelog.md` 1.4.0 entry) — IR-canon coverage matrix went from
+  0 mic@3 / 0 RFC 0016 / 0 RFC 0021 hits on STATUS + ir-stability to
+  5 / 3 / 7 hits; `spec/v1.0/ir-stability.md` gained a Format-detection
+  table + an Evidence-chain-attestation section documenting the GAP-1
+  `mic@1` anchor rule; `STATUS.md` gained 9 new toolchain-features rows.
+- **mindlang.dev alignment** (`/docs/mic`, `/docs/mic/v2`, `/docs/mic/binary`,
+  `/docs/stability`, `/docs/ir`, `/docs/map`, `/docs/runtime`, `/roadmap`)
+  — canon banner on the main MIC page (mic@1 text + mic@3 binary canonical,
+  mic@2/2.1 back-compat pending demotion); mic@2.1 + mic@3 cards; format-
+  detection example updated; status banners on the legacy v2/binary pages;
+  3 new RoadmapCards (RFC 0013 / RFC 0016 / RFC 0021); IR-canon banner on
+  `/docs/ir`; MAP-protocol-vs-MAP-epilogue disambig banner on `/docs/map`;
+  evidence-chain anchor mention on `/docs/runtime`.
+
 ### Known issues (release gate)
 
 - **`#306` — std heap out-of-bounds (HIGH, open).** An 8-byte store at a byte
   offset can write past the backing allocation in `string` / `sha256` / `toml`
   / `tui` paths. A 7-byte backing-store pad mitigates the common case, but the
   root fix (a byte-width-correct store, re-blessing the std keystone in the
-  bootstrap) is **required before the next version tag.** Do not cut a release
-  until this is closed.
+  bootstrap) is **required before the next version tag.** Path-B (commit
+  `0e7dd6c`) added the `__mind_load_i8` / `__mind_store_i8` intrinsics that
+  the migration consumes; the site migration + keystone re-bless is the
+  remaining work. See `docs/byte-store-migration.md` for the executable
+  playbook + the stub-tolerant-test caveat. Do not cut a release until this
+  is closed.
 
 ## [0.7.0] - 2026-05-21 — Credibility-ladder rung 3 graduation: Mindcraft + RFC 0008 KEYSTONE + RFC 0010 foundations + 13 stdlib modules + mindc doc + standalone binary release
 
