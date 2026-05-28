@@ -47,14 +47,22 @@ and will not change in incompatible ways without a major-version bump:
   `mic@2`/`MIC-B`. Back-compatible by omission: a `Graph` with an empty MAP
   serialises byte-identically to `mic@2`, so `MICB_VERSION` is unchanged. The
   MAP is a separable provenance section, not an IR-grammar change.
-- **Canonical-IR direction (RFC 0021).** The `Graph`/`mic@2.x` lineage carries
-  the lighter dataflow IR + the provenance MAP, but it is **not** the
-  compiled-artifact IR — `IRModule`/`mic@1` is (it is what the pipeline and the
-  self-host compiler produce, and the RFC 0016 evidence anchor `ir::ir_trace_hash`
-  hashes its canonical `mic@1` text). RFC 0021 unifies on `mic@1` with provenance
-  attached as a back-compatible `mic@1e` epilogue and demotes the `Graph` lineage
-  to a `mind-model@2` model-exchange format; until that lands, the two coexist
-  and `mic@1` remains the canonical contract above.
+- **Canonical-IR direction (RFC 0021, steps 1–3 shipped).** The `Graph`/`mic@2.x`
+  lineage carries the lighter dataflow IR + the provenance MAP, but it is **not**
+  the compiled-artifact IR — `IRModule`/`mic@1` is (it is what the pipeline and
+  the self-host compiler produce, and the RFC 0016 evidence anchor
+  `ir::ir_trace_hash` hashes its canonical `mic@1` text). RFC 0021 unifies on the
+  `IRModule` data shape with two canonical serialisations: `mic@1` for text and
+  **`mic@3` for binary** (magic `MIC3`, round-trip equivalent to `mic@1`). The
+  provenance MAP attaches to `mic@3` as a `0x4D`-sentinel epilogue using the
+  same key/value form as the `mic@2.1` MAP — exposed via
+  `mindc --emit-mic3` / `--emit-evidence` (steps 1–3 shipped, `src/ir/compact/v3/`).
+  The earlier `mic@1e` proposal was superseded by `mic@3` once `mic@2/2.1`
+  shipped (a third minor on the text form would have collided with the
+  binary-attestation use case). Steps 4–6 (`mindc verify` CLI, demotion of the
+  `Graph` lineage to a `mind-model@2` model-exchange artifact, oracle + CI gate)
+  remain in flight; until they land the two coexist and `mic@1` remains the
+  canonical contract above.
 - New `Instr` variants may be added in minor releases; consumers should
   match exhaustively and treat unknown variants as a hard error.
 - New `BinOp` variants may be added in minor releases (e.g. `BinOp::Mod`
