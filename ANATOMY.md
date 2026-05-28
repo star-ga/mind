@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2664 | **Est. tokens:** ~6,647,427
-**Generated:** 2026-05-28 06:42 UTC
+**Files:** 2664 | **Est. tokens:** ~6,647,732
+**Generated:** 2026-05-28 07:09 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 24 | ~30,232 |
+| `docs/` | 24 | ~30,537 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
@@ -579,7 +579,7 @@
 - `mojo_comparison.md` (~2420 tok, huge) — MIND vs Mojo: Compilation Performance Comparison
 ### `docs/`
 
-- `byte-store-migration.md` (~1827 tok, huge) — Byte-Store Migration — closing `#306`
+- `byte-store-migration.md` (~2132 tok, huge) — Byte-Store Migration — closing `#306`
 - `cli.md` (~582 tok, large) — MIND CLI Reference
 ### `docs/design/`
 

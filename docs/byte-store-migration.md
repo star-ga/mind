@@ -97,11 +97,32 @@ Per-file workflow:
 
 ## Re-blessing the keystone
 
-The bootstrap byte-identity test (`tests/phase_g_keystone_bootstrap.rs`,
-7/7 passing on `eaa24aa`) compares `libmindc_mind.so`'s output against
-baked-in oracle bytes / hashes. When the std sources change, the oracle
-must be regenerated **from a clean build that has all migration changes
-applied** — not from a partial state.
+The bootstrap byte-identity test (`tests/phase_g_keystone_bootstrap.rs`)
+compares `libmindc_mind.so`'s output against the committed oracle at
+`examples/mindc_mind/libmindc_mind.so`. When the std sources change, the
+oracle must be regenerated **from a clean build that has all migration
+changes applied** — not from a partial state.
+
+> **Critical caveat discovered 2026-05-28 mid-session.** The test is
+> deliberately tolerant of environments without a fully-wired MLIR
+> backend: when the local `mindc build` produces a stub (~1245 bytes)
+> rather than a real ELF (~78 KB), the assertion logs a `WARNING:
+> artifact type mismatch — built is stub but oracle is ELF` and
+> **still reports PASS**. This is by design — the test is meant to
+> run in environments without LLVM/MLIR provisioned and gives
+> byte-identity verification only when both sides are ELF. The
+> implication for the re-bless: **DO NOT capture the oracle from a
+> stub-producing environment.** Doing so would silently bake in a
+> 1,245-byte stub as the new oracle, breaking the byte-identity
+> claim everywhere the full MLIR path runs (notably CI).
+>
+> Pre-rebless check: run the test with `-- --nocapture` and verify
+> the log line reads `phase_g_03 KEYSTONE: byte-identical (~78 KB,
+> SHA256 prefix …)` — NOT `stub path or oracle from different
+> toolchain run`. If the stub-path message appears, **stop**: the
+> re-bless session needs LLVM/MLIR installed and the `mlir-build`
+> feature actually exercising the lowering chain (see
+> `docs/install.md` for the prereqs).
 
 The mature procedure:
 
