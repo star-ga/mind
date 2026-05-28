@@ -1,0 +1,150 @@
+# Byte-Store Migration — closing `#306`
+
+> **Status (2026-05-27).** Path-B intrinsics shipped (`__mind_load_i8` /
+> `__mind_store_i8`, commit `0e7dd6c`). The pure-MIND std site migration to
+> consume them — and the bootstrap keystone re-bless that follows — is the
+> remaining work. This doc is the reproducible execution spec.
+
+## Why this exists
+
+`std.string` / `std.sha256` / `std.toml` / `std.tui` currently write single
+bytes with `__mind_store_i64(addr + i, byte)`, where the intrinsic actually
+writes 8 bytes. Each byte-store clobbers the next 7 bytes; subsequent
+byte-stores at `i+1`, `i+2`, … overwrite that clobber. The LAST byte-store
+of a buffer leaves 7 bytes of stale-zero write past `len`.
+
+The runtime-support C shim currently masks the end-of-buffer OOB with a
+7-byte allocation pad (`cc5a513`), so nothing crashes today. But:
+
+- The garbage past `len` is a **cross-substrate bit-identity landmine.**
+  NEON / RVV substrates may not have the same pad shape; the AVX2 reference
+  oracle then disagrees with NEON byte-for-byte on the same Q16.16 input.
+- A `__mind_realloc`-shrink that drops below the pad → real OOB on real
+  hardware.
+- The OOB-write of zeros is a write into memory you don't own, full stop —
+  the rest of the safety story (RFC 0010 region allocator + GenRef) is
+  undermined as long as this exists in the standard library.
+
+Path-B (`0e7dd6c`) added `__mind_store_i8` / `__mind_load_i8` to the type-
+checker intrinsic table + the runtime-support C shim. The intrinsics are
+inert until the std code calls them — this migration switches the call
+sites over.
+
+## The exact call sites
+
+Inventory captured 2026-05-27 against `mind@d27a0e8`. Re-verify with
+`git grep '__mind_store_i64' std/` before executing.
+
+### `std/string.mind` — 1 site
+
+| Line | Current | Replace with |
+|------|---------|---|
+| 99   | `__mind_store_i64(new_addr + s.len, b);` | `__mind_store_i8(new_addr + s.len, b);` |
+
+Also matches one byte-read at line 56:
+`__mind_load_i64(s.addr + i) & 255` → can stay as-is (the `& 255` mask is
+safe; replacing with `__mind_load_i8` is a follow-on cleanup, not required
+for the OOB close).
+
+### `std/sha256.mind` — ~25 byte-store sites
+
+All `__mind_store_i64(...)` calls **without** a `* 8` multiplier on the
+offset. Pattern: `__mind_store_i64(buf + <byte_offset>, <byte_value>)`.
+
+Confirmed lines: 288, 293, 298, 308–315, 337–340. The header comment block
+at lines 11–12 documents the old convention — that comment should be
+updated as part of the migration to describe the new `__mind_store_i8` form.
+
+The i64-aligned scratch stores at lines 175, 179, 245–252 (those have
+`* 8` or are full-i64-value writes into the working `w[]` and `h[]`
+arrays) are **legitimate i64 stores** — do not touch.
+
+### `std/toml.mind` — MIXED (most sites are legitimate i64 stores; only 2 are byte-stores)
+
+| Line | Form | Action |
+|------|------|--------|
+| 129  | `__mind_store_i64(dst + i, __mind_load_i64(src + i) & 255);` | **migrate** — byte copy. Replace store with `__mind_store_i8` (load side mask is fine). |
+| 138  | `__mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));` | **keep** — i64-aligned full-word copy. |
+| 166, 237, 269, 270 | i64-aligned stores with `* 8` offsets | **keep** — legitimate i64 stores into the keys/vals backing arrays. |
+| 498  | `__mind_store_i64(new_dat + old_len, b);` | **migrate** — byte append. Replace with `__mind_store_i8`. |
+
+The TomlValue struct header writes at lines 71–96 (`h + 0`, `h + 8`, `h + 16`, …) are i64-aligned struct ABI — **keep as `__mind_store_i64`.**
+
+### `std/tui.mind` — 0 byte-stores, 1 byte-read
+
+No `__mind_store_i64` byte-store sites. Line 274 has a deliberate
+`__mind_load_i64(buf)` followed by shifts to peel 4 bytes — that's a
+documented packed-load pattern (see the comment block at line 260),
+**not** a bug. Line 457 `__mind_load_i64(payload_addr + i) & 255` is the
+same `& 255` mask pattern as `string.mind` — safe.
+
+## Migration mechanics
+
+Per-file workflow:
+
+1. **Edit** the .mind sources (the lines above) with the documented
+   replacements.
+2. **Run the std-surface test gate** —
+   `cargo test --features "std-surface mlir-lowering"`. Functionality
+   should be unchanged; the test suite that was green on `eaa24aa` should
+   stay green.
+3. **Bootstrap byte-identity** —
+   `cargo test --features "std-surface mlir-lowering" --test phase_g_keystone_bootstrap`.
+   This **will** initially fail: the libmindc_mind.so emits different bytes
+   now (different intrinsic names in the lowered calls). That is the
+   keystone re-bless step (next section).
+4. **Re-bless the keystone** — the only step that requires care.
+
+## Re-blessing the keystone
+
+The bootstrap byte-identity test (`tests/phase_g_keystone_bootstrap.rs`,
+7/7 passing on `eaa24aa`) compares `libmindc_mind.so`'s output against
+baked-in oracle bytes / hashes. When the std sources change, the oracle
+must be regenerated **from a clean build that has all migration changes
+applied** — not from a partial state.
+
+The mature procedure:
+
+1. Land the .mind migrations across all four files in a single commit
+   (no staged half-migration). Verify the std-surface test suite is green.
+2. Run the bootstrap test once to confirm it fails on the keystone (this
+   confirms the .mind changes did flow through to libmindc_mind.so output).
+3. Locate the keystone oracle (typically a `STD_SURFACE_KEYSTONE_HASH` /
+   `KEYSTONE_BYTES` const in the test file or a sibling fixture). Capture
+   the new hash from a clean build — **do not let the test "auto-update"
+   its own oracle, that masks regressions silently.**
+4. Update the oracle in a SEPARATE commit titled
+   `chore(keystone): re-bless std-surface fixed-point after #306 migration`
+   so the rebless is reviewable on its own.
+5. Verify 7/7 phase_g_keystone_bootstrap passes against the new oracle.
+6. Verify the full std-surface + mlir-lowering test suite is green.
+7. Verify default-feature workspace stays green.
+8. Now `v0.7.1` is one `git tag` away (see `CHANGELOG.md` `[Unreleased]`
+   for the staged release notes).
+
+## Why not do it in this session
+
+The re-bless is risky to execute deep in a long context window — getting
+the oracle wrong silently bakes in a stale or buggy byte-identity claim,
+which then hides future cross-substrate regressions. The path-B
+intrinsics work + this spec doc are written from a context where the
+investigation is fresh; the actual migration + re-bless deserves a
+fresh, focused session that does only this one thing and verifies it
+end-to-end. The session start can simply:
+
+> Open `docs/byte-store-migration.md`, execute steps 1–8.
+
+That's the deliverable for the session that closes `#306` and unblocks
+`v0.7.1`.
+
+## Cross-references
+
+- Intrinsic add: `0e7dd6c feat(intrinsics): add __mind_load_i8 / __mind_store_i8`
+- Path-B commit message documents the rationale + non-rebless guarantee.
+- `CHANGELOG.md` `[Unreleased]` ▸ "Known issues (release gate)" — the
+  release-note slot is already staged and references this migration as
+  the gate.
+- The 7-byte runtime-support pad (commit `cc5a513`) is the temporary
+  mitigation that lets the bug stay latent. The pad can be removed
+  *after* the migration lands and bootstrap stays byte-identical for one
+  full release cycle.
