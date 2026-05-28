@@ -57,8 +57,11 @@ MIND Core currently publishes 0.y.z versions with the following rules:
   RFC 0016, `signature.*` Ed25519). Additive and back-compatible by omission
   (empty MAP ⇒ byte-identical to `mic@2`/`MIC-B`); the epilogue is versioned
   independently of the IR grammar (`evidence_chain.schema`). The canonical IR
-  + provenance architecture is being unified onto `mic@1` per RFC 0021
-  (`mic@1e` epilogue); see [`docs/ir-stability.md`](ir-stability.md).
+  + provenance architecture is being unified onto `mic@1` text + **`mic@3`
+  binary** per RFC 0021 (steps 1–3 shipped: binary `IRModule` codec + MAP
+  epilogue via the `0x4D` sentinel + `mindc --emit-mic3` / `--emit-evidence`
+  CLI; steps 4–6 — `mindc verify`, `mic@2.x` → `mind-model@2` demotion,
+  oracle + CI gate — in flight).  See [`docs/ir-stability.md`](ir-stability.md).
 
 ## References
 
