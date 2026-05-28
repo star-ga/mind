@@ -211,7 +211,11 @@ fn map_insert_uses_every_primitive_twice() {
 
     // map_insert body uses, at minimum:
     //   - reads on m.len / m.cap / m.keys_addr / m.vals_addr (>= 4)
-    //   - one __mind_alloc per backing array on grow (>= 2)
+    //   - one __mind_realloc per backing array on grow (>= 2)
+    //     (was __mind_alloc + memcpy; migrated to __mind_realloc to preserve
+    //     bytes on growth — std/map.mind:78–80 — `realloc(NULL, n)` is
+    //     `malloc(n)`, so the grow path covers both the first allocation
+    //     and the subsequent grows with a single primitive.)
     //   - one explicit __mind_store_i64 per side (>= 2)
     //   - four StructLit field stores at the tail (>= 4 more)
     //   - total stores >= 6
@@ -220,7 +224,7 @@ fn map_insert_uses_every_primitive_twice() {
     // behavior in the lowering.
     let loads = count_calls(body, "__mind_load_i64");
     let stores = count_calls(body, "__mind_store_i64");
-    let allocs = count_calls(body, "__mind_alloc");
+    let reallocs = count_calls(body, "__mind_realloc");
 
     assert!(
         loads >= 4,
@@ -231,7 +235,8 @@ fn map_insert_uses_every_primitive_twice() {
         "map_insert stores key + value + four StructLit fields at minimum, got {stores}"
     );
     assert!(
-        allocs >= 2,
-        "map_insert must allocate both backing arrays on grow, got {allocs}"
+        reallocs >= 2,
+        "map_insert must grow-and-preserve both backing arrays via \
+         __mind_realloc, got {reallocs}"
     );
 }

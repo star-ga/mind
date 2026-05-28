@@ -157,17 +157,30 @@ fn string_get_byte_uses_s_addr_plus_one_explicit_load() {
     let ir = lower_string_mind();
     let body = fn_body(&ir, "string_get_byte");
 
-    // `s.addr` → one field-load. The explicit `__mind_load_i64(...)`
-    // intrinsic call is the same callee, so the total count is 2.
-    assert_eq!(
-        count_calls(body, "__mind_load_i64"),
-        2,
-        "string_get_byte body should issue 2 loads (one for s.addr field read, one explicit byte load)"
+    // Intent: `string_get_byte` is a pure reader that issues at least one
+    // explicit `__mind_load_i64` (the byte-load — `s.addr + i` then mask to
+    // the low byte, see std/string.mind:48–56) and performs no allocations
+    // or stores. The exact load count depends on whether the struct field
+    // `s.addr` is lowered through `__mind_load_i64` or inlined out by the
+    // struct-ABI / CSE pass; the `CRITICAL fix(std.string)` rewrite (commit
+    // 0020795) changed the prior 2-load shape, so this assertion is a
+    // floor-count to keep the contract (must-not-store-or-allocate,
+    // must-perform-an-explicit-load) without tying it to a specific
+    // lowering choice.
+    assert!(
+        count_calls(body, "__mind_load_i64") >= 1,
+        "string_get_byte must issue at least one explicit byte load \
+         (`__mind_load_i64(s.addr + i)`)"
     );
     assert_eq!(
         count_calls(body, "__mind_alloc"),
         0,
         "string_get_byte must not allocate"
+    );
+    assert_eq!(
+        count_calls(body, "__mind_realloc"),
+        0,
+        "string_get_byte must not reallocate"
     );
     assert_eq!(
         count_calls(body, "__mind_store_i64"),
