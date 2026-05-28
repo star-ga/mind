@@ -264,6 +264,21 @@ MIND Core v1 follows the public contract in mind-spec Core v1. The stability
 model, SemVer policy, and CLI guarantees are documented in
 [`docs/versioning.md`](docs/versioning.md).
 
+### IR canon (mindc 0.7.x, RFC 0021)
+
+The `IRModule` data shape has two canonical serialisations:
+
+- **`mic@1`** — text form (`libmind::ir::save` / `load`). The load-bearing
+  anchor for the evidence-chain `trace_hash` (RFC 0016 GAP-1).
+- **`mic@3`** — binary form (magic `MIC3`, `src/ir/compact/v3/`). Round-trip
+  equivalent to `mic@1`; emit via `mindc --emit-mic3`. Carries the evidence
+  MAP epilogue via a `0x4D`-sentinel form (RFC 0021 step 2).
+
+Compile-time evidence-chain attestation ships via `mindc --emit-evidence`
+(RFC 0016 Phase A + B, opt-in). `mic@2`/`mic@2.1` are preserved back-compat
+lanes pending RFC 0021 step 5 demotion to `mind-model@2`. See
+[`docs/ir-stability.md`](docs/ir-stability.md).
+
 ## Architecture
 
 * [Runtime & Compiler Architecture](docs/architecture.md)
