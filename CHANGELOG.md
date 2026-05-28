@@ -79,6 +79,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too broad — narrowed to the `@`-operator marker); and a formatter
   stability test that panicked parsing a `std-surface`-gated stdlib file.
 
+### Added — RFC 0013 Tier 1: CLI/agent stdlib surface
+
+- **`std.cli`** — `argv` parsing, a flag walker, `--flag=value` equals form,
+  `string_starts_with`/`slice_from`, and subcommand-dispatch helpers.
+- **`std.io`** — `isatty` plus the full ECMA-48 SGR vocabulary for coloured
+  terminal output.
+- **`std.string`** — `string_push_str` (grow-and-copy), `string_push_i64`, and
+  `string_push_ansi_sgr`, all preserving bytes across reallocation.
+- **`std.tui`** — minimal widget surface: terminal-size via `ioctl`, plus `Box`
+  and `Text`.
+- **`std.sha256`** — pure-MIND SHA-256 (FIPS 180-4), bit-identical to the
+  reference; the hash primitive the evidence chain builds on.
+
+### Added — RFC 0016 / 0021: compile-time evidence chains + canonical IR (experimental)
+
+- **RFC 0016 Phase A** — evidence-chain emission (inert, unsigned): the
+  determinism / substrate / toolchain / `trace_hash` attestation surface.
+- **RFC 0016 Phase B** — `verify_evidence_chain`: a verifier core producing a
+  structured `EvidenceReport` / `EvidenceError`.
+- **RFC 0016 GAP-1** — the evidence `trace_hash` is now anchored on the
+  canonical **mic@1** IR (the actually-emitted artifact), not the weak v2 graph.
+- **mic@2.1 MAP carrier** in compact-IR v2 — the metadata-attribute-pairs
+  extension that carries the chain.
+- **RFC 0021 steps 1–3** — the **mic@3** binary `IRModule` codec (additive),
+  an evidence MAP epilogue that attests the real IR, and the
+  `mindc --emit-mic3` / `--emit-evidence` flags. These are **experimental** and
+  flag-gated; they do not change default lowering. RFC 0021 steps 4–6
+  (`mindc verify` CLI, v2→`mind-model@2` demotion, oracle + CI gate) remain in
+  progress.
+
+### Added — Q16.16 BLAS + cross-substrate reproducibility (RFC 0006 / 0020)
+
+- **Q16.16 row-major GEMV** kernel `__mind_blas_matmul_rmajor_q16_v` (RFC 0006
+  Track B).
+- **Internal cross-substrate reproducibility gate** (RFC 0020 §10, #303): a
+  table-driven harness over `dot-l1-q16`, `dot-l2-q16`, `gemv-q16-256x256`, and
+  a square `gemm-q16-64x64x64` workload, asserting byte-identical results.
+
+### Fixed — std memory-safety, formatter stability, autodiff
+
+- **`std.string` CRITICAL** — `string_get_byte` byte-mask + a real `string_eq`.
+- **`std.string` / `std.vec`** — preserve bytes on growth via `__mind_realloc`
+  (a latent bug that dropped bytes past the initial capacity).
+- **`std.map`** — realloc-on-growth, `slice_from` clamp, `isatty`
+  (code-reviewer HIGH/MEDIUM).
+- **`mindc fmt`** — preserve `let mut` through the round-trip; keep body and
+  trailing comments inside their block (two formatter defects, both closed).
+- **MLIR `while`-loop lowering** — after-loop SSA dominance + shift-register
+  back-edge.
+- **Empty reduction axes** must reduce *all* axes (→ scalar), not none.
+- **Autodiff feature restored** — the gradient `BinOp` match now cfg-gates the
+  `std-surface` bitwise/shift variants (fails loudly rather than emitting a
+  silent zero gradient), and the `mindc_emits_grad_ir` fixture uses the
+  canonical `diff tensor<f32>` form. The feature compiles and tests green under
+  both `--no-default-features --features autodiff` and the full feature set.
+
+### Known issues (release gate)
+
+- **`#306` — std heap out-of-bounds (HIGH, open).** An 8-byte store at a byte
+  offset can write past the backing allocation in `string` / `sha256` / `toml`
+  / `tui` paths. A 7-byte backing-store pad mitigates the common case, but the
+  root fix (a byte-width-correct store, re-blessing the std keystone in the
+  bootstrap) is **required before the next version tag.** Do not cut a release
+  until this is closed.
+
 ## [0.7.0] - 2026-05-21 — Credibility-ladder rung 3 graduation: Mindcraft + RFC 0008 KEYSTONE + RFC 0010 foundations + 13 stdlib modules + mindc doc + standalone binary release
 
 ### Added — Standalone binary distribution (task #265)
