@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2664 | **Est. tokens:** ~6,647,878
-**Generated:** 2026-05-28 11:47 UTC
+**Files:** 2664 | **Est. tokens:** ~6,647,940
+**Generated:** 2026-05-28 11:48 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 24 | ~30,683 |
+| `docs/` | 24 | ~30,745 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
@@ -648,7 +648,7 @@
 ### `docs/`
 
 - `type-system.md` (~947 tok, large) — Type System
-- `versioning.md` (~742 tok, large) — MIND Core Stability & Versioning
+- `versioning.md` (~804 tok, large) — MIND Core Stability & Versioning
 - `whitepaper.md` (~2844 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
