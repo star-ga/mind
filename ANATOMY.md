@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2663 | **Est. tokens:** ~6,644,822
-**Generated:** 2026-05-27 12:18 UTC
+**Files:** 2663 | **Est. tokens:** ~6,644,859
+**Generated:** 2026-05-28 00:54 UTC
 
 ## Token Budget Guide
 
@@ -406,7 +406,7 @@
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
 | `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~540 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~442 |
-| `tests/fixtures/` | 6 | ~191 |
+| `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
 | `tests/mindcraft/` | 1 | ~408 |
@@ -3845,7 +3845,7 @@
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/fixtures/`
 
-- `autodiff.mind` (~18 tok, tiny)
+- `autodiff.mind` (~55 tok, small) — Minimal differentiable program for the --emit-grad-ir CLI test.
 - `invalid_broadcast.mind` (~17 tok, tiny)
 - `invalid.mind` (~6 tok, tiny)
 - `simple.mind` (~3 tok, tiny)
