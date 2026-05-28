@@ -328,7 +328,7 @@ fn win64_four_byte_struct_to_i32() {
 #[test]
 fn end_to_end_win64_struct_lower_to_ir() {
     let src = r#"
-        [repr(C)]
+        #[repr(C)]
         struct TwoI64 { a: i64, b: i64 }
 
         extern "C" callconv(.win64) {

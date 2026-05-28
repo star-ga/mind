@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2663 | **Est. tokens:** ~6,645,346
-**Generated:** 2026-05-28 03:43 UTC
+**Files:** 2663 | **Est. tokens:** ~6,645,347
+**Generated:** 2026-05-28 03:46 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 17 | ~81,159 |
-| `tests/` | 157 | ~263,676 |
+| `tests/` | 157 | ~263,677 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3840,7 +3840,7 @@
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2658 tok, huge) — Copyright 2025 STARGA Inc.
-- `extern_c_phase_b.rs` (~5838 tok, huge) — Copyright 2025 STARGA Inc.
+- `extern_c_phase_b.rs` (~5839 tok, huge) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_c.rs` (~3411 tok, huge) — Copyright 2025 STARGA Inc.
 - `ffi_header.rs` (~221 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/fixtures/`
