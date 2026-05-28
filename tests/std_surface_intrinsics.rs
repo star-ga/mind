@@ -2,12 +2,16 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! RFC 0005 Phase 1 — the five `i64`-signed `__mind_*` intrinsics.
+//! RFC 0005 Phase 1+ — the `i64`-signed `__mind_*` intrinsics.
 //!
 //! Phase 0 (committed `8b2199f`) made `Instr::Call` reach MLIR.
-//! Phase 1 makes those five names *known* to the type-checker with
+//! Phase 1+ makes those names *known* to the type-checker with
 //! fixed `(i64..) -> i64` signatures so the bottom of `std.vec` /
-//! `std.string` / `std.map` / `std.io` can compile. Pure type-checker
+//! `std.string` / `std.map` / `std.io` can compile. Phase 1.5 added
+//! `__mind_load_i64` / `__mind_store_i64` for scalar load/store at
+//! address; Phase 1.6 (task #306) added `__mind_load_i8` /
+//! `__mind_store_i8` for proper one-byte access (closing the
+//! 8-byte-store-at-byte-offset heap-OOB landmine). Pure type-checker
 //! tests use the AST directly; the end-to-end smoke runs the Phase-0
 //! path so the contract is checked through to MLIR text.
 //!
@@ -138,6 +142,33 @@ fn store_i64_two_i64_args_typechecks() {
     );
 }
 
+// RFC 0005 Phase 1.6 (task #306) — single-byte ABI.
+
+#[test]
+fn load_i8_one_i64_arg_typechecks() {
+    let module = module_of(vec![call("__mind_load_i8", vec![lit_int(0xdead_beef)])]);
+    let env = HashMap::new();
+    let diags = check_module_types(&module, "", &env);
+    assert!(
+        diags.is_empty(),
+        "__mind_load_i8/1 must accept; got {diags:#?}"
+    );
+}
+
+#[test]
+fn store_i8_two_i64_args_typechecks() {
+    let module = module_of(vec![call(
+        "__mind_store_i8",
+        vec![lit_int(0xdead_beef), lit_int(0x42)],
+    )]);
+    let env = HashMap::new();
+    let diags = check_module_types(&module, "", &env);
+    assert!(
+        diags.is_empty(),
+        "__mind_store_i8/2 must accept; got {diags:#?}"
+    );
+}
+
 // ── Wrong arity is a clear error that names the i64 ABI / phase 2+ ──
 
 #[test]
@@ -225,9 +256,11 @@ fn each_intrinsic_lowers_to_func_call_with_private_decl() {
         ("__mind_alloc", 1usize),
         ("__mind_free", 1),
         ("__mind_load_i64", 1),
+        ("__mind_load_i8", 1),
         ("__mind_read", 4),
         ("__mind_realloc", 2),
         ("__mind_store_i64", 2),
+        ("__mind_store_i8", 2),
         ("__mind_write", 4),
     ] {
         let mut m = IRModule::new();

@@ -1673,7 +1673,7 @@ fn infer_grad(
 
 // RFC 0005 Phase 1 + 1.5 — pure-MIND standard surface intrinsics.
 //
-// The seven primitives the std surface (`Vec`, `String`, `Map`, `io`)
+// The primitives the std surface (`Vec`, `String`, `Map`, `io`)
 // is allowed to bottom out into. All take and return `i64` only (no
 // `Ptr` type — see RFC 0005 P0a; an address is a 64-bit integer).
 // The pair (`__mind_load_i64`, `__mind_store_i64`) was added at Phase
@@ -1737,9 +1737,20 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     ("__mind_blas_matmul_rmajor_q16_v", 5),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
+    // RFC 0005 Phase 1.6 (task #306) — single-byte load/store. The
+    // (`__mind_store_i64(base + i, b)` writes one byte / `__mind_load_i64(base + i) & 255`
+    // reads one byte) convention used by `std.string` / `std.sha256` / `std.toml`
+    // / `std.tui` clobbers 7 bytes per store and can read past the buffer. The
+    // store form is currently masked by a 7-byte backing-store pad in runtime-support
+    // (commit `cc5a513`), but the garbage past `len` is a cross-substrate
+    // bit-identity landmine (NEON / RVV may not have the same pad). These two
+    // intrinsics provide a proper one-byte ABI; `load_i8` zero-extends to i64 so
+    // call sites preserve the `& 255` mask semantics during migration.
+    ("__mind_load_i8", 1),
     ("__mind_read", 4),
     ("__mind_realloc", 2),
     ("__mind_store_i64", 2),
+    ("__mind_store_i8", 2),
     ("__mind_write", 4),
 ];
 
