@@ -50,7 +50,7 @@ fn empty_repr_c() -> std::collections::BTreeMap<String, Vec<TypeAnn>> {
 /// name is "repr" and whose single argument is "C".
 #[test]
 fn parse_repr_c_attribute_on_struct() {
-    let src = r#"[repr(C)] struct Timeval { tv_sec: i64, tv_usec: i64 }"#;
+    let src = r#"#[repr(C)] struct Timeval { tv_sec: i64, tv_usec: i64 }"#;
     let module = parser::parse(src)
         .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     assert_eq!(module.items.len(), 1);
@@ -60,7 +60,7 @@ fn parse_repr_c_attribute_on_struct() {
             assert_eq!(fields.len(), 2);
             assert!(
                 attrs.iter().any(|a| a.name == "repr" && a.args.iter().any(|s| s == "C")),
-                "expected [repr(C)] attribute; attrs = {attrs:?}"
+                "expected #[repr(C)] attribute; attrs = {attrs:?}"
             );
         }
         other => panic!("expected StructDef, got {other:?}"),
@@ -77,7 +77,7 @@ fn parse_repr_c_attribute_on_struct() {
 fn typecheck_accepts_named_type_in_extern_signature() {
     // Use the parser so the repr_c pre-pass has a real StructDef to scan.
     let src = r#"
-        [repr(C)]
+        #[repr(C)]
         struct Timeval { tv_sec: i64, tv_usec: i64 }
 
         extern "C" {
@@ -429,7 +429,7 @@ fn repr_c_struct_param_expands_to_two_i64_in_mlir() {
 #[test]
 fn end_to_end_repr_c_struct_lower_to_ir() {
     let src = r#"
-        [repr(C)]
+        #[repr(C)]
         struct Point { x: i32, y: i32 }
 
         extern "C" {
@@ -520,7 +520,7 @@ fn repr_c_struct_after_extern_block_classifies_correctly() {
             unsafe fn use_mixed(m: Mixed) -> i32
         }
 
-        [repr(C)]
+        #[repr(C)]
         struct Mixed { x: i32, f: f32 }
     "#;
     let module = parser::parse(src)
