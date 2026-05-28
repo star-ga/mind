@@ -14,7 +14,7 @@
 
 // RFC 0005 Phase 6.5 Stage 1b — runtime-support stub.
 //
-// Provides C implementations of the seven RFC 0005 i64-ABI intrinsics and the
+// Provides C implementations of the RFC 0005 i64-ABI intrinsics and the
 // pure-MIND std.vec, std.map, and std.string surface functions.  This object
 // is statically linked into every --emit-shared cdylib so the resulting .so is
 // self-contained and dlopen-able without an external libmind_std.
@@ -133,6 +133,26 @@ MIND_EXPORT int64_t __mind_load_i64(int64_t addr) {
 
 MIND_EXPORT int64_t __mind_store_i64(int64_t addr, int64_t val) {
     memcpy((void *)(uintptr_t)addr, &val, sizeof(int64_t));
+    return 0;
+}
+
+// RFC 0005 Phase 1.6 (task #306) — single-byte load/store.
+// The std.string / std.sha256 / std.toml / std.tui byte-buffer code currently
+// uses `__mind_store_i64(base + i, b)` to write one byte at byte offset `i`,
+// which clobbers 7 bytes per store; the 7-byte backing-store pad below absorbs
+// the OOB at end-of-buffer but the high bytes within the buffer are stale
+// (overwritten by the next byte store) and the garbage-past-len is a
+// cross-substrate bit-identity landmine.  `__mind_load_i8` zero-extends to i64
+// so existing `& 255` mask semantics are preserved during call-site migration.
+MIND_EXPORT int64_t __mind_load_i8(int64_t addr) {
+    uint8_t b;
+    memcpy(&b, (void *)(uintptr_t)addr, 1);
+    return (int64_t)b;
+}
+
+MIND_EXPORT int64_t __mind_store_i8(int64_t addr, int64_t val) {
+    uint8_t b = (uint8_t)(val & 0xFF);
+    memcpy((void *)(uintptr_t)addr, &b, 1);
     return 0;
 }
 
