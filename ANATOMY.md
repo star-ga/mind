@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2664 | **Est. tokens:** ~6,647,940
-**Generated:** 2026-05-28 12:54 UTC
+**Files:** 2664 | **Est. tokens:** ~6,648,120
+**Generated:** 2026-05-28 12:56 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~20,115 |
+| `./` | 32 | ~20,295 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -455,7 +455,7 @@
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~4404 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~4584 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
