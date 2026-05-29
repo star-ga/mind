@@ -124,8 +124,10 @@ fn cdylib_has_no_undefined_mind_symbols() {
     // runtime-support stub itself depends on.  The POSIX I/O calls
     // are pulled in by std.io's __mind_read / __mind_write / pread /
     // pwrite passthrough (see runtime-support/mind_intrinsics.c).
+    // `abort` is referenced by the RFC 0010 GenRef region allocator for
+    // deterministic OOM / generation-wrap / region-nesting panics.
     let allowed = [
-        "malloc", "free", "memcpy", "realloc", "read", "write", "pread", "pwrite",
+        "malloc", "free", "memcpy", "realloc", "read", "write", "pread", "pwrite", "abort",
     ];
 
     for sym_line in &undefined {

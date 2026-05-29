@@ -266,22 +266,38 @@ fn run_mlir_translate(input: &str, tools: &BuildTools) -> Result<String, BuildEr
 ///
 /// The returned `NamedTempFile` must be kept alive until the link step
 /// completes; dropping it removes the .o from the filesystem.
+///
+/// RFC 0015 bit-identity: the C source is written with the **fixed**
+/// basename `mind_intrinsics.c` (inside a per-build random directory, so
+/// concurrent builds never collide). clang records only that basename as
+/// the `STT_FILE` symbol in the emitted object, so the symbol — and thus
+/// every byte of the linked `.so` — is reproducible across builds. A
+/// random `NamedTempFile` source name (the previous behaviour) leaked into
+/// `.symtab`/`.strtab`, making the keystone artifact non-deterministic and
+/// silently breaking the cross-substrate byte-identity claim.
 #[cfg(feature = "mlir-build")]
 fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, BuildError> {
-    use std::ffi::OsStr;
-
-    let mut src_tmp = NamedTempFile::with_suffix(".c")?;
-    src_tmp.write_all(MIND_RUNTIME_SUPPORT_C.as_bytes())?;
+    let src_dir = tempfile::tempdir()?;
+    let src_path = src_dir.path().join("mind_intrinsics.c");
+    std::fs::write(&src_path, MIND_RUNTIME_SUPPORT_C.as_bytes())?;
 
     let obj_tmp = NamedTempFile::with_suffix(".o")?;
 
+    // RFC 0015 bit-identity contract for this clang invocation:
+    //   * NO `-g` — debug info would embed the absolute random tempdir path
+    //     via DWARF `DW_AT_comp_dir` / line tables and re-break byte-identity.
+    //   * `-ffile-prefix-map` maps the random parent dir to `.` so that even
+    //     if a path were embedded, it normalises to a stable prefix. Belt and
+    //     suspenders behind the fixed `mind_intrinsics.c` basename above.
+    let prefix_map = format!("-ffile-prefix-map={}=.", src_dir.path().to_string_lossy());
     let args: Vec<String> = vec![
         "-x".into(),
         "c".into(),
-        src_tmp.path().to_string_lossy().into_owned(),
+        src_path.to_string_lossy().into_owned(),
         "-c".into(),
         "-fPIC".into(),
         "-O2".into(),
+        prefix_map,
         "-o".into(),
         obj_tmp.path().to_string_lossy().into_owned(),
     ];
@@ -294,9 +310,9 @@ fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, Buil
         });
     }
 
-    // Suppress "unused variable" lint — src_tmp must live until clang finishes.
-    let _ = src_tmp.path().as_os_str() != OsStr::new("");
-    drop(src_tmp);
+    // `src_dir` must live until clang finishes reading the source above;
+    // drop it explicitly now that the object is written.
+    drop(src_dir);
 
     Ok(obj_tmp)
 }
