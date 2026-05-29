@@ -114,6 +114,19 @@ fn build_dot_so() -> Option<&'static PathBuf> {
     SO.get_or_init(|| {
         for tool in ["mlir-opt", "mlir-translate", "clang"] {
             if which::which(tool).is_err() {
+                // CI sets MIND_BENCH_REQUIRE=1 so a missing toolchain fails the
+                // gate loudly instead of self-skipping. A silent skip would turn
+                // the cross-substrate bit-identity check into a vacuous green if
+                // the MLIR install ever broke on a runner (RFC 0020 §10) — the
+                // whole point of the gate is that it cannot pass without running.
+                // Local/sandbox runs without the var keep self-skipping, like the
+                // blas smoke tests.
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
                 println!("cross_substrate_identity: {tool} not on PATH; skipping");
                 return None;
             }
