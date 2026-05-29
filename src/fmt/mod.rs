@@ -58,10 +58,31 @@ impl std::error::Error for FmtError {}
 /// The output is idempotent: `format_source(format_source(s, c), c) ==
 /// format_source(s, c)`.
 ///
+/// Line endings are normalised to LF before any processing.  This ensures
+/// consistent byte-offset arithmetic in the trivia and span indices on every
+/// platform, including Windows where `std::fs::read_to_string` may return
+/// CRLF content when `core.autocrlf` is active.
+///
 /// # Errors
 ///
 /// Returns [`FmtError::ParseError`] when `src` cannot be parsed.
 pub fn format_source(src: &str, cfg: &MindcraftFormatConfig) -> Result<String, FmtError> {
+    // Normalise CR+LF and bare CR to LF so the parser, the trivia collector,
+    // and the printer all see a consistent LF-only byte stream.  Without this,
+    // on Windows (where git may check out files with CRLF endings), the trivia
+    // byte-offsets (recorded in the CRLF source) diverge from the
+    // `stripped_idx` used by the printer (built from an LF-only stripped copy),
+    // causing comments to be placed at the wrong indent level on the first
+    // formatting pass and producing a non-idempotent result.  The second pass
+    // always receives LF-only output from the printer, so without normalisation
+    // pass 1 and pass 2 differ — violating the idempotence contract.
+    let normalized;
+    let src = if src.contains('\r') {
+        normalized = src.replace("\r\n", "\n").replace('\r', "\n");
+        normalized.as_str()
+    } else {
+        src
+    };
     let (module, trivia) = parse_with_trivia(src).map_err(FmtError::ParseError)?;
     Ok(printer::print_module(&module, &trivia, cfg, src))
 }
