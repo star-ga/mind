@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2668 | **Est. tokens:** ~6,668,893
-**Generated:** 2026-05-29 11:58 UTC
+**Files:** 2668 | **Est. tokens:** ~6,669,037
+**Generated:** 2026-05-29 13:05 UTC
 
 ## Token Budget Guide
 
@@ -395,8 +395,8 @@
 | `src/test/` | 1 | ~5,851 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,926 |
-| `std/` | 17 | ~81,159 |
-| `tests/` | 157 | ~265,636 |
+| `std/` | 17 | ~81,222 |
+| `tests/` | 157 | ~265,717 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3763,9 +3763,9 @@
 - `net.mind` (~2321 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~2935 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
-- `sha256.mind` (~3207 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
-- `string.mind` (~2325 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
-- `toml.mind` (~9623 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
+- `sha256.mind` (~3232 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `string.mind` (~2364 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `toml.mind` (~9622 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4814 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~765 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
@@ -4063,7 +4063,7 @@
 - `std_surface_phase_d_env_override.rs` (~1538 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4507 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_string_module.rs` (~2203 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_string_module.rs` (~2284 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_push_str.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_struct_lowering.rs` (~2717 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_toml.rs` (~4153 tok, huge) — Copyright 2025 STARGA Inc.

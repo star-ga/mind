@@ -8,8 +8,9 @@
 // Memory layout:
 //   - Input / output byte buffers: one byte per offset (byte i lives at
 //     base + i), matching std.string discipline.
-//     `__mind_store_i64(base + i, b)` writes byte b;
-//     `__mind_load_i64(base + i) & 255` reads it back.
+//     `__mind_store_i8(base + i, b)` writes byte b (task #306 — no longer
+//     clobbers the trailing 7 bytes); `__mind_load_i64(base + i) & 255`
+//     reads it back (packed-load + mask; load-side cleanup is optional).
 //   - W schedule (64 words): word k lives at base + k*8 (stride-8, like Vec).
 //   - H state (8 words): same stride-8 layout, 8*8=64 bytes.
 //
@@ -285,17 +286,17 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
     let buf: i64 = __mind_alloc(padded_len);
     let mut ci: i64 = 0;
     while ci < in_len {
-        __mind_store_i64(buf + ci, __mind_load_i64(in_addr + ci) & 255);
+        __mind_store_i8(buf + ci, __mind_load_i64(in_addr + ci) & 255);
         ci = ci + 1;
     }
 
     // Append the 0x80 byte (= 128).
-    __mind_store_i64(buf + in_len, 128);
+    __mind_store_i8(buf + in_len, 128);
 
     // Zero-fill the padding region.
     let mut zi: i64 = in_len + 1;
     while zi < in_len + 1 + pad_zeros {
-        __mind_store_i64(buf + zi, 0);
+        __mind_store_i8(buf + zi, 0);
         zi = zi + 1;
     }
 
@@ -305,14 +306,14 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
     // High 32 bits (zero for messages < 2^29 bytes, but written correctly).
     let blen_hi: i64 = (bit_len >> 32) & 4294967295;
     let blen_lo: i64 = bit_len & 4294967295;
-    __mind_store_i64(buf + len_off + 0, (blen_hi >> 24) & 255);
-    __mind_store_i64(buf + len_off + 1, (blen_hi >> 16) & 255);
-    __mind_store_i64(buf + len_off + 2, (blen_hi >> 8)  & 255);
-    __mind_store_i64(buf + len_off + 3, blen_hi          & 255);
-    __mind_store_i64(buf + len_off + 4, (blen_lo >> 24) & 255);
-    __mind_store_i64(buf + len_off + 5, (blen_lo >> 16) & 255);
-    __mind_store_i64(buf + len_off + 6, (blen_lo >> 8)  & 255);
-    __mind_store_i64(buf + len_off + 7, blen_lo          & 255);
+    __mind_store_i8(buf + len_off + 0, (blen_hi >> 24) & 255);
+    __mind_store_i8(buf + len_off + 1, (blen_hi >> 16) & 255);
+    __mind_store_i8(buf + len_off + 2, (blen_hi >> 8)  & 255);
+    __mind_store_i8(buf + len_off + 3, blen_hi          & 255);
+    __mind_store_i8(buf + len_off + 4, (blen_lo >> 24) & 255);
+    __mind_store_i8(buf + len_off + 5, (blen_lo >> 16) & 255);
+    __mind_store_i8(buf + len_off + 6, (blen_lo >> 8)  & 255);
+    __mind_store_i8(buf + len_off + 7, blen_lo          & 255);
 
     // Initialise the 8-word H state (stride-8, 64 bytes).
     let h_addr: i64 = __mind_alloc(64);
@@ -334,10 +335,10 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
     let mut di: i64 = 0;
     while di < 8 {
         let word: i64 = __mind_load_i64(h_addr + di * 8);
-        __mind_store_i64(out_addr + di * 4 + 0, (word >> 24) & 255);
-        __mind_store_i64(out_addr + di * 4 + 1, (word >> 16) & 255);
-        __mind_store_i64(out_addr + di * 4 + 2, (word >> 8)  & 255);
-        __mind_store_i64(out_addr + di * 4 + 3, word          & 255);
+        __mind_store_i8(out_addr + di * 4 + 0, (word >> 24) & 255);
+        __mind_store_i8(out_addr + di * 4 + 1, (word >> 16) & 255);
+        __mind_store_i8(out_addr + di * 4 + 2, (word >> 8)  & 255);
+        __mind_store_i8(out_addr + di * 4 + 3, word          & 255);
         di = di + 1;
     }
 

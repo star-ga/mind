@@ -222,13 +222,16 @@ fn string_push_byte_uses_every_primitive() {
     // string_push_byte body uses, at minimum:
     //   - several s.len / s.cap / s.addr reads
     //   - one __mind_alloc on grow
-    //   - one explicit __mind_store_i64 for the new byte
-    //   - one String struct literal at the tail (3 more stores via P0e)
+    //   - one explicit __mind_store_i8 for the new byte (task #306: the
+    //     single-byte append now uses the i8 store so it no longer clobbers
+    //     the trailing 7 bytes)
+    //   - one String struct literal at the tail (3 i64 stores via P0e)
     //
     // Floor-count only — exact numbers depend on common-subexpression
     // behavior in the lowering.
     let loads = count_calls(body, "__mind_load_i64");
-    let stores = count_calls(body, "__mind_store_i64");
+    let stores_i64 = count_calls(body, "__mind_store_i64");
+    let stores_i8 = count_calls(body, "__mind_store_i8");
     let allocs = count_calls(body, "__mind_alloc");
 
     assert!(
@@ -236,8 +239,12 @@ fn string_push_byte_uses_every_primitive() {
         "string_push_byte reads s.len / s.cap / s.addr at minimum, got {loads}"
     );
     assert!(
-        stores >= 4,
-        "string_push_byte stores byte + three StructLit fields at minimum, got {stores}"
+        stores_i8 >= 1,
+        "string_push_byte stores the new byte via __mind_store_i8 (#306), got {stores_i8}"
+    );
+    assert!(
+        stores_i64 >= 3,
+        "string_push_byte stores three StructLit fields at minimum, got {stores_i64}"
     );
     assert!(
         allocs >= 1,
