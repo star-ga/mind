@@ -286,7 +286,7 @@ lanes pending RFC 0021 step 5 demotion to `mind-model@2`. See
 
 ## Testing
 
-The MIND compiler includes a comprehensive test suite with 169+ tests across 70 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
+The MIND compiler includes a comprehensive test suite with 1,264+ tests across 156 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
 
 ### Running Tests
 
