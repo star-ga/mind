@@ -78,6 +78,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of the legacy `tensor.matmul(a,b)` intrinsic off `E2103` (Phase B classifier
   too broad — narrowed to the `@`-operator marker); and a formatter
   stability test that panicked parsing a `std-surface`-gated stdlib file.
+- **`#306` — std byte-store heap OOB closed at source (`__mind_store_i8`
+  migration).** Every genuine single-byte store in `std/string`, `std/sha256`,
+  and `std/toml` now uses the byte-width-correct `__mind_store_i8` intrinsic
+  instead of an 8-byte `__mind_store_i64` (which clobbered the trailing 7 bytes
+  and wrote past `len`). The i64-aligned struct-header and backing-array stores
+  are left untouched. Behavior preservation is verified: SHA-256 FIPS 180-4
+  conformance (3/3, including the 56-byte two-block-padding vector that
+  exercises the byte-store boundary) and the std-surface string/toml lowering
+  suites all pass against a real `--emit-shared` ELF.
 
 ### Added — RFC 0013 Tier 1: CLI/agent stdlib surface
 
@@ -166,16 +175,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Known issues (release gate)
 
-- **`#306` — std heap out-of-bounds (HIGH, open).** An 8-byte store at a byte
-  offset can write past the backing allocation in `string` / `sha256` / `toml`
-  / `tui` paths. A 7-byte backing-store pad mitigates the common case, but the
-  root fix (a byte-width-correct store, re-blessing the std keystone in the
-  bootstrap) is **required before the next version tag.** Path-B (commit
-  `0e7dd6c`) added the `__mind_load_i8` / `__mind_store_i8` intrinsics that
-  the migration consumes; the site migration + keystone re-bless is the
-  remaining work. See `docs/byte-store-migration.md` for the executable
-  playbook + the stub-tolerant-test caveat. Do not cut a release until this
-  is closed.
+- **`#306` — std byte-store OOB: source fix LANDED + verified; keystone
+  re-bless remaining.** The byte-width-correct `__mind_store_i8` migration is
+  applied to every genuine single-byte store in `string` / `sha256` / `toml`
+  (the `tui` path had no byte-store sites), closing the write-past-`len`
+  landmine at the source. Behavior preservation is verified (SHA-256 FIPS
+  3/3 + std-surface string/toml suites, against a real `--emit-shared` ELF).
+  Remaining before the next version tag: the bootstrap keystone byte-identity
+  re-bless of `examples/mindc_mind/libmindc_mind.so`. The oracle is a real,
+  post-migration ELF, but the `mindc build --emit=cdylib` reproduction path
+  emits a launcher stub in the open toolchain (the ELF-capable path is
+  `mindc --emit-shared`), so independent byte-identity confirmation of the
+  keystone still needs an ELF-capable cdylib build. See
+  `docs/byte-store-migration.md` for the playbook + the stub-tolerant-test
+  caveat.
 
 ## [0.7.0] - 2026-05-21 — Credibility-ladder rung 3 graduation: Mindcraft + RFC 0008 KEYSTONE + RFC 0010 foundations + 13 stdlib modules + mindc doc + standalone binary release
 
