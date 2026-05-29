@@ -62,7 +62,7 @@ fn proc_copy_bytes_rec(src: i64, dst: i64, src_len: i64, i: i64) -> i64 {
     if i >= src_len {
         0
     } else {
-        __mind_store_i64(dst + i, __mind_load_i64(src + i) & 255);
+        __mind_store_i8(dst + i, __mind_load_i64(src + i) & 255);
         proc_copy_bytes_rec(src, dst, src_len, i + 1)
     }
 }
@@ -70,7 +70,7 @@ fn proc_copy_bytes_rec(src: i64, dst: i64, src_len: i64, i: i64) -> i64 {
 fn proc_heap_copy(src_addr: i64, src_len: i64) -> i64 {
     let dst: i64 = __mind_alloc(src_len + 1);
     let _ = proc_copy_bytes_rec(src_addr, dst, src_len, 0);
-    __mind_store_i64(dst + src_len, 0);
+    __mind_store_i8(dst + src_len, 0);
     dst
 }
 
@@ -234,10 +234,10 @@ pub fn spawn_capture(prog_addr: i64, argv_vec_addr: i64, argv_vec_len: i64) -> i
 pub fn wait(c: i64) -> i64 {
     let pid: i64 = child_pid(c);
     let status_buf: i64 = __mind_alloc(4);
-    __mind_store_i64(status_buf + 0, 0);
-    __mind_store_i64(status_buf + 1, 0);
-    __mind_store_i64(status_buf + 2, 0);
-    __mind_store_i64(status_buf + 3, 0);
+    __mind_store_i8(status_buf + 0, 0);
+    __mind_store_i8(status_buf + 1, 0);
+    __mind_store_i8(status_buf + 2, 0);
+    __mind_store_i8(status_buf + 3, 0);
     let _ = waitpid(pid as i32, status_buf as *mut i32, 0);
     let raw: i64 = __mind_load_i64(status_buf) & 65535;
     proc_decode_status(raw)
