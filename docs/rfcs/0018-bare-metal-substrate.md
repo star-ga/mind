@@ -29,9 +29,9 @@ MIND targets regulated-industry deployments (deterministic AI in safety-critical
 systems, edge inference, embedded control). A non-trivial fraction of these use cases
 run on hardware with no OS — microcontrollers, FPGAs, specialised inference ASICs,
 and safety-certified environments that prohibit a general-purpose kernel (DO-178C,
-IEC 61508, ISO 26262, MISRA). The RFC 0014 substrate tier framework already
-anticipates this ("bare-metal" appears in §3.5 as a Tier 0 placeholder), but the
-tier has no specification.
+IEC 61508, ISO 26262, MISRA). The RFC 0014 substrate tier framework does not yet define a bare-metal tier — its
+§3.5 Tier 0 list names only the accelerator substrates (Tpu, Npu, Lpu, Dpu, Fpga).
+This RFC registers bare-metal as a first-class substrate tier and specifies it.
 
 Without a defined bare-metal tier:
 - MIND cannot be used in the regulated embedded markets where its determinism
