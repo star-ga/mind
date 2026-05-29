@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2664 | **Est. tokens:** ~6,648,120
-**Generated:** 2026-05-28 12:56 UTC
+**Files:** 2664 | **Est. tokens:** ~6,649,086
+**Generated:** 2026-05-29 07:01 UTC
 
 ## Token Budget Guide
 
@@ -56,7 +56,7 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 7 | ~6,344 |
+| `.github/workflows/` | 7 | ~6,996 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,284 |
 | `scripts/` | 4 | ~5,178 |
@@ -396,16 +396,16 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,948 |
 | `std/` | 17 | ~81,159 |
-| `tests/` | 157 | ~263,930 |
+| `tests/` | 157 | ~264,151 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 1 | ~875 |
-| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~287 |
-| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~717 |
-| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~540 |
-| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~442 |
+| `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~305 |
+| `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~755 |
+| `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
+| `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -748,7 +748,7 @@
 
 - `bench-gate.yml` (~1052 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~2703 tok, huge) — name: CI
+- `ci.yml` (~3355 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
@@ -3816,25 +3816,25 @@
 ### `tests/cross_substrate_identity/dot-l1-q16/`
 
 - `manifest.toml` (~157 tok, small) — version = "1"
-- `reference_hashes.toml` (~130 tok, small) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
+- `reference_hashes.toml` (~148 tok, small) — avx2 = "ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34"
 ### `tests/cross_substrate_identity/dot-l2-q16/`
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
-- `reference_hashes.toml` (~281 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+- `reference_hashes.toml` (~319 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
 ### `tests/cross_substrate_identity/gemm-q16-64x64x64/`
 
 - `manifest.toml` (~391 tok, medium) — version = "1"
-- `reference_hashes.toml` (~149 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+- `reference_hashes.toml` (~167 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemv-q16-256x256/`
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
-- `reference_hashes.toml` (~132 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+- `reference_hashes.toml` (~151 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
 ### `tests/cross_substrate_identity/`
 
 - `README.md` (~875 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~4483 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~4704 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
