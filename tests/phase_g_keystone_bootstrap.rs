@@ -72,6 +72,24 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// RFC 0015 / `#306` fail-closed gate.
+///
+/// When `MIND_BENCH_REQUIRE=1` is set, the keystone tests must NOT silently
+/// skip or report PASS on a launcher stub. A missing backend toolchain or a
+/// stub-vs-ELF artifact mismatch becomes a hard failure instead.
+///
+/// This closes the false-green documented in `docs/byte-store-migration.md`
+/// ("DO NOT capture the oracle from a stub-producing environment") and in the
+/// 2026-05-29 ecosystem audit (PITFALLS B4): when `mindc build` falls back to a
+/// ~1245-byte launcher script, byte-identity between two stubs is vacuous, yet
+/// the suite still reported PASS — masking the broken real-ELF keystone. The
+/// default (env unset) behaviour is unchanged: these environments legitimately
+/// lack the proprietary `~/.mind/lib` runtime, so they skip. Enforcement mode
+/// (the same flag the cross-substrate gate already uses) demands a real ELF.
+fn enforce_real_backend() -> bool {
+    std::env::var_os("MIND_BENCH_REQUIRE").is_some()
+}
+
 /// Guard the self-host bootstrap fixed point: the pure-MIND parser in
 /// `examples/mindc_mind/main.mind` is attribute-BLIND and fails OPEN (it would
 /// consume `#[` as a stray token, desyncing). The byte-identity oracle holds
@@ -203,12 +221,18 @@ fn phase_g_02_mindc_build_via_mind_toml_exits_0() {
     // non-empty artifact contract is still hard-asserted on equipped runners
     // where the build succeeds, preserving real coverage.
     if !result.status.success() {
-        eprintln!(
-            "SKIP: `mindc build --release` did not succeed (backend toolchain \
+        let detail = format!(
+            "`mindc build --release` did not succeed (backend toolchain \
              may be incomplete)\nstdout: {}\nstderr: {}",
             String::from_utf8_lossy(&result.stdout),
             String::from_utf8_lossy(&result.stderr)
         );
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but the keystone build did not succeed — \
+             refusing to skip (#306).\n{detail}"
+        );
+        eprintln!("SKIP: {detail}");
         return;
     }
 
@@ -268,9 +292,14 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
         .expect("spawn mindc (manifest path)");
 
     if !r_manifest.status.success() {
+        let detail = String::from_utf8_lossy(&r_manifest.stderr);
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but the Mind.toml build did not succeed — \
+             refusing to skip (#306).\nstderr: {detail}"
+        );
         eprintln!(
-            "SKIP: Mind.toml build did not succeed (toolchain may be incomplete)\nstderr: {}",
-            String::from_utf8_lossy(&r_manifest.stderr)
+            "SKIP: Mind.toml build did not succeed (toolchain may be incomplete)\nstderr: {detail}"
         );
         return;
     }
@@ -289,10 +318,13 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
         .expect("spawn mindc (direct path)");
 
     if !r_direct.status.success() {
-        eprintln!(
-            "SKIP: direct-path build did not succeed\nstderr: {}",
-            String::from_utf8_lossy(&r_direct.stderr)
+        let detail = String::from_utf8_lossy(&r_direct.stderr);
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but the direct-path build did not succeed — \
+             refusing to skip (#306).\nstderr: {detail}"
         );
+        eprintln!("SKIP: direct-path build did not succeed\nstderr: {detail}");
         return;
     }
 
@@ -317,6 +349,19 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
         bytes_manifest.len(),
         &sha256_hex(&bytes_manifest)[..16]
     );
+
+    // #306 / PITFALLS B4: under enforcement, byte-identity between two launcher
+    // stubs is vacuous — it proves nothing about the cross-substrate wedge.
+    // Demand a real ELF so the keystone claim cannot pass on the stub path.
+    assert!(
+        !enforce_real_backend() || bytes_manifest.starts_with(b"\x7fELF"),
+        "MIND_BENCH_REQUIRE is set but the keystone artifact is a {}-byte stub, \
+         not a real ELF — byte-identity between two stubs does not prove the \
+         cross-substrate byte-identity wedge (#306). Build mindc with \
+         --features \"mlir-build std-surface\" and ensure the ~/.mind/lib runtime \
+         is present so native linking produces a real cdylib.",
+        bytes_manifest.len()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -334,6 +379,15 @@ fn phase_g_04_oracle_hash_guard() {
     let oracle = repo_root().join("examples/mindc_mind/libmindc_mind.so");
 
     if !oracle.exists() {
+        // The oracle .so is gitignored (a local/equipped-runner build artifact),
+        // so public CI legitimately has nothing to compare against. Under
+        // enforcement the oracle is expected to be present.
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but the oracle at \
+             examples/mindc_mind/libmindc_mind.so is absent — refusing to skip \
+             the keystone byte-identity guard (#306)."
+        );
         eprintln!("SKIP: oracle at examples/mindc_mind/libmindc_mind.so not found");
         return;
     }
@@ -350,9 +404,14 @@ fn phase_g_04_oracle_hash_guard() {
         .expect("spawn mindc");
 
     if !r.status.success() {
+        let detail = String::from_utf8_lossy(&r.stderr);
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but `mindc build` did not succeed — \
+             refusing to skip the oracle guard (#306).\nstderr: {detail}"
+        );
         eprintln!(
-            "SKIP: `mindc build` did not succeed (toolchain may be incomplete)\nstderr: {}",
-            String::from_utf8_lossy(&r.stderr)
+            "SKIP: `mindc build` did not succeed (toolchain may be incomplete)\nstderr: {detail}"
         );
         return;
     }
@@ -386,6 +445,15 @@ fn phase_g_04_oracle_hash_guard() {
         // Stub-script path (no MLIR toolchain): both are shell scripts.
         // Byte-identity is NOT expected here (stubs embed absolute paths).
         // Instead, verify that the built stub is well-formed and non-empty.
+        // #306 / PITFALLS B4: a stub oracle cannot anchor the byte-identity
+        // claim — under enforcement this is a hard failure, not a soft pass.
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but both the built artifact and the oracle \
+             are launcher stubs — the keystone byte-identity oracle is vacuous on \
+             the stub path (#306). Provision the MLIR backend + ~/.mind/lib runtime \
+             and regenerate the oracle from a real-ELF build."
+        );
         eprintln!(
             "phase_g_04 (stub path): MLIR toolchain not available; \
              verifying stub is well-formed ({} bytes)",
@@ -401,15 +469,29 @@ fn phase_g_04_oracle_hash_guard() {
             "stub must start with a shebang line"
         );
     } else {
-        // Mixed: built is ELF but oracle is not (or vice versa).
-        // This indicates a toolchain change between oracle creation and now.
-        // Record diagnostic but do not fail hard — the team can update the oracle.
+        // Mixed: built is ELF but oracle is not (or vice versa). This indicates
+        // a toolchain change between oracle creation and now.
+        //
+        // #306 / PITFALLS B4: the common case here is built=stub, oracle=ELF —
+        // a real-ELF oracle next to a stub build. Soft-passing this is the exact
+        // false-green that let the broken keystone ride green for weeks. Under
+        // enforcement, fail closed; otherwise record the diagnostic so the team
+        // can regenerate the oracle.
+        let built_kind = if built_is_elf { "ELF" } else { "stub" };
+        let oracle_kind = if oracle_is_elf { "ELF" } else { "stub" };
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but artifact type mismatch — built is {built_kind} \
+             but oracle is {oracle_kind}. A stub build cannot verify the real-ELF \
+             byte-identity oracle (#306 / docs/byte-store-migration.md: \"DO NOT \
+             capture the oracle from a stub-producing environment\"). Build mindc \
+             with --features \"mlir-build std-surface\", ensure native linking \
+             succeeds against ~/.mind/lib, then regenerate the oracle."
+        );
         eprintln!(
             "phase_g_04 WARNING: artifact type mismatch — \
-             built is {} but oracle is {}. \
-             Oracle may need regeneration.",
-            if built_is_elf { "ELF" } else { "stub" },
-            if oracle_is_elf { "ELF" } else { "stub" }
+             built is {built_kind} but oracle is {oracle_kind}. \
+             Oracle may need regeneration."
         );
     }
 }
@@ -446,10 +528,13 @@ fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
         .expect("spawn mindc (first build)");
 
     if !r1.status.success() {
-        eprintln!(
-            "SKIP: first build did not succeed\nstderr: {}",
-            String::from_utf8_lossy(&r1.stderr)
+        let detail = String::from_utf8_lossy(&r1.stderr);
+        assert!(
+            !enforce_real_backend(),
+            "MIND_BENCH_REQUIRE is set but the first build did not succeed — \
+             refusing to skip the warm-cache check (#306).\nstderr: {detail}"
         );
+        eprintln!("SKIP: first build did not succeed\nstderr: {detail}");
         return;
     }
 
