@@ -549,7 +549,7 @@ fn eval_asserts_in_stmts(
                     Ok(eval::Value::Int(_)) => {
                         // Non-zero int = truthy, assertion passes.
                     }
-                    Ok(eval::Value::Float(f)) if f == 0.0 => {
+                    Ok(eval::Value::Float(0.0)) => {
                         let fail_msg = msg.as_deref().unwrap_or("assertion failed (float)");
                         return Err(fail_msg.to_string());
                     }

@@ -145,8 +145,8 @@ fn rule_matches(rule: &Rule, path: &str) -> bool {
     if rule.dir_only {
         // Check if any path component or prefix equals the pattern.
         let parts: Vec<&str> = path.split('/').collect();
-        for i in 0..parts.len() {
-            if glob_match_path(&rule.pattern, parts[i]) {
+        for &part in &parts {
+            if glob_match_path(&rule.pattern, part) {
                 // This component matches — the path is under this directory.
                 return true;
             }
