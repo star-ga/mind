@@ -13,7 +13,7 @@
 //! `mindc fmt` — Phase 2A canonical formatter.
 //!
 //! Entry point: [`format_source`].  Parses the source through the trivia-aware
-//! front-end, then walks the AST with [`printer::print_module`] to emit a
+//! front-end, then walks the AST with `printer::print_module` to emit a
 //! canonicalised string.
 //!
 //! Phase 2A rules (no soft line-wrap):

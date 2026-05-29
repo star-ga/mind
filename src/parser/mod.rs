@@ -1626,7 +1626,7 @@ impl<'a> P<'a> {
     ///
     /// Grammar:
     ///   `extern` `"C"` [`callconv` `(` `.` tag `)`] `{`
-    ///       ( [`safe` | `unsafe`] `fn` name `(` params `)` [`->` ret] `;` )*
+    ///       ( [`safe` | `unsafe`] `fn` name `(` params `)` \[`->` ret\] `;` )*
     ///   `}`
     ///
     /// Phase A accepts all four `callconv` tags syntactically; lowering
