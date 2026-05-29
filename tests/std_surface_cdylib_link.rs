@@ -141,6 +141,55 @@ fn cdylib_has_no_undefined_mind_symbols() {
     }
 }
 
+/// #306 regression: the runtime-support shim must DEFINE the MLIR
+/// executable-print helpers `printI64` / `printNewline`.
+///
+/// `mindc` lowers scalar `print(x)` outputs to `func.call @printI64(%x)` +
+/// `func.call @printNewline()` and emits both as `func.func private`
+/// (external) declarations (see `src/eval/mlir_export.rs`).  If the shim does
+/// not provide the definitions, the native cdylib link fails with an
+/// undefined reference to `printI64` and `mindc build --emit=cdylib` of any
+/// program that prints (notably the self-host keystone) silently falls back
+/// to a launcher-script stub instead of a real ELF.  This compiles the shim
+/// in isolation and asserts both symbols are present as defined text symbols.
+#[test]
+fn runtime_support_defines_print_helpers() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let shim = manifest_dir
+        .join("runtime-support")
+        .join("mind_intrinsics.c");
+    assert!(shim.exists(), "runtime-support shim not found at {shim:?}");
+
+    let obj = std::env::temp_dir().join("mind_shim_print_helpers.o");
+    let cc = std::env::var("CC").unwrap_or_else(|_| "cc".to_string());
+    let status = Command::new(&cc)
+        .args(["-c", "-O2", "-fPIC"])
+        .arg(shim.as_os_str())
+        .arg("-o")
+        .arg(obj.as_os_str())
+        .status()
+        .expect("C compiler not found on PATH");
+    assert!(status.success(), "failed to compile runtime-support shim");
+
+    let nm_out = Command::new("nm")
+        .arg(obj.as_os_str())
+        .output()
+        .expect("nm not found on PATH");
+    let text = String::from_utf8_lossy(&nm_out.stdout);
+
+    for sym in ["printI64", "printNewline"] {
+        let defined = text
+            .lines()
+            .any(|l| l.split_whitespace().last() == Some(sym) && l.contains(" T "));
+        assert!(
+            defined,
+            "runtime-support shim does not DEFINE `{sym}` (T) — \
+             executable-print cdylib link would fall back to a stub (#306).\n\
+             nm output:\n{text}"
+        );
+    }
+}
+
 #[test]
 fn cdylib_dlopens_via_python() {
     let so = build_test_so();
