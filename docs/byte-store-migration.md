@@ -78,6 +78,31 @@ documented packed-load pattern (see the comment block at line 260),
 **not** a bug. Line 457 `__mind_load_i64(payload_addr + i) & 255` is the
 same `& 255` mask pattern as `string.mind` — safe.
 
+### `std/fs.mind` — 7 byte-stores (discovered post-inventory, 2026-05-29)
+
+The original inventory (above) was scoped to the keystone-critical modules.
+A follow-up `git grep` surfaced the same byte-store OOB pattern in the
+`std.fs` POSIX surface (Task #268), which the keystone does not import — so
+these never affected the bootstrap oracle, but they were genuine
+out-of-bounds heap writes on their own.
+
+| Line | Site | Form |
+|------|------|------|
+| 101  | `fs_copy_bytes_rec` | byte-by-byte copy `dst + i` |
+| 128  | `fs_heap_copy` | NUL append at `dst + src_len` (into `src_len + 1` alloc — true 7-byte OOB) |
+| 257  | `read_to_string` | NUL terminator at `buf + n` (into `file_sz + 1` alloc — true OOB when `n == file_sz`) |
+| 382  | `mkdir_p_walk` | temp-NUL a `/` separator at `work + i` (mid-buffer clobber) |
+| 384  | `mkdir_p_walk` | restore `/` (47) at `work + i` |
+| 452  | `remove_recursive_entries` | write `/` (47) at `full + plen` |
+| 454  | `remove_recursive_entries` | NUL terminator at `full + full_len` (into `full_len + 1` alloc — true OOB) |
+
+All 7 migrated to `__mind_store_i8`. The i64-aligned struct/word stores in
+`fs.mind` (`* 8` offsets and the 24-byte `DirEntry`/`FileStat`/`Vec` record
+fields at `+0/+8/+16`) are legitimate and stay `__mind_store_i64`. Load
+sites (`__mind_load_i64(...) & 255`) left as-is, same as the other modules.
+Behavior verified via real-ELF ctypes round-trip (`store_i8` writes exactly
+one byte; mid-buffer and end-of-buffer bytes untouched).
+
 ## Migration mechanics
 
 Per-file workflow:
