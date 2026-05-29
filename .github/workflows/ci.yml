@@ -300,6 +300,13 @@ jobs:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
     runs-on: ubuntu-latest
 
+    # MIND_BENCH_REQUIRE=1 makes a missing/incomplete MLIR backend a HARD failure
+    # so the phase_g keystone byte-identity gate can never pass vacuously: without
+    # it a stub artifact would skip the byte-identity assertion and the KEYSTONE
+    # job would still go green (false-green on the wedge's core invariant).
+    env:
+      MIND_BENCH_REQUIRE: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
