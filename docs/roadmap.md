@@ -31,6 +31,26 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 - **Ecosystem Integrations** – Official bindings for Python, Swift, and WebAssembly targets.
 - **Package Registry** – Public `mindpkg` registry with curated models.
 
+## Genesis Ecosystem Audit — verified findings (2026-05-29)
+
+Findings below were hand-reviewed against current code before listing. Open-core boundary findings are handled separately (per-project runtime-protection libraries are by design).
+
+**Shipped 2026-05-29 (verified + CI-green):**
+- Cross-substrate Q16.16 bit-identity CI gate on x86_64 (avx2) + ARM (neon) — #307.
+- Format Check + Documentation CI restored to green; README/STATUS metadata corrected.
+- Out-of-box `pip install` fallback (native → pytorch) for the skill router; route-server `top_k` clamped to [1, 64].
+
+**Open (verified, prioritized):**
+- **#306 — `std` heap out-of-bounds store (RELEASE BLOCKER for v0.7.1).** Several `std/*.mind` sites use an 8-byte store to write a single byte; the `__mind_store_i8` migration is applied to 0 sites. This is a cross-substrate bit-identity landmine. Needs a fresh, ELF-capable session per [`docs/byte-store-migration.md`](byte-store-migration.md).
+- **Real cross-substrate bit-identity gate downstream** — the router's CI bit-identity check is sentinel-mode only; build the native encoder in CI and assert a real cross-architecture hash equality.
+- **Determinism / CALF benchmark** — the inference pipeline's determinism harness is currently a placeholder; implement it so the CALF claim is falsifiable, and add a CI workflow.
+- **RFC 0021 step 5 (#309)** — demote the legacy v2 IR; converge on one canonical IR (mic@1/mic@3) with attached provenance, closing the two-IR gap.
+- **Recall-claim honesty** — scope any "byte-identical across substrates" wording to the audit-hash chain (Q16.16), not floating-point ranking scores.
+- **Cross-ecosystem version-alignment discipline (#301)** — per-release sweep so `Cargo.toml` / `Mind.toml` / README / CHANGELOG versions never drift.
+- **Keystone test fail-closed** — make `phase_g_keystone_bootstrap` fail (not pass) on a stub artifact when `MIND_BENCH_REQUIRE=1`, so a stub-environment re-bless cannot bake a fake byte-identity oracle.
+
+**Prior-art rules locked (genesis research):** treat `trace_hash` as a type-system invariant, not a prose convention; hash canonical mic@1 *text* bytes; close the two-IR gap before adding more evidence features; adopt `SOURCE_DATE_EPOCH` + a self-host fixed-point CI gate; consumer-side evidence verification is mandatory (generation without verification is theater); encode the substrate identity in the hash (SLSA L3); GPU substrates must avoid tensor cores for bit-identity claims (not IEEE-754 compliant); RVV kernels must use ordered reductions; pin each repo's toolchain via `rust-toolchain.toml` so the format gate cannot drift.
+
 ## Contributing
 
 Roadmap items are tracked as GitHub issues with the `roadmap` label. Proposals should follow the RFC template in [`docs/rfcs`](rfcs/).
