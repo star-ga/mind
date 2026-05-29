@@ -54,7 +54,7 @@ use libmind::ast::{Node, TensorElemOp};
 use libmind::eval::lower_to_ir;
 use libmind::ir::format_ir_module;
 use libmind::parser;
-use libmind::type_checker::{check_module_types_in_file, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_in_file};
 use libmind::types::{DType, ShapeDim, TensorType, ValueType};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -113,7 +113,13 @@ fn parse_dot_add_produces_tensor_elemwise_add() {
         panic!("expected Let node");
     };
     assert!(
-        matches!(value.as_ref(), Node::TensorElemwise { op: TensorElemOp::Add, .. }),
+        matches!(
+            value.as_ref(),
+            Node::TensorElemwise {
+                op: TensorElemOp::Add,
+                ..
+            }
+        ),
         "expected TensorElemwise Add, got {:?}",
         value
     );
@@ -128,7 +134,13 @@ fn parse_dot_sub_produces_tensor_elemwise_sub() {
         panic!("expected Let node");
     };
     assert!(
-        matches!(value.as_ref(), Node::TensorElemwise { op: TensorElemOp::Sub, .. }),
+        matches!(
+            value.as_ref(),
+            Node::TensorElemwise {
+                op: TensorElemOp::Sub,
+                ..
+            }
+        ),
         "expected TensorElemwise Sub, got {:?}",
         value
     );
@@ -143,7 +155,13 @@ fn parse_dot_mul_produces_tensor_elemwise_mul() {
         panic!("expected Let node");
     };
     assert!(
-        matches!(value.as_ref(), Node::TensorElemwise { op: TensorElemOp::Mul, .. }),
+        matches!(
+            value.as_ref(),
+            Node::TensorElemwise {
+                op: TensorElemOp::Mul,
+                ..
+            }
+        ),
         "expected TensorElemwise Mul, got {:?}",
         value
     );
@@ -158,7 +176,13 @@ fn parse_dot_div_produces_tensor_elemwise_div() {
         panic!("expected Let node");
     };
     assert!(
-        matches!(value.as_ref(), Node::TensorElemwise { op: TensorElemOp::Div, .. }),
+        matches!(
+            value.as_ref(),
+            Node::TensorElemwise {
+                op: TensorElemOp::Div,
+                ..
+            }
+        ),
         "expected TensorElemwise Div, got {:?}",
         value
     );
@@ -176,9 +200,19 @@ fn elemwise_mul_binds_tighter_than_add() {
         panic!("expected Let node");
     };
     match value.as_ref() {
-        Node::TensorElemwise { op: TensorElemOp::Add, lhs, .. } => {
+        Node::TensorElemwise {
+            op: TensorElemOp::Add,
+            lhs,
+            ..
+        } => {
             assert!(
-                matches!(lhs.as_ref(), Node::TensorElemwise { op: TensorElemOp::Mul, .. }),
+                matches!(
+                    lhs.as_ref(),
+                    Node::TensorElemwise {
+                        op: TensorElemOp::Mul,
+                        ..
+                    }
+                ),
                 "lhs of .+ must be .* group; got {:?}",
                 lhs
             );
@@ -196,7 +230,11 @@ fn at_binds_tighter_than_dot_add() {
         panic!("expected Let node");
     };
     match value.as_ref() {
-        Node::TensorElemwise { op: TensorElemOp::Add, rhs, .. } => {
+        Node::TensorElemwise {
+            op: TensorElemOp::Add,
+            rhs,
+            ..
+        } => {
             assert!(
                 matches!(rhs.as_ref(), Node::TensorMatmul { .. }),
                 "rhs of .+ must be @-group; got {:?}",
@@ -212,13 +250,13 @@ fn at_binds_tighter_than_dot_add() {
 /// `A: Tensor<f32,[4,8]>`, `B: Tensor<f32,[8,16]>` → `C: Tensor<f32,[4,16]>`, no errors.
 #[test]
 fn matmul_op_matching_dims_no_error() {
-    let env = env_with(&[
-        ("a", DType::F32, &[4, 8]),
-        ("b", DType::F32, &[8, 16]),
-    ]);
+    let env = env_with(&[("a", DType::F32, &[4, 8]), ("b", DType::F32, &[8, 16])]);
     let src = "let c = a @ b";
     let diags = check_src(src, &env);
-    let errs: Vec<_> = diags.iter().filter(|d| d.code.starts_with("shape::") || d.code.starts_with("E")).collect();
+    let errs: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code.starts_with("shape::") || d.code.starts_with("E"))
+        .collect();
     assert!(
         errs.is_empty(),
         "expected no errors for compatible matmul; got: {errs:?}"
@@ -231,10 +269,7 @@ fn matmul_op_matching_dims_no_error() {
 /// → `shape::matmul_mismatch`.
 #[test]
 fn matmul_op_inner_dim_mismatch_diagnostic() {
-    let env = env_with(&[
-        ("a", DType::F32, &[4, 8]),
-        ("b", DType::F32, &[7, 16]),
-    ]);
+    let env = env_with(&[("a", DType::F32, &[4, 8]), ("b", DType::F32, &[7, 16])]);
     let src = "let c = a @ b";
     let diags = check_src(src, &env);
     let mismatch_diags: Vec<_> = diags
@@ -252,13 +287,13 @@ fn matmul_op_inner_dim_mismatch_diagnostic() {
 /// `A: Tensor<q16,[8,16]>`, `B: Tensor<q16,[16,32]>` → `C: Tensor<q16,[8,32]>`, no errors.
 #[test]
 fn matmul_op_q16_matching_dims_no_error() {
-    let env = env_with(&[
-        ("a", DType::Q16, &[8, 16]),
-        ("b", DType::Q16, &[16, 32]),
-    ]);
+    let env = env_with(&[("a", DType::Q16, &[8, 16]), ("b", DType::Q16, &[16, 32])]);
     let src = "let c = a @ b";
     let diags = check_src(src, &env);
-    let errs: Vec<_> = diags.iter().filter(|d| d.code.starts_with("shape::") || d.code.starts_with("E")).collect();
+    let errs: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code.starts_with("shape::") || d.code.starts_with("E"))
+        .collect();
     assert!(
         errs.is_empty(),
         "expected no errors for q16 matmul; got: {errs:?}"
@@ -270,13 +305,13 @@ fn matmul_op_q16_matching_dims_no_error() {
 /// `A: Tensor<f32,[4,8]>`, `B: Tensor<f32,[4,8]>` → elementwise `.+` → clean.
 #[test]
 fn elemwise_add_same_shape_no_error() {
-    let env = env_with(&[
-        ("a", DType::F32, &[4, 8]),
-        ("b", DType::F32, &[4, 8]),
-    ]);
+    let env = env_with(&[("a", DType::F32, &[4, 8]), ("b", DType::F32, &[4, 8])]);
     let src = "let c = a .+ b";
     let diags = check_src(src, &env);
-    let errs: Vec<_> = diags.iter().filter(|d| d.code.starts_with("shape::") || d.code.starts_with("E")).collect();
+    let errs: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code.starts_with("shape::") || d.code.starts_with("E"))
+        .collect();
     assert!(
         errs.is_empty(),
         "expected no errors for same-shape .+ ; got: {errs:?}"
@@ -289,10 +324,7 @@ fn elemwise_add_same_shape_no_error() {
 /// elementwise → `shape::broadcast_mismatch`.
 #[test]
 fn elemwise_add_shape_mismatch_diagnostic() {
-    let env = env_with(&[
-        ("a", DType::F32, &[4, 8]),
-        ("b", DType::F32, &[4, 16]),
-    ]);
+    let env = env_with(&[("a", DType::F32, &[4, 8]), ("b", DType::F32, &[4, 16])]);
     let src = "let c = a .+ b";
     let diags = check_src(src, &env);
     let mismatch_diags: Vec<_> = diags
@@ -370,9 +402,11 @@ fn ir_text_dot_add_byte_identical_to_scalar_add() {
 fn ir_text_dot_sub_byte_identical_to_scalar_sub() {
     let ir_dot = ir_text("let c = a .- b");
     let ir_scalar = ir_text("let c = a - b");
-    assert_eq!(ir_dot, ir_scalar,
+    assert_eq!(
+        ir_dot, ir_scalar,
         "`A .- B` and `A - B` must produce identical IR text.\n\
-         dot:\n{ir_dot}\nscalar:\n{ir_scalar}");
+         dot:\n{ir_dot}\nscalar:\n{ir_scalar}"
+    );
 }
 
 /// `A .* B` ≡ `A * B` in IR text.
@@ -380,9 +414,11 @@ fn ir_text_dot_sub_byte_identical_to_scalar_sub() {
 fn ir_text_dot_mul_byte_identical_to_scalar_mul() {
     let ir_dot = ir_text("let c = a .* b");
     let ir_scalar = ir_text("let c = a * b");
-    assert_eq!(ir_dot, ir_scalar,
+    assert_eq!(
+        ir_dot, ir_scalar,
         "`A .* B` and `A * B` must produce identical IR text.\n\
-         dot:\n{ir_dot}\nscalar:\n{ir_scalar}");
+         dot:\n{ir_dot}\nscalar:\n{ir_scalar}"
+    );
 }
 
 /// `A ./ B` ≡ `A / B` in IR text.
@@ -390,9 +426,11 @@ fn ir_text_dot_mul_byte_identical_to_scalar_mul() {
 fn ir_text_dot_div_byte_identical_to_scalar_div() {
     let ir_dot = ir_text("let c = a ./ b");
     let ir_scalar = ir_text("let c = a / b");
-    assert_eq!(ir_dot, ir_scalar,
+    assert_eq!(
+        ir_dot, ir_scalar,
         "`A ./ B` and `A / B` must produce identical IR text.\n\
-         dot:\n{ir_dot}\nscalar:\n{ir_scalar}");
+         dot:\n{ir_dot}\nscalar:\n{ir_scalar}"
+    );
 }
 
 // ── Phase B.2 deferred — documented placeholders ─────────────────────────────

@@ -19,9 +19,9 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 use crate::ast;
+use crate::eval::TensorVal;
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::conv2d_grad;
-use crate::eval::TensorVal;
 use crate::linalg;
 use crate::linalg::MatMulShapeInfo;
 

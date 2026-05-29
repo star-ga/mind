@@ -109,7 +109,13 @@ fn call_sha256(lib: &Library, input: &[u8], output: &mut [u8; 32]) -> i64 {
         lib.get(b"sha256\0")
             .expect("symbol 'sha256' missing from sha256 .so")
     };
-    unsafe { f(input.as_ptr() as i64, input.len() as i64, output.as_mut_ptr() as i64) }
+    unsafe {
+        f(
+            input.as_ptr() as i64,
+            input.len() as i64,
+            output.as_mut_ptr() as i64,
+        )
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {

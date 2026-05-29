@@ -36,7 +36,7 @@ use libmind::fmt::format_source;
 use libmind::ir::Instr;
 use libmind::parser::parse;
 use libmind::project::MindcraftFormatConfig;
-use libmind::type_checker::{check_module_types, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types};
 
 fn default_cfg() -> MindcraftFormatConfig {
     MindcraftFormatConfig::default()
@@ -136,7 +136,9 @@ fn escape_test() -> i64 {
     fn find_region_escape(instrs: &[Instr]) -> bool {
         for instr in instrs {
             match instr {
-                Instr::Region { result, alloc_ids, .. } => {
+                Instr::Region {
+                    result, alloc_ids, ..
+                } => {
                     if alloc_ids.contains(result) {
                         return true;
                     }
@@ -192,7 +194,9 @@ fn direct_escape() -> i64 {
     fn find_direct_escape(instrs: &[Instr]) -> Option<bool> {
         for instr in instrs {
             match instr {
-                Instr::Region { result, alloc_ids, .. } => {
+                Instr::Region {
+                    result, alloc_ids, ..
+                } => {
                     return Some(alloc_ids.contains(result));
                 }
                 Instr::FnDef { body, .. } => {
@@ -207,10 +211,7 @@ fn direct_escape() -> i64 {
     }
 
     let escape = find_direct_escape(&ir.instrs);
-    assert!(
-        escape.is_some(),
-        "expected an Instr::Region in lowered IR"
-    );
+    assert!(escape.is_some(), "expected an Instr::Region in lowered IR");
     assert!(
         escape.unwrap(),
         "expected alloc_ids to contain the result value (direct escape)"
@@ -237,7 +238,9 @@ fn scalar_region() -> i64 {
     fn check_no_escape(instrs: &[Instr]) -> Option<bool> {
         for instr in instrs {
             match instr {
-                Instr::Region { result, alloc_ids, .. } => {
+                Instr::Region {
+                    result, alloc_ids, ..
+                } => {
                     return Some(!alloc_ids.contains(result));
                 }
                 Instr::FnDef { body, .. } => {

@@ -53,19 +53,11 @@ impl Fingerprint {
     }
 
     pub fn shard_prefix(&self) -> &str {
-        if self.0.len() >= 2 {
-            &self.0[..2]
-        } else {
-            ""
-        }
+        if self.0.len() >= 2 { &self.0[..2] } else { "" }
     }
 
     pub fn shard_tail(&self) -> &str {
-        if self.0.len() > 2 {
-            &self.0[2..]
-        } else {
-            ""
-        }
+        if self.0.len() > 2 { &self.0[2..] } else { "" }
     }
 }
 

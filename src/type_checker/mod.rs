@@ -974,7 +974,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                                         shape_from_usize(&out),
                                     )),
                                     *span,
-                                ))
+                                ));
                             }
                             Err(e) => return Err(shape_engine_error("tensor.matmul", e, *span)),
                         }
@@ -1025,7 +1025,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                                         shape_from_usize(&out),
                                     )),
                                     *span,
-                                ))
+                                ));
                             }
                             Err(_) => {
                                 // Inner-dimension mismatch: K on lhs vs K on rhs.
@@ -1043,10 +1043,12 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                         }
                     }
                     // Symbolic shapes: use linalg helper.
-                    let info = linalg::compute_matmul_shape_info(&tl.shape, &tr.shape)
-                        .map_err(|msg| TypeErrSpan {
-                            msg: format!("`@` shape error: {msg}"),
-                            span: *span,
+                    let info =
+                        linalg::compute_matmul_shape_info(&tl.shape, &tr.shape).map_err(|msg| {
+                            TypeErrSpan {
+                                msg: format!("`@` shape error: {msg}"),
+                                span: *span,
+                            }
                         })?;
                     Ok((
                         ValueType::Tensor(TensorType::new(tl.dtype.clone(), info.result_shape)),
@@ -1081,7 +1083,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                         });
                     }
                     if let Some(shape) = broadcast_shapes(&tl.shape, &tr.shape) {
-                        Ok((ValueType::Tensor(TensorType::new(tl.dtype.clone(), shape)), *span))
+                        Ok((
+                            ValueType::Tensor(TensorType::new(tl.dtype.clone(), shape)),
+                            *span,
+                        ))
                     } else {
                         Err(TypeErrSpan {
                             msg: format!(
@@ -1095,10 +1100,20 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     }
                 }
                 // Scalar broadcast: tensor .op scalar or scalar .op tensor.
-                (ValueType::Tensor(t), ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarF32 | ValueType::ScalarF64)
-                | (ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarF32 | ValueType::ScalarF64, ValueType::Tensor(t)) => {
-                    Ok((ValueType::Tensor(t.clone()), *span))
-                }
+                (
+                    ValueType::Tensor(t),
+                    ValueType::ScalarI32
+                    | ValueType::ScalarI64
+                    | ValueType::ScalarF32
+                    | ValueType::ScalarF64,
+                )
+                | (
+                    ValueType::ScalarI32
+                    | ValueType::ScalarI64
+                    | ValueType::ScalarF32
+                    | ValueType::ScalarF64,
+                    ValueType::Tensor(t),
+                ) => Ok((ValueType::Tensor(t.clone()), *span)),
                 _ => Err(TypeErrSpan {
                     msg: "elementwise operator requires tensor operands".to_string(),
                     span: *span,
@@ -1263,19 +1278,19 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             // fell through to the `_ => incompatible types` catch-all (E2001).
             match (&lt, &rt) {
                 (ValueType::ScalarI32, ValueType::ScalarI32) => {
-                    return Ok((ValueType::ScalarI32, *span))
+                    return Ok((ValueType::ScalarI32, *span));
                 }
                 (ValueType::ScalarI64, ValueType::ScalarI64) => {
-                    return Ok((ValueType::ScalarI64, *span))
+                    return Ok((ValueType::ScalarI64, *span));
                 }
                 (ValueType::ScalarF32, ValueType::ScalarF32) => {
-                    return Ok((ValueType::ScalarF32, *span))
+                    return Ok((ValueType::ScalarF32, *span));
                 }
                 (ValueType::ScalarF64, ValueType::ScalarF64) => {
-                    return Ok((ValueType::ScalarF64, *span))
+                    return Ok((ValueType::ScalarF64, *span));
                 }
                 (ValueType::ScalarBool, ValueType::ScalarBool) => {
-                    return Ok((ValueType::ScalarBool, *span))
+                    return Ok((ValueType::ScalarBool, *span));
                 }
                 _ => {}
             }
@@ -1295,10 +1310,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                                             shape_from_usize(&out),
                                         )),
                                         *span,
-                                    ))
+                                    ));
                                 }
                                 Err(e) => {
-                                    return Err(shape_engine_error(binop_display(op), e, *span))
+                                    return Err(shape_engine_error(binop_display(op), e, *span));
                                 }
                             }
                         }
@@ -1340,11 +1355,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                         let message = match promote_scalar_to(t.dtype.clone()) {
                             Some(_) => format!(
                                 "cannot apply `{}`: scalar promotion to tensor dtype `{}` is not supported",
-                                binop_display(op), dtype_str
+                                binop_display(op),
+                                dtype_str
                             ),
                             None => format!(
                                 "cannot apply `{}`: tensor dtype `{}` does not support scalar operands",
-                                binop_display(op), dtype_str
+                                binop_display(op),
+                                dtype_str
                             ),
                         };
                         Err(TypeErrSpan {
@@ -2321,7 +2338,10 @@ pub fn check_module_types_in_file(
         .iter()
         .filter_map(|item| {
             if let Node::StructDef { name, attrs, .. } = item {
-                if attrs.iter().any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C")) {
+                if attrs
+                    .iter()
+                    .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C"))
+                {
                     return Some(name.clone());
                 }
             }
@@ -2412,18 +2432,17 @@ pub fn check_module_types_in_file(
                                     // diagnostics instead of the generic
                                     // `TYPE_ERR_CODE` mismatch.
                                     let shape_handled = match (&vt_ann, &vt) {
-                                        (
-                                            ValueType::Tensor(ann_t),
-                                            ValueType::Tensor(inf_t),
-                                        ) => check_tensor_shape_compat(
-                                            ann_t,
-                                            inf_t,
-                                            name,
-                                            src,
-                                            file,
-                                            value.span(),
-                                            &mut errs,
-                                        ),
+                                        (ValueType::Tensor(ann_t), ValueType::Tensor(inf_t)) => {
+                                            check_tensor_shape_compat(
+                                                ann_t,
+                                                inf_t,
+                                                name,
+                                                src,
+                                                file,
+                                                value.span(),
+                                                &mut errs,
+                                            )
+                                        }
                                         _ => false,
                                     };
                                     if !shape_handled {
@@ -2554,7 +2573,9 @@ pub fn check_module_types_in_file(
             Node::ExternBlock { fns, .. } => {
                 for efn in fns {
                     for param in &efn.params {
-                        if let Err(msg) = check_extern_type_with_repr_c(&param.ty, &repr_c_struct_names) {
+                        if let Err(msg) =
+                            check_extern_type_with_repr_c(&param.ty, &repr_c_struct_names)
+                        {
                             errs.push(diag_from_span(
                                 src,
                                 file,
@@ -2572,10 +2593,7 @@ pub fn check_module_types_in_file(
                             errs.push(diag_from_span(
                                 src,
                                 file,
-                                format!(
-                                    "extern \"C\" fn `{}` return type: {}",
-                                    efn.name, msg
-                                ),
+                                format!("extern \"C\" fn `{}` return type: {}", efn.name, msg),
                                 efn.span,
                                 "safety::extern_non_repr_c",
                             ));
@@ -2628,8 +2646,7 @@ pub fn check_module_types_in_file(
                 // ValueType (defaulting to ScalarI64 for unsupported anns).
                 let mut fn_env = tenv.clone();
                 for param in params {
-                    let vt = valuetype_from_ann(&param.ty)
-                        .unwrap_or(ValueType::ScalarI64);
+                    let vt = valuetype_from_ann(&param.ty).unwrap_or(ValueType::ScalarI64);
                     fn_env.insert(param.name.clone(), vt);
                 }
                 // Walk the function body as a mini-module so shape checks on
@@ -2639,8 +2656,7 @@ pub fn check_module_types_in_file(
                 let body_module = Module {
                     items: body.clone(),
                 };
-                let body_errs =
-                    check_module_types_in_file(&body_module, src, file, &fn_env);
+                let body_errs = check_module_types_in_file(&body_module, src, file, &fn_env);
                 // RFC 0012 Phase A is PURELY ADDITIVE: this recursion exists
                 // solely to fire `shape::*` diagnostics on tensor `let`
                 // bindings inside fn bodies. It must NOT contribute generic
@@ -2733,9 +2749,7 @@ fn check_region_escapes_in_node(
             // Check the result expression (the last item in body).
             if let Some(last) = body.last() {
                 let escapes = match last {
-                    Node::Lit(Literal::Ident(name), _) => {
-                        alloc_bound.contains(name.as_str())
-                    }
+                    Node::Lit(Literal::Ident(name), _) => alloc_bound.contains(name.as_str()),
                     other => is_allocating_call(other),
                 };
                 if escapes {
@@ -2845,7 +2859,11 @@ fn check_genref_unchecked_deref(
         // Let bindings are handled by check_genref_in_stmt_seq above; do NOT
         // recurse here or we would double-count / misattribute the diagnostic.
         // Recursing into if/match/while bodies for nested fn-level seq checks.
-        Node::If { then_branch, else_branch, .. } => {
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             check_genref_in_stmt_seq(then_branch, src, file, errs);
             for stmt in then_branch {
                 check_genref_unchecked_deref(stmt, src, file, errs);
@@ -2873,16 +2891,13 @@ fn check_genref_unchecked_deref(
 ///
 /// Iterates in O(n) — one pass over the statement list.
 #[cfg(feature = "std-surface")]
-fn check_genref_in_stmt_seq(
-    stmts: &[Node],
-    src: &str,
-    file: Option<&str>,
-    errs: &mut Vec<Pretty>,
-) {
+fn check_genref_in_stmt_seq(stmts: &[Node], src: &str, file: Option<&str>, errs: &mut Vec<Pretty>) {
     for (i, stmt) in stmts.iter().enumerate() {
         match stmt {
             // Case 1: let binding of a gen_deref result.
-            Node::Let { name, value, span, .. } if is_genderef_call(value) => {
+            Node::Let {
+                name, value, span, ..
+            } if is_genderef_call(value) => {
                 let next = stmts.get(i + 1);
                 let guarded = next.map_or(false, |n| is_zero_guard_on(n, name));
                 if !guarded {
@@ -3008,8 +3023,8 @@ fn check_extern_type_with_repr_c(
         // RFC 0010 Phase B audit fix F-06: unknown Named types are rejected
         // with safety::extern_non_repr_c to prevent silent miscompilation.
         TypeAnn::Named(name) => match name.as_str() {
-            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64"
-            | "f32" | "f64" | "bool" | "usize" | "isize" => Ok(()),
+            "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "f32" | "f64"
+            | "bool" | "usize" | "isize" => Ok(()),
             other => {
                 if repr_c.contains(other) {
                     Ok(())
@@ -3028,12 +3043,12 @@ fn check_extern_type_with_repr_c(
         | TypeAnn::Ref { .. }
         | TypeAnn::Array { .. }
         | TypeAnn::Tuple { .. }
-        | TypeAnn::Generic { .. } => Err(
-            "aggregate/non-Copy type is not allowed in `extern \"C\"` \
+        | TypeAnn::Generic { .. } => {
+            Err("aggregate/non-Copy type is not allowed in `extern \"C\"` \
              signatures (safety::extern_non_copy); use a raw pointer `*const T` \
              or `*mut T` to pass aggregate data across the C ABI"
-                .into(),
-        ),
+                .into())
+        }
     }
 }
 
@@ -3233,7 +3248,12 @@ fn walk_calls_for_symbolic_check(
         Node::Return { value: Some(v), .. } => {
             walk_calls_for_symbolic_check(v, fn_sigs, env, src, file, errs);
         }
-        Node::If { cond, then_branch, else_branch, .. } => {
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             walk_calls_for_symbolic_check(cond, fn_sigs, env, src, file, errs);
             for s in then_branch {
                 walk_calls_for_symbolic_check(s, fn_sigs, env, src, file, errs);
@@ -3265,9 +3285,28 @@ fn walk_calls_for_symbolic_check(
 /// mindc CLI `parse_target` set (canonical names + documented aliases)
 /// plus `q16`, the RFC 0012 §5.3 deterministic fixed-point pseudo-target.
 const VALID_TARGET_NAMES: &[&str] = &[
-    "cpu", "gpu", "cuda", "rocm", "metal", "webgpu", "tpu", "npu", "ane",
-    "hexagon", "lpu", "groq", "dpu", "smartnic", "bluefield", "fpga", "hls",
-    "cerebras", "wse", "wse2", "wse3", "q16",
+    "cpu",
+    "gpu",
+    "cuda",
+    "rocm",
+    "metal",
+    "webgpu",
+    "tpu",
+    "npu",
+    "ane",
+    "hexagon",
+    "lpu",
+    "groq",
+    "dpu",
+    "smartnic",
+    "bluefield",
+    "fpga",
+    "hls",
+    "cerebras",
+    "wse",
+    "wse2",
+    "wse3",
+    "q16",
 ];
 
 const DET_NONDET_CODE: &str = "determinism::nondeterministic_in_deterministic";
@@ -3329,7 +3368,12 @@ fn for_each_body_node<'a>(node: &'a Node, f: &mut impl FnMut(&'a Node)) {
         }
         Node::Let { value, .. } => for_each_body_node(value, f),
         Node::Return { value: Some(v), .. } => for_each_body_node(v, f),
-        Node::If { cond, then_branch, else_branch, .. } => {
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             for_each_body_node(cond, f);
             for s in then_branch {
                 for_each_body_node(s, f);
@@ -3457,8 +3501,7 @@ fn check_determinism_annotations(
                     None => errs.push(diag_from_span(
                         src,
                         file,
-                        "`[target(...)]` requires a backend name, e.g. `[target(cpu)]`"
-                            .to_string(),
+                        "`[target(...)]` requires a backend name, e.g. `[target(cpu)]`".to_string(),
                         *span,
                         DET_UNKNOWN_TARGET_CODE,
                     )),
@@ -3500,7 +3543,8 @@ fn check_determinism_annotations(
                     }
                 }
             }
-            if let Some(TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. }) = ret_type
+            if let Some(TypeAnn::Tensor { dtype, .. } | TypeAnn::DiffTensor { dtype, .. }) =
+                ret_type
             {
                 if dtype != "q16" {
                     errs.push(diag_from_span(

@@ -15,7 +15,7 @@
 //! Parser and type-checker tests for Phase 10.7 surface constructs:
 //! `match` expressions and `&expr` / `&mut expr` reference-taking expressions.
 
-use libmind::{compile_source, CompileOptions};
+use libmind::{CompileOptions, compile_source};
 
 fn parses(src: &str) -> bool {
     compile_source(src, &CompileOptions::default()).is_ok()

@@ -47,7 +47,10 @@ fn reduce_all_axes_when_axes_empty_yields_scalar() {
     let module = parser::parse(src).expect("parse empty-axes reduction");
     let ir = eval::lower_to_ir(&module);
     let mlir = eval::to_mlir(&ir, "main");
-    assert!(mlir.contains("tensor.reduce"), "expected a reduction in {mlir}");
+    assert!(
+        mlir.contains("tensor.reduce"),
+        "expected a reduction in {mlir}"
+    );
     assert!(
         mlir.contains("-> tensor<f32>") || mlir.contains(": tensor<f32>"),
         "empty axes must reduce to scalar tensor<f32>, not the full shape; got:\n{mlir}"

@@ -1,4 +1,4 @@
-use libmind::conformance::{run_conformance, ConformanceOptions, ConformanceProfile};
+use libmind::conformance::{ConformanceOptions, ConformanceProfile, run_conformance};
 
 #[test]
 fn cpu_conformance_profile_passes() {

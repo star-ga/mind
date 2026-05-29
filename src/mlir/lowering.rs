@@ -204,7 +204,13 @@ struct LoweringContext {
     extern_c_fns: std::collections::BTreeMap<
         String,
         // (param_types, ret_type, is_varargs, vararg_hints, callconv)
-        (Vec<String>, Option<String>, bool, Vec<String>, crate::ast::CallConv),
+        (
+            Vec<String>,
+            Option<String>,
+            bool,
+            Vec<String>,
+            crate::ast::CallConv,
+        ),
     >,
     /// RFC 0005 Gap 1 (dominance fix): after-block substitutions registered
     /// by the While emitter so that subsequent fn-body instructions emitted
@@ -435,7 +441,7 @@ impl LoweringContext {
                                     "non-i64 argument to call `{name}` \
                                      (RFC 0005 phase 2+ covers aggregate call ABI)"
                                 ),
-                            })
+                            });
                         }
                     }
                 }
@@ -534,8 +540,7 @@ impl LoweringContext {
                     // RFC 0010 Phase C / R-03: f32 in a varargs position must
                     // be promoted to f64 per C11 §6.5.2.2p6 default argument
                     // promotions. Vararg positions are indices >= n_concrete.
-                    let arg_refs: Vec<String> =
-                        args.iter().map(|a| format!("%{}", a.0)).collect();
+                    let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
                     let n_concrete = param_types.len();
                     let param_type_str: Vec<String> = args
                         .iter()
@@ -552,7 +557,11 @@ impl LoweringContext {
                                     .cloned()
                                     .unwrap_or_else(|| "i64".to_string());
                                 // R-03: f32 in vararg position → f64.
-                                if hint == "f32" { "f64".to_string() } else { hint }
+                                if hint == "f32" {
+                                    "f64".to_string()
+                                } else {
+                                    hint
+                                }
                             }
                         })
                         .collect();
@@ -572,17 +581,17 @@ impl LoweringContext {
                     ));
                     self.values.insert(*dst, ValueKind::ScalarI64);
                 } else {
-                let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
-                let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
-                self.emit_line(&format!(
-                    "    %{} = func.call @{}({}) : ({}) -> i64",
-                    dst.0,
-                    name,
-                    arg_refs.join(", "),
-                    arg_tys.join(", ")
-                ));
-                self.values.insert(*dst, ValueKind::ScalarI64);
-                self.extern_calls.insert((name.clone(), args.len()));
+                    let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
+                    let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
+                    self.emit_line(&format!(
+                        "    %{} = func.call @{}({}) : ({}) -> i64",
+                        dst.0,
+                        name,
+                        arg_refs.join(", "),
+                        arg_tys.join(", ")
+                    ));
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    self.extern_calls.insert((name.clone(), args.len()));
                 }
             }
             // RFC 0005 P0d: emit `func.func @name(%pN: i64...) -> i64 { ... }`
@@ -914,9 +923,8 @@ impl LoweringContext {
                         .map(|a| {
                             // Check if this post_id matches the init_id of
                             // another (or the same) loop arg.
-                            if let Some(src) = loop_args
-                                .iter()
-                                .find(|other| other.init_id == a.post_id)
+                            if let Some(src) =
+                                loop_args.iter().find(|other| other.init_id == a.post_id)
                             {
                                 // Pass the body-block arg for that source variable.
                                 format!("%{}", src.body_name)
@@ -1394,13 +1402,22 @@ impl LoweringContext {
             //
             // Gated to `std-surface`.
             #[cfg(feature = "std-surface")]
-            Instr::Region { body, result, enter_id, exit_id, alloc_ids } => {
+            Instr::Region {
+                body,
+                result,
+                enter_id,
+                exit_id,
+                alloc_ids,
+            } => {
                 // Register the three region helpers as extern_calls so the
                 // module-level MLIR emitter generates `func.func private`
                 // declarations for them, exactly as for __mind_alloc etc.
-                self.extern_calls.insert(("__mind_region_enter".to_string(), 0));
-                self.extern_calls.insert(("__mind_region_track".to_string(), 1));
-                self.extern_calls.insert(("__mind_region_exit".to_string(), 0));
+                self.extern_calls
+                    .insert(("__mind_region_enter".to_string(), 0));
+                self.extern_calls
+                    .insert(("__mind_region_track".to_string(), 1));
+                self.extern_calls
+                    .insert(("__mind_region_exit".to_string(), 0));
 
                 // Enter: push a new region frame. Use the globally-unique
                 // enter_id allocated by the IR lowering pass so that nested
@@ -1425,16 +1442,18 @@ impl LoweringContext {
                     // The track-call dst uses a synthetic id derived from
                     // the alloc dst + region enter_id to remain unique
                     // across nested regions and multiple allocs.
-                    if let Instr::Call { dst: alloc_dst, name, .. } = bi {
+                    if let Instr::Call {
+                        dst: alloc_dst,
+                        name,
+                        ..
+                    } = bi
+                    {
                         if name == "__mind_alloc" && alloc_ids.contains(alloc_dst) {
                             // Combine alloc_dst and enter_id to get a unique
                             // key that won't collide with other instructions
                             // or other region levels.
-                            let track_dst = ValueId(
-                                enter_id.0
-                                    .wrapping_add(alloc_dst.0)
-                                    .wrapping_add(idx + 1)
-                            );
+                            let track_dst =
+                                ValueId(enter_id.0.wrapping_add(alloc_dst.0).wrapping_add(idx + 1));
                             body_sub.emit_line(&format!(
                                 "    %{} = func.call @__mind_region_track(%{}) \
                                  : (i64) -> i64",
@@ -1468,7 +1487,7 @@ impl LoweringContext {
                 return Err(MlirLowerError::UnsupportedOp {
                     instr_index,
                     op: format!("{:?}", instr),
-                })
+                });
             }
         }
 
@@ -2484,9 +2503,7 @@ impl LoweringContext {
         self.emit_line(&format!(
             "        %vmmq_na_{d} = arith.addi %vmmq_acc_{d}, %vmmq_sh_{d} : vector<{l}xi64>"
         ));
-        self.emit_line(&format!(
-            "        scf.yield %vmmq_na_{d} : vector<{l}xi64>"
-        ));
+        self.emit_line(&format!("        scf.yield %vmmq_na_{d} : vector<{l}xi64>"));
         self.emit_line("      }");
 
         // ── horizontal lane reduction (associative — bit-identical regardless
@@ -2656,7 +2673,11 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
             param_types.join(", ")
         };
         let varargs_suffix = if *is_varargs {
-            if param_types.is_empty() { "...".to_string() } else { ", ...".to_string() }
+            if param_types.is_empty() {
+                "...".to_string()
+            } else {
+                ", ...".to_string()
+            }
         } else {
             String::new()
         };

@@ -119,9 +119,9 @@ pub fn check_source(
     config: &MindcraftConfig,
     registry: &RuleRegistry,
 ) -> Vec<Diagnostic> {
-    use crate::parser::parse_with_trivia;
     use crate::ast::Module;
     use crate::parser::TriviaStream;
+    use crate::parser::parse_with_trivia;
 
     // Best-effort: if the source doesn't parse, return no diagnostics.
     // A parse-error is surfaced by the compile pipeline, not the lint pipeline.

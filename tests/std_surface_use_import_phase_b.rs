@@ -33,8 +33,8 @@
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
 use libmind::parser;
-use libmind::project::module_table::{build_module_table, ModuleTable};
-use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+use libmind::project::module_table::{ModuleTable, build_module_table};
+use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
 const VEC_MIND_SRC: &str = include_str!("../std/vec.mind");
 const IO_MIND_SRC: &str = include_str!("../std/io.mind");

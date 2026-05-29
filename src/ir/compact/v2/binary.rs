@@ -476,7 +476,11 @@ impl MicbDecoder {
                 // EOF = no MAP section (§2 rule 3, §3.4).
                 return Ok(Map::new());
             }
-            Err(e) => return Err(MicbError { message: e.to_string() }),
+            Err(e) => {
+                return Err(MicbError {
+                    message: e.to_string(),
+                });
+            }
             Ok(()) => {}
         }
         if sentinel[0] != 0x4D {
@@ -503,7 +507,8 @@ impl MicbDecoder {
             }
             let key = self.strings[key_idx].clone();
             let value = self.decode_map_value(r)?;
-            map.insert_unique(key, value).map_err(|e| MicbError { message: e })?;
+            map.insert_unique(key, value)
+                .map_err(|e| MicbError { message: e })?;
         }
         Ok(map)
     }

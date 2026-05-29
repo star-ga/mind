@@ -18,7 +18,7 @@
 // re-running the surface parser.
 
 use libmind::ir;
-use libmind::pipeline::{compile_source, compile_to_mic_text, CompileOptions};
+use libmind::pipeline::{CompileOptions, compile_source, compile_to_mic_text};
 
 const SAMPLE_PROGRAM: &str = r#"
 fn main() {

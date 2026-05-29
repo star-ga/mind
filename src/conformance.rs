@@ -1,10 +1,10 @@
 use crate::eval::ir_interp::eval_ir;
 use crate::eval::value::Value;
-use crate::pipeline::{compile_source, CompileOptions};
+use crate::pipeline::{CompileOptions, compile_source};
 use crate::runtime::types::BackendTarget;
 
 #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
-use crate::pipeline::{lower_to_mlir, MlirProducts};
+use crate::pipeline::{MlirProducts, lower_to_mlir};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConformanceProfile {

@@ -12,10 +12,10 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-use libmind::types::infer::unify;
 use libmind::types::DType;
 use libmind::types::ShapeDim;
 use libmind::types::TensorType;
+use libmind::types::infer::unify;
 
 #[test]
 fn unify_known_and_sym() {

@@ -9,8 +9,8 @@
 //! - No trailing newline after final output line
 //! - Sections in order: header, symbols, types, values, output
 
-use super::types::{Graph, Map, MapValue, Opcode, Value};
 use super::MIC2_HEADER;
+use super::types::{Graph, Map, MapValue, Opcode, Value};
 
 /// Emit a Graph as canonical mic@2 text.
 pub fn emit_mic2(graph: &Graph) -> String {

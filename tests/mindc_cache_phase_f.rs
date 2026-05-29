@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use libmind::build::cache::{
-    cache_root, module_cache_key, object_path, probe, BuildManifest, CacheProbe,
+    BuildManifest, CacheProbe, cache_root, module_cache_key, object_path, probe,
 };
 use libmind::project::{BuildTarget, OptimizeLevel};
 
@@ -55,7 +55,10 @@ fn require_mindc() -> Option<PathBuf> {
     if bin.exists() {
         Some(bin)
     } else {
-        eprintln!("SKIP: mindc binary not found at {}; run cargo build first", bin.display());
+        eprintln!(
+            "SKIP: mindc binary not found at {}; run cargo build first",
+            bin.display()
+        );
         None
     }
 }
@@ -90,7 +93,14 @@ fn probe_for_source(
     target: BuildTarget,
     optimize: OptimizeLevel,
 ) -> CacheProbe {
-    let key = module_cache_key(source, target, optimize, &[], env!("CARGO_PKG_VERSION"), 2024);
+    let key = module_cache_key(
+        source,
+        target,
+        optimize,
+        &[],
+        env!("CARGO_PKG_VERSION"),
+        2024,
+    );
     let c_root = cache_root(project_root, target, optimize);
     probe(&c_root, &key)
 }
@@ -109,8 +119,16 @@ fn phase_f_01_cold_build_all_miss() {
     make_project(dir, "cold_project", SIMPLE_MIND);
 
     // Before build: cache miss.
-    let pre = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
-    assert!(matches!(pre, CacheProbe::Miss { .. }), "expected miss before build");
+    let pre = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
+    assert!(
+        matches!(pre, CacheProbe::Miss { .. }),
+        "expected miss before build"
+    );
 
     // After build: cache entry must exist (regardless of whether mlir-build ran).
     let mindc = match require_mindc() {
@@ -122,7 +140,12 @@ fn phase_f_01_cold_build_all_miss() {
     // Build may succeed or gracefully fail on machines without LLVM toolchain.
     // What matters for Phase F is that a build attempt writes to cache on success.
     if status.success() {
-        let post = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
+        let post = probe_for_source(
+            dir,
+            SIMPLE_MIND.as_bytes(),
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+        );
         assert!(
             matches!(post, CacheProbe::Hit { .. }),
             "expected cache hit after successful build"
@@ -154,16 +177,32 @@ fn phase_f_02_rebuild_unchanged_all_hit() {
     }
 
     // Verify cache is populated after first build.
-    let after_first = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
-    assert!(matches!(after_first, CacheProbe::Hit { .. }), "cache must be populated after first build");
+    let after_first = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
+    assert!(
+        matches!(after_first, CacheProbe::Hit { .. }),
+        "cache must be populated after first build"
+    );
 
     // Second build with no source change must hit.
     let s2 = run_build(&mindc, dir, &["--verbose"]);
     assert!(s2.success(), "second build should succeed");
 
     // Cache is still populated and key unchanged.
-    let after_second = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
-    assert!(matches!(after_second, CacheProbe::Hit { .. }), "cache must remain hit after no-op rebuild");
+    let after_second = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
+    assert!(
+        matches!(after_second, CacheProbe::Hit { .. }),
+        "cache must remain hit after no-op rebuild"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -188,14 +227,24 @@ fn phase_f_03_touch_source_causes_miss() {
     }
 
     // Verify original source is cached.
-    let original_hit = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
+    let original_hit = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
     assert!(matches!(original_hit, CacheProbe::Hit { .. }));
 
     // Modify source.
     fs::write(dir.join("src/main.mind"), MODIFIED_MIND).unwrap();
 
     // New source key should be a miss before the rebuild.
-    let modified_miss = probe_for_source(dir, MODIFIED_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
+    let modified_miss = probe_for_source(
+        dir,
+        MODIFIED_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
     assert!(
         matches!(modified_miss, CacheProbe::Miss { .. }),
         "modified source must be a cache miss before rebuild"
@@ -206,7 +255,12 @@ fn phase_f_03_touch_source_causes_miss() {
     assert!(s2.success(), "rebuild after source change should succeed");
 
     // After rebuild, modified source is cached.
-    let modified_hit = probe_for_source(dir, MODIFIED_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
+    let modified_hit = probe_for_source(
+        dir,
+        MODIFIED_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
     assert!(
         matches!(modified_hit, CacheProbe::Hit { .. }),
         "modified source must be cached after rebuild"
@@ -235,7 +289,12 @@ fn phase_f_04_no_cache_bypasses_hit_but_still_writes() {
     }
 
     // Confirm hit exists.
-    let hit = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
+    let hit = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
     assert!(matches!(hit, CacheProbe::Hit { .. }));
 
     // Second build with --no-cache: must NOT short-circuit (will run full compile)
@@ -244,7 +303,12 @@ fn phase_f_04_no_cache_bypasses_hit_but_still_writes() {
     assert!(s2.success(), "--no-cache build must succeed");
 
     // The cache entry should still be present (written by the full compile pass).
-    let post = probe_for_source(dir, SIMPLE_MIND.as_bytes(), BuildTarget::Cpu, OptimizeLevel::Debug);
+    let post = probe_for_source(
+        dir,
+        SIMPLE_MIND.as_bytes(),
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+    );
     assert!(
         matches!(post, CacheProbe::Hit { .. }),
         "--no-cache build must still write entry to cache"
@@ -282,12 +346,18 @@ fn phase_f_05_cross_target_isolation() {
     );
 
     // Keys must differ across targets.
-    assert_ne!(key_cpu, key_cerebras, "cpu and cerebras keys must not collide");
+    assert_ne!(
+        key_cpu, key_cerebras,
+        "cpu and cerebras keys must not collide"
+    );
 
     // Cache root paths must also differ.
     let root_cpu = cache_root(dir, BuildTarget::Cpu, OptimizeLevel::Debug);
     let root_cerebras = cache_root(dir, BuildTarget::Cerebras, OptimizeLevel::Debug);
-    assert_ne!(root_cpu, root_cerebras, "cache roots must be target-segregated");
+    assert_ne!(
+        root_cpu, root_cerebras,
+        "cache roots must be target-segregated"
+    );
 
     // cpu probe must not return a hit in the cerebras cache root and vice versa.
     let obj_cpu = object_path(&root_cpu, &key_cpu);
@@ -322,7 +392,10 @@ fn phase_f_06_optimize_level_isolation() {
     let tmp = tempfile::tempdir().unwrap();
     let root_debug = cache_root(tmp.path(), BuildTarget::Cpu, OptimizeLevel::Debug);
     let root_release = cache_root(tmp.path(), BuildTarget::Cpu, OptimizeLevel::Release);
-    assert_ne!(root_debug, root_release, "debug and release cache roots must differ");
+    assert_ne!(
+        root_debug, root_release,
+        "debug and release cache roots must differ"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +432,7 @@ fn phase_f_07_compiler_version_bump_invalidates() {
 
 #[test]
 fn phase_f_08_clean_cache_preserves_binary() {
-    use libmind::build::cache::{clean_all_caches, write_object, ObjectMeta};
+    use libmind::build::cache::{ObjectMeta, clean_all_caches, write_object};
     use tempfile::TempDir;
 
     let tmp = TempDir::new().unwrap();
@@ -389,7 +462,10 @@ fn phase_f_08_clean_cache_preserves_binary() {
     clean_all_caches(dir).unwrap();
 
     // .cache/ removed.
-    assert!(!c_root.exists(), ".cache/ must be removed after clean --cache");
+    assert!(
+        !c_root.exists(),
+        ".cache/ must be removed after clean --cache"
+    );
 
     // Binary still intact.
     assert!(binary.exists(), "linked binary must survive clean --cache");
@@ -438,7 +514,11 @@ fn phase_f_09_deterministic_cache_key() {
         return;
     }
 
-    let artifact = dir.join("target").join("cpu").join("debug").join("determinism_project");
+    let artifact = dir
+        .join("target")
+        .join("cpu")
+        .join("debug")
+        .join("determinism_project");
     if !artifact.exists() {
         // Binary might be at a different path on this machine; skip byte-identity check.
         return;
@@ -454,7 +534,10 @@ fn phase_f_09_deterministic_cache_key() {
 
     if artifact.exists() {
         let bytes2 = fs::read(&artifact).unwrap();
-        assert_eq!(bytes1, bytes2, "artifact must be byte-identical across cache-hit rebuild");
+        assert_eq!(
+            bytes1, bytes2,
+            "artifact must be byte-identical across cache-hit rebuild"
+        );
     }
 }
 
@@ -549,16 +632,44 @@ fn phase_f_10_concurrent_builds_no_corruption() {
 
 #[test]
 fn cache_key_empty_source_is_stable() {
-    let k1 = module_cache_key(b"", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
-    let k2 = module_cache_key(b"", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
+    let k1 = module_cache_key(
+        b"",
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+        &[],
+        "0.6.8",
+        2024,
+    );
+    let k2 = module_cache_key(
+        b"",
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+        &[],
+        "0.6.8",
+        2024,
+    );
     assert_eq!(k1, k2);
     assert_eq!(k1.len(), 64);
 }
 
 #[test]
 fn cache_key_edition_change_invalidates() {
-    let k2024 = module_cache_key(b"fn x(){}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
-    let k2025 = module_cache_key(b"fn x(){}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2025);
+    let k2024 = module_cache_key(
+        b"fn x(){}",
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+        &[],
+        "0.6.8",
+        2024,
+    );
+    let k2025 = module_cache_key(
+        b"fn x(){}",
+        BuildTarget::Cpu,
+        OptimizeLevel::Debug,
+        &[],
+        "0.6.8",
+        2025,
+    );
     assert_ne!(k2024, k2025, "edition change must produce different key");
 }
 

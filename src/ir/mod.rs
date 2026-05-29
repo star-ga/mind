@@ -26,7 +26,7 @@ mod verify;
 pub use crate::opt::ir_canonical::canonicalize_module;
 pub use evidence::ir_trace_hash;
 pub use print::format_ir_module;
-pub use verify::{verify_module, IrVerifyError};
+pub use verify::{IrVerifyError, verify_module};
 
 /// Errors surfaced by [`load`].
 #[derive(Debug)]
@@ -654,7 +654,6 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::Region { result, .. } => Some(*result),
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {

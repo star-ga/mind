@@ -172,5 +172,8 @@ fn fmt_fix_is_idempotent() {
     );
 
     let after_second = fs::read_to_string(&file).expect("read after second");
-    assert_eq!(after_second, FORMATTED, "second pass should not change the file");
+    assert_eq!(
+        after_second, FORMATTED,
+        "second pass should not change the file"
+    );
 }

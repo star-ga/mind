@@ -18,15 +18,14 @@
 use std::path::Path;
 
 use libmind::lint::check_source;
-use libmind::lint::rules::register_defaults;
 use libmind::lint::rule::RuleRegistry;
+use libmind::lint::rules::register_defaults;
 use libmind::project::MindcraftConfig;
 
 #[test]
 fn lint_std_vec_mind() {
     let vec_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std/vec.mind");
-    let source = std::fs::read_to_string(&vec_path)
-        .expect("std/vec.mind must exist");
+    let source = std::fs::read_to_string(&vec_path).expect("std/vec.mind must exist");
 
     let mut registry = RuleRegistry::new();
     register_defaults(&mut registry);
@@ -34,11 +33,17 @@ fn lint_std_vec_mind() {
     let config = MindcraftConfig::default();
     let diags = check_source(&source, &vec_path, &config, &registry);
 
-    println!("--- lint diagnostics for std/vec.mind ({} total) ---", diags.len());
+    println!(
+        "--- lint diagnostics for std/vec.mind ({} total) ---",
+        diags.len()
+    );
     for d in &diags {
         println!(
             "[{}] {} | span={}..{} | {}",
-            d.rule_id, d.message, d.span.start, d.span.end,
+            d.rule_id,
+            d.message,
+            d.span.start,
+            d.span.end,
             d.help.as_deref().unwrap_or("")
         );
     }

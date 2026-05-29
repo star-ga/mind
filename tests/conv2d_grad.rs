@@ -17,7 +17,7 @@
 //! These tests verify correctness of the analytical gradients computed by
 //! conv2d_vjp_nhwc_hwio_f32 against numerical finite-difference approximations.
 
-use libmind::eval::conv2d_grad::{conv2d_output_shape, conv2d_vjp_nhwc_hwio_f32, Conv2dVjpParams};
+use libmind::eval::conv2d_grad::{Conv2dVjpParams, conv2d_output_shape, conv2d_vjp_nhwc_hwio_f32};
 use libmind::types::ConvPadding;
 
 /// Compute forward Conv2d: y = conv2d(x, w)

@@ -116,10 +116,6 @@ mod tensor_tests {
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
 #[cfg(feature = "mlir-build")]
-pub use mlir_build::build_all as build_mlir_artifacts;
-#[cfg(feature = "mlir-build")]
-pub use mlir_build::resolve_tools as resolve_mlir_build_tools;
-#[cfg(feature = "mlir-build")]
 pub use mlir_build::BuildError as MlirBuildError;
 #[cfg(feature = "mlir-build")]
 pub use mlir_build::BuildOptions as MlirBuildOptions;
@@ -127,17 +123,21 @@ pub use mlir_build::BuildOptions as MlirBuildOptions;
 pub use mlir_build::BuildProducts as MlirBuildProducts;
 #[cfg(feature = "mlir-build")]
 pub use mlir_build::BuildTools as MlirBuildTools;
-pub use mlir_export::emit_mlir_with_opts;
-pub use mlir_export::to_mlir;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::build_all as build_mlir_artifacts;
+#[cfg(feature = "mlir-build")]
+pub use mlir_build::resolve_tools as resolve_mlir_build_tools;
 pub use mlir_export::MlirEmitMode;
 pub use mlir_export::MlirEmitOptions;
 pub use mlir_export::MlirLowerPreset;
+pub use mlir_export::emit_mlir_with_opts;
+pub use mlir_export::to_mlir;
 #[cfg(feature = "mlir-exec")]
 pub use mlir_run::MlirExecConfig;
-pub use value::format_value_human;
 pub use value::TensorVal;
 pub use value::Value;
 pub use value::VarId;
+pub use value::format_value_human;
 
 pub fn emit_mlir_string(ir: &crate::ir::IRModule, preset: mlir_export::MlirLowerPreset) -> String {
     let opts = mlir_export::MlirEmitOptions {
@@ -424,7 +424,7 @@ pub fn eval_module_value_with_env_mode(
                     _ => {
                         return Err(EvalError::UnsupportedMsg(
                             "for-loop start must be int".into(),
-                        ))
+                        ));
                     }
                 };
                 let e = match eval_value_expr_mode(end, &venv, &tensor_env, mode.clone())? {
@@ -1052,7 +1052,7 @@ pub(crate) fn eval_value_expr_mode(
                 _ => {
                     return Err(EvalError::UnsupportedMsg(
                         "for-loop start must be int".into(),
-                    ))
+                    ));
                 }
             };
             let e = match eval_value_expr_mode(end, env, tensor_env, mode.clone())? {
@@ -1252,23 +1252,19 @@ pub(crate) fn eval_value_expr_mode(
             for stmt in body {
                 match stmt {
                     Node::Let { name, value, .. } => {
-                        let val = eval_value_expr_mode(
-                            value, &region_env, tensor_env, mode.clone(),
-                        )?;
+                        let val =
+                            eval_value_expr_mode(value, &region_env, tensor_env, mode.clone())?;
                         region_env.insert(name.clone(), val.clone());
                         result = val;
                     }
                     Node::Assign { name, value, .. } => {
-                        let val = eval_value_expr_mode(
-                            value, &region_env, tensor_env, mode.clone(),
-                        )?;
+                        let val =
+                            eval_value_expr_mode(value, &region_env, tensor_env, mode.clone())?;
                         region_env.insert(name.clone(), val.clone());
                         result = val;
                     }
                     _ => {
-                        result = eval_value_expr_mode(
-                            stmt, &region_env, tensor_env, mode.clone(),
-                        )?;
+                        result = eval_value_expr_mode(stmt, &region_env, tensor_env, mode.clone())?;
                     }
                 }
             }
@@ -1290,7 +1286,7 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
                         ShapeDim::Sym(_) => {
                             return Err(EvalError::UnsupportedMsg(
                                 "cannot compute .len() on tensor with symbolic dimensions".into(),
-                            ))
+                            ));
                         }
                     }
                 }

@@ -30,7 +30,7 @@ use crate::fmt::format_source;
 use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
 use crate::parser::parse_with_trivia;
-use crate::project::{find_project_root, load_manifest, MindcraftConfig, RuleSeverity};
+use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
 use crate::type_checker::check_module_types_in_file;
 
 use gitignore::GitignoreFilter;
@@ -47,7 +47,6 @@ pub enum CheckPhase {
     Lint,
     TypeCheck,
 }
-
 
 /// Severity of a [`CheckDiagnostic`].
 ///
@@ -239,24 +238,20 @@ pub fn run_check(opts: &CheckOptions) -> i32 {
                 println!("{}", d.human_line());
             }
         }
-        ReporterKind::Json => {
-            match serde_json::to_string_pretty(&all_diags) {
-                Ok(json) => println!("{json}"),
-                Err(e) => {
-                    eprintln!("error[check]: JSON serialisation failed: {e}");
-                    return 1;
-                }
+        ReporterKind::Json => match serde_json::to_string_pretty(&all_diags) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("error[check]: JSON serialisation failed: {e}");
+                return 1;
             }
-        }
-        ReporterKind::Lsp => {
-            match emit_lsp_diagnostics(&all_diags) {
-                Ok(json) => println!("{json}"),
-                Err(e) => {
-                    eprintln!("error[check]: LSP serialisation failed: {e}");
-                    return 1;
-                }
+        },
+        ReporterKind::Lsp => match emit_lsp_diagnostics(&all_diags) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("error[check]: LSP serialisation failed: {e}");
+                return 1;
             }
-        }
+        },
     }
 
     if has_errors { 1 } else { 0 }
@@ -323,7 +318,10 @@ fn run_check_fix(opts: &CheckOptions) -> i32 {
             Err(_) => continue,
         };
         let diags = check_file(path, &source, &config, &registry, opts);
-        remaining += diags.iter().filter(|d| d.auto_fix.is_none() && d.phase != CheckPhase::Fmt).count();
+        remaining += diags
+            .iter()
+            .filter(|d| d.auto_fix.is_none() && d.phase != CheckPhase::Fmt)
+            .count();
     }
 
     println!(
@@ -333,9 +331,7 @@ fn run_check_fix(opts: &CheckOptions) -> i32 {
     );
 
     if !converged {
-        eprintln!(
-            "warning[check]: some files did not converge in {MAX_FIX_ITERATIONS} iterations"
-        );
+        eprintln!("warning[check]: some files did not converge in {MAX_FIX_ITERATIONS} iterations");
     }
 
     if remaining > 0 { 1 } else { 0 }
@@ -358,8 +354,7 @@ fn fix_file_iteratively(
     let mut any_written = false;
 
     for _iter in 0..MAX_FIX_ITERATIONS {
-        let source = fs::read_to_string(path)
-            .map_err(|e| format!("cannot read: {e}"))?;
+        let source = fs::read_to_string(path).map_err(|e| format!("cannot read: {e}"))?;
 
         let diags = check_file(path, &source, config, registry, opts);
 
@@ -370,7 +365,11 @@ fn fix_file_iteratively(
             .collect();
 
         if fixable.is_empty() {
-            return Ok(if any_written { FixResult::Fixed } else { FixResult::Clean });
+            return Ok(if any_written {
+                FixResult::Fixed
+            } else {
+                FixResult::Clean
+            });
         }
 
         // Prioritise fmt::drift: if the file is not formatted, write the
@@ -382,8 +381,7 @@ fn fix_file_iteratively(
             let formatted = crate::fmt::format_source(&source, &config.format)
                 .map_err(|e| format!("format error: {e}"))?;
             if formatted != source {
-                write_atomic(path, &formatted)
-                    .map_err(|e| format!("cannot write: {e}"))?;
+                write_atomic(path, &formatted).map_err(|e| format!("cannot write: {e}"))?;
                 any_written = true;
                 continue; // re-check from scratch with the formatted source
             }
@@ -393,13 +391,15 @@ fn fix_file_iteratively(
 
         // No fmt drift (or fmt was already applied above).  Collect and apply
         // lint auto-fixes (byte-range edits) against the current source.
-        let mut edits: Vec<crate::lint::rule::Fix> = fixable
-            .iter()
-            .filter_map(|d| d.auto_fix.clone())
-            .collect();
+        let mut edits: Vec<crate::lint::rule::Fix> =
+            fixable.iter().filter_map(|d| d.auto_fix.clone()).collect();
 
         if edits.is_empty() {
-            return Ok(if any_written { FixResult::Fixed } else { FixResult::Clean });
+            return Ok(if any_written {
+                FixResult::Fixed
+            } else {
+                FixResult::Clean
+            });
         }
 
         // Apply edits in ascending byte-offset order (apply_edits handles this).
@@ -414,11 +414,14 @@ fn fix_file_iteratively(
         let fixed_source = apply_edits(&source, &edits)?;
 
         if fixed_source == source {
-            return Ok(if any_written { FixResult::Fixed } else { FixResult::Clean });
+            return Ok(if any_written {
+                FixResult::Fixed
+            } else {
+                FixResult::Clean
+            });
         }
 
-        write_atomic(path, &fixed_source)
-            .map_err(|e| format!("cannot write: {e}"))?;
+        write_atomic(path, &fixed_source).map_err(|e| format!("cannot write: {e}"))?;
         any_written = true;
     }
 
@@ -503,7 +506,7 @@ fn lsp_severity(s: CheckSeverity) -> u8 {
 ///
 /// LSP line/character values are 0-based; `CheckDiagnostic` uses 1-based.
 fn emit_lsp_diagnostics(diags: &[CheckDiagnostic]) -> Result<String, serde_json::Error> {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     let items: Vec<Value> = diags
         .iter()
@@ -550,8 +553,7 @@ fn load_check_config() -> MindcraftConfig {
 
 fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathBuf>, String> {
     let roots: Vec<PathBuf> = if paths.is_empty() {
-        vec![std::env::current_dir()
-            .map_err(|e| format!("cannot read current directory: {e}"))?]
+        vec![std::env::current_dir().map_err(|e| format!("cannot read current directory: {e}"))?]
     } else {
         paths.iter().map(PathBuf::from).collect()
     };
@@ -563,7 +565,9 @@ fn resolve_paths(paths: &[String], config: &MindcraftConfig) -> Result<Vec<PathB
     let repo_root = {
         let candidate_start = roots.first().map(|p| {
             if p.is_file() {
-                p.parent().map(|d| d.to_path_buf()).unwrap_or_else(|| p.clone())
+                p.parent()
+                    .map(|d| d.to_path_buf())
+                    .unwrap_or_else(|| p.clone())
             } else {
                 p.clone()
             }
@@ -624,11 +628,7 @@ fn collect_mind_files(
 }
 
 /// Return `true` if `path` should be included in the check run.
-fn should_include(
-    path: &Path,
-    filter: Option<&GitignoreFilter>,
-    repo_root: Option<&Path>,
-) -> bool {
+fn should_include(path: &Path, filter: Option<&GitignoreFilter>, repo_root: Option<&Path>) -> bool {
     let Some(filter) = filter else {
         return true;
     };
@@ -790,8 +790,7 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
     };
 
     let file_name = path.to_str();
-    let type_diags =
-        check_module_types_in_file(&module, source, file_name, &HashMap::new());
+    let type_diags = check_module_types_in_file(&module, source, file_name, &HashMap::new());
 
     for d in type_diags {
         let (line, col) = match &d.span {
@@ -851,4 +850,3 @@ fn first_diff_position(a: &str, b: &str) -> (usize, usize) {
         .unwrap_or_else(|| a.len().min(b.len()));
     offset_to_line_col(a, diff_offset)
 }
-

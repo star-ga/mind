@@ -59,7 +59,9 @@ impl LintRule for UnusedImport {
         let source = ctx.source;
 
         for item in &ctx.module.items {
-            let Node::Import { path, span } = item else { continue };
+            let Node::Import { path, span } = item else {
+                continue;
+            };
             let local_name = match path.last() {
                 Some(n) => n.as_str(),
                 None => continue,
@@ -70,25 +72,20 @@ impl LintRule for UnusedImport {
             // The import declaration itself contributes exactly 1 occurrence
             // (the last path segment in `use std.vec`). If total non-comment
             // count is only 1, nothing outside the declaration references it.
-            let non_comment_count =
-                count_word_occurrences_non_comment(source, local_name);
+            let non_comment_count = count_word_occurrences_non_comment(source, local_name);
 
             if non_comment_count <= 1 {
                 diagnostics.push(Diagnostic {
                     rule_id: self.id().to_string(),
                     severity: self.default_severity(),
-                    message: format!(
-                        "unused import `{}`",
-                        path.join(".")
-                    ),
+                    message: format!("unused import `{}`", path.join(".")),
                     file: ctx.file.to_path_buf(),
                     span: SourceSpan {
                         start: span.start(),
                         end: span.end(),
                     },
                     help: Some(
-                        "remove the `use` declaration or use the imported symbol"
-                            .to_string(),
+                        "remove the `use` declaration or use the imported symbol".to_string(),
                     ),
                     auto_fix: None,
                 });

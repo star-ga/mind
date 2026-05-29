@@ -19,9 +19,9 @@
 
 use std::path::Path;
 
-use libmind::lint::rules::Q16Overflow;
-use libmind::lint::rule::LintRule;
 use libmind::lint::rule::LintCtx;
+use libmind::lint::rule::LintRule;
+use libmind::lint::rules::Q16Overflow;
 use libmind::parser::parse_with_trivia;
 use libmind::project::MindcraftConfig;
 
@@ -29,16 +29,21 @@ fn fixture(name: &str) -> String {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/mindcraft/lint/q16_overflow")
         .join(name);
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read fixture {name}: {e}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("could not read fixture {name}: {e}"))
 }
 
 fn run(src: &str, file: &str) -> Vec<libmind::lint::Diagnostic> {
-    let (module, trivia) = parse_with_trivia(src)
-        .unwrap_or_else(|e| panic!("parse failed for {file}: {e:?}"));
+    let (module, trivia) =
+        parse_with_trivia(src).unwrap_or_else(|e| panic!("parse failed for {file}: {e:?}"));
     let config = MindcraftConfig::default();
     let path = Path::new(file);
-    let ctx = LintCtx { module: &module, trivia: &trivia, source: src, file: path, config: &config };
+    let ctx = LintCtx {
+        module: &module,
+        trivia: &trivia,
+        source: src,
+        file: path,
+        config: &config,
+    };
     Q16Overflow.check(&ctx)
 }
 

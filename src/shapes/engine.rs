@@ -162,7 +162,7 @@ pub fn infer_output_shape(op: &str, inputs: &[&[usize]]) -> Result<Shape, ShapeE
             return Err(ShapeError {
                 op: op.to_string(),
                 kind: ShapeErrorKind::UnknownOp,
-            })
+            });
         }
     };
 

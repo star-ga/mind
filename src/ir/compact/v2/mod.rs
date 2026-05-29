@@ -50,13 +50,13 @@ mod parse;
 mod types;
 mod varint;
 
-pub use binary::{emit_micb, parse_micb, MicbError};
-pub use emit::{emit_mic2, Mic2Emitter};
+pub use binary::{MicbError, emit_micb, parse_micb};
+pub use emit::{Mic2Emitter, emit_mic2};
 pub use evidence::{
-    attach_evidence_chain, compute_trace_hash, remove_evidence_chain, verify_evidence_chain,
-    Determinism, EvidenceError, EvidenceReport,
+    Determinism, EvidenceError, EvidenceReport, attach_evidence_chain, compute_trace_hash,
+    remove_evidence_chain, verify_evidence_chain,
 };
-pub use parse::{parse_mic2, Mic2ParseError};
+pub use parse::{Mic2ParseError, parse_mic2};
 pub use types::{DType, Graph, GraphEq, Map, MapValue, Opcode, TensorType, Value};
 pub use varint::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
 

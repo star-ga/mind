@@ -23,8 +23,8 @@ use std::process::Command;
 use tempfile::TempDir;
 
 use libmind::deps::{
-    compute_tree_sha256, resolve_and_verify_deps, run_clean, run_fetch, run_lock, CleanOpts,
-    FetchOpts, LockOpts, MindLock,
+    CleanOpts, FetchOpts, LockOpts, MindLock, compute_tree_sha256, resolve_and_verify_deps,
+    run_clean, run_fetch, run_lock,
 };
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,11 @@ fn create_local_bare_repo(bare_dir: &Path, pkg_name: &str) -> String {
     );
     fs::write(work.join("Mind.toml"), &mind_toml).unwrap();
     fs::create_dir_all(work.join("src")).unwrap();
-    fs::write(work.join("src/main.mind"), "fn add(a: i64, b: i64) -> i64 { a + b }\n").unwrap();
+    fs::write(
+        work.join("src/main.mind"),
+        "fn add(a: i64, b: i64) -> i64 { a + b }\n",
+    )
+    .unwrap();
 
     // Configure git identity for the temp work repo.
     run_git_in(&["config", "user.email", "test@test.test"], &work);
@@ -106,8 +110,17 @@ fn run_git(args: &[&str]) {
 }
 
 fn run_git_in(args: &[&str], dir: &Path) {
-    let status = Command::new("git").args(args).current_dir(dir).status().unwrap();
-    assert!(status.success(), "git {:?} in {} failed", args, dir.display());
+    let status = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .unwrap();
+    assert!(
+        status.success(),
+        "git {:?} in {} failed",
+        args,
+        dir.display()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -139,7 +152,10 @@ fn mindc_deps_phase_de_d_path_dep_clean_lock_builds() {
     let manifest = load_manifest(&app_dir);
 
     // Lock first.
-    let lock_opts = LockOpts { check: false, update_pkg: None };
+    let lock_opts = LockOpts {
+        check: false,
+        update_pkg: None,
+    };
     run_lock(&app_dir, &manifest, &lock_opts).unwrap();
 
     // Verify lockfile was written.
@@ -148,12 +164,23 @@ fn mindc_deps_phase_de_d_path_dep_clean_lock_builds() {
     assert_eq!(lock.dependencies.len(), 1);
     let entry = &lock.dependencies[0];
     assert_eq!(entry.name, "my-lib");
-    assert!(entry.source.starts_with("path:"), "source should be path:, got {}", entry.source);
-    assert!(!entry.tree_sha256.is_empty(), "tree_sha256 should not be empty");
+    assert!(
+        entry.source.starts_with("path:"),
+        "source should be path:, got {}",
+        entry.source
+    );
+    assert!(
+        !entry.tree_sha256.is_empty(),
+        "tree_sha256 should not be empty"
+    );
 
     // resolve_and_verify_deps should pass.
     let result = resolve_and_verify_deps(&app_dir, &manifest);
-    assert!(result.is_ok(), "verify should pass after lock: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "verify should pass after lock: {:?}",
+        result
+    );
 }
 
 /// D-2: Modified path dep content fails build with clear drift error.
@@ -226,11 +253,18 @@ fn mindc_deps_phase_de_d_lock_regenerates_after_change() {
     run_lock(&app_dir, &manifest, &LockOpts::default()).unwrap();
     let second_hash = load_lock(&app_dir).dependencies[0].tree_sha256.clone();
 
-    assert_ne!(first_hash, second_hash, "hash must change after source mutation");
+    assert_ne!(
+        first_hash, second_hash,
+        "hash must change after source mutation"
+    );
 
     // Verify should pass now.
     let result = resolve_and_verify_deps(&app_dir, &manifest);
-    assert!(result.is_ok(), "verify should pass after re-lock: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "verify should pass after re-lock: {:?}",
+        result
+    );
 }
 
 /// D-4: Absent Mind.lock fails `resolve_and_verify_deps` with AP-2 message.
@@ -293,10 +327,17 @@ fn mindc_deps_phase_de_d_lock_check_fails_on_stale() {
     run_lock(&app_dir, &manifest, &LockOpts::default()).unwrap();
 
     // Mutate the lib source so tree hash changes.
-    fs::write(lib_dir.join("src/main.mind"), "// changed\nfn main() -> i64 { 1 }\n").unwrap();
+    fs::write(
+        lib_dir.join("src/main.mind"),
+        "// changed\nfn main() -> i64 { 1 }\n",
+    )
+    .unwrap();
 
     // --check should report stale.
-    let check_opts = LockOpts { check: true, update_pkg: None };
+    let check_opts = LockOpts {
+        check: true,
+        update_pkg: None,
+    };
     let result = run_lock(&app_dir, &manifest, &check_opts);
     assert!(result.is_err(), "--check should fail on stale lockfile");
     let msg = result.unwrap_err().to_string();
@@ -318,7 +359,11 @@ fn mindc_deps_phase_de_d_no_deps_no_lockfile_required() {
     let manifest = load_manifest(&app_dir);
     // No Mind.lock, no deps → should succeed.
     let result = resolve_and_verify_deps(&app_dir, &manifest);
-    assert!(result.is_ok(), "no-deps project should not need Mind.lock: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "no-deps project should not need Mind.lock: {:?}",
+        result
+    );
 }
 
 /// D-7: Multiple path deps are all sorted and recorded.
@@ -383,13 +428,21 @@ fn mindc_deps_phase_de_e_git_dep_rev_resolves_and_caches() {
     assert_eq!(lock.dependencies.len(), 1);
     let entry = &lock.dependencies[0];
     assert_eq!(entry.name, "remote-lib");
-    assert!(entry.source.starts_with("git+"), "source should be git+: {}", entry.source);
+    assert!(
+        entry.source.starts_with("git+"),
+        "source should be git+: {}",
+        entry.source
+    );
     assert!(!entry.rev.is_empty(), "rev should be populated");
     assert!(!entry.tree_sha256.is_empty());
 
     // verify should pass.
     let result = resolve_and_verify_deps(&app, &manifest);
-    assert!(result.is_ok(), "verify should pass after git lock: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "verify should pass after git lock: {:?}",
+        result
+    );
 }
 
 /// E-2: Git dep with `branch` resolves to a commit SHA at lock time.
@@ -446,11 +499,17 @@ fn mindc_deps_phase_de_e_lock_check_absent_fails() {
 
     let manifest = load_manifest(&app);
     // No Mind.lock.
-    let check_opts = LockOpts { check: true, update_pkg: None };
+    let check_opts = LockOpts {
+        check: true,
+        update_pkg: None,
+    };
     let result = run_lock(&app, &manifest, &check_opts);
     assert!(result.is_err(), "--check on absent Mind.lock should fail");
     let msg = result.unwrap_err().to_string();
-    assert!(msg.contains("Mind.lock"), "error should mention Mind.lock: {msg}");
+    assert!(
+        msg.contains("Mind.lock"),
+        "error should mention Mind.lock: {msg}"
+    );
 }
 
 /// E-4: `mindc fetch` populates cache without touching lockfile.
@@ -534,10 +593,16 @@ fn mindc_deps_phase_de_e_clean_removes_target_dir() {
     fs::create_dir_all(&target).unwrap();
     fs::write(target.join("artifact.o"), b"fake").unwrap();
 
-    let opts = CleanOpts { cache: false, all: false };
+    let opts = CleanOpts {
+        cache: false,
+        all: false,
+    };
     run_clean(&app, &opts).unwrap();
 
-    assert!(!target.exists(), "target/ should be removed after mindc clean");
+    assert!(
+        !target.exists(),
+        "target/ should be removed after mindc clean"
+    );
 }
 
 /// E-7: `mindc clean --all` removes both `target/` and the cache entries.
@@ -557,7 +622,10 @@ fn mindc_deps_phase_de_e_clean_all_removes_target_and_cache() {
     // cache cleanup without touching the real ~/.mindenv. We achieve this
     // by passing a fake path and checking the `CleanOpts::all` code path
     // handles a missing cache dir gracefully (no panic).
-    let opts = CleanOpts { cache: false, all: true };
+    let opts = CleanOpts {
+        cache: false,
+        all: true,
+    };
     run_clean(&app, &opts).unwrap();
     assert!(!target.exists(), "target/ removed by --all");
 }
@@ -569,7 +637,11 @@ fn mindc_deps_phase_de_e_tree_sha256_is_stable() {
     let tmp2 = TempDir::new().unwrap();
 
     for tmp in [tmp1.path(), tmp2.path()] {
-        fs::write(tmp.join("Mind.toml"), "[package]\nname=\"x\"\nversion=\"1.0.0\"\n").unwrap();
+        fs::write(
+            tmp.join("Mind.toml"),
+            "[package]\nname=\"x\"\nversion=\"1.0.0\"\n",
+        )
+        .unwrap();
         fs::create_dir_all(tmp.join("src")).unwrap();
         fs::write(tmp.join("src/main.mind"), "fn main() -> i64 { 0 }\n").unwrap();
     }

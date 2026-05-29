@@ -112,10 +112,7 @@ fn find_mlir_capi_libs() -> Vec<PathBuf> {
 /// Run `nm <lib>` and collect all global text symbols (lines containing ` T `).
 /// Returns a sorted, deduplicated list of symbol names.
 fn nm_symbols(lib: &PathBuf) -> Vec<String> {
-    let out = Command::new("nm")
-        .arg("--defined-only")
-        .arg(lib)
-        .output();
+    let out = Command::new("nm").arg("--defined-only").arg(lib).output();
     let out = match out {
         Ok(o) => o,
         Err(_) => return Vec::new(), // nm not available

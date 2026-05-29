@@ -40,7 +40,7 @@
 //! any way that changes the lowered result.
 
 use libmind::fmt::format_source;
-use libmind::pipeline::{compile_to_mic_text, CompileOptions};
+use libmind::pipeline::{CompileOptions, compile_to_mic_text};
 use libmind::project::MindcraftFormatConfig;
 
 fn default_cfg() -> MindcraftFormatConfig {
@@ -85,18 +85,16 @@ fn check_ir_preservation(label: &str, src: &str) -> bool {
     };
 
     // Step 3: compile the formatted source.
-    let ir_after = compile_to_mic_text(&formatted, &opts)
-        .unwrap_or_else(|e| {
-            panic!(
-                "ir_preservation: formatted source failed to compile for {label}: {e}\n\
+    let ir_after = compile_to_mic_text(&formatted, &opts).unwrap_or_else(|e| {
+        panic!(
+            "ir_preservation: formatted source failed to compile for {label}: {e}\n\
                  Formatted source:\n{formatted}"
-            )
-        });
+        )
+    });
 
     // Step 4: byte-identical assertion.
     assert_eq!(
-        ir_before,
-        ir_after,
+        ir_before, ir_after,
         "IR changed after formatting for {label}.\n\
          This means the formatter altered program semantics.\n\
          IR before formatting:\n{ir_before}\n\
@@ -152,7 +150,9 @@ fn ir_preservation_blas() {
 #[test]
 fn ir_preservation_parser_main() {
     let path = manifest_dir().join("examples/parser/main.mind");
-    if !path.exists() { return; }
+    if !path.exists() {
+        return;
+    }
     let src = std::fs::read_to_string(&path).unwrap();
     let exercised = check_ir_preservation("examples/parser/main.mind", &src);
     let _ = exercised;
@@ -161,7 +161,9 @@ fn ir_preservation_parser_main() {
 #[test]
 fn ir_preservation_typecheck_main() {
     let path = manifest_dir().join("examples/typecheck/main.mind");
-    if !path.exists() { return; }
+    if !path.exists() {
+        return;
+    }
     let src = std::fs::read_to_string(&path).unwrap();
     let exercised = check_ir_preservation("examples/typecheck/main.mind", &src);
     let _ = exercised;
@@ -170,7 +172,9 @@ fn ir_preservation_typecheck_main() {
 #[test]
 fn ir_preservation_emit_ir_main() {
     let path = manifest_dir().join("examples/emit_ir/main.mind");
-    if !path.exists() { return; }
+    if !path.exists() {
+        return;
+    }
     let src = std::fs::read_to_string(&path).unwrap();
     let exercised = check_ir_preservation("examples/emit_ir/main.mind", &src);
     let _ = exercised;
@@ -204,8 +208,8 @@ fn ir_preservation_summary() {
             skipped += 1;
             continue;
         }
-        let src = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("cannot read {rel}: {e}"));
+        let src =
+            std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {rel}: {e}"));
         if check_ir_preservation(rel, &src) {
             exercised += 1;
         } else {
@@ -213,9 +217,7 @@ fn ir_preservation_summary() {
         }
     }
 
-    eprintln!(
-        "ir_preservation_summary: {exercised} exercised, {skipped} skipped (compile-scope)"
-    );
+    eprintln!("ir_preservation_summary: {exercised} exercised, {skipped} skipped (compile-scope)");
 
     // At minimum the stdlib files that use only core MIND should all compile.
     // If ALL files skipped, something is wrong with the compile pipeline.

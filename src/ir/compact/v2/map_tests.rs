@@ -28,9 +28,16 @@ use super::types::{Graph, GraphEq, Map, MapValue};
 
 fn residual_with_map() -> Graph {
     let mut g = Graph::residual_block();
-    g.map.insert("target.canonical_name", MapValue::String("cpu_avx2".into()));
-    g.map.insert("evidence_chain.substrate", MapValue::String("x86_avx2".into()));
-    g.map.insert("evidence_chain.trace_hash", MapValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef]));
+    g.map
+        .insert("target.canonical_name", MapValue::String("cpu_avx2".into()));
+    g.map.insert(
+        "evidence_chain.substrate",
+        MapValue::String("x86_avx2".into()),
+    );
+    g.map.insert(
+        "evidence_chain.trace_hash",
+        MapValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+    );
     g
 }
 
@@ -118,7 +125,10 @@ fn populated_map_binary_roundtrip_byte_identical() {
     let bin1 = emit_micb_bytes(&g);
     let parsed = parse_micb(&mut Cursor::new(&bin1)).expect("parse failed");
     let bin2 = emit_micb_bytes(&parsed);
-    assert_eq!(bin1, bin2, "emit_micb(parse_micb(emit_micb(G))) != emit_micb(G)");
+    assert_eq!(
+        bin1, bin2,
+        "emit_micb(parse_micb(emit_micb(G))) != emit_micb(G)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +155,10 @@ fn text_binary_cross_roundtrip() {
     let parsed3 = parse_mic2(&text3).expect("parse text failed");
     let bin3 = emit_micb_bytes(&parsed3);
 
-    assert_eq!(bin2, bin3, "binary→parse→text→parse→binary must be lossless");
+    assert_eq!(
+        bin2, bin3,
+        "binary→parse→text→parse→binary must be lossless"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -170,7 +183,10 @@ fn canonical_sorting_unsorted_input_produces_sorted_output() {
     let m_pos = map_block.find("m.key").expect("m.key missing");
     let z_pos = map_block.find("z.key").expect("z.key missing");
 
-    assert!(a_pos < m_pos && m_pos < z_pos, "keys must be sorted: a < m < z");
+    assert!(
+        a_pos < m_pos && m_pos < z_pos,
+        "keys must be sorted: a < m < z"
+    );
 }
 
 #[test]
@@ -249,10 +265,15 @@ fn map_value_type_string() {
     let mut g = Graph::residual_block();
     g.map.insert("k", MapValue::String("hello world".into()));
     let text = emit_mic2(&g);
-    assert!(text.contains("k = \"hello world\""), "string value must appear quoted");
+    assert!(
+        text.contains("k = \"hello world\""),
+        "string value must appear quoted"
+    );
     let parsed = parse_mic2(&text).expect("parse failed");
-    assert_eq!(parsed.map.iter().find(|(k, _)| *k == "k").map(|(_, v)| v),
-               Some(&MapValue::String("hello world".into())));
+    assert_eq!(
+        parsed.map.iter().find(|(k, _)| *k == "k").map(|(_, v)| v),
+        Some(&MapValue::String("hello world".into()))
+    );
 }
 
 #[test]
@@ -262,8 +283,10 @@ fn map_value_type_int_positive() {
     let text = emit_mic2(&g);
     assert!(text.contains("n = 42"), "int 42 must appear unquoted");
     let parsed = parse_mic2(&text).expect("parse failed");
-    assert_eq!(parsed.map.iter().find(|(k, _)| *k == "n").map(|(_, v)| v),
-               Some(&MapValue::Int(42)));
+    assert_eq!(
+        parsed.map.iter().find(|(k, _)| *k == "n").map(|(_, v)| v),
+        Some(&MapValue::Int(42))
+    );
 }
 
 #[test]
@@ -273,8 +296,10 @@ fn map_value_type_int_negative() {
     let text = emit_mic2(&g);
     assert!(text.contains("n = -7"), "negative int must appear");
     let parsed = parse_mic2(&text).expect("parse failed");
-    assert_eq!(parsed.map.iter().find(|(k, _)| *k == "n").map(|(_, v)| v),
-               Some(&MapValue::Int(-7)));
+    assert_eq!(
+        parsed.map.iter().find(|(k, _)| *k == "n").map(|(_, v)| v),
+        Some(&MapValue::Int(-7))
+    );
 }
 
 #[test]
@@ -285,19 +310,27 @@ fn map_value_type_int_zero_normalised() {
     assert!(text.contains("z = 0"), "zero must emit as '0'");
     // Parsing "0" must not fail and must produce Int(0).
     let parsed = parse_mic2(&text).expect("parse failed");
-    assert_eq!(parsed.map.iter().find(|(k, _)| *k == "z").map(|(_, v)| v),
-               Some(&MapValue::Int(0)));
+    assert_eq!(
+        parsed.map.iter().find(|(k, _)| *k == "z").map(|(_, v)| v),
+        Some(&MapValue::Int(0))
+    );
 }
 
 #[test]
 fn map_value_type_bytes() {
     let mut g = Graph::residual_block();
-    g.map.insert("h", MapValue::Bytes(vec![0xca, 0xfe, 0xf0, 0x0d]));
+    g.map
+        .insert("h", MapValue::Bytes(vec![0xca, 0xfe, 0xf0, 0x0d]));
     let text = emit_mic2(&g);
-    assert!(text.contains("h = bytes(0xcafef00d)"), "bytes must be lowercase hex");
+    assert!(
+        text.contains("h = bytes(0xcafef00d)"),
+        "bytes must be lowercase hex"
+    );
     let parsed = parse_mic2(&text).expect("parse failed");
-    assert_eq!(parsed.map.iter().find(|(k, _)| *k == "h").map(|(_, v)| v),
-               Some(&MapValue::Bytes(vec![0xca, 0xfe, 0xf0, 0x0d])));
+    assert_eq!(
+        parsed.map.iter().find(|(k, _)| *k == "h").map(|(_, v)| v),
+        Some(&MapValue::Bytes(vec![0xca, 0xfe, 0xf0, 0x0d]))
+    );
 }
 
 #[test]
@@ -310,12 +343,14 @@ fn map_value_type_nested() {
     assert!(text.contains("parent = {"), "nested map must use braces");
     assert!(text.contains("child = 1"), "nested key must appear");
     let parsed = parse_mic2(&text).expect("parse failed");
-    match parsed.map.iter().find(|(k, _)| *k == "parent").map(|(_, v)| v) {
+    match parsed
+        .map
+        .iter()
+        .find(|(k, _)| *k == "parent")
+        .map(|(_, v)| v)
+    {
         Some(MapValue::Nested(inner)) => {
-            assert_eq!(
-                inner.iter().next(),
-                Some(("child", &MapValue::Int(1)))
-            );
+            assert_eq!(inner.iter().next(), Some(("child", &MapValue::Int(1))));
         }
         other => panic!("expected Nested, got: {:?}", other),
     }
@@ -346,7 +381,10 @@ fn detection_rule_eof_means_empty_map() {
     let bin = emit_micb_bytes(&g);
     // Verify binary has no MAP (empty graph must emit identically to pre-2.1).
     let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse failed");
-    assert!(parsed.map.is_empty(), "mic@2 binary without MAP must parse as empty map");
+    assert!(
+        parsed.map.is_empty(),
+        "mic@2 binary without MAP must parse as empty map"
+    );
 }
 
 #[test]
@@ -356,7 +394,10 @@ fn detection_rule_0x4d_signals_map() {
     let bin = emit_micb_bytes(&g);
     // Must parse without error and contain the key.
     let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse failed");
-    assert!(!parsed.map.is_empty(), "MAP marker 0x4D must trigger MAP decode");
+    assert!(
+        !parsed.map.is_empty(),
+        "MAP marker 0x4D must trigger MAP decode"
+    );
     assert_eq!(
         parsed.map.iter().find(|(k, _)| *k == "k").map(|(_, v)| v),
         Some(&MapValue::Int(1))
@@ -372,7 +413,10 @@ fn detection_rule_bad_byte_is_parse_error() {
     bin.push(0x42); // 'B'
 
     let result = parse_micb(&mut Cursor::new(&bin));
-    assert!(result.is_err(), "unexpected byte after output must be a parse error");
+    assert!(
+        result.is_err(),
+        "unexpected byte after output must be a parse error"
+    );
     let err = result.unwrap_err();
     assert!(
         err.message.contains("0x42") || err.message.contains("unexpected"),
@@ -400,7 +444,10 @@ fn limit_key_depth_too_large_text() {
     let deep_key = "a.b.c.d.e.f.g.h.i"; // 9 segments
     let input = format!("mic@2\nT0 f16 128\na X T0\nO 0\nmap {{\n  {deep_key} = 1\n}}\n");
     let result = parse_mic2(&input);
-    assert!(result.is_err(), "key with 9 segments must be rejected (limit 8)");
+    assert!(
+        result.is_err(),
+        "key with 9 segments must be rejected (limit 8)"
+    );
 }
 
 #[test]
@@ -448,10 +495,16 @@ fn compat_mic2_binary_parses_as_empty_map() {
     let g = Graph::residual_block(); // no MAP
     let bin = emit_micb_bytes(&g);
     let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse failed");
-    assert!(parsed.map.is_empty(), "mic@2 binary must parse as empty MAP under mic@2.1");
+    assert!(
+        parsed.map.is_empty(),
+        "mic@2 binary must parse as empty MAP under mic@2.1"
+    );
     // Re-emit must be byte-identical to the original.
     let bin2 = emit_micb_bytes(&parsed);
-    assert_eq!(bin, bin2, "round-trip of mic@2 binary via mic@2.1 must be byte-identical");
+    assert_eq!(
+        bin, bin2,
+        "round-trip of mic@2 binary via mic@2.1 must be byte-identical"
+    );
 }
 
 #[test]
@@ -463,22 +516,35 @@ fn compat_mic21_empty_map_is_identical_bytes_to_mic2() {
 
     let bin_21 = emit_micb_bytes(&g_21);
     let bin_2 = emit_micb_bytes(&g_2);
-    assert_eq!(bin_21, bin_2, "mic@2.1 with empty MAP must be identical bytes to mic@2");
+    assert_eq!(
+        bin_21, bin_2,
+        "mic@2.1 with empty MAP must be identical bytes to mic@2"
+    );
 
     let text_21 = emit_mic2(&g_21);
     let text_2 = emit_mic2(&g_2);
-    assert_eq!(text_21, text_2, "mic@2.1 text with empty MAP must be identical to mic@2 text");
+    assert_eq!(
+        text_21, text_2,
+        "mic@2.1 text with empty MAP must be identical to mic@2 text"
+    );
 }
 
 #[test]
 fn compat_mic2_text_parses_as_empty_map() {
     // A classic mic@2 text parses under the mic@2.1 parser as empty MAP.
-    let classic = "mic@2\nT0 f16 128 128\nT1 f16 128\na X T0\np W T0\np b T1\nm 0 1\n+ 3 2\nr 4\n+ 5 0\nO 6";
+    let classic =
+        "mic@2\nT0 f16 128 128\nT1 f16 128\na X T0\np W T0\np b T1\nm 0 1\n+ 3 2\nr 4\n+ 5 0\nO 6";
     let parsed = parse_mic2(classic).expect("parse failed");
-    assert!(parsed.map.is_empty(), "classic mic@2 text must parse as empty MAP");
+    assert!(
+        parsed.map.is_empty(),
+        "classic mic@2 text must parse as empty MAP"
+    );
     // Re-emit must be byte-identical.
     let re_emitted = emit_mic2(&parsed);
-    assert_eq!(classic, re_emitted, "round-trip of mic@2 text via mic@2.1 must be identical");
+    assert_eq!(
+        classic, re_emitted,
+        "round-trip of mic@2 text via mic@2.1 must be identical"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -494,7 +560,11 @@ fn binary_string_table_dedup_for_map_keys() {
     let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse failed");
     // Should parse correctly.
     assert_eq!(
-        parsed.map.iter().find(|(k, _)| *k == "meta.info").map(|(_, v)| v),
+        parsed
+            .map
+            .iter()
+            .find(|(k, _)| *k == "meta.info")
+            .map(|(_, v)| v),
         Some(&MapValue::String("X".into()))
     );
     // And the binary should still round-trip.
@@ -516,11 +586,19 @@ fn map_int_i64_min_max_roundtrip() {
     let text = emit_mic2(&g);
     let parsed_text = parse_mic2(&text).expect("parse text failed");
     assert_eq!(
-        parsed_text.map.iter().find(|(k, _)| *k == "lo").map(|(_, v)| v),
+        parsed_text
+            .map
+            .iter()
+            .find(|(k, _)| *k == "lo")
+            .map(|(_, v)| v),
         Some(&MapValue::Int(i64::MIN))
     );
     assert_eq!(
-        parsed_text.map.iter().find(|(k, _)| *k == "hi").map(|(_, v)| v),
+        parsed_text
+            .map
+            .iter()
+            .find(|(k, _)| *k == "hi")
+            .map(|(_, v)| v),
         Some(&MapValue::Int(i64::MAX))
     );
 
@@ -528,11 +606,19 @@ fn map_int_i64_min_max_roundtrip() {
     let bin = emit_micb_bytes(&g);
     let parsed_bin = parse_micb(&mut Cursor::new(&bin)).expect("parse binary failed");
     assert_eq!(
-        parsed_bin.map.iter().find(|(k, _)| *k == "lo").map(|(_, v)| v),
+        parsed_bin
+            .map
+            .iter()
+            .find(|(k, _)| *k == "lo")
+            .map(|(_, v)| v),
         Some(&MapValue::Int(i64::MIN))
     );
     assert_eq!(
-        parsed_bin.map.iter().find(|(k, _)| *k == "hi").map(|(_, v)| v),
+        parsed_bin
+            .map
+            .iter()
+            .find(|(k, _)| *k == "hi")
+            .map(|(_, v)| v),
         Some(&MapValue::Int(i64::MAX))
     );
 }
@@ -543,11 +629,7 @@ fn map_int_i64_min_max_roundtrip() {
 
 #[test]
 fn map_bytes_various_lengths() {
-    for case in [
-        vec![],
-        vec![0x00],
-        vec![0xFF, 0xFE, 0xFD],
-    ] {
+    for case in [vec![], vec![0x00], vec![0xFF, 0xFE, 0xFD]] {
         let mut g = Graph::residual_block();
         g.map.insert("b", MapValue::Bytes(case.clone()));
         let text = emit_mic2(&g);
@@ -555,14 +637,20 @@ fn map_bytes_various_lengths() {
         assert_eq!(
             parsed.map.iter().find(|(k, _)| *k == "b").map(|(_, v)| v),
             Some(&MapValue::Bytes(case.clone())),
-            "bytes round-trip failed for {:?}", case
+            "bytes round-trip failed for {:?}",
+            case
         );
         let bin = emit_micb_bytes(&g);
         let parsed_bin = parse_micb(&mut Cursor::new(&bin)).expect("parse binary failed");
         assert_eq!(
-            parsed_bin.map.iter().find(|(k, _)| *k == "b").map(|(_, v)| v),
+            parsed_bin
+                .map
+                .iter()
+                .find(|(k, _)| *k == "b")
+                .map(|(_, v)| v),
             Some(&MapValue::Bytes(case.clone())),
-            "binary bytes round-trip failed for {:?}", case
+            "binary bytes round-trip failed for {:?}",
+            case
         );
     }
 }

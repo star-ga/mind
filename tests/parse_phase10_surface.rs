@@ -13,7 +13,7 @@
 //! development machines where the variable points at a directory of
 //! `.mind` files, the sweep asserts the documented high-watermark.
 
-use libmind::{compile_source, CompileOptions};
+use libmind::{CompileOptions, compile_source};
 
 fn parses(src: &str) -> bool {
     compile_source(src, &CompileOptions::default()).is_ok()

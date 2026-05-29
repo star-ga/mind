@@ -244,9 +244,9 @@ fn regex_mind_auto_exports_public_symbols() {
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn bundled_stdlib_resolves_use_std_regex() {
-    use libmind::project::stdlib::parsed_stdlib_modules;
     use libmind::project::module_table::build_module_table;
-    use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+    use libmind::project::stdlib::parsed_stdlib_modules;
+    use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
     let stdlib = parsed_stdlib_modules();
     let refs: Vec<(String, &libmind::ast::Module)> =
@@ -330,15 +330,17 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
 
         unsafe {
             let lib = libloading::Library::new(&so_path).expect("dlopen regex_smoke.so");
-            type CompileFn  = unsafe extern "C" fn(i64, i64) -> i64;
-            type IsMatchFn  = unsafe extern "C" fn(i64, i64, i64) -> i64;
-            type FindFn     = unsafe extern "C" fn(i64, i64, i64) -> i64;
+            type CompileFn = unsafe extern "C" fn(i64, i64) -> i64;
+            type IsMatchFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
+            type FindFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
             type FindAllLFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 
-            let compile_fn:   libloading::Symbol<CompileFn>  = lib.get(b"smoke_rx_compile\0").unwrap();
-            let is_match_fn:  libloading::Symbol<IsMatchFn>  = lib.get(b"smoke_rx_is_match\0").unwrap();
-            let find_fn:      libloading::Symbol<FindFn>     = lib.get(b"smoke_rx_find\0").unwrap();
-            let find_all_fn:  libloading::Symbol<FindAllLFn> = lib.get(b"smoke_rx_find_all_len\0").unwrap();
+            let compile_fn: libloading::Symbol<CompileFn> = lib.get(b"smoke_rx_compile\0").unwrap();
+            let is_match_fn: libloading::Symbol<IsMatchFn> =
+                lib.get(b"smoke_rx_is_match\0").unwrap();
+            let find_fn: libloading::Symbol<FindFn> = lib.get(b"smoke_rx_find\0").unwrap();
+            let find_all_fn: libloading::Symbol<FindAllLFn> =
+                lib.get(b"smoke_rx_find_all_len\0").unwrap();
 
             // Fixture 1: literal match
             let pat1 = b"hello";
@@ -346,24 +348,36 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             assert!(rx1 != 0, "literal pattern must compile");
 
             let inp1 = b"say hello world";
-            assert_eq!(is_match_fn(rx1, inp1.as_ptr() as i64, inp1.len() as i64), 1,
-                "literal 'hello' must match in 'say hello world'");
+            assert_eq!(
+                is_match_fn(rx1, inp1.as_ptr() as i64, inp1.len() as i64),
+                1,
+                "literal 'hello' must match in 'say hello world'"
+            );
 
             let inp1b = b"no match here";
-            assert_eq!(is_match_fn(rx1, inp1b.as_ptr() as i64, inp1b.len() as i64), 0,
-                "literal 'hello' must NOT match in 'no match here'");
+            assert_eq!(
+                is_match_fn(rx1, inp1b.as_ptr() as i64, inp1b.len() as i64),
+                0,
+                "literal 'hello' must NOT match in 'no match here'"
+            );
 
             // Fixture 2: find byte offset
             let offset = find_fn(rx1, inp1.as_ptr() as i64, inp1.len() as i64);
-            assert_eq!(offset, 4, "literal 'hello' starts at offset 4 in 'say hello world'");
+            assert_eq!(
+                offset, 4,
+                "literal 'hello' starts at offset 4 in 'say hello world'"
+            );
 
             // Fixture 3: character class [a-z]+
             let pat3 = b"[a-z]+";
             let rx3 = compile_fn(pat3.as_ptr() as i64, pat3.len() as i64);
             assert!(rx3 != 0, "character class pattern must compile");
             let inp3 = b"abc123def";
-            assert_eq!(is_match_fn(rx3, inp3.as_ptr() as i64, inp3.len() as i64), 1,
-                "[a-z]+ must match in 'abc123def'");
+            assert_eq!(
+                is_match_fn(rx3, inp3.as_ptr() as i64, inp3.len() as i64),
+                1,
+                "[a-z]+ must match in 'abc123def'"
+            );
 
             // Fixture 4: alternation a|b
             let pat4 = b"cat|dog";
@@ -372,20 +386,32 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             let inp4a = b"I have a cat";
             let inp4b = b"I have a dog";
             let inp4c = b"I have a fish";
-            assert_eq!(is_match_fn(rx4, inp4a.as_ptr() as i64, inp4a.len() as i64), 1,
-                "cat|dog must match 'cat'");
-            assert_eq!(is_match_fn(rx4, inp4b.as_ptr() as i64, inp4b.len() as i64), 1,
-                "cat|dog must match 'dog'");
-            assert_eq!(is_match_fn(rx4, inp4c.as_ptr() as i64, inp4c.len() as i64), 0,
-                "cat|dog must NOT match 'fish'");
+            assert_eq!(
+                is_match_fn(rx4, inp4a.as_ptr() as i64, inp4a.len() as i64),
+                1,
+                "cat|dog must match 'cat'"
+            );
+            assert_eq!(
+                is_match_fn(rx4, inp4b.as_ptr() as i64, inp4b.len() as i64),
+                1,
+                "cat|dog must match 'dog'"
+            );
+            assert_eq!(
+                is_match_fn(rx4, inp4c.as_ptr() as i64, inp4c.len() as i64),
+                0,
+                "cat|dog must NOT match 'fish'"
+            );
 
             // Fixture 5: \d+ (digit class)
             let pat5 = b"\\d+";
             let rx5 = compile_fn(pat5.as_ptr() as i64, pat5.len() as i64);
             assert!(rx5 != 0, "\\d+ pattern must compile");
             let inp5 = b"abc 123 xyz";
-            assert_eq!(is_match_fn(rx5, inp5.as_ptr() as i64, inp5.len() as i64), 1,
-                "\\d+ must match digits in 'abc 123 xyz'");
+            assert_eq!(
+                is_match_fn(rx5, inp5.as_ptr() as i64, inp5.len() as i64),
+                1,
+                "\\d+ must match digits in 'abc 123 xyz'"
+            );
 
             // Fixture 6: ^ start anchor
             let pat6 = b"^hello";
@@ -393,10 +419,16 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             assert!(rx6 != 0, "^hello must compile");
             let inp6a = b"hello world";
             let inp6b = b"say hello world";
-            assert_eq!(is_match_fn(rx6, inp6a.as_ptr() as i64, inp6a.len() as i64), 1,
-                "^hello must match at start");
-            assert_eq!(is_match_fn(rx6, inp6b.as_ptr() as i64, inp6b.len() as i64), 0,
-                "^hello must NOT match in middle");
+            assert_eq!(
+                is_match_fn(rx6, inp6a.as_ptr() as i64, inp6a.len() as i64),
+                1,
+                "^hello must match at start"
+            );
+            assert_eq!(
+                is_match_fn(rx6, inp6b.as_ptr() as i64, inp6b.len() as i64),
+                0,
+                "^hello must NOT match in middle"
+            );
 
             // Fixture 7: find_all count
             let pat7 = b"[0-9]+";
@@ -404,7 +436,10 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             assert!(rx7 != 0, "[0-9]+ must compile");
             let inp7 = b"1 22 333";
             let n = find_all_fn(rx7, inp7.as_ptr() as i64, inp7.len() as i64);
-            assert_eq!(n, 3, "find_all([0-9]+, '1 22 333') must find 3 matches; got {n}");
+            assert_eq!(
+                n, 3,
+                "find_all([0-9]+, '1 22 333') must find 3 matches; got {n}"
+            );
 
             // Fixture 8: negated character class [^abc]
             let pat8 = b"[^abc]+";
@@ -412,10 +447,16 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             assert!(rx8 != 0, "[^abc]+ must compile");
             let inp8a = b"xyz";
             let inp8b = b"aaa";
-            assert_eq!(is_match_fn(rx8, inp8a.as_ptr() as i64, inp8a.len() as i64), 1,
-                "[^abc]+ must match 'xyz'");
-            assert_eq!(is_match_fn(rx8, inp8b.as_ptr() as i64, inp8b.len() as i64), 0,
-                "[^abc]+ must NOT match 'aaa'");
+            assert_eq!(
+                is_match_fn(rx8, inp8a.as_ptr() as i64, inp8a.len() as i64),
+                1,
+                "[^abc]+ must match 'xyz'"
+            );
+            assert_eq!(
+                is_match_fn(rx8, inp8b.as_ptr() as i64, inp8b.len() as i64),
+                0,
+                "[^abc]+ must NOT match 'aaa'"
+            );
 
             // Fixture 9: email-like pattern \w+@\w+\.\w+
             let pat9 = b"\\w+@\\w+\\.\\w+";
@@ -423,10 +464,16 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             assert!(rx9 != 0, "email-like pattern must compile");
             let inp9a = b"user@example.com";
             let inp9b = b"not-an-email";
-            assert_eq!(is_match_fn(rx9, inp9a.as_ptr() as i64, inp9a.len() as i64), 1,
-                "email-like pattern must match 'user@example.com'");
-            assert_eq!(is_match_fn(rx9, inp9b.as_ptr() as i64, inp9b.len() as i64), 0,
-                "email-like pattern must NOT match 'not-an-email'");
+            assert_eq!(
+                is_match_fn(rx9, inp9a.as_ptr() as i64, inp9a.len() as i64),
+                1,
+                "email-like pattern must match 'user@example.com'"
+            );
+            assert_eq!(
+                is_match_fn(rx9, inp9b.as_ptr() as i64, inp9b.len() as i64),
+                0,
+                "email-like pattern must NOT match 'not-an-email'"
+            );
 
             // Fixture 10: IPv4-like pattern \d+\.\d+\.\d+\.\d+
             let pat10 = b"\\d+\\.\\d+\\.\\d+\\.\\d+";
@@ -434,12 +481,18 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             assert!(rx10 != 0, "IPv4-like pattern must compile");
             let inp10a = b"192.168.1.1";
             let inp10b = b"not.an.ip";
-            assert_eq!(is_match_fn(rx10, inp10a.as_ptr() as i64, inp10a.len() as i64), 1,
-                "IPv4-like pattern must match '192.168.1.1'");
+            assert_eq!(
+                is_match_fn(rx10, inp10a.as_ptr() as i64, inp10a.len() as i64),
+                1,
+                "IPv4-like pattern must match '192.168.1.1'"
+            );
             // "not.an.ip" has no digit sequences at all in the right spots
             let inp10c = b"abc.def.ghi.jkl";
-            assert_eq!(is_match_fn(rx10, inp10c.as_ptr() as i64, inp10c.len() as i64), 0,
-                "IPv4-like pattern must NOT match all-alpha octets");
+            assert_eq!(
+                is_match_fn(rx10, inp10c.as_ptr() as i64, inp10c.len() as i64),
+                0,
+                "IPv4-like pattern must NOT match all-alpha octets"
+            );
         }
     }
 }

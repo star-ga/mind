@@ -125,8 +125,7 @@ fn cdylib_has_no_undefined_mind_symbols() {
     // are pulled in by std.io's __mind_read / __mind_write / pread /
     // pwrite passthrough (see runtime-support/mind_intrinsics.c).
     let allowed = [
-        "malloc", "free", "memcpy", "realloc",
-        "read", "write", "pread", "pwrite",
+        "malloc", "free", "memcpy", "realloc", "read", "write", "pread", "pwrite",
     ];
 
     for sym_line in &undefined {

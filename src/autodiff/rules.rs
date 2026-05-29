@@ -15,7 +15,7 @@
 use crate::ir::{BinOp, Instr, ValueId};
 
 use super::engine::GradientOps;
-use super::engine::{as_invalid, AutodiffError};
+use super::engine::{AutodiffError, as_invalid};
 
 pub(super) fn apply_rule(
     ops: &mut impl GradientOps,
@@ -61,7 +61,9 @@ pub(super) fn apply_rule(
                 // it the variants don't exist and the match is already complete.
                 #[cfg(feature = "std-surface")]
                 BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                    return Err(AutodiffError::UnsupportedOp { op: "bitwise/shift" });
+                    return Err(AutodiffError::UnsupportedOp {
+                        op: "bitwise/shift",
+                    });
                 }
             }
             Ok(())

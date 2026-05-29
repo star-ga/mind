@@ -130,9 +130,10 @@ pub fn attach_evidence_chain(
     );
 
     // Step 1: insert all keys except trace_hash.
-    graph
-        .map
-        .insert("evidence_chain.substrate", MapValue::String(substrate.to_owned()));
+    graph.map.insert(
+        "evidence_chain.substrate",
+        MapValue::String(substrate.to_owned()),
+    );
     if let Some(p) = parent {
         graph
             .map
@@ -142,9 +143,10 @@ pub fn attach_evidence_chain(
         "evidence_chain.determinism",
         MapValue::String(determinism.as_str().to_owned()),
     );
-    graph
-        .map
-        .insert("evidence_chain.toolchain", MapValue::String(toolchain.to_owned()));
+    graph.map.insert(
+        "evidence_chain.toolchain",
+        MapValue::String(toolchain.to_owned()),
+    );
 
     // Step 2-4: compute trace_hash via §3.2.
     let hash = compute_trace_hash(graph);
@@ -358,12 +360,7 @@ mod tests {
         Graph::residual_block()
     }
 
-    fn attach(
-        g: &mut Graph,
-        substrate: &str,
-        parent: Option<[u8; 32]>,
-        det: Determinism,
-    ) {
+    fn attach(g: &mut Graph, substrate: &str, parent: Option<[u8; 32]>, det: Determinism) {
         attach_evidence_chain(g, substrate, parent, det, "0.7.0");
     }
 
@@ -445,7 +442,10 @@ mod tests {
         let parsed = parse_mic2(&text1).expect("parse failed");
         let text2 = emit_mic2(&parsed);
 
-        assert_eq!(text1, text2, "emit(parse(emit(G))) must equal emit(G) for text");
+        assert_eq!(
+            text1, text2,
+            "emit(parse(emit(G))) must equal emit(G) for text"
+        );
     }
 
     #[test]
@@ -556,24 +556,28 @@ mod tests {
         let mut g = base_graph();
         attach(&mut g, "x86_avx2", None, Determinism::Deterministic);
 
-        let has_parent = g
-            .map
-            .iter()
-            .any(|(k, _)| k == "evidence_chain.parent");
-        assert!(!has_parent, "absent parent must not produce evidence_chain.parent key");
+        let has_parent = g.map.iter().any(|(k, _)| k == "evidence_chain.parent");
+        assert!(
+            !has_parent,
+            "absent parent must not produce evidence_chain.parent key"
+        );
     }
 
     #[test]
     fn parent_present_includes_parent_key_with_correct_bytes() {
         let parent_hash: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
 
         let mut g = base_graph();
-        attach(&mut g, "x86_avx2", Some(parent_hash), Determinism::Deterministic);
+        attach(
+            &mut g,
+            "x86_avx2",
+            Some(parent_hash),
+            Determinism::Deterministic,
+        );
 
         let stored = g
             .map
@@ -585,7 +589,11 @@ mod tests {
             })
             .expect("evidence_chain.parent must be present when parent supplied");
 
-        assert_eq!(stored, parent_hash.to_vec(), "stored parent must match supplied hash");
+        assert_eq!(
+            stored,
+            parent_hash.to_vec(),
+            "stored parent must match supplied hash"
+        );
         assert_eq!(stored.len(), 32);
     }
 
@@ -596,8 +604,18 @@ mod tests {
         let mut g_no_parent = base_graph();
         let mut g_with_parent = base_graph();
 
-        attach(&mut g_no_parent, "x86_avx2", None, Determinism::Deterministic);
-        attach(&mut g_with_parent, "x86_avx2", Some(parent_hash), Determinism::Deterministic);
+        attach(
+            &mut g_no_parent,
+            "x86_avx2",
+            None,
+            Determinism::Deterministic,
+        );
+        attach(
+            &mut g_with_parent,
+            "x86_avx2",
+            Some(parent_hash),
+            Determinism::Deterministic,
+        );
 
         let h_no = g_no_parent
             .map
@@ -629,7 +647,10 @@ mod tests {
             "unannotated graph must not contain evidence_chain in text output"
         );
         // Must end with canonical output line, no MAP block.
-        assert!(text.ends_with("O 6"), "canonical residual block must end with 'O 6'");
+        assert!(
+            text.ends_with("O 6"),
+            "canonical residual block must end with 'O 6'"
+        );
     }
 
     #[test]
@@ -675,8 +696,14 @@ mod tests {
         remove_evidence_chain(&mut g);
 
         let has_ec = g.map.iter().any(|(k, _)| k.starts_with("evidence_chain."));
-        assert!(!has_ec, "remove_evidence_chain must clear all evidence_chain.* keys");
-        assert!(g.map.is_empty(), "map must be empty after removing only evidence keys");
+        assert!(
+            !has_ec,
+            "remove_evidence_chain must clear all evidence_chain.* keys"
+        );
+        assert!(
+            g.map.is_empty(),
+            "map must be empty after removing only evidence keys"
+        );
     }
 
     /// Double-attach without an intervening `remove_evidence_chain` must trip
@@ -742,7 +769,11 @@ mod tests {
                 other => panic!("expected Bytes, got {other:?}"),
             })
             .expect("parent missing after round-trip");
-        assert_eq!(parent, h1.to_vec(), "round-tripped parent must equal link 1 trace_hash");
+        assert_eq!(
+            parent,
+            h1.to_vec(),
+            "round-tripped parent must equal link 1 trace_hash"
+        );
 
         // (b) A verifier recomputing §3.2 over the parsed graph reproduces the
         //     stored trace_hash — the chain link is independently checkable.
@@ -778,7 +809,8 @@ mod tests {
         // Mutate the attested graph AFTER the hash was sealed, without
         // re-attaching. The §3.2 recompute now covers the new key, so the
         // stored trace_hash no longer matches.
-        g.map.insert("stage", MapValue::String("tampered".to_owned()));
+        g.map
+            .insert("stage", MapValue::String("tampered".to_owned()));
 
         let report = verify_evidence_chain(&g).expect("decodes, but must report invalid");
         assert!(
@@ -797,7 +829,12 @@ mod tests {
     fn verify_reports_parent_and_nonroot() {
         let parent_hash = [0x7eu8; 32];
         let mut g = base_graph();
-        attach(&mut g, "arm_neon", Some(parent_hash), Determinism::Nondeterministic);
+        attach(
+            &mut g,
+            "arm_neon",
+            Some(parent_hash),
+            Determinism::Nondeterministic,
+        );
 
         let report = verify_evidence_chain(&g).expect("valid evidence must verify");
         assert!(report.trace_hash_valid);
@@ -816,7 +853,10 @@ mod tests {
         let parsed = parse_micb(&mut Cursor::new(&bin)).expect("parse_micb failed");
 
         let report = verify_evidence_chain(&parsed).expect("round-tripped evidence must verify");
-        assert!(report.trace_hash_valid, "evidence must verify after a MIC-B round-trip");
+        assert!(
+            report.trace_hash_valid,
+            "evidence must verify after a MIC-B round-trip"
+        );
         assert_eq!(report.substrate, "x86_avx2");
     }
 
@@ -842,10 +882,9 @@ mod tests {
         assert_eq!(
             abc,
             [
-                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
-                0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
-                0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
-                0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
+                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
+                0xf2, 0x00, 0x15, 0xad,
             ],
             "SHA-256(\"abc\") must equal the FIPS 180-4 vector — the frozen \
              conformance target the pure-MIND std.sha256 endpoint must also hit"
@@ -856,26 +895,22 @@ mod tests {
         assert_eq!(
             empty,
             [
-                0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14,
-                0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
-                0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
-                0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
+                0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f,
+                0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b,
+                0x78, 0x52, 0xb8, 0x55,
             ],
             "SHA-256(\"\") must equal the FIPS 180-4 empty-string vector"
         );
 
         // FIPS 180-4 §B.2: the two-block (56-byte) vector exercises padding
         // that spills into a second compression block.
-        let two_block = trace_sha256(
-            b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
-        );
+        let two_block = trace_sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq");
         assert_eq!(
             two_block,
             [
-                0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8,
-                0xe5, 0xc0, 0x26, 0x93, 0x0c, 0x3e, 0x60, 0x39,
-                0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67,
-                0xf6, 0xec, 0xed, 0xd4, 0x19, 0xdb, 0x06, 0xc1,
+                0x24, 0x8d, 0x6a, 0x61, 0xd2, 0x06, 0x38, 0xb8, 0xe5, 0xc0, 0x26, 0x93, 0x0c, 0x3e,
+                0x60, 0x39, 0xa3, 0x3c, 0xe4, 0x59, 0x64, 0xff, 0x21, 0x67, 0xf6, 0xec, 0xed, 0xd4,
+                0x19, 0xdb, 0x06, 0xc1,
             ],
             "SHA-256 of the FIPS 180-4 two-block vector must match"
         );
@@ -905,9 +940,8 @@ mod tests {
     /// The pinned §3.2 trace_hash of `Graph::residual_block()` with substrate
     /// `x86_avx2`, no parent, deterministic, toolchain `0.7.0`.
     const EXPECTED_RESIDUAL_TRACE_HASH: [u8; 32] = [
-        0x5a, 0x62, 0x9d, 0x55, 0x9b, 0x25, 0x17, 0xe0,
-        0x44, 0xd7, 0x21, 0x61, 0x41, 0x29, 0x0f, 0x57,
-        0xb9, 0x1b, 0x5d, 0x9b, 0x4c, 0xf5, 0x18, 0x85,
-        0x31, 0xee, 0x8e, 0x6f, 0x1d, 0x72, 0x29, 0x82,
+        0x5a, 0x62, 0x9d, 0x55, 0x9b, 0x25, 0x17, 0xe0, 0x44, 0xd7, 0x21, 0x61, 0x41, 0x29, 0x0f,
+        0x57, 0xb9, 0x1b, 0x5d, 0x9b, 0x4c, 0xf5, 0x18, 0x85, 0x31, 0xee, 0x8e, 0x6f, 0x1d, 0x72,
+        0x29, 0x82,
     ];
 }

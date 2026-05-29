@@ -14,7 +14,7 @@
 
 use libmind::ast::Node;
 use libmind::eval::lower::lower_to_ir;
-use libmind::ir::{canonicalize_module, Instr};
+use libmind::ir::{Instr, canonicalize_module};
 use libmind::parser;
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 //! Cerebras backend target — first-class surface tests.
 
 use libmind::BackendTarget;
-use libmind::{compile_source, CompileError, CompileOptions};
+use libmind::{CompileError, CompileOptions, compile_source};
 
 #[test]
 fn cerebras_target_displays_as_cerebras() {

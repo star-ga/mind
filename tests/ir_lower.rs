@@ -69,7 +69,7 @@ fn lower_no_export_keeps_exports_empty() {
 // `CompileOptions.manifest_exports`, alongside any in-source `export {}`.
 #[test]
 fn compile_pipeline_merges_manifest_exports() {
-    use libmind::pipeline::{compile_source, CompileOptions};
+    use libmind::pipeline::{CompileOptions, compile_source};
     let opts = CompileOptions {
         manifest_exports: vec!["from_manifest".to_string()],
         ..Default::default()
@@ -83,7 +83,7 @@ fn compile_pipeline_merges_manifest_exports() {
 // v0.2.9 hardening — manifest exports list is bounded and identifier-checked.
 #[test]
 fn manifest_exports_reject_oversized_list() {
-    use libmind::pipeline::{compile_source, CompileError, CompileOptions};
+    use libmind::pipeline::{CompileError, CompileOptions, compile_source};
     let opts = CompileOptions {
         manifest_exports: (0..2048).map(|i| format!("name_{i}")).collect(),
         ..Default::default()
@@ -94,7 +94,7 @@ fn manifest_exports_reject_oversized_list() {
 
 #[test]
 fn manifest_exports_reject_non_identifier() {
-    use libmind::pipeline::{compile_source, CompileError, CompileOptions};
+    use libmind::pipeline::{CompileError, CompileOptions, compile_source};
     for bad in [
         "",
         "../../evil",

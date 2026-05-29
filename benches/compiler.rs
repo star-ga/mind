@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use libmind::{compile_source, CompileOptions};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use libmind::{CompileOptions, compile_source};
 
 #[cfg(feature = "mlir-lowering")]
 use libmind::lower_to_mlir;

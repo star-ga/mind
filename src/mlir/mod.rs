@@ -24,4 +24,4 @@ mod lowering;
 #[cfg(feature = "ffi-c-user")]
 pub mod c_export;
 
-pub use lowering::{compile_ir_to_mlir_text, lower_ir_to_mlir, MlirLowerError, MlirModule};
+pub use lowering::{MlirLowerError, MlirModule, compile_ir_to_mlir_text, lower_ir_to_mlir};

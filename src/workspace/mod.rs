@@ -82,10 +82,8 @@ impl WorkspaceOpts {
         };
 
         // Build name→member index.
-        let by_name: HashMap<&str, &WorkspaceMember> = all_members
-            .iter()
-            .map(|m| (m.name.as_str(), m))
-            .collect();
+        let by_name: HashMap<&str, &WorkspaceMember> =
+            all_members.iter().map(|m| (m.name.as_str(), m)).collect();
 
         // BFS to collect the target and all its workspace-member prerequisites.
         let mut needed: HashSet<String> = HashSet::new();
@@ -219,14 +217,16 @@ struct RawDepTable {
 /// build order.
 pub fn resolve_workspace_members(root: &Path) -> Result<Vec<WorkspaceMember>, WorkspaceError> {
     let manifest_path = root.join("Mind.toml");
-    let text = fs::read_to_string(&manifest_path)
-        .map_err(|e| WorkspaceError::ManifestError(format!("cannot read {}: {e}", manifest_path.display())))?;
-    let raw: RawManifest = toml::from_str(&text)
-        .map_err(|e| WorkspaceError::ManifestError(format!("parse error in {}: {e}", manifest_path.display())))?;
+    let text = fs::read_to_string(&manifest_path).map_err(|e| {
+        WorkspaceError::ManifestError(format!("cannot read {}: {e}", manifest_path.display()))
+    })?;
+    let raw: RawManifest = toml::from_str(&text).map_err(|e| {
+        WorkspaceError::ManifestError(format!("parse error in {}: {e}", manifest_path.display()))
+    })?;
 
-    let workspace_cfg = raw
-        .workspace
-        .ok_or_else(|| WorkspaceError::ManifestError("no [workspace] block in root Mind.toml".into()))?;
+    let workspace_cfg = raw.workspace.ok_or_else(|| {
+        WorkspaceError::ManifestError("no [workspace] block in root Mind.toml".into())
+    })?;
 
     // Expand member patterns to concrete directories.
     let mut member_dirs: Vec<PathBuf> = Vec::new();
@@ -307,9 +307,7 @@ pub fn toposort_members(
     }
 
     // Kahn's algorithm.
-    let mut queue: VecDeque<usize> = (0..n)
-        .filter(|&i| in_degree[i] == 0)
-        .collect();
+    let mut queue: VecDeque<usize> = (0..n).filter(|&i| in_degree[i] == 0).collect();
 
     let mut sorted: Vec<usize> = Vec::with_capacity(n);
     while let Some(node) = queue.pop_front() {
@@ -328,9 +326,7 @@ pub fn toposort_members(
             .filter(|&i| in_degree[i] > 0)
             .map(|i| members[i].name.as_str())
             .collect();
-        return Err(WorkspaceError::DependencyCycle(
-            cycle_names.join(" -> "),
-        ));
+        return Err(WorkspaceError::DependencyCycle(cycle_names.join(" -> ")));
     }
 
     Ok(sorted.into_iter().map(|i| members[i].clone()).collect())
@@ -350,18 +346,18 @@ fn load_member(
     let text = fs::read_to_string(&manifest_path)
         .map_err(|_| WorkspaceError::MissingMemberManifest(dir.to_path_buf()))?;
 
-    let raw: RawManifest = toml::from_str(&text)
-        .map_err(|e| WorkspaceError::ManifestError(format!(
-            "parse error in {}: {e}",
-            manifest_path.display()
-        )))?;
+    let raw: RawManifest = toml::from_str(&text).map_err(|e| {
+        WorkspaceError::ManifestError(format!("parse error in {}: {e}", manifest_path.display()))
+    })?;
 
     let pkg_name = raw
         .package
-        .ok_or_else(|| WorkspaceError::ManifestError(format!(
-            "member at {} has no [package] block",
-            dir.display()
-        )))?
+        .ok_or_else(|| {
+            WorkspaceError::ManifestError(format!(
+                "member at {} has no [package] block",
+                dir.display()
+            ))
+        })?
         .name;
 
     // Resolve path deps.
@@ -437,10 +433,7 @@ fn expand_glob_pattern(workspace_root: &Path, pattern: &str) -> Vec<PathBuf> {
         if !path.is_dir() {
             continue;
         }
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy();
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
         if glob_match_simple(tail_pattern, &name) {
             result.push(path);
         }

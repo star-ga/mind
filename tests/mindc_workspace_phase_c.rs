@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 use libmind::workspace::{
-    resolve_workspace_members, toposort_members, WorkspaceError, WorkspaceOpts,
+    WorkspaceError, WorkspaceOpts, resolve_workspace_members, toposort_members,
 };
 
 // ---------------------------------------------------------------------------
@@ -28,9 +28,7 @@ fn write_manifest(dir: &Path, name: &str, path_deps: &[(&str, &str)]) {
     if !path_deps.is_empty() {
         content.push_str("\n[dependencies]\n");
         for (dep_name, dep_path) in path_deps {
-            content.push_str(&format!(
-                "{dep_name} = {{ path = \"{dep_path}\" }}\n"
-            ));
+            content.push_str(&format!("{dep_name} = {{ path = \"{dep_path}\" }}\n"));
         }
     }
     fs::write(dir.join("Mind.toml"), &content).unwrap();
@@ -105,7 +103,12 @@ fn workspace_two_members_no_deps_resolves_both() {
     write_source(&beta, HELLO_MIND);
 
     let members = resolve_workspace_members(root).expect("should resolve workspace members");
-    assert_eq!(members.len(), 2, "expected 2 members, got {}", members.len());
+    assert_eq!(
+        members.len(),
+        2,
+        "expected 2 members, got {}",
+        members.len()
+    );
 
     let names: Vec<&str> = members.iter().map(|m| m.name.as_str()).collect();
     assert!(names.contains(&"alpha"), "alpha missing from members");
@@ -140,7 +143,11 @@ fn workspace_toposort_dep_order_a_before_b() {
     let names: Vec<&str> = sorted.iter().map(|m| m.name.as_str()).collect();
     let pos_a = names.iter().position(|&n| n == "a").expect("a in sorted");
     let pos_b = names.iter().position(|&n| n == "b").expect("b in sorted");
-    assert!(pos_a < pos_b, "a must come before b in topo order; got {:?}", names);
+    assert!(
+        pos_a < pos_b,
+        "a must come before b in topo order; got {:?}",
+        names
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +188,10 @@ fn workspace_package_filter_selects_member_and_deps() {
     let names: Vec<&str> = selected.iter().map(|m| m.name.as_str()).collect();
     assert!(names.contains(&"b"), "b must be in selected");
     assert!(names.contains(&"a"), "a must be in selected (dep of b)");
-    assert!(!names.contains(&"c"), "c must not be in selected (unrelated)");
+    assert!(
+        !names.contains(&"c"),
+        "c must not be in selected (unrelated)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +321,10 @@ fn workspace_missing_member_manifest_errors() {
     fs::create_dir_all(root.join("crates/absent")).unwrap();
 
     let result = resolve_workspace_members(root);
-    assert!(result.is_err(), "expected error for missing member manifest");
+    assert!(
+        result.is_err(),
+        "expected error for missing member manifest"
+    );
     let msg = result.unwrap_err().to_string();
     assert!(
         msg.contains("absent") || msg.contains("Mind.toml"),
@@ -339,11 +352,12 @@ fn workspace_member_root_paths_are_canonical() {
     let m = &members[0];
 
     // The member root must be an absolute path pointing to the alpha dir.
-    assert!(m.root.is_absolute(), "member root should be absolute: {}", m.root.display());
-    assert_eq!(
-        m.root.file_name().unwrap().to_str().unwrap(),
-        "alpha"
+    assert!(
+        m.root.is_absolute(),
+        "member root should be absolute: {}",
+        m.root.display()
     );
+    assert_eq!(m.root.file_name().unwrap().to_str().unwrap(), "alpha");
 }
 
 // ---------------------------------------------------------------------------
@@ -387,7 +401,11 @@ fn workspace_toposort_three_member_chain() {
 
     write_workspace_manifest(root, &["a", "b", "c"], &[]);
 
-    for (name, deps) in [("a", vec![]), ("b", vec![("a", "../a")]), ("c", vec![("b", "../b")])] {
+    for (name, deps) in [
+        ("a", vec![]),
+        ("b", vec![("a", "../a")]),
+        ("c", vec![("b", "../b")]),
+    ] {
         let dir = root.join(name);
         fs::create_dir_all(&dir).unwrap();
         write_manifest(&dir, name, &deps);
@@ -410,10 +428,18 @@ fn workspace_toposort_three_member_chain() {
 #[test]
 fn workspace_error_exit_codes() {
     let cycle = WorkspaceError::DependencyCycle("a -> b -> a".into());
-    assert_eq!(cycle.exit_code(), 2, "cycle is a usage/config error → exit 2");
+    assert_eq!(
+        cycle.exit_code(),
+        2,
+        "cycle is a usage/config error → exit 2"
+    );
 
     let missing = WorkspaceError::MissingMemberManifest(PathBuf::from("crates/absent"));
-    assert_eq!(missing.exit_code(), 1, "missing manifest is a build error → exit 1");
+    assert_eq!(
+        missing.exit_code(),
+        1,
+        "missing manifest is a build error → exit 1"
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -24,9 +24,9 @@
 
 use libmind::parser;
 use libmind::project::module_table::{
-    build_module_table, collect_module_exports, ModuleExports, ModuleTable,
+    ModuleExports, ModuleTable, build_module_table, collect_module_exports,
 };
-use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
 const VEC_MIND_SRC: &str = include_str!("../std/vec.mind");
 const STRING_MIND_SRC: &str = include_str!("../std/string.mind");

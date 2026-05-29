@@ -22,7 +22,7 @@ use libmind::ast::Module;
 use libmind::parser;
 use libmind::project::module_table::build_module_table;
 use libmind::project::stdlib::parsed_stdlib_modules;
-use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
 fn build_table_with_stdlib() -> libmind::project::module_table::ModuleTable {
     let stdlib: Vec<(String, Module)> = parsed_stdlib_modules();
@@ -77,7 +77,11 @@ fn tui_phase_b_carries_signatures() {
     let clear = table
         .lookup_imported_fn("tui_clear_screen")
         .expect("tui_clear_screen must be in the bundled stdlib");
-    assert_eq!(clear.param_types.len(), 1, "tui_clear_screen takes (String)");
+    assert_eq!(
+        clear.param_types.len(),
+        1,
+        "tui_clear_screen takes (String)"
+    );
 }
 
 #[test]

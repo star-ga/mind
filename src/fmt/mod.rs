@@ -23,10 +23,10 @@
 //! - Comment re-attachment from the trivia stream.
 //! - String-literal contents passed through bytewise.
 
-mod printer;
 pub mod cli;
+mod printer;
 
-use crate::parser::{parse_with_trivia, ParseError};
+use crate::parser::{ParseError, parse_with_trivia};
 use crate::project::MindcraftFormatConfig;
 
 /// Error type for formatting operations.

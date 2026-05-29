@@ -36,7 +36,7 @@
 #![cfg(feature = "std-surface")]
 
 use libmind::parser::parse;
-use libmind::type_checker::{check_module_types, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types};
 
 // ---------------------------------------------------------------------------
 // Tests 1–3: interpreter-level semantics through the MIND evaluator.
@@ -205,13 +205,17 @@ static GENREF_SO: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 type GenAllocFn = unsafe extern "C" fn(i64) -> i64;
 type GenDerefFn = unsafe extern "C" fn(i64) -> i64;
-type GenFreeFn  = unsafe extern "C" fn(i64) -> i64;
+type GenFreeFn = unsafe extern "C" fn(i64) -> i64;
 
 fn build_genref_so() -> Option<PathBuf> {
     let clang = which::which("clang").ok()?;
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let src = manifest_dir.join(RUNTIME_SUPPORT_REL);
-    assert!(src.exists(), "runtime-support source must exist at {}", src.display());
+    assert!(
+        src.exists(),
+        "runtime-support source must exist at {}",
+        src.display()
+    );
 
     let out_dir = manifest_dir.join("target").join("genref_smoke");
     std::fs::create_dir_all(&out_dir).expect("create target/genref_smoke");
@@ -223,7 +227,8 @@ fn build_genref_so() -> Option<PathBuf> {
 
     let mut cmd = Command::new(&clang);
     cmd.args([
-        "-x", "c",
+        "-x",
+        "c",
         src.to_str().unwrap(),
         "-shared",
         "-O2",
@@ -237,7 +242,8 @@ fn build_genref_so() -> Option<PathBuf> {
     assert!(
         status.success(),
         "clang failed to compile {} → {}",
-        src.display(), so_path.display()
+        src.display(),
+        so_path.display()
     );
     Some(so_path)
 }
@@ -288,7 +294,10 @@ fn genref_runtime_alloc_then_deref_returns_live_ptr() {
     assert_ne!(handle, 0, "gen_alloc(64) must return a non-zero handle");
 
     let ptr = call_gen_deref(&lib, handle);
-    assert_ne!(ptr, 0, "gen_deref of a live handle must return a non-zero pointer");
+    assert_ne!(
+        ptr, 0,
+        "gen_deref of a live handle must return a non-zero pointer"
+    );
 }
 
 // Test 6b — gen_free makes subsequent gen_deref return 0 (dangling detected).
@@ -312,7 +321,10 @@ fn genref_runtime_free_makes_deref_return_zero() {
 
     // After free the same handle must deref to 0.
     let ptr_after = call_gen_deref(&lib, handle);
-    assert_eq!(ptr_after, 0, "deref after gen_free must return 0 (dangling detected)");
+    assert_eq!(
+        ptr_after, 0,
+        "deref after gen_free must return 0 (dangling detected)"
+    );
 }
 
 // Test 6c — slot reuse: old handle from a freed slot returns 0 even after

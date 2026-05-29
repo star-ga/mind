@@ -136,10 +136,17 @@ fn build_dot_so() -> Option<&'static PathBuf> {
         let so_path = dir.join("mind_xsi_dot_q16.so");
         std::fs::write(&src_path, SRC).expect("write workload .mind source");
         let status = Command::new(mindc_path())
-            .args([src_path.to_str().unwrap(), "--emit-shared", so_path.to_str().unwrap()])
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
             .status()
             .expect("spawn mindc --emit-shared");
-        assert!(status.success(), "mindc --emit-shared failed for the dot-q16 workload");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the dot-q16 workload"
+        );
         Some(so_path)
     })
     .as_ref()
@@ -366,7 +373,10 @@ fn gemv_q16_reproducibility_gate() {
 
     // 1. Within-run exactness vs the scalar gemv oracle.
     let oracle = ref_gemv_q16_scalar(&w, &x, rows, cols);
-    assert_eq!(y, oracle, "{id}: gemv vector path diverged from the scalar oracle");
+    assert_eq!(
+        y, oracle,
+        "{id}: gemv vector path diverged from the scalar oracle"
+    );
 
     // 2. Canonical hash pinned to the committed per-substrate reference.
     let computed = canonical_hash_i32s(&y);
@@ -458,7 +468,10 @@ fn gemm_q16_reproducibility_gate() {
 
     // 1. Within-run exactness vs the scalar GEMM oracle.
     let oracle = ref_gemm_q16_scalar(&a, &bt, m, k, n);
-    assert_eq!(c, oracle, "{id}: gemm vector path diverged from the scalar oracle");
+    assert_eq!(
+        c, oracle,
+        "{id}: gemm vector path diverged from the scalar oracle"
+    );
 
     // 2. Canonical hash pinned to the committed per-substrate reference.
     let computed = canonical_hash_i32s(&c);

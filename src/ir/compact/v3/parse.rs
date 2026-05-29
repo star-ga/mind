@@ -20,16 +20,16 @@ use crate::ir::{IRModule, IndexSpec, Instr, SliceSpec, ValueId};
 use crate::types::ShapeDim;
 use crate::types::intern::intern_str;
 
-use super::{MIC3_MAGIC, MIC3_VERSION};
 use super::emit::{
-    byte_to_binop, byte_to_dtype, byte_to_padding, byte_to_sparse_layout,
-    OP_ARRAY_LOAD, OP_BINOP, OP_CALL, OP_CONST_ARRAY, OP_CONST_F64, OP_CONST_I64,
-    OP_CONST_TENSOR, OP_CONV2D, OP_CONV2D_GRAD_FILTER, OP_CONV2D_GRAD_INPUT, OP_DOT,
-    OP_EXPAND_DIMS, OP_EXTERN_FN_DECL, OP_FN_DEF, OP_GATHER, OP_IF, OP_INDEX, OP_MATMUL,
-    OP_MEAN, OP_OUTPUT, OP_PARAM, OP_REGION, OP_RESHAPE, OP_RETURN, OP_SLICE, OP_SPARSE_ATTR,
-    OP_SQUEEZE, OP_SUM, OP_TRANSPOSE, OP_VEC_FMA, OP_VEC_LOAD, OP_VEC_LOAD_I32,
-    OP_VEC_MUL_ADD_Q16, OP_VEC_REDUCE_ADD, OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE,
+    OP_ARRAY_LOAD, OP_BINOP, OP_CALL, OP_CONST_ARRAY, OP_CONST_F64, OP_CONST_I64, OP_CONST_TENSOR,
+    OP_CONV2D, OP_CONV2D_GRAD_FILTER, OP_CONV2D_GRAD_INPUT, OP_DOT, OP_EXPAND_DIMS,
+    OP_EXTERN_FN_DECL, OP_FN_DEF, OP_GATHER, OP_IF, OP_INDEX, OP_MATMUL, OP_MEAN, OP_OUTPUT,
+    OP_PARAM, OP_REGION, OP_RESHAPE, OP_RETURN, OP_SLICE, OP_SPARSE_ATTR, OP_SQUEEZE, OP_SUM,
+    OP_TRANSPOSE, OP_VEC_FMA, OP_VEC_LOAD, OP_VEC_LOAD_I32, OP_VEC_MUL_ADD_Q16, OP_VEC_REDUCE_ADD,
+    OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE, byte_to_binop, byte_to_dtype, byte_to_padding,
+    byte_to_sparse_layout,
 };
+use super::{MIC3_MAGIC, MIC3_VERSION};
 use crate::ir::compact::v2::{uleb128_read, zigzag_decode};
 
 // ─── Error type ──────────────────────────────────────────────────────────────
@@ -50,7 +50,9 @@ impl std::error::Error for Mic3Error {}
 
 impl From<std::io::Error> for Mic3Error {
     fn from(e: std::io::Error) -> Self {
-        Self { message: e.to_string() }
+        Self {
+            message: e.to_string(),
+        }
     }
 }
 
@@ -92,10 +94,13 @@ fn read_bool<R: Read>(r: &mut R) -> Result<bool, Mic3Error> {
 
 fn read_string<R: Read>(r: &mut R, strings: &[String]) -> Result<String, Mic3Error> {
     let idx = read_uleb(r)? as usize;
-    strings
-        .get(idx)
-        .cloned()
-        .ok_or_else(|| err!("string index {} out of bounds (table size {})", idx, strings.len()))
+    strings.get(idx).cloned().ok_or_else(|| {
+        err!(
+            "string index {} out of bounds (table size {})",
+            idx,
+            strings.len()
+        )
+    })
 }
 
 fn read_opt_vid<R: Read>(r: &mut R) -> Result<Option<ValueId>, Mic3Error> {
@@ -192,12 +197,9 @@ fn read_shape<R: Read>(r: &mut R, strings: &[String]) -> Result<Vec<ShapeDim>, M
 // ─── TypeAnn decode (std-surface) ─────────────────────────────────────────────
 
 #[cfg(feature = "std-surface")]
-fn read_type_ann<R: Read>(
-    r: &mut R,
-    strings: &[String],
-) -> Result<crate::ast::TypeAnn, Mic3Error> {
-    use crate::ast::TypeAnn;
+fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::TypeAnn, Mic3Error> {
     use super::emit::byte_to_sparse_layout;
+    use crate::ast::TypeAnn;
 
     let tag = read_u8(r)?;
     match tag {
@@ -227,17 +229,26 @@ fn read_type_ann<R: Read>(
         0x0A => {
             let mutable = read_bool(r)?;
             let element = read_type_ann(r, strings)?;
-            Ok(TypeAnn::Slice { mutable, element: Box::new(element) })
+            Ok(TypeAnn::Slice {
+                mutable,
+                element: Box::new(element),
+            })
         }
         0x0B => {
             let length = read_uleb(r)? as u32;
             let element = read_type_ann(r, strings)?;
-            Ok(TypeAnn::Array { element: Box::new(element), length })
+            Ok(TypeAnn::Array {
+                element: Box::new(element),
+                length,
+            })
         }
         0x0C => {
             let mutable = read_bool(r)?;
             let target = read_type_ann(r, strings)?;
-            Ok(TypeAnn::Ref { mutable, target: Box::new(target) })
+            Ok(TypeAnn::Ref {
+                mutable,
+                target: Box::new(target),
+            })
         }
         0x0D => {
             let name = read_string(r, strings)?;
@@ -266,12 +277,19 @@ fn read_type_ann<R: Read>(
             for _ in 0..ns {
                 shape.push(read_shape_dim(r, strings)?);
             }
-            Ok(TypeAnn::SparseTensor { layout, element: Box::new(element), shape })
+            Ok(TypeAnn::SparseTensor {
+                layout,
+                element: Box::new(element),
+                shape,
+            })
         }
         0x10 => {
             let mutable = read_bool(r)?;
             let pointee = read_type_ann(r, strings)?;
-            Ok(TypeAnn::RawPtr { mutable, pointee: Box::new(pointee) })
+            Ok(TypeAnn::RawPtr {
+                mutable,
+                pointee: Box::new(pointee),
+            })
         }
         0x11 => {
             let np = read_uleb(r)? as usize;
@@ -318,8 +336,8 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         OP_BINOP => {
             let dst = read_vid(r)?;
             let op_byte = read_u8(r)?;
-            let op = byte_to_binop(op_byte)
-                .ok_or_else(|| err!("unknown binop byte: {}", op_byte))?;
+            let op =
+                byte_to_binop(op_byte).ok_or_else(|| err!("unknown binop byte: {}", op_byte))?;
             let lhs = read_vid(r)?;
             let rhs = read_vid(r)?;
             Ok(Instr::BinOp { dst, op, lhs, rhs })
@@ -329,20 +347,34 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let src = read_vid(r)?;
             let axes = read_i64_vec(r)?;
             let keepdims = read_bool(r)?;
-            Ok(Instr::Sum { dst, src, axes, keepdims })
+            Ok(Instr::Sum {
+                dst,
+                src,
+                axes,
+                keepdims,
+            })
         }
         OP_MEAN => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
             let axes = read_i64_vec(r)?;
             let keepdims = read_bool(r)?;
-            Ok(Instr::Mean { dst, src, axes, keepdims })
+            Ok(Instr::Mean {
+                dst,
+                src,
+                axes,
+                keepdims,
+            })
         }
         OP_RESHAPE => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
             let new_shape = read_shape(r, strings)?;
-            Ok(Instr::Reshape { dst, src, new_shape })
+            Ok(Instr::Reshape {
+                dst,
+                src,
+                new_shape,
+            })
         }
         OP_EXPAND_DIMS => {
             let dst = read_vid(r)?;
@@ -381,9 +413,16 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let stride_h = read_uleb(r)? as usize;
             let stride_w = read_uleb(r)? as usize;
             let pb = read_u8(r)?;
-            let padding = byte_to_padding(pb)
-                .ok_or_else(|| err!("unknown padding byte: {}", pb))?;
-            Ok(Instr::Conv2d { dst, input, filter, stride_h, stride_w, padding })
+            let padding =
+                byte_to_padding(pb).ok_or_else(|| err!("unknown padding byte: {}", pb))?;
+            Ok(Instr::Conv2d {
+                dst,
+                input,
+                filter,
+                stride_h,
+                stride_w,
+                padding,
+            })
         }
         OP_CONV2D_GRAD_INPUT => {
             let dst = read_vid(r)?;
@@ -396,9 +435,17 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let stride_h = read_uleb(r)? as usize;
             let stride_w = read_uleb(r)? as usize;
             let pb = read_u8(r)?;
-            let padding = byte_to_padding(pb)
-                .ok_or_else(|| err!("unknown padding byte: {}", pb))?;
-            Ok(Instr::Conv2dGradInput { dst, dy, filter, input_shape, stride_h, stride_w, padding })
+            let padding =
+                byte_to_padding(pb).ok_or_else(|| err!("unknown padding byte: {}", pb))?;
+            Ok(Instr::Conv2dGradInput {
+                dst,
+                dy,
+                filter,
+                input_shape,
+                stride_h,
+                stride_w,
+                padding,
+            })
         }
         OP_CONV2D_GRAD_FILTER => {
             let dst = read_vid(r)?;
@@ -411,9 +458,17 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let stride_h = read_uleb(r)? as usize;
             let stride_w = read_uleb(r)? as usize;
             let pb = read_u8(r)?;
-            let padding = byte_to_padding(pb)
-                .ok_or_else(|| err!("unknown padding byte: {}", pb))?;
-            Ok(Instr::Conv2dGradFilter { dst, input, dy, filter_shape, stride_h, stride_w, padding })
+            let padding =
+                byte_to_padding(pb).ok_or_else(|| err!("unknown padding byte: {}", pb))?;
+            Ok(Instr::Conv2dGradFilter {
+                dst,
+                input,
+                dy,
+                filter_shape,
+                stride_h,
+                stride_w,
+                padding,
+            })
         }
         OP_INDEX => {
             let dst = read_vid(r)?;
@@ -437,7 +492,12 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
                 let start = read_i64(r)?;
                 let end = read_opt_i64(r)?;
                 let stride = read_i64(r)?;
-                dims.push(SliceSpec { axis, start, end, stride });
+                dims.push(SliceSpec {
+                    axis,
+                    start,
+                    end,
+                    stride,
+                });
             }
             Ok(Instr::Slice { dst, src, dims })
         }
@@ -446,7 +506,12 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let src = read_vid(r)?;
             let indices = read_vid(r)?;
             let axis = read_i64(r)?;
-            Ok(Instr::Gather { dst, src, indices, axis })
+            Ok(Instr::Gather {
+                dst,
+                src,
+                indices,
+                axis,
+            })
         }
         OP_OUTPUT => {
             let id = read_vid(r)?;
@@ -470,7 +535,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings)?);
             }
-            Ok(Instr::FnDef { name, params, ret_id, body, reap_threshold })
+            Ok(Instr::FnDef {
+                name,
+                params,
+                ret_id,
+                body,
+                reap_threshold,
+            })
         }
         OP_CALL => {
             let dst = read_vid(r)?;
@@ -521,7 +592,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             }
             let live_vars = read_named_vids(r, strings)?;
             let init_ids = read_vid_vec(r)?;
-            Ok(Instr::While { cond_id, cond_instrs, body, live_vars, init_ids })
+            Ok(Instr::While {
+                cond_id,
+                cond_instrs,
+                body,
+                live_vars,
+                init_ids,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_IF => {
@@ -562,7 +639,12 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let base = read_vid(r)?;
             let offset = read_vid(r)?;
             let lanes = read_uleb(r)? as usize;
-            Ok(Instr::VecLoad { dst, base, offset, lanes })
+            Ok(Instr::VecLoad {
+                dst,
+                base,
+                offset,
+                lanes,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_VEC_FMA => {
@@ -571,7 +653,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let b = read_vid(r)?;
             let acc = read_vid(r)?;
             let lanes = read_uleb(r)? as usize;
-            Ok(Instr::VecFma { dst, a, b, acc, lanes })
+            Ok(Instr::VecFma {
+                dst,
+                a,
+                b,
+                acc,
+                lanes,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_VEC_REDUCE_ADD => {
@@ -586,7 +674,12 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let base = read_vid(r)?;
             let offset = read_vid(r)?;
             let lanes = read_uleb(r)? as usize;
-            Ok(Instr::VecStore { src, base, offset, lanes })
+            Ok(Instr::VecStore {
+                src,
+                base,
+                offset,
+                lanes,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_VEC_LOAD_I32 => {
@@ -594,7 +687,12 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let base = read_vid(r)?;
             let offset = read_vid(r)?;
             let lanes = read_uleb(r)? as usize;
-            Ok(Instr::VecLoadI32 { dst, base, offset, lanes })
+            Ok(Instr::VecLoadI32 {
+                dst,
+                base,
+                offset,
+                lanes,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_VEC_MUL_ADD_Q16 => {
@@ -603,7 +701,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let b = read_vid(r)?;
             let acc = read_vid(r)?;
             let lanes = read_uleb(r)? as usize;
-            Ok(Instr::VecMulAddQ16 { dst, a, b, acc, lanes })
+            Ok(Instr::VecMulAddQ16 {
+                dst,
+                a,
+                b,
+                acc,
+                lanes,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_VEC_REDUCE_ADD_I64 => {
@@ -623,7 +727,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let enter_id = read_vid(r)?;
             let exit_id = read_vid(r)?;
             let alloc_ids = read_vid_vec(r)?;
-            Ok(Instr::Region { body, result, enter_id, exit_id, alloc_ids })
+            Ok(Instr::Region {
+                body,
+                result,
+                enter_id,
+                exit_id,
+                alloc_ids,
+            })
         }
         #[cfg(feature = "std-surface")]
         OP_EXTERN_FN_DECL => {
@@ -642,8 +752,8 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
                 vararg_hints.push(read_string(r, strings)?);
             }
             let cb = read_u8(r)?;
-            let callconv = byte_to_callconv(cb)
-                .ok_or_else(|| err!("unknown callconv byte: {}", cb))?;
+            let callconv =
+                byte_to_callconv(cb).ok_or_else(|| err!("unknown callconv byte: {}", cb))?;
             Ok(Instr::ExternFnDecl {
                 name,
                 param_types,
@@ -713,8 +823,7 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         let len = read_uleb(&mut r)? as usize;
         let mut buf = vec![0u8; len];
         r.read_exact(&mut buf)?;
-        let s = String::from_utf8(buf)
-            .map_err(|_| err!("invalid UTF-8 in string table"))?;
+        let s = String::from_utf8(buf).map_err(|_| err!("invalid UTF-8 in string table"))?;
         strings.push(s);
     }
 

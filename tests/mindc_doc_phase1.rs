@@ -80,15 +80,16 @@ fn doc_generates_html_with_doc_comments() {
 
     // And an html file named after the source (myvec.html in the root of out_dir)
     let html_path = out_dir.join("myvec.html");
-    assert!(html_path.exists(), "myvec.html must exist at {}", html_path.display());
+    assert!(
+        html_path.exists(),
+        "myvec.html must exist at {}",
+        html_path.display()
+    );
 
     let html = fs::read_to_string(&html_path).expect("read myvec.html");
 
     // Must contain the fn name
-    assert!(
-        html.contains("vec_new"),
-        "expected 'vec_new' in myvec.html"
-    );
+    assert!(html.contains("vec_new"), "expected 'vec_new' in myvec.html");
 
     // Must contain the signature fragment
     assert!(
@@ -126,8 +127,14 @@ fn doc_custom_out_dir() {
         .expect("spawn mindc doc");
 
     assert!(status.success(), "mindc doc failed");
-    assert!(out_dir.join("index.html").exists(), "index.html must be in custom dir");
-    assert!(out_dir.join("test.html").exists(), "test.html must be in custom dir");
+    assert!(
+        out_dir.join("index.html").exists(),
+        "index.html must be in custom dir"
+    );
+    assert!(
+        out_dir.join("test.html").exists(),
+        "test.html must be in custom dir"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -154,10 +161,7 @@ fn doc_no_deps_restricts_to_given_paths() {
 
     let index_html = fs::read_to_string(out_dir.join("index.html")).expect("index.html");
     // Only the user-supplied file should appear; no std paths
-    assert!(
-        index_html.contains("mylib"),
-        "index should mention mylib"
-    );
+    assert!(index_html.contains("mylib"), "index should mention mylib");
     // No std/vec or std/io items should appear since we only gave mylib.mind
     assert!(
         !index_html.contains("vec_new"),

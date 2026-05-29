@@ -16,9 +16,7 @@
 
 use std::path::PathBuf;
 
-use libmind::test::{
-    discover_tests_in_source, run_tests, ReporterKind, TestOptions, TestStatus,
-};
+use libmind::test::{ReporterKind, TestOptions, TestStatus, discover_tests_in_source, run_tests};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,7 +87,11 @@ fn test_invalid(x: i64) {
         "expected parse error for #[test] fn with non-zero arity"
     );
     let errs = result.unwrap_err();
-    let msg = errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(" ");
+    let msg = errs
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
     assert!(
         msg.contains("zero parameters") || msg.contains("parameter"),
         "error message should mention parameters: {msg}"
@@ -107,7 +109,9 @@ pub fn test_pub_fn() {
 "#;
     let module = libmind::parser::parse(src).expect("parse ok");
     match module.items.first() {
-        Some(libmind::ast::Node::FnDef { is_test, is_pub, .. }) => {
+        Some(libmind::ast::Node::FnDef {
+            is_test, is_pub, ..
+        }) => {
             assert!(*is_test);
             assert!(*is_pub);
         }
@@ -121,7 +125,9 @@ fn is_pub_field_preserved_on_non_test_fn() {
     let src = r#"pub fn exported() -> i64 { 1 }"#;
     let module = libmind::parser::parse(src).expect("parse ok");
     match module.items.first() {
-        Some(libmind::ast::Node::FnDef { is_pub, is_test, .. }) => {
+        Some(libmind::ast::Node::FnDef {
+            is_pub, is_test, ..
+        }) => {
             assert!(*is_pub, "pub fn should have is_pub=true");
             assert!(!*is_test, "non-test fn should have is_test=false");
         }
@@ -170,8 +176,16 @@ fn discover_from_fixture_all_pass() {
     let src = read_fixture("test_phase_b_all_pass.mind");
     let entries = discover_tests_in_source(&path, &src).expect("discover ok");
     assert_eq!(entries.len(), 2);
-    assert!(entries.iter().any(|e| e.name.contains("test_addition_is_correct")));
-    assert!(entries.iter().any(|e| e.name.contains("test_multiplication_is_correct")));
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.name.contains("test_addition_is_correct"))
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.name.contains("test_multiplication_is_correct"))
+    );
 }
 
 #[test]
@@ -228,10 +242,7 @@ fn run_one_fail_fixture_reports_1_passed_1_failed() {
         .results
         .iter()
         .find(|r| r.status != TestStatus::Passed);
-    assert!(
-        fail_result.is_some(),
-        "should have a failing test result"
-    );
+    assert!(fail_result.is_some(), "should have a failing test result");
     let fail = fail_result.unwrap();
     assert!(
         fail.name.contains("test_fails"),
@@ -278,7 +289,10 @@ fn filter_with_no_match_runs_zero_tests() {
     let summary = run_tests(&opts).expect("run_tests ok");
     assert_eq!(summary.passed, 0);
     assert_eq!(summary.failed, 0);
-    assert!(summary.all_passed(), "--no-match filter: all_passed should be true (0 tests)");
+    assert!(
+        summary.all_passed(),
+        "--no-match filter: all_passed should be true (0 tests)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -346,7 +360,11 @@ fn directory_walk_discovers_test_fns() {
     let src2 = read_fixture("test_phase_b_one_fail.mind");
     let e1 = discover_tests_in_source(&all_pass_path, &src1).unwrap();
     let e2 = discover_tests_in_source(&one_fail_path, &src2).unwrap();
-    assert_eq!(e1.len() + e2.len(), 4, "should find 4 test fns across both fixtures");
+    assert_eq!(
+        e1.len() + e2.len(),
+        4,
+        "should find 4 test fns across both fixtures"
+    );
     // Silence unused-variable warning on summary.
     let _ = summary;
 }
@@ -383,7 +401,11 @@ fn expert_fn() -> i64 { 1 }
 "#;
     let module = libmind::parser::parse(src).expect("parse ok");
     match module.items.first() {
-        Some(libmind::ast::Node::FnDef { reap_threshold, is_test, .. }) => {
+        Some(libmind::ast::Node::FnDef {
+            reap_threshold,
+            is_test,
+            ..
+        }) => {
             assert!(reap_threshold.is_some(), "reap_threshold should be set");
             assert!(!*is_test, "is_test should be false");
         }

@@ -247,7 +247,8 @@ fn call_on_large_stack(lib: &Library, src_bytes: &[u8]) -> Option<Vec<u8>> {
             // SAFETY: library is alive in the parent thread, which joins
             // before we return.
             let lib_ref: &Library = unsafe { &*(lib_ptr as *const Library) };
-            let src_slice: &[u8] = unsafe { std::slice::from_raw_parts(src_ptr as *const u8, src_len) };
+            let src_slice: &[u8] =
+                unsafe { std::slice::from_raw_parts(src_ptr as *const u8, src_len) };
             unsafe { call_mindc_compile(lib_ref, src_slice) }
         })
         .expect("spawn worker thread")
@@ -293,9 +294,7 @@ fn uses_unsupported_features(src: &str) -> bool {
     let has_module_block = src.lines().any(|l| {
         let t = l.trim_start();
         // `module IDENT {` — a named module block, not the IR `module {` header.
-        t.starts_with("module ")
-            && t.split_whitespace().count() >= 3
-            && !t.starts_with("module {")
+        t.starts_with("module ") && t.split_whitespace().count() >= 3 && !t.starts_with("module {")
     });
     let has_enum = src.lines().any(|l| {
         let t = l.trim_start();
@@ -325,9 +324,7 @@ fn unsupported_reason(src: &str) -> String {
     }
     if src.lines().any(|l| {
         let t = l.trim_start();
-        t.starts_with("module ")
-            && t.split_whitespace().count() >= 3
-            && !t.starts_with("module {")
+        t.starts_with("module ") && t.split_whitespace().count() >= 3 && !t.starts_with("module {")
     }) {
         reasons.push("module-block");
     }
@@ -412,7 +409,6 @@ enum Outcome {
     MindUnsupported { reason: String },
     RustOnly { reason: String },
 }
-
 
 // ---------------------------------------------------------------------------
 // Per-fixture runner

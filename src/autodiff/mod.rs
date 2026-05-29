@@ -28,6 +28,6 @@ mod engine;
 mod rules;
 
 pub use engine::{
-    differentiate_function, differentiate_with_options, AutodiffError, GradientOptions,
-    GradientResult,
+    AutodiffError, GradientOptions, GradientResult, differentiate_function,
+    differentiate_with_options,
 };

@@ -3,8 +3,8 @@
 
 //! mic@2 text format parser with implicit value IDs.
 
-use super::types::{DType, Graph, Map, MapValue, Opcode, TensorType, Value};
 use super::MIC2_HEADER;
+use super::types::{DType, Graph, Map, MapValue, Opcode, TensorType, Value};
 
 /// Maximum input size in bytes (10 MB).
 pub const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024;
@@ -368,10 +368,7 @@ impl<'a> Mic2Parser<'a> {
             // Expect the line to be `map {`
             let rest = line["map".len()..].trim();
             if rest != "{" {
-                return Err(self.error(format!(
-                    "expected 'map {{', got 'map {}'",
-                    rest
-                )));
+                return Err(self.error(format!("expected 'map {{', got 'map {}'", rest)));
             }
             let map = self.parse_map_entries(0)?;
             // §5 rule 10: empty MAP is valid from the wire but canonically
@@ -417,9 +414,9 @@ impl<'a> Mic2Parser<'a> {
             }
 
             // Parse `key = value`
-            let eq_pos = trimmed.find('=').ok_or_else(|| {
-                self.error(format!("MAP entry missing '=': {trimmed}"))
-            })?;
+            let eq_pos = trimmed
+                .find('=')
+                .ok_or_else(|| self.error(format!("MAP entry missing '=': {trimmed}")))?;
 
             let key_raw = trimmed[..eq_pos].trim();
             let value_raw = trimmed[eq_pos + 1..].trim();
@@ -450,10 +447,9 @@ impl<'a> Mic2Parser<'a> {
             } else if value_raw == "{" {
                 // Nested map.
                 if depth >= MAX_NESTING {
-                    return Err(self.error(format!(
-                        "MAP nesting depth exceeds limit {}",
-                        MAX_NESTING
-                    )));
+                    return Err(
+                        self.error(format!("MAP nesting depth exceeds limit {}", MAX_NESTING))
+                    );
                 }
                 let inner = self.parse_map_entries(depth + 1)?;
                 MapValue::Nested(inner)
@@ -503,14 +499,16 @@ fn validate_map_key(key: &str) -> Result<(), String> {
         let mut chars = segment.chars();
         match chars.next() {
             Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-            Some(c) => return Err(format!("segment '{segment}' starts with invalid char '{c}'")),
+            Some(c) => {
+                return Err(format!(
+                    "segment '{segment}' starts with invalid char '{c}'"
+                ));
+            }
             None => return Err("empty segment".into()),
         }
         for c in chars {
             if !c.is_ascii_alphanumeric() && c != '_' {
-                return Err(format!(
-                    "segment '{segment}' contains invalid char '{c}'"
-                ));
+                return Err(format!("segment '{segment}' contains invalid char '{c}'"));
             }
         }
     }
@@ -529,7 +527,10 @@ fn parse_map_bytes_value(raw: &str) -> Result<MapValue, String> {
         return Ok(MapValue::Bytes(vec![]));
     }
     if inner.len() % 2 != 0 {
-        return Err(format!("bytes() hex must be even-length, got {} chars", inner.len()));
+        return Err(format!(
+            "bytes() hex must be even-length, got {} chars",
+            inner.len()
+        ));
     }
     // §3.5: bytes ≤ 1 MiB.
     const MAX_BYTES: usize = 1024 * 1024;

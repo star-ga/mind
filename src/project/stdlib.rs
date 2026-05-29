@@ -40,21 +40,21 @@ use crate::ast::Module;
 /// table's deterministic-insertion contract is preserved when the
 /// project loader prepends these to the user's own modules.
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
-    ("std.async",   include_str!("../../std/async.mind")),
-    ("std.blas",    include_str!("../../std/blas.mind")),
-    ("std.cli",     include_str!("../../std/cli.mind")),
-    ("std.fs",      include_str!("../../std/fs.mind")),
-    ("std.io",      include_str!("../../std/io.mind")),
-    ("std.json",    include_str!("../../std/json.mind")),
-    ("std.map",     include_str!("../../std/map.mind")),
-    ("std.net",     include_str!("../../std/net.mind")),
+    ("std.async", include_str!("../../std/async.mind")),
+    ("std.blas", include_str!("../../std/blas.mind")),
+    ("std.cli", include_str!("../../std/cli.mind")),
+    ("std.fs", include_str!("../../std/fs.mind")),
+    ("std.io", include_str!("../../std/io.mind")),
+    ("std.json", include_str!("../../std/json.mind")),
+    ("std.map", include_str!("../../std/map.mind")),
+    ("std.net", include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
-    ("std.regex",   include_str!("../../std/regex.mind")),
-    ("std.sha256",  include_str!("../../std/sha256.mind")),
-    ("std.string",  include_str!("../../std/string.mind")),
-    ("std.toml",    include_str!("../../std/toml.mind")),
-    ("std.tui",     include_str!("../../std/tui.mind")),
-    ("std.vec",     include_str!("../../std/vec.mind")),
+    ("std.regex", include_str!("../../std/regex.mind")),
+    ("std.sha256", include_str!("../../std/sha256.mind")),
+    ("std.string", include_str!("../../std/string.mind")),
+    ("std.toml", include_str!("../../std/toml.mind")),
+    ("std.tui", include_str!("../../std/tui.mind")),
+    ("std.vec", include_str!("../../std/vec.mind")),
 ];
 
 /// Parse every bundled std/*.mind source and return the

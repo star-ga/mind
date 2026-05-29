@@ -171,7 +171,9 @@ fn stdin_formats_and_writes_to_stdout() {
 
     {
         let stdin = child.stdin.as_mut().expect("stdin handle");
-        stdin.write_all(NEEDS_FORMAT.as_bytes()).expect("write stdin");
+        stdin
+            .write_all(NEEDS_FORMAT.as_bytes())
+            .expect("write stdin");
     }
 
     let output = child.wait_with_output().expect("wait");
@@ -237,11 +239,7 @@ fn default_mode_writes_file_in_place() {
     let file = dir.path().join("dirty.mind");
     fs::write(&file, NEEDS_FORMAT).expect("write");
 
-    let status = mindc()
-        .arg("fmt")
-        .arg(&file)
-        .status()
-        .expect("spawn mindc");
+    let status = mindc().arg("fmt").arg(&file).status().expect("spawn mindc");
 
     assert_eq!(
         status.code(),
@@ -278,11 +276,7 @@ fn default_mode_leaves_no_tmp_file() {
     let tmp = dir.path().join("dirty.mind.tmp");
     fs::write(&file, NEEDS_FORMAT).expect("write");
 
-    mindc()
-        .arg("fmt")
-        .arg(&file)
-        .status()
-        .expect("spawn mindc");
+    mindc().arg("fmt").arg(&file).status().expect("spawn mindc");
 
     assert!(
         !tmp.exists(),
@@ -364,10 +358,7 @@ fn stdin_with_positional_paths_exits_2() {
 #[test]
 fn hard_gate_check_on_formatted_fixture_exits_0() {
     let path = formatted_fixture_path();
-    assert!(
-        Path::new(path).exists(),
-        "fixture not found: {path}"
-    );
+    assert!(Path::new(path).exists(), "fixture not found: {path}");
 
     let status = mindc()
         .args(["fmt", "--check", path])

@@ -92,13 +92,13 @@
 //! | 0x24 | Region (std-surface) |
 //! | 0x25 | ExternFnDecl (std-surface) |
 
-pub mod evidence;
 mod emit;
+pub mod evidence;
 mod parse;
 
 pub use emit::emit_mic3;
-pub use parse::{parse_mic3, Mic3Error};
 pub use evidence::{emit_mic3_with_evidence, mic3_evidence_report};
+pub use parse::{Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.
 pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport};
 
@@ -212,7 +212,12 @@ mod tests {
             let v2 = m.fresh();
             m.instrs.push(Instr::ConstI64(v0, 1));
             m.instrs.push(Instr::ConstI64(v1, 2));
-            m.instrs.push(Instr::BinOp { dst: v2, op, lhs: v0, rhs: v1 });
+            m.instrs.push(Instr::BinOp {
+                dst: v2,
+                op,
+                lhs: v0,
+                rhs: v1,
+            });
             m.instrs.push(Instr::Output(v2));
             let parsed = roundtrip(&m);
             // Verify instrs count preserved
@@ -270,8 +275,16 @@ mod tests {
             src: v0,
             new_shape: vec![ShapeDim::Known(12)],
         });
-        m.instrs.push(Instr::ExpandDims { dst: v2, src: v1, axis: 0 });
-        m.instrs.push(Instr::Squeeze { dst: v3, src: v2, axes: vec![0] });
+        m.instrs.push(Instr::ExpandDims {
+            dst: v2,
+            src: v1,
+            axis: 0,
+        });
+        m.instrs.push(Instr::Squeeze {
+            dst: v3,
+            src: v2,
+            axes: vec![0],
+        });
         m.instrs.push(Instr::Transpose {
             dst: v4,
             src: v0,
@@ -308,8 +321,16 @@ mod tests {
             vec![ShapeDim::Known(4), ShapeDim::Known(4)],
             None,
         ));
-        m.instrs.push(Instr::Dot { dst: v2, a: v0, b: v1 });
-        m.instrs.push(Instr::MatMul { dst: v3, a: v0, b: v1 });
+        m.instrs.push(Instr::Dot {
+            dst: v2,
+            a: v0,
+            b: v1,
+        });
+        m.instrs.push(Instr::MatMul {
+            dst: v3,
+            a: v0,
+            b: v1,
+        });
         m.instrs.push(Instr::Output(v3));
 
         let parsed = roundtrip(&m);
@@ -327,13 +348,23 @@ mod tests {
         m.instrs.push(Instr::ConstTensor(
             v0,
             DType::F32,
-            vec![ShapeDim::Known(1), ShapeDim::Known(8), ShapeDim::Known(8), ShapeDim::Known(3)],
+            vec![
+                ShapeDim::Known(1),
+                ShapeDim::Known(8),
+                ShapeDim::Known(8),
+                ShapeDim::Known(3),
+            ],
             None,
         ));
         m.instrs.push(Instr::ConstTensor(
             v1,
             DType::F32,
-            vec![ShapeDim::Known(3), ShapeDim::Known(3), ShapeDim::Known(3), ShapeDim::Known(16)],
+            vec![
+                ShapeDim::Known(3),
+                ShapeDim::Known(3),
+                ShapeDim::Known(3),
+                ShapeDim::Known(16),
+            ],
             None,
         ));
         m.instrs.push(Instr::Conv2d {
@@ -388,7 +419,12 @@ mod tests {
         m.instrs.push(Instr::Slice {
             dst: v2,
             src: v0,
-            dims: vec![SliceSpec { axis: 0, start: 1, end: Some(3), stride: 1 }],
+            dims: vec![SliceSpec {
+                axis: 0,
+                start: 1,
+                end: Some(3),
+                stride: 1,
+            }],
         });
         m.instrs.push(Instr::Output(v1));
 
@@ -426,9 +462,18 @@ mod tests {
             params: vec![("x".into(), p0)],
             ret_id: Some(ret),
             body: vec![
-                Instr::Param { dst: p0, name: "x".into(), index: 0 },
+                Instr::Param {
+                    dst: p0,
+                    name: "x".into(),
+                    index: 0,
+                },
                 Instr::ConstI64(v0, 7),
-                Instr::BinOp { dst: ret, op: BinOp::Add, lhs: p0, rhs: v0 },
+                Instr::BinOp {
+                    dst: ret,
+                    op: BinOp::Add,
+                    lhs: p0,
+                    rhs: v0,
+                },
                 Instr::Return { value: Some(ret) },
             ],
             reap_threshold: Some(0.5),
@@ -444,7 +489,13 @@ mod tests {
         let parsed = roundtrip(&m);
         assert_eq!(parsed.instrs.len(), m.instrs.len());
         // Verify FnDef body is preserved
-        if let Instr::FnDef { body, name, reap_threshold, .. } = &parsed.instrs[0] {
+        if let Instr::FnDef {
+            body,
+            name,
+            reap_threshold,
+            ..
+        } = &parsed.instrs[0]
+        {
             assert_eq!(name, "my_fn");
             assert_eq!(body.len(), 4);
             assert_eq!(*reap_threshold, Some(0.5));
@@ -466,18 +517,30 @@ mod tests {
             params: vec![("a".into(), outer_p)],
             ret_id: Some(outer_ret),
             body: vec![
-                Instr::Param { dst: outer_p, name: "a".into(), index: 0 },
+                Instr::Param {
+                    dst: outer_p,
+                    name: "a".into(),
+                    index: 0,
+                },
                 Instr::FnDef {
                     name: "inner".into(),
                     params: vec![("b".into(), inner_p)],
                     ret_id: Some(inner_ret),
                     body: vec![
-                        Instr::Param { dst: inner_p, name: "b".into(), index: 0 },
-                        Instr::Return { value: Some(inner_p) },
+                        Instr::Param {
+                            dst: inner_p,
+                            name: "b".into(),
+                            index: 0,
+                        },
+                        Instr::Return {
+                            value: Some(inner_p),
+                        },
                     ],
                     reap_threshold: None,
                 },
-                Instr::Return { value: Some(outer_p) },
+                Instr::Return {
+                    value: Some(outer_p),
+                },
             ],
             reap_threshold: None,
         });
@@ -489,7 +552,12 @@ mod tests {
             assert_eq!(name, "outer");
             assert_eq!(body.len(), 3);
             // Nested FnDef
-            if let Instr::FnDef { name: inner_name, body: inner_body, .. } = &body[1] {
+            if let Instr::FnDef {
+                name: inner_name,
+                body: inner_body,
+                ..
+            } = &body[1]
+            {
                 assert_eq!(inner_name, "inner");
                 assert_eq!(inner_body.len(), 2);
             } else {
@@ -561,13 +629,21 @@ mod tests {
         let v2 = m.fresh();
         m.instrs.push(Instr::ConstI64(v0, 42));
         m.instrs.push(Instr::ConstI64(v1, 10));
-        m.instrs.push(Instr::BinOp { dst: v2, op: BinOp::Mul, lhs: v0, rhs: v1 });
+        m.instrs.push(Instr::BinOp {
+            dst: v2,
+            op: BinOp::Mul,
+            lhs: v0,
+            rhs: v1,
+        });
         m.instrs.push(Instr::Output(v2));
 
         let bytes1 = emit_mic3(&m);
         let parsed = parse_mic3(&bytes1).unwrap();
         let bytes2 = emit_mic3(&parsed);
-        assert_eq!(bytes1, bytes2, "fixed-point: emit(parse(emit(m))) != emit(m)");
+        assert_eq!(
+            bytes1, bytes2,
+            "fixed-point: emit(parse(emit(m))) != emit(m)"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -625,14 +701,22 @@ mod tests {
         let v2 = m.fresh();
         m.instrs.push(Instr::ConstI64(v0, 10));
         m.instrs.push(Instr::ConstI64(v1, 20));
-        m.instrs.push(Instr::BinOp { dst: v2, op: BinOp::Add, lhs: v0, rhs: v1 });
+        m.instrs.push(Instr::BinOp {
+            dst: v2,
+            op: BinOp::Add,
+            lhs: v0,
+            rhs: v1,
+        });
         m.instrs.push(Instr::Output(v2));
 
         let from_mic3 = parse_mic3(&emit_mic3(&m)).unwrap();
         let from_mic1 = crate::ir::compact::parse_mic(&crate::ir::compact::emit_mic(&m)).unwrap();
 
-        assert_eq!(mic1_canonical(&from_mic3), mic1_canonical(&from_mic1),
-            "mic@3 and mic@1 round-trips produce different modules");
+        assert_eq!(
+            mic1_canonical(&from_mic3),
+            mic1_canonical(&from_mic1),
+            "mic@3 and mic@1 round-trips produce different modules"
+        );
     }
 
     #[test]
@@ -647,8 +731,17 @@ mod tests {
             vec![ShapeDim::Known(2), ShapeDim::Known(3)],
             Some(0.0),
         ));
-        m.instrs.push(Instr::Sum { dst: v1, src: v0, axes: vec![0], keepdims: false });
-        m.instrs.push(Instr::Transpose { dst: v2, src: v0, perm: vec![1, 0] });
+        m.instrs.push(Instr::Sum {
+            dst: v1,
+            src: v0,
+            axes: vec![0],
+            keepdims: false,
+        });
+        m.instrs.push(Instr::Transpose {
+            dst: v2,
+            src: v0,
+            perm: vec![1, 0],
+        });
         m.instrs.push(Instr::Output(v1));
 
         let from_mic3 = parse_mic3(&emit_mic3(&m)).unwrap();
@@ -666,13 +759,23 @@ mod tests {
         m.instrs.push(Instr::ConstTensor(
             v0,
             DType::F32,
-            vec![ShapeDim::Known(1), ShapeDim::Known(4), ShapeDim::Known(4), ShapeDim::Known(1)],
+            vec![
+                ShapeDim::Known(1),
+                ShapeDim::Known(4),
+                ShapeDim::Known(4),
+                ShapeDim::Known(1),
+            ],
             None,
         ));
         m.instrs.push(Instr::ConstTensor(
             v1,
             DType::F32,
-            vec![ShapeDim::Known(3), ShapeDim::Known(3), ShapeDim::Known(1), ShapeDim::Known(8)],
+            vec![
+                ShapeDim::Known(3),
+                ShapeDim::Known(3),
+                ShapeDim::Known(1),
+                ShapeDim::Known(8),
+            ],
             None,
         ));
         m.instrs.push(Instr::Conv2d {
@@ -718,7 +821,14 @@ mod tests {
 
             let parsed = roundtrip(&m);
             assert_eq!(parsed.instrs.len(), m.instrs.len());
-            if let Instr::While { cond_instrs, body, live_vars, init_ids, .. } = &parsed.instrs[0] {
+            if let Instr::While {
+                cond_instrs,
+                body,
+                live_vars,
+                init_ids,
+                ..
+            } = &parsed.instrs[0]
+            {
                 assert_eq!(cond_instrs.len(), 1);
                 assert_eq!(body.len(), 1);
                 assert_eq!(live_vars.len(), 1);
@@ -752,7 +862,10 @@ mod tests {
             let parsed = roundtrip(&m);
             assert_eq!(parsed.instrs.len(), m.instrs.len());
             if let Instr::If {
-                then_instrs, else_instrs, branch_bindings, ..
+                then_instrs,
+                else_instrs,
+                branch_bindings,
+                ..
             } = &parsed.instrs[0]
             {
                 assert_eq!(then_instrs.len(), 1);
@@ -783,8 +896,13 @@ mod tests {
 
             let parsed = roundtrip(&m);
             assert_eq!(parsed.instrs.len(), m.instrs.len());
-            if let Instr::Region { body, alloc_ids, result: r, enter_id: ei, exit_id: xi } =
-                &parsed.instrs[0]
+            if let Instr::Region {
+                body,
+                alloc_ids,
+                result: r,
+                enter_id: ei,
+                exit_id: xi,
+            } = &parsed.instrs[0]
             {
                 assert_eq!(body.len(), 1);
                 assert_eq!(alloc_ids.len(), 1);
@@ -809,10 +927,30 @@ mod tests {
 
             m.instrs.push(Instr::ConstI64(base, 0));
             m.instrs.push(Instr::ConstI64(off, 0));
-            m.instrs.push(Instr::VecLoad { dst: dst_load, base, offset: off, lanes: 8 });
-            m.instrs.push(Instr::VecFma { dst: fma_dst, a: dst_load, b: dst_load, acc: dst_load, lanes: 8 });
-            m.instrs.push(Instr::VecReduceAdd { dst: red_dst, src: fma_dst, lanes: 8 });
-            m.instrs.push(Instr::VecStore { src: dst_load, base, offset: off, lanes: 8 });
+            m.instrs.push(Instr::VecLoad {
+                dst: dst_load,
+                base,
+                offset: off,
+                lanes: 8,
+            });
+            m.instrs.push(Instr::VecFma {
+                dst: fma_dst,
+                a: dst_load,
+                b: dst_load,
+                acc: dst_load,
+                lanes: 8,
+            });
+            m.instrs.push(Instr::VecReduceAdd {
+                dst: red_dst,
+                src: fma_dst,
+                lanes: 8,
+            });
+            m.instrs.push(Instr::VecStore {
+                src: dst_load,
+                base,
+                offset: off,
+                lanes: 8,
+            });
             m.instrs.push(Instr::Output(red_dst));
 
             let parsed = roundtrip(&m);
@@ -834,9 +972,24 @@ mod tests {
 
             m.instrs.push(Instr::ConstI64(base, 0));
             m.instrs.push(Instr::ConstI64(off, 0));
-            m.instrs.push(Instr::VecLoadI32 { dst: vi32, base, offset: off, lanes: 8 });
-            m.instrs.push(Instr::VecMulAddQ16 { dst: muladd, a: vi32, b: vi32, acc: vi32, lanes: 8 });
-            m.instrs.push(Instr::VecReduceAddI64 { dst: red, src: muladd, lanes: 8 });
+            m.instrs.push(Instr::VecLoadI32 {
+                dst: vi32,
+                base,
+                offset: off,
+                lanes: 8,
+            });
+            m.instrs.push(Instr::VecMulAddQ16 {
+                dst: muladd,
+                a: vi32,
+                b: vi32,
+                acc: vi32,
+                lanes: 8,
+            });
+            m.instrs.push(Instr::VecReduceAddI64 {
+                dst: red,
+                src: muladd,
+                lanes: 8,
+            });
             m.instrs.push(Instr::Output(red));
 
             let parsed = roundtrip(&m);
@@ -856,7 +1009,11 @@ mod tests {
                 values: vec![1, 2, 3, 4],
             });
             m.instrs.push(Instr::ConstI64(idx, 2));
-            m.instrs.push(Instr::ArrayLoad { dst: elem, base: arr, index: idx });
+            m.instrs.push(Instr::ArrayLoad {
+                dst: elem,
+                base: arr,
+                index: idx,
+            });
             m.instrs.push(Instr::Output(elem));
 
             let parsed = roundtrip(&m);
@@ -884,7 +1041,12 @@ mod tests {
             let parsed = roundtrip(&m);
             assert_eq!(parsed.instrs.len(), 1);
             if let Instr::ExternFnDecl {
-                name, param_types, ret_type, is_varargs, vararg_hints, callconv,
+                name,
+                param_types,
+                ret_type,
+                is_varargs,
+                vararg_hints,
+                callconv,
             } = &parsed.instrs[0]
             {
                 assert_eq!(name, "printf");
@@ -901,8 +1063,10 @@ mod tests {
         #[test]
         fn roundtrip_struct_defs() {
             let mut m = IRModule::new();
-            m.struct_defs.insert("Point".into(), vec!["x".into(), "y".into()]);
-            m.struct_defs.insert("Vec3".into(), vec!["x".into(), "y".into(), "z".into()]);
+            m.struct_defs
+                .insert("Point".into(), vec!["x".into(), "y".into()]);
+            m.struct_defs
+                .insert("Vec3".into(), vec!["x".into(), "y".into(), "z".into()]);
 
             let parsed = roundtrip(&m);
             assert_eq!(parsed.struct_defs, m.struct_defs);

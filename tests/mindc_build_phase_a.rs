@@ -42,7 +42,10 @@ fn require_mindc() -> Option<PathBuf> {
     if bin.exists() {
         Some(bin)
     } else {
-        eprintln!("SKIP: mindc binary not found at {}; run cargo build first", bin.display());
+        eprintln!(
+            "SKIP: mindc binary not found at {}; run cargo build first",
+            bin.display()
+        );
         None
     }
 }
@@ -78,7 +81,10 @@ fn build_target_parse_aliases() {
     use libmind::project::BuildTarget;
     assert_eq!(BuildTarget::parse("cuda").unwrap(), BuildTarget::Gpu);
     assert_eq!(BuildTarget::parse("rocm").unwrap(), BuildTarget::Gpu);
-    assert_eq!(BuildTarget::parse("cerebras").unwrap(), BuildTarget::Cerebras);
+    assert_eq!(
+        BuildTarget::parse("cerebras").unwrap(),
+        BuildTarget::Cerebras
+    );
     assert_eq!(BuildTarget::parse("wse3").unwrap(), BuildTarget::Cerebras);
 }
 
@@ -219,7 +225,11 @@ fn cli_build_unknown_target_exits_2() {
     let td = tempfile::tempdir().expect("tempdir");
     let src = td.path().join("main.mind");
     fs::write(&src, HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "main.mind"),
+    )
+    .unwrap();
 
     let output = Command::new(&bin)
         .args(["build", "--target=quantumfpga"])
@@ -243,7 +253,11 @@ fn cli_build_unknown_emit_exits_2() {
     let td = tempfile::tempdir().expect("tempdir");
     let src = td.path().join("main.mind");
     fs::write(&src, HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "main.mind"),
+    )
+    .unwrap();
 
     let output = Command::new(&bin)
         .args(["build", "--emit=dll"])
@@ -319,7 +333,11 @@ fn cli_build_release_flag_accepted() {
     fs::create_dir_all(td.path().join("src")).unwrap();
     let src = td.path().join("src/main.mind");
     fs::write(&src, HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "src/main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "src/main.mind"),
+    )
+    .unwrap();
 
     let out = td.path().join("target/release/hello");
 
@@ -358,7 +376,11 @@ fn cli_build_debug_puts_artifact_in_debug_subdir() {
     let td = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(td.path().join("src")).unwrap();
     fs::write(td.path().join("src/main.mind"), HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "src/main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "src/main.mind"),
+    )
+    .unwrap();
 
     let output = Command::new(&bin)
         .arg("build")
@@ -388,15 +410,16 @@ fn cli_build_custom_out_path() {
     let td = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(td.path().join("src")).unwrap();
     fs::write(td.path().join("src/main.mind"), HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "src/main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "src/main.mind"),
+    )
+    .unwrap();
 
     let custom_out = td.path().join("my_custom_binary");
 
     let output = Command::new(&bin)
-        .args([
-            "build",
-            &format!("--out={}", custom_out.display()),
-        ])
+        .args(["build", &format!("--out={}", custom_out.display())])
         .current_dir(td.path())
         .output()
         .expect("spawn mindc");
@@ -439,9 +462,10 @@ fn cli_build_emit_cdylib_produces_so() {
         assert!(
             so_path.exists() || so_path_win.exists(),
             "expected .so/.dll under target/debug/; contents: {:?}",
-            fs::read_dir(td.path().join("target/debug"))
-                .ok()
-                .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).collect::<Vec<_>>())
+            fs::read_dir(td.path().join("target/debug")).ok().map(|d| d
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .collect::<Vec<_>>())
         );
     }
 }
@@ -453,7 +477,11 @@ fn cli_build_target_cpu_is_default() {
     let td = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(td.path().join("src")).unwrap();
     fs::write(td.path().join("src/main.mind"), HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "src/main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "src/main.mind"),
+    )
+    .unwrap();
 
     // --target=cpu should succeed or fail at build level (1), never at CLI parsing (2).
     let output = Command::new(&bin)
@@ -477,7 +505,11 @@ fn cli_build_target_gpu_returns_clear_error() {
     let td = tempfile::tempdir().expect("tempdir");
     fs::create_dir_all(td.path().join("src")).unwrap();
     fs::write(td.path().join("src/main.mind"), HELLO_MIND).unwrap();
-    fs::write(td.path().join("Mind.toml"), minimal_manifest("hello", "src/main.mind")).unwrap();
+    fs::write(
+        td.path().join("Mind.toml"),
+        minimal_manifest("hello", "src/main.mind"),
+    )
+    .unwrap();
 
     let output = Command::new(&bin)
         .args(["build", "--target=gpu"])

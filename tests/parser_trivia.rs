@@ -15,7 +15,7 @@
 //! Hard gate: `parse_with_trivia(src).0` must equal `parse(src)` for every
 //! input — the AST shape is unchanged by trivia collection.
 
-use libmind::parser::{parse, parse_with_trivia, Trivia, TriviaKind};
+use libmind::parser::{Trivia, TriviaKind, parse, parse_with_trivia};
 
 /// Convenience: parse a MIND source snippet that is expected to succeed.
 fn must_parse(src: &str) -> libmind::ast::Module {
@@ -239,7 +239,11 @@ fn whitespace_only_line_is_blank() {
         .filter(|t| t.kind == TriviaKind::BlankLine)
         .collect();
 
-    assert_eq!(blanks.len(), 1, "space-only line must be recorded as BlankLine");
+    assert_eq!(
+        blanks.len(),
+        1,
+        "space-only line must be recorded as BlankLine"
+    );
 }
 
 #[test]
@@ -283,9 +287,21 @@ fn comment_heavy_source_round_trip() {
     assert_eq!(module_trivia, module_plain, "AST must be identical");
 
     // Gate 2: expected trivia counts.
-    let line_comments = stream.0.iter().filter(|t| t.kind == TriviaKind::LineComment).count();
-    let doc_comments  = stream.0.iter().filter(|t| t.kind == TriviaKind::DocComment).count();
-    let blank_lines   = stream.0.iter().filter(|t| t.kind == TriviaKind::BlankLine).count();
+    let line_comments = stream
+        .0
+        .iter()
+        .filter(|t| t.kind == TriviaKind::LineComment)
+        .count();
+    let doc_comments = stream
+        .0
+        .iter()
+        .filter(|t| t.kind == TriviaKind::DocComment)
+        .count();
+    let blank_lines = stream
+        .0
+        .iter()
+        .filter(|t| t.kind == TriviaKind::BlankLine)
+        .count();
 
     assert_eq!(line_comments, 3, "expected 3 line comments");
     assert_eq!(doc_comments, 2, "expected 2 doc comments");

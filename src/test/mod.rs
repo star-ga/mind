@@ -143,8 +143,8 @@ pub enum TestError {
 /// `summary.all_passed()` to decide the exit code.
 pub fn run_tests(opts: &TestOptions) -> Result<TestRunSummary, TestError> {
     // 1. Resolve source files to walk.
-    let source_files = collect_source_files(&opts.paths)
-        .map_err(|e| TestError::Discovery(e.to_string()))?;
+    let source_files =
+        collect_source_files(&opts.paths).map_err(|e| TestError::Discovery(e.to_string()))?;
 
     // 2. Parse each file, collect #[test] entries.
     //    Files that fail to parse are silently skipped — the intent is to
@@ -184,7 +184,11 @@ pub fn run_tests(opts: &TestOptions) -> Result<TestRunSummary, TestError> {
     }
 
     // 5. Print header.
-    println!("running {} test{}", entries.len(), if entries.len() == 1 { "" } else { "s" });
+    println!(
+        "running {} test{}",
+        entries.len(),
+        if entries.len() == 1 { "" } else { "s" }
+    );
     if entries.is_empty() {
         println!("\ntest result: ok. 0 passed; 0 failed");
         return Ok(TestRunSummary::default());
@@ -254,10 +258,7 @@ fn walk_dir_recursive(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), std::io:
 /// as individual test failures rather than aborting discovery of the entire
 /// file — this mirrors `cargo test` behaviour where a syntax error in one
 /// module does not hide tests in sibling modules.
-pub fn discover_tests_in_source(
-    path: &Path,
-    source: &str,
-) -> Result<Vec<TestEntry>, String> {
+pub fn discover_tests_in_source(path: &Path, source: &str) -> Result<Vec<TestEntry>, String> {
     let module = match parser::parse(source) {
         Ok(m) => m,
         Err(errs) => {
@@ -280,7 +281,13 @@ pub fn discover_tests_in_source(
 
     let mut entries = Vec::new();
     for item in &module.items {
-        if let Node::FnDef { is_test: true, name, span, .. } = item {
+        if let Node::FnDef {
+            is_test: true,
+            name,
+            span,
+            ..
+        } = item
+        {
             let source_line = line_number_at(source, span.start());
             entries.push(TestEntry {
                 name: format!("{}::{}", file_stem, name),
@@ -304,10 +311,7 @@ fn line_number_at(source: &str, offset: usize) -> u32 {
 // ---------------------------------------------------------------------------
 
 /// Execute the test entries in parallel, collecting results.
-fn execute_tests(
-    entries: Vec<TestEntry>,
-    opts: &TestOptions,
-) -> Result<TestRunSummary, TestError> {
+fn execute_tests(entries: Vec<TestEntry>, opts: &TestOptions) -> Result<TestRunSummary, TestError> {
     let thread_count = if opts.threads == 0 {
         std::thread::available_parallelism()
             .map(|n| n.get())
@@ -354,10 +358,13 @@ fn execute_tests(
                     ReporterKind::Json => {
                         let (res_str, msg_field) = match &result.status {
                             TestStatus::Passed => ("passed", String::new()),
-                            TestStatus::Failed { message } => ("failed", format!(
-                                r#","message":"{}""#,
-                                message.replace('"', "\\\"").replace('\n', "\\n")
-                            )),
+                            TestStatus::Failed { message } => (
+                                "failed",
+                                format!(
+                                    r#","message":"{}""#,
+                                    message.replace('"', "\\\"").replace('\n', "\\n")
+                                ),
+                            ),
                         };
                         println!(
                             r#"{{"type":"test","name":"{}","result":"{}"{}}}"#,
@@ -373,7 +380,8 @@ fn execute_tests(
     }
 
     for h in handles {
-        h.join().map_err(|_| TestError::Execution("worker thread panicked".into()))?;
+        h.join()
+            .map_err(|_| TestError::Execution("worker thread panicked".into()))?;
     }
 
     let mut all_results = Arc::try_unwrap(results)
@@ -384,8 +392,14 @@ fn execute_tests(
     // Sort by name for deterministic output.
     all_results.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let passed = all_results.iter().filter(|r| r.status == TestStatus::Passed).count() as u32;
-    let failed = all_results.iter().filter(|r| r.status != TestStatus::Passed).count() as u32;
+    let passed = all_results
+        .iter()
+        .filter(|r| r.status == TestStatus::Passed)
+        .count() as u32;
+    let failed = all_results
+        .iter()
+        .filter(|r| r.status != TestStatus::Passed)
+        .count() as u32;
 
     Ok(TestRunSummary {
         passed,
@@ -404,9 +418,7 @@ fn run_one_test(entry: &TestEntry) -> TestResult {
 
     // Isolate the test execution: parse + eval inside catch_unwind.
     // We re-parse each time so that no mutable state bleeds between tests.
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        eval_test_fn(entry)
-    }));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| eval_test_fn(entry)));
 
     let duration = start.elapsed();
 
@@ -449,8 +461,12 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
     use crate::eval::ExecMode;
 
     // Re-parse to get a fresh, unaliased AST.
-    let module = parser::parse(&entry.source_text)
-        .map_err(|errs| errs.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "))?;
+    let module = parser::parse(&entry.source_text).map_err(|errs| {
+        errs.iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
 
     // Extract the test function name (strip the "file_stem::" prefix).
     let fn_name = entry.name.split("::").last().unwrap_or(&entry.name);
@@ -460,7 +476,13 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
         .items
         .iter()
         .find_map(|item| {
-            if let Node::FnDef { name, is_test: true, body, .. } = item {
+            if let Node::FnDef {
+                name,
+                is_test: true,
+                body,
+                ..
+            } = item
+            {
                 if name == fn_name {
                     return Some(body.clone());
                 }
@@ -479,17 +501,15 @@ fn eval_test_fn(entry: &TestEntry) -> Result<(), String> {
         .collect();
     synthetic_items.extend(body_items.clone());
 
-    let synthetic_module = Module { items: synthetic_items };
+    let synthetic_module = Module {
+        items: synthetic_items,
+    };
 
     // First pass: evaluate the module through the standard interpreter so that
     // let bindings and arithmetic are properly resolved.
     let mut env = std::collections::HashMap::new();
-    let _result = eval::eval_module_value_with_env_mode(
-        &synthetic_module,
-        &mut env,
-        None,
-        ExecMode::Preview,
-    );
+    let _result =
+        eval::eval_module_value_with_env_mode(&synthetic_module, &mut env, None, ExecMode::Preview);
     // (Ignore the result; we do assertion checking in the second pass.)
 
     // Second pass: walk the body looking for `assert` nodes and evaluate them
@@ -519,18 +539,11 @@ fn eval_asserts_in_stmts(
         match stmt {
             Node::Assert { cond, msg, .. } => {
                 // Evaluate the condition expression.
-                let val = eval::eval_value_expr_mode(
-                    cond,
-                    &venv,
-                    &tensor_env,
-                    ExecMode::Preview,
-                );
+                let val = eval::eval_value_expr_mode(cond, &venv, &tensor_env, ExecMode::Preview);
                 match val {
                     Ok(eval::Value::Int(0)) => {
                         // Condition evaluated to 0 (false).
-                        let fail_msg = msg
-                            .as_deref()
-                            .unwrap_or("assertion failed");
+                        let fail_msg = msg.as_deref().unwrap_or("assertion failed");
                         return Err(fail_msg.to_string());
                     }
                     Ok(eval::Value::Int(_)) => {
@@ -557,12 +570,7 @@ fn eval_asserts_in_stmts(
             Node::Return { value: Some(v), .. } => {
                 // A return with a value: evaluate it.
                 // If it evaluates to Int(0) or fails, treat as failing assertion.
-                match eval::eval_value_expr_mode(
-                    v,
-                    &venv,
-                    &tensor_env,
-                    ExecMode::Preview,
-                ) {
+                match eval::eval_value_expr_mode(v, &venv, &tensor_env, ExecMode::Preview) {
                     Ok(eval::Value::Int(0)) => {
                         return Err("test returned false (0)".to_string());
                     }
@@ -571,7 +579,12 @@ fn eval_asserts_in_stmts(
                 }
             }
             // For `if`, `for`, `while` blocks: recurse into branches.
-            Node::If { then_branch, else_branch, cond, .. } => {
+            Node::If {
+                then_branch,
+                else_branch,
+                cond,
+                ..
+            } => {
                 // Evaluate the condition to decide which branch to descend.
                 match eval::eval_value_expr_mode(cond, &venv, &tensor_env, ExecMode::Preview) {
                     Ok(eval::Value::Int(0)) => {
@@ -593,7 +606,6 @@ fn eval_asserts_in_stmts(
     }
     Ok(())
 }
-
 
 /// Extract a human-readable string from a panic payload.
 fn extract_panic_message(payload: Box<dyn std::any::Any + Send>) -> String {

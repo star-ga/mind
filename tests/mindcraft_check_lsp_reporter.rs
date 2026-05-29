@@ -81,11 +81,13 @@ fn lsp_reporter_diagnostic_shape() {
         .expect("spawn mindc");
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let array: serde_json::Value = serde_json::from_str(&stdout)
-        .expect("valid JSON");
+    let array: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
     let items = array.as_array().expect("JSON array");
 
-    assert!(!items.is_empty(), "expected at least one diagnostic for a drifted file");
+    assert!(
+        !items.is_empty(),
+        "expected at least one diagnostic for a drifted file"
+    );
 
     for item in items {
         // uri
@@ -113,17 +115,16 @@ fn lsp_reporter_diagnostic_shape() {
             .expect("range.end.character must be present");
 
         // severity: 1=Error, 2=Warning, 3=Information
-        let sev = item["severity"].as_u64().expect("severity must be an integer");
+        let sev = item["severity"]
+            .as_u64()
+            .expect("severity must be an integer");
         assert!(
             (1..=3).contains(&sev),
             "severity must be 1, 2, or 3; got: {sev}"
         );
 
         // message
-        assert!(
-            item["message"].is_string(),
-            "message must be a string"
-        );
+        assert!(item["message"].is_string(), "message must be a string");
 
         // source = "mindc"
         assert_eq!(
@@ -133,10 +134,7 @@ fn lsp_reporter_diagnostic_shape() {
         );
 
         // code = rule_id
-        assert!(
-            item["code"].is_string(),
-            "code must be a string (rule_id)"
-        );
+        assert!(item["code"].is_string(), "code must be a string (rule_id)");
     }
 }
 

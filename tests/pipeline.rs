@@ -14,7 +14,7 @@
 
 #[cfg(feature = "autodiff")]
 use libmind::ir::Instr;
-use libmind::pipeline::{compile_source, CompileOptions};
+use libmind::pipeline::{CompileOptions, compile_source};
 use libmind::runtime::types::BackendTarget;
 
 #[cfg(feature = "autodiff")]
@@ -169,10 +169,12 @@ fn pipeline_emits_mlir() {
     );
     assert!(mlir_products.primal_mlir.contains("func.func @main"));
     // Gradient module should also be present when autodiff is enabled.
-    assert!(mlir_products
-        .grad_mlir
-        .as_deref()
-        .unwrap_or("")
-        .to_lowercase()
-        .contains("func.func"));
+    assert!(
+        mlir_products
+            .grad_mlir
+            .as_deref()
+            .unwrap_or("")
+            .to_lowercase()
+            .contains("func.func")
+    );
 }
