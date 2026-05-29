@@ -85,6 +85,18 @@ Step 4 is the *link*: it binds the runtime execution to the compiled artifact, s
 the compile-time evidence (substrate, toolchain, determinism, parent DAG) flows
 into the agent step record without duplication.
 
+> **Reconciliation with RFC 0016 (normative for this RFC).** Two cross-RFC items are
+> resolved here so an implementer is not blocked by a forward-reference mismatch:
+> (1) RFC 0016 §7's placeholder field name `agent.trace` is **superseded** by the
+> concrete schema in §4.1 below (`agent.artifact_hash` / `agent.replay_trace` /
+> `agent.step_hash`); `agent.trace` is not a real field.
+> (2) RFC 0016 Open Question 4 — whether `evidence_chain.trace_hash` is overwritten
+> with the runtime fold — is resolved in the **negative** for the agent layer:
+> `evidence_chain.trace_hash` stays the compile-time IR hash (so step 4's equality
+> holds), and the runtime fold `H(artifact_hash || replay_trace)` lives in the
+> separate `agent.step_hash` field. The compiled artifact is never mutated. RFC 0016
+> §3.3 should be amended to name `agent.step_hash` as the fold's home.
+
 ### 3.3 Determinism claim
 
 An agent step is `deterministic` in the `agent.determinism` field if and only if:
