@@ -239,6 +239,49 @@ fn idempotence_fmt_fixtures() {
 }
 
 // ---------------------------------------------------------------------------
+// Bare `[T]` dynamic-slice canonicalisation (parser accepts `[T]` as sugar
+// for `&[T]`; both share the `Slice` AST node). The formatter has one
+// surface form for that node — `&[T]` — so `[T]` canonicalises to `&[T]`.
+// This must be a DECIDED, stable rewrite (lossless: MIND draws no
+// borrow/owned distinction on slices), not an accidental drift. Asserts the
+// canonical target and that a second pass is a fixpoint.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bare_slice_canonicalises_to_borrowed_and_is_idempotent() {
+    let cfg = default_cfg();
+    let src = "struct S { items: [u32] }\n";
+
+    let once = format_source(src, &cfg).expect("bare `[T]` must format");
+    assert!(
+        once.contains("&[u32]"),
+        "bare `[T]` must canonicalise to `&[T]`, got:\n{once}"
+    );
+    assert!(
+        !once.contains(": [u32]"),
+        "no bare `[T]` should survive formatting, got:\n{once}"
+    );
+
+    let twice = format_source(&once, &cfg).expect("second pass must format");
+    assert_eq!(once, twice, "`[T]` canonicalisation must be a fixpoint");
+}
+
+#[test]
+fn fixed_array_is_not_canonicalised_to_slice() {
+    let cfg = default_cfg();
+    let src = "struct S { lut: [u32; 4] }\n";
+    let once = format_source(src, &cfg).expect("`[T; N]` must format");
+    assert!(
+        once.contains("[u32; 4]"),
+        "`[T; N]` must stay a fixed-size array, got:\n{once}"
+    );
+    assert!(
+        !once.contains("&["),
+        "`[T; N]` must not become a slice, got:\n{once}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Helper
 // ---------------------------------------------------------------------------
 

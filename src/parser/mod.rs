@@ -596,13 +596,32 @@ impl<'a> P<'a> {
         }
         // Phase 10.6: fixed-size array `[T; N]`. The N is a compile-time
         // u32. Used for LUT tables and other static buffers.
+        //
+        // Bare `[T]` (no `; N`) is a dynamic slice: a sized run of `T` whose
+        // length is not part of the type. MIND's slice type carries no
+        // borrow/owned distinction — the type checker treats `[T]` and `&[T]`
+        // identically as a contiguous run of `T` (see `TypeAnn::Slice`). So
+        // `[T]` is accepted as sugar for `&[T]` and shares the `Slice`
+        // representation; `mindc fmt` surface-canonicalises `[T]` to `&[T]`
+        // (no semantic loss — the source spelling is normalised — and the
+        // rewrite is idempotent). `[T; N]` (with a compile-time length) stays
+        // a distinct fixed-size `Array`.
         if self.at(b'[') {
             self.pos += 1;
             self.skip_ws();
             let element = self.type_ann()?;
             self.skip_ws();
+            if self.eat(b']') {
+                return Ok(TypeAnn::Slice {
+                    mutable: false,
+                    element: Box::new(element),
+                });
+            }
             if !self.eat(b';') {
-                return Err(self.err("expected `;` between array element type and length".into()));
+                return Err(self.err(
+                    "expected `;` before the length in `[T; N]`, or `]` to close a dynamic slice `[T]`"
+                        .into(),
+                ));
             }
             self.skip_ws();
             let length_str = self

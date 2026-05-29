@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2669 | **Est. tokens:** ~6,676,964
-**Generated:** 2026-05-29 20:06 UTC
+**Files:** 2669 | **Est. tokens:** ~6,678,303
+**Generated:** 2026-05-29 22:12 UTC
 
 ## Token Budget Guide
 
@@ -362,7 +362,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,223 |
-| `src/ast/` | 1 | ~6,223 |
+| `src/ast/` | 1 | ~6,285 |
 | `src/autodiff/` | 3 | ~4,467 |
 | `src/bin/` | 2 | ~19,524 |
 | `src/build/` | 2 | ~11,080 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 17 | ~81,212 |
-| `tests/` | 158 | ~269,784 |
+| `tests/` | 158 | ~271,061 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3557,7 +3557,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~6223 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6285 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3859,7 +3859,7 @@
 ### `tests/`
 
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_idempotence.rs` (~2375 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_idempotence.rs` (~2782 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_stdlib_stability.rs` (~2692 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6091 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3998,7 +3998,7 @@
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2699 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse_phase10_surface.rs` (~3881 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parse_phase10_surface.rs` (~4410 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `phase_g_keystone_bootstrap.rs` (~6259 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4083,7 +4083,7 @@
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_ann_check.rs` (~330 tok, medium) — Copyright 2025 STARGA Inc.
-- `type_ann_parse.rs` (~243 tok, medium) — Copyright 2025 STARGA Inc.
+- `type_ann_parse.rs` (~584 tok, large) — Copyright 2025 STARGA Inc.
 - `typecheck_binary.rs` (~327 tok, medium) — Copyright 2025 STARGA Inc.
 - `typecheck_env.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
 ### `tests/type_checker/`

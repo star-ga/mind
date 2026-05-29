@@ -151,9 +151,12 @@ pub enum TypeAnn {
     Named(String),
     /// Unsigned 32-bit integer (Phase 10.5 Tier-2).
     ScalarU32,
-    /// Borrowed slice `&[T]` or `&mut [T]` (Phase 10.6). Used in fn
-    /// signatures to pass contiguous buffers without copying. The type
-    /// checker treats this as a sized run of T.
+    /// Slice `&[T]` / `&mut [T]`, or the bare `[T]` dynamic-slice sugar
+    /// (Phase 10.6). Used in fn signatures and struct fields to carry a
+    /// contiguous run of `T` whose length is not part of the type. MIND
+    /// draws no borrow/owned distinction here: `[T]` and `&[T]` parse to
+    /// the same node (`mutable: false`) and the type checker treats both
+    /// as a sized run of `T`; `mindc fmt` canonicalises `[T]` to `&[T]`.
     Slice {
         mutable: bool,
         element: Box<TypeAnn>,

@@ -263,6 +263,65 @@ fn parses_slice_of_qualified_type() {
     assert!(parses(src), "&[module.Type] must parse");
 }
 
+// Step 8e' — bare `[T]` dynamic slice (no `; N`). Distinct from the
+// borrowed `&[T]` and from the fixed-size `[T; N]`: the length is not
+// part of the type. Reuses the `Slice` representation so the type
+// checker treats it as a contiguous run of `T`. (mindc parser gap that
+// blocked ~half of the 512-mind modules from parsing.)
+#[test]
+fn parses_bare_dynamic_slice_in_param() {
+    let src = "module m { fn s(xs: [i32]) -> i32 { 0 } }\n";
+    assert!(
+        parses(src),
+        "bare `[T]` dynamic slice in fn param must parse"
+    );
+}
+
+#[test]
+fn parses_bare_dynamic_slice_in_struct_field() {
+    let src = "module m { struct Holder { items: [u32] } }\n";
+    assert!(
+        parses(src),
+        "bare `[T]` dynamic slice in struct field must parse"
+    );
+}
+
+#[test]
+fn parses_bare_dynamic_slice_of_qualified_type() {
+    let src = "module foo { type Q = i32 }\n\
+               module bar { use foo\n struct S { xs: [foo.Q] } }\n";
+    assert!(parses(src), "bare `[module.Type]` dynamic slice must parse");
+}
+
+#[test]
+fn parses_fixed_array_still_distinct_from_slice() {
+    // `[T; N]` must keep parsing after the dynamic-slice path was added.
+    let src = "module m { fn lut(t: [i32; 8]) -> i32 { 0 } }\n";
+    assert!(parses(src), "`[T; N]` array must still parse");
+}
+
+#[test]
+fn rejects_array_type_missing_length() {
+    // `[T; ]` (a `;` with no length) is still a hard parse error — the
+    // dynamic-slice path only fires when there is no `;` at all.
+    let src = "module m { struct B { x: [u32; ] } }\n";
+    assert!(!parses(src), "`[T; ]` with empty length must not parse");
+}
+
+#[test]
+fn parses_nested_dynamic_slice() {
+    // `[[T]]` — element type recurses, so a slice-of-slices parses.
+    let src = "module m { struct S { grid: [[u32]] } }\n";
+    assert!(parses(src), "nested `[[T]]` dynamic slice must parse");
+}
+
+#[test]
+fn parses_dynamic_slice_as_generic_arg() {
+    // `Map<K, [V]>` — the bare slice appears as a generic type argument.
+    let src = "module m { struct S { m: Map<u32, [u256]> } }\n";
+    assert!(parses(src), "bare `[T]` as a generic arg must parse");
+}
+
 // Step 8f — `let mut` mutable binding (Phase 10.6). Used for
 // accumulator loops. mindc treats `mut` as informational; the eval
 // env always allows reassignment.
