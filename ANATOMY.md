@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2664 | **Est. tokens:** ~6,653,989
-**Generated:** 2026-05-29 08:45 UTC
+**Files:** 2668 | **Est. tokens:** ~6,668,650
+**Generated:** 2026-05-29 11:30 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~20,295 |
+| `./` | 32 | ~21,369 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -36,13 +36,13 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 24 | ~30,745 |
+| `docs/` | 25 | ~33,203 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 24 | ~101,155 |
+| `docs/rfcs/` | 27 | ~112,284 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -460,7 +460,7 @@
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~2272 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3346 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -631,13 +631,16 @@
 - `0014-per-substrate-mlir-lowering-contracts.md` (~4898 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~5715 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0017-mindc-verify.md` (~3442 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
+- `0018-bare-metal-substrate.md` (~3775 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
+- `0019-deterministic-agent-substrate.md` (~3912 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `0021-canonical-ir-unification.md` (~3993 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~12140 tok, huge) — Roadmap
+- `roadmap.md` (~12803 tok, huge) — Roadmap
 - `security.md` (~753 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -649,6 +652,7 @@
 
 - `type-system.md` (~947 tok, large) — Type System
 - `versioning.md` (~804 tok, large) — MIND Core Stability & Versioning
+- `version-matrix.md` (~1795 tok, huge) — MIND Ecosystem — Version Matrix
 - `whitepaper.md` (~2844 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
