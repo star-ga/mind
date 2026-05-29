@@ -1029,12 +1029,12 @@ fn jvsb_push_rx(h: i64, b: i64) -> i64 {
         let d: i64 = __mind_alloc(new_cap);
         let mut ci: i64 = 0;
         while ci < old_len {
-            __mind_store_i64(d + ci, __mind_load_i64(old_dat + ci) & 255);
+            __mind_store_i8(d + ci, __mind_load_i64(old_dat + ci) & 255);
             ci = ci + 1;
         }
         d
     };
-    __mind_store_i64(new_dat + old_len, b);
+    __mind_store_i8(new_dat + old_len, b);
     __mind_store_i64(h + 0,  new_dat);
     __mind_store_i64(h + 8,  old_len + 1);
     __mind_store_i64(h + 16, new_cap);
