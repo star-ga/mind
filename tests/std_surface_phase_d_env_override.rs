@@ -25,7 +25,7 @@
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
 use libmind::project::module_table::build_module_table;
-use libmind::project::stdlib::{parsed_stdlib_modules, STDLIB_MIND_SOURCES};
+use libmind::project::stdlib::{STDLIB_MIND_SOURCES, parsed_stdlib_modules};
 
 /// Sets `MIND_STDLIB_PATH` for the duration of the closure, then
 /// clears it. The wrapper centralises the unsafe blocks the
