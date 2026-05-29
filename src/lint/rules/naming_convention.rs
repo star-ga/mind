@@ -69,32 +69,24 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
                 check_node(stmt, ctx, out);
             }
         }
-        Node::StructDef { name, span, .. } => {
-            if !is_exempt(name) && !is_upper_camel(name) {
-                emit(out, ctx, name, "UpperCamelCase", span.start(), span.end());
-            }
+        Node::StructDef { name, span, .. } if !is_exempt(name) && !is_upper_camel(name) => {
+            emit(out, ctx, name, "UpperCamelCase", span.start(), span.end());
         }
-        Node::EnumDef { name, span, .. } => {
-            if !is_exempt(name) && !is_upper_camel(name) {
-                emit(out, ctx, name, "UpperCamelCase", span.start(), span.end());
-            }
+        Node::EnumDef { name, span, .. } if !is_exempt(name) && !is_upper_camel(name) => {
+            emit(out, ctx, name, "UpperCamelCase", span.start(), span.end());
         }
-        Node::TypeAlias { name, span, .. } => {
-            if !is_exempt(name) && !is_upper_camel(name) {
-                emit(out, ctx, name, "UpperCamelCase", span.start(), span.end());
-            }
+        Node::TypeAlias { name, span, .. } if !is_exempt(name) && !is_upper_camel(name) => {
+            emit(out, ctx, name, "UpperCamelCase", span.start(), span.end());
         }
-        Node::Const { name, span, .. } => {
-            if !is_exempt(name) && !is_screaming_snake(name) {
-                emit(
-                    out,
-                    ctx,
-                    name,
-                    "SCREAMING_SNAKE_CASE",
-                    span.start(),
-                    span.end(),
-                );
-            }
+        Node::Const { name, span, .. } if !is_exempt(name) && !is_screaming_snake(name) => {
+            emit(
+                out,
+                ctx,
+                name,
+                "SCREAMING_SNAKE_CASE",
+                span.start(),
+                span.end(),
+            );
         }
         Node::Let {
             name, value, span, ..
@@ -135,10 +127,8 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
                 check_node(s, ctx, out);
             }
         }
-        Node::Return { value, .. } => {
-            if let Some(v) = value {
-                check_node(v, ctx, out);
-            }
+        Node::Return { value: Some(v), .. } => {
+            check_node(v, ctx, out);
         }
         Node::Assign { value, .. } => {
             check_node(value, ctx, out);

@@ -155,7 +155,7 @@ pub struct MindcraftConfig {
 /// RFC 0007 §5 — severity model for individual rules. Mapped from
 /// the lowercase TOML strings; deserialisation rejects any other
 /// value with a clear error.
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleSeverity {
     /// Rule disabled — no diagnostic emitted, no `--fix` mutation.
@@ -163,19 +163,15 @@ pub enum RuleSeverity {
     /// Informational note; does not affect exit code.
     Info,
     /// Warning; surfaces in CI output. Default for stylistic rules.
+    ///
+    /// Canonical default for any rule not explicitly mapped — see RFC 0007 §6.
+    /// Each rule ships with its own baseline; this is only the fallback when
+    /// the manifest mentions a rule by id with no value (TOML's bare
+    /// ``"lint::foo"`` form).
+    #[default]
     Warn,
     /// Hard error; ``mindc check`` exits non-zero on any match.
     Error,
-}
-
-impl Default for RuleSeverity {
-    fn default() -> Self {
-        // Canonical default for any rule not explicitly mapped — see
-        // RFC 0007 §6. Each rule ships with its own baseline; this
-        // is only the fallback when the manifest mentions a rule by
-        // id with no value (TOML's bare ``"lint::foo"`` form).
-        RuleSeverity::Warn
-    }
 }
 
 /// RFC 0007 §5 — formatter settings. Zero-config gives the canonical

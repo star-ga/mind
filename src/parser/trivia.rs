@@ -166,8 +166,8 @@ pub(super) fn strip_comments_with_trivia(
         }
 
         // Append content bytes and build offset map entries.
-        for rel in 0..content_end {
-            stripped_bytes.push(content_bytes[rel]);
+        for (rel, &byte) in content_bytes.iter().take(content_end).enumerate() {
+            stripped_bytes.push(byte);
             offset_map.push(line_start + rel);
         }
 

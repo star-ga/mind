@@ -203,9 +203,9 @@ struct RawDepTable {
 /// # Resolution algorithm
 ///
 /// 1. Read `<root>/Mind.toml`; require a `[workspace]` block.
-/// 2. For each pattern in `[workspace].members`:
-///    a. If it contains a glob character (`*` or `?`), expand against the
-///       filesystem; otherwise treat as a literal relative path.
+/// 2. For each pattern in `[workspace].members`: if it contains a glob
+///    character (`*` or `?`), expand against the filesystem; otherwise treat
+///    it as a literal relative path.
 /// 3. Remove any path whose relative form (from root) starts with an entry
 ///    in `[workspace].exclude`.
 /// 4. For each surviving path, read its `Mind.toml` and extract `[package].name`
@@ -402,19 +402,16 @@ fn expand_glob_pattern(workspace_root: &Path, pattern: &str) -> Vec<PathBuf> {
 
     // Split the pattern at the first glob character to find the base dir.
     // e.g. "crates/*" → base = "crates", tail_glob = "*"
-    let slash_pos = pattern
-        .rfind(|c| c == '/')
-        .map(|p| {
-            // Walk back to find the last non-glob segment.
-            let before = &pattern[..p];
-            if before.contains('*') || before.contains('?') {
-                // Complex pattern: walk from workspace root.
-                None
-            } else {
-                Some(p)
-            }
-        })
-        .flatten();
+    let slash_pos = pattern.rfind('/').and_then(|p| {
+        // Walk back to find the last non-glob segment.
+        let before = &pattern[..p];
+        if before.contains('*') || before.contains('?') {
+            // Complex pattern: walk from workspace root.
+            None
+        } else {
+            Some(p)
+        }
+    });
 
     let (base_dir, tail_pattern) = match slash_pos {
         Some(p) => (workspace_root.join(&pattern[..p]), &pattern[p + 1..]),

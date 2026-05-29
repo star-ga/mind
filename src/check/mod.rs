@@ -618,10 +618,10 @@ fn collect_mind_files(
     for child in children {
         if child.is_dir() {
             collect_mind_files(&child, out, filter, repo_root)?;
-        } else if child.extension().map_or(false, |ext| ext == "mind") {
-            if should_include(&child, filter, repo_root) {
-                out.push(child);
-            }
+        } else if child.extension().is_some_and(|ext| ext == "mind")
+            && should_include(&child, filter, repo_root)
+        {
+            out.push(child);
         }
     }
     Ok(())

@@ -100,10 +100,8 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
         Node::Assign { value, .. } => {
             check_node(value, ctx, out);
         }
-        Node::Return { value, .. } => {
-            if let Some(v) = value {
-                check_node(v, ctx, out);
-            }
+        Node::Return { value: Some(v), .. } => {
+            check_node(v, ctx, out);
         }
         Node::Match {
             scrutinee, arms, ..

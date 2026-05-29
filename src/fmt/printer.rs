@@ -160,7 +160,7 @@ impl<'a> Printer<'a> {
             };
             for c in &comments {
                 self.out.push_str(&indent);
-                self.out.push_str(&c);
+                self.out.push_str(c);
                 self.out.push('\n');
             }
         }
@@ -432,6 +432,7 @@ fn emit_attrs(p: &mut Printer, attrs: &[Attribute]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_fn_def(
     p: &mut Printer,
     is_pub: bool,

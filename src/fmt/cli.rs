@@ -145,7 +145,7 @@ fn collect_mind_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for child in children {
         if child.is_dir() {
             collect_mind_files(&child, out)?;
-        } else if child.extension().map_or(false, |ext| ext == "mind") {
+        } else if child.extension().is_some_and(|ext| ext == "mind") {
             out.push(child);
         }
     }

@@ -227,7 +227,7 @@ fn collect_mind_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for child in children {
         if child.is_dir() {
             collect_mind_files(&child, out)?;
-        } else if child.extension().map_or(false, |ext| ext == "mind") {
+        } else if child.extension().is_some_and(|ext| ext == "mind") {
             out.push(child);
         }
     }
@@ -488,10 +488,10 @@ fn collect_doc_comments(doc_trivia: &[&Trivia], item_offset: usize, _source: &st
         if trivia.kind == TriviaKind::DocComment {
             let text = trivia.text.as_str();
             // Strip `/// ` or `///` prefix.
-            let content = if text.starts_with("/// ") {
-                &text[4..]
-            } else if text.starts_with("///") {
-                &text[3..]
+            let content = if let Some(rest) = text.strip_prefix("/// ") {
+                rest
+            } else if let Some(rest) = text.strip_prefix("///") {
+                rest
             } else {
                 text
             };
