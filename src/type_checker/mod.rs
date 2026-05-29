@@ -2006,6 +2006,17 @@ fn infer_call(
                 }
                 return Ok((ValueType::ScalarI64, span));
             }
+            // Intra-module function call: if the callee is a function defined
+            // in the same module, the pre-scan in check_module_types_in_file
+            // registers it in env as ScalarI64. Accept the call without full
+            // signature validation (Phase B deliverable) and check argument
+            // expressions for their own errors.
+            if env.get(callee).is_some() {
+                for a in args {
+                    let _ = infer_expr(a, env)?;
+                }
+                return Ok((ValueType::ScalarI64, span));
+            }
             #[cfg(feature = "std-surface")]
             {
                 check_std_surface_intrinsic(callee, args, span, env)
@@ -2388,6 +2399,18 @@ pub fn check_module_types_in_file(
             }
         })
         .collect();
+
+    // Pre-register all module-level FnDef names so that intra-module function
+    // calls type-check without "unsupported call" errors. The placeholder type
+    // ScalarI64 is consistent with the loose i64-ABI assumption used elsewhere
+    // for unresolved symbols; full signature inference is a Phase B deliverable.
+    // Only names not already in the incoming `env` are registered so that
+    // cross-module-imports-resolved signatures take precedence.
+    for item in &module.items {
+        if let Node::FnDef { name, .. } = item {
+            tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
+        }
+    }
 
     for item in &module.items {
         match item {
