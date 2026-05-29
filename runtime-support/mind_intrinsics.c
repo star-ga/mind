@@ -186,6 +186,40 @@ MIND_EXPORT int64_t print_bytes(int64_t buf_addr, int64_t count) {
     return __mind_write(1, buf_addr, count, -1);
 }
 
+// printI64 / printNewline — MLIR executable-print helpers (#306).
+// `mindc` lowers scalar `print(x)` outputs to `func.call @printI64(%x)`
+// followed by `func.call @printNewline()` and emits both as `func.func
+// private` (external) declarations — see
+// src/eval/mlir_export.rs::emit_executable_prints / emit_executable_helpers.
+// The definitions must live in this statically-linked runtime-support shim:
+// without them the keystone self-host link fails with an undefined reference
+// to `printI64`, and `mindc build --emit=cdylib` falls back to a launcher
+// stub instead of a real ELF cdylib (the #306 keystone real-ELF blocker).
+// Output goes through the same raw fd-1 write as `print_bytes` so the two
+// print surfaces share one unbuffered, deterministic path (no stdio buffer
+// interleave, no locale dependence — required for byte-identical bootstrap).
+MIND_EXPORT void printI64(int64_t value) {
+    // Decimal-format into a fixed buffer (max i64 = 20 digits + sign), then
+    // emit in a single write. Two's-complement-safe negation for INT64_MIN.
+    char digits[20];
+    int n = 0;
+    uint64_t mag = (value < 0) ? (~(uint64_t)value + 1ULL) : (uint64_t)value;
+    do {
+        digits[n++] = (char)('0' + (int)(mag % 10ULL));
+        mag /= 10ULL;
+    } while (mag != 0 && n < (int)sizeof(digits));
+    char out[24];
+    int len = 0;
+    if (value < 0) out[len++] = '-';
+    while (n > 0) out[len++] = digits[--n];
+    MIND_WRITE(1, out, (size_t)len);
+}
+
+MIND_EXPORT void printNewline(void) {
+    char nl = '\n';
+    MIND_WRITE(1, &nl, 1);
+}
+
 // ---------------------------------------------------------------------------
 // std.vec surface — matches RFC 0005 Option C heap-record layout.
 //
