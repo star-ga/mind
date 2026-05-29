@@ -1,6 +1,6 @@
 # MIND Compiler Status
 
-> **Last Updated:** 2026-05-21
+> **Last Updated:** 2026-05-29
 > **Version:** 0.7.0
 
 ## Overview
@@ -138,6 +138,73 @@ There are TODO items in `src/exec/cpu.rs`, `src/eval/mod.rs`, and
 **intentional design markers** indicating functionality provided by the
 proprietary `mind-runtime` backend. They are not missing features but
 architectural boundary markers.
+
+## IR Canon
+
+The canonical compiled-artifact IR is `IRModule` serialized as **mic@1** text
+(`ir::save`) — RFC-0001 deterministic, the stable public contract documented in
+`docs/ir-stability.md`. The binary shipping format is **mic@3**: a binary encoding
+of the full `IRModule` (all 37 `Instr` variants including control flow, functions,
+and SIMD) with an embedded mic@2.1 MAP epilogue carrying the `evidence_chain.*`
+and `verify.*` namespaces.
+
+| Layer | Format | Status |
+|---|---|---|
+| mic@1 text (human-readable, round-trip stable) | `ir::save` / `ir::load` | ✅ Stable — the anchor for `trace_hash` |
+| mic@3 binary `IRModule` codec | `src/ir/compact/v3/` | ✅ Shipped (RFC 0021 step 1, mind@5c29f0d) |
+| Evidence MAP epilogue on mic@3 | `src/ir/compact/v3/evidence.rs` | ✅ Shipped (RFC 0021 step 2, mind@c64bd0b) |
+| `mindc --emit-mic3` / `--emit-evidence` CLI | `src/bin/mindc.rs` | ✅ Shipped (RFC 0021 step 3, mind@7fc10d2) |
+| `trace_hash` anchored on canonical mic@1 IR | `src/ir/evidence.rs::ir_trace_hash` | ✅ Shipped (RFC 0016 GAP-1, mind@db5cb76) |
+| RFC 0016 Phase A evidence emit (inert, unsigned) | `src/ir/compact/v2/evidence.rs` | ✅ Shipped (mind@e7c8c28 / cadca87) |
+| RFC 0016 Phase B verifier core | `src/ir/compact/v2/evidence.rs::verify_evidence_chain` | ✅ Shipped (mind@cadca87) |
+| `mindc verify` CLI subcommand (RFC 0017) | pending | 🚧 In progress (RFC 0021 step 4) |
+| mic@2.x → `mind-model@2` demotion | cross-repo migration | 🚧 In progress (RFC 0021 step 5) |
+| Cross-substrate CI oracle gate | `tests/cross_substrate_identity/` + `oracle.rs` | 🚧 In progress (RFC 0021 step 6, #307) |
+| Ed25519 signing on release artifacts (RFC 0016 Phase C) | release CI runner | ⏳ Pending |
+| RFC 0016 Phase D — determinism-default (#289) | pending `Tensor<f32>` gate | ⏳ Pending |
+| RFC 0016 Phase E — agent + governance links (RFC 0019) | pending scheduler integration | ⏳ Pending |
+| #306 keystone re-bless (std string/sha256/toml byte-precise stores) | pending fresh-context session | 🚧 Pending |
+
+### Evidence chain
+
+A compiled MIND artifact carries a `evidence_chain.*` MAP block that attests:
+- **`trace_hash`**: SHA-256 (FIPS 180-4) of the canonical mic@1 IR bytes — the
+  artifact's deterministic production hash, reproducible by any verifier.
+- **`substrate`**: the RFC 0014 canonical lowering-tier ID (`x86_avx2`, `arm_neon`, …).
+- **`parent`**: `trace_hash` of the predecessor step in the transformation DAG.
+- **`determinism`**: `"deterministic"` or `"nondeterministic"` (never a bare artifact).
+- **`toolchain`**: `mindc` version that produced the artifact.
+
+For a Q16.16 graph, two artifacts compiled for different substrates from the same
+source have equal `trace_hash` values — cross-substrate bit-identity made inspectable
+in-band (RFC 0015). The `verify.*` MAP block (RFC 0017) carries a signed receipt
+from `mindc verify`; the `agent.*` MAP block (RFC 0019) links a runtime agent step's
+`ReplayScheduler` trace to the artifact's `trace_hash` (the fold:
+`H(mic1_ir_hash || replay_trace_hash)`).
+
+### mic@3 binary codec
+
+`mic@3` is the binary shipping format: the mic@2.1 MAP+Ed25519 container extended
+to carry the full `IRModule` data model. Key properties:
+- Canonical encoding: sorted map keys, fixed-width length prefixes, f64 via `to_bits`,
+  deterministic depth-first pre-order traversal of control-flow regions.
+- `save→load→save` fixed-point verified by differential-fuzz test suite.
+- Additive alongside mic@1 — mic@1 text output is unchanged; `mic@3` is a new emit
+  target (`--emit-mic3`, `--emit-evidence`).
+- `trace_hash` in the MAP epilogue is SHA-256 of the canonical mic@1 IR bytes
+  (not the binary body), so the same hash appears whether verifying via mic@1 text
+  or mic@3 binary.
+
+### RFC 0021 migration progress
+
+| Step | Description | Status |
+|---|---|---|
+| 1 | mic@3 binary `IRModule` codec | ✅ Done (mind@5c29f0d) |
+| 2 | Evidence MAP epilogue on mic@3 | ✅ Done (mind@c64bd0b) |
+| 3 | `mindc --emit-mic3` / `--emit-evidence` CLI flags | ✅ Done (mind@7fc10d2) |
+| 4 | `mindc verify --evidence` CLI subcommand | 🚧 In progress |
+| 5 | Demote mic@2.x → `mind-model@2` (cross-repo migration) | 🚧 In progress |
+| 6 | `oracle.rs` + CI bit-identity gate (#307) | 🚧 In progress |
 
 ## Contributing
 
