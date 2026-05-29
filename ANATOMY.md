@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2669 | **Est. tokens:** ~6,673,530
-**Generated:** 2026-05-29 16:35 UTC
+**Files:** 2669 | **Est. tokens:** ~6,673,440
+**Generated:** 2026-05-29 16:55 UTC
 
 ## Token Budget Guide
 
@@ -364,37 +364,37 @@
 | `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~6,223 |
 | `src/autodiff/` | 3 | ~4,467 |
-| `src/bin/` | 2 | ~19,525 |
+| `src/bin/` | 2 | ~19,524 |
 | `src/build/` | 2 | ~11,080 |
 | `src/cache/` | 4 | ~3,525 |
-| `src/check/` | 3 | ~9,758 |
+| `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~8,087 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
-| `src/doc/` | 3 | ~10,468 |
+| `src/doc/` | 3 | ~10,474 |
 | `src/eval/` | 13 | ~82,595 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,898 |
-| `src/fmt/` | 3 | ~17,708 |
+| `src/fmt/` | 3 | ~17,717 |
 | `src/ir/` | 4 | ~15,575 |
 | `src/ir/compact/` | 3 | ~14,226 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
-| `src/ir/compact/v3/` | 4 | ~34,886 |
+| `src/ir/compact/v3/` | 4 | ~34,882 |
 | `src/lint/` | 2 | ~4,001 |
-| `src/lint/rules/` | 6 | ~9,259 |
+| `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 2 | ~1,967 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~3,252 |
-| `src/project/` | 3 | ~20,902 |
+| `src/parser/` | 1 | ~3,260 |
+| `src/project/` | 3 | ~20,884 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
-| `src/test/` | 1 | ~5,851 |
+| `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
-| `src/workspace/` | 1 | ~4,926 |
+| `src/workspace/` | 1 | ~4,906 |
 | `std/` | 17 | ~81,222 |
 | `tests/` | 158 | ~268,039 |
 | `tests/autodiff/` | 2 | ~247 |
@@ -3566,7 +3566,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~13482 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~13481 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3579,8 +3579,8 @@
 - `store.rs` (~1112 tok, large) — Copyright 2025-2026 STARGA Inc.
 ### `src/check/`
 
-- `gitignore.rs` (~2347 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7037 tok, huge) — Copyright 2025 STARGA Inc.
+- `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7034 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3603,7 +3603,7 @@
 
 - `html.rs` (~956 tok, large) — Copyright 2025 STARGA Inc.
 - `markdown.rs` (~2644 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~6868 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6874 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3639,7 +3639,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~13241 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~13250 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3659,7 +3659,7 @@
 
 - `emit.rs` (~9808 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~9128 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~8549 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8545 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~7401 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
@@ -3678,9 +3678,9 @@
 ### `src/lint/rules/`
 
 - `mod.rs` (~454 tok, medium) — Copyright 2025 STARGA Inc.
-- `naming_convention.rs` (~1898 tok, huge) — Copyright 2025 STARGA Inc.
+- `naming_convention.rs` (~1848 tok, huge) — Copyright 2025 STARGA Inc.
 - `q16_overflow.rs` (~2549 tok, huge) — Copyright 2025 STARGA Inc.
-- `shadowing.rs` (~1797 tok, huge) — Copyright 2025 STARGA Inc.
+- `shadowing.rs` (~1785 tok, huge) — Copyright 2025 STARGA Inc.
 - `trailing_whitespace.rs` (~869 tok, large) — Copyright 2025 STARGA Inc.
 - `unused_import.rs` (~1692 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3707,13 +3707,13 @@
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `trivia.rs` (~3252 tok, huge) — Copyright 2025 STARGA Inc.
+- `trivia.rs` (~3260 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~13793 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13775 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3443 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3739,7 +3739,7 @@
 - `tensor.rs` (~391 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/test/`
 
-- `mod.rs` (~5851 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~5848 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3748,7 +3748,7 @@
 - `value.rs` (~297 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/workspace/`
 
-- `mod.rs` (~4926 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
 - `async.mind` (~2465 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver

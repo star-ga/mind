@@ -103,7 +103,7 @@ pub use parse::{Mic3Error, parse_mic3};
 pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport};
 
 /// Magic header bytes for MIC@3 binary format.
-pub const MIC3_MAGIC: [u8; 4] = [b'M', b'I', b'C', b'3'];
+pub const MIC3_MAGIC: [u8; 4] = *b"MIC3";
 
 /// MIC@3 format version byte.
 pub const MIC3_VERSION: u8 = 0x01;

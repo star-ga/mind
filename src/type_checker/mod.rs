@@ -47,6 +47,15 @@ pub struct TypeErrSpan {
 
 pub type TypeEnv = HashMap<String, ValueType>;
 
+/// A tensor parameter signature: `(arg_position, param_name, dims, dtype)`.
+/// `arg_position` is the 0-based index in the full param list so call arguments
+/// (some of which may be non-tensor) can be correlated (RFC 0012 Phase A).
+type TensorParamSig = (usize, String, Vec<String>, String);
+
+/// Maps a function name to its tensor-param signatures, used by call-site
+/// symbolic-dim checks without a second module walk.
+type FnTensorSigs = HashMap<String, Vec<TensorParamSig>>;
+
 const TYPE_ERR_CODE: &str = "E2001";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
@@ -2354,12 +2363,12 @@ pub fn check_module_types_in_file(
     // Maps function name → list of (arg_position, param_name, dims, dtype).
     // `arg_position` is the 0-based index in the full param list so we can
     // correctly correlate call arguments (some of which may be non-tensor).
-    let fn_tensor_sigs: HashMap<String, Vec<(usize, String, Vec<String>, String)>> = module
+    let fn_tensor_sigs: FnTensorSigs = module
         .items
         .iter()
         .filter_map(|item| {
             if let Node::FnDef { name, params, .. } = item {
-                let tensor_params: Vec<(usize, String, Vec<String>, String)> = params
+                let tensor_params: Vec<TensorParamSig> = params
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, p)| match &p.ty {
@@ -3156,11 +3165,12 @@ fn check_tensor_shape_compat(
 /// Example: `fn f(a: Tensor<f32,[N,K]>, b: Tensor<f32,[N,M]>)` called with
 /// `f(x, y)` where `x: Tensor<f32,[4,8]>` and `y: Tensor<f32,[8,16]>` → `N`
 /// is bound to `4` by `x` and `8` by `y` → `shape::symbolic_conflict`.
+#[allow(clippy::too_many_arguments)]
 fn check_call_symbolic_dims(
     callee: &str,
     args: &[Node],
     call_span: AstSpan,
-    fn_sigs: &HashMap<String, Vec<(usize, String, Vec<String>, String)>>,
+    fn_sigs: &FnTensorSigs,
     env: &TypeEnv,
     src: &str,
     file: Option<&str>,
@@ -3224,7 +3234,7 @@ fn check_call_symbolic_dims(
 /// on every `Node::Call` that matches a function in `fn_sigs`.
 fn walk_calls_for_symbolic_check(
     node: &Node,
-    fn_sigs: &HashMap<String, Vec<(usize, String, Vec<String>, String)>>,
+    fn_sigs: &FnTensorSigs,
     env: &TypeEnv,
     src: &str,
     file: Option<&str>,

@@ -644,6 +644,7 @@ fn main() {
     emit_shared_if_requested(&cli.compile, &products);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_mindc_build(
     paths: &[String],
     release: bool,
@@ -800,6 +801,7 @@ fn detect_workspace_root() -> Option<std::path::PathBuf> {
 }
 
 /// Build all workspace members (or a filtered subset) in topological order.
+#[allow(clippy::too_many_arguments)]
 fn run_workspace_build(
     workspace_root: &std::path::Path,
     release: bool,
@@ -831,11 +833,10 @@ fn run_workspace_build(
     };
     let selected = ws_opts.filter_members(&members, &sorted);
 
-    if selected.is_empty() && package.is_some() {
-        eprintln!(
-            "error[workspace]: package '{}' not found in workspace",
-            package.unwrap()
-        );
+    if selected.is_empty()
+        && let Some(pkg) = package
+    {
+        eprintln!("error[workspace]: package '{pkg}' not found in workspace");
         process::exit(2);
     }
 
@@ -852,7 +853,7 @@ fn run_workspace_build(
         } else {
             None // each member uses its own default output path
         };
-        let member_out = std::env::current_dir().ok().map(|_| eff_out).flatten();
+        let member_out = std::env::current_dir().ok().and(eff_out);
 
         // Run the Phase A build for this member's root.
         let mut build_opts = BuildOpts {
@@ -973,11 +974,10 @@ fn run_workspace_test(
     };
     let selected = ws_opts.filter_members(&members, &sorted);
 
-    if selected.is_empty() && package.is_some() {
-        eprintln!(
-            "error[workspace]: package '{}' not found in workspace",
-            package.unwrap()
-        );
+    if selected.is_empty()
+        && let Some(pkg) = package
+    {
+        eprintln!("error[workspace]: package '{pkg}' not found in workspace");
         process::exit(2);
     }
 
