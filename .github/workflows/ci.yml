@@ -195,6 +195,77 @@ jobs:
             cargo clippy --no-default-features -- -D warnings
           fi
 
+  cross_substrate_identity:
+    # RFC 0020 §10 — the wedge's load-bearing invariant made enforceable: a
+    # Q16.16 workload MUST hash byte-identically on every substrate (RFC 0015
+    # §3.1). x86_64 verifies the `avx2` reference; the Linux ARM runner verifies
+    # the `neon` reference on real aarch64 hardware — without it the committed
+    # neon hash is an unverified copy of avx2 and an ARM lowering divergence
+    # would ship green. MIND_BENCH_REQUIRE=1 turns a missing MLIR toolchain into
+    # a hard failure so the gate can never pass vacuously.
+    name: Cross-substrate bit-identity (${{ matrix.substrate }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            substrate: avx2
+          - runner: ubuntu-24.04-arm
+            substrate: neon
+    runs-on: ${{ matrix.runner }}
+
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      no_proxy: ""
+      MIND_BENCH_REQUIRE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.runner }}-xsi-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ matrix.runner }}-xsi-
+
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 18)
+        # Stock noble universe ships llvm-18 by default on both x86_64 and
+        # arm64; the gate shells out to unversioned mlir-opt / mlir-translate /
+        # clang, all of which live in /usr/lib/llvm-18/bin.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mlir-18-tools clang-18
+          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain on PATH
+        run: |
+          mlir-opt --version | head -1
+          mlir-translate --version | head -1
+          clang --version | head -1
+
+      - name: Build mindc (MLIR backend)
+        run: |
+          cargo build --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" --bin mindc
+
+      - name: Cross-substrate reproducibility gate
+        # Host substrate (avx2 on x86_64, neon on aarch64) is verified here;
+        # the other substrate is verified on its sibling matrix runner.
+        run: |
+          cargo test --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" \
+            --test cross_substrate_identity -- --nocapture
+
   format:
     name: Format Check
     runs-on: ubuntu-latest
