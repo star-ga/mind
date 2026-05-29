@@ -20,7 +20,8 @@
 //! ```
 
 use crate::ast::{
-    BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TensorElemOp, TypeAnn,
+    BinOp, CallConv, ExternFn, Literal, MatchArm, Module, Node, Param, Pattern, Span, TensorElemOp,
+    TypeAnn,
 };
 use crate::diagnostics::{Diagnostic as PrettyDiagnostic, Span as DiagnosticSpan};
 use crate::types::ConvPadding;
@@ -459,7 +460,8 @@ impl<'a> P<'a> {
             self.pos += 6; // "extern"
             self.skip_ws();
             // Must be followed by `"C"` and then `fn`.
-            if self.at(b'"') && self.pos + 2 < self.b.len()
+            if self.at(b'"')
+                && self.pos + 2 < self.b.len()
                 && self.b[self.pos + 1] == b'C'
                 && self.b[self.pos + 2] == b'"'
             {
@@ -520,9 +522,9 @@ impl<'a> P<'a> {
                 self.pos += 5;
                 false
             } else {
-                return Err(self.err(
-                    "expected `const` or `mut` after `*` in raw pointer type".into(),
-                ));
+                return Err(
+                    self.err("expected `const` or `mut` after `*` in raw pointer type".into())
+                );
             };
             self.skip_ws();
             let pointee = self.type_ann()?;
@@ -1300,7 +1302,11 @@ impl<'a> P<'a> {
     }
 
     /// Parse `struct NAME { field: T, field: T }`.
-    fn parse_struct(&mut self, attrs: Vec<crate::ast::Attribute>, is_pub: bool) -> Result<Node, ParseError> {
+    fn parse_struct(
+        &mut self,
+        attrs: Vec<crate::ast::Attribute>,
+        is_pub: bool,
+    ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 6; // "struct"
         self.skip_ws();
@@ -1364,7 +1370,11 @@ impl<'a> P<'a> {
     }
 
     /// Parse `enum NAME { Variant, Variant(T), ... }`.
-    fn parse_enum(&mut self, attrs: Vec<crate::ast::Attribute>, is_pub: bool) -> Result<Node, ParseError> {
+    fn parse_enum(
+        &mut self,
+        attrs: Vec<crate::ast::Attribute>,
+        is_pub: bool,
+    ) -> Result<Node, ParseError> {
         let start = self.pos;
         self.pos += 4; // "enum"
         self.skip_ws();
@@ -1458,7 +1468,7 @@ impl<'a> P<'a> {
             other => {
                 return Err(self.err(format!(
                     "unknown sparse layout `{other}` — expected one of: csr, csc, coo, bsr"
-                )))
+                )));
             }
         };
         self.skip_ws();
@@ -1618,7 +1628,11 @@ impl<'a> P<'a> {
 
     /// Kept for back-compat with call sites that do not pass `is_test`.
     #[allow(dead_code)]
-    fn parse_fn_def_with_reap(&mut self, reap_threshold: Option<f64>, is_pub: bool) -> Result<Node, ParseError> {
+    fn parse_fn_def_with_reap(
+        &mut self,
+        reap_threshold: Option<f64>,
+        is_pub: bool,
+    ) -> Result<Node, ParseError> {
         self.parse_fn_def_with_attrs(reap_threshold, false, is_pub, Vec::new())
     }
 
@@ -1642,9 +1656,7 @@ impl<'a> P<'a> {
         }
         self.pos += 1;
         if !self.starts_with(b"C\"") {
-            return Err(self.err(
-                "only `extern \"C\"` is supported in RFC 0010 Phase A".into(),
-            ));
+            return Err(self.err("only `extern \"C\"` is supported in RFC 0010 Phase A".into()));
         }
         self.pos += 2; // C"
         self.skip_ws();
@@ -1666,11 +1678,9 @@ impl<'a> P<'a> {
                 "sysv" => CallConv::SysV,
                 "win64" => CallConv::Win64,
                 "aapcs" => CallConv::Aapcs,
-                other => {
-                    return Err(self.err(format!(
-                        "unknown callconv tag `{other}` — expected one of: .c, .sysv, .win64, .aapcs"
-                    )))
-                }
+                other => return Err(self.err(format!(
+                    "unknown callconv tag `{other}` — expected one of: .c, .sysv, .win64, .aapcs"
+                ))),
             };
             self.skip_ws();
             self.expect(b')')?;
@@ -1703,7 +1713,11 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b'}')?;
         let span = Span::new(start, self.pos);
-        Ok(Node::ExternBlock { callconv, fns, span })
+        Ok(Node::ExternBlock {
+            callconv,
+            fns,
+            span,
+        })
     }
 
     /// Parse one `[safe | unsafe] fn name(params) [-> ret] [;]` inside an
@@ -1727,9 +1741,7 @@ impl<'a> P<'a> {
             true
         };
         if !self.at_keyword(b"fn") {
-            return Err(self.err(
-                "expected `fn` inside `extern \"C\"` block".into(),
-            ));
+            return Err(self.err("expected `fn` inside `extern \"C\"` block".into()));
         }
         self.pos += 2; // "fn"
         self.skip_ws();
@@ -2325,9 +2337,19 @@ impl<'a> P<'a> {
                         if args.is_empty() && (method == "sum" || method == "mean") {
                             let x = Box::new(node);
                             node = if method == "sum" {
-                                Node::CallTensorSum { x, axes: Vec::new(), keepdims: false, span }
+                                Node::CallTensorSum {
+                                    x,
+                                    axes: Vec::new(),
+                                    keepdims: false,
+                                    span,
+                                }
                             } else {
-                                Node::CallTensorMean { x, axes: Vec::new(), keepdims: false, span }
+                                Node::CallTensorMean {
+                                    x,
+                                    axes: Vec::new(),
+                                    keepdims: false,
+                                    span,
+                                }
                             };
                             continue;
                         }

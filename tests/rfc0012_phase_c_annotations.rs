@@ -13,7 +13,7 @@
 //! MIND attribute surface syntax is Rust-style `#[attr]` (RFC 0012 §5; the
 //! `#` disambiguates attributes from the `@` operator and bare `[` arrays).
 
-use libmind::pipeline::{compile_source_with_name, CompileError, CompileOptions};
+use libmind::pipeline::{CompileError, CompileOptions, compile_source_with_name};
 use libmind::runtime::types::BackendTarget;
 
 fn opts() -> CompileOptions {
@@ -201,9 +201,7 @@ fn q16_q16_let_binding_is_ok() {
 fn deterministic_check_descends_into_module_block() {
     // A `#[deterministic]` fn nested in a `module { }` block calling a plain
     // fn (also nested) must be flagged — the pass descends into module blocks.
-    let c = codes(
-        "module m {\n#[deterministic]\nfn f() -> i64 { g() }\nfn g() -> i64 { 0 }\n}\n",
-    );
+    let c = codes("module m {\n#[deterministic]\nfn f() -> i64 { g() }\nfn g() -> i64 { 0 }\n}\n");
     assert!(
         c.contains(&"determinism::nondeterministic_in_deterministic"),
         "determinism check must reach fns inside module blocks; saw {c:?}"

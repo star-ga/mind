@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use libmind::fmt::format_source;
 use libmind::project::MindcraftFormatConfig;
 use std::path::Path;
@@ -67,9 +67,7 @@ fn bench_fmt_vec_mind(c: &mut Criterion) {
         BenchmarkId::new("mindcraft_fmt", "vec.mind"),
         &src,
         |b, s| {
-            b.iter(|| {
-                format_source(black_box(s), black_box(&cfg)).expect("format failed")
-            });
+            b.iter(|| format_source(black_box(s), black_box(&cfg)).expect("format failed"));
         },
     );
 }
@@ -82,9 +80,7 @@ fn bench_fmt_mindc_mind(c: &mut Criterion) {
         BenchmarkId::new("mindcraft_fmt", "mindc_mind/main.mind"),
         &src,
         |b, s| {
-            b.iter(|| {
-                format_source(black_box(s), black_box(&cfg)).expect("format failed")
-            });
+            b.iter(|| format_source(black_box(s), black_box(&cfg)).expect("format failed"));
         },
     );
 }
@@ -97,9 +93,7 @@ fn bench_fmt_synthetic_stress(c: &mut Criterion) {
         BenchmarkId::new("mindcraft_fmt", "synthetic_1000_loc"),
         &src,
         |b, s| {
-            b.iter(|| {
-                format_source(black_box(s), black_box(&cfg)).expect("format failed")
-            });
+            b.iter(|| format_source(black_box(s), black_box(&cfg)).expect("format failed"));
         },
     );
 }

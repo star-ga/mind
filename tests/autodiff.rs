@@ -124,11 +124,13 @@ fn matmul_rule_applied() {
     assert!(gradients.contains_key(&a));
     assert!(gradients.contains_key(&b));
     // Expect at least one transpose in the gradient IR for matmul.
-    assert!(result
-        .gradient_module
-        .instrs
-        .iter()
-        .any(|instr| matches!(instr, Instr::Transpose { .. })));
+    assert!(
+        result
+            .gradient_module
+            .instrs
+            .iter()
+            .any(|instr| matches!(instr, Instr::Transpose { .. }))
+    );
 }
 
 #[test]

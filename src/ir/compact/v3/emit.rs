@@ -277,7 +277,11 @@ pub(super) fn encode_type_ann<W: Write>(
                 encode_type_ann(w, e, st)?;
             }
         }
-        TypeAnn::SparseTensor { layout, element, shape } => {
+        TypeAnn::SparseTensor {
+            layout,
+            element,
+            shape,
+        } => {
             w.write_all(&[sparse_layout_to_byte(*layout)])?;
             encode_type_ann(w, element, st)?;
             uleb128_write(w, shape.len() as u64)?;
@@ -316,7 +320,10 @@ pub(super) struct StringTable {
 
 impl StringTable {
     pub fn new() -> Self {
-        Self { entries: Vec::new(), index: HashMap::new() }
+        Self {
+            entries: Vec::new(),
+            index: HashMap::new(),
+        }
     }
 
     /// Intern a string and return its index (idempotent).
@@ -366,11 +373,7 @@ fn write_bool<W: Write>(w: &mut W, b: bool) -> std::io::Result<()> {
     w.write_all(&[b as u8])
 }
 
-fn encode_shape_dim<W: Write>(
-    w: &mut W,
-    dim: &ShapeDim,
-    st: &StringTable,
-) -> std::io::Result<()> {
+fn encode_shape_dim<W: Write>(w: &mut W, dim: &ShapeDim, st: &StringTable) -> std::io::Result<()> {
     match dim {
         ShapeDim::Known(n) => {
             w.write_all(&[0u8])?; // tag: known
@@ -479,7 +482,9 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
                 }
             }
         }
-        Instr::FnDef { name, params, body, .. } => {
+        Instr::FnDef {
+            name, params, body, ..
+        } => {
             st.intern(name);
             for (pname, _) in params {
                 st.intern(pname);
@@ -499,7 +504,12 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
             }
         }
         #[cfg(feature = "std-surface")]
-        Instr::While { cond_instrs, body, live_vars, .. } => {
+        Instr::While {
+            cond_instrs,
+            body,
+            live_vars,
+            ..
+        } => {
             collect_strings(cond_instrs, st);
             collect_strings(body, st);
             for (name, _) in live_vars {
@@ -507,7 +517,13 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
             }
         }
         #[cfg(feature = "std-surface")]
-        Instr::If { cond_instrs, then_instrs, else_instrs, branch_bindings, .. } => {
+        Instr::If {
+            cond_instrs,
+            then_instrs,
+            else_instrs,
+            branch_bindings,
+            ..
+        } => {
             collect_strings(cond_instrs, st);
             collect_strings(then_instrs, st);
             collect_strings(else_instrs, st);
@@ -520,7 +536,13 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
             collect_strings(body, st);
         }
         #[cfg(feature = "std-surface")]
-        Instr::ExternFnDecl { name, param_types, ret_type, vararg_hints, .. } => {
+        Instr::ExternFnDecl {
+            name,
+            param_types,
+            ret_type,
+            vararg_hints,
+            ..
+        } => {
             st.intern(name);
             for t in param_types {
                 st.intern(t);
@@ -606,8 +628,12 @@ fn collect_type_ann_strings(ann: &crate::ast::TypeAnn, st: &mut StringTable) {
         }
         TypeAnn::Slice { element, .. }
         | TypeAnn::Array { element, .. }
-        | TypeAnn::Ref { target: element, .. }
-        | TypeAnn::RawPtr { pointee: element, .. } => {
+        | TypeAnn::Ref {
+            target: element, ..
+        }
+        | TypeAnn::RawPtr {
+            pointee: element, ..
+        } => {
             collect_type_ann_strings(element, st);
         }
         TypeAnn::Tuple { elements } => {
@@ -754,21 +780,35 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *lhs).unwrap();
             write_vid(w, *rhs).unwrap();
         }
-        Instr::Sum { dst, src, axes, keepdims } => {
+        Instr::Sum {
+            dst,
+            src,
+            axes,
+            keepdims,
+        } => {
             w.write_all(&[OP_SUM]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *src).unwrap();
             encode_i64_vec(w, axes).unwrap();
             write_bool(w, *keepdims).unwrap();
         }
-        Instr::Mean { dst, src, axes, keepdims } => {
+        Instr::Mean {
+            dst,
+            src,
+            axes,
+            keepdims,
+        } => {
             w.write_all(&[OP_MEAN]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *src).unwrap();
             encode_i64_vec(w, axes).unwrap();
             write_bool(w, *keepdims).unwrap();
         }
-        Instr::Reshape { dst, src, new_shape } => {
+        Instr::Reshape {
+            dst,
+            src,
+            new_shape,
+        } => {
             w.write_all(&[OP_RESHAPE]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *src).unwrap();
@@ -807,7 +847,14 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *a).unwrap();
             write_vid(w, *b).unwrap();
         }
-        Instr::Conv2d { dst, input, filter, stride_h, stride_w, padding } => {
+        Instr::Conv2d {
+            dst,
+            input,
+            filter,
+            stride_h,
+            stride_w,
+            padding,
+        } => {
             w.write_all(&[OP_CONV2D]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *input).unwrap();
@@ -817,7 +864,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             w.write_all(&[padding_to_byte(*padding)]).unwrap();
         }
         Instr::Conv2dGradInput {
-            dst, dy, filter, input_shape, stride_h, stride_w, padding,
+            dst,
+            dy,
+            filter,
+            input_shape,
+            stride_h,
+            stride_w,
+            padding,
         } => {
             w.write_all(&[OP_CONV2D_GRAD_INPUT]).unwrap();
             write_vid(w, *dst).unwrap();
@@ -831,7 +884,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             w.write_all(&[padding_to_byte(*padding)]).unwrap();
         }
         Instr::Conv2dGradFilter {
-            dst, input, dy, filter_shape, stride_h, stride_w, padding,
+            dst,
+            input,
+            dy,
+            filter_shape,
+            stride_h,
+            stride_w,
+            padding,
         } => {
             w.write_all(&[OP_CONV2D_GRAD_FILTER]).unwrap();
             write_vid(w, *dst).unwrap();
@@ -866,7 +925,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
                 write_i64(w, d.stride).unwrap();
             }
         }
-        Instr::Gather { dst, src, indices, axis } => {
+        Instr::Gather {
+            dst,
+            src,
+            indices,
+            axis,
+        } => {
             w.write_all(&[OP_GATHER]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *src).unwrap();
@@ -883,7 +947,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *dst).unwrap();
             w.write_all(&[sparse_layout_to_byte(*layout)]).unwrap();
         }
-        Instr::FnDef { name, params, ret_id, body, reap_threshold } => {
+        Instr::FnDef {
+            name,
+            params,
+            ret_id,
+            body,
+            reap_threshold,
+        } => {
             w.write_all(&[OP_FN_DEF]).unwrap();
             encode_string_idx(w, name, st).unwrap();
             encode_named_vids(w, params, st).unwrap();
@@ -929,7 +999,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *index).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::While { cond_id, cond_instrs, body, live_vars, init_ids } => {
+        Instr::While {
+            cond_id,
+            cond_instrs,
+            body,
+            live_vars,
+            init_ids,
+        } => {
             w.write_all(&[OP_WHILE]).unwrap();
             write_vid(w, *cond_id).unwrap();
             uleb128_write(w, cond_instrs.len() as u64).unwrap();
@@ -974,7 +1050,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             encode_named_vids(w, branch_bindings, st).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::VecLoad { dst, base, offset, lanes } => {
+        Instr::VecLoad {
+            dst,
+            base,
+            offset,
+            lanes,
+        } => {
             w.write_all(&[OP_VEC_LOAD]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *base).unwrap();
@@ -982,7 +1063,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             uleb128_write(w, *lanes as u64).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::VecFma { dst, a, b, acc, lanes } => {
+        Instr::VecFma {
+            dst,
+            a,
+            b,
+            acc,
+            lanes,
+        } => {
             w.write_all(&[OP_VEC_FMA]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *a).unwrap();
@@ -998,7 +1085,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             uleb128_write(w, *lanes as u64).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::VecStore { src, base, offset, lanes } => {
+        Instr::VecStore {
+            src,
+            base,
+            offset,
+            lanes,
+        } => {
             w.write_all(&[OP_VEC_STORE]).unwrap();
             write_vid(w, *src).unwrap();
             write_vid(w, *base).unwrap();
@@ -1006,7 +1098,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             uleb128_write(w, *lanes as u64).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::VecLoadI32 { dst, base, offset, lanes } => {
+        Instr::VecLoadI32 {
+            dst,
+            base,
+            offset,
+            lanes,
+        } => {
             w.write_all(&[OP_VEC_LOAD_I32]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *base).unwrap();
@@ -1014,7 +1111,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             uleb128_write(w, *lanes as u64).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::VecMulAddQ16 { dst, a, b, acc, lanes } => {
+        Instr::VecMulAddQ16 {
+            dst,
+            a,
+            b,
+            acc,
+            lanes,
+        } => {
             w.write_all(&[OP_VEC_MUL_ADD_Q16]).unwrap();
             write_vid(w, *dst).unwrap();
             write_vid(w, *a).unwrap();
@@ -1030,7 +1133,13 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             uleb128_write(w, *lanes as u64).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::Region { body, result, enter_id, exit_id, alloc_ids } => {
+        Instr::Region {
+            body,
+            result,
+            enter_id,
+            exit_id,
+            alloc_ids,
+        } => {
             w.write_all(&[OP_REGION]).unwrap();
             uleb128_write(w, body.len() as u64).unwrap();
             for bi in body {
@@ -1042,7 +1151,14 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             encode_vid_vec(w, alloc_ids).unwrap();
         }
         #[cfg(feature = "std-surface")]
-        Instr::ExternFnDecl { name, param_types, ret_type, is_varargs, vararg_hints, callconv } => {
+        Instr::ExternFnDecl {
+            name,
+            param_types,
+            ret_type,
+            is_varargs,
+            vararg_hints,
+            callconv,
+        } => {
             w.write_all(&[OP_EXTERN_FN_DECL]).unwrap();
             encode_string_idx(w, name, st).unwrap();
             uleb128_write(w, param_types.len() as u64).unwrap();

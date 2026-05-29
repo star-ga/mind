@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use libmind::{compile_source, differentiate_function, CompileOptions};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use libmind::{CompileOptions, compile_source, differentiate_function};
 
 /// Simple linear function
 const LINEAR: &str = r#"

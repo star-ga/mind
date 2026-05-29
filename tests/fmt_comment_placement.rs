@@ -82,9 +82,13 @@ fn between_stmts_comment_stays_inside() {
     comment_stays_inside("between_stmts", &out);
     // The comment must appear before the implicit return, not after `}`.
     let lines: Vec<&str> = out.lines().collect();
-    let comment_pos = lines.iter().position(|l| l.trim() == "// middle comment")
+    let comment_pos = lines
+        .iter()
+        .position(|l| l.trim() == "// middle comment")
         .expect("comment not found");
-    let close_pos = lines.iter().rposition(|l| l.trim() == "}")
+    let close_pos = lines
+        .iter()
+        .rposition(|l| l.trim() == "}")
         .expect("closing brace not found");
     assert!(
         comment_pos < close_pos,
@@ -111,9 +115,13 @@ fn trailing_same_line_comment_stays_inside() {
     comment_stays_inside("trailing_same_line", &out);
     // The comment must appear before the closing `}`.
     let lines: Vec<&str> = out.lines().collect();
-    let comment_pos = lines.iter().position(|l| l.trim() == "// keep me")
+    let comment_pos = lines
+        .iter()
+        .position(|l| l.trim() == "// keep me")
         .expect("comment not found");
-    let close_pos = lines.iter().rposition(|l| l.trim() == "}")
+    let close_pos = lines
+        .iter()
+        .rposition(|l| l.trim() == "}")
         .expect("closing brace not found");
     assert!(
         comment_pos < close_pos,
@@ -129,7 +137,8 @@ fn trailing_same_line_comment_stays_inside() {
 
 #[test]
 fn leading_body_comment_stays_inside() {
-    let src = "pub fn h(x: i64) -> i64 {\n    // leading body comment\n    let a: i64 = x;\n    a\n}\n";
+    let src =
+        "pub fn h(x: i64) -> i64 {\n    // leading body comment\n    let a: i64 = x;\n    a\n}\n";
     let out = fmt(src);
     assert!(
         out.contains("// leading body comment"),
@@ -138,9 +147,13 @@ fn leading_body_comment_stays_inside() {
     comment_stays_inside("leading_body", &out);
     // The comment must appear before the closing `}`.
     let lines: Vec<&str> = out.lines().collect();
-    let comment_pos = lines.iter().position(|l| l.trim() == "// leading body comment")
+    let comment_pos = lines
+        .iter()
+        .position(|l| l.trim() == "// leading body comment")
         .expect("comment not found");
-    let close_pos = lines.iter().rposition(|l| l.trim() == "}")
+    let close_pos = lines
+        .iter()
+        .rposition(|l| l.trim() == "}")
         .expect("closing brace not found");
     assert!(
         comment_pos < close_pos,
@@ -156,7 +169,8 @@ fn leading_body_comment_stays_inside() {
 
 #[test]
 fn trailing_body_comment_stays_inside() {
-    let src = "pub fn f(x: i64) -> i64 {\n    let a: i64 = x;\n    // trailing body comment\n    a\n}\n";
+    let src =
+        "pub fn f(x: i64) -> i64 {\n    let a: i64 = x;\n    // trailing body comment\n    a\n}\n";
     let out = fmt(src);
     // Note: the comment is between the let and the final expression, so the
     // formatter must keep it between those two statements.
@@ -166,9 +180,13 @@ fn trailing_body_comment_stays_inside() {
     );
     comment_stays_inside("trailing_body", &out);
     let lines: Vec<&str> = out.lines().collect();
-    let comment_pos = lines.iter().position(|l| l.trim() == "// trailing body comment")
+    let comment_pos = lines
+        .iter()
+        .position(|l| l.trim() == "// trailing body comment")
         .expect("comment not found");
-    let close_pos = lines.iter().rposition(|l| l.trim() == "}")
+    let close_pos = lines
+        .iter()
+        .rposition(|l| l.trim() == "}")
         .expect("closing brace not found");
     assert!(
         comment_pos < close_pos,
@@ -196,13 +214,15 @@ fn idempotence_trailing_same_line() {
 
 #[test]
 fn idempotence_leading_body() {
-    let src = "pub fn h(x: i64) -> i64 {\n    // leading body comment\n    let a: i64 = x;\n    a\n}\n";
+    let src =
+        "pub fn h(x: i64) -> i64 {\n    // leading body comment\n    let a: i64 = x;\n    a\n}\n";
     assert_idempotent("leading_body", src);
 }
 
 #[test]
 fn idempotence_trailing_body() {
-    let src = "pub fn f(x: i64) -> i64 {\n    let a: i64 = x;\n    // trailing body comment\n    a\n}\n";
+    let src =
+        "pub fn f(x: i64) -> i64 {\n    let a: i64 = x;\n    // trailing body comment\n    a\n}\n";
     assert_idempotent("trailing_body", src);
 }
 
@@ -214,12 +234,19 @@ fn idempotence_trailing_body() {
 fn comment_does_not_cross_fn_boundary() {
     let src = "pub fn first(x: i64) -> i64 {\n    let a: i64 = x;\n    // note inside first\n    a\n}\n\npub fn second(x: i64) -> i64 {\n    x\n}\n";
     let out = fmt(src);
-    assert!(out.contains("// note inside first"), "comment must be present:\n{out}");
+    assert!(
+        out.contains("// note inside first"),
+        "comment must be present:\n{out}"
+    );
     // The comment must appear before second function's definition.
     let lines: Vec<&str> = out.lines().collect();
-    let comment_pos = lines.iter().position(|l| l.trim() == "// note inside first")
+    let comment_pos = lines
+        .iter()
+        .position(|l| l.trim() == "// note inside first")
         .expect("comment not found");
-    let second_fn_pos = lines.iter().position(|l| l.trim().starts_with("pub fn second"))
+    let second_fn_pos = lines
+        .iter()
+        .position(|l| l.trim().starts_with("pub fn second"))
         .expect("second fn not found");
     assert!(
         comment_pos < second_fn_pos,
@@ -241,7 +268,10 @@ fn repro_trailing_comment_stays_inside_fn() {
     let out = fmt(src);
     // The comment must not appear after the `}` on any line by itself.
     let lines: Vec<&str> = out.lines().collect();
-    let last_close = lines.iter().rposition(|l| l.trim() == "}").expect("no close brace");
+    let last_close = lines
+        .iter()
+        .rposition(|l| l.trim() == "}")
+        .expect("no close brace");
     for line in &lines[last_close + 1..] {
         assert!(
             !line.trim().starts_with("//"),
@@ -253,10 +283,14 @@ fn repro_trailing_comment_stays_inside_fn() {
 
 #[test]
 fn repro_leading_body_comment_stays_inside_fn() {
-    let src = "pub fn h(x: i64) -> i64 {\n    // leading body comment\n    let a: i64 = x;\n    a\n}\n";
+    let src =
+        "pub fn h(x: i64) -> i64 {\n    // leading body comment\n    let a: i64 = x;\n    a\n}\n";
     let out = fmt(src);
     let lines: Vec<&str> = out.lines().collect();
-    let last_close = lines.iter().rposition(|l| l.trim() == "}").expect("no close brace");
+    let last_close = lines
+        .iter()
+        .rposition(|l| l.trim() == "}")
+        .expect("no close brace");
     for line in &lines[last_close + 1..] {
         assert!(
             !line.trim().starts_with("//"),

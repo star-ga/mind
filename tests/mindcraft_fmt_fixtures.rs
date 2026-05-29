@@ -25,8 +25,7 @@ fn read_fixture(name: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/mindcraft/fmt")
         .join(name);
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("could not read fixture {name}: {e}"))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("could not read fixture {name}: {e}"))
 }
 
 /// Produce a simple line-by-line diff for failure messages.

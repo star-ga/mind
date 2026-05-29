@@ -24,13 +24,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::project::{
-    build_project, find_project_root, load_manifest, BuildOptions as LegacyBuildOptions,
-    BuildTarget, EmitKind, OptimizeLevel,
+    BuildOptions as LegacyBuildOptions, BuildTarget, EmitKind, OptimizeLevel, build_project,
+    find_project_root, load_manifest,
 };
 
 use cache::{
-    module_cache_key, probe, write_object, BuildDecision, BuildManifest, CacheProbe,
-    ObjectMeta, cache_root,
+    BuildDecision, BuildManifest, CacheProbe, ObjectMeta, cache_root, module_cache_key, probe,
+    write_object,
 };
 
 // ---------------------------------------------------------------------------
@@ -156,15 +156,17 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .replace('-', "_");
-            let pkg_name = if stem.chars().next().map(|c| c.is_ascii_alphabetic()).unwrap_or(false) {
+            let pkg_name = if stem
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_alphabetic())
+                .unwrap_or(false)
+            {
                 stem
             } else {
                 format!("pkg_{}", stem)
             };
-            let toml_src = format!(
-                "[package]\nname = \"{}\"\nversion = \"0.1.0\"\n",
-                pkg_name
-            );
+            let toml_src = format!("[package]\nname = \"{}\"\nversion = \"0.1.0\"\n", pkg_name);
             let m: ProjectManifest = toml::from_str(&toml_src)
                 .map_err(|e| BuildError::Invalid(format!("synthetic manifest: {e}")))?;
             (root, m)
@@ -231,8 +233,9 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
     let compiler_version = env!("CARGO_PKG_VERSION");
     let edition: u32 = 2024;
 
-    let source_bytes = fs::read(&entry_path)
-        .map_err(|e| BuildError::Failed(format!("cannot read source {}: {e}", entry_path.display())))?;
+    let source_bytes = fs::read(&entry_path).map_err(|e| {
+        BuildError::Failed(format!("cannot read source {}: {e}", entry_path.display()))
+    })?;
 
     let cache_key = module_cache_key(
         &source_bytes,
@@ -250,7 +253,10 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         BuildDecision::CacheMiss
     } else {
         match probe(&c_root, &cache_key) {
-            CacheProbe::Hit { ref key, ref object_path } => {
+            CacheProbe::Hit {
+                ref key,
+                ref object_path,
+            } => {
                 if opts.verbose {
                     eprintln!("   [CACHE HIT] {} ({})", entry_path.display(), &key[..8]);
                 }
@@ -263,7 +269,13 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
                     BuildDecision::CacheMiss
                 } else {
                     // Update manifest.
-                    update_manifest(&c_root, &project_root, &entry_path, &cache_key, opts.verbose);
+                    update_manifest(
+                        &c_root,
+                        &project_root,
+                        &entry_path,
+                        &cache_key,
+                        opts.verbose,
+                    );
 
                     let final_path = match eff_emit {
                         EmitKind::Cdylib => ensure_cdylib_extension(artifact_path),
@@ -383,7 +395,13 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
             };
             // Best-effort: cache write failure does not fail the build.
             let _ = write_object(&c_root, &cache_key, &artifact_bytes, &meta);
-            update_manifest(&c_root, &project_root, &entry_path, &cache_key, opts.verbose);
+            update_manifest(
+                &c_root,
+                &project_root,
+                &entry_path,
+                &cache_key,
+                opts.verbose,
+            );
         }
     }
 
@@ -439,16 +457,13 @@ fn update_manifest(
 // ---------------------------------------------------------------------------
 
 fn validate_package_name(name: &str) -> Result<(), BuildError> {
-    let valid = name
-        .chars()
-        .enumerate()
-        .all(|(i, c)| {
-            if i == 0 {
-                c.is_ascii_alphabetic()
-            } else {
-                c.is_ascii_alphanumeric() || c == '_' || c == '-'
-            }
-        });
+    let valid = name.chars().enumerate().all(|(i, c)| {
+        if i == 0 {
+            c.is_ascii_alphabetic()
+        } else {
+            c.is_ascii_alphanumeric() || c == '_' || c == '-'
+        }
+    });
     if name.is_empty() || !valid {
         return Err(BuildError::Invalid(format!(
             "invalid package name '{}': must match [a-zA-Z][a-zA-Z0-9_-]*",
@@ -531,7 +546,11 @@ fn default_artifact_path(
     emit: EmitKind,
     optimize: OptimizeLevel,
 ) -> PathBuf {
-    let profile_dir = if optimize.is_release() { "release" } else { "debug" };
+    let profile_dir = if optimize.is_release() {
+        "release"
+    } else {
+        "debug"
+    };
     let base = project_root.join("target").join(profile_dir);
     match emit {
         EmitKind::Binary => base.join(package_name),
@@ -599,7 +618,10 @@ fn patch_manifest_entry(toml_text: &str, new_entry: &str) -> String {
     if let Some(pos) = toml_text.find("[build]") {
         let after = &toml_text[pos + 7..];
         // Find end of [build] section (next section header or EOF).
-        let section_end = after.find("\n[").map(|p| pos + 7 + p + 1).unwrap_or(toml_text.len());
+        let section_end = after
+            .find("\n[")
+            .map(|p| pos + 7 + p + 1)
+            .unwrap_or(toml_text.len());
         let (before_end, rest) = toml_text.split_at(section_end);
         return format!("{}\nentry = \"{}\"\n{}", before_end, new_entry, rest);
     }

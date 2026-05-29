@@ -20,26 +20,25 @@ use std::process;
 
 use clap::{ArgAction, Parser, Subcommand};
 
-use libmind::build::{run_build, BuildOpts};
-use libmind::check::{run_check, CheckOptions, ReporterKind};
-use libmind::deps::{run_clean, run_fetch, run_lock, CleanOpts, FetchOpts, LockOpts};
-use libmind::doc::{run_doc, DocOptions};
+use libmind::build::{BuildOpts, run_build};
+use libmind::check::{CheckOptions, ReporterKind, run_check};
+use libmind::deps::{CleanOpts, FetchOpts, LockOpts, run_clean, run_fetch, run_lock};
+use libmind::doc::{DocOptions, run_doc};
 use libmind::fmt::cli as mindc_fmt;
-use libmind::test::{run_tests, ReporterKind as TestReporterKind, TestOptions as MindTestOptions};
-use libmind::workspace::{resolve_workspace_members, toposort_members, WorkspaceOpts};
+use libmind::test::{ReporterKind as TestReporterKind, TestOptions as MindTestOptions, run_tests};
+use libmind::workspace::{WorkspaceOpts, resolve_workspace_members, toposort_members};
 
+use libmind::BackendTarget;
 use libmind::diagnostics::{ColorChoice, DiagnosticEmitter, DiagnosticFormat};
 use libmind::ops::core_v1;
-use libmind::pipeline::{compile_source_with_name, CompileOptions};
+use libmind::pipeline::{CompileOptions, compile_source_with_name};
 use libmind::project::{
-    bench_project, run_project, BenchOptions, BuildOptions,
-    BuildTarget, EmitKind, OptimizeLevel,
+    BenchOptions, BuildOptions, BuildTarget, EmitKind, OptimizeLevel, bench_project, run_project,
 };
-use libmind::BackendTarget;
-use libmind::{conformance, ConformanceOptions, ConformanceProfile};
+use libmind::{ConformanceOptions, ConformanceProfile, conformance};
 
 #[cfg(any(feature = "mlir-lowering", feature = "mlir-build"))]
-use libmind::pipeline::{lower_to_mlir, MlirProducts};
+use libmind::pipeline::{MlirProducts, lower_to_mlir};
 
 #[cfg(feature = "mlir-build")]
 use std::path::Path;
@@ -386,7 +385,17 @@ fn main() {
             workspace: _,
             no_cache,
         }) => {
-            run_mindc_build(paths, *release, target, emit, optimize, out, *verbose, package.as_deref(), *no_cache);
+            run_mindc_build(
+                paths,
+                *release,
+                target,
+                emit,
+                optimize,
+                out,
+                *verbose,
+                package.as_deref(),
+                *no_cache,
+            );
             return;
         }
         Some(Command::Run {
@@ -407,7 +416,14 @@ fn main() {
             reporter,
             package,
         }) => {
-            run_mindc_test(paths, filter.as_deref(), *threads, *list, reporter, package.as_deref());
+            run_mindc_test(
+                paths,
+                filter.as_deref(),
+                *threads,
+                *list,
+                reporter,
+                package.as_deref(),
+            );
             return;
         }
         Some(Command::Bench {
@@ -446,8 +462,8 @@ fn main() {
         }) => {
             let reporter_kind = match reporter.as_str() {
                 "json" => ReporterKind::Json,
-                "lsp"  => ReporterKind::Lsp,
-                _      => ReporterKind::Human,
+                "lsp" => ReporterKind::Lsp,
+                _ => ReporterKind::Human,
             };
             let opts = CheckOptions {
                 run_fmt: !no_fmt,
@@ -468,7 +484,12 @@ fn main() {
         }) => {
             process::exit(mindc_fmt::run_fmt(paths, *check, *diff, *stdin, *fix));
         }
-        Some(Command::Doc { paths, out, no_deps, open }) => {
+        Some(Command::Doc {
+            paths,
+            out,
+            no_deps,
+            open,
+        }) => {
             let opts = DocOptions {
                 paths: paths.clone(),
                 out_dir: std::path::PathBuf::from(out),
@@ -616,7 +637,9 @@ fn run_mindc_build(
     // source paths are given, delegate to the workspace build path.
     if paths.is_empty() {
         if let Some(root) = detect_workspace_root() {
-            run_workspace_build(&root, release, target, emit, optimize, out, verbose, package);
+            run_workspace_build(
+                &root, release, target, emit, optimize, out, verbose, package,
+            );
             return;
         }
     }
@@ -1078,7 +1101,10 @@ fn run_mindc_clean(cache: bool, all: bool) {
             }
         }
         // Also clean the deps git cache via the deps subsystem.
-        let opts = CleanOpts { cache: true, all: false };
+        let opts = CleanOpts {
+            cache: true,
+            all: false,
+        };
         match run_clean(&root, &opts) {
             Ok(()) => {}
             Err(e) => {
@@ -1264,7 +1290,10 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
         eprintln!("error[emit-evidence]: failed to write {path}: {err}");
         process::exit(1);
     }
-    eprintln!("Wrote mic@3 evidence artifact: {path} ({} bytes)", bytes.len());
+    eprintln!(
+        "Wrote mic@3 evidence artifact: {path} ({} bytes)",
+        bytes.len()
+    );
 }
 
 fn parse_target(raw: &str) -> Result<BackendTarget, String> {

@@ -53,9 +53,11 @@ fn build_and_inspect_roundtrip() {
     let parsed =
         inspect_package(package_path.to_str().expect("package path")).expect("inspect package");
     assert_eq!(parsed.name, "demo");
-    assert!(parsed
-        .checksums
-        .as_ref()
-        .expect("checksums present")
-        .contains_key("model.mlir"));
+    assert!(
+        parsed
+            .checksums
+            .as_ref()
+            .expect("checksums present")
+            .contains_key("model.mlir")
+    );
 }

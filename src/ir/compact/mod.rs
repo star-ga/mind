@@ -62,11 +62,11 @@ mod parse;
 pub mod v2;
 pub mod v3;
 
-pub use emit::{emit_mic, MicEmitter};
-pub use parse::{parse_mic, MicParseError};
-pub use v2::{detect_format, MicFormat};
-pub use v3::{emit_mic3, emit_mic3_with_evidence, mic3_evidence_report, parse_mic3, Mic3Error};
+pub use emit::{MicEmitter, emit_mic};
+pub use parse::{MicParseError, parse_mic};
+pub use v2::{MicFormat, detect_format};
 pub use v3::{Determinism, EvidenceError, EvidenceReport};
+pub use v3::{Mic3Error, emit_mic3, emit_mic3_with_evidence, mic3_evidence_report, parse_mic3};
 
 /// MIC format version.
 pub const MIC_VERSION: u32 = 1;

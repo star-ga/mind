@@ -179,8 +179,8 @@ fn toml_dump_calls_sb_push() {
     let ir = lower_toml_mind();
     let body = fn_body(&ir, "toml_dump");
     // toml_dump must call sb_push (directly or via dump_value).
-    let pushes_direct  = count_calls_recursive(body, "sb_push");
-    let pushes_via_dv  = count_calls_recursive(body, "dump_value");
+    let pushes_direct = count_calls_recursive(body, "sb_push");
+    let pushes_via_dv = count_calls_recursive(body, "dump_value");
     assert!(
         pushes_direct > 0 || pushes_via_dv > 0,
         "toml_dump must call sb_push or dump_value; got neither"
@@ -236,9 +236,9 @@ fn toml_mind_auto_exports_public_symbols() {
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn bundled_stdlib_resolves_use_std_toml() {
-    use libmind::project::stdlib::parsed_stdlib_modules;
     use libmind::project::module_table::build_module_table;
-    use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+    use libmind::project::stdlib::parsed_stdlib_modules;
+    use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
     let stdlib = parsed_stdlib_modules();
     let refs: Vec<(String, &libmind::ast::Module)> =
@@ -278,17 +278,16 @@ fn mind_toml_rust_parse_ground_truth() {
     // Parse with Rust `toml` crate.
     let parsed: toml::Value = toml::from_str(&src).expect("Mind.toml must parse via toml crate");
     // [package] section checks.
-    let pkg = parsed.get("package").expect("Mind.toml must have [package] section");
+    let pkg = parsed
+        .get("package")
+        .expect("Mind.toml must have [package] section");
     assert_eq!(
         pkg.get("name").and_then(|v| v.as_str()),
         Some("mind"),
         "[package].name must be \"mind\""
     );
     let version = pkg.get("version").and_then(|v| v.as_str());
-    assert!(
-        version.is_some(),
-        "[package].version must be present"
-    );
+    assert!(version.is_some(), "[package].version must be present");
     assert!(
         version.unwrap().contains('.'),
         "[package].version must be semver-shaped: {:?}",
@@ -307,8 +306,12 @@ fn mind_toml_rust_parse_ground_truth() {
         "[build].emit must be \"cdylib\""
     );
     // [mindcraft] section and sub-table checks.
-    let mindcraft = parsed.get("mindcraft").expect("Mind.toml must have [mindcraft]");
-    let fmt = mindcraft.get("format").expect("[mindcraft] must have [format] sub-table");
+    let mindcraft = parsed
+        .get("mindcraft")
+        .expect("Mind.toml must have [mindcraft]");
+    let fmt = mindcraft
+        .get("format")
+        .expect("[mindcraft] must have [format] sub-table");
     let indent = fmt.get("indent_width").and_then(|v| v.as_integer());
     assert_eq!(indent, Some(4), "[mindcraft.format].indent_width must be 4");
 }
@@ -335,7 +338,9 @@ mod mlir_functional {
     fn toml_parse_mind_toml_via_compiled_so() {
         let mindc = mindc_bin();
         if !mindc.exists() {
-            println!("toml_parse_mind_toml_via_compiled_so: mindc not found at {mindc:?}; skipping");
+            println!(
+                "toml_parse_mind_toml_via_compiled_so: mindc not found at {mindc:?}; skipping"
+            );
             return;
         }
 
@@ -392,10 +397,10 @@ pub fn smoke_tv_s_len(h: i64) -> i64 {{ tv_s_len(h) }}
         unsafe {
             let lib = libloading::Library::new(&so_path).expect("dlopen toml_smoke.so");
             type ParseFn = unsafe extern "C" fn(i64, i64) -> i64;
-            type GetFn   = unsafe extern "C" fn(i64, i64, i64) -> i64;
-            type KindFn  = unsafe extern "C" fn(i64) -> i64;
+            type GetFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
+            type KindFn = unsafe extern "C" fn(i64) -> i64;
             type SAddrFn = unsafe extern "C" fn(i64) -> i64;
-            type SLenFn  = unsafe extern "C" fn(i64) -> i64;
+            type SLenFn = unsafe extern "C" fn(i64) -> i64;
 
             let parse_fn: libloading::Symbol<ParseFn> =
                 lib.get(b"smoke_toml_parse\0").expect("smoke_toml_parse");
@@ -417,14 +422,17 @@ pub fn smoke_tv_s_len(h: i64) -> i64 {{ tv_s_len(h) }}
             // Look up "package.name".
             let path = b"package.name";
             let val = get_fn(root, path.as_ptr() as i64, path.len() as i64);
-            assert!(val != 0, "toml_get(root, \"package.name\") must find a value");
+            assert!(
+                val != 0,
+                "toml_get(root, \"package.name\") must find a value"
+            );
 
             // Verify it's a string (kind=0).
             assert_eq!(kind_fn(val), 0, "package.name must be a String (kind=0)");
 
             // Read the string bytes and compare against "mind".
             let s_addr = s_addr_fn(val);
-            let s_len  = s_len_fn(val);
+            let s_len = s_len_fn(val);
             assert_eq!(s_len, 4, "package.name must be 4 bytes (\"mind\")");
             let name_bytes = std::slice::from_raw_parts(s_addr as *const u8, s_len as usize);
             assert_eq!(name_bytes, b"mind", "package.name must equal \"mind\"");

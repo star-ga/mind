@@ -16,8 +16,8 @@
 //! from the [`TriviaStream`].
 
 use crate::ast::{
-    Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, Literal, LogicalOp,
-    MatchArm, Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TypeAnn,
+    Attribute, BinOp, BitOp, CallConv, EnumVariant, ExternFn, Field, Literal, LogicalOp, MatchArm,
+    Module, Node, Param, Pattern, Span, SparseLayout, StructLitField, TypeAnn,
 };
 use crate::parser::{TriviaKind, TriviaStream};
 use crate::project::MindcraftFormatConfig;
@@ -93,9 +93,11 @@ impl TriviaMap {
                 }
             }
         }
-        Self { comments_at, blank_lines }
+        Self {
+            comments_at,
+            blank_lines,
+        }
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -114,11 +116,7 @@ struct Printer<'a> {
 }
 
 impl<'a> Printer<'a> {
-    fn new(
-        cfg: &'a MindcraftFormatConfig,
-        trivia_map: TriviaMap,
-        stripped_src: &str,
-    ) -> Self {
+    fn new(cfg: &'a MindcraftFormatConfig, trivia_map: TriviaMap, stripped_src: &str) -> Self {
         Self {
             out: String::new(),
             cfg,
@@ -168,7 +166,6 @@ impl<'a> Printer<'a> {
         }
         self.last_trivia_line = item_line;
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -259,10 +256,7 @@ fn strip_for_lines(src: &str) -> String {
                     }
                 } else if bytes[i] == b'"' {
                     in_string = true;
-                } else if bytes[i] == b'/'
-                    && i + 1 < bytes.len()
-                    && bytes[i + 1] == b'/'
-                {
+                } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
                     comment_col = Some(i);
                     break;
                 }
@@ -283,19 +277,51 @@ fn strip_for_lines(src: &str) -> String {
 
 fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
     match node {
-        Node::FnDef { is_pub, name, params, ret_type, body, attrs, span, .. } => {
+        Node::FnDef {
+            is_pub,
+            name,
+            params,
+            ret_type,
+            body,
+            attrs,
+            span,
+            ..
+        } => {
             emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
         }
-        Node::StructDef { is_pub, name, fields, attrs, .. } => {
+        Node::StructDef {
+            is_pub,
+            name,
+            fields,
+            attrs,
+            ..
+        } => {
             emit_struct_def(p, *is_pub, name, fields, attrs);
         }
-        Node::EnumDef { is_pub, name, variants, attrs, .. } => {
+        Node::EnumDef {
+            is_pub,
+            name,
+            variants,
+            attrs,
+            ..
+        } => {
             emit_enum_def(p, *is_pub, name, variants, attrs);
         }
-        Node::Const { name, ty, value, attrs, .. } => {
+        Node::Const {
+            name,
+            ty,
+            value,
+            attrs,
+            ..
+        } => {
             emit_const(p, name, ty, value, attrs);
         }
-        Node::TypeAlias { name, target, attrs, .. } => {
+        Node::TypeAlias {
+            name,
+            target,
+            attrs,
+            ..
+        } => {
             emit_type_alias(p, name, target, attrs);
         }
         Node::Import { path, .. } => {
@@ -304,25 +330,52 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         Node::Export { names, .. } => {
             emit_export(p, names);
         }
-        Node::Let { name, mutable, ann, value, .. } => {
+        Node::Let {
+            name,
+            mutable,
+            ann,
+            value,
+            ..
+        } => {
             emit_let(p, name, *mutable, ann, value);
         }
         Node::Assign { name, value, .. } => {
             emit_assign(p, name, value);
         }
-        Node::IndexAssign { receiver, index, value, .. } => {
+        Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
             emit_index_assign(p, receiver, index, value);
         }
-        Node::FieldAssign { receiver, field, value, .. } => {
+        Node::FieldAssign {
+            receiver,
+            field,
+            value,
+            ..
+        } => {
             emit_field_assign(p, receiver, field, value);
         }
         Node::Return { value, .. } => {
             emit_return(p, value.as_deref());
         }
-        Node::If { cond, then_branch, else_branch, span } => {
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            span,
+        } => {
             emit_if(p, cond, then_branch, else_branch.as_deref(), *span);
         }
-        Node::For { var, start, end, body, span } => {
+        Node::For {
+            var,
+            start,
+            end,
+            body,
+            span,
+        } => {
             emit_for(p, var, start, end, body, *span);
         }
         #[cfg(feature = "std-surface")]
@@ -343,7 +396,9 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
             let close_line = p.stripped_idx.line_of(span.end());
             emit_block_stmts(p, stmts, close_line);
         }
-        Node::Match { scrutinee, arms, .. } => {
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
             emit_match(p, scrutinee, arms);
         }
         // Expression-statements (top-level or in fn body)
@@ -426,7 +481,13 @@ fn emit_fn_def(
     p.push("}");
 }
 
-fn emit_struct_def(p: &mut Printer, is_pub: bool, name: &str, fields: &[Field], attrs: &[Attribute]) {
+fn emit_struct_def(
+    p: &mut Printer,
+    is_pub: bool,
+    name: &str,
+    fields: &[Field],
+    attrs: &[Attribute],
+) {
     emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
@@ -454,7 +515,13 @@ fn emit_struct_def(p: &mut Printer, is_pub: bool, name: &str, fields: &[Field], 
     p.push("}");
 }
 
-fn emit_enum_def(p: &mut Printer, is_pub: bool, name: &str, variants: &[EnumVariant], attrs: &[Attribute]) {
+fn emit_enum_def(
+    p: &mut Printer,
+    is_pub: bool,
+    name: &str,
+    variants: &[EnumVariant],
+    attrs: &[Attribute],
+) {
     emit_attrs(p, attrs);
     let ind = p.indent_str();
     p.push(&ind);
@@ -563,13 +630,24 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
         let stmt_line = p.stripped_idx.line_of(stmt.span_start());
         p.emit_leading_trivia(stmt_line);
         match stmt {
-            Node::If { cond, then_branch, else_branch, span } => {
+            Node::If {
+                cond,
+                then_branch,
+                else_branch,
+                span,
+            } => {
                 let ind = p.indent_str();
                 p.push(&ind);
                 emit_if_inline(p, cond, then_branch, else_branch.as_deref(), *span);
                 p.push("\n");
             }
-            Node::For { var, start, end, body, span } => {
+            Node::For {
+                var,
+                start,
+                end,
+                body,
+                span,
+            } => {
                 let ind = p.indent_str();
                 p.push(&ind);
                 emit_for_inline(p, var, start, end, body, *span);
@@ -589,7 +667,9 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
                 emit_region_inline(p, body, *span);
                 p.push("\n");
             }
-            Node::Match { scrutinee, arms, .. } => {
+            Node::Match {
+                scrutinee, arms, ..
+            } => {
                 let ind = p.indent_str();
                 p.push(&ind);
                 emit_match_inline(p, scrutinee, arms);
@@ -608,7 +688,16 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
                 p.push("}\n");
             }
             // FnDef nested inside a body (uncommon but valid in MIND)
-            Node::FnDef { is_pub, name, params, ret_type, body, attrs, span, .. } => {
+            Node::FnDef {
+                is_pub,
+                name,
+                params,
+                ret_type,
+                body,
+                attrs,
+                span,
+                ..
+            } => {
                 emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
                 p.push("\n");
             }
@@ -651,7 +740,13 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
     let ind = p.indent_str();
     p.push(&ind);
     match node {
-        Node::Let { name, mutable, ann, value, .. } => {
+        Node::Let {
+            name,
+            mutable,
+            ann,
+            value,
+            ..
+        } => {
             emit_let_inline(p, name, *mutable, ann, value);
         }
         Node::Assign { name, value, .. } => {
@@ -659,14 +754,24 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
             p.push(" = ");
             emit_expr(p, value);
         }
-        Node::IndexAssign { receiver, index, value, .. } => {
+        Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
             emit_expr(p, receiver);
             p.push("[");
             emit_expr(p, index);
             p.push("] = ");
             emit_expr(p, value);
         }
-        Node::FieldAssign { receiver, field, value, .. } => {
+        Node::FieldAssign {
+            receiver,
+            field,
+            value,
+            ..
+        } => {
             emit_expr(p, receiver);
             p.push(".");
             p.push(field);
@@ -712,7 +817,13 @@ fn emit_let(p: &mut Printer, name: &str, mutable: bool, ann: &Option<TypeAnn>, v
     emit_let_inline(p, name, mutable, ann, value);
 }
 
-fn emit_let_inline(p: &mut Printer, name: &str, mutable: bool, ann: &Option<TypeAnn>, value: &Node) {
+fn emit_let_inline(
+    p: &mut Printer,
+    name: &str,
+    mutable: bool,
+    ann: &Option<TypeAnn>,
+    value: &Node,
+) {
     p.push("let ");
     if mutable {
         p.push("mut ");
@@ -849,7 +960,14 @@ fn emit_for(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &[Node],
     emit_for_inline(p, var, start, end, body, span);
 }
 
-fn emit_for_inline(p: &mut Printer, var: &str, start: &Node, end: &Node, body: &[Node], span: Span) {
+fn emit_for_inline(
+    p: &mut Printer,
+    var: &str,
+    start: &Node,
+    end: &Node,
+    body: &[Node],
+    span: Span,
+) {
     p.push("for ");
     p.push(var);
     p.push(" in ");
@@ -953,9 +1071,15 @@ fn emit_match_inline(p: &mut Printer, scrutinee: &Node, arms: &[MatchArm]) {
 fn emit_expr(p: &mut Printer, node: &Node) {
     match node {
         Node::Lit(lit, _) => emit_literal(p, lit),
-        Node::Binary { op, left, right, .. } => emit_binary(p, op, left, right),
-        Node::Logical { op, left, right, .. } => emit_logical(p, op, left, right),
-        Node::Bitwise { op, left, right, .. } => emit_bitwise(p, op, left, right),
+        Node::Binary {
+            op, left, right, ..
+        } => emit_binary(p, op, left, right),
+        Node::Logical {
+            op, left, right, ..
+        } => emit_logical(p, op, left, right),
+        Node::Bitwise {
+            op, left, right, ..
+        } => emit_bitwise(p, op, left, right),
         Node::Paren(inner, _) => {
             p.push("(");
             emit_expr(p, inner);
@@ -976,7 +1100,12 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             emit_expr(p, operand);
         }
         Node::Call { callee, args, .. } => emit_call(p, callee, args),
-        Node::MethodCall { receiver, method, args, .. } => {
+        Node::MethodCall {
+            receiver,
+            method,
+            args,
+            ..
+        } => {
             emit_expr(p, receiver);
             p.push(".");
             p.push(method);
@@ -989,12 +1118,16 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             }
             p.push(")");
         }
-        Node::FieldAccess { receiver, field, .. } => {
+        Node::FieldAccess {
+            receiver, field, ..
+        } => {
             emit_expr(p, receiver);
             p.push(".");
             p.push(field);
         }
-        Node::IndexAccess { receiver, index, .. } => {
+        Node::IndexAccess {
+            receiver, index, ..
+        } => {
             emit_expr(p, receiver);
             p.push("[");
             emit_expr(p, index);
@@ -1032,7 +1165,9 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(&wrt.join(", "));
             p.push(")");
         }
-        Node::CallTensorSum { x, axes, keepdims, .. } => {
+        Node::CallTensorSum {
+            x, axes, keepdims, ..
+        } => {
             p.push("tensor.sum(");
             emit_expr(p, x);
             p.push(", axes=[");
@@ -1048,7 +1183,9 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             }
             p.push(")");
         }
-        Node::CallTensorMean { x, axes, keepdims, .. } => {
+        Node::CallTensorMean {
+            x, axes, keepdims, ..
+        } => {
             p.push("tensor.mean(");
             emit_expr(p, x);
             p.push(", axes=[");
@@ -1106,7 +1243,13 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(&i.to_string());
             p.push(")");
         }
-        Node::CallSlice { x, axis, start, end, .. } => {
+        Node::CallSlice {
+            x,
+            axis,
+            start,
+            end,
+            ..
+        } => {
             p.push("tensor.slice(");
             emit_expr(p, x);
             p.push(", ");
@@ -1117,7 +1260,14 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(&end.to_string());
             p.push(")");
         }
-        Node::CallSliceStride { x, axis, start, end, step, .. } => {
+        Node::CallSliceStride {
+            x,
+            axis,
+            start,
+            end,
+            step,
+            ..
+        } => {
             p.push("tensor.slice_stride(");
             emit_expr(p, x);
             p.push(", ");
@@ -1182,7 +1332,14 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(&parts.join(", "));
             p.push("])");
         }
-        Node::CallTensorConv2d { x, w, stride_h, stride_w, padding, .. } => {
+        Node::CallTensorConv2d {
+            x,
+            w,
+            stride_h,
+            stride_w,
+            padding,
+            ..
+        } => {
             p.push("tensor.conv2d(");
             emit_expr(p, x);
             p.push(", ");
@@ -1200,7 +1357,12 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(")");
         }
         // Statements that can appear as expressions in certain contexts
-        Node::If { cond, then_branch, else_branch, span } => {
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            span,
+        } => {
             emit_if_inline(p, cond, then_branch, else_branch.as_deref(), *span);
         }
         Node::Block { stmts, span } => {
@@ -1213,10 +1375,18 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(&ind);
             p.push("}");
         }
-        Node::Let { name, mutable, ann, value, .. } => {
+        Node::Let {
+            name,
+            mutable,
+            ann,
+            value,
+            ..
+        } => {
             emit_let_inline(p, name, *mutable, ann, value);
         }
-        Node::Match { scrutinee, arms, .. } => {
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
             emit_match_inline(p, scrutinee, arms);
         }
         Node::Print { args, .. } => {
@@ -1258,21 +1428,37 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push(" = ");
             emit_expr(p, value);
         }
-        Node::IndexAssign { receiver, index, value, .. } => {
+        Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
             emit_expr(p, receiver);
             p.push("[");
             emit_expr(p, index);
             p.push("] = ");
             emit_expr(p, value);
         }
-        Node::FieldAssign { receiver, field, value, .. } => {
+        Node::FieldAssign {
+            receiver,
+            field,
+            value,
+            ..
+        } => {
             emit_expr(p, receiver);
             p.push(".");
             p.push(field);
             p.push(" = ");
             emit_expr(p, value);
         }
-        Node::For { var, start, end, body, span } => {
+        Node::For {
+            var,
+            start,
+            end,
+            body,
+            span,
+        } => {
             emit_for_inline(p, var, start, end, body, *span);
         }
         #[cfg(feature = "std-surface")]
@@ -1460,7 +1646,11 @@ fn emit_type_ann(p: &mut Printer, ty: &TypeAnn) {
             }
             p.push(")");
         }
-        TypeAnn::SparseTensor { layout, element, shape } => {
+        TypeAnn::SparseTensor {
+            layout,
+            element,
+            shape,
+        } => {
             let layout_str = match layout {
                 SparseLayout::Csr => "csr",
                 SparseLayout::Csc => "csc",
@@ -1531,7 +1721,11 @@ fn emit_extern_block(p: &mut Printer, callconv: &CallConv, fns: &[ExternFn]) {
     for efn in fns {
         let inner_ind = p.indent_str();
         p.push(&inner_ind);
-        p.push(if efn.is_unsafe { "unsafe fn " } else { "safe fn " });
+        p.push(if efn.is_unsafe {
+            "unsafe fn "
+        } else {
+            "safe fn "
+        });
         p.push(&efn.name);
         p.push("(");
         for (i, param) in efn.params.iter().enumerate() {

@@ -39,7 +39,9 @@ fn lower_async_mind() -> libmind::ir::IRModule {
 }
 
 fn has_fndef(ir: &libmind::ir::IRModule, name: &str) -> bool {
-    ir.instrs.iter().any(|i| matches!(i, Instr::FnDef { name: n, .. } if n == name))
+    ir.instrs
+        .iter()
+        .any(|i| matches!(i, Instr::FnDef { name: n, .. } if n == name))
 }
 
 fn count_calls_recursive(instrs: &[Instr], callee: &str) -> usize {

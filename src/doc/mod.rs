@@ -148,7 +148,10 @@ pub fn run_doc(opts: &DocOptions) -> i32 {
 
     // Create the output directory tree.
     if let Err(e) = fs::create_dir_all(&opts.out_dir) {
-        eprintln!("error[doc]: cannot create output dir {}: {e}", opts.out_dir.display());
+        eprintln!(
+            "error[doc]: cannot create output dir {}: {e}",
+            opts.out_dir.display()
+        );
         return 1;
     }
 
@@ -173,7 +176,11 @@ pub fn run_doc(opts: &DocOptions) -> i32 {
     }
 
     let index_path = opts.out_dir.join("index.html");
-    println!("   Generated {} item(s) → {}", total_items(&file_docs), index_path.display());
+    println!(
+        "   Generated {} item(s) → {}",
+        total_items(&file_docs),
+        index_path.display()
+    );
 
     if opts.open {
         open_browser(&index_path);
@@ -192,8 +199,7 @@ fn total_items(docs: &[FileDoc]) -> usize {
 
 fn resolve_paths(paths: &[String]) -> Result<Vec<PathBuf>, String> {
     let roots: Vec<PathBuf> = if paths.is_empty() {
-        vec![std::env::current_dir()
-            .map_err(|e| format!("cannot read current directory: {e}"))?]
+        vec![std::env::current_dir().map_err(|e| format!("cannot read current directory: {e}"))?]
     } else {
         paths.iter().map(PathBuf::from).collect()
     };
@@ -203,8 +209,7 @@ fn resolve_paths(paths: &[String]) -> Result<Vec<PathBuf>, String> {
         if root.is_file() {
             out.push(root);
         } else if root.is_dir() {
-            collect_mind_files(&root, &mut out)
-                .map_err(|e| format!("{}: {e}", root.display()))?;
+            collect_mind_files(&root, &mut out).map_err(|e| format!("{}: {e}", root.display()))?;
         } else {
             return Err(format!("'{}' does not exist", root.display()));
         }
@@ -235,11 +240,10 @@ fn collect_mind_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
 
 /// Extract [`FileDoc`] from one source file.
 fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|e| format!("cannot read: {e}"))?;
+    let source = fs::read_to_string(path).map_err(|e| format!("cannot read: {e}"))?;
 
-    let (module, trivia) = parse_with_trivia(&source)
-        .map_err(|errs| format!("parse error: {}", errs[0].message))?;
+    let (module, trivia) =
+        parse_with_trivia(&source).map_err(|errs| format!("parse error: {}", errs[0].message))?;
 
     // Build a map from byte-offset → trivia index for fast preceding-comment
     // lookup when visiting AST nodes.
@@ -257,43 +261,100 @@ fn extract_file_doc(path: &Path) -> Result<FileDoc, String> {
         }
     }
 
-    Ok(FileDoc { path: path.to_path_buf(), items })
+    Ok(FileDoc {
+        path: path.to_path_buf(),
+        items,
+    })
 }
 
 /// Extract a [`DocItem`] from an AST node if it is a `pub` item.
 fn extract_item(node: &Node, doc_trivia: &[&Trivia], source: &str) -> Option<DocItem> {
     match node {
-        Node::FnDef { is_pub: true, name, params, ret_type, span, .. } => {
+        Node::FnDef {
+            is_pub: true,
+            name,
+            params,
+            ret_type,
+            span,
+            ..
+        } => {
             let (kind, sig) = (ItemKind::Fn, render_fn_sig(name, params, ret_type.as_ref()));
             let line = offset_to_line(source, span.start());
             let doc = collect_doc_comments(doc_trivia, span.start(), source);
-            Some(DocItem { kind, name: name.clone(), signature: sig, doc, line })
+            Some(DocItem {
+                kind,
+                name: name.clone(),
+                signature: sig,
+                doc,
+                line,
+            })
         }
-        Node::StructDef { is_pub: true, name, fields, span, .. } => {
+        Node::StructDef {
+            is_pub: true,
+            name,
+            fields,
+            span,
+            ..
+        } => {
             let sig = format!("struct {name} {{ {} }}", render_fields(fields));
             let line = offset_to_line(source, span.start());
             let doc = collect_doc_comments(doc_trivia, span.start(), source);
-            Some(DocItem { kind: ItemKind::Struct, name: name.clone(), signature: sig, doc, line })
+            Some(DocItem {
+                kind: ItemKind::Struct,
+                name: name.clone(),
+                signature: sig,
+                doc,
+                line,
+            })
         }
-        Node::EnumDef { is_pub: true, name, variants, span, .. } => {
+        Node::EnumDef {
+            is_pub: true,
+            name,
+            variants,
+            span,
+            ..
+        } => {
             let variant_names: Vec<String> = variants.iter().map(|v| v.name.clone()).collect();
             let sig = format!("enum {name} {{ {} }}", variant_names.join(", "));
             let line = offset_to_line(source, span.start());
             let doc = collect_doc_comments(doc_trivia, span.start(), source);
-            Some(DocItem { kind: ItemKind::Enum, name: name.clone(), signature: sig, doc, line })
+            Some(DocItem {
+                kind: ItemKind::Enum,
+                name: name.clone(),
+                signature: sig,
+                doc,
+                line,
+            })
         }
         Node::Const { name, ty, span, .. } => {
-            let ty_str = ty.as_ref().map(render_type).unwrap_or_else(|| "_".to_string());
+            let ty_str = ty
+                .as_ref()
+                .map(render_type)
+                .unwrap_or_else(|| "_".to_string());
             let sig = format!("const {name}: {ty_str}");
             let line = offset_to_line(source, span.start());
             let doc = collect_doc_comments(doc_trivia, span.start(), source);
-            Some(DocItem { kind: ItemKind::Const, name: name.clone(), signature: sig, doc, line })
+            Some(DocItem {
+                kind: ItemKind::Const,
+                name: name.clone(),
+                signature: sig,
+                doc,
+                line,
+            })
         }
-        Node::TypeAlias { name, target, span, .. } => {
+        Node::TypeAlias {
+            name, target, span, ..
+        } => {
             let sig = format!("type {name} = {}", render_type(target));
             let line = offset_to_line(source, span.start());
             let doc = collect_doc_comments(doc_trivia, span.start(), source);
-            Some(DocItem { kind: ItemKind::TypeAlias, name: name.clone(), signature: sig, doc, line })
+            Some(DocItem {
+                kind: ItemKind::TypeAlias,
+                name: name.clone(),
+                signature: sig,
+                doc,
+                line,
+            })
         }
         _ => None,
     }
@@ -356,10 +417,18 @@ pub fn render_type(ty: &TypeAnn) -> String {
             format!("{name}<{args_str}>")
         }
         TypeAnn::Tuple { elements } => {
-            let elems = elements.iter().map(render_type).collect::<Vec<_>>().join(", ");
+            let elems = elements
+                .iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("({elems})")
         }
-        TypeAnn::SparseTensor { layout, element, shape } => {
+        TypeAnn::SparseTensor {
+            layout,
+            element,
+            shape,
+        } => {
             let layout_str = match layout {
                 crate::ast::SparseLayout::Csr => "csr",
                 crate::ast::SparseLayout::Csc => "csc",
@@ -374,14 +443,21 @@ pub fn render_type(ty: &TypeAnn) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("tensor<sparse[{layout_str}], {}[{shape_str}]>", render_type(element))
+            format!(
+                "tensor<sparse[{layout_str}], {}[{shape_str}]>",
+                render_type(element)
+            )
         }
         TypeAnn::RawPtr { mutable, pointee } => {
             let mut_str = if *mutable { "mut" } else { "const" };
             format!("*{} {}", mut_str, render_type(pointee))
         }
         TypeAnn::FnPtr { params, ret } => {
-            let params_str = params.iter().map(render_type).collect::<Vec<_>>().join(", ");
+            let params_str = params
+                .iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", ");
             match ret {
                 Some(r) => format!("extern \"C\" fn({params_str}) -> {}", render_type(r)),
                 None => format!("extern \"C\" fn({params_str})"),
@@ -457,7 +533,10 @@ fn render_file_html(fd: &FileDoc, out_dir: &Path, base_dir: &Path) -> Result<(),
     let title = rel_stem.replace('/', "::");
     let mut body = String::new();
 
-    body.push_str(&format!("<h1 class=\"module-title\">{}</h1>\n", html_escape(&title)));
+    body.push_str(&format!(
+        "<h1 class=\"module-title\">{}</h1>\n",
+        html_escape(&title)
+    ));
 
     if fd.items.is_empty() {
         body.push_str("<p class=\"empty\">No public items.</p>\n");
@@ -519,8 +598,7 @@ fn render_index_html(docs: &[FileDoc], out_dir: &Path, base_dir: &Path) -> Resul
 
     let html = html::page("MIND Documentation", &body, "");
     let index_path = out_dir.join("index.html");
-    fs::write(&index_path, html)
-        .map_err(|e| format!("cannot write index.html: {e}"))?;
+    fs::write(&index_path, html).map_err(|e| format!("cannot write index.html: {e}"))?;
 
     Ok(())
 }
@@ -609,7 +687,11 @@ fn file_rel_stem(path: &Path, base_dir: &Path) -> String {
     let rel = path.strip_prefix(base_dir).unwrap_or(path);
     let s = rel.to_string_lossy();
     // Remove `.mind` extension.
-    let without_ext = if let Some(p) = s.strip_suffix(".mind") { p } else { &s };
+    let without_ext = if let Some(p) = s.strip_suffix(".mind") {
+        p
+    } else {
+        &s
+    };
     // Normalise to forward slashes and strip leading `./`.
     let normalised = without_ext.replace('\\', "/");
     let trimmed = normalised.trim_start_matches("./");
@@ -628,19 +710,21 @@ fn emit_search_index(docs: &[FileDoc], out_dir: &Path, base_dir: &Path) -> Resul
         for item in &fd.items {
             let mut m = HashMap::new();
             m.insert("name", serde_json::Value::String(item.name.clone()));
-            m.insert("kind", serde_json::Value::String(item.kind.as_str().to_string()));
+            m.insert(
+                "kind",
+                serde_json::Value::String(item.kind.as_str().to_string()),
+            );
             m.insert("file", serde_json::Value::String(format!("{stem}.html")));
             m.insert("line", serde_json::Value::Number(item.line.into()));
             entries.push(m);
         }
     }
 
-    let json = serde_json::to_string_pretty(&entries)
-        .map_err(|e| format!("JSON serialisation: {e}"))?;
+    let json =
+        serde_json::to_string_pretty(&entries).map_err(|e| format!("JSON serialisation: {e}"))?;
 
     let path = out_dir.join("search-index.json");
-    fs::write(&path, json)
-        .map_err(|e| format!("cannot write search-index.json: {e}"))?;
+    fs::write(&path, json).map_err(|e| format!("cannot write search-index.json: {e}"))?;
 
     Ok(())
 }
@@ -653,7 +737,11 @@ fn open_browser(path: &Path) {
     let path_str = path.to_string_lossy();
     // Try platform openers in order.
     for opener in &["xdg-open", "open", "start"] {
-        if OsCommand::new(opener).arg(path_str.as_ref()).spawn().is_ok() {
+        if OsCommand::new(opener)
+            .arg(path_str.as_ref())
+            .spawn()
+            .is_ok()
+        {
             return;
         }
     }

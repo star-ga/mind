@@ -31,7 +31,7 @@
 //! | large   | 256 × 256     | `FabricRegion::default()` in runtime|
 //! | wafer   | 750 × 750     | Approximate WSE-3 working block     |
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use libmind::ops::cerebras::{StencilElemType, StencilTileOp};
 
 /// Configurations exercised by the benchmark.

@@ -26,13 +26,13 @@
 #![cfg(all(feature = "std-surface", feature = "mlir-lowering"))]
 
 use libmind::ast::{CallConv, ExternFn, Module, Node, Param, Span, TypeAnn};
-use libmind::eval::lower::sysv_classify_struct;
 use libmind::eval::lower::SysVClass;
 use libmind::eval::lower::classify_scalar_field;
+use libmind::eval::lower::sysv_classify_struct;
 use libmind::ir::{IRModule, Instr};
 use libmind::mlir::lower_ir_to_mlir;
 use libmind::parser;
-use libmind::type_checker::{check_module_types_in_file, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_in_file};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -51,15 +51,21 @@ fn empty_repr_c() -> std::collections::BTreeMap<String, Vec<TypeAnn>> {
 #[test]
 fn parse_repr_c_attribute_on_struct() {
     let src = r#"#[repr(C)] struct Timeval { tv_sec: i64, tv_usec: i64 }"#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     assert_eq!(module.items.len(), 1);
     match &module.items[0] {
-        Node::StructDef { name, attrs, fields, .. } => {
+        Node::StructDef {
+            name,
+            attrs,
+            fields,
+            ..
+        } => {
             assert_eq!(name, "Timeval");
             assert_eq!(fields.len(), 2);
             assert!(
-                attrs.iter().any(|a| a.name == "repr" && a.args.iter().any(|s| s == "C")),
+                attrs
+                    .iter()
+                    .any(|a| a.name == "repr" && a.args.iter().any(|s| s == "C")),
                 "expected #[repr(C)] attribute; attrs = {attrs:?}"
             );
         }
@@ -84,8 +90,7 @@ fn typecheck_accepts_named_type_in_extern_signature() {
             safe fn accept_timeval(tv: Timeval) -> i32
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
     // A repr(C)-annotated struct must be accepted; no diagnostic expected.
     assert!(
@@ -102,8 +107,11 @@ fn typecheck_accepts_named_type_in_extern_signature() {
 fn sysv_all_int_8b_struct_to_single_i64() {
     let fields = vec![TypeAnn::ScalarI32, TypeAnn::ScalarI32]; // 4 + 4 = 8B
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["i64".to_string()],
-        "8B all-int struct must classify to a single i64; got {result:?}");
+    assert_eq!(
+        result,
+        vec!["i64".to_string()],
+        "8B all-int struct must classify to a single i64; got {result:?}"
+    );
 }
 
 // ── test 4: SysV — all-int 16B struct → two i64s ─────────────────────────────
@@ -114,8 +122,11 @@ fn sysv_all_int_8b_struct_to_single_i64() {
 fn sysv_all_int_16b_struct_to_two_i64() {
     let fields = vec![TypeAnn::ScalarI64, TypeAnn::ScalarI64]; // 8 + 8 = 16B
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["i64".to_string(), "i64".to_string()],
-        "16B all-int struct must classify to two i64s; got {result:?}");
+    assert_eq!(
+        result,
+        vec!["i64".to_string(), "i64".to_string()],
+        "16B all-int struct must classify to two i64s; got {result:?}"
+    );
 }
 
 // ── test 5: SysV — all-float 8B struct → f64 ─────────────────────────────────
@@ -125,8 +136,11 @@ fn sysv_all_int_16b_struct_to_two_i64() {
 fn sysv_all_float_8b_struct_to_f64() {
     let fields = vec![TypeAnn::ScalarF64]; // 8B float
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["f64".to_string()],
-        "8B all-float struct (f64) must classify to f64; got {result:?}");
+    assert_eq!(
+        result,
+        vec!["f64".to_string()],
+        "8B all-float struct (f64) must classify to f64; got {result:?}"
+    );
 }
 
 /// Two f32 fields (total 8 bytes, float) classify to a single `f32` eightbyte
@@ -135,8 +149,11 @@ fn sysv_all_float_8b_struct_to_f64() {
 fn sysv_all_float_8b_f32_pair_to_f32() {
     let fields = vec![TypeAnn::ScalarF32, TypeAnn::ScalarF32]; // 4 + 4 = 8B
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["f32".to_string()],
-        "8B all-float struct (2xf32) must classify to f32; got {result:?}");
+    assert_eq!(
+        result,
+        vec!["f32".to_string()],
+        "8B all-float struct (2xf32) must classify to f32; got {result:?}"
+    );
 }
 
 // ── test 6: SysV — all-float 16B struct → two float slots ────────────────────
@@ -146,8 +163,11 @@ fn sysv_all_float_8b_f32_pair_to_f32() {
 fn sysv_all_float_16b_struct_to_two_f64() {
     let fields = vec![TypeAnn::ScalarF64, TypeAnn::ScalarF64]; // 8 + 8 = 16B
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["f64".to_string(), "f64".to_string()],
-        "16B all-float struct (2xf64) must classify to two f64s; got {result:?}");
+    assert_eq!(
+        result,
+        vec!["f64".to_string(), "f64".to_string()],
+        "16B all-float struct (2xf64) must classify to two f64s; got {result:?}"
+    );
 }
 
 // ── test 7: SysV — >16B struct → MEMORY (!llvm.ptr) ─────────────────────────
@@ -158,8 +178,11 @@ fn sysv_large_struct_to_memory_class() {
     // Three i64 fields = 24 bytes > 16.
     let fields = vec![TypeAnn::ScalarI64, TypeAnn::ScalarI64, TypeAnn::ScalarI64];
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["!llvm.ptr".to_string()],
-        ">16B struct must classify to MEMORY (!llvm.ptr); got {result:?}");
+    assert_eq!(
+        result,
+        vec!["!llvm.ptr".to_string()],
+        ">16B struct must classify to MEMORY (!llvm.ptr); got {result:?}"
+    );
 }
 
 // ── test 8: SysV — mixed int+float → MEMORY ──────────────────────────────────
@@ -170,8 +193,11 @@ fn sysv_large_struct_to_memory_class() {
 fn sysv_mixed_int_float_struct_to_memory_class() {
     let fields = vec![TypeAnn::ScalarI32, TypeAnn::ScalarF32]; // 4B int + 4B float = 8B mixed
     let result = sysv_classify_struct(&fields, &empty_repr_c());
-    assert_eq!(result, vec!["!llvm.ptr".to_string()],
-        "mixed int+float struct must classify to MEMORY (!llvm.ptr); got {result:?}");
+    assert_eq!(
+        result,
+        vec!["!llvm.ptr".to_string()],
+        "mixed int+float struct must classify to MEMORY (!llvm.ptr); got {result:?}"
+    );
 }
 
 // ── test 9: parse extern "C" fn(T) -> R callback type ────────────────────────
@@ -190,10 +216,10 @@ fn parse_fn_ptr_callback_type() {
             )
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
-    let Node::ExternBlock { fns, .. } = &module.items[0]
-    else { panic!("expected ExternBlock") };
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let Node::ExternBlock { fns, .. } = &module.items[0] else {
+        panic!("expected ExternBlock")
+    };
 
     let qsort = &fns[0];
     assert_eq!(qsort.name, "qsort");
@@ -220,10 +246,10 @@ fn parse_fn_ptr_no_params_no_ret() {
             unsafe fn atexit(func: extern "C" fn())
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
-    let Node::ExternBlock { fns, .. } = &module.items[0]
-    else { panic!("expected ExternBlock") };
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let Node::ExternBlock { fns, .. } = &module.items[0] else {
+        panic!("expected ExternBlock")
+    };
     let atexit = &fns[0];
     assert_eq!(atexit.params.len(), 1);
     match &atexit.params[0].ty {
@@ -308,9 +334,7 @@ fn fn_ptr_param_lowers_to_llvm_ptr_in_mlir() {
     m.instrs.push(Instr::ConstI64(id, 0));
     m.instrs.push(Instr::Output(id));
 
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     assert!(
         text.contains("llvm.func @signal"),
@@ -356,9 +380,7 @@ fn variadic_printf_call_uses_vararg_hints() {
     });
     m.instrs.push(Instr::Output(dst));
 
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     // The llvm.call type signature must list:
     //   (!llvm.ptr, !llvm.ptr, i64, ...) -> i64
@@ -405,9 +427,7 @@ fn repr_c_struct_param_expands_to_two_i64_in_mlir() {
     m.instrs.push(Instr::ConstI64(id, 0));
     m.instrs.push(Instr::Output(id));
 
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     assert!(
         text.contains("llvm.func @accept_timeval"),
@@ -436,8 +456,7 @@ fn end_to_end_repr_c_struct_lower_to_ir() {
             unsafe fn draw_point(p: Point) -> i32
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
     // Type-check: must produce no errors.
     let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
@@ -458,23 +477,31 @@ fn end_to_end_repr_c_struct_lower_to_ir() {
     assert_eq!(point_fields.len(), 2, "Point must have 2 fields");
     // Both i32 fields → SysV: total 8B all-int → single i64.
     let mlir_types = sysv_classify_struct(point_fields, &ir.repr_c_structs);
-    assert_eq!(mlir_types, vec!["i64".to_string()],
-        "Point (2xi32 = 8B all-int) must classify to single i64; got {mlir_types:?}");
+    assert_eq!(
+        mlir_types,
+        vec!["i64".to_string()],
+        "Point (2xi32 = 8B all-int) must classify to single i64; got {mlir_types:?}"
+    );
 
     // Verify ExternFnDecl was emitted with i64 param type for the struct.
     let extern_decl = ir.instrs.iter().find_map(|instr| {
         #[cfg(feature = "std-surface")]
-        if let Instr::ExternFnDecl { name, param_types, .. } = instr {
+        if let Instr::ExternFnDecl {
+            name, param_types, ..
+        } = instr
+        {
             if name == "draw_point" {
                 return Some(param_types.clone());
             }
         }
         None
     });
-    let param_types = extern_decl
-        .expect("must have ExternFnDecl for draw_point");
-    assert_eq!(param_types, vec!["i64".to_string()],
-        "draw_point(Point) must lower to single i64 param; got {param_types:?}");
+    let param_types = extern_decl.expect("must have ExternFnDecl for draw_point");
+    assert_eq!(
+        param_types,
+        vec!["i64".to_string()],
+        "draw_point(Point) must lower to single i64 param; got {param_types:?}"
+    );
 }
 
 // ── test 15: SysV scalar field classification ─────────────────────────────────
@@ -484,19 +511,40 @@ fn end_to_end_repr_c_struct_lower_to_ir() {
 #[test]
 fn sysv_scalar_field_classification() {
     let r = &empty_repr_c();
-    assert_eq!(classify_scalar_field(&TypeAnn::ScalarI32, r), (Some(SysVClass::Integer), 4));
-    assert_eq!(classify_scalar_field(&TypeAnn::ScalarI64, r), (Some(SysVClass::Integer), 8));
-    assert_eq!(classify_scalar_field(&TypeAnn::ScalarF32, r), (Some(SysVClass::Float), 4));
-    assert_eq!(classify_scalar_field(&TypeAnn::ScalarF64, r), (Some(SysVClass::Float), 8));
     assert_eq!(
-        classify_scalar_field(&TypeAnn::RawPtr {
-            mutable: true,
-            pointee: Box::new(TypeAnn::ScalarI32),
-        }, r),
+        classify_scalar_field(&TypeAnn::ScalarI32, r),
+        (Some(SysVClass::Integer), 4)
+    );
+    assert_eq!(
+        classify_scalar_field(&TypeAnn::ScalarI64, r),
         (Some(SysVClass::Integer), 8)
     );
     assert_eq!(
-        classify_scalar_field(&TypeAnn::FnPtr { params: vec![], ret: None }, r),
+        classify_scalar_field(&TypeAnn::ScalarF32, r),
+        (Some(SysVClass::Float), 4)
+    );
+    assert_eq!(
+        classify_scalar_field(&TypeAnn::ScalarF64, r),
+        (Some(SysVClass::Float), 8)
+    );
+    assert_eq!(
+        classify_scalar_field(
+            &TypeAnn::RawPtr {
+                mutable: true,
+                pointee: Box::new(TypeAnn::ScalarI32),
+            },
+            r
+        ),
+        (Some(SysVClass::Integer), 8)
+    );
+    assert_eq!(
+        classify_scalar_field(
+            &TypeAnn::FnPtr {
+                params: vec![],
+                ret: None
+            },
+            r
+        ),
         (Some(SysVClass::Integer), 8)
     );
 }
@@ -523,8 +571,7 @@ fn repr_c_struct_after_extern_block_classifies_correctly() {
         #[repr(C)]
         struct Mixed { x: i32, f: f32 }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
     use libmind::eval::lower_to_ir;
     let ir = lower_to_ir(&module);
@@ -533,22 +580,25 @@ fn repr_c_struct_after_extern_block_classifies_correctly() {
     assert!(
         ir.repr_c_structs.contains_key("Mixed"),
         "repr_c_structs must contain 'Mixed' even when StructDef comes after ExternBlock; \
-         keys: {:?}", ir.repr_c_structs.keys().collect::<Vec<_>>()
+         keys: {:?}",
+        ir.repr_c_structs.keys().collect::<Vec<_>>()
     );
 
     // The ExternFnDecl for use_mixed must have param_types = ["!llvm.ptr"]
     // because Mixed is a mixed int+float struct -> MEMORY class.
     let extern_decl = ir.instrs.iter().find_map(|instr| {
         #[cfg(feature = "std-surface")]
-        if let Instr::ExternFnDecl { name, param_types, .. } = instr {
+        if let Instr::ExternFnDecl {
+            name, param_types, ..
+        } = instr
+        {
             if name == "use_mixed" {
                 return Some(param_types.clone());
             }
         }
         None
     });
-    let param_types = extern_decl
-        .expect("must have ExternFnDecl for use_mixed");
+    let param_types = extern_decl.expect("must have ExternFnDecl for use_mixed");
     assert_eq!(
         param_types,
         vec!["!llvm.ptr".to_string()],
@@ -575,8 +625,7 @@ fn non_repr_c_named_struct_in_extern_signature_emits_diagnostic() {
             unsafe fn bad(n: NotReprC) -> i32
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
     let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
     assert!(

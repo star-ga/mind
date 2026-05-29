@@ -175,8 +175,7 @@ pub(super) fn strip_comments_with_trivia(
         if let Some(col_idx) = comment_col {
             let comment_start_orig = line_start + col_idx;
             let comment_bytes = &line_bytes[col_idx..];
-            let comment_text =
-                std::str::from_utf8(comment_bytes).unwrap_or("").to_string();
+            let comment_text = std::str::from_utf8(comment_bytes).unwrap_or("").to_string();
 
             let kind = classify_comment(comment_bytes);
             col.push(Trivia {
@@ -197,8 +196,7 @@ pub(super) fn strip_comments_with_trivia(
         }
     }
 
-    let stripped = String::from_utf8(stripped_bytes)
-        .expect("stripped source must be valid UTF-8");
+    let stripped = String::from_utf8(stripped_bytes).expect("stripped source must be valid UTF-8");
     (stripped, offset_map)
 }
 

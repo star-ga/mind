@@ -143,9 +143,7 @@ fn heading_level(line: &str) -> Option<usize> {
 /// Return true if `line` starts an unordered list item (`- ` or `* `).
 fn is_list_item(line: &str) -> bool {
     let t = line.trim_start();
-    (t.starts_with("- ") || t.starts_with("* "))
-        && !t.starts_with("---")
-        && !t.starts_with("***")
+    (t.starts_with("- ") || t.starts_with("* ")) && !t.starts_with("---") && !t.starts_with("***")
 }
 
 /// Render inline Markdown spans to HTML.
@@ -260,9 +258,7 @@ fn try_parse_link(chars: &[char], i: usize) -> Option<(String, usize)> {
         return None;
     }
     // Find closing `)`
-    let close_paren = chars[text_end + 2..]
-        .iter()
-        .position(|&c| c == ')')?;
+    let close_paren = chars[text_end + 2..].iter().position(|&c| c == ')')?;
     let url_end = text_end + 2 + close_paren;
 
     let text: String = chars[i + 1..text_end].iter().collect();

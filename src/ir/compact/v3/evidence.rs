@@ -67,9 +67,9 @@
 
 use std::io::Write;
 
+use crate::ir::IRModule;
 use crate::ir::compact::v2::{uleb128_read, uleb128_write, zigzag_decode, zigzag_encode};
 use crate::ir::evidence::ir_trace_hash;
-use crate::ir::IRModule;
 
 // Re-export the canonical evidence vocabulary from v2 — one set of types for
 // the whole codebase (RFC 0021 §3.2: "reuse, don't rebuild").
@@ -125,7 +125,14 @@ pub fn emit_mic3_with_evidence(
     let body = super::emit_mic3(ir);
     let trace_hash = ir_trace_hash(ir);
     let mut out = body;
-    append_map_epilogue(&mut out, substrate, parent, determinism, toolchain, trace_hash);
+    append_map_epilogue(
+        &mut out,
+        substrate,
+        parent,
+        determinism,
+        toolchain,
+        trace_hash,
+    );
     out
 }
 
@@ -170,10 +177,13 @@ fn append_map_epilogue(
 ) {
     // Collect entries sorted by key.
     let mut entries: Vec<(&str, MapEntryValue)> = vec![
-        (KEY_DETERMINISM, MapEntryValue::Str(match determinism {
-            Determinism::Deterministic => "deterministic",
-            Determinism::Nondeterministic => "nondeterministic",
-        })),
+        (
+            KEY_DETERMINISM,
+            MapEntryValue::Str(match determinism {
+                Determinism::Deterministic => "deterministic",
+                Determinism::Nondeterministic => "nondeterministic",
+            }),
+        ),
         (KEY_SCHEMA, MapEntryValue::Int(1)),
         (KEY_SUBSTRATE, MapEntryValue::Str(substrate)),
         (KEY_TOOLCHAIN, MapEntryValue::Str(toolchain)),
@@ -283,42 +293,41 @@ pub(crate) fn parse_map_epilogue(bytes: &[u8]) -> Result<Vec<ParsedEntry>, Parse
         return Err(ParseMapError::MissingSentinel);
     }
     let mut r = std::io::Cursor::new(&bytes[1..]);
-    let count = uleb128_read(&mut r)
-        .map_err(|_| ParseMapError::Truncated)? as usize;
+    let count = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
         let key_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
         let mut key_buf = vec![0u8; key_len];
         use std::io::Read;
-        r.read_exact(&mut key_buf).map_err(|_| ParseMapError::Truncated)?;
-        let key =
-            String::from_utf8(key_buf).map_err(|_| ParseMapError::InvalidUtf8)?;
+        r.read_exact(&mut key_buf)
+            .map_err(|_| ParseMapError::Truncated)?;
+        let key = String::from_utf8(key_buf).map_err(|_| ParseMapError::InvalidUtf8)?;
 
         let tag_byte = {
             let mut tb = [0u8];
-            r.read_exact(&mut tb).map_err(|_| ParseMapError::Truncated)?;
+            r.read_exact(&mut tb)
+                .map_err(|_| ParseMapError::Truncated)?;
             tb[0]
         };
 
         let value = match tag_byte {
             TAG_STRING => {
-                let val_len = uleb128_read(&mut r)
-                    .map_err(|_| ParseMapError::Truncated)? as usize;
+                let val_len = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
                 let mut vb = vec![0u8; val_len];
-                r.read_exact(&mut vb).map_err(|_| ParseMapError::Truncated)?;
+                r.read_exact(&mut vb)
+                    .map_err(|_| ParseMapError::Truncated)?;
                 let s = String::from_utf8(vb).map_err(|_| ParseMapError::InvalidUtf8)?;
                 ParsedValue::Str(s)
             }
             TAG_INT => {
-                let encoded = uleb128_read(&mut r)
-                    .map_err(|_| ParseMapError::Truncated)?;
+                let encoded = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)?;
                 ParsedValue::Int(zigzag_decode(encoded))
             }
             TAG_BYTES => {
-                let blen = uleb128_read(&mut r)
-                    .map_err(|_| ParseMapError::Truncated)? as usize;
+                let blen = uleb128_read(&mut r).map_err(|_| ParseMapError::Truncated)? as usize;
                 let mut bb = vec![0u8; blen];
-                r.read_exact(&mut bb).map_err(|_| ParseMapError::Truncated)?;
+                r.read_exact(&mut bb)
+                    .map_err(|_| ParseMapError::Truncated)?;
                 ParsedValue::Bytes(bb)
             }
             other => return Err(ParseMapError::UnknownTag(other)),
@@ -428,8 +437,8 @@ fn find_bytes_opt(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{BinOp, IRModule, Instr};
     use crate::ir::compact::v3::{emit_mic3, parse_mic3};
+    use crate::ir::{BinOp, IRModule, Instr};
     use crate::types::{DType, ShapeDim};
 
     // -------------------------------------------------------------------------
@@ -463,7 +472,12 @@ mod tests {
         let c = m.fresh();
         m.instrs.push(Instr::ConstI64(a, 10));
         m.instrs.push(Instr::ConstI64(b, 20));
-        m.instrs.push(Instr::BinOp { dst: c, op: BinOp::Add, lhs: a, rhs: b });
+        m.instrs.push(Instr::BinOp {
+            dst: c,
+            op: BinOp::Add,
+            lhs: a,
+            rhs: b,
+        });
         m.instrs.push(Instr::Output(c));
         m
     }
@@ -478,7 +492,12 @@ mod tests {
             vec![ShapeDim::Known(4), ShapeDim::Known(8)],
             Some(1.0),
         ));
-        m.instrs.push(Instr::Sum { dst: s, src: t, axes: vec![0], keepdims: false });
+        m.instrs.push(Instr::Sum {
+            dst: s,
+            src: t,
+            axes: vec![0],
+            keepdims: false,
+        });
         m.instrs.push(Instr::Output(s));
         m
     }
@@ -494,15 +513,28 @@ mod tests {
             params: vec![("x".into(), p)],
             ret_id: Some(r),
             body: vec![
-                Instr::Param { dst: p, name: "x".into(), index: 0 },
+                Instr::Param {
+                    dst: p,
+                    name: "x".into(),
+                    index: 0,
+                },
                 Instr::ConstI64(v, 1),
-                Instr::BinOp { dst: r, op: BinOp::Add, lhs: p, rhs: v },
+                Instr::BinOp {
+                    dst: r,
+                    op: BinOp::Add,
+                    lhs: p,
+                    rhs: v,
+                },
                 Instr::Return { value: Some(r) },
             ],
             reap_threshold: None,
         });
         m.instrs.push(Instr::ConstI64(v, 5));
-        m.instrs.push(Instr::Call { dst, name: "add_one".into(), args: vec![v] });
+        m.instrs.push(Instr::Call {
+            dst,
+            name: "add_one".into(),
+            args: vec![v],
+        });
         m.instrs.push(Instr::Output(dst));
         m
     }
@@ -515,8 +547,18 @@ mod tests {
         let d = m.fresh();
         m.instrs.push(Instr::ConstI64(a, 1));
         m.instrs.push(Instr::ConstI64(b, 2));
-        m.instrs.push(Instr::BinOp { dst: c, op: BinOp::Mul, lhs: a, rhs: b });
-        m.instrs.push(Instr::BinOp { dst: d, op: BinOp::Sub, lhs: c, rhs: a });
+        m.instrs.push(Instr::BinOp {
+            dst: c,
+            op: BinOp::Mul,
+            lhs: a,
+            rhs: b,
+        });
+        m.instrs.push(Instr::BinOp {
+            dst: d,
+            op: BinOp::Sub,
+            lhs: c,
+            rhs: a,
+        });
         m.instrs.push(Instr::Output(d));
         m
     }
@@ -542,13 +584,21 @@ mod tests {
             params: vec![("a".into(), op)],
             ret_id: Some(or),
             body: vec![
-                Instr::Param { dst: op, name: "a".into(), index: 0 },
+                Instr::Param {
+                    dst: op,
+                    name: "a".into(),
+                    index: 0,
+                },
                 Instr::FnDef {
                     name: "inner".into(),
                     params: vec![("b".into(), ip)],
                     ret_id: Some(ir),
                     body: vec![
-                        Instr::Param { dst: ip, name: "b".into(), index: 0 },
+                        Instr::Param {
+                            dst: ip,
+                            name: "b".into(),
+                            index: 0,
+                        },
                         Instr::Return { value: Some(ip) },
                     ],
                     reap_threshold: None,
@@ -582,15 +632,12 @@ mod tests {
     #[test]
     fn byte_determinism_across_repeated_calls() {
         for (name, ir) in all_modules() {
-            let b1 = emit_mic3_with_evidence(
-                &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-            );
-            let b2 = emit_mic3_with_evidence(
-                &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-            );
-            let b3 = emit_mic3_with_evidence(
-                &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-            );
+            let b1 =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+            let b2 =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+            let b3 =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
             assert_eq!(b1, b2, "module '{}': emit call 1 != call 2", name);
             assert_eq!(b2, b3, "module '{}': emit call 2 != call 3", name);
         }
@@ -603,12 +650,10 @@ mod tests {
     #[test]
     fn roundtrip_ir_body_survives_evidence_emit() {
         for (name, ir) in all_modules() {
-            let bytes = emit_mic3_with_evidence(
-                &ir, "arm_neon", None, Determinism::Deterministic, "0.8.0",
-            );
+            let bytes =
+                emit_mic3_with_evidence(&ir, "arm_neon", None, Determinism::Deterministic, "0.8.0");
             // The IR body is a prefix — parse just the body.
-            let body_end =
-                find_map_sentinel(&bytes).expect("sentinel must be present");
+            let body_end = find_map_sentinel(&bytes).expect("sentinel must be present");
             let parsed = parse_mic3(&bytes[..body_end])
                 .unwrap_or_else(|e| panic!("module '{}': parse failed: {}", name, e));
 
@@ -630,9 +675,8 @@ mod tests {
     #[test]
     fn evidence_report_valid_for_untampered_artifact() {
         for (name, ir) in all_modules() {
-            let bytes = emit_mic3_with_evidence(
-                &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-            );
+            let bytes =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
             let report = mic3_evidence_report(&bytes)
                 .unwrap_or_else(|e| panic!("module '{}': evidence_report error: {:?}", name, e));
             assert!(
@@ -641,7 +685,12 @@ mod tests {
                 name
             );
             assert_eq!(report.substrate, "x86_avx2", "module '{}'", name);
-            assert_eq!(report.determinism, Determinism::Deterministic, "module '{}'", name);
+            assert_eq!(
+                report.determinism,
+                Determinism::Deterministic,
+                "module '{}'",
+                name
+            );
             assert_eq!(report.toolchain, "0.8.0", "module '{}'", name);
             assert!(report.is_root(), "module '{}': no parent ⇒ is_root", name);
         }
@@ -654,15 +703,14 @@ mod tests {
     #[test]
     fn tamper_detection_flips_trace_hash_valid() {
         for (name, ir) in all_modules() {
-            let bytes = emit_mic3_with_evidence(
-                &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-            );
+            let bytes =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
 
             // Flip one byte in the IR body (byte index 5 is inside the body,
             // past the 5-byte header; safe because all modules have at least
             // several more bytes).
-            let body_end = find_map_sentinel(&bytes)
-                .expect("sentinel must be present for non-empty modules");
+            let body_end =
+                find_map_sentinel(&bytes).expect("sentinel must be present for non-empty modules");
 
             if body_end < 6 {
                 // empty module has a 5-byte header + tiny body; skip tamper
@@ -701,9 +749,8 @@ mod tests {
     fn plain_emit_mic3_unchanged_no_sentinel() {
         for (name, ir) in all_modules() {
             let plain = emit_mic3(&ir);
-            let with_ev = emit_mic3_with_evidence(
-                &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-            );
+            let with_ev =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
 
             // Plain body is an exact prefix of the evidence-bearing bytes.
             assert!(
@@ -735,11 +782,14 @@ mod tests {
         let ir = mod_binop();
         let parent = [0xABu8; 32];
 
-        let no_parent_bytes = emit_mic3_with_evidence(
-            &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-        );
+        let no_parent_bytes =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
         let with_parent_bytes = emit_mic3_with_evidence(
-            &ir, "x86_avx2", Some(parent), Determinism::Deterministic, "0.8.0",
+            &ir,
+            "x86_avx2",
+            Some(parent),
+            Determinism::Deterministic,
+            "0.8.0",
         );
 
         // Different bytes (parent is part of the MAP).
@@ -775,7 +825,11 @@ mod tests {
     fn nondeterministic_declaration_round_trips() {
         let ir = mod_const_i64();
         let bytes = emit_mic3_with_evidence(
-            &ir, "x86_avx2", None, Determinism::Nondeterministic, "0.8.0",
+            &ir,
+            "x86_avx2",
+            None,
+            Determinism::Nondeterministic,
+            "0.8.0",
         );
         let report = mic3_evidence_report(&bytes).unwrap();
         assert!(report.trace_hash_valid);
@@ -807,9 +861,8 @@ mod tests {
     #[test]
     fn map_keys_are_lexicographically_sorted() {
         let ir = mod_binop();
-        let bytes = emit_mic3_with_evidence(
-            &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-        );
+        let bytes =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
         let body_end = find_map_sentinel(&bytes).unwrap();
         let entries = parse_map_epilogue(&bytes[body_end..]).unwrap();
 
@@ -830,12 +883,10 @@ mod tests {
     #[test]
     fn substrate_field_is_correct_in_report() {
         let ir = mod_binop();
-        let avx2 = emit_mic3_with_evidence(
-            &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-        );
-        let neon = emit_mic3_with_evidence(
-            &ir, "arm_neon", None, Determinism::Deterministic, "0.8.0",
-        );
+        let avx2 =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+        let neon =
+            emit_mic3_with_evidence(&ir, "arm_neon", None, Determinism::Deterministic, "0.8.0");
 
         let r_avx2 = mic3_evidence_report(&avx2).unwrap();
         let r_neon = mic3_evidence_report(&neon).unwrap();
@@ -856,12 +907,13 @@ mod tests {
     #[test]
     fn schema_key_present_and_equals_one() {
         let ir = mod_const_i64();
-        let bytes = emit_mic3_with_evidence(
-            &ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-        );
+        let bytes =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
         let body_end = find_map_sentinel(&bytes).unwrap();
         let entries = parse_map_epilogue(&bytes[body_end..]).unwrap();
-        let schema_entry = entries.iter().find(|e| e.key == KEY_SCHEMA)
+        let schema_entry = entries
+            .iter()
+            .find(|e| e.key == KEY_SCHEMA)
             .expect("evidence_chain.schema must be present");
         match &schema_entry.value {
             ParsedValue::Int(1) => {}
@@ -891,9 +943,8 @@ mod tests {
         });
         m.instrs.push(Instr::Output(cond));
 
-        let bytes = emit_mic3_with_evidence(
-            &m, "x86_avx2", None, Determinism::Deterministic, "0.8.0",
-        );
+        let bytes =
+            emit_mic3_with_evidence(&m, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
         let report = mic3_evidence_report(&bytes).unwrap();
         assert!(report.trace_hash_valid);
         assert_eq!(report.substrate, "x86_avx2");

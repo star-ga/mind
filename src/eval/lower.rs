@@ -67,8 +67,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // mixed-type structs that should classify to MEMORY (!llvm.ptr).
     #[cfg(feature = "std-surface")]
     for item in &module.items {
-        if let ast::Node::StructDef { name, fields, attrs, .. } = item {
-            if attrs.iter().any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C")) {
+        if let ast::Node::StructDef {
+            name,
+            fields,
+            attrs,
+            ..
+        } = item
+        {
+            if attrs
+                .iter()
+                .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C"))
+            {
                 let field_types: Vec<crate::ast::TypeAnn> =
                     fields.iter().map(|f| f.ty.clone()).collect();
                 ir.repr_c_structs.insert(name.clone(), field_types);
@@ -127,15 +136,20 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             // modules — a struct declaration is still a no-op at the
             // value level, the side-table is pure metadata.
             #[cfg(feature = "std-surface")]
-            ast::Node::StructDef { name, fields, attrs, .. } => {
+            ast::Node::StructDef {
+                name,
+                fields,
+                attrs,
+                ..
+            } => {
                 let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                 ir.struct_defs.insert(name.clone(), field_names);
                 // RFC 0010 Phase B: if the struct carries `#[repr(C)]`, register
                 // its field types in `repr_c_structs` so extern_type_to_mlir can
                 // classify Named types that appear in `extern "C"` signatures.
-                let is_repr_c = attrs.iter().any(|a| {
-                    a.name == "repr" && a.args.iter().any(|arg| arg == "C")
-                });
+                let is_repr_c = attrs
+                    .iter()
+                    .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C"));
                 if is_repr_c {
                     let field_types: Vec<crate::ast::TypeAnn> =
                         fields.iter().map(|f| f.ty.clone()).collect();
@@ -503,7 +517,12 @@ fn lower_expr(
                 TensorElemOp::Mul => BinOp::Mul,
                 TensorElemOp::Div => BinOp::Div,
             };
-            ir.instrs.push(Instr::BinOp { dst, op: ir_op, lhs: l, rhs: r });
+            ir.instrs.push(Instr::BinOp {
+                dst,
+                op: ir_op,
+                lhs: l,
+                rhs: r,
+            });
             dst
         }
         ast::Node::CallTensorRand { shape, .. } => {
@@ -1419,9 +1438,9 @@ fn lower_expr(
                 let param_types: Vec<String> = efn
                     .params
                     .iter()
-                    .flat_map(|p| extern_type_to_mlir_multi_for(
-                        &p.ty, &repr_c_snapshot, effective_callconv,
-                    ))
+                    .flat_map(|p| {
+                        extern_type_to_mlir_multi_for(&p.ty, &repr_c_snapshot, effective_callconv)
+                    })
                     .collect();
                 let ret_type = efn.ret_type.as_ref().map(|t| {
                     // Return types: structs >8B returned via hidden pointer;
@@ -1567,12 +1586,20 @@ fn lower_stmt_seq(
     let mut last_id: Option<ValueId> = None;
     for stmt in stmts {
         let id = match stmt {
-            ast::Node::Let { name, ann, value, .. } => {
+            ast::Node::Let {
+                name, ann, value, ..
+            } => {
                 let id = match ann {
                     Some(TypeAnn::Tensor { dtype, dims })
-                    | Some(TypeAnn::DiffTensor { dtype, dims }) => {
-                        lower_tensor_binding(ir, value, dtype, dims, env, struct_env, receiver_types)
-                    }
+                    | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
+                        ir,
+                        value,
+                        dtype,
+                        dims,
+                        env,
+                        struct_env,
+                        receiver_types,
+                    ),
                     _ => lower_expr(value, ir, env, struct_env, receiver_types),
                 };
                 env.insert(name.clone(), id);
@@ -1701,7 +1728,7 @@ pub(crate) fn extern_type_to_mlir_multi(
                 "f32" => return vec!["f32".to_string()],
                 "f64" => return vec!["f64".to_string()],
                 "i8" | "i16" | "i32" | "u8" | "u16" | "u32" | "bool" => {
-                    return vec!["i64".to_string()]
+                    return vec!["i64".to_string()];
                 }
                 "i64" | "u64" | "usize" | "isize" => return vec!["i64".to_string()],
                 _ => {}
@@ -1714,10 +1741,9 @@ pub(crate) fn extern_type_to_mlir_multi(
             }
         }
         // Built-in scalar integer/bool types all lower to i64.
-        TypeAnn::ScalarI32
-        | TypeAnn::ScalarI64
-        | TypeAnn::ScalarBool
-        | TypeAnn::ScalarU32 => vec!["i64".to_string()],
+        TypeAnn::ScalarI32 | TypeAnn::ScalarI64 | TypeAnn::ScalarBool | TypeAnn::ScalarU32 => {
+            vec!["i64".to_string()]
+        }
         // Fallback: any aggregate that slipped past the type-checker becomes i64.
         _ => vec!["i64".to_string()],
     }

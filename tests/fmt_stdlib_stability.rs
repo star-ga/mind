@@ -84,13 +84,22 @@ fn diff_lines(expected: &str, got: &str) -> String {
 /// Idempotence for toml.mind is separately enforced by `idempotence_stdlib_toml`
 /// in `fmt_idempotence.rs` (runs under `std-surface`).
 const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
-    ("toml", "TOML-001: while-loop + whitespace alignment; std-surface required"),
-    ("string", "STRING-001: while-loop body (string_eq / string_starts_with byte \
+    (
+        "toml",
+        "TOML-001: while-loop + whitespace alignment; std-surface required",
+    ),
+    (
+        "string",
+        "STRING-001: while-loop body (string_eq / string_starts_with byte \
                  compares); the default-build formatter parser needs std-surface to \
-                 parse `while`. Idempotence enforced by idempotence_stdlib_string."),
-    ("sha256", "SHA256-001: while-loop bodies (compress_block / sha256 padding); \
+                 parse `while`. Idempotence enforced by idempotence_stdlib_string.",
+    ),
+    (
+        "sha256",
+        "SHA256-001: while-loop bodies (compress_block / sha256 padding); \
                  std-surface required for `while`. Idempotence enforced by \
-                 idempotence_stdlib_sha256."),
+                 idempotence_stdlib_sha256.",
+    ),
 ];
 
 fn stability_skip_reason(stem: &str) -> Option<&'static str> {

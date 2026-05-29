@@ -23,7 +23,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::fmt::format_source;
-use crate::project::{find_project_root, load_manifest, MindcraftFormatConfig};
+use crate::project::{MindcraftFormatConfig, find_project_root, load_manifest};
 
 /// Entry point called from `mindc.rs`.
 ///
@@ -32,13 +32,7 @@ use crate::project::{find_project_root, load_manifest, MindcraftFormatConfig};
 /// The `fix` flag is an explicit alias for the default write mode: files are
 /// formatted in-place and a summary line `Formatted N files, M unchanged` is
 /// printed to stdout.
-pub fn run_fmt(
-    paths: &[String],
-    check: bool,
-    diff: bool,
-    stdin: bool,
-    fix: bool,
-) -> i32 {
+pub fn run_fmt(paths: &[String], check: bool, diff: bool, stdin: bool, fix: bool) -> i32 {
     // --stdin is mutually exclusive with positional paths.
     if stdin && !paths.is_empty() {
         eprintln!("error[fmt]: --stdin cannot be combined with positional paths");
@@ -123,8 +117,7 @@ fn load_fmt_config() -> MindcraftFormatConfig {
 /// - Directories are walked recursively; only `*.mind` entries are kept.
 fn resolve_paths(paths: &[String]) -> Result<Vec<PathBuf>, String> {
     let roots: Vec<PathBuf> = if paths.is_empty() {
-        vec![std::env::current_dir()
-            .map_err(|e| format!("cannot read current directory: {e}"))?]
+        vec![std::env::current_dir().map_err(|e| format!("cannot read current directory: {e}"))?]
     } else {
         paths.iter().map(PathBuf::from).collect()
     };
@@ -134,8 +127,7 @@ fn resolve_paths(paths: &[String]) -> Result<Vec<PathBuf>, String> {
         if root.is_file() {
             out.push(root);
         } else if root.is_dir() {
-            collect_mind_files(&root, &mut out)
-                .map_err(|e| format!("{}: {e}", root.display()))?;
+            collect_mind_files(&root, &mut out).map_err(|e| format!("{}: {e}", root.display()))?;
         } else {
             return Err(format!("'{}' does not exist", root.display()));
         }
@@ -147,10 +139,7 @@ fn resolve_paths(paths: &[String]) -> Result<Vec<PathBuf>, String> {
 fn collect_mind_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     let entries = fs::read_dir(dir)?;
     // Collect and sort for deterministic ordering.
-    let mut children: Vec<_> = entries
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .collect();
+    let mut children: Vec<_> = entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
     children.sort();
 
     for child in children {
@@ -182,11 +171,9 @@ fn process_file(
     diff: bool,
     cfg: &MindcraftFormatConfig,
 ) -> Result<FileResult, String> {
-    let src = fs::read_to_string(path)
-        .map_err(|e| format!("cannot read: {e}"))?;
+    let src = fs::read_to_string(path).map_err(|e| format!("cannot read: {e}"))?;
 
-    let formatted = format_source(&src, cfg)
-        .map_err(|e| format!("format error: {e}"))?;
+    let formatted = format_source(&src, cfg).map_err(|e| format!("format error: {e}"))?;
 
     if formatted == src {
         return Ok(FileResult::Clean);
@@ -205,8 +192,7 @@ fn process_file(
     }
 
     // Default: write in-place via atomic rename.
-    write_atomic(path, &formatted)
-        .map_err(|e| format!("cannot write: {e}"))?;
+    write_atomic(path, &formatted).map_err(|e| format!("cannot write: {e}"))?;
 
     Ok(FileResult::Written)
 }
@@ -313,9 +299,7 @@ fn compute_lcs_diff(old: &[&str], new: &[&str]) -> Vec<Edit> {
             edits.push(Edit::Keep);
             i -= 1;
             j -= 1;
-        } else if j > 0
-            && (i == 0 || dp[i * (m + 1) + (j - 1)] >= dp[(i - 1) * (m + 1) + j])
-        {
+        } else if j > 0 && (i == 0 || dp[i * (m + 1) + (j - 1)] >= dp[(i - 1) * (m + 1) + j]) {
             edits.push(Edit::Insert);
             j -= 1;
         } else {
@@ -328,12 +312,7 @@ fn compute_lcs_diff(old: &[&str], new: &[&str]) -> Vec<Edit> {
 }
 
 /// Build the unified-diff string from an edit script.
-fn build_unified_hunks(
-    old: &[&str],
-    new: &[&str],
-    edits: &[Edit],
-    context: usize,
-) -> String {
+fn build_unified_hunks(old: &[&str], new: &[&str], edits: &[Edit], context: usize) -> String {
     // Build a flat list of per-line items: (old_line, new_line, edit).
     // old_line / new_line are the 1-based line numbers (0 = not present).
     struct Line {
@@ -349,16 +328,28 @@ fn build_unified_hunks(
     for &edit in edits {
         match edit {
             Edit::Keep => {
-                lines.push(Line { old_no: oi + 1, new_no: ni + 1, edit });
+                lines.push(Line {
+                    old_no: oi + 1,
+                    new_no: ni + 1,
+                    edit,
+                });
                 oi += 1;
                 ni += 1;
             }
             Edit::Delete => {
-                lines.push(Line { old_no: oi + 1, new_no: 0, edit });
+                lines.push(Line {
+                    old_no: oi + 1,
+                    new_no: 0,
+                    edit,
+                });
                 oi += 1;
             }
             Edit::Insert => {
-                lines.push(Line { old_no: 0, new_no: ni + 1, edit });
+                lines.push(Line {
+                    old_no: 0,
+                    new_no: ni + 1,
+                    edit,
+                });
                 ni += 1;
             }
         }

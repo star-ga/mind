@@ -22,20 +22,20 @@ use crate::ast::Literal;
 
 use crate::ast::Node;
 
-use crate::eval::autodiff::TensorEnvEntry;
-use crate::eval::eval_value_expr_mode;
-use crate::eval::format_value_human;
 use crate::eval::EvalError;
 use crate::eval::ExecMode;
 use crate::eval::TensorVal;
 use crate::eval::Value;
+use crate::eval::autodiff::TensorEnvEntry;
+use crate::eval::eval_value_expr_mode;
+use crate::eval::format_value_human;
 
+#[cfg(feature = "cpu-buffers")]
+use crate::eval::MATERIALIZE_MAX;
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::materialize_filled;
 #[cfg(feature = "cpu-buffers")]
 use crate::eval::num_elems;
-#[cfg(feature = "cpu-buffers")]
-use crate::eval::MATERIALIZE_MAX;
 
 use crate::linalg;
 use crate::linalg::MatMulShapeInfo;
