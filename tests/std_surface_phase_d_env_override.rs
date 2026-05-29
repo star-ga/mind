@@ -25,7 +25,7 @@
 #![cfg(all(feature = "std-surface", feature = "cross-module-imports"))]
 
 use libmind::project::module_table::build_module_table;
-use libmind::project::stdlib::parsed_stdlib_modules;
+use libmind::project::stdlib::{parsed_stdlib_modules, STDLIB_MIND_SOURCES};
 
 /// Sets `MIND_STDLIB_PATH` for the duration of the closure, then
 /// clears it. The wrapper centralises the unsafe blocks the
@@ -52,9 +52,10 @@ fn env_unset_uses_bundled_stdlib() {
     with_env("MIND_STDLIB_PATH", None, || {
         let mods = parsed_stdlib_modules();
         let names: Vec<&str> = mods.iter().map(|(p, _)| p.as_str()).collect();
-        // The bundled set now contains twelve canonical modules
-        // (std.async added in RFC 0011 Phase A).
-        assert_eq!(mods.len(), 12);
+        // Every bundled module must parse cleanly and round-trip through the
+        // loader. Assert against the source-of-truth count rather than a magic
+        // number so adding a std module never silently leaves this stale.
+        assert_eq!(mods.len(), STDLIB_MIND_SOURCES.len());
         assert!(names.contains(&"std.async"));
         assert!(names.contains(&"std.blas"));
         assert!(names.contains(&"std.io"));
@@ -81,7 +82,7 @@ fn env_set_to_repo_std_dir_round_trips() {
 
     with_env("MIND_STDLIB_PATH", Some(&std_dir), || {
         let mods = parsed_stdlib_modules();
-        assert_eq!(mods.len(), 12);
+        assert_eq!(mods.len(), STDLIB_MIND_SOURCES.len());
 
         // Build the same project-loader-shaped table and confirm
         // every canonical public fn still resolves through the
@@ -112,7 +113,7 @@ fn env_set_to_missing_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            12,
+            STDLIB_MIND_SOURCES.len(),
             "missing override dir must fall back to bundled stdlib"
         );
     });
@@ -138,7 +139,7 @@ fn env_set_to_partial_dir_falls_back_to_bundled() {
         let mods = parsed_stdlib_modules();
         assert_eq!(
             mods.len(),
-            12,
+            STDLIB_MIND_SOURCES.len(),
             "partial override dir must fall back to bundled stdlib"
         );
     });
