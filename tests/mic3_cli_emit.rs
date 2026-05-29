@@ -81,8 +81,8 @@ fn emit_mic3_writes_parseable_binary() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let bytes = std::fs::read(&tmp)
-        .unwrap_or_else(|e| panic!("cannot read output file {tmp}: {e}"));
+    let bytes =
+        std::fs::read(&tmp).unwrap_or_else(|e| panic!("cannot read output file {tmp}: {e}"));
 
     // Verify magic header: 'M','I','C','3'
     assert!(
@@ -128,8 +128,8 @@ fn emit_evidence_report_validates() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let bytes = std::fs::read(&tmp)
-        .unwrap_or_else(|e| panic!("cannot read output file {tmp}: {e}"));
+    let bytes =
+        std::fs::read(&tmp).unwrap_or_else(|e| panic!("cannot read output file {tmp}: {e}"));
 
     let report = libmind::ir::compact::mic3_evidence_report(&bytes)
         .expect("mic3_evidence_report must succeed on --emit-evidence output");
@@ -169,8 +169,7 @@ fn emit_mic3_matches_library_emit() {
 
     assert!(out.status.success());
 
-    let cli_bytes = std::fs::read(&tmp)
-        .unwrap_or_else(|e| panic!("cannot read {tmp}: {e}"));
+    let cli_bytes = std::fs::read(&tmp).unwrap_or_else(|e| panic!("cannot read {tmp}: {e}"));
 
     // Reproduce via the library directly.
     let source = std::fs::read_to_string(fixture("simple.mind")).unwrap();
@@ -258,7 +257,7 @@ fn evidence_body_prefix_equals_plain_mic3() {
     }
 
     let tmp_plain = tempfile_path("mic3_plain.bin");
-    let tmp_ev    = tempfile_path("mic3_ev.bin");
+    let tmp_ev = tempfile_path("mic3_ev.bin");
 
     let out_plain = Command::new(&bin)
         .args([&fixture("simple.mind"), "--emit-mic3", &tmp_plain])

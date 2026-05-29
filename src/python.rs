@@ -14,7 +14,7 @@
 
 //! Python bindings for MIND compiler benchmarks
 
-use crate::pipeline::{compile_source, CompileOptions};
+use crate::pipeline::{CompileOptions, compile_source};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 

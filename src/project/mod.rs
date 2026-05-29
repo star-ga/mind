@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
 /// Cross-module import resolution (Phase 10.6 item 9 / Phase 15
@@ -759,7 +759,7 @@ fn compile_single_source(
 ) -> Result<()> {
     use crate::eval;
     use crate::parser;
-    use crate::pipeline::{compile_source_with_name, CompileOptions};
+    use crate::pipeline::{CompileOptions, compile_source_with_name};
     use crate::runtime::types::BackendTarget;
 
     // Read source

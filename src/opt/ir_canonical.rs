@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ir::{instruction_dst, BinOp, IRModule, Instr, ValueId};
+use crate::ir::{BinOp, IRModule, Instr, ValueId, instruction_dst};
 
 /// Canonicalize the public MIND IR in-place.
 ///

@@ -263,9 +263,9 @@ fn json_mind_auto_exports_public_symbols() {
 #[cfg(feature = "cross-module-imports")]
 #[test]
 fn bundled_stdlib_resolves_use_std_json() {
-    use libmind::project::stdlib::parsed_stdlib_modules;
     use libmind::project::module_table::build_module_table;
-    use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+    use libmind::project::stdlib::parsed_stdlib_modules;
+    use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
     let stdlib = parsed_stdlib_modules();
     let refs: Vec<(String, &libmind::ast::Module)> =
@@ -351,29 +351,29 @@ pub fn smoke_jv_n_is_int(h: i64) -> i64 {{ jv_n_is_int(h) }}
 
         unsafe {
             let lib = libloading::Library::new(&so_path).expect("dlopen json_smoke.so");
-            type ParseFn  = unsafe extern "C" fn(i64, i64) -> i64;
-            type KindFn   = unsafe extern "C" fn(i64) -> i64;
-            type ALenFn   = unsafe extern "C" fn(i64) -> i64;
-            type AGetFn   = unsafe extern "C" fn(i64, i64) -> i64;
-            type TLenFn   = unsafe extern "C" fn(i64) -> i64;
-            type GetFn    = unsafe extern "C" fn(i64, i64, i64) -> i64;
-            type SAddrFn  = unsafe extern "C" fn(i64) -> i64;
-            type SLenFn   = unsafe extern "C" fn(i64) -> i64;
-            type BValFn   = unsafe extern "C" fn(i64) -> i64;
-            type NIntFn   = unsafe extern "C" fn(i64) -> i64;
+            type ParseFn = unsafe extern "C" fn(i64, i64) -> i64;
+            type KindFn = unsafe extern "C" fn(i64) -> i64;
+            type ALenFn = unsafe extern "C" fn(i64) -> i64;
+            type AGetFn = unsafe extern "C" fn(i64, i64) -> i64;
+            type TLenFn = unsafe extern "C" fn(i64) -> i64;
+            type GetFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
+            type SAddrFn = unsafe extern "C" fn(i64) -> i64;
+            type SLenFn = unsafe extern "C" fn(i64) -> i64;
+            type BValFn = unsafe extern "C" fn(i64) -> i64;
+            type NIntFn = unsafe extern "C" fn(i64) -> i64;
             type NIsIntFn = unsafe extern "C" fn(i64) -> i64;
 
-            let parse_fn:   libloading::Symbol<ParseFn>  = lib.get(b"smoke_jv_parse\0").unwrap();
-            let kind_fn:    libloading::Symbol<KindFn>   = lib.get(b"smoke_jv_kind\0").unwrap();
-            let alen_fn:    libloading::Symbol<ALenFn>   = lib.get(b"smoke_jv_arr_len\0").unwrap();
-            let aget_fn:    libloading::Symbol<AGetFn>   = lib.get(b"smoke_jv_arr_get\0").unwrap();
-            let tlen_fn:    libloading::Symbol<TLenFn>   = lib.get(b"smoke_jv_tbl_len\0").unwrap();
-            let get_fn:     libloading::Symbol<GetFn>    = lib.get(b"smoke_jv_get\0").unwrap();
-            let s_addr_fn:  libloading::Symbol<SAddrFn>  = lib.get(b"smoke_jv_s_addr\0").unwrap();
-            let s_len_fn:   libloading::Symbol<SLenFn>   = lib.get(b"smoke_jv_s_len\0").unwrap();
-            let bval_fn:    libloading::Symbol<BValFn>   = lib.get(b"smoke_jv_bval\0").unwrap();
-            let nint_fn:    libloading::Symbol<NIntFn>   = lib.get(b"smoke_jv_n_int\0").unwrap();
-            let nisint_fn:  libloading::Symbol<NIsIntFn> = lib.get(b"smoke_jv_n_is_int\0").unwrap();
+            let parse_fn: libloading::Symbol<ParseFn> = lib.get(b"smoke_jv_parse\0").unwrap();
+            let kind_fn: libloading::Symbol<KindFn> = lib.get(b"smoke_jv_kind\0").unwrap();
+            let alen_fn: libloading::Symbol<ALenFn> = lib.get(b"smoke_jv_arr_len\0").unwrap();
+            let aget_fn: libloading::Symbol<AGetFn> = lib.get(b"smoke_jv_arr_get\0").unwrap();
+            let tlen_fn: libloading::Symbol<TLenFn> = lib.get(b"smoke_jv_tbl_len\0").unwrap();
+            let get_fn: libloading::Symbol<GetFn> = lib.get(b"smoke_jv_get\0").unwrap();
+            let s_addr_fn: libloading::Symbol<SAddrFn> = lib.get(b"smoke_jv_s_addr\0").unwrap();
+            let s_len_fn: libloading::Symbol<SLenFn> = lib.get(b"smoke_jv_s_len\0").unwrap();
+            let bval_fn: libloading::Symbol<BValFn> = lib.get(b"smoke_jv_bval\0").unwrap();
+            let nint_fn: libloading::Symbol<NIntFn> = lib.get(b"smoke_jv_n_int\0").unwrap();
+            let nisint_fn: libloading::Symbol<NIsIntFn> = lib.get(b"smoke_jv_n_is_int\0").unwrap();
 
             // Fixture 1: simple object
             let src1 = br#"{"name":"mind","version":1}"#;
@@ -385,9 +385,13 @@ pub fn smoke_jv_n_is_int(h: i64) -> i64 {{ jv_n_is_int(h) }}
             let name_key = b"name";
             let name_val = get_fn(root1, name_key.as_ptr() as i64, name_key.len() as i64);
             assert!(name_val != 0, "fixture 1: 'name' key must be present");
-            assert_eq!(kind_fn(name_val), 3, "fixture 1: 'name' must be string (kind=3)");
+            assert_eq!(
+                kind_fn(name_val),
+                3,
+                "fixture 1: 'name' must be string (kind=3)"
+            );
             let s_addr = s_addr_fn(name_val);
-            let s_len  = s_len_fn(name_val);
+            let s_len = s_len_fn(name_val);
             assert_eq!(s_len, 4, "fixture 1: name length must be 4");
             let name_bytes = std::slice::from_raw_parts(s_addr as *const u8, s_len as usize);
             assert_eq!(name_bytes, b"mind", "fixture 1: name must equal 'mind'");
@@ -395,7 +399,11 @@ pub fn smoke_jv_n_is_int(h: i64) -> i64 {{ jv_n_is_int(h) }}
             let ver_key = b"version";
             let ver_val = get_fn(root1, ver_key.as_ptr() as i64, ver_key.len() as i64);
             assert!(ver_val != 0, "fixture 1: 'version' key must be present");
-            assert_eq!(kind_fn(ver_val), 2, "fixture 1: 'version' must be number (kind=2)");
+            assert_eq!(
+                kind_fn(ver_val),
+                2,
+                "fixture 1: 'version' must be number (kind=2)"
+            );
             assert_eq!(nint_fn(ver_val), 1, "fixture 1: version must be 1");
             assert_eq!(nisint_fn(ver_val), 1, "fixture 1: version must be integer");
 

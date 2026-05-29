@@ -105,7 +105,10 @@ fn idempotence_stdlib() {
         }
     }
 
-    assert_eq!(skipped, 0, "unexpected parse failures in std/ ({skipped} file(s))");
+    assert_eq!(
+        skipped, 0,
+        "unexpected parse failures in std/ ({skipped} file(s))"
+    );
     assert_eq!(passed, 4, "expected 4 stdlib files, got {passed}");
 }
 
@@ -121,7 +124,10 @@ fn idempotence_stdlib_string() {
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     let exercised = check_idempotence("string", &src, &cfg);
-    assert!(exercised, "string.mind failed to parse under std-surface — unexpected");
+    assert!(
+        exercised,
+        "string.mind failed to parse under std-surface — unexpected"
+    );
 }
 
 /// `sha256.mind` uses `while` loops in compress_block and sha256, which require
@@ -135,7 +141,10 @@ fn idempotence_stdlib_sha256() {
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     let exercised = check_idempotence("sha256", &src, &cfg);
-    assert!(exercised, "sha256.mind failed to parse under std-surface — unexpected");
+    assert!(
+        exercised,
+        "sha256.mind failed to parse under std-surface — unexpected"
+    );
 }
 
 /// `toml.mind` uses `while` loops, which require the `std-surface` feature to
@@ -149,7 +158,10 @@ fn idempotence_stdlib_toml() {
     let src = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
     let exercised = check_idempotence("toml", &src, &cfg);
-    assert!(exercised, "toml.mind failed to parse under std-surface — unexpected");
+    assert!(
+        exercised,
+        "toml.mind failed to parse under std-surface — unexpected"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +184,11 @@ fn idempotence_examples() {
     assert!(!paths.is_empty(), "no .mind files found under examples/");
 
     for path in &paths {
-        let label = path.strip_prefix(&base).unwrap_or(path).display().to_string();
+        let label = path
+            .strip_prefix(&base)
+            .unwrap_or(path)
+            .display()
+            .to_string();
         let src = std::fs::read_to_string(path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         if check_idempotence(&label, &src, &cfg) {
@@ -198,8 +214,8 @@ fn idempotence_fmt_fixtures() {
     let cfg = default_cfg();
     let mut passed = 0usize;
 
-    for entry in std::fs::read_dir(&fixture_dir)
-        .unwrap_or_else(|e| panic!("cannot read fixture dir: {e}"))
+    for entry in
+        std::fs::read_dir(&fixture_dir).unwrap_or_else(|e| panic!("cannot read fixture dir: {e}"))
     {
         let entry = entry.unwrap();
         let path = entry.path();

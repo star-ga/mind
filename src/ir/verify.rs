@@ -14,7 +14,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::ir::{instruction_dst, IRModule, Instr, ValueId};
+use crate::ir::{IRModule, Instr, ValueId, instruction_dst};
 
 /// Structured errors returned by the IR verifier.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

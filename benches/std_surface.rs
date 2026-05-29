@@ -10,7 +10,7 @@
 //! frontend moat). Measures the added cost of lowering a module with
 //! N `func.call`s in isolation.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use libmind::ir::{IRModule, Instr};
 use libmind::mlir::lower_ir_to_mlir;
 

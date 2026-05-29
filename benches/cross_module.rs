@@ -11,7 +11,7 @@
 //! and type-checking a module that imports N symbols, isolated from the
 //! base parse/typecheck path.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use libmind::parser::parse;
 use libmind::project::module_table::build_module_table;
 use libmind::type_checker::check_module_types_with_modules;

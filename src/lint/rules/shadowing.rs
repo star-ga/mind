@@ -75,14 +75,21 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
             check_scope(stmts, ctx, out);
         }
         // For other compound nodes, just recurse to find nested fn/block scopes.
-        Node::If { cond, then_branch, else_branch, .. } => {
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             check_node(cond, ctx, out);
             check_scope(then_branch, ctx, out);
             if let Some(eb) = else_branch {
                 check_scope(eb, ctx, out);
             }
         }
-        Node::For { start, end, body, .. } => {
+        Node::For {
+            start, end, body, ..
+        } => {
             check_node(start, ctx, out);
             check_node(end, ctx, out);
             check_scope(body, ctx, out);
@@ -98,7 +105,9 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
                 check_node(v, ctx, out);
             }
         }
-        Node::Match { scrutinee, arms, .. } => {
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
             check_node(scrutinee, ctx, out);
             for arm in arms {
                 check_node(&arm.body, ctx, out);
@@ -159,7 +168,10 @@ fn check_scope(stmts: &[Node], ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
     let mut seen: HashMap<&str, (usize, usize)> = HashMap::new();
 
     for stmt in stmts {
-        if let Node::Let { name, value, span, .. } = stmt {
+        if let Node::Let {
+            name, value, span, ..
+        } = stmt
+        {
             if let Some(&(first_start, first_end)) = seen.get(name.as_str()) {
                 // Second (or later) `let name` in the same scope — shadowing.
                 let _ = (first_start, first_end); // first decl location noted for message

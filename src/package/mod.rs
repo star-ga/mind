@@ -33,9 +33,9 @@ use anyhow::Context;
 
 use anyhow::Result;
 
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
 use sha2::Digest;
 use sha2::Sha256;
 

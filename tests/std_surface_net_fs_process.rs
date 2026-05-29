@@ -39,7 +39,9 @@ const PROCESS_MIND_SRC: &str = include_str!("../std/process.mind");
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn has_fn(ir: &libmind::ir::IRModule, name: &str) -> bool {
-    ir.instrs.iter().any(|i| matches!(i, Instr::FnDef { name: n, .. } if n == name))
+    ir.instrs
+        .iter()
+        .any(|i| matches!(i, Instr::FnDef { name: n, .. } if n == name))
 }
 
 // ─── Section A: parse + lower ─────────────────────────────────────────────────
@@ -131,7 +133,10 @@ fn process_mind_parses_and_lowers() {
         "exit_code",
         "exit_signal",
     ] {
-        assert!(has_fn(&ir, want), "std/process.mind: missing FnDef `{want}`");
+        assert!(
+            has_fn(&ir, want),
+            "std/process.mind: missing FnDef `{want}`"
+        );
     }
 }
 
@@ -193,7 +198,14 @@ mod cross_module {
     fn process_mind_auto_exports_public_symbols() {
         let module = parser::parse(PROCESS_MIND_SRC).expect("std/process.mind must parse");
         let ex = collect_module_exports("std.process", &module);
-        for want in ["spawn", "wait", "getenv", "proc_pid", "proc_exit", "current_dir"] {
+        for want in [
+            "spawn",
+            "wait",
+            "getenv",
+            "proc_pid",
+            "proc_exit",
+            "current_dir",
+        ] {
             assert!(
                 ex.exported.iter().any(|s| s == want),
                 "std.process must auto-export `{want}`; got {:?}",
@@ -237,11 +249,7 @@ mod mlir_functional {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let dbg = manifest.join("target").join("debug").join("mindc");
         let rel = manifest.join("target").join("release").join("mindc");
-        if dbg.exists() {
-            dbg
-        } else {
-            rel
-        }
+        if dbg.exists() { dbg } else { rel }
     }
 
     fn out_dir() -> PathBuf {
@@ -264,7 +272,11 @@ mod mlir_functional {
         let so_path = dir.join(format!("{tag}.so"));
         std::fs::write(&src_path, src).expect("write .mind source");
         let status = Command::new(&mindc)
-            .args([src_path.to_str().unwrap(), "--emit-shared", so_path.to_str().unwrap()])
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
             .status()
             .expect("spawn mindc");
         assert!(

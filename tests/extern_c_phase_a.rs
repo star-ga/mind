@@ -26,7 +26,7 @@ use libmind::ast::{CallConv, ExternFn, Module, Node, Param, Span, TypeAnn};
 use libmind::ir::{IRModule, Instr};
 use libmind::mlir::lower_ir_to_mlir;
 use libmind::parser;
-use libmind::type_checker::{check_module_types_in_file, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_in_file};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,8 +88,7 @@ fn module_with_extern_call() -> IRModule {
 #[test]
 fn parse_bare_extern_c_block() {
     let src = r#"extern "C" { fn puts(s: i64) -> i64 }"#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     assert_eq!(module.items.len(), 1, "expected exactly one top-level item");
     match &module.items[0] {
         Node::ExternBlock { callconv, fns, .. } => {
@@ -116,14 +115,23 @@ fn parse_safe_and_unsafe_attribution() {
                    fn bare(n: i64) -> i64
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
-    let Node::ExternBlock { fns, .. } = &module.items[0]
-    else { panic!("expected ExternBlock") };
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let Node::ExternBlock { fns, .. } = &module.items[0] else {
+        panic!("expected ExternBlock")
+    };
 
-    assert!(!fns[0].is_unsafe, "`safe fn query` must have is_unsafe = false");
-    assert!(fns[1].is_unsafe, "`unsafe fn mutate` must have is_unsafe = true");
-    assert!(fns[2].is_unsafe, "bare `fn bare` must default to is_unsafe = true");
+    assert!(
+        !fns[0].is_unsafe,
+        "`safe fn query` must have is_unsafe = false"
+    );
+    assert!(
+        fns[1].is_unsafe,
+        "`unsafe fn mutate` must have is_unsafe = true"
+    );
+    assert!(
+        fns[2].is_unsafe,
+        "bare `fn bare` must default to is_unsafe = true"
+    );
 }
 
 // ── test 3: callconv annotation ──────────────────────────────────────────────
@@ -140,10 +148,11 @@ fn parse_callconv_annotation() {
         ("c", CallConv::C),
     ] {
         let src = format!(r#"extern "C" callconv(.{tag}) {{ fn f(x: i64) -> i64 }}"#);
-        let module = parser::parse(&src)
-            .unwrap_or_else(|e| panic!("parse failed for .{tag}: {e:?}"));
-        let Node::ExternBlock { callconv, .. } = &module.items[0]
-        else { panic!("expected ExternBlock for .{tag}") };
+        let module =
+            parser::parse(&src).unwrap_or_else(|e| panic!("parse failed for .{tag}: {e:?}"));
+        let Node::ExternBlock { callconv, .. } = &module.items[0] else {
+            panic!("expected ExternBlock for .{tag}")
+        };
         assert_eq!(
             *callconv, expected,
             "callconv(.{tag}) must parse to {expected:?}"
@@ -158,10 +167,10 @@ fn parse_callconv_annotation() {
 #[test]
 fn parse_varargs_declaration() {
     let src = r#"extern "C" { fn printf(fmt: i64, ...) -> i64 }"#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
-    let Node::ExternBlock { fns, .. } = &module.items[0]
-    else { panic!("expected ExternBlock") };
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let Node::ExternBlock { fns, .. } = &module.items[0] else {
+        panic!("expected ExternBlock")
+    };
     let printf = &fns[0];
     assert_eq!(printf.name, "printf");
     assert!(printf.is_varargs, "`printf` must be marked varargs");
@@ -218,9 +227,7 @@ fn typecheck_rejects_tensor_in_extern_signature() {
 #[test]
 fn extern_fn_decl_emits_llvm_func_declaration() {
     let m = module_with_extern_decl();
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     assert!(
         text.contains("llvm.func @puts"),
@@ -245,9 +252,7 @@ fn extern_fn_decl_emits_llvm_func_declaration() {
 #[test]
 fn extern_c_call_lowers_to_llvm_call() {
     let m = module_with_extern_call();
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     assert!(
         text.contains("llvm.call @printf("),

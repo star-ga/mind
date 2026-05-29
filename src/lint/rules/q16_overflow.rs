@@ -96,7 +96,11 @@ fn scan_top(node: &Node, ret_is_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Diag
 fn scan_stmt(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
     match node {
         // `let x: i32 = <expr>` — check if <expr> contains an unshifted Mul.
-        Node::Let { ann: Some(TypeAnn::ScalarI32), value, .. } => {
+        Node::Let {
+            ann: Some(TypeAnn::ScalarI32),
+            value,
+            ..
+        } => {
             if let Some(mul_span) = find_unshifted_mul(value) {
                 out.push(make_diag(ctx, mul_span.0, mul_span.1));
             }
@@ -111,19 +115,34 @@ fn scan_stmt(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
             }
         }
         Node::Block { stmts, .. } => {
-            for s in stmts { scan_stmt(s, fn_ret_i32, ctx, out); }
-        }
-        Node::If { cond, then_branch, else_branch, .. } => {
-            scan_expr(cond, fn_ret_i32, ctx, out);
-            for s in then_branch { scan_stmt(s, fn_ret_i32, ctx, out); }
-            if let Some(eb) = else_branch {
-                for s in eb { scan_stmt(s, fn_ret_i32, ctx, out); }
+            for s in stmts {
+                scan_stmt(s, fn_ret_i32, ctx, out);
             }
         }
-        Node::For { start, end, body, .. } => {
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            scan_expr(cond, fn_ret_i32, ctx, out);
+            for s in then_branch {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    scan_stmt(s, fn_ret_i32, ctx, out);
+                }
+            }
+        }
+        Node::For {
+            start, end, body, ..
+        } => {
             scan_expr(start, fn_ret_i32, ctx, out);
             scan_expr(end, fn_ret_i32, ctx, out);
-            for s in body { scan_stmt(s, fn_ret_i32, ctx, out); }
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
         }
         Node::Return { value, .. } if fn_ret_i32 => {
             if let Some(v) = value {
@@ -138,7 +157,9 @@ fn scan_stmt(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
         Node::Let { value, .. } => scan_expr(value, fn_ret_i32, ctx, out),
         Node::Assign { value, .. } => scan_expr(value, fn_ret_i32, ctx, out),
         Node::Return { value, .. } => {
-            if let Some(v) = value { scan_expr(v, fn_ret_i32, ctx, out); }
+            if let Some(v) = value {
+                scan_expr(v, fn_ret_i32, ctx, out);
+            }
         }
         _ => scan_expr(node, fn_ret_i32, ctx, out),
     }
@@ -149,22 +170,39 @@ fn scan_expr(node: &Node, fn_ret_i32: bool, ctx: &LintCtx<'_>, out: &mut Vec<Dia
     match node {
         Node::FnDef { ret_type, body, .. } => {
             let inner = matches!(ret_type, Some(TypeAnn::ScalarI32));
-            for s in body { scan_stmt(s, inner, ctx, out); }
-        }
-        Node::Block { stmts, .. } => {
-            for s in stmts { scan_stmt(s, fn_ret_i32, ctx, out); }
-        }
-        Node::If { cond, then_branch, else_branch, .. } => {
-            scan_expr(cond, fn_ret_i32, ctx, out);
-            for s in then_branch { scan_stmt(s, fn_ret_i32, ctx, out); }
-            if let Some(eb) = else_branch {
-                for s in eb { scan_stmt(s, fn_ret_i32, ctx, out); }
+            for s in body {
+                scan_stmt(s, inner, ctx, out);
             }
         }
-        Node::For { start, end, body, .. } => {
+        Node::Block { stmts, .. } => {
+            for s in stmts {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+        }
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            scan_expr(cond, fn_ret_i32, ctx, out);
+            for s in then_branch {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
+            if let Some(eb) = else_branch {
+                for s in eb {
+                    scan_stmt(s, fn_ret_i32, ctx, out);
+                }
+            }
+        }
+        Node::For {
+            start, end, body, ..
+        } => {
             scan_expr(start, fn_ret_i32, ctx, out);
             scan_expr(end, fn_ret_i32, ctx, out);
-            for s in body { scan_stmt(s, fn_ret_i32, ctx, out); }
+            for s in body {
+                scan_stmt(s, fn_ret_i32, ctx, out);
+            }
         }
         _ => {}
     }
@@ -185,7 +223,12 @@ fn find_unshifted_mul(expr: &Node) -> Option<(usize, usize)> {
 
 fn find_mul_inner(expr: &Node, under_shr16: bool) -> Option<(usize, usize)> {
     match expr {
-        Node::Binary { op: BinOp::Mul, span, left, right } => {
+        Node::Binary {
+            op: BinOp::Mul,
+            span,
+            left,
+            right,
+        } => {
             if under_shr16 {
                 // This Mul is safely shifted — but its children might not be.
                 // For simplicity: once we're under a shift, the product is safe.
@@ -195,7 +238,12 @@ fn find_mul_inner(expr: &Node, under_shr16: bool) -> Option<(usize, usize)> {
             let _ = (left, right); // don't recurse into children of the flagged Mul
             Some((span.start(), span.end()))
         }
-        Node::Bitwise { op: BitOp::Shr, left, right, .. } if is_lit_16(right) => {
+        Node::Bitwise {
+            op: BitOp::Shr,
+            left,
+            right,
+            ..
+        } if is_lit_16(right) => {
             // Left child is under a >>16 shift — any Mul there is safe.
             // The right child is Lit(16) which can never contain a Mul.
             find_mul_inner(left, true)
@@ -203,12 +251,10 @@ fn find_mul_inner(expr: &Node, under_shr16: bool) -> Option<(usize, usize)> {
         Node::Paren(inner, _) => find_mul_inner(inner, under_shr16),
         Node::As { expr, .. } => find_mul_inner(expr, under_shr16),
         Node::Binary { left, right, .. } => {
-            find_mul_inner(left, under_shr16)
-                .or_else(|| find_mul_inner(right, under_shr16))
+            find_mul_inner(left, under_shr16).or_else(|| find_mul_inner(right, under_shr16))
         }
         Node::Bitwise { left, right, .. } => {
-            find_mul_inner(left, under_shr16)
-                .or_else(|| find_mul_inner(right, under_shr16))
+            find_mul_inner(left, under_shr16).or_else(|| find_mul_inner(right, under_shr16))
         }
         _ => None,
     }

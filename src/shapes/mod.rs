@@ -511,16 +511,16 @@ pub fn conv2d_shape(
             return Err(ShapeError::ConvChannelMismatch {
                 input: in_channels.clone(),
                 filter: kernel_channels.clone(),
-            })
+            });
         }
         (ShapeDim::Sym(a), ShapeDim::Sym(b)) if a != b => {
             return Err(ShapeError::ConvChannelMismatch {
                 input: in_channels.clone(),
                 filter: kernel_channels.clone(),
-            })
+            });
         }
         (ShapeDim::Known(0), _) | (_, ShapeDim::Known(0)) => {
-            return Err(ShapeError::ConvKernelEmpty)
+            return Err(ShapeError::ConvKernelEmpty);
         }
         _ => {}
     }

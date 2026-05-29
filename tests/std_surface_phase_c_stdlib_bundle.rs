@@ -33,7 +33,7 @@ use libmind::ast::Module;
 use libmind::parser;
 use libmind::project::module_table::build_module_table;
 use libmind::project::stdlib::parsed_stdlib_modules;
-use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
 #[test]
 fn bundled_stdlib_resolves_use_std_vec_end_to_end() {

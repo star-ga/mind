@@ -1,7 +1,7 @@
 // Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 // Added 2026-02-17 per consensus gap analysis.
 
-use libmind::ir::{verify_module, BinOp, IRModule, Instr, IrVerifyError, ValueId};
+use libmind::ir::{BinOp, IRModule, Instr, IrVerifyError, ValueId, verify_module};
 use libmind::types::ConvPadding;
 
 fn scalar_const(ir: &mut IRModule, value: i64) -> ValueId {

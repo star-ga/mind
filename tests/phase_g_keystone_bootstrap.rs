@@ -109,7 +109,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
     // deterministic inputs set so the same bytes always hash the same way.
     // The actual file hash is captured in the assertion below by running
     // module_cache_key on the file bytes directly.
-    module_cache_key(bytes, BuildTarget::Cpu, OptimizeLevel::Release, &[], "0.6.8", 2024)
+    module_cache_key(
+        bytes,
+        BuildTarget::Cpu,
+        OptimizeLevel::Release,
+        &[],
+        "0.6.8",
+        2024,
+    )
 }
 
 /// Compute a SHA-256 over the raw bytes of `path`.
@@ -130,11 +137,10 @@ fn phase_g_01_mind_toml_exists_and_is_valid() {
         "Mind.toml must exist at the repo root (Phase G prerequisite)"
     );
 
-    let text = fs::read_to_string(&manifest_path)
-        .expect("Mind.toml must be readable");
+    let text = fs::read_to_string(&manifest_path).expect("Mind.toml must be readable");
 
-    let manifest: libmind::project::ProjectManifest = toml::from_str(&text)
-        .expect("Mind.toml must parse as a valid ProjectManifest");
+    let manifest: libmind::project::ProjectManifest =
+        toml::from_str(&text).expect("Mind.toml must parse as a valid ProjectManifest");
 
     assert_eq!(
         manifest.package.name, "mind",
@@ -182,11 +188,7 @@ fn phase_g_02_mindc_build_via_mind_toml_exits_0() {
     let out = std::env::temp_dir().join("phase_g_02_libmindc_mind.so");
 
     let result = Command::new(&bin)
-        .args([
-            "build",
-            "--release",
-            &format!("--out={}", out.display()),
-        ])
+        .args(["build", "--release", &format!("--out={}", out.display())])
         .current_dir(repo_root())
         .output()
         .expect("failed to spawn mindc");
@@ -287,7 +289,8 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
     let bytes_direct = fs::read(&out_direct).expect("read direct artifact");
 
     assert_eq!(
-        bytes_manifest, bytes_direct,
+        bytes_manifest,
+        bytes_direct,
         "KEYSTONE VIOLATION: Mind.toml-driven build and direct-path build produced \
          different artifacts.\n\
          Mind.toml artifact: {} bytes ({})\n\
@@ -406,7 +409,7 @@ fn phase_g_04_oracle_hash_guard() {
 
 #[test]
 fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
-    use libmind::build::cache::{cache_root, module_cache_key, probe, CacheProbe};
+    use libmind::build::cache::{CacheProbe, cache_root, module_cache_key, probe};
     use libmind::project::{BuildTarget, OptimizeLevel};
 
     let Some(bin) = require_mindc() else { return };
@@ -531,8 +534,14 @@ fn phase_g_06_report_artifact_sha256() {
     let oracle_hash = file_sha256(&oracle).unwrap_or_else(|| "oracle not found".to_string());
 
     eprintln!("=== Phase G — Keystone artifact hashes ===");
-    eprintln!("Built via mindc build (Mind.toml):  SHA256 = {}", built_hash);
-    eprintln!("Oracle (v0.6.1 fixed-point):        SHA256 = {}", oracle_hash);
+    eprintln!(
+        "Built via mindc build (Mind.toml):  SHA256 = {}",
+        built_hash
+    );
+    eprintln!(
+        "Oracle (v0.6.1 fixed-point):        SHA256 = {}",
+        oracle_hash
+    );
     eprintln!(
         "Match: {}",
         if built_hash == oracle_hash {

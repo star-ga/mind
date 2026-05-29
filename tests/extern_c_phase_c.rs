@@ -31,7 +31,7 @@ use libmind::eval::lower::win64_classify_struct;
 use libmind::ir::{IRModule, Instr};
 use libmind::mlir::lower_ir_to_mlir;
 use libmind::parser;
-use libmind::type_checker::{check_module_types_in_file, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_in_file};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -50,8 +50,7 @@ fn parse_callconv_win64_produces_ast_variant() {
             safe fn get_tick_count() -> i64
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
     assert_eq!(module.items.len(), 1, "expected one item");
     match &module.items[0] {
         Node::ExternBlock { callconv, fns, .. } => {
@@ -138,7 +137,10 @@ fn win64_and_sysv_agree_on_eight_byte_struct() {
         vec!["i64".to_string()],
         "8-byte struct must be i64 under SysV; got {sysv_result:?}"
     );
-    assert_eq!(win64_result, sysv_result, "Win64 and SysV must agree on 8-byte struct");
+    assert_eq!(
+        win64_result, sysv_result,
+        "Win64 and SysV must agree on 8-byte struct"
+    );
 }
 
 // ── test 5: f32 vararg hint promotes to f64 (R-03) ───────────────────────────
@@ -174,9 +176,7 @@ fn vararg_f32_hint_promotes_to_f64_in_mlir() {
     });
     m.instrs.push(Instr::Output(dst));
 
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     // The emitted call must use f64 for the vararg position, NOT f32.
     assert!(
@@ -220,9 +220,7 @@ fn win64_extern_decl_emits_cconv_attribute() {
     });
     m.instrs.push(Instr::Output(dst));
 
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     // llvm.func declaration must carry the cconv attribute.
     assert!(
@@ -262,9 +260,7 @@ fn sysv_extern_decl_has_no_cconv_attribute() {
     });
     m.instrs.push(Instr::Output(dst));
 
-    let text = lower_ir_to_mlir(&m)
-        .expect("lowering must succeed")
-        .text;
+    let text = lower_ir_to_mlir(&m).expect("lowering must succeed").text;
 
     assert!(
         !text.contains("cconv"),
@@ -335,8 +331,7 @@ fn end_to_end_win64_struct_lower_to_ir() {
             unsafe fn win_consume(s: TwoI64) -> i32
         }
     "#;
-    let module = parser::parse(src)
-        .unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    let module = parser::parse(src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
 
     // Type-check: must succeed (struct is repr(C)).
     let diags = check_module_types_in_file(&module, src, None, &TypeEnv::new());
@@ -351,7 +346,13 @@ fn end_to_end_win64_struct_lower_to_ir() {
 
     // Find the ExternFnDecl for win_consume.
     let extern_decl = ir.instrs.iter().find_map(|instr| {
-        if let Instr::ExternFnDecl { name, param_types, callconv, .. } = instr {
+        if let Instr::ExternFnDecl {
+            name,
+            param_types,
+            callconv,
+            ..
+        } = instr
+        {
             if name == "win_consume" {
                 return Some((param_types.clone(), *callconv));
             }
@@ -359,8 +360,7 @@ fn end_to_end_win64_struct_lower_to_ir() {
         None
     });
 
-    let (param_types, callconv) = extern_decl
-        .expect("must have ExternFnDecl for win_consume");
+    let (param_types, callconv) = extern_decl.expect("must have ExternFnDecl for win_consume");
 
     // Win64 16-byte struct → MEMORY (!llvm.ptr).
     assert_eq!(

@@ -25,9 +25,12 @@ use libmind::ast::Module;
 use libmind::parser;
 use libmind::project::module_table::build_module_table;
 use libmind::project::stdlib::parsed_stdlib_modules;
-use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
 
-fn build_table_with_stdlib() -> (Vec<(String, Module)>, libmind::project::module_table::ModuleTable) {
+fn build_table_with_stdlib() -> (
+    Vec<(String, Module)>,
+    libmind::project::module_table::ModuleTable,
+) {
     let stdlib: Vec<(String, Module)> = parsed_stdlib_modules();
     let refs: Vec<(String, &Module)> = stdlib.iter().map(|(p, m)| (p.clone(), m)).collect();
     let table = build_module_table(&refs);

@@ -17,7 +17,7 @@
 //!      (regression guard for the prior `emit_fn_def` attribute-drop bug).
 
 use libmind::fmt::format_source;
-use libmind::pipeline::{compile_source_with_name, CompileError, CompileOptions};
+use libmind::pipeline::{CompileError, CompileOptions, compile_source_with_name};
 use libmind::project::MindcraftFormatConfig;
 use libmind::runtime::types::BackendTarget;
 
@@ -56,7 +56,9 @@ fn hash_attribute_parses_and_checks_fire() {
 
 #[test]
 fn hash_target_unknown_reports_code() {
-    assert!(codes("#[target(cebras)]\nfn f() -> i64 { 0 }\n").contains(&"determinism::unknown_target"));
+    assert!(
+        codes("#[target(cebras)]\nfn f() -> i64 { 0 }\n").contains(&"determinism::unknown_target")
+    );
 }
 
 #[test]
@@ -109,7 +111,10 @@ fn formatter_does_not_erase_function_attributes() {
     // Regression guard: emit_fn_def previously dropped attributes entirely,
     // so `mindc fmt` silently erased `#[deterministic]` on functions.
     let out = fmt("#[deterministic]\nfn f() -> i64 {\n    0\n}\n");
-    assert!(out.contains("#[deterministic]"), "fn attribute must survive fmt; got:\n{out}");
+    assert!(
+        out.contains("#[deterministic]"),
+        "fn attribute must survive fmt; got:\n{out}"
+    );
 }
 
 #[test]

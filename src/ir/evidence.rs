@@ -41,7 +41,7 @@
 //! supplies the value those keys must hold for a compiled artifact.
 
 use crate::deps::mini_sha256;
-use crate::ir::{save, IRModule};
+use crate::ir::{IRModule, save};
 
 /// The RFC 0016 §3.2/§3.3 `trace_hash` for a compiled artifact's **IR link**:
 /// SHA-256 of the canonical mic@1 IR text of `ir`.

@@ -193,8 +193,7 @@ impl BuildManifest {
         }
         let text = fs::read_to_string(path)
             .with_context(|| format!("read manifest {}", path.display()))?;
-        serde_json::from_str(&text)
-            .with_context(|| format!("parse manifest {}", path.display()))
+        serde_json::from_str(&text).with_context(|| format!("parse manifest {}", path.display()))
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -202,8 +201,7 @@ impl BuildManifest {
             fs::create_dir_all(parent)
                 .with_context(|| format!("create dir {}", parent.display()))?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .context("serialise manifest")?;
+        let json = serde_json::to_string_pretty(self).context("serialise manifest")?;
         atomic_write(path, json.as_bytes())
     }
 }
@@ -234,7 +232,9 @@ pub fn probe(cache_root: &Path, key: &str) -> CacheProbe {
             object_path: obj,
         }
     } else {
-        CacheProbe::Miss { key: key.to_string() }
+        CacheProbe::Miss {
+            key: key.to_string(),
+        }
     }
 }
 
@@ -250,10 +250,8 @@ pub fn write_object(
     // Ensure subdirectories exist.
     let obj_dir = cache_root.join("objects");
     let meta_dir = cache_root.join("meta");
-    fs::create_dir_all(&obj_dir)
-        .with_context(|| format!("create {}", obj_dir.display()))?;
-    fs::create_dir_all(&meta_dir)
-        .with_context(|| format!("create {}", meta_dir.display()))?;
+    fs::create_dir_all(&obj_dir).with_context(|| format!("create {}", obj_dir.display()))?;
+    fs::create_dir_all(&meta_dir).with_context(|| format!("create {}", meta_dir.display()))?;
 
     // Write object via atomic rename.
     let obj_path = object_path(cache_root, key);
@@ -290,11 +288,14 @@ pub enum BuildDecision {
 ///
 /// Called by `mindc clean --cache`.  The sibling binary (e.g. `target/cpu/debug/myapp`)
 /// is NOT removed — only the `.cache/` subdirectory is cleared.
-pub fn clean_cache(project_root: &Path, target: BuildTarget, optimize: OptimizeLevel) -> Result<()> {
+pub fn clean_cache(
+    project_root: &Path,
+    target: BuildTarget,
+    optimize: OptimizeLevel,
+) -> Result<()> {
     let root = cache_root(project_root, target, optimize);
     if root.exists() {
-        fs::remove_dir_all(&root)
-            .with_context(|| format!("remove {}", root.display()))?;
+        fs::remove_dir_all(&root).with_context(|| format!("remove {}", root.display()))?;
     }
     Ok(())
 }
@@ -339,8 +340,7 @@ pub fn clean_all_caches(project_root: &Path) -> Result<()> {
 /// reader either sees the old file or the new file — never a half-written one.
 fn atomic_write(dest: &Path, data: &[u8]) -> Result<()> {
     let tmp = dest.with_extension("tmp");
-    fs::write(&tmp, data)
-        .with_context(|| format!("write tmp {}", tmp.display()))?;
+    fs::write(&tmp, data).with_context(|| format!("write tmp {}", tmp.display()))?;
     fs::rename(&tmp, dest)
         .with_context(|| format!("rename {} -> {}", tmp.display(), dest.display()))
 }
@@ -358,21 +358,18 @@ pub(crate) fn sha256_hex(data: &[u8]) -> String {
 }
 
 const SHA256_K: [u32; 64] = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
-    0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
-    0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
-    0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
-    0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
-    0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
-    0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
-    0xc67178f2,
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
 const SHA256_H0: [u32; 8] = [
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
 fn sha256_compress(state: &mut [u32; 8], block: &[u8; 64]) {
@@ -447,45 +444,120 @@ mod tests {
 
     #[test]
     fn cache_key_is_64_hex_chars() {
-        let key = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
+        let key = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
         assert_eq!(key.len(), 64);
         assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
     fn cache_key_differs_on_source_change() {
-        let k1 = module_cache_key(b"fn main() -> i64 { 1 }", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
-        let k2 = module_cache_key(b"fn main() -> i64 { 2 }", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
+        let k1 = module_cache_key(
+            b"fn main() -> i64 { 1 }",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
+        let k2 = module_cache_key(
+            b"fn main() -> i64 { 2 }",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn cache_key_differs_on_target_change() {
-        let k1 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
-        let k2 = module_cache_key(b"fn main() {}", BuildTarget::Cerebras, OptimizeLevel::Debug, &[], "0.6.8", 2024);
+        let k1 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
+        let k2 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cerebras,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn cache_key_differs_on_optimize_change() {
-        let k1 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
-        let k2 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Release, &[], "0.6.8", 2024);
+        let k1 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
+        let k2 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Release,
+            &[],
+            "0.6.8",
+            2024,
+        );
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn cache_key_differs_on_compiler_version_change() {
-        let k1 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.8", 2024);
-        let k2 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug, &[], "0.6.9", 2024);
+        let k1 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.8",
+            2024,
+        );
+        let k2 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &[],
+            "0.6.9",
+            2024,
+        );
         assert_ne!(k1, k2);
     }
 
     #[test]
     fn cache_key_dep_order_independent() {
-        let k1 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug,
-            &["aaaa".to_string(), "bbbb".to_string()], "0.6.8", 2024);
-        let k2 = module_cache_key(b"fn main() {}", BuildTarget::Cpu, OptimizeLevel::Debug,
-            &["bbbb".to_string(), "aaaa".to_string()], "0.6.8", 2024);
+        let k1 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &["aaaa".to_string(), "bbbb".to_string()],
+            "0.6.8",
+            2024,
+        );
+        let k2 = module_cache_key(
+            b"fn main() {}",
+            BuildTarget::Cpu,
+            OptimizeLevel::Debug,
+            &["bbbb".to_string(), "aaaa".to_string()],
+            "0.6.8",
+            2024,
+        );
         assert_eq!(k1, k2, "dep order must not affect cache key");
     }
 
@@ -516,11 +588,16 @@ mod tests {
     fn build_manifest_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let mut manifest = BuildManifest::default();
-        manifest.entries.insert("src/main.mind".to_string(), "aabb".to_string());
+        manifest
+            .entries
+            .insert("src/main.mind".to_string(), "aabb".to_string());
         let path = tmp.path().join("manifest.json");
         manifest.save(&path).unwrap();
         let loaded = BuildManifest::load(&path).unwrap();
-        assert_eq!(loaded.entries.get("src/main.mind").map(|s| s.as_str()), Some("aabb"));
+        assert_eq!(
+            loaded.entries.get("src/main.mind").map(|s| s.as_str()),
+            Some("aabb")
+        );
     }
 
     #[test]

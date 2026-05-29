@@ -36,7 +36,7 @@
 
 use libmind::ast::{Literal, Module, Node, Param, Span, TypeAnn};
 use libmind::parser;
-use libmind::type_checker::{check_module_types_in_file, TypeEnv};
+use libmind::type_checker::{TypeEnv, check_module_types_in_file};
 use libmind::types::{DType, ShapeDim, TensorType, ValueType};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -45,7 +45,11 @@ fn sp() -> Span {
     Span::new(0, 0)
 }
 
-fn check_module(module: &Module, src: &str, env: &TypeEnv) -> Vec<libmind::diagnostics::Diagnostic> {
+fn check_module(
+    module: &Module,
+    src: &str,
+    env: &TypeEnv,
+) -> Vec<libmind::diagnostics::Diagnostic> {
     check_module_types_in_file(module, src, None, env)
 }
 
@@ -65,12 +69,7 @@ fn env_with(entries: &[(&str, DType, &[usize])]) -> TypeEnv {
 }
 
 /// Build a `let name: Tensor<dtype, [dims]> = ident_rhs` AST node.
-fn let_tensor(
-    name: &str,
-    ann_dtype: &str,
-    ann_dims: &[&str],
-    rhs_ident: &str,
-) -> Node {
+fn let_tensor(name: &str, ann_dtype: &str, ann_dims: &[&str], rhs_ident: &str) -> Node {
     Node::Let {
         name: name.to_string(),
         mutable: false,
@@ -361,7 +360,10 @@ fn symbolic_dim_same_n_no_conflict() {
             },
         ],
         ret_type: Some(TypeAnn::ScalarI32),
-        body: vec![Node::Return { value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))), span: sp() }],
+        body: vec![Node::Return {
+            value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
+            span: sp(),
+        }],
         reap_threshold: None,
         attrs: Vec::new(),
         span: sp(),
@@ -395,8 +397,14 @@ fn symbolic_dim_same_n_no_conflict() {
     };
 
     let mut env = TypeEnv::new();
-    env.insert("x_src".to_string(), tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(8)]));
-    env.insert("y_src".to_string(), tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(16)]));
+    env.insert(
+        "x_src".to_string(),
+        tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(8)]),
+    );
+    env.insert(
+        "y_src".to_string(),
+        tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(16)]),
+    );
 
     let src = "fn f(a: Tensor<f32,[N,K]>, b: Tensor<f32,[N,M]>) -> i32 { return 0 } let x = x_src let y = y_src f(x, y)";
     let diags = check_module(&module, src, &env);
@@ -439,7 +447,10 @@ fn symbolic_dim_mismatch_n_conflict() {
             },
         ],
         ret_type: Some(TypeAnn::ScalarI32),
-        body: vec![Node::Return { value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))), span: sp() }],
+        body: vec![Node::Return {
+            value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
+            span: sp(),
+        }],
         reap_threshold: None,
         attrs: Vec::new(),
         span: sp(),
@@ -472,8 +483,14 @@ fn symbolic_dim_mismatch_n_conflict() {
     };
 
     let mut env = TypeEnv::new();
-    env.insert("x_src".to_string(), tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(8)]));
-    env.insert("y_src".to_string(), tensor_vt(DType::F32, vec![ShapeDim::Known(8), ShapeDim::Known(16)]));
+    env.insert(
+        "x_src".to_string(),
+        tensor_vt(DType::F32, vec![ShapeDim::Known(4), ShapeDim::Known(8)]),
+    );
+    env.insert(
+        "y_src".to_string(),
+        tensor_vt(DType::F32, vec![ShapeDim::Known(8), ShapeDim::Known(16)]),
+    );
 
     let src = "fn f(a: Tensor<f32,[N,K]>, b: Tensor<f32,[N,M]>) -> i32 { return 0 } let x = x_src let y = y_src f(x, y)";
     let diags = check_module(&module, src, &env);
@@ -545,13 +562,18 @@ fn shape_check_inside_fn_body() {
         ret_type: Some(TypeAnn::ScalarI32),
         body: vec![
             body_let,
-            Node::Return { value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))), span: sp() },
+            Node::Return {
+                value: Some(Box::new(Node::Lit(Literal::Int(0), sp()))),
+                span: sp(),
+            },
         ],
         reap_threshold: None,
         attrs: Vec::new(),
         span: sp(),
     };
-    let module = Module { items: vec![fn_node] };
+    let module = Module {
+        items: vec![fn_node],
+    };
     let env = env_with(&[("body_src", DType::F32, &[4, 8])]);
     let src = "fn check_body() -> i32 { let x: Tensor<f32, [4, 16]> = body_src return 0 }";
     let diags = check_module(&module, src, &env);

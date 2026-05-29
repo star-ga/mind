@@ -53,8 +53,7 @@ const DRIFTED: &str = "fn add(a: i64,  b: i64) -> i64 {\n    a  +  b\n}\n";
 
 /// A MIND source with an unused import (triggers lint::unused_import).
 /// Uses the canonical `import` form so the file also passes fmt-check.
-const UNUSED_IMPORT: &str =
-    "import std.vec;\n\nfn add(a: i64, b: i64) -> i64 {\n    a + b\n}\n";
+const UNUSED_IMPORT: &str = "import std.vec;\n\nfn add(a: i64, b: i64) -> i64 {\n    a + b\n}\n";
 
 // ---------------------------------------------------------------------------
 // Test 1: clean file exits 0
@@ -120,26 +119,36 @@ fn json_reporter_produces_valid_json() {
     let out = run_check(&["--reporter", "json", drifted.to_str().unwrap()]);
 
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-            panic!("stdout is not valid JSON: {e}\nstdout: {stdout}")
-        });
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout: {stdout}"));
 
     assert!(
         parsed.is_array(),
         "JSON reporter must emit an array; got: {parsed}"
     );
     let arr = parsed.as_array().unwrap();
-    assert!(!arr.is_empty(), "expected at least one diagnostic in JSON output");
+    assert!(
+        !arr.is_empty(),
+        "expected at least one diagnostic in JSON output"
+    );
 
     // Validate required fields on first diagnostic.
     let first = &arr[0];
     assert!(first.get("file").is_some(), "diagnostic must have 'file'");
     assert!(first.get("line").is_some(), "diagnostic must have 'line'");
     assert!(first.get("col").is_some(), "diagnostic must have 'col'");
-    assert!(first.get("severity").is_some(), "diagnostic must have 'severity'");
-    assert!(first.get("message").is_some(), "diagnostic must have 'message'");
-    assert!(first.get("rule_id").is_some(), "diagnostic must have 'rule_id'");
+    assert!(
+        first.get("severity").is_some(),
+        "diagnostic must have 'severity'"
+    );
+    assert!(
+        first.get("message").is_some(),
+        "diagnostic must have 'message'"
+    );
+    assert!(
+        first.get("rule_id").is_some(),
+        "diagnostic must have 'rule_id'"
+    );
     assert!(first.get("phase").is_some(), "diagnostic must have 'phase'");
 }
 
@@ -247,11 +256,7 @@ fn vcs_filtering_skips_gitignored_file() {
 
     // Create a fake git repo so find_git_root() resolves to dir.
     fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
-    fs::write(
-        dir.path().join(".gitignore"),
-        "ignored.mind\n",
-    )
-    .expect("write .gitignore");
+    fs::write(dir.path().join(".gitignore"), "ignored.mind\n").expect("write .gitignore");
 
     // File that should be ignored.
     let ignored = dir.path().join("ignored.mind");
@@ -314,8 +319,14 @@ fn directory_walk_produces_sorted_diagnostics() {
 
     // Lines should be sorted: files appear in lexicographic order.
     // aaa.mind should come before bbb.mind.
-    let pos_a = lines.iter().position(|l| l.contains("aaa.mind")).unwrap_or(usize::MAX);
-    let pos_b = lines.iter().position(|l| l.contains("bbb.mind")).unwrap_or(usize::MAX);
+    let pos_a = lines
+        .iter()
+        .position(|l| l.contains("aaa.mind"))
+        .unwrap_or(usize::MAX);
+    let pos_b = lines
+        .iter()
+        .position(|l| l.contains("bbb.mind"))
+        .unwrap_or(usize::MAX);
     assert!(
         pos_a < pos_b,
         "aaa.mind should appear before bbb.mind in sorted output; stdout:\n{stdout}"
@@ -332,10 +343,8 @@ fn json_reporter_empty_result_is_empty_array() {
     // No .mind files.
     let out = run_check(&["--reporter", "json", dir.path().to_str().unwrap()]);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let parsed: serde_json::Value =
-        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-            panic!("stdout is not valid JSON: {e}\nstdout: {stdout}")
-        });
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("stdout is not valid JSON: {e}\nstdout: {stdout}"));
     assert_eq!(
         parsed,
         serde_json::json!([]),

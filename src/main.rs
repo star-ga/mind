@@ -19,7 +19,7 @@
 //!   mind repl
 
 #[cfg(feature = "pkg")]
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 
 use clap::Args;
 use clap::Parser;
@@ -27,7 +27,7 @@ use clap::Subcommand;
 
 #[cfg(feature = "pkg")]
 use libmind::package::{
-    build_package, default_install_dir, inspect_package, install_package, MindManifest,
+    MindManifest, build_package, default_install_dir, inspect_package, install_package,
 };
 
 use libmind::diagnostics;

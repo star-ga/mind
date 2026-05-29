@@ -26,9 +26,9 @@ use std::path::{Path, PathBuf};
 
 use libmind::ast::Module;
 use libmind::lint::rule::{LintCtx, LintRule, RuleRegistry};
-use libmind::lint::rules::{register_defaults, TrailingWhitespace};
-use libmind::lint::{run_lint, Diagnostic};
-use libmind::parser::{parse_with_trivia, TriviaStream};
+use libmind::lint::rules::{TrailingWhitespace, register_defaults};
+use libmind::lint::{Diagnostic, run_lint};
+use libmind::parser::{TriviaStream, parse_with_trivia};
 use libmind::project::{MindcraftConfig, MindcraftOverride, RuleSeverity};
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,13 @@ fn ctx<'a>(
     file: &'a Path,
     config: &'a MindcraftConfig,
 ) -> LintCtx<'a> {
-    LintCtx { module, trivia, source, file, config }
+    LintCtx {
+        module,
+        trivia,
+        source,
+        file,
+        config,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -138,19 +144,21 @@ fn glob_override_changes_severity_for_matching_path() {
     let matching_file = Path::new("tests/foo/bar.mind");
     let non_matching_file = Path::new("src/lib.mind");
 
-    let sev_match = registry.effective_severity(
-        "lint::trailing_whitespace",
-        &config,
-        matching_file,
-    );
-    let sev_no_match = registry.effective_severity(
-        "lint::trailing_whitespace",
-        &config,
-        non_matching_file,
-    );
+    let sev_match =
+        registry.effective_severity("lint::trailing_whitespace", &config, matching_file);
+    let sev_no_match =
+        registry.effective_severity("lint::trailing_whitespace", &config, non_matching_file);
 
-    assert_eq!(sev_match, RuleSeverity::Error, "override should apply for tests/**");
-    assert_eq!(sev_no_match, RuleSeverity::Warn, "override must not apply outside tests/**");
+    assert_eq!(
+        sev_match,
+        RuleSeverity::Error,
+        "override should apply for tests/**"
+    );
+    assert_eq!(
+        sev_no_match,
+        RuleSeverity::Warn,
+        "override must not apply outside tests/**"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +172,9 @@ struct SpyRule {
 
 impl SpyRule {
     fn new() -> Self {
-        Self { called: std::sync::atomic::AtomicBool::new(false) }
+        Self {
+            called: std::sync::atomic::AtomicBool::new(false),
+        }
     }
 
     fn was_called(&self) -> bool {
@@ -200,10 +210,18 @@ fn off_severity_skips_rule_entirely() {
     // Wrap in a newtype so we can box it.
     struct ArcSpy(Arc<SpyRule>);
     impl LintRule for ArcSpy {
-        fn id(&self) -> &'static str { self.0.id() }
-        fn default_severity(&self) -> RuleSeverity { self.0.default_severity() }
-        fn description(&self) -> &'static str { self.0.description() }
-        fn check(&self, ctx: &LintCtx<'_>) -> Vec<Diagnostic> { self.0.check(ctx) }
+        fn id(&self) -> &'static str {
+            self.0.id()
+        }
+        fn default_severity(&self) -> RuleSeverity {
+            self.0.default_severity()
+        }
+        fn description(&self) -> &'static str {
+            self.0.description()
+        }
+        fn check(&self, ctx: &LintCtx<'_>) -> Vec<Diagnostic> {
+            self.0.check(ctx)
+        }
     }
 
     let mut registry = RuleRegistry::new();
@@ -227,10 +245,9 @@ fn off_severity_skips_rule_entirely() {
 
 #[test]
 fn trailing_whitespace_emits_on_dirty_file() {
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/mindcraft/lint/trailing_ws_dirty.mind");
-    let src = std::fs::read_to_string(&fixture_path)
-        .expect("trailing_ws_dirty.mind must exist");
+    let fixture_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mindcraft/lint/trailing_ws_dirty.mind");
+    let src = std::fs::read_to_string(&fixture_path).expect("trailing_ws_dirty.mind must exist");
 
     let (module, trivia) = parse(&src);
     let config = empty_config();
@@ -260,10 +277,9 @@ fn trailing_whitespace_emits_on_dirty_file() {
 
 #[test]
 fn trailing_whitespace_clean_on_clean_file() {
-    let fixture_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/mindcraft/lint/trailing_ws_clean.mind");
-    let src = std::fs::read_to_string(&fixture_path)
-        .expect("trailing_ws_clean.mind must exist");
+    let fixture_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mindcraft/lint/trailing_ws_clean.mind");
+    let src = std::fs::read_to_string(&fixture_path).expect("trailing_ws_clean.mind must exist");
 
     let (module, trivia) = parse(&src);
     let config = empty_config();
