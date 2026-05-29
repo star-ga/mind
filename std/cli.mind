@@ -27,27 +27,23 @@
 //     `--flag=value` (equals form) and `-abc` (bundled-shorts form)
 //     are Phase 2.
 
-use std.vec;
-use std.string;
+import std.vec;
+import std.string;
 
 // ---------------------------------------------------------------------------
 // Args — argv container.
 // ---------------------------------------------------------------------------
 
 struct Args {
-    // Parallel storage for the String fields at each argv index.
     addrs: Vec,
-    lens:  Vec,
-    caps:  Vec,
+    lens: Vec,
+    caps: Vec,
 }
+// Parallel storage for the String fields at each argv index.
 
 // args_new — empty Args, zero allocation.
 pub fn args_new() -> Args {
-    Args {
-        addrs: vec_new(),
-        lens:  vec_new(),
-        caps:  vec_new(),
-    }
+    Args { addrs: vec_new(), lens: vec_new(), caps: vec_new() }
 }
 
 // args_len — number of argv entries.
@@ -58,11 +54,7 @@ pub fn args_len(a: Args) -> i64 {
 // args_push — append a String entry.  Each call writes to all three
 // parallel arrays in lockstep; the three vectors are length-invariant.
 pub fn args_push(a: Args, s: String) -> Args {
-    Args {
-        addrs: vec_push(a.addrs, s.addr),
-        lens:  vec_push(a.lens,  s.len),
-        caps:  vec_push(a.caps,  s.cap),
-    }
+    Args { addrs: vec_push(a.addrs, s.addr), lens: vec_push(a.lens, s.len), caps: vec_push(a.caps, s.cap) }
 }
 
 // args_get — reconstruct the i-th argv entry as a String value.
@@ -75,11 +67,7 @@ pub fn args_get(a: Args, i: i64) -> String {
     if i >= vec_len(a.addrs) {
         return string_new();
     }
-    String {
-        addr: vec_get(a.addrs, i),
-        len:  vec_get(a.lens,  i),
-        cap:  vec_get(a.caps,  i),
-    }
+    String { addr: vec_get(a.addrs, i), len: vec_get(a.lens, i), cap: vec_get(a.caps, i) }
 }
 
 // ---------------------------------------------------------------------------
@@ -95,10 +83,12 @@ fn is_double_dash(s: String) -> i64 {
     if s.len != 2 {
         return 0;
     }
-    if string_get_byte(s, 0) != 45 {  // '-'
+    if string_get_byte(s, 0) != 45 {
+        // '-'
         return 0;
     }
-    if string_get_byte(s, 1) != 45 {  // '-'
+    if string_get_byte(s, 1) != 45 {
+        // '-'
         return 0;
     }
     return 1;
@@ -195,7 +185,8 @@ fn equals_value(entry: String, flag: String) -> String {
     if entry.len <= flag.len {
         return string_new();
     }
-    if string_get_byte(entry, flag.len) != 61 {  // '='
+    if string_get_byte(entry, flag.len) != 61 {
+        // '='
         return string_new();
     }
     string_slice_from(entry, flag.len + 1)
@@ -317,7 +308,7 @@ pub fn args_first_positional_idx(a: Args) -> i64 {
         if is_double_dash(s) == 1 {
             after_sep = 1;
             i = i + 1;
-            continue;
+            continue
         }
         if s.len == 0 {
             return i;

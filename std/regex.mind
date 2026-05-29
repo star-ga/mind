@@ -45,29 +45,57 @@
 
 // --- NFA state kind constants ---
 
-pub fn rx_kind_match()       -> i64 { 0 }
-pub fn rx_kind_split()       -> i64 { 1 }
-pub fn rx_kind_char()        -> i64 { 2 }
-pub fn rx_kind_any()         -> i64 { 3 }
-pub fn rx_kind_class()       -> i64 { 4 }
-pub fn rx_kind_anchor_start() -> i64 { 5 }
-pub fn rx_kind_anchor_end()  -> i64 { 6 }
+pub fn rx_kind_match() -> i64 {
+    0
+}
+pub fn rx_kind_split() -> i64 {
+    1
+}
+pub fn rx_kind_char() -> i64 {
+    2
+}
+pub fn rx_kind_any() -> i64 {
+    3
+}
+pub fn rx_kind_class() -> i64 {
+    4
+}
+pub fn rx_kind_anchor_start() -> i64 {
+    5
+}
+pub fn rx_kind_anchor_end() -> i64 {
+    6
+}
 
 // --- State field accessors ---
 
-fn rx_st_kind(st: i64)    -> i64 { __mind_load_i64(st + 0)  }
-fn rx_st_c(st: i64)       -> i64 { __mind_load_i64(st + 8)  }
-fn rx_st_out1(st: i64)    -> i64 { __mind_load_i64(st + 16) }
-fn rx_st_out2(st: i64)    -> i64 { __mind_load_i64(st + 24) }
-fn rx_st_cls_idx(st: i64) -> i64 { __mind_load_i64(st + 32) }
+fn rx_st_kind(st: i64) -> i64 {
+    __mind_load_i64(st + 0)
+}
+fn rx_st_c(st: i64) -> i64 {
+    __mind_load_i64(st + 8)
+}
+fn rx_st_out1(st: i64) -> i64 {
+    __mind_load_i64(st + 16)
+}
+fn rx_st_out2(st: i64) -> i64 {
+    __mind_load_i64(st + 24)
+}
+fn rx_st_cls_idx(st: i64) -> i64 {
+    __mind_load_i64(st + 32)
+}
 
-fn rx_st_set_out1(st: i64, v: i64) -> i64 { __mind_store_i64(st + 16, v) }
-fn rx_st_set_out2(st: i64, v: i64) -> i64 { __mind_store_i64(st + 24, v) }
+fn rx_st_set_out1(st: i64, v: i64) -> i64 {
+    __mind_store_i64(st + 16, v)
+}
+fn rx_st_set_out2(st: i64, v: i64) -> i64 {
+    __mind_store_i64(st + 24, v)
+}
 
 fn rx_st_alloc(kind: i64, c: i64, out1: i64, out2: i64, cls_idx: i64) -> i64 {
     let st: i64 = __mind_alloc(40);
-    __mind_store_i64(st + 0,  kind);
-    __mind_store_i64(st + 8,  c);
+    __mind_store_i64(st + 0, kind);
+    __mind_store_i64(st + 8, c);
     __mind_store_i64(st + 16, out1);
     __mind_store_i64(st + 24, out2);
     __mind_store_i64(st + 32, cls_idx);
@@ -76,17 +104,23 @@ fn rx_st_alloc(kind: i64, c: i64, out1: i64, out2: i64, cls_idx: i64) -> i64 {
 
 // --- Regex handle accessors ---
 
-pub fn rx_nfa_start(rx: i64)      -> i64 { __mind_load_i64(rx + 0) }
-pub fn rx_capture_count(rx: i64)  -> i64 { __mind_load_i64(rx + 8) }
-fn rx_class_table(rx: i64)        -> i64 { __mind_load_i64(rx + 16) }
+pub fn rx_nfa_start(rx: i64) -> i64 {
+    __mind_load_i64(rx + 0)
+}
+pub fn rx_capture_count(rx: i64) -> i64 {
+    __mind_load_i64(rx + 8)
+}
+fn rx_class_table(rx: i64) -> i64 {
+    __mind_load_i64(rx + 16)
+}
 
 // --- Class table (Vec of class record handles) ---
 // A class table is a 3-field heap record [addr | len | cap] of i64 handles.
 
 fn rx_cls_tbl_new() -> i64 {
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0,  0);
-    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
     __mind_store_i64(h + 16, 0);
     h
 }
@@ -116,8 +150,8 @@ fn rx_cls_tbl_push(tbl: i64, cls: i64) -> i64 {
         d
     };
     __mind_store_i64(new_dat + old_len * 8, cls);
-    __mind_store_i64(tbl + 0,  new_dat);
-    __mind_store_i64(tbl + 8,  old_len + 1);
+    __mind_store_i64(tbl + 0, new_dat);
+    __mind_store_i64(tbl + 8, old_len + 1);
     __mind_store_i64(tbl + 16, new_cap);
     0
 }
@@ -132,15 +166,21 @@ fn rx_cls_tbl_get(tbl: i64, i: i64) -> i64 {
 
 fn rx_cls_alloc(negated: i64, pairs_addr: i64, pairs_count: i64) -> i64 {
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0,  negated);
-    __mind_store_i64(h + 8,  pairs_count);
+    __mind_store_i64(h + 0, negated);
+    __mind_store_i64(h + 8, pairs_count);
     __mind_store_i64(h + 16, pairs_addr);
     h
 }
 
-fn rx_cls_negated(cls: i64)    -> i64 { __mind_load_i64(cls + 0)  }
-fn rx_cls_count(cls: i64)      -> i64 { __mind_load_i64(cls + 8)  }
-fn rx_cls_range_addr(cls: i64) -> i64 { __mind_load_i64(cls + 16) }
+fn rx_cls_negated(cls: i64) -> i64 {
+    __mind_load_i64(cls + 0)
+}
+fn rx_cls_count(cls: i64) -> i64 {
+    __mind_load_i64(cls + 8)
+}
+fn rx_cls_range_addr(cls: i64) -> i64 {
+    __mind_load_i64(cls + 16)
+}
 
 fn rx_cls_matches(cls: i64, c: i64) -> i64 {
     let count: i64 = rx_cls_count(cls);
@@ -162,7 +202,11 @@ fn rx_cls_matches(cls: i64, c: i64) -> i64 {
         }
     }
     if rx_cls_negated(cls) == 1 {
-        if matched == 1 { 0 } else { 1 }
+        if matched == 1 {
+            0
+        } else {
+            1
+        }
     } else {
         matched
     }
@@ -173,8 +217,8 @@ fn rx_cls_matches(cls: i64, c: i64) -> i64 {
 fn rx_ranges_new() -> i64 {
     // Returns [addr | len | cap] of i64 pairs (each pair = 2 * i64 = 16 bytes).
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0,  0);
-    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
     __mind_store_i64(h + 16, 0);
     h
 }
@@ -198,16 +242,16 @@ fn rx_ranges_push(h: i64, lo: i64, hi: i64) -> i64 {
         let d: i64 = __mind_alloc(new_cap * 16);
         let mut ci: i64 = 0;
         while ci < old_len {
-            __mind_store_i64(d + ci * 16,     __mind_load_i64(old_dat + ci * 16));
+            __mind_store_i64(d + ci * 16, __mind_load_i64(old_dat + ci * 16));
             __mind_store_i64(d + ci * 16 + 8, __mind_load_i64(old_dat + ci * 16 + 8));
             ci = ci + 1;
         }
         d
     };
-    __mind_store_i64(new_dat + old_len * 16,     lo);
+    __mind_store_i64(new_dat + old_len * 16, lo);
     __mind_store_i64(new_dat + old_len * 16 + 8, hi);
-    __mind_store_i64(h + 0,  new_dat);
-    __mind_store_i64(h + 8,  old_len + 1);
+    __mind_store_i64(h + 0, new_dat);
+    __mind_store_i64(h + 8, old_len + 1);
     __mind_store_i64(h + 16, new_cap);
     0
 }
@@ -222,17 +266,25 @@ fn rx_load_byte(buf: i64, i: i64) -> i64 {
 
 fn rx_cs_new(cls_tbl: i64) -> i64 {
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0,  0);
-    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
     __mind_store_i64(h + 16, cls_tbl);
     h
 }
 
-fn rx_cs_pos(cs: i64)       -> i64 { __mind_load_i64(cs + 0)  }
-fn rx_cs_caps(cs: i64)      -> i64 { __mind_load_i64(cs + 8)  }
-fn rx_cs_cls_tbl(cs: i64)   -> i64 { __mind_load_i64(cs + 16) }
-fn rx_cs_set_pos(cs: i64, v: i64)  -> i64 { __mind_store_i64(cs + 0,  v) }
-fn rx_cs_inc_caps(cs: i64)  -> i64 {
+fn rx_cs_pos(cs: i64) -> i64 {
+    __mind_load_i64(cs + 0)
+}
+fn rx_cs_caps(cs: i64) -> i64 {
+    __mind_load_i64(cs + 8)
+}
+fn rx_cs_cls_tbl(cs: i64) -> i64 {
+    __mind_load_i64(cs + 16)
+}
+fn rx_cs_set_pos(cs: i64, v: i64) -> i64 {
+    __mind_store_i64(cs + 0, v)
+}
+fn rx_cs_inc_caps(cs: i64) -> i64 {
     let old: i64 = __mind_load_i64(cs + 8);
     __mind_store_i64(cs + 8, old + 1)
 }
@@ -244,14 +296,19 @@ fn rx_cs_inc_caps(cs: i64)  -> i64 {
 
 fn rx_frag_new(start: i64) -> i64 {
     let h: i64 = __mind_alloc(32);
-    __mind_store_i64(h + 0,  start);
-    __mind_store_i64(h + 8,  0);  // patch addr
-    __mind_store_i64(h + 16, 0);  // patch len
-    __mind_store_i64(h + 24, 0);  // patch cap
+    __mind_store_i64(h + 0, start);
+    __mind_store_i64(h + 8, 0);
+    // patch addr
+    __mind_store_i64(h + 16, 0);
+    // patch len
+    __mind_store_i64(h + 24, 0);
+    // patch cap
     h
 }
 
-fn rx_frag_start(f: i64)    -> i64 { __mind_load_i64(f + 0) }
+fn rx_frag_start(f: i64) -> i64 {
+    __mind_load_i64(f + 0)
+}
 
 fn rx_frag_patch_push(f: i64, state: i64, field: i64) -> i64 {
     let old_len: i64 = __mind_load_i64(f + 16);
@@ -272,21 +329,23 @@ fn rx_frag_patch_push(f: i64, state: i64, field: i64) -> i64 {
         let d: i64 = __mind_alloc(new_cap * 16);
         let mut ci: i64 = 0;
         while ci < old_len {
-            __mind_store_i64(d + ci * 16,     __mind_load_i64(old_dat + ci * 16));
+            __mind_store_i64(d + ci * 16, __mind_load_i64(old_dat + ci * 16));
             __mind_store_i64(d + ci * 16 + 8, __mind_load_i64(old_dat + ci * 16 + 8));
             ci = ci + 1;
         }
         d
     };
-    __mind_store_i64(new_dat + old_len * 16,     state);
+    __mind_store_i64(new_dat + old_len * 16, state);
     __mind_store_i64(new_dat + old_len * 16 + 8, field);
-    __mind_store_i64(f + 8,  new_dat);
+    __mind_store_i64(f + 8, new_dat);
     __mind_store_i64(f + 16, old_len + 1);
     __mind_store_i64(f + 24, new_cap);
     0
 }
 
-fn rx_frag_patch_len(f: i64) -> i64 { __mind_load_i64(f + 16) }
+fn rx_frag_patch_len(f: i64) -> i64 {
+    __mind_load_i64(f + 16)
+}
 
 fn rx_frag_patch_state(f: i64, i: i64) -> i64 {
     __mind_load_i64(__mind_load_i64(f + 8) + i * 16)
@@ -301,7 +360,7 @@ fn rx_frag_patch_all(f: i64, target: i64) -> i64 {
     let n: i64 = rx_frag_patch_len(f);
     let mut i: i64 = 0;
     while i < n {
-        let st: i64    = rx_frag_patch_state(f, i);
+        let st: i64 = rx_frag_patch_state(f, i);
         let field: i64 = rx_frag_patch_field(f, i);
         if field == 0 {
             let _ = rx_st_set_out1(st, target);
@@ -334,8 +393,12 @@ fn rx_parse_class(pat: i64, i: i64, len: i64, cls_tbl: i64) -> i64 {
         if rx_load_byte(pat, pos) == 94 {
             pos = pos + 1;
             1
-        } else { 0 }
-    } else { 0 };
+        } else {
+            0
+        }
+    } else {
+        0
+    };
     // Allow ] as first char inside class
     let mut done: i64 = 0;
     let mut ok: i64 = 1;
@@ -407,14 +470,18 @@ fn rx_parse_class(pat: i64, i: i64, len: i64, cls_tbl: i64) -> i64 {
             }
         }
     }
-    let rlen: i64  = __mind_load_i64(ranges + 8);
+    let rlen: i64 = __mind_load_i64(ranges + 8);
     let raddr: i64 = __mind_load_i64(ranges + 0);
     let cls: i64 = rx_cls_alloc(negated, raddr, rlen);
     let idx: i64 = __mind_load_i64(cls_tbl + 8);
     let _ = rx_cls_tbl_push(cls_tbl, cls);
     let r: i64 = __mind_alloc(16);
     __mind_store_i64(r + 0, pos);
-    __mind_store_i64(r + 8, if ok == 1 { idx } else { 0 - 1 });
+    __mind_store_i64(r + 8, if ok == 1 {
+        idx
+    } else {
+        0 - 1
+    });
     r
 }
 
@@ -543,11 +610,21 @@ fn rx_compile_atom(pat: i64, pat_len: i64, cs: i64) -> i64 {
         return f;
     }
     // Metacharacters that end an atom: `*` `+` `?` `|` `)` `]`
-    if b == 42 { return 0; }
-    if b == 43 { return 0; }
-    if b == 63 { return 0; }
-    if b == 124 { return 0; }
-    if b == 41 { return 0; }
+    if b == 42 {
+        return 0;
+    }
+    if b == 43 {
+        return 0;
+    }
+    if b == 63 {
+        return 0;
+    }
+    if b == 124 {
+        return 0;
+    }
+    if b == 41 {
+        return 0;
+    }
     // Literal character
     let _ = rx_cs_set_pos(cs, pos + 1);
     let st: i64 = rx_st_alloc(rx_kind_char(), b, 0, 0, 0);
@@ -662,12 +739,7 @@ fn rx_compile_alternation(pat: i64, pat_len: i64, cs: i64) -> i64 {
     let _ = rx_cs_set_pos(cs, pos + 1);
     let right: i64 = rx_compile_alternation(pat, pat_len, cs);
     // split(left.start, right.start), dangling = merged patches
-    let sp: i64 = rx_st_alloc(
-        rx_kind_split(), 0,
-        rx_frag_start(left),
-        rx_frag_start(right),
-        0
-    );
+    let sp: i64 = rx_st_alloc(rx_kind_split(), 0, rx_frag_start(left), rx_frag_start(right), 0);
     let nf: i64 = rx_frag_new(sp);
     let _ = rx_frag_merge_patches(nf, left);
     let _ = rx_frag_merge_patches(nf, right);
@@ -691,8 +763,8 @@ pub fn rx_compile(pat_addr: i64, pat_len: i64) -> i64 {
     let _ = rx_frag_patch_all(frag, match_st);
     let caps: i64 = rx_cs_caps(cs);
     let rx: i64 = __mind_alloc(24);
-    __mind_store_i64(rx + 0,  rx_frag_start(frag));
-    __mind_store_i64(rx + 8,  caps);
+    __mind_store_i64(rx + 0, rx_frag_start(frag));
+    __mind_store_i64(rx + 8, caps);
     __mind_store_i64(rx + 16, cls_tbl);
     rx
 }
@@ -700,7 +772,11 @@ pub fn rx_compile(pat_addr: i64, pat_len: i64) -> i64 {
 // rx_try_compile -- returns 0 on success, 1 on failure.
 pub fn rx_try_compile(pat_addr: i64, pat_len: i64) -> i64 {
     let r: i64 = rx_compile(pat_addr, pat_len);
-    if r == 0 { 1 } else { 0 }
+    if r == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 // --- NFA simulation ---
@@ -715,13 +791,15 @@ pub fn rx_try_compile(pat_addr: i64, pat_len: i64) -> i64 {
 // State queue: [addr | len | cap] of i64 handles.
 fn rx_sq_new() -> i64 {
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0,  0);
-    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
     __mind_store_i64(h + 16, 0);
     h
 }
 
-fn rx_sq_len(q: i64) -> i64 { __mind_load_i64(q + 8) }
+fn rx_sq_len(q: i64) -> i64 {
+    __mind_load_i64(q + 8)
+}
 
 fn rx_sq_get(q: i64, i: i64) -> i64 {
     __mind_load_i64(__mind_load_i64(q + 0) + i * 8)
@@ -752,8 +830,8 @@ fn rx_sq_push(q: i64, st: i64) -> i64 {
         d
     };
     __mind_store_i64(new_dat + old_len * 8, st);
-    __mind_store_i64(q + 0,  new_dat);
-    __mind_store_i64(q + 8,  old_len + 1);
+    __mind_store_i64(q + 0, new_dat);
+    __mind_store_i64(q + 8, old_len + 1);
     __mind_store_i64(q + 16, new_cap);
     0
 }
@@ -780,8 +858,12 @@ fn rx_sq_contains(q: i64, st: i64) -> i64 {
 
 // Add state to queue, following epsilon (Split) transitions.
 fn rx_sq_add_eps(q: i64, st: i64) -> i64 {
-    if st == 0 { return 0; }
-    if rx_sq_contains(q, st) == 1 { return 0; }
+    if st == 0 {
+        return 0;
+    }
+    if rx_sq_contains(q, st) == 1 {
+        return 0;
+    }
     let _ = rx_sq_push(q, st);
     let k: i64 = rx_st_kind(st);
     if k == rx_kind_split() {
@@ -861,14 +943,22 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
     let cls_tbl: i64 = rx_class_table(rx_h);
     let cur: i64 = rx_sq_new();
     let next: i64 = rx_sq_new();
-    let at_start0: i64 = if start == 0 { 1 } else { 0 };
+    let at_start0: i64 = if start == 0 {
+        1
+    } else {
+        0
+    };
     let _ = rx_sq_add_eps(cur, nfa);
     // Handle zero-width anchors at the start position
     if at_start0 == 1 {
-        let _ = rx_step(cur, next, 0 - 1, cls_tbl, 1, if inp_len == 0 { 1 } else { 0 });
+        let _ = rx_step(cur, next, 0 - 1, cls_tbl, 1, if inp_len == 0 {
+            1
+        } else {
+            0
+        });
         if rx_sq_len(next) > 0 {
-            // Merge next back (epsilon anchors consumed)
         }
+        // Merge next back (epsilon anchors consumed)
     }
     let mut pos: i64 = start;
     let mut last_match: i64 = 0 - 1;
@@ -878,18 +968,26 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
     }
     while pos < inp_len {
         let c: i64 = __mind_load_i64(inp_addr + pos) & 255;
-        let at_start1: i64 = if pos == 0 { 1 } else { 0 };
-        let at_end1: i64   = if pos + 1 == inp_len { 1 } else { 0 };
+        let at_start1: i64 = if pos == 0 {
+            1
+        } else {
+            0
+        };
+        let at_end1: i64 = if pos + 1 == inp_len {
+            1
+        } else {
+            0
+        };
         let _ = rx_step(cur, next, c, cls_tbl, at_start1, at_end1);
         // Swap cur and next
         let tmp_addr: i64 = __mind_load_i64(cur + 0);
-        let tmp_len: i64  = __mind_load_i64(cur + 8);
-        let tmp_cap: i64  = __mind_load_i64(cur + 16);
-        __mind_store_i64(cur + 0,  __mind_load_i64(next + 0));
-        __mind_store_i64(cur + 8,  __mind_load_i64(next + 8));
+        let tmp_len: i64 = __mind_load_i64(cur + 8);
+        let tmp_cap: i64 = __mind_load_i64(cur + 16);
+        __mind_store_i64(cur + 0, __mind_load_i64(next + 0));
+        __mind_store_i64(cur + 8, __mind_load_i64(next + 8));
         __mind_store_i64(cur + 16, __mind_load_i64(next + 16));
-        __mind_store_i64(next + 0,  tmp_addr);
-        __mind_store_i64(next + 8,  tmp_len);
+        __mind_store_i64(next + 0, tmp_addr);
+        __mind_store_i64(next + 8, tmp_len);
         __mind_store_i64(next + 16, tmp_cap);
         if rx_is_match_state(cur) == 1 {
             last_match = pos + 1;
@@ -1004,8 +1102,8 @@ pub fn rx_capture(rx_h: i64, inp_addr: i64, inp_len: i64, group: i64) -> i64 {
 // Minimal string builder for rx_capture (duplicated to avoid cross-module dep).
 fn jvsb_new_rx() -> i64 {
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0,  0);
-    __mind_store_i64(h + 8,  0);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
     __mind_store_i64(h + 16, 0);
     h
 }
@@ -1035,8 +1133,8 @@ fn jvsb_push_rx(h: i64, b: i64) -> i64 {
         d
     };
     __mind_store_i8(new_dat + old_len, b);
-    __mind_store_i64(h + 0,  new_dat);
-    __mind_store_i64(h + 8,  old_len + 1);
+    __mind_store_i64(h + 0, new_dat);
+    __mind_store_i64(h + 8, old_len + 1);
     __mind_store_i64(h + 16, new_cap);
     0
 }

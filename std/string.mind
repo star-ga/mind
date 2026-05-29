@@ -185,7 +185,11 @@ pub fn string_push_str(dst: String, src: String) -> String {
     let new_cap: i64 = if needed <= dst.cap {
         dst.cap
     } else {
-        let mut c: i64 = if dst.cap == 0 { 16 } else { dst.cap };
+        let mut c: i64 = if dst.cap == 0 {
+            16
+        } else {
+            dst.cap
+        };
         while c < needed {
             c = c * 2;
         }

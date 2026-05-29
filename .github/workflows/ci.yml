@@ -388,11 +388,14 @@ jobs:
             ${{ runner.os }}-mindcraft-
 
       - name: Build mindc
-        run: cargo build --release --no-default-features --bin mindc
+        # std-surface enables the while/for/region parser arms used in std/ and
+        # examples/; without it the type-checker rejects valid MIND source files
+        # that use these constructs and the check exits non-zero.
+        run: cargo build --release --no-default-features --features std-surface --bin mindc
 
       - name: Run mindc check on std/ and examples/
         run: |
-          cargo run --release --no-default-features --bin mindc -- \
+          cargo run --release --no-default-features --features std-surface --bin mindc -- \
             check std/ examples/
 
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features
