@@ -163,7 +163,8 @@ and `verify.*` namespaces.
 | Ed25519 signing on release artifacts (RFC 0016 Phase C) | release CI runner | ⏳ Pending |
 | RFC 0016 Phase D — determinism-default (#289) | pending `Tensor<f32>` gate | ⏳ Pending |
 | RFC 0016 Phase E — agent + governance links (RFC 0019) | pending scheduler integration | ⏳ Pending |
-| #306 keystone re-bless (std string/sha256/toml byte-precise stores) | pending fresh-context session | 🚧 Pending |
+| #306 std byte-store `__mind_store_i8` migration (string/sha256/toml) | `45049a9`; verified via SHA-256 FIPS 3/3 + std-surface string/toml suites (real `--emit-shared` ELF) | ✅ Landed |
+| #306 keystone byte-identity re-bless | oracle is a post-migration ELF; `mindc build --emit=cdylib` emits a stub in the open toolchain | 🚧 Pending (ELF-capable cdylib build) |
 
 ### Evidence chain
 
