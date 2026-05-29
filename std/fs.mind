@@ -98,7 +98,7 @@ fn fs_copy_bytes_rec(src: i64, dst: i64, n: i64, i: i64) -> i64 {
     if i >= n {
         0
     } else {
-        __mind_store_i64(dst + i, __mind_load_i64(src + i) & 255);
+        __mind_store_i8(dst + i, __mind_load_i64(src + i) & 255);
         fs_copy_bytes_rec(src, dst, n, i + 1)
     }
 }
@@ -125,7 +125,7 @@ fn fs_cstr_len(addr: i64) -> i64 {
 fn fs_heap_copy(src_addr: i64, src_len: i64) -> i64 {
     let dst: i64 = __mind_alloc(src_len + 1);
     let _ = fs_copy_bytes(src_addr, dst, src_len);
-    __mind_store_i64(dst + src_len, 0);
+    __mind_store_i8(dst + src_len, 0);
     dst
 }
 
@@ -254,7 +254,7 @@ pub fn read_to_string(path_addr: i64) -> i64 {
     if n < 0 {
         return rec;
     }
-    __mind_store_i64(buf + n, 0);
+    __mind_store_i8(buf + n, 0);
     __mind_store_i64(rec + 0, buf);
     __mind_store_i64(rec + 8, n);
     __mind_store_i64(rec + 16, file_sz + 1);
@@ -379,9 +379,9 @@ fn mkdir_p_walk(work: i64, plen: i64, i: i64, mode: i64) -> i64 {
     } else {
         let b: i64 = __mind_load_i64(work + i) & 255;
         if b == 47 {
-            __mind_store_i64(work + i, 0);
+            __mind_store_i8(work + i, 0);
             let _ = mkdir(work as *const u8, mode as i32);
-            __mind_store_i64(work + i, 47)
+            __mind_store_i8(work + i, 47)
         } else {
             if i == plen {
                 let _ = mkdir(work as *const u8, mode as i32);
@@ -449,9 +449,9 @@ fn remove_recursive_entries(path_addr: i64, plen: i64, vec_h: i64, idx: i64) -> 
         let full_len: i64 = plen + 1 + ename_len;
         let full: i64 = __mind_alloc(full_len + 1);
         let _ = fs_copy_bytes(path_addr, full, plen);
-        __mind_store_i64(full + plen, 47);
+        __mind_store_i8(full + plen, 47);
         let _ = fs_copy_bytes(ename_addr, full + plen + 1, ename_len);
-        __mind_store_i64(full + full_len, 0);
+        __mind_store_i8(full + full_len, 0);
         let sub_ok: i64 = remove_recursive(full);
         let rest_ok: i64 = remove_recursive_entries(path_addr, plen, vec_h, idx + 1);
         if sub_ok == 1 {

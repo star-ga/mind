@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2669 | **Est. tokens:** ~6,673,440
-**Generated:** 2026-05-29 16:55 UTC
+**Files:** 2669 | **Est. tokens:** ~6,673,815
+**Generated:** 2026-05-29 17:14 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 25 | ~33,367 |
+| `docs/` | 25 | ~33,744 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
@@ -395,7 +395,7 @@
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 17 | ~81,222 |
+| `std/` | 17 | ~81,220 |
 | `tests/` | 158 | ~268,039 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -579,7 +579,7 @@
 - `mojo_comparison.md` (~2420 tok, huge) — MIND vs Mojo: Compilation Performance Comparison
 ### `docs/`
 
-- `byte-store-migration.md` (~2132 tok, huge) — Byte-Store Migration — closing `#306`
+- `byte-store-migration.md` (~2509 tok, huge) — Byte-Store Migration — closing `#306`
 - `cli.md` (~582 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
@@ -3754,7 +3754,7 @@
 - `async.mind` (~2465 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2800 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
-- `fs.mind` (~4340 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
+- `fs.mind` (~4338 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
