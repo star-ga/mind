@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2668 | **Est. tokens:** ~6,668,650
-**Generated:** 2026-05-29 11:32 UTC
+**Files:** 2668 | **Est. tokens:** ~6,668,893
+**Generated:** 2026-05-29 11:58 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 27 | ~112,284 |
+| `docs/rfcs/` | 27 | ~112,527 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
@@ -632,8 +632,8 @@
 - `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~5715 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0017-mindc-verify.md` (~3442 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
-- `0018-bare-metal-substrate.md` (~3775 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
-- `0019-deterministic-agent-substrate.md` (~3912 tok, huge) — RFC 0019: Deterministic Agent Substrate
+- `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
+- `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
 - `0021-canonical-ir-unification.md` (~3993 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
