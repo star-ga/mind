@@ -128,7 +128,15 @@ mlir-gpu = []
 mlir-build = ["mlir-subprocess"]
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
-cross-module-imports = []  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver
+# `cross-module-imports` bundles the real std/*.mind sources (see
+# src/project/stdlib.rs) and parses them at resolve time. Those sources are
+# written in the std-surface language (`while`, `region`, …), whose parser
+# arms are gated behind `std-surface`. Resolving the bundled stdlib therefore
+# requires the std-surface parser — without the dependency, 7 of the 15
+# bundled modules silently fail to parse under a cross-module-imports-only
+# build. Both features stay non-default, so the default-build byte-identity
+# hot path is untouched.
+cross-module-imports = ["std-surface"]  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver
 std-surface = []  # RFC 0005 Phase 0: generic Instr::Call -> MLIR func.call lowering (i64 ABI)
 ffi-examples = []
 pkg = ["tar", "flate2", "sha2"]

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2669 | **Est. tokens:** ~6,673,105
-**Generated:** 2026-05-29 13:52 UTC
+**Files:** 2669 | **Est. tokens:** ~6,673,304
+**Generated:** 2026-05-29 15:56 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~21,369 |
+| `./` | 32 | ~21,509 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,926 |
 | `std/` | 17 | ~81,222 |
-| `tests/` | 158 | ~267,980 |
+| `tests/` | 158 | ~268,039 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -440,7 +440,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~869 tok, large) — [package]
+- `Cargo.toml` (~1009 tok, large) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -4060,7 +4060,7 @@
 - `std_surface_map_module.rs` (~2044 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~7339 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_phase_d_env_override.rs` (~1538 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4507 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2284 tok, huge) — Copyright 2025 STARGA Inc.
