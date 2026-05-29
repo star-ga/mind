@@ -185,7 +185,7 @@ Standalone binary distribution: `mindc` is now available as pre-built binaries f
 Linux (x86_64 static musl), macOS (universal x86_64 + arm64), and Windows (x86_64
 MSVC). No Rust toolchain required. See `docs/install.md`.
 
-- `.github/workflows/release-binary.yml` — builds and publishes binaries on tag push
+- `.github/workflows/release.yml` — builds and publishes binaries on tag push
 - `scripts/install.sh` — one-line curl-pipe installer for Linux/macOS
 - `scripts/install.ps1` — one-line PowerShell installer for Windows
 - `docs/install.md` — installation guide (curl-pipe, manual, build from source)

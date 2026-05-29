@@ -31,7 +31,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | **RFC 0010 extern "C" + SysV/Win64 ABI (Phases A/B/C shipped; E/F scaffolded)** | ✅ **A/B/C** + scaffold E/F | **v0.7.0** | [`docs/rfcs/0010-memory-safety-and-c-abi.md`](docs/rfcs/0010-memory-safety-and-c-abi.md) |
 | **13 stdlib modules** (vec/string/map/io/blas/toml/json/regex/net/fs/process/mlir/llvm) | ✅ Complete | **v0.7.0** | `std/` |
 | **`mindc doc`** — rustdoc-style HTML documentation generator | ✅ Phase 1 shipped | **v0.7.0** | `src/doc/` |
-| **Standalone binary release pipeline** (linux-musl + macos-universal + windows-msvc) | ✅ Complete | **v0.7.0** | `.github/workflows/release-binary.yml` |
+| **Standalone binary release pipeline** (linux-musl + macos-universal + windows-msvc) | ✅ Complete | **v0.7.0** | `.github/workflows/release.yml` |
 | RFCs 0009/0011 specifications | ✅ Drafted | **v0.7.0** | `docs/rfcs/` |
 
 ## Mindcraft (RFC 0007) — Fully Shipped in v0.6.8
