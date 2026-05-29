@@ -30,7 +30,7 @@
 //! );
 //! ```
 //!
-//! The builder is **opt-in**: it is never called from [`emit_mic2`] or
+//! The builder is **opt-in**: it is never called from [`emit_mic2`](super::emit::emit_mic2) or
 //! [`emit_micb`] — a graph without evidence attached emits byte-identically
 //! to pre-RFC-0016 output (the MAP epilogue is omitted when empty).
 
@@ -105,7 +105,7 @@ impl Determinism {
 ///
 /// ## Opt-in guarantee
 ///
-/// This function is **never called** from [`emit_mic2`] or [`emit_micb`].
+/// This function is **never called** from [`emit_mic2`](super::emit::emit_mic2) or [`emit_micb`].
 /// Default emit paths are unmodified; an unannotated graph emits byte-identically
 /// to pre-Phase-A output.
 ///

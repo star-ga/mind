@@ -150,7 +150,7 @@ fn is_list_item(line: &str) -> bool {
 
 /// Render inline Markdown spans to HTML.
 ///
-/// Handles: `code`, **bold**, *italic*, [link](url).
+/// Handles: `code`, **bold**, *italic*, `[link](url)`.
 fn inline_render(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 32);
     let chars: Vec<char> = s.chars().collect();

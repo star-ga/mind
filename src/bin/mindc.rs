@@ -63,9 +63,9 @@ enum Command {
     /// Build a MIND project (reads Mind.toml).
     ///
     /// RFC 0008 Phase A — single-crate orchestrator.
-    /// Reads [build] from Mind.toml; CLI flags override the manifest.
+    /// Reads `[build]` from Mind.toml; CLI flags override the manifest.
     Build {
-        /// Source files to compile.  When omitted, uses [build].entry or
+        /// Source files to compile.  When omitted, uses `[build].entry` or
         /// auto-detects src/main.mind / src/lib.mind.
         #[arg(value_name = "PATHS")]
         paths: Vec<String>,
@@ -73,18 +73,18 @@ enum Command {
         #[arg(long)]
         release: bool,
         /// Target backend (cpu|gpu|tpu|npu|lpu|dpu|fpga|cerebras).
-        /// Overrides [build].target in Mind.toml.
+        /// Overrides `[build].target` in Mind.toml.
         #[arg(long, value_name = "TARGET")]
         target: Option<String>,
         /// Output artifact type: binary | cdylib | object.
-        /// Overrides [build].emit in Mind.toml.
+        /// Overrides `[build].emit` in Mind.toml.
         #[arg(long, value_name = "EMIT")]
         emit: Option<String>,
         /// Optimization level: debug | release | size.
-        /// Overrides [build].optimize in Mind.toml. --release is shorthand.
+        /// Overrides `[build].optimize` in Mind.toml. --release is shorthand.
         #[arg(long, value_name = "LEVEL", conflicts_with = "release")]
         optimize: Option<String>,
-        /// Custom output path.  Overrides the default target/<profile>/<name>.
+        /// Custom output path.  Overrides the default `target/<profile>/<name>`.
         #[arg(long, value_name = "PATH")]
         out: Option<String>,
         /// Show verbose output.

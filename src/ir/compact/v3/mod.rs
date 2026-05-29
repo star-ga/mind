@@ -12,7 +12,7 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! MIC@3 binary format — compact, deterministic binary encoding of [`IRModule`].
+//! MIC@3 binary format — compact, deterministic binary encoding of [`IRModule`](crate::ir::IRModule).
 //!
 //! # Wire layout (IR body)
 //!

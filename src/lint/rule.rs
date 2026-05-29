@@ -89,7 +89,7 @@ pub trait LintRule: Send + Sync {
 /// the offsets valid.
 #[derive(Debug, Clone)]
 pub struct Fix {
-    /// Byte range to replace (from [`SourceSpan`]).
+    /// Byte range to replace (from [`SourceSpan`](crate::lint::SourceSpan)).
     pub range: std::ops::Range<usize>,
     /// Text that replaces `source[range]`.  Empty string = deletion.
     pub replacement: String,
