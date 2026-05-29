@@ -289,6 +289,25 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Verify the evidence chain embedded in a mic@3 artifact (RFC 0021 §4.2).
+    ///
+    /// Reads an artifact written by `mindc build --emit-evidence` (or
+    /// `--emit-mic3` plus a MAP epilogue), peels the `evidence_chain.*` MAP,
+    /// recomputes the canonical mic@1 `trace_hash` (RFC 0016 §3.2) over the
+    /// parsed IR body, and confirms it matches the stored hash.  This is the
+    /// consumer-side half of the wedge: generation without verification is
+    /// security theatre (RFC 0021 §4 / #288 / #290 / #309).
+    ///
+    /// Exit code 0 = trace_hash valid (artifact untampered);
+    /// 1 = tampered, unattested, or malformed; 2 = I/O or CLI error.
+    Verify {
+        /// Path to the mic@3 evidence artifact to verify.
+        #[arg(value_name = "ARTIFACT")]
+        artifact: String,
+        /// Emit the report as a JSON object instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Parser, Debug, Default)]
@@ -513,6 +532,9 @@ fn main() {
         Some(Command::Clean { cache, all }) => {
             run_mindc_clean(*cache, *all);
             return;
+        }
+        Some(Command::Verify { artifact, json }) => {
+            process::exit(run_verify(artifact, *json));
         }
         None => {}
     }
@@ -1296,6 +1318,128 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
     );
 }
 
+/// Lowercase hex-encode a byte slice (no `hex` crate dependency).
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Escape a string for embedding inside a hand-built JSON string literal.
+///
+/// `--json` output is assembled by interpolation rather than via serde, so any
+/// free-form field (the artifact path, or the `substrate` / `toolchain` values
+/// which a crafted artifact controls verbatim) must be escaped or it could
+/// inject structure into the object — e.g. spoofing `trace_hash_valid` for a
+/// consumer that parses the JSON instead of checking the exit code.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `mindc verify <artifact>` — consumer-side evidence-chain verification.
+///
+/// Returns the process exit code: 0 = valid, 1 = verification failed
+/// (tampered / unattested / malformed), 2 = I/O error reading the artifact.
+fn run_verify(artifact: &str, json: bool) -> i32 {
+    use libmind::ir::compact::{Determinism, EvidenceError, mic3_evidence_report};
+
+    let bytes = match fs::read(artifact) {
+        Ok(b) => b,
+        Err(err) => {
+            eprintln!("error[verify]: cannot read artifact {artifact}: {err}");
+            return 2;
+        }
+    };
+
+    match mic3_evidence_report(&bytes) {
+        Ok(report) => {
+            let determinism = match report.determinism {
+                Determinism::Deterministic => "deterministic",
+                Determinism::Nondeterministic => "nondeterministic",
+            };
+            let parent = report.parent.map(|p| hex_encode(&p));
+            let trace_hash = hex_encode(&report.trace_hash);
+
+            if json {
+                // Hand-formatted JSON keeps the binary free of a serde dependency
+                // and the output byte-stable for scripted consumers.  Free-form
+                // fields are json_escape'd; `determinism`/`trace_hash`/`parent`
+                // are charset-safe (enum / hex) by construction.
+                let parent_field = match &parent {
+                    Some(p) => format!("\"{p}\""),
+                    None => "null".to_string(),
+                };
+                println!(
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_valid\":{}}}",
+                    json_escape(artifact),
+                    json_escape(&report.substrate),
+                    json_escape(&report.toolchain),
+                    report.trace_hash_valid
+                );
+            } else {
+                println!("artifact:         {artifact}");
+                println!("substrate:        {}", report.substrate);
+                println!("determinism:      {determinism}");
+                println!("toolchain:        {}", report.toolchain);
+                println!(
+                    "parent:           {}",
+                    parent.as_deref().unwrap_or("(root)")
+                );
+                println!("trace_hash:       {trace_hash}");
+                println!(
+                    "trace_hash_valid: {}",
+                    if report.trace_hash_valid { "yes" } else { "NO" }
+                );
+            }
+
+            if report.trace_hash_valid {
+                if !json {
+                    eprintln!("verified: evidence chain is intact (untampered)");
+                    if matches!(report.determinism, Determinism::Nondeterministic) {
+                        eprintln!(
+                            "note: artifact declares a nondeterministic build; trace_hash matches but reproducibility is not asserted"
+                        );
+                    }
+                }
+                0
+            } else {
+                eprintln!("error[verify]: trace_hash MISMATCH — artifact has been tampered with");
+                1
+            }
+        }
+        Err(EvidenceError::Missing) => {
+            eprintln!("error[verify]: {artifact} carries no evidence_chain — unattested artifact");
+            1
+        }
+        Err(EvidenceError::MissingKey(k)) => {
+            eprintln!("error[verify]: evidence chain is missing required key '{k}'");
+            1
+        }
+        Err(EvidenceError::Malformed(k)) => {
+            eprintln!("error[verify]: evidence chain key '{k}' is malformed");
+            1
+        }
+        Err(EvidenceError::UnknownDeterminism(d)) => {
+            eprintln!("error[verify]: evidence chain has unknown determinism value '{d}'");
+            1
+        }
+    }
+}
+
 fn parse_target(raw: &str) -> Result<BackendTarget, String> {
     match raw.to_ascii_lowercase().as_str() {
         "cpu" => Ok(BackendTarget::Cpu),
@@ -1431,5 +1575,37 @@ fn emit_shared_if_requested(cli: &CompileArgs, _products: &libmind::pipeline::Co
     if cli.emit_shared.is_some() {
         eprintln!("error[build]: --emit-shared requires building with the 'mlir-build' feature");
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{hex_encode, json_escape};
+
+    #[test]
+    fn hex_encode_is_lowercase_and_fixed_width() {
+        assert_eq!(hex_encode(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+        assert_eq!(hex_encode(&[]), "");
+        assert_eq!(hex_encode(&[0x5; 32]).len(), 64);
+    }
+
+    #[test]
+    fn json_escape_passes_clean_strings_through() {
+        assert_eq!(json_escape("cpu"), "cpu");
+        assert_eq!(json_escape("0.7.0"), "0.7.0");
+        assert_eq!(json_escape("/tmp/a.bin"), "/tmp/a.bin");
+    }
+
+    #[test]
+    fn json_escape_neutralizes_structure_injection() {
+        // A crafted substrate/toolchain or a path with a quote must not break
+        // out of its JSON string literal (the MEDIUM finding being guarded).
+        assert_eq!(
+            json_escape(r#"cpu","trace_hash_valid":true,"x":""#),
+            r#"cpu\",\"trace_hash_valid\":true,\"x\":\""#
+        );
+        assert_eq!(json_escape("a\\b"), "a\\\\b");
+        assert_eq!(json_escape("line\nbreak\ttab\r"), "line\\nbreak\\ttab\\r");
+        assert_eq!(json_escape("\u{0001}"), "\\u0001");
     }
 }
