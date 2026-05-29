@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2668 | **Est. tokens:** ~6,669,037
-**Generated:** 2026-05-29 13:05 UTC
+**Files:** 2669 | **Est. tokens:** ~6,672,915
+**Generated:** 2026-05-29 13:32 UTC
 
 ## Token Budget Guide
 
@@ -364,7 +364,7 @@
 | `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~6,223 |
 | `src/autodiff/` | 3 | ~4,467 |
-| `src/bin/` | 2 | ~17,720 |
+| `src/bin/` | 2 | ~19,525 |
 | `src/build/` | 2 | ~11,080 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,758 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,926 |
 | `std/` | 17 | ~81,222 |
-| `tests/` | 157 | ~265,717 |
+| `tests/` | 158 | ~267,790 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3566,7 +3566,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~11677 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~13482 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4096,6 +4096,7 @@
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
+- `verify_cli.rs` (~2073 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
