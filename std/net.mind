@@ -75,26 +75,26 @@ fn net_handle_fd(h: i64) -> i64 {
 fn net_build_sockaddr_in(ip_str_addr: i64, port: i64) -> i64 {
     let sa: i64 = __mind_alloc(16);
     let _ = memset(sa as *mut u8, 0, 16);
-    __mind_store_i64(sa + 0, 2);
-    __mind_store_i64(sa + 1, 0);
+    __mind_store_i8(sa + 0, 2);
+    __mind_store_i8(sa + 1, 0);
     let np: i64 = htons(port as i32) as i64;
-    __mind_store_i64(sa + 2, (np >> 8) & 255);
-    __mind_store_i64(sa + 3, np & 255);
+    __mind_store_i8(sa + 2, (np >> 8) & 255);
+    __mind_store_i8(sa + 3, np & 255);
     let inet_buf: i64 = __mind_alloc(4);
     let _ = inet_pton(2, ip_str_addr as *const u8, inet_buf as *mut u8);
-    __mind_store_i64(sa + 4, __mind_load_i64(inet_buf + 0) & 255);
-    __mind_store_i64(sa + 5, __mind_load_i64(inet_buf + 1) & 255);
-    __mind_store_i64(sa + 6, __mind_load_i64(inet_buf + 2) & 255);
-    __mind_store_i64(sa + 7, __mind_load_i64(inet_buf + 3) & 255);
+    __mind_store_i8(sa + 4, __mind_load_i64(inet_buf + 0) & 255);
+    __mind_store_i8(sa + 5, __mind_load_i64(inet_buf + 1) & 255);
+    __mind_store_i8(sa + 6, __mind_load_i64(inet_buf + 2) & 255);
+    __mind_store_i8(sa + 7, __mind_load_i64(inet_buf + 3) & 255);
     sa
 }
 
 fn net_set_reuseaddr(fd: i64) -> i64 {
     let optval: i64 = __mind_alloc(4);
-    __mind_store_i64(optval + 0, 1);
-    __mind_store_i64(optval + 1, 0);
-    __mind_store_i64(optval + 2, 0);
-    __mind_store_i64(optval + 3, 0);
+    __mind_store_i8(optval + 0, 1);
+    __mind_store_i8(optval + 1, 0);
+    __mind_store_i8(optval + 2, 0);
+    __mind_store_i8(optval + 3, 0);
     setsockopt(fd as i32, sol_socket() as i32, so_reuseaddr() as i32, optval as *const u8, 4) as i64
 }
 
@@ -102,10 +102,10 @@ fn net_getsockname_port(fd: i64) -> i64 {
     let sa: i64 = __mind_alloc(16);
     let _ = memset(sa as *mut u8, 0, 16);
     let lenptr: i64 = __mind_alloc(4);
-    __mind_store_i64(lenptr + 0, 16);
-    __mind_store_i64(lenptr + 1, 0);
-    __mind_store_i64(lenptr + 2, 0);
-    __mind_store_i64(lenptr + 3, 0);
+    __mind_store_i8(lenptr + 0, 16);
+    __mind_store_i8(lenptr + 1, 0);
+    __mind_store_i8(lenptr + 2, 0);
+    __mind_store_i8(lenptr + 3, 0);
     let _ = getsockname(fd as i32, sa as *mut u8, lenptr as *mut u8);
     let b0: i64 = __mind_load_i64(sa + 2) & 255;
     let b1: i64 = __mind_load_i64(sa + 3) & 255;
@@ -155,10 +155,10 @@ pub fn tcp_accept(l: i64) -> i64 {
     let sa: i64 = __mind_alloc(16);
     let _ = memset(sa as *mut u8, 0, 16);
     let lenptr: i64 = __mind_alloc(4);
-    __mind_store_i64(lenptr + 0, 16);
-    __mind_store_i64(lenptr + 1, 0);
-    __mind_store_i64(lenptr + 2, 0);
-    __mind_store_i64(lenptr + 3, 0);
+    __mind_store_i8(lenptr + 0, 16);
+    __mind_store_i8(lenptr + 1, 0);
+    __mind_store_i8(lenptr + 2, 0);
+    __mind_store_i8(lenptr + 3, 0);
     let fd: i64 = accept(lfd as i32, sa as *mut u8, lenptr as *mut u8) as i64;
     if fd < 0 {
         return 0;
@@ -261,10 +261,10 @@ pub fn udp_recv_from(s: i64, buf_addr: i64, max: i64) -> i64 {
     let sa: i64 = __mind_alloc(16);
     let _ = memset(sa as *mut u8, 0, 16);
     let lenptr: i64 = __mind_alloc(4);
-    __mind_store_i64(lenptr + 0, 16);
-    __mind_store_i64(lenptr + 1, 0);
-    __mind_store_i64(lenptr + 2, 0);
-    __mind_store_i64(lenptr + 3, 0);
+    __mind_store_i8(lenptr + 0, 16);
+    __mind_store_i8(lenptr + 1, 0);
+    __mind_store_i8(lenptr + 2, 0);
+    __mind_store_i8(lenptr + 3, 0);
     recvfrom(fd as i32, buf_addr as *mut u8, max, 0, sa as *mut u8, lenptr as *mut u8)
 }
 

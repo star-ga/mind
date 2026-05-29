@@ -103,6 +103,53 @@ sites (`__mind_load_i64(...) & 255`) left as-is, same as the other modules.
 Behavior verified via real-ELF ctypes round-trip (`store_i8` writes exactly
 one byte; mid-buffer and end-of-buffer bytes untouched).
 
+### `std/json.mind`, `std/regex.mind`, `std/process.mind`, `std/net.mind` — 34 byte-stores (discovered 2026-05-29)
+
+A repo-wide `git grep '__mind_store_i64' std/` after the `fs.mind` follow-up
+surfaced the same byte-store OOB pattern in four more POSIX/parser-surface
+modules. None are imported by the keystone (`mindc_mind`) bootstrap, so they
+never affected the oracle — but each is a genuine out-of-bounds heap write on
+its own, identical in shape to the `string`/`toml`/`fs` cases.
+
+**Byte-array sites** (1-byte payload into a byte buffer):
+
+| File | Line | Site | Form |
+|------|------|------|------|
+| `json.mind`    | 168 | `jv_copy_bytes`        | byte-copy loop `dst + i` |
+| `json.mind`    | 254 | `jvsb_push`            | byte append at `new_dat + old_len` (into `new_cap` alloc) |
+| `regex.mind`   | 1032| `jvsb_push_rx` grow    | byte-copy loop `d + ci` |
+| `regex.mind`   | 1037| `jvsb_push_rx` append  | byte append at `new_dat + old_len` |
+| `process.mind` | 65  | `proc_copy_bytes_rec`  | byte-by-byte copy `dst + i` |
+| `process.mind` | 73  | `proc_heap_copy`       | NUL terminator at `dst + src_len` (into `src_len + 1` alloc — true 7-byte OOB) |
+
+**4-byte syscall-buffer sites** (little-endian `i32`/`socklen_t` written one
+byte per index into a `__mind_alloc(4)` — the first `store_i64(buf + 0, …)`
+writes 8 bytes into a 4-byte alloc = 4-byte OOB):
+
+| File | Lines | Buffer | Consumed by |
+|------|-------|--------|-------------|
+| `process.mind` | 237–240 | `status_buf` (4 B) | `waitpid(.., *mut i32, ..)` |
+| `net.mind`     | 94–97   | `optval` (4 B)     | `setsockopt(.., optval, 4)` |
+| `net.mind`     | 105–108, 158–161, 264–267 | `lenptr` (4 B) ×3 | `getsockname` / `accept` / `recvfrom` |
+
+**16-byte sockaddr** (`net.mind` 78–88, `net_build_sockaddr_in`): the `sa`
+buffer is 16 B and the highest write (offset 7) ends in-bounds at byte 15, so
+there was no OOB here — but the same writes were migrated to `__mind_store_i8`
+for uniformity and to remove the load-bearing reliance on ascending-offset
+clobber-then-overwrite ordering.
+
+All 34 store statements migrated to `__mind_store_i8`. The i64-aligned struct/word
+stores in these modules (`* 8` offsets, the `+0/+8/+16/+24/+32` record fields,
+the JSON value-struct header writes at `h + 0 … h + 128`, the 8-byte handle
+store at `net.mind:67`) are legitimate and stay `__mind_store_i64`. Load sites
+(`__mind_load_i64(...) & 255`) are left as-is, same as the other modules —
+masked-byte reads are a follow-on cleanup, not part of the OOB-write close.
+Behavior in every valid region is byte-identical to the old i64 stores: byte
+arrays had each trailing clobber immediately overwritten by the next ascending
+write; the 4-byte and 16-byte buffers hold small values (`0`/`1`/`2`/`16`/port
+and IP octets) whose high bytes were already explicitly written `0`. Confirmed
+against a clean-HEAD parse+lower baseline.
+
 ## Migration mechanics
 
 Per-file workflow:
