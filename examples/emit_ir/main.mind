@@ -59,9 +59,9 @@
 // Every walker is `emit_*_rest(state, ...) -> EmitState` accumulating
 // into the byte buffer carried inside the EmitState heap record.
 
-use std.vec;
-use std.string;
-use std.io;
+import std.vec;
+import std.string;
+import std.io;
 
 // ===== AST kind tag mirror =====
 //
@@ -72,26 +72,64 @@ use std.io;
 // fold these into `examples/ast/tags.mind` shared between parser,
 // type-checker, and this emitter.
 
-pub fn ast_int_lit() -> i64 { 1 }
-pub fn ast_ident() -> i64   { 2 }
-pub fn ast_binop() -> i64   { 3 }
-pub fn ast_call() -> i64    { 4 }
-pub fn ast_fn_def() -> i64  { 5 }
-pub fn ast_let() -> i64     { 6 }
-pub fn ast_use() -> i64     { 7 }
-pub fn ast_return() -> i64  { 8 }
-pub fn ast_param() -> i64   { 9 }
-pub fn ast_block() -> i64   { 10 }
-pub fn ast_program() -> i64 { 11 }
-pub fn ast_paren() -> i64   { 12 }
+pub fn ast_int_lit() -> i64 {
+    1
+}
+pub fn ast_ident() -> i64 {
+    2
+}
+pub fn ast_binop() -> i64 {
+    3
+}
+pub fn ast_call() -> i64 {
+    4
+}
+pub fn ast_fn_def() -> i64 {
+    5
+}
+pub fn ast_let() -> i64 {
+    6
+}
+pub fn ast_use() -> i64 {
+    7
+}
+pub fn ast_return() -> i64 {
+    8
+}
+pub fn ast_param() -> i64 {
+    9
+}
+pub fn ast_block() -> i64 {
+    10
+}
+pub fn ast_program() -> i64 {
+    11
+}
+pub fn ast_paren() -> i64 {
+    12
+}
 
-pub fn op_add() -> i64 { 1 }
-pub fn op_sub() -> i64 { 2 }
-pub fn op_mul() -> i64 { 3 }
-pub fn op_div() -> i64 { 4 }
-pub fn op_lt()  -> i64 { 5 }
-pub fn op_gt()  -> i64 { 6 }
-pub fn op_eq()  -> i64 { 7 }
+pub fn op_add() -> i64 {
+    1
+}
+pub fn op_sub() -> i64 {
+    2
+}
+pub fn op_mul() -> i64 {
+    3
+}
+pub fn op_div() -> i64 {
+    4
+}
+pub fn op_lt() -> i64 {
+    5
+}
+pub fn op_gt() -> i64 {
+    6
+}
+pub fn op_eq() -> i64 {
+    7
+}
 
 // ===== AST accessors =====
 //
@@ -100,13 +138,27 @@ pub fn op_eq()  -> i64 { 7 }
 // contained (mindc v0.4.4 cross-module-binary import limitation
 // quoted above).
 
-pub fn ast_kind(node: i64)    -> i64 { __mind_load_i64(node + 0) }
-pub fn ast_span_lo(node: i64) -> i64 { __mind_load_i64(node + 8) }
-pub fn ast_span_hi(node: i64) -> i64 { __mind_load_i64(node + 16) }
-pub fn ast_child0(node: i64)  -> i64 { __mind_load_i64(node + 24) }
-pub fn ast_child1(node: i64)  -> i64 { __mind_load_i64(node + 32) }
-pub fn ast_child2(node: i64)  -> i64 { __mind_load_i64(node + 40) }
-pub fn ast_aux(node: i64)     -> i64 { __mind_load_i64(node + 48) }
+pub fn ast_kind(node: i64) -> i64 {
+    __mind_load_i64(node + 0)
+}
+pub fn ast_span_lo(node: i64) -> i64 {
+    __mind_load_i64(node + 8)
+}
+pub fn ast_span_hi(node: i64) -> i64 {
+    __mind_load_i64(node + 16)
+}
+pub fn ast_child0(node: i64) -> i64 {
+    __mind_load_i64(node + 24)
+}
+pub fn ast_child1(node: i64) -> i64 {
+    __mind_load_i64(node + 32)
+}
+pub fn ast_child2(node: i64) -> i64 {
+    __mind_load_i64(node + 40)
+}
+pub fn ast_aux(node: i64) -> i64 {
+    __mind_load_i64(node + 48)
+}
 
 // load_byte — same shape as the lexer + parser helpers.  Used to
 // read the source-byte span for fn names (`// fn NAME` comments) and
@@ -138,9 +190,15 @@ pub fn es_new() -> EmitState {
     EmitState { buf: string_new(), next_id: 0, last_id: 0 - 1 }
 }
 
-pub fn es_buf(s: EmitState)     -> String { s.buf }
-pub fn es_next_id(s: EmitState) -> i64    { s.next_id }
-pub fn es_last_id(s: EmitState) -> i64    { s.last_id }
+pub fn es_buf(s: EmitState) -> String {
+    s.buf
+}
+pub fn es_next_id(s: EmitState) -> i64 {
+    s.next_id
+}
+pub fn es_last_id(s: EmitState) -> i64 {
+    s.last_id
+}
 
 // ===== Byte writers =====
 //
@@ -149,11 +207,7 @@ pub fn es_last_id(s: EmitState) -> i64    { s.last_id }
 // vec_push).  Tail-recursive byte-array writers live below.
 
 pub fn es_push(s: EmitState, b: i64) -> EmitState {
-    EmitState {
-        buf: string_push_byte(s.buf, b),
-        next_id: s.next_id,
-        last_id: s.last_id,
-    }
+    EmitState { buf: string_push_byte(s.buf, b), next_id: s.next_id, last_id: s.last_id }
 }
 
 // ===== ASCII byte constants =====
@@ -161,15 +215,42 @@ pub fn es_push(s: EmitState, b: i64) -> EmitState {
 // Named so the emitter reads as text-level intent rather than a wall
 // of numeric magic.  All ASCII, no UTF-8 multi-byte involved.
 
-pub fn ch_space()    -> i64 { 32 }   // ' '
-pub fn ch_newline()  -> i64 { 10 }   // '\n'
-pub fn ch_percent()  -> i64 { 37 }   // '%'
-pub fn ch_eq_sign()  -> i64 { 61 }   // '='
-pub fn ch_comma()    -> i64 { 44 }   // ','
-pub fn ch_dot()      -> i64 { 46 }   // '.'
-pub fn ch_slash()    -> i64 { 47 }   // '/'
-pub fn ch_lbrace()   -> i64 { 123 }  // '{'
-pub fn ch_rbrace()   -> i64 { 125 }  // '}'
+pub fn ch_space() -> i64 {
+    32
+}
+// ' '
+pub fn ch_newline() -> i64 {
+    10
+}
+// '\n'
+pub fn ch_percent() -> i64 {
+    37
+}
+// '%'
+pub fn ch_eq_sign() -> i64 {
+    61
+}
+// '='
+pub fn ch_comma() -> i64 {
+    44
+}
+// ','
+pub fn ch_dot() -> i64 {
+    46
+}
+// '.'
+pub fn ch_slash() -> i64 {
+    47
+}
+// '/'
+pub fn ch_lbrace() -> i64 {
+    123
+}
+// '{'
+pub fn ch_rbrace() -> i64 {
+    125
+}
+// '}'
 
 // ===== Decimal i64 writer =====
 //
@@ -186,21 +267,27 @@ pub fn ch_rbrace()   -> i64 { 125 }  // '}'
 // empty string.
 
 pub fn emit_digits_collect(n: i64, acc: Vec) -> Vec {
-    if n == 0 { return acc; }
+    if n == 0 {
+        return acc;
+    }
     let d: i64 = n - (n / 10) * 10;
     let new_acc: Vec = vec_push(acc, 48 + d);
     emit_digits_collect(n / 10, new_acc)
 }
 
 pub fn emit_digits_flush(s: EmitState, digits: Vec, i: i64) -> EmitState {
-    if i < 0 { return s; }
+    if i < 0 {
+        return s;
+    }
     let b: i64 = vec_get(digits, i);
     let s2: EmitState = es_push(s, b);
     emit_digits_flush(s2, digits, i - 1)
 }
 
 pub fn emit_i64(s: EmitState, n: i64) -> EmitState {
-    if n == 0 { return es_push(s, 48); }
+    if n == 0 {
+        return es_push(s, 48);
+    }
     let collected: Vec = emit_digits_collect(n, vec_new());
     emit_digits_flush(s, collected, vec_len(collected) - 1)
 }
@@ -212,7 +299,9 @@ pub fn emit_i64(s: EmitState, n: i64) -> EmitState {
 // has no `while` statement.
 
 pub fn emit_byte_range(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
-    if lo >= hi { return s; }
+    if lo >= hi {
+        return s;
+    }
     let b: i64 = load_byte(buf, lo);
     let s2: EmitState = es_push(s, b);
     emit_byte_range(s2, buf, lo + 1, hi)
@@ -230,12 +319,18 @@ pub fn emit_byte_range(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
 
 // "module {\n"
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
-    let s1: EmitState = es_push(s,  109);   // 'm'
-    let s2: EmitState = es_push(s1, 111);   // 'o'
-    let s3: EmitState = es_push(s2, 100);   // 'd'
-    let s4: EmitState = es_push(s3, 117);   // 'u'
-    let s5: EmitState = es_push(s4, 108);   // 'l'
-    let s6: EmitState = es_push(s5, 101);   // 'e'
+    let s1: EmitState = es_push(s, 109);
+    // 'm'
+    let s2: EmitState = es_push(s1, 111);
+    // 'o'
+    let s3: EmitState = es_push(s2, 100);
+    // 'd'
+    let s4: EmitState = es_push(s3, 117);
+    // 'u'
+    let s5: EmitState = es_push(s4, 108);
+    // 'l'
+    let s6: EmitState = es_push(s5, 101);
+    // 'e'
     let s7: EmitState = es_push(s6, ch_space());
     let s8: EmitState = es_push(s7, ch_lbrace());
     es_push(s8, ch_newline())
@@ -243,47 +338,63 @@ pub fn emit_lit_module_open(s: EmitState) -> EmitState {
 
 // "  // fn "
 pub fn emit_lit_fn_comment_head(s: EmitState) -> EmitState {
-    let s1: EmitState = es_push(s,  ch_space());
+    let s1: EmitState = es_push(s, ch_space());
     let s2: EmitState = es_push(s1, ch_space());
     let s3: EmitState = es_push(s2, ch_slash());
     let s4: EmitState = es_push(s3, ch_slash());
     let s5: EmitState = es_push(s4, ch_space());
-    let s6: EmitState = es_push(s5, 102);    // 'f'
-    let s7: EmitState = es_push(s6, 110);    // 'n'
+    let s6: EmitState = es_push(s5, 102);
+    // 'f'
+    let s7: EmitState = es_push(s6, 110);
+    // 'n'
     es_push(s7, ch_space())
 }
 
 // "  " + "%" + decimal(id) + " = const.i64 "
 pub fn emit_lit_const_i64_head(s: EmitState, id: i64) -> EmitState {
-    let s1: EmitState = es_push(s,  ch_space());
+    let s1: EmitState = es_push(s, ch_space());
     let s2: EmitState = es_push(s1, ch_space());
     let s3: EmitState = es_push(s2, ch_percent());
     let s4: EmitState = emit_i64(s3, id);
     let s5: EmitState = es_push(s4, ch_space());
     let s6: EmitState = es_push(s5, ch_eq_sign());
     let s7: EmitState = es_push(s6, ch_space());
-    let s8: EmitState = es_push(s7, 99);     // 'c'
-    let s9: EmitState = es_push(s8, 111);    // 'o'
-    let s10: EmitState = es_push(s9, 110);   // 'n'
-    let s11: EmitState = es_push(s10, 115);  // 's'
-    let s12: EmitState = es_push(s11, 116);  // 't'
+    let s8: EmitState = es_push(s7, 99);
+    // 'c'
+    let s9: EmitState = es_push(s8, 111);
+    // 'o'
+    let s10: EmitState = es_push(s9, 110);
+    // 'n'
+    let s11: EmitState = es_push(s10, 115);
+    // 's'
+    let s12: EmitState = es_push(s11, 116);
+    // 't'
     let s13: EmitState = es_push(s12, ch_dot());
-    let s14: EmitState = es_push(s13, 105);  // 'i'
-    let s15: EmitState = es_push(s14, 54);   // '6'
-    let s16: EmitState = es_push(s15, 52);   // '4'
+    let s14: EmitState = es_push(s13, 105);
+    // 'i'
+    let s15: EmitState = es_push(s14, 54);
+    // '6'
+    let s16: EmitState = es_push(s15, 52);
+    // '4'
     es_push(s16, ch_space())
 }
 
 // "  output %" + decimal(id) + "\n"
 pub fn emit_lit_output(s: EmitState, id: i64) -> EmitState {
-    let s1: EmitState = es_push(s,  ch_space());
+    let s1: EmitState = es_push(s, ch_space());
     let s2: EmitState = es_push(s1, ch_space());
-    let s3: EmitState = es_push(s2, 111);    // 'o'
-    let s4: EmitState = es_push(s3, 117);    // 'u'
-    let s5: EmitState = es_push(s4, 116);    // 't'
-    let s6: EmitState = es_push(s5, 112);    // 'p'
-    let s7: EmitState = es_push(s6, 117);    // 'u'
-    let s8: EmitState = es_push(s7, 116);    // 't'
+    let s3: EmitState = es_push(s2, 111);
+    // 'o'
+    let s4: EmitState = es_push(s3, 117);
+    // 'u'
+    let s5: EmitState = es_push(s4, 116);
+    // 't'
+    let s6: EmitState = es_push(s5, 112);
+    // 'p'
+    let s7: EmitState = es_push(s6, 117);
+    // 'u'
+    let s8: EmitState = es_push(s7, 116);
+    // 't'
     let s9: EmitState = es_push(s8, ch_space());
     let s10: EmitState = es_push(s9, ch_percent());
     let s11: EmitState = emit_i64(s10, id);
@@ -292,19 +403,26 @@ pub fn emit_lit_output(s: EmitState, id: i64) -> EmitState {
 
 // "}  // next_id = " + decimal(next_id) + "\n"
 pub fn emit_lit_module_close(s: EmitState) -> EmitState {
-    let s1: EmitState = es_push(s,  ch_rbrace());
+    let s1: EmitState = es_push(s, ch_rbrace());
     let s2: EmitState = es_push(s1, ch_space());
     let s3: EmitState = es_push(s2, ch_space());
     let s4: EmitState = es_push(s3, ch_slash());
     let s5: EmitState = es_push(s4, ch_slash());
     let s6: EmitState = es_push(s5, ch_space());
-    let s7: EmitState = es_push(s6, 110);    // 'n'
-    let s8: EmitState = es_push(s7, 101);    // 'e'
-    let s9: EmitState = es_push(s8, 120);    // 'x'
-    let s10: EmitState = es_push(s9, 116);   // 't'
-    let s11: EmitState = es_push(s10, 95);   // '_'
-    let s12: EmitState = es_push(s11, 105);  // 'i'
-    let s13: EmitState = es_push(s12, 100);  // 'd'
+    let s7: EmitState = es_push(s6, 110);
+    // 'n'
+    let s8: EmitState = es_push(s7, 101);
+    // 'e'
+    let s9: EmitState = es_push(s8, 120);
+    // 'x'
+    let s10: EmitState = es_push(s9, 116);
+    // 't'
+    let s11: EmitState = es_push(s10, 95);
+    // '_'
+    let s12: EmitState = es_push(s11, 105);
+    // 'i'
+    let s13: EmitState = es_push(s12, 100);
+    // 'd'
     let s14: EmitState = es_push(s13, ch_space());
     let s15: EmitState = es_push(s14, ch_eq_sign());
     let s16: EmitState = es_push(s15, ch_space());
@@ -317,37 +435,55 @@ pub fn emit_lit_module_close(s: EmitState) -> EmitState {
 // src/ir/print.rs exactly.
 pub fn emit_op_mnemonic(s: EmitState, op: i64) -> EmitState {
     if op == op_add() {
-        let s1: EmitState = es_push(s, 97);   // 'a'
-        let s2: EmitState = es_push(s1, 100); // 'd'
-        return es_push(s2, 100);              // 'd'
+        let s1: EmitState = es_push(s, 97);
+        // 'a'
+        let s2: EmitState = es_push(s1, 100);
+        // 'd'
+        return es_push(s2, 100);
     }
+    // 'd'
     if op == op_sub() {
-        let s1: EmitState = es_push(s, 115);  // 's'
-        let s2: EmitState = es_push(s1, 117); // 'u'
-        return es_push(s2, 98);               // 'b'
+        let s1: EmitState = es_push(s, 115);
+        // 's'
+        let s2: EmitState = es_push(s1, 117);
+        // 'u'
+        return es_push(s2, 98);
     }
+    // 'b'
     if op == op_mul() {
-        let s1: EmitState = es_push(s, 109);  // 'm'
-        let s2: EmitState = es_push(s1, 117); // 'u'
-        return es_push(s2, 108);              // 'l'
+        let s1: EmitState = es_push(s, 109);
+        // 'm'
+        let s2: EmitState = es_push(s1, 117);
+        // 'u'
+        return es_push(s2, 108);
     }
+    // 'l'
     if op == op_div() {
-        let s1: EmitState = es_push(s, 100);  // 'd'
-        let s2: EmitState = es_push(s1, 105); // 'i'
-        return es_push(s2, 118);              // 'v'
+        let s1: EmitState = es_push(s, 100);
+        // 'd'
+        let s2: EmitState = es_push(s1, 105);
+        // 'i'
+        return es_push(s2, 118);
     }
+    // 'v'
     if op == op_lt() {
-        let s1: EmitState = es_push(s, 108);  // 'l'
-        return es_push(s1, 116);              // 't'
+        let s1: EmitState = es_push(s, 108);
+        // 'l'
+        return es_push(s1, 116);
     }
+    // 't'
     if op == op_gt() {
-        let s1: EmitState = es_push(s, 103);  // 'g'
-        return es_push(s1, 116);              // 't'
+        let s1: EmitState = es_push(s, 103);
+        // 'g'
+        return es_push(s1, 116);
     }
+    // 't'
     if op == op_eq() {
-        let s1: EmitState = es_push(s, 101);  // 'e'
-        return es_push(s1, 113);              // 'q'
+        let s1: EmitState = es_push(s, 101);
+        // 'e'
+        return es_push(s1, 113);
     }
+    // 'q'
     // Unknown op — fall through to "??" so the emitter never produces
     // an empty mnemonic (any byte-identical-output gate will catch
     // this immediately).
@@ -364,7 +500,9 @@ pub fn emit_op_mnemonic(s: EmitState, op: i64) -> EmitState {
 // gate keeps holding.  Tail-recursive accumulator pattern.
 
 pub fn parse_int_span(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
-    if lo >= hi { return acc; }
+    if lo >= hi {
+        return acc;
+    }
     let b: i64 = load_byte(buf, lo);
     parse_int_span(buf, lo + 1, hi, acc * 10 + (b - 48))
 }
@@ -397,7 +535,8 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
     if k == ast_ident() {
         let id: i64 = s.next_id;
         let s1: EmitState = emit_lit_const_i64_head(s, id);
-        let s2: EmitState = es_push(s1, 48);            // '0'
+        let s2: EmitState = es_push(s1, 48);
+        // '0'
         let s3: EmitState = es_push(s2, ch_newline());
         return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
     }
@@ -410,13 +549,13 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
         let rhs_id: i64 = s2.last_id;
         let id: i64 = s2.next_id;
         // "  %K = "
-        let s3: EmitState = es_push(s2,  ch_space());
-        let s4: EmitState = es_push(s3,  ch_space());
-        let s5: EmitState = es_push(s4,  ch_percent());
+        let s3: EmitState = es_push(s2, ch_space());
+        let s4: EmitState = es_push(s3, ch_space());
+        let s5: EmitState = es_push(s4, ch_percent());
         let s6: EmitState = emit_i64(s5, id);
-        let s7: EmitState = es_push(s6,  ch_space());
-        let s8: EmitState = es_push(s7,  ch_eq_sign());
-        let s9: EmitState = es_push(s8,  ch_space());
+        let s7: EmitState = es_push(s6, ch_space());
+        let s8: EmitState = es_push(s7, ch_eq_sign());
+        let s9: EmitState = es_push(s8, ch_space());
         // mnemonic
         let s10: EmitState = emit_op_mnemonic(s9, ast_aux(node));
         let s11: EmitState = es_push(s10, ch_space());
@@ -443,11 +582,12 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
     // branch in src/eval/lower.rs.
     if k == ast_call() {
         let args_addr: i64 = ast_child1(node);
-        let args_len: i64  = ast_aux(node);
+        let args_len: i64 = ast_aux(node);
         let s_args: EmitState = emit_call_args(s, buf, args_addr, args_len, 0);
         let id: i64 = s_args.next_id;
         let s1: EmitState = emit_lit_const_i64_head(s_args, id);
-        let s2: EmitState = es_push(s1, 48);            // '0'
+        let s2: EmitState = es_push(s1, 48);
+        // '0'
         let s3: EmitState = es_push(s2, ch_newline());
         return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
     }
@@ -465,7 +605,9 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
 // Tail-recursive call-arg lowerer.  `args_addr` is the i64 base of a
 // Vec<i64> of AST node addresses, `args_len` is the logical length.
 pub fn emit_call_args(s: EmitState, buf: i64, args_addr: i64, args_len: i64, i: i64) -> EmitState {
-    if i >= args_len { return s; }
+    if i >= args_len {
+        return s;
+    }
     let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
     let s1: EmitState = emit_expr(s, buf, arg_node);
     emit_call_args(s1, buf, args_addr, args_len, i + 1)
@@ -507,7 +649,9 @@ pub fn emit_stmt(s: EmitState, buf: i64, node: i64) -> EmitState {
 // expression value — used by emit_fn_def to decide which `%K` to
 // route into the function's `output` line.
 pub fn emit_block_stmts(s: EmitState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> EmitState {
-    if i >= stmts_len { return s; }
+    if i >= stmts_len {
+        return s;
+    }
     let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
     let s1: EmitState = emit_stmt(s, buf, stmt_node);
     emit_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1)
@@ -544,7 +688,8 @@ pub fn emit_fn_def(s: EmitState, buf: i64, node: i64) -> EmitState {
     // while the IR text stays narrow.
     let id: i64 = s3.next_id;
     let s4: EmitState = emit_lit_const_i64_head(s3, id);
-    let s5: EmitState = es_push(s4, 48);                  // '0'
+    let s5: EmitState = es_push(s4, 48);
+    // '0'
     let s6: EmitState = es_push(s5, ch_newline());
     let s7: EmitState = EmitState { buf: s6.buf, next_id: id + 1, last_id: id };
     emit_lit_output(s7, id)
@@ -557,7 +702,9 @@ pub fn emit_fn_def(s: EmitState, buf: i64, node: i64) -> EmitState {
 // items default to a no-op so the emitter never aborts.
 
 pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i64, i: i64) -> EmitState {
-    if i >= items_len { return s; }
+    if i >= items_len {
+        return s;
+    }
     let item: i64 = __mind_load_i64(items_addr + i * 8);
     let k: i64 = ast_kind(item);
     let s1: EmitState = if k == ast_fn_def() {
@@ -580,7 +727,7 @@ pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i6
 
 pub fn lower_program(ast_addr: i64, buf: i64) -> EmitState {
     let items_addr: i64 = ast_child0(ast_addr);
-    let items_len: i64  = ast_aux(ast_addr);
+    let items_len: i64 = ast_aux(ast_addr);
     let s0: EmitState = es_new();
     let s1: EmitState = emit_lit_module_open(s0);
     // mindc-Rust's format_ir_module emits a leading "%0 = const.i64 0
@@ -589,7 +736,8 @@ pub fn lower_program(ast_addr: i64, buf: i64) -> EmitState {
     // matches the fixture's EXPECTED.md byte-for-byte.
     let id0: i64 = s1.next_id;
     let s2: EmitState = emit_lit_const_i64_head(s1, id0);
-    let s3: EmitState = es_push(s2, 48);                  // '0'
+    let s3: EmitState = es_push(s2, 48);
+    // '0'
     let s4: EmitState = es_push(s3, ch_newline());
     let s5: EmitState = EmitState { buf: s4.buf, next_id: id0 + 1, last_id: id0 };
     let s6: EmitState = emit_lit_output(s5, id0);

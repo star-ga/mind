@@ -4,7 +4,7 @@
 // examples/lexer/EXPECTED.md.  Don't reformat without bumping the
 // expected stream.
 
-use std.vec;
+import std.vec;
 
 pub fn add(x: i64, y: i64) -> i64 {
     let z: i64 = x + y;
