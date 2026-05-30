@@ -383,8 +383,17 @@ impl LoweringContext {
                                 "    %{} = linalg.generic {{indexing_maps = [{}, {}, {}], \
                                  iterator_types = [{}]}} ins(%{}, %{} : {}, {}) \
                                  outs(%bcast{} : {}) {{",
-                                dst.0, lhs_aff, rhs_aff, out_aff, iters, lhs.0, rhs.0, lhs_ty,
-                                rhs_ty, dst.0, result_ty
+                                dst.0,
+                                lhs_aff,
+                                rhs_aff,
+                                out_aff,
+                                iters,
+                                lhs.0,
+                                rhs.0,
+                                lhs_ty,
+                                rhs_ty,
+                                dst.0,
+                                result_ty
                             ));
                             self.emit_line(&format!(
                                 "    ^bb0(%bcl{}: {elem}, %bcr{}: {elem}, %bco{}: {elem}):",
@@ -394,10 +403,7 @@ impl LoweringContext {
                                 "      %bcv{} = {} %bcl{}, %bcr{} : {elem}",
                                 dst.0, op_str, dst.0, dst.0
                             ));
-                            self.emit_line(&format!(
-                                "      linalg.yield %bcv{} : {elem}",
-                                dst.0
-                            ));
+                            self.emit_line(&format!("      linalg.yield %bcv{} : {elem}", dst.0));
                             self.emit_line(&format!("    }} -> {result_ty}"));
                             self.values.insert(
                                 *dst,
@@ -2849,7 +2855,10 @@ type BroadcastMaps = (Vec<ShapeDim>, Vec<String>, Vec<String>);
 /// (e.g. the `1` axes of `(4,1,3) + (1,5,3) -> (4,5,3)`). Only statically-known
 /// dimensions are handled; a symbolic dimension in a *broadcasting* position is
 /// rejected because it would emit MLIR with a non-numeric extent.
-fn broadcast_binop_maps(lhs: &[ShapeDim], rhs: &[ShapeDim]) -> Result<BroadcastMaps, MlirLowerError> {
+fn broadcast_binop_maps(
+    lhs: &[ShapeDim],
+    rhs: &[ShapeDim],
+) -> Result<BroadcastMaps, MlirLowerError> {
     let sym_err = || {
         MlirLowerError::ShapeError(
             "broadcasting tensors with symbolic dimensions is not yet supported in MLIR lowering"
