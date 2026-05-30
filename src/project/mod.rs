@@ -523,6 +523,21 @@ pub struct BuildOptions {
     /// extends `IRModule.exports` with these alongside any in-source
     /// `export { ... }` block.
     pub manifest_exports: Vec<String>,
+    /// Artifact kind being produced. A `cdylib` has a defined export
+    /// surface (the `[exports] c_abi` symbols), so it is built from the
+    /// single manifest entry through the shared-library link path — which
+    /// links the bundled runtime-support shim (`printI64`, `__mind_store_i8`,
+    /// vec/string/map intrinsics). The default whole-directory compile +
+    /// executable link path is reserved for `binary`/`object` emits, where
+    /// every sibling `.mind` is a translation unit of one program.
+    pub emit: EmitKind,
+    /// Explicit final artifact path (`--out`). For the `cdylib` path the
+    /// shared library is linked directly to this path, so concurrent
+    /// `mindc build` invocations with distinct `--out` targets never collide
+    /// on the shared `target/<profile>/<output_name>` intermediary (the
+    /// keystone test suite runs four `mindc build` processes in parallel).
+    /// `None` falls back to the manifest-derived `target/<profile>/<name>`.
+    pub out_path: Option<PathBuf>,
 }
 
 /// Build result
@@ -635,6 +650,41 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
         target_name.clone()
     };
 
+    // A cdylib has a single defined export surface (the `[exports] c_abi`
+    // symbols of the manifest entry); sibling `.mind` files are not
+    // translation units of one shared object. Building one cdylib out of
+    // every `.mind` in the entry directory pulls in each file's `main`
+    // wrapper, which collides at link time (`multiple definition of main`)
+    // and forces the launcher-stub fallback. Route the cdylib emit through
+    // the same shared-library link path the standalone `--emit-shared` flag
+    // uses (`mlir_build::build_all` with `emit_shared`), compiling only the
+    // entry — this links the bundled runtime-support shim so `printI64`,
+    // `__mind_store_i8`, and the vec/string/map intrinsics resolve, and
+    // yields the real, byte-identical ELF the Phase G keystone oracle
+    // expects. The executable link path below is unchanged for
+    // binary/object emits.
+    if opts.emit == EmitKind::Cdylib {
+        let entry_path = project_root.join(&manifest.build.entry);
+        // Link straight to the caller's `--out` when given, so concurrent
+        // cdylib builds don't race on the shared `target/<profile>/<name>`
+        // intermediary (and `run_build` needs no follow-up rename).
+        let cdylib_out = opts.out_path.clone().unwrap_or_else(|| output_path.clone());
+        if let Some(parent) = cdylib_out.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        build_cdylib_from_entry(&entry_path, &cdylib_out, &backend, opts)?;
+
+        if opts.verbose {
+            println!("  Output: {}", cdylib_out.display());
+        }
+
+        return Ok(BuildResult {
+            output_path: cdylib_out,
+            target: target_name,
+            success: true,
+        });
+    }
+
     // Build each source file and link
     let compiled = compile_sources(&project_root, &sources, &backend, opts)?;
 
@@ -650,6 +700,114 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
         target: target_name,
         success: true,
     })
+}
+
+/// Build a `cdylib` artifact from a single manifest entry.
+///
+/// This is the shared-library counterpart to the executable
+/// [`compile_sources`] + [`link_binary`] path. It mirrors the standalone
+/// `mindc --emit-shared <file>` pipeline exactly (RFC 0005 Phase 6.5
+/// Stage 1b): compile only the entry through the full pipeline, lower to
+/// MLIR, then call `mlir_build::build_all` with `emit_shared` — which
+/// compiles and links the bundled `runtime-support/mind_intrinsics.c` shim
+/// (`printI64`, `printNewline`, `__mind_store_i8`, vec/string/map
+/// intrinsics) into the `.so`. Without that shim the print/store symbols are
+/// undefined and the link fails, which previously triggered a silent
+/// launcher-stub fallback — exactly the false-green the Phase G keystone
+/// guards against (`#306`).
+///
+/// The byte-identity of the produced ELF is the keystone oracle (see
+/// `examples/mindc_mind/EXPECTED.md`): two runs of this path on the same
+/// source produce byte-identical output because the shim is compiled with a
+/// fixed `mind_intrinsics.c` basename + `-ffile-prefix-map` and no debug
+/// info (RFC 0015 bit-identity, enforced in `compile_runtime_support_obj`).
+#[cfg(feature = "mlir-build")]
+fn build_cdylib_from_entry(
+    entry_path: &Path,
+    output: &Path,
+    backend: &str,
+    opts: &BuildOptions,
+) -> Result<()> {
+    use crate::eval::mlir_build;
+    use crate::pipeline::{CompileOptions, compile_source_with_name, lower_to_mlir};
+    use crate::runtime::types::BackendTarget;
+
+    let source_code = fs::read_to_string(entry_path)
+        .with_context(|| format!("Failed to read entry source: {}", entry_path.display()))?;
+
+    // cdylib emit only targets the CPU backend in Phase A (the GPU/accelerator
+    // backends require the proprietary runtime for final emission). The
+    // executable path's backend → BackendTarget mapping is preserved for
+    // parity, but anything non-CPU surfaces a precise error rather than a stub.
+    let target = match backend {
+        "cuda" | "cuda-ampere" | "cuda-hopper" | "cuda-blackwell" | "cuda-rubin" | "rocm"
+        | "rocm-mi300" | "metal" | "metal-m4" | "webgpu" | "directx" | "oneapi" => {
+            BackendTarget::Gpu
+        }
+        "cerebras" | "wse" | "wse2" | "wse3" | "cs2" | "cs3" => BackendTarget::Cerebras,
+        _ => BackendTarget::Cpu,
+    };
+
+    let compile_opts = CompileOptions {
+        func: None,
+        enable_autodiff: false,
+        target,
+        manifest_exports: opts.manifest_exports.clone(),
+        ..Default::default()
+    };
+
+    let products = compile_source_with_name(
+        &source_code,
+        Some(&entry_path.to_string_lossy()),
+        &compile_opts,
+    )
+    .map_err(|e| anyhow!("cdylib compile failed for {}: {e}", entry_path.display()))?;
+
+    // Mirror the standalone `--emit-shared` lowering: `core` preset, no extra
+    // opt pipeline, host target triple. `lower_to_mlir` honours the `autodiff`
+    // feature's two-arity signature via the same compat shim the CLI uses.
+    #[cfg(feature = "autodiff")]
+    let mlir = lower_to_mlir(&products.ir, products.grad.as_ref())
+        .map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
+    #[cfg(not(feature = "autodiff"))]
+    let mlir = lower_to_mlir(&products.ir).map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
+
+    let tools =
+        mlir_build::resolve_tools().map_err(|e| anyhow!("MLIR build tools unavailable: {e}"))?;
+
+    let build_opts = mlir_build::BuildOptions {
+        preset: "core",
+        emit_mlir_file: None,
+        emit_llvm_file: None,
+        emit_obj_file: None,
+        emit_shared: Some(output),
+        opt_pipeline: None,
+        target_triple: None,
+    };
+
+    mlir_build::build_all(&mlir.primal_mlir, &tools, &build_opts)
+        .map_err(|e| anyhow!("cdylib link failed: {e}"))?;
+
+    Ok(())
+}
+
+/// `mlir-build` feature disabled: a `cdylib` cannot be emitted because the
+/// runtime-support shim link path lives behind that feature. Fail loudly
+/// instead of silently dropping to a launcher stub — a stub cannot satisfy
+/// the Phase G byte-identity keystone, so masking the missing backend here
+/// would re-introduce the `#306` false-green.
+#[cfg(not(feature = "mlir-build"))]
+fn build_cdylib_from_entry(
+    _entry_path: &Path,
+    _output: &Path,
+    _backend: &str,
+    _opts: &BuildOptions,
+) -> Result<()> {
+    Err(anyhow!(
+        "cdylib emit requires the 'mlir-build' feature (the runtime-support \
+         link path is gated behind it); rebuild mindc with \
+         --features mlir-build"
+    ))
 }
 
 /// Compile source files to object files
