@@ -199,6 +199,17 @@ pub fn run_build(opts: &BuildOpts) -> Result<BuildOutput, BuildError> {
         ),
     };
 
+    // Normalise the cdylib extension up front so the value threaded into the
+    // build (where the shared library is linked directly to this path) is the
+    // same path reported back to the caller. Otherwise the link would write to
+    // the un-suffixed path while the post-build `ensure_cdylib_extension`
+    // returns the suffixed path, leaving the artifact at the wrong name.
+    let artifact_path = match eff_emit {
+        EmitKind::Cdylib => ensure_cdylib_extension(artifact_path),
+        EmitKind::Object => ensure_object_extension(artifact_path),
+        EmitKind::Binary => artifact_path,
+    };
+
     // Ensure the parent directory exists.
     if let Some(parent) = artifact_path.parent() {
         fs::create_dir_all(parent)
@@ -572,7 +583,7 @@ fn legacy_opts_from(
     optimize: OptimizeLevel,
     manifest_exports: &[String],
     _entry_path: &Path,
-    _artifact_path: &Path,
+    artifact_path: &Path,
     verbose: bool,
 ) -> LegacyBuildOptions {
     let target_str = match target {
@@ -589,6 +600,14 @@ fn legacy_opts_from(
         } else {
             Vec::new()
         },
+        // Thread the emit kind so `build_project` routes `cdylib` through the
+        // single-entry shared-library link path (which links the runtime
+        // support shim) instead of the whole-directory executable link path.
+        emit,
+        // Thread the resolved `--out` so the cdylib link writes directly to
+        // the final path — no shared `target/<profile>/<name>` intermediary
+        // for concurrent builds to collide on.
+        out_path: Some(artifact_path.to_path_buf()),
     }
 }
 
