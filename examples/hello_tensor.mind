@@ -9,6 +9,7 @@
 
 fn main() -> f64 {
     let x: f64 = 3.0;
-    let y: f64 = x * x + 2.0 * x + 1.0;  // (x+1)^2 at x=3.0 → 16.0
+    let y: f64 = x * x + 2.0 * x + 1.0;
+    // (x+1)^2 at x=3.0 → 16.0
     return y;
 }

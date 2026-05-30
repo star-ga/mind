@@ -51,7 +51,7 @@
 // the comma-separated arg/param loops — all expressed as recursive
 // `parse_*_rest(toks, pos, acc) -> ParseResult` functions.
 
-use std.vec;
+import std.vec;
 
 // ===== AST kind tags =====
 //
@@ -59,30 +59,81 @@ use std.vec;
 // annotated variants but never renumber an existing tag — the
 // `EXPECTED.md` AST tree is keyed by these constants.
 
-pub fn ast_int_lit() -> i64 { 1 }   // span_lo/span_hi cover the literal bytes
-pub fn ast_ident() -> i64   { 2 }   // span covers the identifier
-pub fn ast_binop() -> i64   { 3 }   // child0 = lhs, child1 = rhs, aux = op tag
-pub fn ast_call() -> i64    { 4 }   // child0 = callee (ident node), child1 = Vec<i64> args
-pub fn ast_fn_def() -> i64  { 5 }   // child0 = name ident, child1 = Vec<i64> params, child2 = body block, aux = is_pub
-pub fn ast_let() -> i64     { 6 }   // child0 = name ident, child1 = type ident, child2 = init expr
-pub fn ast_use() -> i64     { 7 }   // child0 = path-head ident, child1 = path-tail ident
-pub fn ast_return() -> i64  { 8 }   // child0 = value expr
-pub fn ast_param() -> i64   { 9 }   // child0 = name ident, child1 = type ident
-pub fn ast_block() -> i64   { 10 }  // child0 = Vec<i64> stmts
-pub fn ast_program() -> i64 { 11 }  // child0 = Vec<i64> items
-pub fn ast_paren() -> i64   { 12 }  // child0 = inner expr (transparent for shape)
+pub fn ast_int_lit() -> i64 {
+    1
+}
+// span_lo/span_hi cover the literal bytes
+pub fn ast_ident() -> i64 {
+    2
+}
+// span covers the identifier
+pub fn ast_binop() -> i64 {
+    3
+}
+// child0 = lhs, child1 = rhs, aux = op tag
+pub fn ast_call() -> i64 {
+    4
+}
+// child0 = callee (ident node), child1 = Vec<i64> args
+pub fn ast_fn_def() -> i64 {
+    5
+}
+// child0 = name ident, child1 = Vec<i64> params, child2 = body block, aux = is_pub
+pub fn ast_let() -> i64 {
+    6
+}
+// child0 = name ident, child1 = type ident, child2 = init expr
+pub fn ast_use() -> i64 {
+    7
+}
+// child0 = path-head ident, child1 = path-tail ident
+pub fn ast_return() -> i64 {
+    8
+}
+// child0 = value expr
+pub fn ast_param() -> i64 {
+    9
+}
+// child0 = name ident, child1 = type ident
+pub fn ast_block() -> i64 {
+    10
+}
+// child0 = Vec<i64> stmts
+pub fn ast_program() -> i64 {
+    11
+}
+// child0 = Vec<i64> items
+pub fn ast_paren() -> i64 {
+    12
+}
+// child0 = inner expr (transparent for shape)
 
 // ===== Binop operator tags (subset of token kinds, copied so the
 // AST stays self-describing without forcing the type-checker to
 // pull in lexer constants). =====
 
-pub fn op_add() -> i64 { 1 }
-pub fn op_sub() -> i64 { 2 }
-pub fn op_mul() -> i64 { 3 }
-pub fn op_div() -> i64 { 4 }
-pub fn op_lt()  -> i64 { 5 }
-pub fn op_gt()  -> i64 { 6 }
-pub fn op_eq()  -> i64 { 7 }   // single `=` — treated as a binop for Phase 6.2
+pub fn op_add() -> i64 {
+    1
+}
+pub fn op_sub() -> i64 {
+    2
+}
+pub fn op_mul() -> i64 {
+    3
+}
+pub fn op_div() -> i64 {
+    4
+}
+pub fn op_lt() -> i64 {
+    5
+}
+pub fn op_gt() -> i64 {
+    6
+}
+pub fn op_eq() -> i64 {
+    7
+}
+// single `=` — treated as a binop for Phase 6.2
 
 // ===== Token-kind mirror (must match examples/lexer/main.mind) =====
 //
@@ -93,28 +144,72 @@ pub fn op_eq()  -> i64 { 7 }   // single `=` — treated as a binop for Phase 6.
 // fold the token-kind constants into a shared examples/lexer/tokens
 // module and import them from both sides.
 
-pub fn tk_eof()    -> i64 { 0 }
-pub fn tk_ident()  -> i64 { 1 }
-pub fn tk_int()    -> i64 { 2 }
-pub fn tk_lparen() -> i64 { 3 }
-pub fn tk_rparen() -> i64 { 4 }
-pub fn tk_lbrace() -> i64 { 5 }
-pub fn tk_rbrace() -> i64 { 6 }
-pub fn tk_comma()  -> i64 { 7 }
-pub fn tk_semi()   -> i64 { 8 }
-pub fn tk_colon()  -> i64 { 9 }
-pub fn tk_arrow()  -> i64 { 10 }
-pub fn tk_eq()     -> i64 { 11 }
-pub fn tk_plus()   -> i64 { 12 }
-pub fn tk_minus()  -> i64 { 13 }
-pub fn tk_star()   -> i64 { 14 }
-pub fn tk_slash()  -> i64 { 15 }
-pub fn tk_lt()     -> i64 { 16 }
-pub fn tk_gt()     -> i64 { 17 }
-pub fn tk_kw_fn()  -> i64 { 18 }
-pub fn tk_kw_let() -> i64 { 19 }
-pub fn tk_kw_use() -> i64 { 20 }
-pub fn tk_kw_pub() -> i64 { 21 }
+pub fn tk_eof() -> i64 {
+    0
+}
+pub fn tk_ident() -> i64 {
+    1
+}
+pub fn tk_int() -> i64 {
+    2
+}
+pub fn tk_lparen() -> i64 {
+    3
+}
+pub fn tk_rparen() -> i64 {
+    4
+}
+pub fn tk_lbrace() -> i64 {
+    5
+}
+pub fn tk_rbrace() -> i64 {
+    6
+}
+pub fn tk_comma() -> i64 {
+    7
+}
+pub fn tk_semi() -> i64 {
+    8
+}
+pub fn tk_colon() -> i64 {
+    9
+}
+pub fn tk_arrow() -> i64 {
+    10
+}
+pub fn tk_eq() -> i64 {
+    11
+}
+pub fn tk_plus() -> i64 {
+    12
+}
+pub fn tk_minus() -> i64 {
+    13
+}
+pub fn tk_star() -> i64 {
+    14
+}
+pub fn tk_slash() -> i64 {
+    15
+}
+pub fn tk_lt() -> i64 {
+    16
+}
+pub fn tk_gt() -> i64 {
+    17
+}
+pub fn tk_kw_fn() -> i64 {
+    18
+}
+pub fn tk_kw_let() -> i64 {
+    19
+}
+pub fn tk_kw_use() -> i64 {
+    20
+}
+pub fn tk_kw_pub() -> i64 {
+    21
+}
 
 // ===== Token-stream accessors =====
 //
@@ -140,8 +235,12 @@ pub fn tok_count(toks: Vec) -> i64 {
 // Cheap "are we at EOF?" — used to terminate every recursive loop
 // without relying on a sentinel position past the array.
 pub fn at_eof(toks: Vec, pos: i64) -> i64 {
-    if pos >= tok_count(toks) { return 1; }
-    if tok_kind(toks, pos) == tk_eof() { return 1; }
+    if pos >= tok_count(toks) {
+        return 1;
+    }
+    if tok_kind(toks, pos) == tk_eof() {
+        return 1;
+    }
     0
 }
 
@@ -173,8 +272,8 @@ pub fn ast_alloc() -> i64 {
 
 pub fn ast_new_leaf(kind: i64, span_lo: i64, span_hi: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  kind);
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, kind);
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, 0);
     __mind_store_i64(n + 32, 0);
@@ -185,8 +284,8 @@ pub fn ast_new_leaf(kind: i64, span_lo: i64, span_hi: i64) -> i64 {
 
 pub fn ast_new_binop(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64, op: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_binop());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_binop());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, lhs);
     __mind_store_i64(n + 32, rhs);
@@ -197,8 +296,8 @@ pub fn ast_new_binop(span_lo: i64, span_hi: i64, lhs: i64, rhs: i64, op: i64) ->
 
 pub fn ast_new_call(span_lo: i64, span_hi: i64, callee: i64, args_vec_addr: i64, args_len: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_call());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_call());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, callee);
     __mind_store_i64(n + 32, args_vec_addr);
@@ -207,12 +306,10 @@ pub fn ast_new_call(span_lo: i64, span_hi: i64, callee: i64, args_vec_addr: i64,
     n
 }
 
-pub fn ast_new_fn_def(span_lo: i64, span_hi: i64,
-                      name: i64, params_addr: i64, body: i64,
-                      params_len: i64, is_pub: i64) -> i64 {
+pub fn ast_new_fn_def(span_lo: i64, span_hi: i64, name: i64, params_addr: i64, body: i64, params_len: i64, is_pub: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_fn_def());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_fn_def());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, name);
     __mind_store_i64(n + 32, params_addr);
@@ -226,8 +323,8 @@ pub fn ast_new_fn_def(span_lo: i64, span_hi: i64,
 
 pub fn ast_new_let(span_lo: i64, span_hi: i64, name: i64, ty: i64, init: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_let());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_let());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, name);
     __mind_store_i64(n + 32, ty);
@@ -238,8 +335,8 @@ pub fn ast_new_let(span_lo: i64, span_hi: i64, name: i64, ty: i64, init: i64) ->
 
 pub fn ast_new_use(span_lo: i64, span_hi: i64, head: i64, tail: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_use());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_use());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, head);
     __mind_store_i64(n + 32, tail);
@@ -250,8 +347,8 @@ pub fn ast_new_use(span_lo: i64, span_hi: i64, head: i64, tail: i64) -> i64 {
 
 pub fn ast_new_return(span_lo: i64, span_hi: i64, value: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_return());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_return());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, value);
     __mind_store_i64(n + 32, 0);
@@ -262,8 +359,8 @@ pub fn ast_new_return(span_lo: i64, span_hi: i64, value: i64) -> i64 {
 
 pub fn ast_new_param(span_lo: i64, span_hi: i64, name: i64, ty: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_param());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_param());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, name);
     __mind_store_i64(n + 32, ty);
@@ -274,8 +371,8 @@ pub fn ast_new_param(span_lo: i64, span_hi: i64, name: i64, ty: i64) -> i64 {
 
 pub fn ast_new_block(span_lo: i64, span_hi: i64, stmts_addr: i64, stmts_len: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_block());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_block());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, stmts_addr);
     __mind_store_i64(n + 32, 0);
@@ -286,8 +383,8 @@ pub fn ast_new_block(span_lo: i64, span_hi: i64, stmts_addr: i64, stmts_len: i64
 
 pub fn ast_new_program(span_lo: i64, span_hi: i64, items_addr: i64, items_len: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_program());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_program());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, items_addr);
     __mind_store_i64(n + 32, 0);
@@ -298,8 +395,8 @@ pub fn ast_new_program(span_lo: i64, span_hi: i64, items_addr: i64, items_len: i
 
 pub fn ast_new_paren(span_lo: i64, span_hi: i64, inner: i64) -> i64 {
     let n: i64 = ast_alloc();
-    __mind_store_i64(n + 0,  ast_paren());
-    __mind_store_i64(n + 8,  span_lo);
+    __mind_store_i64(n + 0, ast_paren());
+    __mind_store_i64(n + 8, span_lo);
     __mind_store_i64(n + 16, span_hi);
     __mind_store_i64(n + 24, inner);
     __mind_store_i64(n + 32, 0);
@@ -311,13 +408,27 @@ pub fn ast_new_paren(span_lo: i64, span_hi: i64, inner: i64) -> i64 {
 // ===== AST accessors (for downstream consumers, e.g. Phase 6.3
 // type-checker walking the heap-record tree). =====
 
-pub fn ast_kind(node: i64)    -> i64 { __mind_load_i64(node + 0) }
-pub fn ast_span_lo(node: i64) -> i64 { __mind_load_i64(node + 8) }
-pub fn ast_span_hi(node: i64) -> i64 { __mind_load_i64(node + 16) }
-pub fn ast_child0(node: i64)  -> i64 { __mind_load_i64(node + 24) }
-pub fn ast_child1(node: i64)  -> i64 { __mind_load_i64(node + 32) }
-pub fn ast_child2(node: i64)  -> i64 { __mind_load_i64(node + 40) }
-pub fn ast_aux(node: i64)     -> i64 { __mind_load_i64(node + 48) }
+pub fn ast_kind(node: i64) -> i64 {
+    __mind_load_i64(node + 0)
+}
+pub fn ast_span_lo(node: i64) -> i64 {
+    __mind_load_i64(node + 8)
+}
+pub fn ast_span_hi(node: i64) -> i64 {
+    __mind_load_i64(node + 16)
+}
+pub fn ast_child0(node: i64) -> i64 {
+    __mind_load_i64(node + 24)
+}
+pub fn ast_child1(node: i64) -> i64 {
+    __mind_load_i64(node + 32)
+}
+pub fn ast_child2(node: i64) -> i64 {
+    __mind_load_i64(node + 40)
+}
+pub fn ast_aux(node: i64) -> i64 {
+    __mind_load_i64(node + 48)
+}
 
 // ===== ParseResult — threaded through every parse_* function =====
 //
@@ -341,8 +452,12 @@ pub fn pr_new(next_pos: i64, node: i64) -> ParseResult {
     ParseResult { next_pos: next_pos, node: node }
 }
 
-pub fn pr_pos(r: ParseResult)  -> i64 { r.next_pos }
-pub fn pr_node(r: ParseResult) -> i64 { r.node }
+pub fn pr_pos(r: ParseResult) -> i64 {
+    r.next_pos
+}
+pub fn pr_node(r: ParseResult) -> i64 {
+    r.node
+}
 
 // ===== Token-kind helpers (mirror the lexer's load_byte for the
 // byte-level keyword detection used to spot `return`). =====
@@ -357,14 +472,25 @@ pub fn load_byte(buf: i64, i: i64) -> i64 {
 // can replace this with a tk_kw_return() check trivially.
 pub fn is_ident_return(buf: i64, lo: i64, hi: i64) -> i64 {
     if hi - lo == 6 {
-        if load_byte(buf, lo)     == 114 {     // 'r'
-        if load_byte(buf, lo + 1) == 101 {     // 'e'
-        if load_byte(buf, lo + 2) == 116 {     // 't'
-        if load_byte(buf, lo + 3) == 117 {     // 'u'
-        if load_byte(buf, lo + 4) == 114 {     // 'r'
-        if load_byte(buf, lo + 5) == 110 {     // 'n'
-            return 1;
-        } } } } } }
+        if load_byte(buf, lo) == 114 {
+            // 'r'
+            if load_byte(buf, lo + 1) == 101 {
+                // 'e'
+                if load_byte(buf, lo + 2) == 116 {
+                    // 't'
+                    if load_byte(buf, lo + 3) == 117 {
+                        // 'u'
+                        if load_byte(buf, lo + 4) == 114 {
+                            // 'r'
+                            if load_byte(buf, lo + 5) == 110 {
+                                // 'n'
+                                return 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     0
 }
@@ -376,24 +502,52 @@ pub fn is_ident_return(buf: i64, lo: i64, hi: i64) -> i64 {
 // table (the rhs is parsed at `prec + 1`).
 
 pub fn infix_prec(kind: i64) -> i64 {
-    if kind == tk_eq()    { return 1; }
-    if kind == tk_lt()    { return 2; }
-    if kind == tk_gt()    { return 2; }
-    if kind == tk_plus()  { return 3; }
-    if kind == tk_minus() { return 3; }
-    if kind == tk_star()  { return 4; }
-    if kind == tk_slash() { return 4; }
+    if kind == tk_eq() {
+        return 1;
+    }
+    if kind == tk_lt() {
+        return 2;
+    }
+    if kind == tk_gt() {
+        return 2;
+    }
+    if kind == tk_plus() {
+        return 3;
+    }
+    if kind == tk_minus() {
+        return 3;
+    }
+    if kind == tk_star() {
+        return 4;
+    }
+    if kind == tk_slash() {
+        return 4;
+    }
     0
 }
 
 pub fn tk_to_op(kind: i64) -> i64 {
-    if kind == tk_plus()  { return op_add(); }
-    if kind == tk_minus() { return op_sub(); }
-    if kind == tk_star()  { return op_mul(); }
-    if kind == tk_slash() { return op_div(); }
-    if kind == tk_lt()    { return op_lt(); }
-    if kind == tk_gt()    { return op_gt(); }
-    if kind == tk_eq()    { return op_eq(); }
+    if kind == tk_plus() {
+        return op_add();
+    }
+    if kind == tk_minus() {
+        return op_sub();
+    }
+    if kind == tk_star() {
+        return op_mul();
+    }
+    if kind == tk_slash() {
+        return op_div();
+    }
+    if kind == tk_lt() {
+        return op_lt();
+    }
+    if kind == tk_gt() {
+        return op_gt();
+    }
+    if kind == tk_eq() {
+        return op_eq();
+    }
     0
 }
 
@@ -473,8 +627,7 @@ pub fn parse_call(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     // Handle the empty-arg-list case directly.
     if tok_kind(toks, after_open) == tk_rparen() {
         let close_hi: i64 = tok_hi(toks, after_open);
-        let call_node: i64 = ast_new_call(lo, close_hi, callee,
-                                          vec_addr(empty_args), 0);
+        let call_node: i64 = ast_new_call(lo, close_hi, callee, vec_addr(empty_args), 0);
         return pr_new(after_open + 1, call_node);
     }
 
@@ -485,7 +638,7 @@ pub fn parse_call(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     // — we extract those rather than threading a Vec separately.
     let args_node: i64 = pr_node(args_res);
     let args_addr: i64 = ast_child0(args_node);
-    let args_len: i64  = ast_aux(args_node);
+    let args_len: i64 = ast_aux(args_node);
 
     let close_hi: i64 = tok_hi(toks, after_args);
     let after_close: i64 = if tok_kind(toks, after_args) == tk_rparen() {
@@ -528,11 +681,17 @@ pub fn parse_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 }
 
 pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
-    if at_eof(toks, pos) == 1 { return pr_new(pos, lhs); }
+    if at_eof(toks, pos) == 1 {
+        return pr_new(pos, lhs);
+    }
     let k: i64 = tok_kind(toks, pos);
     let prec: i64 = infix_prec(k);
-    if prec == 0 { return pr_new(pos, lhs); }
-    if prec < min_prec { return pr_new(pos, lhs); }
+    if prec == 0 {
+        return pr_new(pos, lhs);
+    }
+    if prec < min_prec {
+        return pr_new(pos, lhs);
+    }
 
     let op_tag: i64 = tk_to_op(k);
     // Recursive descent for the right operand at prec+1 (left-assoc).
@@ -555,7 +714,9 @@ pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> Pa
 
 pub fn parse_stmt(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let k: i64 = tok_kind(toks, pos);
-    if k == tk_kw_let() { return parse_let(toks, pos, buf); }
+    if k == tk_kw_let() {
+        return parse_let(toks, pos, buf);
+    }
     if k == tk_ident() {
         let lo: i64 = tok_lo(toks, pos);
         let hi: i64 = tok_hi(toks, pos);
@@ -630,7 +791,7 @@ pub fn parse_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     // accumulated stmts vec.
     let stmts_node: i64 = pr_node(body);
     let stmts_addr: i64 = ast_child0(stmts_node);
-    let stmts_len: i64  = ast_aux(stmts_node);
+    let stmts_len: i64 = ast_aux(stmts_node);
 
     let close_hi: i64 = tok_hi(toks, after_body);
     let after_close: i64 = if tok_kind(toks, after_body) == tk_rbrace() {
@@ -678,7 +839,7 @@ pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
     let after_params: i64 = pr_pos(params_res);
     let params_node: i64 = pr_node(params_res);
     let params_addr: i64 = ast_child0(params_node);
-    let params_len: i64  = ast_aux(params_node);
+    let params_len: i64 = ast_aux(params_node);
 
     // after_params should be at ")"; advance past it.
     let after_rparen: i64 = if tok_kind(toks, after_params) == tk_rparen() {
@@ -701,9 +862,7 @@ pub fn parse_fn_def(toks: Vec, pos: i64, buf: i64, is_pub: i64) -> ParseResult {
     let body_res: ParseResult = parse_block(toks, after_ret, buf);
     let body_hi: i64 = ast_span_hi(pr_node(body_res));
 
-    let fn_node: i64 = ast_new_fn_def(fn_lo, body_hi,
-                                       name, params_addr, pr_node(body_res),
-                                       params_len, is_pub);
+    let fn_node: i64 = ast_new_fn_def(fn_lo, body_hi, name, params_addr, pr_node(body_res), params_len, is_pub);
     pr_new(pr_pos(body_res), fn_node)
 }
 
@@ -770,7 +929,9 @@ pub fn parse_use(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 
 pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let k: i64 = tok_kind(toks, pos);
-    if k == tk_kw_use() { return parse_use(toks, pos, buf); }
+    if k == tk_kw_use() {
+        return parse_use(toks, pos, buf);
+    }
     if k == tk_kw_pub() {
         // pos + 1 should be "fn"
         return parse_fn_def(toks, pos + 1, buf, 1);
@@ -809,6 +970,6 @@ pub fn parse(toks: Vec, buf: i64) -> i64 {
     let res: ParseResult = parse_items_rest(toks, 0, buf, acc);
     let s: i64 = pr_node(res);
     let items_addr: i64 = ast_child0(s);
-    let items_len: i64  = ast_aux(s);
+    let items_len: i64 = ast_aux(s);
     ast_new_program(0, 0, items_addr, items_len)
 }
