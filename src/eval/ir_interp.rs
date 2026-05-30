@@ -62,6 +62,18 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, out.clone());
                 last = out;
             }
+            Instr::Relu { dst, src } => {
+                let input = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let out = match input {
+                    // ReLU preserves shape; the constant-fill preview clamps at 0.
+                    Value::Tensor(t) => {
+                        Value::Tensor(TensorVal::new(t.dtype, t.shape, t.fill.map(|f| f.max(0.0))))
+                    }
+                    other => other,
+                };
+                vals.insert(*dst, out.clone());
+                last = out;
+            }
             Instr::Reshape {
                 dst,
                 src,

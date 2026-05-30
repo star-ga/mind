@@ -36,3 +36,26 @@ fn mlir_export_emits_linalg_dot_and_matmul() {
         "expected linalg.matmul in {mlir}"
     );
 }
+
+/// Eval-path emitter must lower `tensor.relu` to a `linalg.generic` with
+/// `arith.maximumf` — not silently drop it (audit H2). Mirrors the canonical
+/// pipeline emitter.
+#[test]
+fn mlir_export_emits_relu_maximumf() {
+    let src = r#"
+        let a: Tensor[f32,(4,8)] = 1;
+        tensor.relu(a)
+    "#;
+    let module = parser::parse(src).expect("parse relu module");
+    let ir = eval::lower_to_ir(&module);
+    let mlir = eval::to_mlir(&ir, "main");
+    eprintln!("=== eval relu MLIR ===\n{mlir}\n======================");
+    assert!(
+        mlir.contains("linalg.generic"),
+        "expected linalg.generic in {mlir}"
+    );
+    assert!(
+        mlir.contains("arith.maximumf"),
+        "expected arith.maximumf in {mlir}"
+    );
+}
