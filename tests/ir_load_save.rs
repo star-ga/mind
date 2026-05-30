@@ -121,3 +121,48 @@ fn ir_save_load_round_trips_relu() {
         "relu save->load->save must be a fixed point"
     );
 }
+
+/// Regression: backward ReLU (`ReluGrad`) must survive the mic@1 text round-trip
+/// (exercises `parse_relu_grad`). Built directly — the op is autodiff-internal
+/// with no surface syntax. trace_hash is SHA-256 of this text (RFC 0016), so a
+/// dropped/mis-parsed backward op would attest incomplete gradient IR.
+#[test]
+fn ir_save_load_round_trips_relu_grad() {
+    use libmind::ir::{IRModule, Instr};
+    use libmind::types::{DType, ShapeDim};
+
+    let mut module = IRModule::new();
+    let g = module.fresh();
+    module.instrs.push(Instr::ConstTensor(
+        g,
+        DType::F32,
+        vec![ShapeDim::Known(4)],
+        None,
+    ));
+    let x = module.fresh();
+    module.instrs.push(Instr::ConstTensor(
+        x,
+        DType::F32,
+        vec![ShapeDim::Known(4)],
+        None,
+    ));
+    let dx = module.fresh();
+    module.instrs.push(Instr::ReluGrad {
+        dst: dx,
+        grad: g,
+        src: x,
+    });
+    module.instrs.push(Instr::Output(dx));
+
+    let mic_text = ir::save(&module);
+    assert!(
+        mic_text.contains(" relu_grad "),
+        "mic@1 text must contain the relu_grad node, got:\n{mic_text}"
+    );
+    let loaded = ir::load(mic_text.as_bytes()).expect("load relu_grad mic@1");
+    assert_eq!(
+        ir::save(&loaded),
+        mic_text,
+        "relu_grad save->load->save must be a fixed point"
+    );
+}

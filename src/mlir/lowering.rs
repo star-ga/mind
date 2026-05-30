@@ -508,6 +508,14 @@ impl LoweringContext {
                 // elementwise map (no reassociation), so Q16.16 bit-identity holds.
                 let info = self.tensor_info(src, "relu")?;
                 let elem = info.dtype.as_str();
+                // relu(x) = max(x, 0); the max op + zero literal are dtype-
+                // dependent: float uses `arith.maximumf` vs `0.0`, integer/
+                // Q16.16 uses `arith.maxsi` vs `0` (a float op/literal on an
+                // integer type is invalid MLIR). Pure elementwise either way.
+                let (zero_lit, max_op) = match &info.dtype {
+                    DType::F32 | DType::F16 | DType::BF16 => ("0.0", "arith.maximumf"),
+                    _ => ("0", "arith.maxsi"),
+                };
                 let ty = tensor_type(&info.shape, elem);
                 let rank = info.shape.len();
                 let dims = (0..rank)
@@ -516,7 +524,10 @@ impl LoweringContext {
                     .join(", ");
                 let iters = vec!["\"parallel\""; rank].join(", ");
                 let id_map = format!("affine_map<({dims}) -> ({dims})>");
-                self.emit_line(&format!("    %zero{} = arith.constant 0.0 : {elem}", dst.0));
+                self.emit_line(&format!(
+                    "    %zero{} = arith.constant {zero_lit} : {elem}",
+                    dst.0
+                ));
                 self.emit_line(&format!("    %tmp{} = tensor.empty() : {ty}", dst.0));
                 self.emit_line(&format!(
                     "    %{} = linalg.generic {{indexing_maps = [{id_map}, {id_map}], \
@@ -528,10 +539,67 @@ impl LoweringContext {
                     dst.0, dst.0
                 ));
                 self.emit_line(&format!(
-                    "      %rmax{} = arith.maximumf %rin{}, %zero{} : {elem}",
+                    "      %rmax{} = {max_op} %rin{}, %zero{} : {elem}",
                     dst.0, dst.0, dst.0
                 ));
                 self.emit_line(&format!("      linalg.yield %rmax{} : {elem}", dst.0));
+                self.emit_line(&format!("    }} -> {ty}"));
+                self.values.insert(
+                    *dst,
+                    ValueKind::Tensor {
+                        dtype: info.dtype.clone(),
+                        shape: info.shape.clone(),
+                    },
+                );
+            }
+            Instr::ReluGrad { dst, grad, src } => {
+                // RFC 0012 backward activation: dx = select(src > 0, grad, 0).
+                // Emitted as a two-input shape-preserving `linalg.generic` whose
+                // body does `arith.cmpf "ogt"` against a captured `0.0` then
+                // `arith.select` — a pure elementwise map (no reassociation), so
+                // cross-substrate Q16.16 bit-identity holds. `grad` (upstream)
+                // and `src` (the ReLU input) share the same shape.
+                let info = self.tensor_info(src, "relu_grad")?;
+                let elem = info.dtype.as_str();
+                // ReLU-backward gate is dtype-dependent: float tensors compare
+                // with `cmpf "ogt"` vs a `0.0` constant; integer/Q16.16 tensors
+                // must use `cmpi "sgt"` vs `0` (a float literal or `cmpf` on an
+                // integer type is invalid MLIR). Pure elementwise either way.
+                let (zero_lit, cmp_op) = match &info.dtype {
+                    DType::F32 | DType::F16 | DType::BF16 => ("0.0", "arith.cmpf \"ogt\""),
+                    _ => ("0", "arith.cmpi \"sgt\""),
+                };
+                let ty = tensor_type(&info.shape, elem);
+                let rank = info.shape.len();
+                let dims = (0..rank)
+                    .map(|d| format!("d{d}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let iters = vec!["\"parallel\""; rank].join(", ");
+                let id_map = format!("affine_map<({dims}) -> ({dims})>");
+                self.emit_line(&format!(
+                    "    %zero{} = arith.constant {zero_lit} : {elem}",
+                    dst.0
+                ));
+                self.emit_line(&format!("    %tmp{} = tensor.empty() : {ty}", dst.0));
+                self.emit_line(&format!(
+                    "    %{} = linalg.generic {{indexing_maps = [{id_map}, {id_map}, {id_map}], \
+                     iterator_types = [{iters}]}} ins(%{}, %{} : {ty}, {ty}) outs(%tmp{} : {ty}) {{",
+                    dst.0, grad.0, src.0, dst.0
+                ));
+                self.emit_line(&format!(
+                    "    ^bb0(%rg{}: {elem}, %rx{}: {elem}, %rout{}: {elem}):",
+                    dst.0, dst.0, dst.0
+                ));
+                self.emit_line(&format!(
+                    "      %rmask{} = {cmp_op} %rx{}, %zero{} : {elem}",
+                    dst.0, dst.0, dst.0
+                ));
+                self.emit_line(&format!(
+                    "      %rsel{} = arith.select %rmask{}, %rg{}, %zero{} : {elem}",
+                    dst.0, dst.0, dst.0, dst.0
+                ));
+                self.emit_line(&format!("      linalg.yield %rsel{} : {elem}", dst.0));
                 self.emit_line(&format!("    }} -> {ty}"));
                 self.values.insert(
                     *dst,

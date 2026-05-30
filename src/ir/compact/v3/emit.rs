@@ -65,6 +65,9 @@ pub(super) const OP_EXTERN_FN_DECL: u8 = 0x25;
 /// Elementwise ReLU (`{dst, src}`). Appended (never inserted) so existing
 /// mic@3 byte streams — and their `trace_hash` — are unchanged.
 pub(super) const OP_RELU: u8 = 0x26;
+/// Backward ReLU (`{dst, grad, src}`): `dx = grad * step(src)`. Appended after
+/// `OP_RELU` so existing mic@3 byte streams and their `trace_hash` are unchanged.
+pub(super) const OP_RELU_GRAD: u8 = 0x27;
 
 // ─── DType byte tags ─────────────────────────────────────────────────────────
 
@@ -810,6 +813,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
         Instr::Relu { dst, src } => {
             w.write_all(&[OP_RELU]).unwrap();
             write_vid(w, *dst).unwrap();
+            write_vid(w, *src).unwrap();
+        }
+        Instr::ReluGrad { dst, grad, src } => {
+            w.write_all(&[OP_RELU_GRAD]).unwrap();
+            write_vid(w, *dst).unwrap();
+            write_vid(w, *grad).unwrap();
             write_vid(w, *src).unwrap();
         }
         Instr::Reshape {

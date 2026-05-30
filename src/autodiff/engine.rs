@@ -246,6 +246,15 @@ impl<'a> GradientBuilder<'a> {
         dst
     }
 
+    fn add_relu_grad(&mut self, grad: ValueId, src: ValueId) -> ValueId {
+        let dst = ValueId(self.gradient.next_id);
+        self.gradient.next_id += 1;
+        self.gradient
+            .instrs
+            .push(Instr::ReluGrad { dst, grad, src });
+        dst
+    }
+
     fn add_grad(&mut self, target: ValueId, contribution: ValueId) {
         match self.grads.get(&target).copied() {
             None => {
@@ -276,6 +285,7 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Conv2d { dst, .. }
         | Instr::Conv2dGradInput { dst, .. }
         | Instr::Conv2dGradFilter { dst, .. }
+        | Instr::ReluGrad { dst, .. }
         | Instr::Index { dst, .. }
         | Instr::Slice { dst, .. }
         | Instr::Gather { dst, .. } => Some(*dst),
@@ -301,6 +311,8 @@ pub(super) trait GradientOps {
     fn add_binop(&mut self, op: BinOp, lhs: ValueId, rhs: ValueId) -> ValueId;
     fn add_transpose(&mut self, src: ValueId, perm: Vec<i64>) -> ValueId;
     fn add_matmul(&mut self, a: ValueId, b: ValueId) -> ValueId;
+    /// Emit `dx = relu_grad(grad, src) = grad * step(src)` (backward ReLU).
+    fn add_relu_grad(&mut self, grad: ValueId, src: ValueId) -> ValueId;
     fn add_grad(&mut self, target: ValueId, contribution: ValueId);
 }
 
@@ -319,6 +331,10 @@ impl<'a> GradientOps for GradientBuilder<'a> {
 
     fn add_matmul(&mut self, a: ValueId, b: ValueId) -> ValueId {
         self.add_matmul(a, b)
+    }
+
+    fn add_relu_grad(&mut self, grad: ValueId, src: ValueId) -> ValueId {
+        self.add_relu_grad(grad, src)
     }
 
     fn add_grad(&mut self, target: ValueId, contribution: ValueId) {

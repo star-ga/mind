@@ -91,6 +91,8 @@
 //! | 0x23 | VecReduceAddI64 (std-surface) |
 //! | 0x24 | Region (std-surface) |
 //! | 0x25 | ExternFnDecl (std-surface) |
+//! | 0x26 | Relu |
+//! | 0x27 | ReluGrad |
 
 mod emit;
 pub mod evidence;
@@ -345,6 +347,8 @@ mod tests {
         let v2 = m.fresh();
         let v3 = m.fresh();
         let v4 = m.fresh();
+        let v5 = m.fresh();
+        let v6 = m.fresh();
         m.instrs.push(Instr::ConstTensor(
             v0,
             DType::F32,
@@ -392,6 +396,13 @@ mod tests {
             stride_h: 1,
             stride_w: 1,
             padding: ConvPadding::Same,
+        });
+        // Exercise forward + backward ReLU on the mic@3 wire path.
+        m.instrs.push(Instr::Relu { dst: v5, src: v2 });
+        m.instrs.push(Instr::ReluGrad {
+            dst: v6,
+            grad: v5,
+            src: v2,
         });
         m.instrs.push(Instr::Output(v2));
 

@@ -59,3 +59,48 @@ fn mlir_export_emits_relu_maximumf() {
         "expected arith.maximumf in {mlir}"
     );
 }
+
+/// Eval-path emitter must lower backward ReLU (`ReluGrad`) to a `linalg.generic`
+/// with `arith.cmpf "ogt"` + `arith.select` — the masked gradient gate — and not
+/// silently drop it. Built directly (well-typed grad+src tensors) since there is
+/// no surface syntax for the autodiff-internal backward op.
+#[test]
+fn mlir_export_emits_relu_grad_cmpf_select() {
+    use libmind::ir::{IRModule, Instr};
+    use libmind::types::{DType, ShapeDim};
+
+    let mut ir = IRModule::new();
+    let g = ir.fresh();
+    ir.instrs.push(Instr::ConstTensor(
+        g,
+        DType::F32,
+        vec![ShapeDim::Known(4)],
+        None,
+    ));
+    let x = ir.fresh();
+    ir.instrs.push(Instr::ConstTensor(
+        x,
+        DType::F32,
+        vec![ShapeDim::Known(4)],
+        None,
+    ));
+    let dx = ir.fresh();
+    ir.instrs.push(Instr::ReluGrad {
+        dst: dx,
+        grad: g,
+        src: x,
+    });
+    ir.instrs.push(Instr::Output(dx));
+
+    let mlir = eval::to_mlir(&ir, "main");
+    eprintln!("=== eval relu_grad MLIR ===\n{mlir}\n===========================");
+    assert!(
+        mlir.contains("linalg.generic"),
+        "expected linalg.generic in {mlir}"
+    );
+    assert!(mlir.contains("arith.cmpf"), "expected arith.cmpf in {mlir}");
+    assert!(
+        mlir.contains("arith.select"),
+        "expected arith.select in {mlir}"
+    );
+}
