@@ -60,6 +60,16 @@ fn require_mindc() -> Option<PathBuf> {
     if bin.exists() {
         Some(bin)
     } else {
+        // Fail-closed under enforcement: a missing mindc must NOT let the
+        // keystone suite pass vacuously (#306 false-green guard). Only a
+        // non-enforced (local convenience) run is allowed to skip.
+        assert!(
+            !enforce_real_backend(),
+            "KEYSTONE: mindc binary not found at {} but MIND_BENCH_REQUIRE=1 — build it \
+             (cargo build --release --features \"mlir-build std-surface cross-module-imports\" --bin mindc); \
+             the gate must not pass when the toolchain is absent",
+            bin.display()
+        );
         eprintln!(
             "SKIP: mindc binary not found at {}; run `cargo build --release` first",
             bin.display()
@@ -269,6 +279,11 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
 
     let src_path = repo_root().join("examples/mindc_mind/main.mind");
     if !src_path.exists() {
+        assert!(
+            !enforce_real_backend(),
+            "KEYSTONE: examples/mindc_mind/main.mind not found but MIND_BENCH_REQUIRE=1 — \
+             the keystone source must be present when the gate is enforced"
+        );
         eprintln!("SKIP: examples/mindc_mind/main.mind not found");
         return;
     }
@@ -388,6 +403,11 @@ fn phase_g_04_self_consistent_byte_identity() {
 
     let src_path = repo_root().join("examples/mindc_mind/main.mind");
     if !src_path.exists() {
+        assert!(
+            !enforce_real_backend(),
+            "KEYSTONE: examples/mindc_mind/main.mind not found but MIND_BENCH_REQUIRE=1 — \
+             the keystone source must be present when the gate is enforced"
+        );
         eprintln!("SKIP: examples/mindc_mind/main.mind not found");
         return;
     }
@@ -485,6 +505,11 @@ fn phase_g_05_warm_cache_hit_after_mind_toml_build() {
 
     let src_path = repo_root().join("examples/mindc_mind/main.mind");
     if !src_path.exists() {
+        assert!(
+            !enforce_real_backend(),
+            "KEYSTONE: examples/mindc_mind/main.mind not found but MIND_BENCH_REQUIRE=1 — \
+             the keystone source must be present when the gate is enforced"
+        );
         eprintln!("SKIP: examples/mindc_mind/main.mind not found");
         return;
     }
