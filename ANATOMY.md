@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2669 | **Est. tokens:** ~6,678,303
-**Generated:** 2026-05-29 23:33 UTC
+**Files:** 2669 | **Est. tokens:** ~6,681,252
+**Generated:** 2026-05-30 00:00 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~21,571 |
+| `./` | 32 | ~21,691 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -56,7 +56,7 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 7 | ~6,996 |
+| `.github/workflows/` | 7 | ~7,427 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,676 |
 | `scripts/` | 4 | ~5,178 |
@@ -365,7 +365,7 @@
 | `src/ast/` | 1 | ~6,285 |
 | `src/autodiff/` | 3 | ~4,467 |
 | `src/bin/` | 2 | ~19,524 |
-| `src/build/` | 2 | ~11,080 |
+| `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~8,087 |
@@ -376,7 +376,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,898 |
-| `src/fmt/` | 3 | ~17,717 |
+| `src/fmt/` | 3 | ~18,007 |
 | `src/ir/` | 4 | ~15,575 |
 | `src/ir/compact/` | 3 | ~14,226 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
@@ -388,7 +388,7 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~20,884 |
+| `src/project/` | 3 | ~22,713 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -448,7 +448,7 @@
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~283 tok, medium) — # Rust
+- `.gitignore` (~403 tok, medium) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -752,7 +752,7 @@
 
 - `bench-gate.yml` (~1052 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~3355 tok, huge) — name: CI
+- `ci.yml` (~3786 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
@@ -3570,7 +3570,7 @@
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~5798 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6077 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3638,7 +3638,7 @@
 ### `src/fmt/`
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.
 - `printer.rs` (~13250 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
@@ -3713,7 +3713,7 @@
 - `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~13775 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~15604 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3443 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`

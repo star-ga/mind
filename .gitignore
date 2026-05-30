@@ -24,6 +24,15 @@ Cargo.lock
 *.dylib
 *.dll
 
+# Exception: the RFC 0008 Phase G keystone oracle is a committed, blessed
+# real-ELF artifact (examples/mindc_mind/libmindc_mind.so) that the
+# mindcraft_self_host gate compares its fresh build against under
+# MIND_BENCH_REQUIRE=1. It is produced deterministically by
+#   mindc --emit-shared examples/mindc_mind/libmindc_mind.so \
+#         examples/mindc_mind/main.mind
+# (LLVM 18 toolchain). Re-bless from a verified real-ELF build only.
+!examples/mindc_mind/libmindc_mind.so
+
 # Testing
 /coverage/
 *.profraw
