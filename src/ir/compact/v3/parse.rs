@@ -24,10 +24,10 @@ use super::emit::{
     OP_ARRAY_LOAD, OP_BINOP, OP_CALL, OP_CONST_ARRAY, OP_CONST_F64, OP_CONST_I64, OP_CONST_TENSOR,
     OP_CONV2D, OP_CONV2D_GRAD_FILTER, OP_CONV2D_GRAD_INPUT, OP_DOT, OP_EXPAND_DIMS,
     OP_EXTERN_FN_DECL, OP_FN_DEF, OP_GATHER, OP_IF, OP_INDEX, OP_MATMUL, OP_MEAN, OP_OUTPUT,
-    OP_PARAM, OP_REGION, OP_RESHAPE, OP_RETURN, OP_SLICE, OP_SPARSE_ATTR, OP_SQUEEZE, OP_SUM,
-    OP_TRANSPOSE, OP_VEC_FMA, OP_VEC_LOAD, OP_VEC_LOAD_I32, OP_VEC_MUL_ADD_Q16, OP_VEC_REDUCE_ADD,
-    OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE, byte_to_binop, byte_to_dtype, byte_to_padding,
-    byte_to_sparse_layout,
+    OP_PARAM, OP_REGION, OP_RELU, OP_RESHAPE, OP_RETURN, OP_SLICE, OP_SPARSE_ATTR, OP_SQUEEZE,
+    OP_SUM, OP_TRANSPOSE, OP_VEC_FMA, OP_VEC_LOAD, OP_VEC_LOAD_I32, OP_VEC_MUL_ADD_Q16,
+    OP_VEC_REDUCE_ADD, OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE, byte_to_binop, byte_to_dtype,
+    byte_to_padding, byte_to_sparse_layout,
 };
 use super::{MIC3_MAGIC, MIC3_VERSION};
 use crate::ir::compact::v2::{uleb128_read, zigzag_decode};
@@ -365,6 +365,11 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
                 axes,
                 keepdims,
             })
+        }
+        OP_RELU => {
+            let dst = read_vid(r)?;
+            let src = read_vid(r)?;
+            Ok(Instr::Relu { dst, src })
         }
         OP_RESHAPE => {
             let dst = read_vid(r)?;

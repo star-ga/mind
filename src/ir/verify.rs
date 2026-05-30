@@ -111,6 +111,7 @@ fn validate_operands(
         | Instr::ExpandDims { src, .. }
         | Instr::Squeeze { src, .. }
         | Instr::Transpose { src, .. }
+        | Instr::Relu { src, .. }
         | Instr::Index { src, .. }
         | Instr::Slice { src, .. } => {
             check_defined(*src)?;

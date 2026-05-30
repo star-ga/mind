@@ -84,6 +84,11 @@ pub(super) fn apply_rule(
         Instr::Conv2dGradFilter { .. } => Err(AutodiffError::UnsupportedOp {
             op: "conv2d_grad_filter",
         }),
+        // ReLU forward lowers (RFC 0012), but its masked backward
+        // (grad * step(x)) is not yet implemented. Fail loud rather than let
+        // the catch-all silently drop the gradient — the wedge forbids silent
+        // wrong results. Tracked with the R3.x backward-pass work.
+        Instr::Relu { .. } => Err(AutodiffError::UnsupportedOp { op: "relu" }),
         Instr::Dot { a, b, .. } => {
             let da = ops.add_binop(BinOp::Mul, upstream, *b);
             let db = ops.add_binop(BinOp::Mul, upstream, *a);

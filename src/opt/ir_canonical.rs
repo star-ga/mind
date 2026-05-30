@@ -269,6 +269,7 @@ fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         Instr::BinOp { lhs, rhs, .. } => vec![*lhs, *rhs],
         Instr::Sum { src, .. }
         | Instr::Mean { src, .. }
+        | Instr::Relu { src, .. }
         | Instr::Reshape { src, .. }
         | Instr::ExpandDims { src, .. }
         | Instr::Squeeze { src, .. }
