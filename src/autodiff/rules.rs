@@ -90,7 +90,48 @@ pub(super) fn apply_rule(
             ops.add_grad(*b, db);
             Ok(())
         }
-        Instr::Conv2d { .. } => Err(AutodiffError::UnsupportedOp { op: "conv2d" }),
+        Instr::Conv2d {
+            input,
+            filter,
+            stride_h,
+            stride_w,
+            padding,
+            ..
+        } => {
+            // Conv2d backward reuses the existing Conv2dGradInput / Conv2dGradFilter
+            // ops. Both need a static 4-D shape (input NHWC / filter HWIO) to size
+            // their output; if the shape is dynamic we fail loud rather than emit a
+            // conv backward against a guessed shape (silent-wrong training).
+            let input_shape =
+                ops.static_shape4(*input)
+                    .ok_or_else(|| AutodiffError::UnsupportedShape {
+                        reason: "conv2d input shape is not statically known (NHWC)".to_string(),
+                    })?;
+            let filter_shape =
+                ops.static_shape4(*filter)
+                    .ok_or_else(|| AutodiffError::UnsupportedShape {
+                        reason: "conv2d filter shape is not statically known (HWIO)".to_string(),
+                    })?;
+            let dinput = ops.add_conv2d_grad_input(
+                upstream,
+                *filter,
+                input_shape,
+                *stride_h,
+                *stride_w,
+                *padding,
+            );
+            ops.add_grad(*input, dinput);
+            let dfilter = ops.add_conv2d_grad_filter(
+                *input,
+                upstream,
+                filter_shape,
+                *stride_h,
+                *stride_w,
+                *padding,
+            );
+            ops.add_grad(*filter, dfilter);
+            Ok(())
+        }
         Instr::Conv2dGradInput { .. } => Err(AutodiffError::UnsupportedOp {
             op: "conv2d_grad_input",
         }),

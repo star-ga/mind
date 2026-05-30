@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::ir::{self, BinOp, IRModule, Instr, ValueId};
+use crate::types::{ConvPadding, ShapeDim};
 
 use super::rules;
 
@@ -255,6 +256,79 @@ impl<'a> GradientBuilder<'a> {
         dst
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn add_conv2d_grad_input(
+        &mut self,
+        dy: ValueId,
+        filter: ValueId,
+        input_shape: [usize; 4],
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    ) -> ValueId {
+        let dst = ValueId(self.gradient.next_id);
+        self.gradient.next_id += 1;
+        self.gradient.instrs.push(Instr::Conv2dGradInput {
+            dst,
+            dy,
+            filter,
+            input_shape,
+            stride_h,
+            stride_w,
+            padding,
+        });
+        dst
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_conv2d_grad_filter(
+        &mut self,
+        input: ValueId,
+        dy: ValueId,
+        filter_shape: [usize; 4],
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    ) -> ValueId {
+        let dst = ValueId(self.gradient.next_id);
+        self.gradient.next_id += 1;
+        self.gradient.instrs.push(Instr::Conv2dGradFilter {
+            dst,
+            input,
+            dy,
+            filter_shape,
+            stride_h,
+            stride_w,
+            padding,
+        });
+        dst
+    }
+
+    /// Resolve a value's statically-known 4-D shape from the primal module
+    /// (currently `ConstTensor` with four `Known` dims). Returns `None` for a
+    /// dynamic/symbolic shape — callers must then fail loud rather than emit a
+    /// conv backward against a guessed shape (the wedge forbids silent-wrong).
+    fn static_shape4(&self, id: ValueId) -> Option<[usize; 4]> {
+        for instr in &self.primal.instrs {
+            if let Instr::ConstTensor(dst, _, dims, _) = instr {
+                if *dst == id {
+                    if dims.len() != 4 {
+                        return None;
+                    }
+                    let mut out = [0usize; 4];
+                    for (slot, dim) in out.iter_mut().zip(dims.iter()) {
+                        match dim {
+                            ShapeDim::Known(n) => *slot = *n,
+                            _ => return None,
+                        }
+                    }
+                    return Some(out);
+                }
+            }
+        }
+        None
+    }
+
     fn add_grad(&mut self, target: ValueId, contribution: ValueId) {
         match self.grads.get(&target).copied() {
             None => {
@@ -313,6 +387,32 @@ pub(super) trait GradientOps {
     fn add_matmul(&mut self, a: ValueId, b: ValueId) -> ValueId;
     /// Emit `dx = relu_grad(grad, src) = grad * step(src)` (backward ReLU).
     fn add_relu_grad(&mut self, grad: ValueId, src: ValueId) -> ValueId;
+    /// Emit Conv2d backward w.r.t. input (`dx`), reusing the existing
+    /// `Conv2dGradInput` op. `input_shape` is the forward input's NHWC shape.
+    #[allow(clippy::too_many_arguments)]
+    fn add_conv2d_grad_input(
+        &mut self,
+        dy: ValueId,
+        filter: ValueId,
+        input_shape: [usize; 4],
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    ) -> ValueId;
+    /// Emit Conv2d backward w.r.t. filter (`dw`), reusing the existing
+    /// `Conv2dGradFilter` op. `filter_shape` is the forward filter's HWIO shape.
+    #[allow(clippy::too_many_arguments)]
+    fn add_conv2d_grad_filter(
+        &mut self,
+        input: ValueId,
+        dy: ValueId,
+        filter_shape: [usize; 4],
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    ) -> ValueId;
+    /// Statically-known 4-D shape of a primal value, or `None` if dynamic.
+    fn static_shape4(&self, id: ValueId) -> Option<[usize; 4]>;
     fn add_grad(&mut self, target: ValueId, contribution: ValueId);
 }
 
@@ -335,6 +435,34 @@ impl<'a> GradientOps for GradientBuilder<'a> {
 
     fn add_relu_grad(&mut self, grad: ValueId, src: ValueId) -> ValueId {
         self.add_relu_grad(grad, src)
+    }
+
+    fn add_conv2d_grad_input(
+        &mut self,
+        dy: ValueId,
+        filter: ValueId,
+        input_shape: [usize; 4],
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    ) -> ValueId {
+        self.add_conv2d_grad_input(dy, filter, input_shape, stride_h, stride_w, padding)
+    }
+
+    fn add_conv2d_grad_filter(
+        &mut self,
+        input: ValueId,
+        dy: ValueId,
+        filter_shape: [usize; 4],
+        stride_h: usize,
+        stride_w: usize,
+        padding: ConvPadding,
+    ) -> ValueId {
+        self.add_conv2d_grad_filter(input, dy, filter_shape, stride_h, stride_w, padding)
+    }
+
+    fn static_shape4(&self, id: ValueId) -> Option<[usize; 4]> {
+        self.static_shape4(id)
     }
 
     fn add_grad(&mut self, target: ValueId, contribution: ValueId) {
