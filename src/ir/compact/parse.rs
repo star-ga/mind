@@ -320,6 +320,7 @@ impl<'a> MicParser<'a> {
             "div" => self.parse_binop(value_id, BinOp::Div, args)?,
             "sum" => self.parse_reduction(value_id, true, args)?,
             "mean" => self.parse_reduction(value_id, false, args)?,
+            "relu" => self.parse_relu(value_id, args)?,
             "reshape" => self.parse_reshape(value_id, args)?,
             "expand" => self.parse_expand(value_id, args)?,
             "squeeze" => self.parse_squeeze(value_id, args)?,
@@ -402,6 +403,17 @@ impl<'a> MicParser<'a> {
             lhs,
             rhs,
         })
+    }
+
+    /// `N{dst} relu N{src} T{tid}` — elementwise ReLU (shape-preserving). The
+    /// trailing type token is recomputed at emit, so only the source matters.
+    fn parse_relu(&self, id: ValueId, args: &[&str]) -> Result<Instr, MicParseError> {
+        if args.is_empty() {
+            return Err(self.error("relu requires source".to_string()));
+        }
+        let src = self.parse_node_ref(args[0])?;
+        self.check_node_defined(src.0)?;
+        Ok(Instr::Relu { dst: id, src })
     }
 
     fn parse_reduction(

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,685,158
-**Generated:** 2026-05-30 08:41 UTC
+**Files:** 2670 | **Est. tokens:** ~6,685,700
+**Generated:** 2026-05-30 08:52 UTC
 
 ## Token Budget Guide
 
@@ -378,7 +378,7 @@
 | `src/ffi/` | 3 | ~3,898 |
 | `src/fmt/` | 3 | ~17,717 |
 | `src/ir/` | 4 | ~15,680 |
-| `src/ir/compact/` | 3 | ~14,226 |
+| `src/ir/compact/` | 3 | ~14,474 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
 | `src/ir/compact/v3/` | 4 | ~35,009 |
 | `src/lint/` | 2 | ~4,001 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 17 | ~82,560 |
-| `tests/` | 159 | ~273,090 |
+| `tests/` | 159 | ~273,384 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3642,9 +3642,9 @@
 - `printer.rs` (~13250 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
-- `emit.rs` (~4406 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~4516 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~2374 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~7446 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~7584 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
 - `binary.rs` (~5910 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3870,7 +3870,7 @@
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
 - `ir_core.rs` (~847 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
-- `ir_load_save.rs` (~715 tok, large) — Copyright 2025 STARGA Inc.
+- `ir_load_save.rs` (~1009 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~1331 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_negative_literals.rs` (~1722 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_stub.rs` (~219 tok, medium) — Copyright 2025 STARGA Inc.
