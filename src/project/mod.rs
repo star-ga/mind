@@ -748,6 +748,18 @@ fn build_cdylib_from_entry(
         _ => BackendTarget::Cpu,
     };
 
+    // Phase A: cdylib emit is CPU-only. The GPU/accelerator backends need the
+    // proprietary runtime for final emission, so a non-CPU `--emit=cdylib`
+    // surfaces a precise error HERE rather than silently driving the host
+    // `emit_shared` link path and producing a wrong/host `.so`.
+    if !matches!(target, BackendTarget::Cpu) {
+        return Err(anyhow!(
+            "cdylib emit (--emit=cdylib) supports only the CPU backend in Phase A; \
+             backend '{backend}' is not yet supported for shared-library output \
+             (use --emit=object, or a CPU target)"
+        ));
+    }
+
     let compile_opts = CompileOptions {
         func: None,
         enable_autodiff: false,
