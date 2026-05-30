@@ -163,6 +163,15 @@ pub enum Instr {
         dst: ValueId,
         src: ValueId,
     },
+    /// Backward pass for ReLU: `dx = grad * step(src)` where `step(x) = 1` when
+    /// `x > 0` else `0`. Elementwise and shape-preserving — `grad` (upstream)
+    /// and `src` (the original ReLU input) share the same shape. Appended after
+    /// `Relu` so existing IR / wire streams are unaffected.
+    ReluGrad {
+        dst: ValueId,
+        grad: ValueId,
+        src: ValueId,
+    },
     Reshape {
         dst: ValueId,
         src: ValueId,
@@ -625,6 +634,7 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Sum { dst, .. }
         | Instr::Mean { dst, .. }
         | Instr::Relu { dst, .. }
+        | Instr::ReluGrad { dst, .. }
         | Instr::Reshape { dst, .. }
         | Instr::ExpandDims { dst, .. }
         | Instr::Squeeze { dst, .. }

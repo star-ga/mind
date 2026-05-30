@@ -55,6 +55,32 @@ fn grad_of_square() {
 }
 
 #[test]
+fn grad_of_relu() {
+    let mut ir = IRModule::new();
+    let x = scalar_tensor(&mut ir);
+    let y = ir.fresh();
+    ir.instrs.push(Instr::Relu { dst: y, src: x });
+    ir.instrs.push(Instr::Output(y));
+
+    let result = differentiate_function(&ir, "main").expect("gradients");
+    assert_deterministic(&ir);
+
+    // ReLU backward must emit a dedicated `ReluGrad` op gated on the original
+    // input `x` (dx = grad * step(x)) — not fail with UnsupportedOp nor silently
+    // drop the gradient. `x` therefore has a registered gradient.
+    result.gradients.get(&x).expect("gradient for x");
+    let seen_relu_grad = result
+        .gradient_module
+        .instrs
+        .iter()
+        .any(|instr| matches!(instr, Instr::ReluGrad { src, .. } if *src == x));
+    assert!(
+        seen_relu_grad,
+        "relu backward should emit a ReluGrad op gated on the original input"
+    );
+}
+
+#[test]
 fn grad_of_bilinear() {
     let mut ir = IRModule::new();
     let x = scalar_tensor(&mut ir);

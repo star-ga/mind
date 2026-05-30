@@ -321,6 +321,7 @@ impl<'a> MicParser<'a> {
             "sum" => self.parse_reduction(value_id, true, args)?,
             "mean" => self.parse_reduction(value_id, false, args)?,
             "relu" => self.parse_relu(value_id, args)?,
+            "relu_grad" => self.parse_relu_grad(value_id, args)?,
             "reshape" => self.parse_reshape(value_id, args)?,
             "expand" => self.parse_expand(value_id, args)?,
             "squeeze" => self.parse_squeeze(value_id, args)?,
@@ -414,6 +415,20 @@ impl<'a> MicParser<'a> {
         let src = self.parse_node_ref(args[0])?;
         self.check_node_defined(src.0)?;
         Ok(Instr::Relu { dst: id, src })
+    }
+
+    /// `N{dst} relu_grad N{grad} N{src} T{tid}` — backward ReLU. `grad` is the
+    /// upstream gradient, `src` the original ReLU input; the trailing type token
+    /// is recomputed at emit, so only the two operands matter.
+    fn parse_relu_grad(&self, id: ValueId, args: &[&str]) -> Result<Instr, MicParseError> {
+        if args.len() < 2 {
+            return Err(self.error("relu_grad requires gradient and source".to_string()));
+        }
+        let grad = self.parse_node_ref(args[0])?;
+        let src = self.parse_node_ref(args[1])?;
+        self.check_node_defined(grad.0)?;
+        self.check_node_defined(src.0)?;
+        Ok(Instr::ReluGrad { dst: id, grad, src })
     }
 
     fn parse_reduction(

@@ -74,6 +74,25 @@ pub fn eval_ir(ir: &IRModule) -> Value {
                 vals.insert(*dst, out.clone());
                 last = out;
             }
+            Instr::ReluGrad { dst, grad, src } => {
+                // Backward ReLU preview: dx = grad * step(src). Shape-preserving
+                // (dx matches grad/src). On the constant-fill model the gate is
+                // src.fill > 0; otherwise the gradient is zeroed.
+                let grad_val = vals.get(grad).cloned().unwrap_or(Value::Int(0));
+                let src_val = vals.get(src).cloned().unwrap_or(Value::Int(0));
+                let out = match (grad_val, src_val) {
+                    (Value::Tensor(g), Value::Tensor(s)) => {
+                        let gated = match (g.fill, s.fill) {
+                            (Some(gf), Some(sf)) => Some(if sf > 0.0 { gf } else { 0.0 }),
+                            _ => None,
+                        };
+                        Value::Tensor(TensorVal::new(g.dtype, g.shape, gated))
+                    }
+                    (other, _) => other,
+                };
+                vals.insert(*dst, out.clone());
+                last = out;
+            }
             Instr::Reshape {
                 dst,
                 src,

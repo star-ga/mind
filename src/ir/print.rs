@@ -88,6 +88,19 @@ fn format_instr(instr: &Instr, out: &mut String) {
             )
             .unwrap();
         }
+        Instr::Relu { dst, src } => {
+            writeln!(out, "  {} = relu {}", value_name(*dst), value_name(*src)).unwrap();
+        }
+        Instr::ReluGrad { dst, grad, src } => {
+            writeln!(
+                out,
+                "  {} = relu_grad {} {}",
+                value_name(*dst),
+                value_name(*grad),
+                value_name(*src)
+            )
+            .unwrap();
+        }
         Instr::Reshape {
             dst,
             src,
