@@ -116,6 +116,10 @@ fn validate_operands(
         | Instr::Slice { src, .. } => {
             check_defined(*src)?;
         }
+        Instr::ReluGrad { grad, src, .. } => {
+            check_defined(*grad)?;
+            check_defined(*src)?;
+        }
         Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => {
             check_defined(*a)?;
             check_defined(*b)?;
