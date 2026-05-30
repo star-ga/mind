@@ -97,7 +97,7 @@ impl MicEmitter {
                     // Type inferred from operands, use f32 as default
                     self.intern_scalar_type(&DType::F32);
                 }
-                Instr::Sum { .. } | Instr::Mean { .. } => {
+                Instr::Sum { .. } | Instr::Mean { .. } | Instr::Relu { .. } => {
                     self.intern_scalar_type(&DType::F32);
                 }
                 Instr::Reshape { new_shape, .. } => {
@@ -213,6 +213,13 @@ impl MicEmitter {
                     dst.0, src.0, axes_str, kd, tid
                 )
                 .unwrap();
+            }
+            Instr::Relu { dst, src } => {
+                // Canonical mic@1 text MUST represent relu — `trace_hash` is
+                // SHA-256 of this text (RFC 0016). Dropping it would attest IR
+                // that omits the activation.
+                let tid = self.get_scalar_type_id(&DType::F32);
+                writeln!(&mut self.output, "N{} relu N{} T{}", dst.0, src.0, tid).unwrap();
             }
             Instr::Reshape {
                 dst,
