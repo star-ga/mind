@@ -155,6 +155,14 @@ pub enum Instr {
         axes: Vec<i64>,
         keepdims: bool,
     },
+    /// Elementwise ReLU: `max(x, 0)`. Output shape equals input shape
+    /// (RFC 0012 elementwise activation). Lowered to a `linalg.generic` with
+    /// `arith.maximumf` against a `0.0` constant — a pure elementwise map, so
+    /// cross-substrate Q16.16 bit-identity is preserved.
+    Relu {
+        dst: ValueId,
+        src: ValueId,
+    },
     Reshape {
         dst: ValueId,
         src: ValueId,
@@ -616,6 +624,7 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::BinOp { dst, .. }
         | Instr::Sum { dst, .. }
         | Instr::Mean { dst, .. }
+        | Instr::Relu { dst, .. }
         | Instr::Reshape { dst, .. }
         | Instr::ExpandDims { dst, .. }
         | Instr::Squeeze { dst, .. }

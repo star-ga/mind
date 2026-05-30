@@ -420,6 +420,12 @@ fn lower_expr(
             });
             dst
         }
+        ast::Node::CallTensorRelu { x, .. } => {
+            let src = lower_expr(x, ir, env, struct_env, receiver_types);
+            let dst = ir.fresh();
+            ir.instrs.push(Instr::Relu { dst, src });
+            dst
+        }
         ast::Node::CallReshape { x, dims, .. } => {
             let src = lower_expr(x, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();

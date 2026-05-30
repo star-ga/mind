@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,684,622
-**Generated:** 2026-05-30 07:41 UTC
+**Files:** 2670 | **Est. tokens:** ~6,685,158
+**Generated:** 2026-05-30 08:41 UTC
 
 ## Token Budget Guide
 
@@ -363,7 +363,7 @@
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~6,285 |
-| `src/autodiff/` | 3 | ~4,467 |
+| `src/autodiff/` | 3 | ~4,570 |
 | `src/bin/` | 2 | ~19,524 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
@@ -372,20 +372,20 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 13 | ~82,886 |
+| `src/eval/` | 13 | ~82,946 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,898 |
 | `src/fmt/` | 3 | ~17,717 |
-| `src/ir/` | 4 | ~15,575 |
+| `src/ir/` | 4 | ~15,680 |
 | `src/ir/compact/` | 3 | ~14,226 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
-| `src/ir/compact/v3/` | 4 | ~34,882 |
+| `src/ir/compact/v3/` | 4 | ~35,009 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 2 | ~1,967 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 4 | ~8,183 |
+| `src/opt/` | 4 | ~8,191 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
 | `src/project/` | 3 | ~22,865 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 17 | ~82,560 |
-| `tests/` | 159 | ~272,957 |
+| `tests/` | 159 | ~273,090 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3560,9 +3560,9 @@
 - `mod.rs` (~6285 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
-- `engine.rs` (~2684 tok, huge) — Copyright 2025 STARGA Inc.
+- `engine.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~342 tok, medium) — Copyright 2025 STARGA Inc.
-- `rules.rs` (~1441 tok, large) — Copyright 2025 STARGA Inc.
+- `rules.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3609,7 +3609,7 @@
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~22104 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~22164 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4445 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~8482 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3657,16 +3657,16 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/`
 
-- `emit.rs` (~9808 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~9897 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~9128 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~8545 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~7401 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~7439 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1268 tok, large) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7805 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7901 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3435 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~3067 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~3076 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -3698,7 +3698,7 @@
 ### `src/opt/`
 
 - `fold.rs` (~1175 tok, large) — Copyright 2025 STARGA Inc.
-- `ir_canonical.rs` (~2718 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_canonical.rs` (~2726 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
 ### `src/package/`
@@ -3983,7 +3983,7 @@
 - `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3525 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_broadcast.rs` (~1346 tok, large) — Copyright 2025 STARGA Inc.
+- `mlir_broadcast.rs` (~1479 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_indexing.rs` (~414 tok, medium) — Copyright 2025 STARGA Inc.

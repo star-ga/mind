@@ -267,6 +267,7 @@ fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         | Instr::Sum { dst, .. }
         | Instr::Mean { dst, .. }
         | Instr::Reshape { dst, .. }
+        | Instr::Relu { dst, .. }
         | Instr::ExpandDims { dst, .. }
         | Instr::Squeeze { dst, .. }
         | Instr::Transpose { dst, .. }
