@@ -59,8 +59,8 @@ fn bias_add_broadcasts_via_linalg_generic() {
         "expected linalg.yield in broadcast body:\n{mlir}"
     );
     assert!(
-        mlir.contains("-> (d1)"),
-        "expected rhs bias broadcast map `-> (d1)` in:\n{mlir}"
+        mlir.contains("affine_map<(d0, d1) -> (d1)>"),
+        "expected rhs bias broadcast map `affine_map<(d0, d1) -> (d1)>` in:\n{mlir}"
     );
 }
 
