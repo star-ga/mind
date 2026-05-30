@@ -310,7 +310,7 @@ impl LoweringContext {
                         context: "binop",
                     })?
                     .clone();
-                let (result_kind, type_str, op_str) = match (&lhs_kind, &rhs_kind) {
+                match (&lhs_kind, &rhs_kind) {
                     (
                         ValueKind::Tensor { dtype, shape },
                         ValueKind::Tensor {
@@ -318,21 +318,95 @@ impl LoweringContext {
                             shape: shape_b,
                         },
                     ) => {
-                        if dtype != dtype_b || shape != shape_b {
+                        if dtype != dtype_b {
                             return Err(MlirLowerError::ShapeError(
-                                "tensor binary ops require matching shapes".into(),
+                                "tensor binary ops require matching element types".into(),
                             ));
                         }
-                        let mlir_op = select_arith_op(*op, dtype);
-                        let ty = tensor_type(shape, dtype.as_str());
-                        (
-                            ValueKind::Tensor {
-                                dtype: dtype.clone(),
-                                shape: shape.clone(),
-                            },
-                            ty,
-                            mlir_op,
-                        )
+                        let op_str = select_arith_op(*op, dtype);
+                        if shape == shape_b {
+                            // Equal shapes: original single-line `arith` emit. Kept
+                            // byte-identical so the self-host bootstrap and every
+                            // existing test produce unchanged MLIR text.
+                            let ty = tensor_type(shape, dtype.as_str());
+                            self.emit_line(&format!(
+                                "    %{} = {} %{}, %{} : {}",
+                                dst.0, op_str, lhs.0, rhs.0, ty
+                            ));
+                            self.values.insert(
+                                *dst,
+                                ValueKind::Tensor {
+                                    dtype: dtype.clone(),
+                                    shape: shape.clone(),
+                                },
+                            );
+                        } else {
+                            // RFC 0012 §4.2: the type-checker has already validated a
+                            // right-aligned broadcast (`shapes::broadcast_shapes`);
+                            // emit a `linalg.generic` that broadcasts each operand to
+                            // the result shape. Broadcasting is a pure index remap —
+                            // no float reassociation — so cross-substrate Q16.16
+                            // bit-identity is preserved.
+                            // Core v1 (mind-spec language.md §arithmetic): only
+                            // `+ - *` lower to a broadcasting `BinOp`; division is
+                            // not Core v1, so a broadcasting `/`/`%` is a shape
+                            // error rather than a silent miscompile.
+                            if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul) {
+                                return Err(MlirLowerError::ShapeError(format!(
+                                    "broadcasting is only supported for elementwise \
+                                     +, -, * on tensors (Core v1); operator `{op:?}` \
+                                     requires matching operand shapes"
+                                )));
+                            }
+                            let (result_shape, lhs_map, rhs_map) =
+                                broadcast_binop_maps(shape, shape_b)?;
+                            let elem = dtype.as_str();
+                            let result_ty = tensor_type(&result_shape, elem);
+                            let lhs_ty = tensor_type(shape, elem);
+                            let rhs_ty = tensor_type(shape_b, elem);
+                            let rank = result_shape.len();
+                            let dims = (0..rank)
+                                .map(|d| format!("d{d}"))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let iters = vec!["\"parallel\""; rank].join(", ");
+                            let lhs_aff =
+                                format!("affine_map<({dims}) -> ({})>", lhs_map.join(", "));
+                            let rhs_aff =
+                                format!("affine_map<({dims}) -> ({})>", rhs_map.join(", "));
+                            let out_aff = format!("affine_map<({dims}) -> ({dims})>");
+                            self.emit_line(&format!(
+                                "    %bcast{} = tensor.empty() : {}",
+                                dst.0, result_ty
+                            ));
+                            self.emit_line(&format!(
+                                "    %{} = linalg.generic {{indexing_maps = [{}, {}, {}], \
+                                 iterator_types = [{}]}} ins(%{}, %{} : {}, {}) \
+                                 outs(%bcast{} : {}) {{",
+                                dst.0, lhs_aff, rhs_aff, out_aff, iters, lhs.0, rhs.0, lhs_ty,
+                                rhs_ty, dst.0, result_ty
+                            ));
+                            self.emit_line(&format!(
+                                "    ^bb0(%bcl{}: {elem}, %bcr{}: {elem}, %bco{}: {elem}):",
+                                dst.0, dst.0, dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "      %bcv{} = {} %bcl{}, %bcr{} : {elem}",
+                                dst.0, op_str, dst.0, dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "      linalg.yield %bcv{} : {elem}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!("    }} -> {result_ty}"));
+                            self.values.insert(
+                                *dst,
+                                ValueKind::Tensor {
+                                    dtype: dtype.clone(),
+                                    shape: result_shape,
+                                },
+                            );
+                        }
                     }
                     _ => {
                         let mlir_op = match op {
@@ -360,15 +434,13 @@ impl LoweringContext {
                             #[cfg(feature = "std-surface")]
                             BinOp::Shr => "arith.shrsi",
                         };
-                        (ValueKind::ScalarI64, "i64".to_string(), mlir_op)
+                        self.emit_line(&format!(
+                            "    %{} = {} %{}, %{} : i64",
+                            dst.0, mlir_op, lhs.0, rhs.0
+                        ));
+                        self.values.insert(*dst, ValueKind::ScalarI64);
                     }
-                };
-
-                self.emit_line(&format!(
-                    "    %{} = {} %{}, %{} : {}",
-                    dst.0, op_str, lhs.0, rhs.0, type_str
-                ));
-                self.values.insert(*dst, result_kind);
+                }
             }
             Instr::MatMul { dst, a, b } => {
                 let a_info = self.tensor_info(a, "matmul lhs")?;
@@ -379,9 +451,12 @@ impl LoweringContext {
                     "    %tmp{} = tensor.empty() : {}",
                     dst.0, result_ty
                 ));
+                // Grouped `ins(%a, %b : ta, tb)` form — the only one mlir-opt's
+                // linalg named-op parser accepts (a per-operand `ins(%a : ta, %b : tb)`
+                // is rejected as "expected non-function type").
                 self.emit_line(&format!(
-                    "    %{} = linalg.matmul ins(%{} : {} , %{} : {}) outs(%tmp{} : {}) -> {}",
-                    dst.0, a.0, m_ty, b.0, n_ty, dst.0, result_ty, result_ty
+                    "    %{} = linalg.matmul ins(%{}, %{} : {}, {}) outs(%tmp{} : {}) -> {}",
+                    dst.0, a.0, b.0, m_ty, n_ty, dst.0, result_ty, result_ty
                 ));
                 self.values.insert(
                     *dst,
@@ -407,9 +482,10 @@ impl LoweringContext {
                     "    %tmp{} = tensor.empty() : {}",
                     dst.0, result_ty
                 ));
+                // Grouped `ins(%a, %b : ta, tb)` form (see MatMul above).
                 self.emit_line(&format!(
-                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{} : {}, %{} : {}) outs(%tmp{} : {}) -> {}",
-                    dst.0, input.0, input_ty, filter.0, filter_ty, dst.0, result_ty, result_ty
+                    "    %{} = linalg.conv_2d_nhwc_hwcf ins(%{}, %{} : {}, {}) outs(%tmp{} : {}) -> {}",
+                    dst.0, input.0, filter.0, input_ty, filter_ty, dst.0, result_ty, result_ty
                 ));
                 self.values.insert(
                     *dst,
@@ -2754,6 +2830,89 @@ fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
         #[cfg(feature = "std-surface")]
         ValueKind::VectorI64 { lanes } => Ok(format!("vector<{lanes}xi64>")),
     }
+}
+
+/// `(result_shape, lhs_map_exprs, rhs_map_exprs)` produced by
+/// [`broadcast_binop_maps`] — the result tensor shape plus, per operand, the
+/// `linalg.generic` affine-map result expressions.
+type BroadcastMaps = (Vec<ShapeDim>, Vec<String>, Vec<String>);
+
+/// Plan a right-aligned NumPy/RFC-0012 broadcast for an elementwise tensor
+/// binop, returning the result shape plus the per-operand `linalg.generic`
+/// affine-map result expressions. This is the same rule the type-checker
+/// applies in `shapes::broadcast_shapes` and that `mind-spec/spec/v1.0/shapes.md`
+/// makes normative; keeping the two in lockstep is what stops a
+/// type-checks-but-won't-lower gap.
+///
+/// Each operand's map entry for its dimension `k` is the result iteration dim it
+/// reads (`d{i}`), or the constant `0` when that dimension is a size-1 stretch
+/// (e.g. the `1` axes of `(4,1,3) + (1,5,3) -> (4,5,3)`). Only statically-known
+/// dimensions are handled; a symbolic dimension in a *broadcasting* position is
+/// rejected because it would emit MLIR with a non-numeric extent.
+fn broadcast_binop_maps(lhs: &[ShapeDim], rhs: &[ShapeDim]) -> Result<BroadcastMaps, MlirLowerError> {
+    let sym_err = || {
+        MlirLowerError::ShapeError(
+            "broadcasting tensors with symbolic dimensions is not yet supported in MLIR lowering"
+                .into(),
+        )
+    };
+    let lhs_d: Vec<usize> = lhs
+        .iter()
+        .map(known_dim)
+        .collect::<Option<_>>()
+        .ok_or_else(sym_err)?;
+    let rhs_d: Vec<usize> = rhs
+        .iter()
+        .map(known_dim)
+        .collect::<Option<_>>()
+        .ok_or_else(sym_err)?;
+
+    let rank = lhs_d.len().max(rhs_d.len());
+    let mut result = vec![0usize; rank];
+    for i in 0..rank {
+        // Align from the right: missing leading dims act as extent 1.
+        let a = if i < lhs_d.len() {
+            lhs_d[lhs_d.len() - 1 - i]
+        } else {
+            1
+        };
+        let b = if i < rhs_d.len() {
+            rhs_d[rhs_d.len() - 1 - i]
+        } else {
+            1
+        };
+        let dim = if a == b {
+            a
+        } else if a == 1 {
+            b
+        } else if b == 1 {
+            a
+        } else {
+            return Err(MlirLowerError::ShapeError(format!(
+                "cannot broadcast tensor shapes {lhs_d:?} and {rhs_d:?}"
+            )));
+        };
+        result[rank - 1 - i] = dim;
+    }
+
+    let map_for = |operand: &[usize]| -> Vec<String> {
+        let r = operand.len();
+        (0..r)
+            .map(|k| {
+                let res_idx = (rank - r) + k;
+                if operand[k] == result[res_idx] {
+                    format!("d{res_idx}")
+                } else {
+                    // operand[k] == 1, stretched to the result extent.
+                    "0".to_string()
+                }
+            })
+            .collect()
+    };
+    let lhs_map = map_for(&lhs_d);
+    let rhs_map = map_for(&rhs_d);
+    let result_shape = result.into_iter().map(ShapeDim::Known).collect();
+    Ok((result_shape, lhs_map, rhs_map))
 }
 
 fn tensor_type(shape: &[ShapeDim], dtype: &str) -> String {
