@@ -115,6 +115,74 @@ fn grad_of_div() {
 }
 
 #[test]
+fn grad_of_conv2d() {
+    use libmind::types::ConvPadding;
+
+    let mut ir = IRModule::new();
+    let input = ir.fresh();
+    ir.instrs.push(Instr::ConstTensor(
+        input,
+        DType::F32,
+        vec![
+            ShapeDim::Known(1),
+            ShapeDim::Known(8),
+            ShapeDim::Known(8),
+            ShapeDim::Known(3),
+        ],
+        None,
+    ));
+    let filter = ir.fresh();
+    ir.instrs.push(Instr::ConstTensor(
+        filter,
+        DType::F32,
+        vec![
+            ShapeDim::Known(3),
+            ShapeDim::Known(3),
+            ShapeDim::Known(3),
+            ShapeDim::Known(16),
+        ],
+        None,
+    ));
+    let y = ir.fresh();
+    ir.instrs.push(Instr::Conv2d {
+        dst: y,
+        input,
+        filter,
+        stride_h: 1,
+        stride_w: 1,
+        padding: ConvPadding::Same,
+    });
+    ir.instrs.push(Instr::Output(y));
+
+    let result = differentiate_function(&ir, "main").expect("conv2d gradients");
+    assert_deterministic(&ir);
+
+    // Conv2d backward must register gradients for both operands and reuse the
+    // existing Conv2dGradInput (dx) + Conv2dGradFilter (dw) ops — not fail with
+    // UnsupportedOp.
+    result.gradients.get(&input).expect("gradient for input");
+    result.gradients.get(&filter).expect("gradient for filter");
+    let has_grad_input = result
+        .gradient_module
+        .instrs
+        .iter()
+        .any(|i| matches!(i, Instr::Conv2dGradInput { .. }));
+    let has_grad_filter = result
+        .gradient_module
+        .instrs
+        .iter()
+        .any(|i| matches!(i, Instr::Conv2dGradFilter { .. }));
+    assert!(
+        has_grad_input,
+        "conv2d backward should emit Conv2dGradInput"
+    );
+    assert!(
+        has_grad_filter,
+        "conv2d backward should emit Conv2dGradFilter"
+    );
+}
+
+#[test]
 fn grad_of_bilinear() {
     let mut ir = IRModule::new();
     let x = scalar_tensor(&mut ir);
