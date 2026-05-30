@@ -43,7 +43,20 @@ pub(super) fn apply_rule(
                     ops.add_grad(*rhs, drhs);
                 }
                 BinOp::Div => {
-                    return Err(AutodiffError::UnsupportedOp { op: "div" });
+                    // c = a / b.  dc/da = 1/b      -> da = upstream / b.
+                    //             dc/db = -a / b^2  -> db = -(upstream * a) / (b * b).
+                    // Quotient-rule backward built entirely from existing binops
+                    // (Div/Mul) + a scalar -1, so the gradient IR lowers through
+                    // the same deterministic, Q16.16-safe paths as the forward op.
+                    let dlhs = ops.add_binop(BinOp::Div, upstream, *rhs);
+                    ops.add_grad(*lhs, dlhs);
+
+                    let num = ops.add_binop(BinOp::Mul, upstream, *lhs);
+                    let denom = ops.add_binop(BinOp::Mul, *rhs, *rhs);
+                    let quot = ops.add_binop(BinOp::Div, num, denom);
+                    let neg_one = ops.add_const_i64(-1);
+                    let drhs = ops.add_binop(BinOp::Mul, quot, neg_one);
+                    ops.add_grad(*rhs, drhs);
                 }
                 BinOp::Mod => {
                     return Err(AutodiffError::UnsupportedOp { op: "mod" });
