@@ -115,14 +115,9 @@ fn equal_shape_add_stays_plain_arith() {
 }
 
 /// The bench `large_network` fixture (3 bias-add layers feeding `tensor.relu`
-/// into the next `matmul`). Ignored: `tensor.relu` is still dropped at AST→IR
-/// (`lower_expr` has no `CallTensorRelu` arm → "unhandled AST node, default 0"),
-/// so the pipeline emitter never sees it. Tracked separately as the tensor-op
-/// surface (relu/sum/mean/reshape/transpose) completion in the canonical mic@1
-/// emitter — un-ignore once that lands. Broadcast itself (this op's `+ bias`) is
-/// proven by the tests above.
+/// into the next `matmul`). Exercises relu lowering + broadcast end-to-end on
+/// the canonical pipeline emitter.
 #[test]
-#[ignore = "blocked on tensor.relu lowering in the pipeline (mic@1) emitter — pre-existing gap"]
 fn large_network_lowers() {
     let mlir = lower(
         r#"
@@ -141,8 +136,48 @@ fn large_network_lowers() {
         matmul3 + b3
     "#,
     );
+    eprintln!(
+        "=== large_network MLIR ===
+{mlir}
+=========================="
+    );
     assert!(
         mlir.contains("linalg.generic"),
-        "expected broadcast in:\n{mlir}"
+        "expected broadcast/relu generic in:
+{mlir}"
+    );
+    assert!(
+        mlir.contains("arith.maximumf"),
+        "expected relu arith.maximumf in:
+{mlir}"
+    );
+    assert!(
+        mlir.contains("linalg.matmul"),
+        "expected matmul in:
+{mlir}"
+    );
+}
+
+/// `tensor.relu` lowers to a shape-preserving `linalg.generic` whose body is a
+/// single `arith.maximumf` against `0.0` (RFC 0012 elementwise activation).
+#[test]
+fn relu_lowers_to_maximumf_generic() {
+    let mlir = lower(
+        r#"
+        let a: Tensor[f32,(4,8)] = 1;
+        tensor.relu(a)
+    "#,
+    );
+    assert!(
+        mlir.contains("linalg.generic"),
+        "expected linalg.generic in:\n{mlir}"
+    );
+    assert!(
+        mlir.contains("arith.maximumf"),
+        "expected arith.maximumf in:\n{mlir}"
+    );
+    assert!(
+        mlir.contains("arith.constant 0.0"),
+        "expected zero constant in:\n{mlir}"
     );
 }

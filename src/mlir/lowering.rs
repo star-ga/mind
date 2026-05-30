@@ -501,6 +501,46 @@ impl LoweringContext {
                     },
                 );
             }
+            Instr::Relu { dst, src } => {
+                // RFC 0012 elementwise activation: relu(x) = max(x, 0). Emitted
+                // as a shape-preserving `linalg.generic` whose body does a single
+                // `arith.maximumf` against a captured `0.0` constant — a pure
+                // elementwise map (no reassociation), so Q16.16 bit-identity holds.
+                let info = self.tensor_info(src, "relu")?;
+                let elem = info.dtype.as_str();
+                let ty = tensor_type(&info.shape, elem);
+                let rank = info.shape.len();
+                let dims = (0..rank)
+                    .map(|d| format!("d{d}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let iters = vec!["\"parallel\""; rank].join(", ");
+                let id_map = format!("affine_map<({dims}) -> ({dims})>");
+                self.emit_line(&format!("    %zero{} = arith.constant 0.0 : {elem}", dst.0));
+                self.emit_line(&format!("    %tmp{} = tensor.empty() : {ty}", dst.0));
+                self.emit_line(&format!(
+                    "    %{} = linalg.generic {{indexing_maps = [{id_map}, {id_map}], \
+                     iterator_types = [{iters}]}} ins(%{} : {ty}) outs(%tmp{} : {ty}) {{",
+                    dst.0, src.0, dst.0
+                ));
+                self.emit_line(&format!(
+                    "    ^bb0(%rin{}: {elem}, %rout{}: {elem}):",
+                    dst.0, dst.0
+                ));
+                self.emit_line(&format!(
+                    "      %rmax{} = arith.maximumf %rin{}, %zero{} : {elem}",
+                    dst.0, dst.0, dst.0
+                ));
+                self.emit_line(&format!("      linalg.yield %rmax{} : {elem}", dst.0));
+                self.emit_line(&format!("    }} -> {ty}"));
+                self.values.insert(
+                    *dst,
+                    ValueKind::Tensor {
+                        dtype: info.dtype.clone(),
+                        shape: info.shape.clone(),
+                    },
+                );
+            }
             Instr::Output(id) => {
                 self.outputs.push(*id);
             }

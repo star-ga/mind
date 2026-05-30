@@ -62,6 +62,9 @@ pub(super) const OP_VEC_MUL_ADD_Q16: u8 = 0x22;
 pub(super) const OP_VEC_REDUCE_ADD_I64: u8 = 0x23;
 pub(super) const OP_REGION: u8 = 0x24;
 pub(super) const OP_EXTERN_FN_DECL: u8 = 0x25;
+/// Elementwise ReLU (`{dst, src}`). Appended (never inserted) so existing
+/// mic@3 byte streams — and their `trace_hash` — are unchanged.
+pub(super) const OP_RELU: u8 = 0x26;
 
 // ─── DType byte tags ─────────────────────────────────────────────────────────
 
@@ -803,6 +806,11 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *src).unwrap();
             encode_i64_vec(w, axes).unwrap();
             write_bool(w, *keepdims).unwrap();
+        }
+        Instr::Relu { dst, src } => {
+            w.write_all(&[OP_RELU]).unwrap();
+            write_vid(w, *dst).unwrap();
+            write_vid(w, *src).unwrap();
         }
         Instr::Reshape {
             dst,
