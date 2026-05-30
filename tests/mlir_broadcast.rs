@@ -1,5 +1,4 @@
 #![cfg(feature = "mlir-lowering")]
-
 // Copyright 2025 STARGA Inc.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -76,7 +75,10 @@ fn multidim_broadcast_emits_const_zero_maps() {
         a * b
     "#,
     );
-    assert!(mlir.contains("linalg.generic"), "expected linalg.generic in:\n{mlir}");
+    assert!(
+        mlir.contains("linalg.generic"),
+        "expected linalg.generic in:\n{mlir}"
+    );
     assert!(
         mlir.contains("(d0, 0, d2)"),
         "expected lhs map `(d0, 0, d2)` in:\n{mlir}"
@@ -102,7 +104,10 @@ fn equal_shape_add_stays_plain_arith() {
         a + b
     "#,
     );
-    assert!(mlir.contains("arith.addf"), "expected arith.addf in:\n{mlir}");
+    assert!(
+        mlir.contains("arith.addf"),
+        "expected arith.addf in:\n{mlir}"
+    );
     assert!(
         !mlir.contains("linalg.generic"),
         "equal-shape add must NOT use linalg.generic:\n{mlir}"
@@ -136,5 +141,8 @@ fn large_network_lowers() {
         matmul3 + b3
     "#,
     );
-    assert!(mlir.contains("linalg.generic"), "expected broadcast in:\n{mlir}");
+    assert!(
+        mlir.contains("linalg.generic"),
+        "expected broadcast in:\n{mlir}"
+    );
 }
