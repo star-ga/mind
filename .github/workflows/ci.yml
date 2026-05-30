@@ -300,6 +300,16 @@ jobs:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
     runs-on: ubuntu-latest
 
+    # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
+    # toolchain or a launcher-stub artifact becomes a hard failure instead of a
+    # silent skip (#306). With the toolchain installed below this passes
+    # deterministically — the keystone verifies SELF-CONSISTENCY (two clean
+    # builds of the self-host .so in this environment are byte-identical), not a
+    # match against a committed cross-toolchain binary oracle (which would be
+    # clang-patch-version specific and unworkable to commit).
+    env:
+      MIND_BENCH_REQUIRE: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -318,8 +328,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mindcraft-self-host-
 
-      - name: Build mindc
-        run: cargo build --release --no-default-features --bin mindc
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 18)
+        # Mirror cross_substrate_identity: the cdylib emit shells out to
+        # unversioned mlir-opt / mlir-translate / clang to link a real ELF, all
+        # of which live in /usr/lib/llvm-18/bin. Without this the self-host
+        # build falls back to a launcher stub and MIND_BENCH_REQUIRE fails it.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mlir-18-tools clang-18
+          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+
+      - name: Verify toolchain on PATH
+        run: |
+          mlir-opt --version | head -1
+          mlir-translate --version | head -1
+          clang --version | head -1
+
+      - name: Build mindc (MLIR backend)
+        run: |
+          cargo build --release --no-default-features \
+            --features "mlir-build std-surface cross-module-imports" --bin mindc
 
       - name: Self-host bootstrap via mindc build (Mind.toml)
         run: |

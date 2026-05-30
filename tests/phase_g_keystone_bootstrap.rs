@@ -137,12 +137,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     )
 }
 
-/// Compute a SHA-256 over the raw bytes of `path`.
-fn file_sha256(path: &std::path::Path) -> Option<String> {
-    let bytes = fs::read(path).ok()?;
-    Some(sha256_hex(&bytes))
-}
-
 // ---------------------------------------------------------------------------
 // Test 1 — Phase G manifest: Mind.toml exists at the repo root and is valid.
 // ---------------------------------------------------------------------------
@@ -365,135 +359,117 @@ fn phase_g_03_byte_identical_mind_toml_vs_direct_path() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4 — Oracle hash guard: the SHA-256 of the Phase G artifact matches
-// the committed oracle at examples/mindc_mind/libmindc_mind.so, OR, when
-// MLIR toolchain is unavailable, both stubs hash identically (proving the
-// stub-path is also deterministic through the mindc build orchestrator).
+// Test 4 — KEYSTONE self-consistency: two independent clean builds of the
+// self-host `.so` in THIS environment are byte-identical.
+//
+// This is the honest keystone. The wedge claim is that the MIND compiler is
+// *deterministic*: the same input + the same environment produces the same
+// output bytes, every time. We do NOT compare against a committed
+// cross-toolchain binary oracle — that is unworkable in practice (the ELF
+// size and bytes are clang-patch-version specific, so a committed oracle
+// would be green only on the exact toolchain that produced it and red
+// everywhere else, and a committed Linux `.so` would break the
+// cross-platform tests that dlopen it). Instead we re-run the *same*
+// deterministic pipeline twice from scratch and require bit-for-bit
+// identical artifacts.
+//
+// #306 / PITFALLS B4: byte-identity between two launcher *stubs* is vacuous
+// (stubs may embed absolute paths and prove nothing about the compiler).
+// So under MIND_BENCH_REQUIRE the artifact must additionally be a real ELF,
+// and a non-succeeding build is a hard failure rather than a silent skip.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn phase_g_04_oracle_hash_guard() {
+fn phase_g_04_self_consistent_byte_identity() {
     let Some(bin) = require_mindc() else { return };
 
-    let out = std::env::temp_dir().join("phase_g_04_oracle_check.so");
-    let oracle = repo_root().join("examples/mindc_mind/libmindc_mind.so");
+    let out_a = std::env::temp_dir().join("phase_g_04_build_a.so");
+    let out_b = std::env::temp_dir().join("phase_g_04_build_b.so");
 
-    if !oracle.exists() {
-        // The oracle .so is gitignored (a local/equipped-runner build artifact),
-        // so public CI legitimately has nothing to compare against. Under
-        // enforcement the oracle is expected to be present.
-        assert!(
-            !enforce_real_backend(),
-            "MIND_BENCH_REQUIRE is set but the oracle at \
-             examples/mindc_mind/libmindc_mind.so is absent — refusing to skip \
-             the keystone byte-identity guard (#306)."
-        );
-        eprintln!("SKIP: oracle at examples/mindc_mind/libmindc_mind.so not found");
+    let src_path = repo_root().join("examples/mindc_mind/main.mind");
+    if !src_path.exists() {
+        eprintln!("SKIP: examples/mindc_mind/main.mind not found");
         return;
     }
 
-    let r = Command::new(&bin)
-        .args([
-            "build",
-            "--release",
-            "--emit=cdylib",
-            &format!("--out={}", out.display()),
-        ])
-        .current_dir(repo_root())
-        .output()
-        .expect("spawn mindc");
+    // Build the self-host `.so` twice, each a fresh `mindc build` process in
+    // this same environment, writing to distinct `--out` paths so the two
+    // links never collide on a shared intermediary.
+    let build = |out: &std::path::Path| -> std::process::Output {
+        Command::new(&bin)
+            .args([
+                "build",
+                "--release",
+                "--emit=cdylib",
+                "--no-cache",
+                &format!("--out={}", out.display()),
+            ])
+            .current_dir(repo_root())
+            .output()
+            .expect("spawn mindc")
+    };
 
-    if !r.status.success() {
-        let detail = String::from_utf8_lossy(&r.stderr);
+    let r_a = build(&out_a);
+    if !r_a.status.success() {
+        let detail = String::from_utf8_lossy(&r_a.stderr);
         assert!(
             !enforce_real_backend(),
-            "MIND_BENCH_REQUIRE is set but `mindc build` did not succeed — \
-             refusing to skip the oracle guard (#306).\nstderr: {detail}"
+            "MIND_BENCH_REQUIRE is set but build A did not succeed — refusing to \
+             skip the self-consistency keystone (#306).\nstderr: {detail}"
         );
-        eprintln!(
-            "SKIP: `mindc build` did not succeed (toolchain may be incomplete)\nstderr: {detail}"
-        );
+        eprintln!("SKIP: build A did not succeed (toolchain may be incomplete)\nstderr: {detail}");
         return;
     }
 
-    let built = fs::read(&out).expect("read built artifact");
-    let oracle_bytes = fs::read(&oracle).expect("read oracle");
-
-    // Determine artifact type: ELF or stub script.
-    let built_is_elf = built.starts_with(b"\x7fELF");
-    let oracle_is_elf = oracle_bytes.starts_with(b"\x7fELF");
-
-    if built_is_elf && oracle_is_elf {
-        // Full MLIR path: byte-identity to the v0.6.1 fixed-point oracle.
-        let built_hash = sha256_hex(&built);
-        let oracle_hash = sha256_hex(&oracle_bytes);
-
-        eprintln!("phase_g_04 (ELF path):");
-        eprintln!("  Built  SHA256: {}", built_hash);
-        eprintln!("  Oracle SHA256: {}", oracle_hash);
-
-        assert_eq!(
-            built_hash, oracle_hash,
-            "KEYSTONE VIOLATION: ELF artifact does not match v0.6.1 oracle.\n\
-             Built  SHA256: {}\n\
-             Oracle SHA256: {}",
-            built_hash, oracle_hash
-        );
-
-        eprintln!("phase_g_04: ELF byte-identical to v0.6.1 oracle");
-    } else if !built_is_elf && !oracle_is_elf {
-        // Stub-script path (no MLIR toolchain): both are shell scripts.
-        // Byte-identity is NOT expected here (stubs embed absolute paths).
-        // Instead, verify that the built stub is well-formed and non-empty.
-        // #306 / PITFALLS B4: a stub oracle cannot anchor the byte-identity
-        // claim — under enforcement this is a hard failure, not a soft pass.
+    let r_b = build(&out_b);
+    if !r_b.status.success() {
+        let detail = String::from_utf8_lossy(&r_b.stderr);
         assert!(
             !enforce_real_backend(),
-            "MIND_BENCH_REQUIRE is set but both the built artifact and the oracle \
-             are launcher stubs — the keystone byte-identity oracle is vacuous on \
-             the stub path (#306). Provision the MLIR backend + ~/.mind/lib runtime \
-             and regenerate the oracle from a real-ELF build."
+            "MIND_BENCH_REQUIRE is set but build B did not succeed — refusing to \
+             skip the self-consistency keystone (#306).\nstderr: {detail}"
         );
-        eprintln!(
-            "phase_g_04 (stub path): MLIR toolchain not available; \
-             verifying stub is well-formed ({} bytes)",
-            built.len()
-        );
-        assert!(
-            built.len() > 50,
-            "stub artifact is suspiciously small ({} bytes)",
-            built.len()
-        );
-        assert!(
-            built.starts_with(b"#!/"),
-            "stub must start with a shebang line"
-        );
-    } else {
-        // Mixed: built is ELF but oracle is not (or vice versa). This indicates
-        // a toolchain change between oracle creation and now.
-        //
-        // #306 / PITFALLS B4: the common case here is built=stub, oracle=ELF —
-        // a real-ELF oracle next to a stub build. Soft-passing this is the exact
-        // false-green that let the broken keystone ride green for weeks. Under
-        // enforcement, fail closed; otherwise record the diagnostic so the team
-        // can regenerate the oracle.
-        let built_kind = if built_is_elf { "ELF" } else { "stub" };
-        let oracle_kind = if oracle_is_elf { "ELF" } else { "stub" };
-        assert!(
-            !enforce_real_backend(),
-            "MIND_BENCH_REQUIRE is set but artifact type mismatch — built is {built_kind} \
-             but oracle is {oracle_kind}. A stub build cannot verify the real-ELF \
-             byte-identity oracle (#306 / docs/byte-store-migration.md: \"DO NOT \
-             capture the oracle from a stub-producing environment\"). Build mindc \
-             with --features \"mlir-build std-surface\", ensure native linking \
-             succeeds against ~/.mind/lib, then regenerate the oracle."
-        );
-        eprintln!(
-            "phase_g_04 WARNING: artifact type mismatch — \
-             built is {built_kind} but oracle is {oracle_kind}. \
-             Oracle may need regeneration."
-        );
+        eprintln!("SKIP: build B did not succeed (toolchain may be incomplete)\nstderr: {detail}");
+        return;
     }
+
+    let bytes_a = fs::read(&out_a).expect("read build A artifact");
+    let bytes_b = fs::read(&out_b).expect("read build B artifact");
+
+    // #306 / PITFALLS B4: demand a real ELF under enforcement so two stubs
+    // hashing alike can never satisfy the keystone.
+    assert!(
+        !enforce_real_backend() || bytes_a.starts_with(b"\x7fELF"),
+        "MIND_BENCH_REQUIRE is set but the self-host artifact is a {}-byte stub, \
+         not a real ELF — self-consistency between two stubs does not prove the \
+         deterministic-compiler wedge (#306). Build mindc with \
+         --features \"mlir-build std-surface cross-module-imports\" and ensure the \
+         MLIR toolchain (mlir-*-18, clang-18) is on PATH so native linking \
+         produces a real cdylib.",
+        bytes_a.len()
+    );
+
+    assert_eq!(
+        bytes_a,
+        bytes_b,
+        "KEYSTONE VIOLATION: two independent clean builds of the self-host \
+         compiler in the same environment produced DIFFERENT artifacts — the \
+         deterministic-compiler claim is false.\n\
+         Build A: {} bytes (SHA256 {})\n\
+         Build B: {} bytes (SHA256 {})",
+        bytes_a.len(),
+        sha256_hex(&bytes_a),
+        bytes_b.len(),
+        sha256_hex(&bytes_b)
+    );
+
+    eprintln!(
+        "phase_g_04 KEYSTONE: self-consistent byte-identity across two clean \
+         builds ({} bytes, ELF={}, SHA256 prefix {}...)",
+        bytes_a.len(),
+        bytes_a.starts_with(b"\x7fELF"),
+        &sha256_hex(&bytes_a)[..16]
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +579,6 @@ fn phase_g_06_report_artifact_sha256() {
     let Some(bin) = require_mindc() else { return };
 
     let out = std::env::temp_dir().join("phase_g_06_report.so");
-    let oracle = repo_root().join("examples/mindc_mind/libmindc_mind.so");
 
     let r = Command::new(&bin)
         .args([
@@ -627,27 +602,24 @@ fn phase_g_06_report_artifact_sha256() {
     let built_bytes = fs::read(&out).expect("read artifact");
     let built_hash = sha256_hex(&built_bytes);
 
-    let oracle_hash = file_sha256(&oracle).unwrap_or_else(|| "oracle not found".to_string());
-
-    eprintln!("=== Phase G — Keystone artifact hashes ===");
+    eprintln!("=== Phase G — Keystone artifact hash ===");
     eprintln!(
         "Built via mindc build (Mind.toml):  SHA256 = {}",
         built_hash
     );
     eprintln!(
-        "Oracle (v0.6.1 fixed-point):        SHA256 = {}",
-        oracle_hash
-    );
-    eprintln!(
-        "Match: {}",
-        if built_hash == oracle_hash {
-            "BYTE-IDENTICAL (full MLIR path)"
+        "Artifact kind: {}",
+        if built_bytes.starts_with(b"\x7fELF") {
+            "real ELF (full MLIR path)"
         } else {
-            "DIFFERENT (stub path or oracle from different toolchain run)"
+            "launcher stub (no MLIR toolchain)"
         }
     );
     eprintln!("Artifact size: {} bytes", built_bytes.len());
 
     // This test always passes — it is a reporting gate, not a boolean assertion.
-    // Test 4 (oracle_hash_guard) is the hard assertion.
+    // Test 4 (phase_g_04_self_consistent_byte_identity) is the hard assertion:
+    // it builds the self-host `.so` twice in this environment and requires the
+    // two artifacts to be byte-identical (deterministic-compiler self-consistency),
+    // rather than matching a committed cross-toolchain oracle.
 }

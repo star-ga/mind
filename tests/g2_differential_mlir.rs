@@ -6,6 +6,12 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+// The differential harness (dlopen + FFI helpers, fixture corpus, etc.) is
+// only exercised by the Linux-gated test below; on macOS/Windows the test
+// no-ops, leaving these items unused. Silence the resulting dead-code/unused
+// warnings off-Linux rather than cfg-gating every helper individually.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
+
 //! RFC 0010 G2.1 — Pure-MIND vs Rust IR-text differential coverage harness.
 //!
 //! Compiles every fixture in the corpus through two paths:
@@ -42,10 +48,12 @@
 //!     --test g2_differential_mlir
 //! ```
 //!
-//! The Oracle `.so` at `examples/mindc_mind/libmindc_mind.so` is the
-//! v0.6.1 fixed-point artifact committed to the repository.  If it is
-//! absent or is not an ELF, the test rebuilds it from the committed
-//! `examples/mindc_mind/main.mind` source via `mindc build --emit=cdylib`.
+//! The pure-MIND `.so` is built on demand from the committed
+//! `examples/mindc_mind/main.mind` source via `mindc build --emit=cdylib`
+//! (no committed binary oracle — a Linux `.so` only dlopens on Linux, and the
+//! ELF bytes are toolchain-patch-version specific). This harness is Linux-only
+//! (it dlopens an ELF and calls in over the System V AMD64 C ABI); on other
+//! platforms the test no-ops as a pass.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -89,10 +97,13 @@ fn require_mindc() -> Option<PathBuf> {
 // libmindc_mind.so — load once per process via OnceLock
 // ---------------------------------------------------------------------------
 
-/// Build (if needed) and return the path to `libmindc_mind.so`.
+/// Build and return the path to a real-ELF `libmindc_mind.so`.
 ///
-/// Prefers the committed oracle; rebuilds only if it is absent or is not
-/// an ELF (i.e. the stub path because the MLIR toolchain is missing).
+/// No binary oracle is committed, so this normally rebuilds from
+/// `examples/mindc_mind/main.mind` via `mindc build --emit=cdylib`. If a
+/// real-ELF `.so` happens to be present locally (e.g. a prior build left one
+/// in the example dir) it is reused; a stub or absent artifact triggers a
+/// rebuild, and a failed rebuild (no MLIR toolchain) returns `None` to skip.
 fn oracle_so_path(bin: &Path) -> Option<PathBuf> {
     static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
     SO.get_or_init(|| {
@@ -596,6 +607,23 @@ fn write_coverage_report(rows: &[(PathBuf, Outcome)], report_path: &Path) -> Str
 // Main test
 // ---------------------------------------------------------------------------
 
+// The pure-MIND path dlopen()s a Linux ELF `libmindc_mind.so` and calls into
+// it via the System V AMD64 C ABI. On macOS/Windows that object cannot be
+// loaded (`dlopen` reports "slice is not valid mach-o file" / a PE error), and
+// no committed cross-platform oracle exists (a committed Linux `.so` would only
+// dlopen on Linux anyway). The differential harness is therefore meaningful
+// only on Linux; gate it there and let it no-op as a passing test elsewhere so
+// the cross-platform CI matrix stays green.
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn g2_1_differential_coverage() {
+    println!(
+        "g2_differential_mlir: SKIP -- differential harness dlopen()s a Linux \
+         ELF and is gated to #[cfg(target_os = \"linux\")]"
+    );
+}
+
+#[cfg(target_os = "linux")]
 #[test]
 fn g2_1_differential_coverage() {
     let Some(bin) = require_mindc() else {
@@ -609,6 +637,21 @@ fn g2_1_differential_coverage() {
         );
         return;
     };
+
+    // Defence-in-depth: oracle_so_path only ever returns a path that starts
+    // with the ELF magic, but re-verify before dlopen so a non-native or
+    // truncated artifact skips cleanly instead of panicking in the loader.
+    match fs::read(&so_path) {
+        Ok(bytes) if bytes.starts_with(b"\x7fELF") => {}
+        _ => {
+            println!(
+                "g2_differential_mlir: SKIP -- {} is not a native ELF; \
+                 cannot dlopen for the differential harness",
+                so_path.display()
+            );
+            return;
+        }
+    }
 
     // Load the shared library once.
     let lib = unsafe {
