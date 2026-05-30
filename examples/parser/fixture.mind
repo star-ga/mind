@@ -10,7 +10,7 @@
 //   - a multi-statement block (let + return + tail expression)
 //   - a multi-parameter fn signature
 
-import std.vec;
+use std.vec;
 
 pub fn add(x: i64, y: i64) -> i64 {
     let z: i64 = x + y;
