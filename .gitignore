@@ -24,15 +24,6 @@ Cargo.lock
 *.dylib
 *.dll
 
-# Exception: the RFC 0008 Phase G keystone oracle is a committed, blessed
-# real-ELF artifact (examples/mindc_mind/libmindc_mind.so) that the
-# mindcraft_self_host gate compares its fresh build against under
-# MIND_BENCH_REQUIRE=1. It is produced deterministically by
-#   mindc --emit-shared examples/mindc_mind/libmindc_mind.so \
-#         examples/mindc_mind/main.mind
-# (LLVM 18 toolchain). Re-bless from a verified real-ELF build only.
-!examples/mindc_mind/libmindc_mind.so
-
 # Testing
 /coverage/
 *.profraw
@@ -79,20 +70,3 @@ examples/**/*.html
 
 # Agent worktree isolation (local sub-agent infrastructure, never tracked)
 .claude/
-
-# Aspirational examples — use MIND language features not yet implemented in the
-# parser (tensor type syntax, for/in loops, tuple destructuring, hex literals,
-# compound assignment, &[u8] slices).  These files are git-tracked design
-# references; this gitignore entry only excludes them from `mindc check` via the
-# VCS integration (vcs.use_ignore_file = true in Mind.toml mindcraft config).
-# Remove an entry once the corresponding parser feature ships.
-/examples/remizov_benchmark.mind
-/examples/remizov_feynman.mind
-/examples/remizov_gpu.mind
-/examples/remizov_inverse.mind
-/examples/remizov_solver.mind
-/examples/remizov_verify.mind
-/examples/fft_signal.mind
-/examples/policy.mind
-/examples/compliance/auditable_model.mind
-/examples/zoo/

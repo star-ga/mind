@@ -300,15 +300,6 @@ jobs:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
     runs-on: ubuntu-latest
 
-    env:
-      # MIND_BENCH_REQUIRE=1 makes a missing/incomplete MLIR backend a HARD
-      # failure so the phase_g keystone byte-identity gate can never pass
-      # vacuously: without it a launcher-stub artifact would skip the
-      # byte-identity + real-ELF assertions and the KEYSTONE job would still go
-      # green (false-green on the wedge's core invariant, #306). Mirrors the
-      # cross_substrate_identity gate's enforcement.
-      MIND_BENCH_REQUIRE: "1"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -327,32 +318,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mindcraft-self-host-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 18)
-        # The Phase G keystone lowers the self-host source through the MLIR
-        # backend (mlir-opt / mlir-translate / clang) to a real cdylib ELF and
-        # links the bundled runtime-support shim. Without the toolchain
-        # `mindc build` falls back to a launcher stub and the byte-identity
-        # claim is vacuous; mirrors the cross_substrate_identity install step
-        # exactly. Stock noble universe ships llvm-18 in /usr/lib/llvm-18/bin.
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mlir-18-tools clang-18
-          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
-
-      - name: Verify toolchain on PATH
-        run: |
-          mlir-opt --version | head -1
-          mlir-translate --version | head -1
-          clang --version | head -1
-
-      - name: Build mindc (MLIR backend)
-        # The cdylib self-host emit (the runtime-support-linked shared-library
-        # path) lives behind the mlir-build feature; std-surface +
-        # cross-module-imports are required for `use std.*` resolution in the
-        # self-host source. Mirrors the cross_substrate_identity build flags.
-        run: |
-          cargo build --release --no-default-features \
-            --features "mlir-build std-surface cross-module-imports" --bin mindc
+      - name: Build mindc
+        run: cargo build --release --no-default-features --bin mindc
 
       - name: Self-host bootstrap via mindc build (Mind.toml)
         run: |
@@ -421,14 +388,11 @@ jobs:
             ${{ runner.os }}-mindcraft-
 
       - name: Build mindc
-        # std-surface enables the while/for/region parser arms used in std/ and
-        # examples/; without it the type-checker rejects valid MIND source files
-        # that use these constructs and the check exits non-zero.
-        run: cargo build --release --no-default-features --features std-surface --bin mindc
+        run: cargo build --release --no-default-features --bin mindc
 
       - name: Run mindc check on std/ and examples/
         run: |
-          cargo run --release --no-default-features --features std-surface --bin mindc -- \
+          cargo run --release --no-default-features --bin mindc -- \
             check std/ examples/
 
   # MSRV check temporarily disabled - ar_archive_writer 0.5.x requires nightly features

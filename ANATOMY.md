@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2669 | **Est. tokens:** ~6,683,073
-**Generated:** 2026-05-30 00:02 UTC
+**Files:** 2669 | **Est. tokens:** ~6,678,303
+**Generated:** 2026-05-30 00:18 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 32 | ~21,877 |
+| `./` | 32 | ~21,571 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -44,19 +44,19 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 27 | ~112,527 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 15 | ~31,892 |
+| `examples/` | 15 | ~32,242 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
-| `examples/emit_ir/` | 5 | ~13,648 |
-| `examples/lexer/` | 6 | ~8,908 |
-| `examples/mindc_mind/` | 6 | ~23,207 |
-| `examples/parser/` | 5 | ~17,923 |
-| `examples/typecheck/` | 5 | ~14,553 |
+| `examples/emit_ir/` | 5 | ~13,605 |
+| `examples/lexer/` | 6 | ~8,706 |
+| `examples/mindc_mind/` | 6 | ~23,022 |
+| `examples/parser/` | 5 | ~17,813 |
+| `examples/typecheck/` | 5 | ~14,524 |
 | `examples/zoo/` | 6 | ~12,885 |
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 7 | ~7,495 |
+| `.github/workflows/` | 7 | ~6,996 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,676 |
 | `scripts/` | 4 | ~5,178 |
@@ -365,7 +365,7 @@
 | `src/ast/` | 1 | ~6,285 |
 | `src/autodiff/` | 3 | ~4,467 |
 | `src/bin/` | 2 | ~19,524 |
-| `src/build/` | 2 | ~11,359 |
+| `src/build/` | 2 | ~11,080 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~8,087 |
@@ -376,7 +376,7 @@
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,898 |
-| `src/fmt/` | 3 | ~18,007 |
+| `src/fmt/` | 3 | ~17,717 |
 | `src/ir/` | 4 | ~15,575 |
 | `src/ir/compact/` | 3 | ~14,226 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
@@ -388,14 +388,14 @@
 | `src/opt/` | 4 | ~8,183 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~22,713 |
+| `src/project/` | 3 | ~20,884 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 17 | ~82,560 |
+| `std/` | 17 | ~81,212 |
 | `tests/` | 158 | ~271,061 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -448,7 +448,7 @@
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~589 tok, large) — # Rust
+- `.gitignore` (~283 tok, medium) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -656,14 +656,14 @@
 - `whitepaper.md` (~2844 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
-- `autodiff_demo.mind` (~1715 tok, huge) — Autodiff Demonstration
+- `autodiff_demo.mind` (~1846 tok, huge) — Autodiff Demonstration
 ### `examples/c/`
 
 - `min.c` (~82 tok, small)
 - `mind.h` (~318 tok, medium) — Copyright 2025 STARGA Inc.
 ### `examples/`
 
-- `cnn_classifier.mind` (~999 tok, large) — CNN Classifier Example
+- `cnn_classifier.mind` (~1143 tok, large) — CNN Classifier Example
 ### `examples/compliance/`
 
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
@@ -673,21 +673,21 @@
 
 - `bootstrap_smoke.py` (~2890 tok, huge)
 - `EXPECTED.md` (~1942 tok, huge) — Phase 6.4 — Expected IR Text
-- `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~6419 tok, huge) — examples/emit_ir/main.mind — RFC 0005 Phase 6.4 self-host MLIR text emitter.
+- `fixture.mind` (~182 tok, small) — Phase 6.4 emit_ir smoke fixture.
+- `main.mind` (~6377 tok, huge) — examples/emit_ir/main.mind — RFC 0005 Phase 6.4 self-host MLIR text emitter.
 - `README.md` (~2214 tok, huge) — RFC 0005 Phase 6.4 — Self-Host MLIR Text Emitter
 ### `examples/`
 
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
-- `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
-- `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
+- `hello_stdlib.mind` (~270 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
+- `hello_tensor.mind` (~140 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
 ### `examples/lexer/`
 
 - `bootstrap_smoke.py` (~2367 tok, huge)
 - `BOOTSTRAP_SMOKE_REPORT.md` (~1931 tok, huge) — Phase 6.5 Stage 1 — Bootstrap Smoke Report
 - `EXPECTED.md` (~1093 tok, large) — Phase 6.1 — Expected Token Stream
-- `fixture.mind` (~67 tok, small) — Phase 6.1 lexer smoke fixture.
-- `main.mind` (~2461 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
+- `fixture.mind` (~66 tok, small) — Phase 6.1 lexer smoke fixture.
+- `main.mind` (~2260 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
 - `README.md` (~989 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
 ### `examples/mindc_mind/`
 
@@ -695,8 +695,8 @@
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
-- `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~14877 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+- `fixture.mind` (~182 tok, small) — Phase 6.4 emit_ir smoke fixture.
+- `main.mind` (~14693 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
@@ -704,8 +704,8 @@
 
 - `bootstrap_smoke.py` (~5544 tok, huge)
 - `EXPECTED.md` (~2140 tok, huge) — Phase 6.2 — Expected AST Tree
-- `fixture.mind` (~160 tok, small) — Phase 6.2 parser smoke fixture.
-- `main.mind` (~7825 tok, huge) — examples/parser/main.mind — RFC 0005 Phase 6.2 self-host parser seed.
+- `fixture.mind` (~159 tok, small) — Phase 6.2 parser smoke fixture.
+- `main.mind` (~7716 tok, huge) — examples/parser/main.mind — RFC 0005 Phase 6.2 self-host parser seed.
 - `README.md` (~2254 tok, huge) — RFC 0005 Phase 6.2 — Self-Host Parser Seed
 ### `examples/`
 
@@ -717,13 +717,13 @@
 - `remizov_inverse.mind` (~2511 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `remizov_solver.mind` (~3699 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `remizov_verify.mind` (~3618 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `tiny_edge_model.mind` (~1823 tok, huge) — Tiny Edge Model Example
+- `tiny_edge_model.mind` (~1900 tok, huge) — Tiny Edge Model Example
 ### `examples/typecheck/`
 
 - `bootstrap_smoke.py` (~2608 tok, huge)
 - `EXPECTED.md` (~2015 tok, huge) — Phase 6.3 — Expected Type-Check Report
 - `fixture.mind` (~198 tok, small) — Phase 6.3 type-checker smoke fixture.
-- `main.mind` (~7120 tok, huge) — examples/typecheck/main.mind — RFC 0005 Phase 6.3 self-host
+- `main.mind` (~7091 tok, huge) — examples/typecheck/main.mind — RFC 0005 Phase 6.3 self-host
 - `README.md` (~2612 tok, huge) — RFC 0005 Phase 6.3 — Self-Host Type-Checker Seed
 ### `examples/zoo/`
 
@@ -752,7 +752,7 @@
 
 - `bench-gate.yml` (~1052 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~3854 tok, huge) — name: CI
+- `ci.yml` (~3355 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
@@ -3570,7 +3570,7 @@
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~6077 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~5798 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/cache/`
 
 - `entry.rs` (~820 tok, large) — Copyright 2025-2026 STARGA Inc.
@@ -3638,7 +3638,7 @@
 ### `src/fmt/`
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
 - `printer.rs` (~13250 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
@@ -3713,7 +3713,7 @@
 - `pipeline.rs` (~3296 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~15604 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13775 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3443 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3751,21 +3751,21 @@
 - `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
+- `async.mind` (~2465 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
-- `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+- `cli.mind` (~2800 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4338 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
-- `json.mind` (~10201 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
+- `json.mind` (~9398 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~935 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `net.mind` (~2315 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~2933 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
-- `regex.mind` (~8929 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
-- `sha256.mind` (~3432 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
-- `string.mind` (~2374 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
-- `toml.mind` (~9913 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
+- `regex.mind` (~8861 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
+- `sha256.mind` (~3232 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `string.mind` (~2364 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `toml.mind` (~9622 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4814 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~765 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`

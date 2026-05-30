@@ -10,7 +10,7 @@
 // → ty_bool branches.  Three fns × representative statement shapes
 // = the minimum coverage that exercises every Phase 6.3 walker.
 
-import std.vec;
+use std.vec;
 
 pub fn add(x: i64, y: i64) -> i64 {
     let z: i64 = x + y;

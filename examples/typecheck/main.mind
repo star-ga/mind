@@ -51,36 +51,22 @@
 // Gap 1).  Every walk loop here mirrors the parser's
 // parse_*_rest(acc) → result shape.
 
-import std.vec;
-import std.map;
-import std.string;
+use std.vec;
+use std.map;
+use std.string;
 
 // ===== Type tags (i64 constants) =====
 //
 // Frozen for Phase 6.3.  Phase 6.3b will add tags for user-defined
 // types (struct names, enum names) without renumbering these.
 
-pub fn ty_unknown() -> i64 {
-    0
-}
-pub fn ty_i64() -> i64 {
-    1
-}
-pub fn ty_f64() -> i64 {
-    2
-}
-pub fn ty_bool() -> i64 {
-    3
-}
-pub fn ty_vec() -> i64 {
-    4
-}
-pub fn ty_string() -> i64 {
-    5
-}
-pub fn ty_unit() -> i64 {
-    6
-}
+pub fn ty_unknown() -> i64 { 0 }
+pub fn ty_i64()     -> i64 { 1 }
+pub fn ty_f64()     -> i64 { 2 }
+pub fn ty_bool()    -> i64 { 3 }
+pub fn ty_vec()     -> i64 { 4 }
+pub fn ty_string()  -> i64 { 5 }
+pub fn ty_unit()    -> i64 { 6 }
 
 // ===== AST kind tags =====
 //
@@ -90,68 +76,30 @@ pub fn ty_unit() -> i64 {
 // std.* lookups only.  Phase 6.3b will fold these into a shared
 // examples/ast/tags.mind module and import them from both sides.
 
-pub fn ast_int_lit() -> i64 {
-    1
-}
-pub fn ast_ident() -> i64 {
-    2
-}
-pub fn ast_binop() -> i64 {
-    3
-}
-pub fn ast_call() -> i64 {
-    4
-}
-pub fn ast_fn_def() -> i64 {
-    5
-}
-pub fn ast_let() -> i64 {
-    6
-}
-pub fn ast_use() -> i64 {
-    7
-}
-pub fn ast_return() -> i64 {
-    8
-}
-pub fn ast_param() -> i64 {
-    9
-}
-pub fn ast_block() -> i64 {
-    10
-}
-pub fn ast_program() -> i64 {
-    11
-}
-pub fn ast_paren() -> i64 {
-    12
-}
+pub fn ast_int_lit() -> i64 { 1 }
+pub fn ast_ident()   -> i64 { 2 }
+pub fn ast_binop()   -> i64 { 3 }
+pub fn ast_call()    -> i64 { 4 }
+pub fn ast_fn_def()  -> i64 { 5 }
+pub fn ast_let()     -> i64 { 6 }
+pub fn ast_use()     -> i64 { 7 }
+pub fn ast_return()  -> i64 { 8 }
+pub fn ast_param()   -> i64 { 9 }
+pub fn ast_block()   -> i64 { 10 }
+pub fn ast_program() -> i64 { 11 }
+pub fn ast_paren()   -> i64 { 12 }
 
 // ===== Binop operator tags =====
 //
 // Mirror of examples/parser/main.mind's op_* constants.
 
-pub fn op_add() -> i64 {
-    1
-}
-pub fn op_sub() -> i64 {
-    2
-}
-pub fn op_mul() -> i64 {
-    3
-}
-pub fn op_div() -> i64 {
-    4
-}
-pub fn op_lt() -> i64 {
-    5
-}
-pub fn op_gt() -> i64 {
-    6
-}
-pub fn op_eq() -> i64 {
-    7
-}
+pub fn op_add() -> i64 { 1 }
+pub fn op_sub() -> i64 { 2 }
+pub fn op_mul() -> i64 { 3 }
+pub fn op_div() -> i64 { 4 }
+pub fn op_lt()  -> i64 { 5 }
+pub fn op_gt()  -> i64 { 6 }
+pub fn op_eq()  -> i64 { 7 }
 
 // ===== AST accessors =====
 //
@@ -159,36 +107,18 @@ pub fn op_eq() -> i64 {
 // 0/8/16/24/32/40/48 (kind, span_lo, span_hi, child0, child1, child2,
 // aux).  Duplicated for the same reason as the kind tags.
 
-pub fn ast_kind(node: i64) -> i64 {
-    __mind_load_i64(node + 0)
-}
-pub fn ast_span_lo(node: i64) -> i64 {
-    __mind_load_i64(node + 8)
-}
-pub fn ast_span_hi(node: i64) -> i64 {
-    __mind_load_i64(node + 16)
-}
-pub fn ast_child0(node: i64) -> i64 {
-    __mind_load_i64(node + 24)
-}
-pub fn ast_child1(node: i64) -> i64 {
-    __mind_load_i64(node + 32)
-}
-pub fn ast_child2(node: i64) -> i64 {
-    __mind_load_i64(node + 40)
-}
-pub fn ast_aux(node: i64) -> i64 {
-    __mind_load_i64(node + 48)
-}
+pub fn ast_kind(node: i64)    -> i64 { __mind_load_i64(node + 0) }
+pub fn ast_span_lo(node: i64) -> i64 { __mind_load_i64(node + 8) }
+pub fn ast_span_hi(node: i64) -> i64 { __mind_load_i64(node + 16) }
+pub fn ast_child0(node: i64)  -> i64 { __mind_load_i64(node + 24) }
+pub fn ast_child1(node: i64)  -> i64 { __mind_load_i64(node + 32) }
+pub fn ast_child2(node: i64)  -> i64 { __mind_load_i64(node + 40) }
+pub fn ast_aux(node: i64)     -> i64 { __mind_load_i64(node + 48) }
 
 // fn_def aux packing (params_len * 2 + is_pub) — see parser's
 // ast_new_fn_def.  Helpers to unpack for clarity.
-pub fn fn_def_params_len(node: i64) -> i64 {
-    ast_aux(node) / 2
-}
-pub fn fn_def_is_pub(node: i64) -> i64 {
-    ast_aux(node) - (ast_aux(node) / 2) * 2
-}
+pub fn fn_def_params_len(node: i64) -> i64 { ast_aux(node) / 2 }
+pub fn fn_def_is_pub(node: i64)     -> i64 { ast_aux(node) - (ast_aux(node) / 2) * 2 }
 
 // ===== Byte-buffer helpers =====
 //
@@ -205,17 +135,17 @@ pub fn load_byte(buf: i64, i: i64) -> i64 {
 // as cmp_buf[clo..chi)?  Returns 1 on match, 0 otherwise.  Length is
 // the primary discriminator; on equal-length pairs we delegate to
 // bytes_eq_rest which is a tail-recursive byte-by-byte compare.
-pub fn bytes_eq(buf: i64, lo: i64, hi: i64, cmp_buf: i64, clo: i64, chi: i64) -> i64 {
+pub fn bytes_eq(buf: i64, lo: i64, hi: i64,
+                cmp_buf: i64, clo: i64, chi: i64) -> i64 {
     if hi - lo == chi - clo {
         return bytes_eq_rest(buf, lo, hi, cmp_buf, clo);
     }
     0
 }
 
-pub fn bytes_eq_rest(buf: i64, lo: i64, hi: i64, cmp_buf: i64, clo: i64) -> i64 {
-    if lo >= hi {
-        return 1;
-    }
+pub fn bytes_eq_rest(buf: i64, lo: i64, hi: i64,
+                     cmp_buf: i64, clo: i64) -> i64 {
+    if lo >= hi { return 1; }
     if load_byte(buf, lo) == load_byte(cmp_buf, clo) {
         return bytes_eq_rest(buf, lo + 1, hi, cmp_buf, clo + 1);
     }
@@ -249,7 +179,8 @@ pub fn make_byte_buf_4(b0: i64, b1: i64, b2: i64, b3: i64) -> i64 {
     h
 }
 
-pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> i64 {
+pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64,
+                       b3: i64, b4: i64, b5: i64) -> i64 {
     let h: i64 = __mind_alloc(16);
     __mind_store_i64(h + 0, b0);
     __mind_store_i64(h + 1, b1);
@@ -261,49 +192,29 @@ pub fn make_byte_buf_6(b0: i64, b1: i64, b2: i64, b3: i64, b4: i64, b5: i64) -> 
 }
 
 // "i64" — 0x69 0x36 0x34
-pub fn name_buf_i64() -> i64 {
-    make_byte_buf_3(105, 54, 52)
-}
+pub fn name_buf_i64() -> i64    { make_byte_buf_3(105, 54, 52) }
 // "f64" — 0x66 0x36 0x34
-pub fn name_buf_f64() -> i64 {
-    make_byte_buf_3(102, 54, 52)
-}
+pub fn name_buf_f64() -> i64    { make_byte_buf_3(102, 54, 52) }
 // "bool" — 0x62 0x6f 0x6f 0x6c
-pub fn name_buf_bool() -> i64 {
-    make_byte_buf_4(98, 111, 111, 108)
-}
+pub fn name_buf_bool() -> i64   { make_byte_buf_4(98, 111, 111, 108) }
 // "Vec" — 0x56 0x65 0x63
-pub fn name_buf_vec() -> i64 {
-    make_byte_buf_3(86, 101, 99)
-}
+pub fn name_buf_vec() -> i64    { make_byte_buf_3(86, 101, 99) }
 // "String" — 0x53 0x74 0x72 0x69 0x6e 0x67
-pub fn name_buf_string() -> i64 {
-    make_byte_buf_6(83, 116, 114, 105, 110, 103)
-}
+pub fn name_buf_string() -> i64 { make_byte_buf_6(83, 116, 114, 105, 110, 103) }
 
 // Resolve a type-ident byte range to a TY_* tag.  Compares against
 // the five known type names; falls back to TY_UNKNOWN.
 pub fn resolve_type_ident(buf: i64, lo: i64, hi: i64) -> i64 {
     let i64_buf: i64 = name_buf_i64();
-    if bytes_eq(buf, lo, hi, i64_buf, 0, 3) == 1 {
-        return ty_i64();
-    }
+    if bytes_eq(buf, lo, hi, i64_buf, 0, 3) == 1 { return ty_i64(); }
     let f64_buf: i64 = name_buf_f64();
-    if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 {
-        return ty_f64();
-    }
+    if bytes_eq(buf, lo, hi, f64_buf, 0, 3) == 1 { return ty_f64(); }
     let bool_buf: i64 = name_buf_bool();
-    if bytes_eq(buf, lo, hi, bool_buf, 0, 4) == 1 {
-        return ty_bool();
-    }
+    if bytes_eq(buf, lo, hi, bool_buf, 0, 4) == 1 { return ty_bool(); }
     let vec_buf: i64 = name_buf_vec();
-    if bytes_eq(buf, lo, hi, vec_buf, 0, 3) == 1 {
-        return ty_vec();
-    }
+    if bytes_eq(buf, lo, hi, vec_buf, 0, 3) == 1 { return ty_vec(); }
     let str_buf: i64 = name_buf_string();
-    if bytes_eq(buf, lo, hi, str_buf, 0, 6) == 1 {
-        return ty_string();
-    }
+    if bytes_eq(buf, lo, hi, str_buf, 0, 6) == 1 { return ty_string(); }
     ty_unknown()
 }
 
@@ -322,21 +233,15 @@ pub fn resolve_type_ident(buf: i64, lo: i64, hi: i64) -> i64 {
 // stays inside the signed-i64 range across the short identifiers the
 // Phase 6.3 fixture actually contains.
 
-pub fn djb2_seed() -> i64 {
-    5381
-}
-pub fn djb2_prime() -> i64 {
-    33
-}
+pub fn djb2_seed()  -> i64 { 5381 }
+pub fn djb2_prime() -> i64 { 33 }
 
 pub fn name_hash(buf: i64, lo: i64, hi: i64) -> i64 {
     name_hash_rest(buf, lo, hi, djb2_seed())
 }
 
 pub fn name_hash_rest(buf: i64, lo: i64, hi: i64, acc: i64) -> i64 {
-    if lo >= hi {
-        return acc;
-    }
+    if lo >= hi { return acc; }
     let b: i64 = load_byte(buf, lo);
     let mixed: i64 = (acc * djb2_prime()) + b;
     name_hash_rest(buf, lo + 1, hi, mixed)
@@ -367,9 +272,7 @@ pub fn env_lookup(env: Map, buf: i64, lo: i64, hi: i64) -> i64 {
 }
 
 pub fn env_lookup_rest(env: Map, key: i64, i: i64, best: i64) -> i64 {
-    if i >= map_len(env) {
-        return best;
-    }
+    if i >= map_len(env) { return best; }
     let new_best: i64 = if map_key_at(env, i) == key {
         map_value_at(env, i)
     } else {
@@ -390,22 +293,18 @@ pub fn push_ascii(s: String, b: i64) -> String {
 }
 
 pub fn push_newline(s: String) -> String {
-    string_push_byte(s, 10)
-    // '\n'
+    string_push_byte(s, 10)   // '\n'
 }
 
 pub fn push_space(s: String) -> String {
-    string_push_byte(s, 32)
-    // ' '
+    string_push_byte(s, 32)   // ' '
 }
 
 // Append the bytes of buf[lo..hi) to `s`, one at a time, tail-
 // recursively.  Used to splice an identifier's source bytes into a
 // report line.
 pub fn push_bytes(s: String, buf: i64, lo: i64, hi: i64) -> String {
-    if lo >= hi {
-        return s;
-    }
+    if lo >= hi { return s; }
     let b: i64 = load_byte(buf, lo);
     let next: String = string_push_byte(s, b);
     push_bytes(next, buf, lo + 1, hi)
@@ -414,29 +313,23 @@ pub fn push_bytes(s: String, buf: i64, lo: i64, hi: i64) -> String {
 // Spell out a TY_* tag as its source-form name.
 pub fn push_type_name(s: String, ty: i64) -> String {
     if ty == ty_i64() {
-        let s1: String = string_push_byte(s, 105);
-        // 'i'
-        let s2: String = string_push_byte(s1, 54);
-        // '6'
-        return string_push_byte(s2, 52);
+        let s1: String = string_push_byte(s, 105);   // 'i'
+        let s2: String = string_push_byte(s1, 54);   // '6'
+        return string_push_byte(s2, 52);              // '4'
     }
-    // '4'
     if ty == ty_f64() {
-        let s1: String = string_push_byte(s, 102);
-        // 'f'
+        let s1: String = string_push_byte(s, 102);   // 'f'
         let s2: String = string_push_byte(s1, 54);
         return string_push_byte(s2, 52);
     }
     if ty == ty_bool() {
-        let s1: String = string_push_byte(s, 98);
-        // 'b'
+        let s1: String = string_push_byte(s, 98);    // 'b'
         let s2: String = string_push_byte(s1, 111);
         let s3: String = string_push_byte(s2, 111);
         return string_push_byte(s3, 108);
     }
     if ty == ty_vec() {
-        let s1: String = string_push_byte(s, 86);
-        // 'V'
+        let s1: String = string_push_byte(s, 86);    // 'V'
         let s2: String = string_push_byte(s1, 101);
         return string_push_byte(s2, 99);
     }
@@ -449,11 +342,9 @@ pub fn push_type_name(s: String, ty: i64) -> String {
         return string_push_byte(s5, 103);
     }
     if ty == ty_unit() {
-        let s1: String = string_push_byte(s, 40);
-        // '('
-        return string_push_byte(s1, 41);
+        let s1: String = string_push_byte(s, 40);    // '('
+        return string_push_byte(s1, 41);              // ')'
     }
-    // ')'
     // ty_unknown — spell as "?"
     string_push_byte(s, 63)
 }
@@ -489,12 +380,8 @@ pub fn push_arrow(s: String) -> String {
 }
 
 // "(" / ")"
-pub fn push_lparen(s: String) -> String {
-    string_push_byte(s, 40)
-}
-pub fn push_rparen(s: String) -> String {
-    string_push_byte(s, 41)
-}
+pub fn push_lparen(s: String) -> String { string_push_byte(s, 40) }
+pub fn push_rparen(s: String) -> String { string_push_byte(s, 41) }
 // ", "
 pub fn push_comma(s: String) -> String {
     let s1: String = string_push_byte(s, 44);
@@ -531,9 +418,8 @@ pub fn push_at_span(s: String) -> String {
 // path — assert callers pre-normalise.
 pub fn push_i64(s: String, n: i64) -> String {
     if n < 10 {
-        return string_push_byte(s, 48 + n);
+        return string_push_byte(s, 48 + n);     // '0' + digit
     }
-    // '0' + digit
     let high: String = push_i64(s, n / 10);
     string_push_byte(high, 48 + (n - (n / 10) * 10))
 }
@@ -541,46 +427,26 @@ pub fn push_i64(s: String, n: i64) -> String {
 // "return type mismatch" — load-bearing error phrase.  Pre-computed
 // per-byte for the same reason push_type_name is.
 pub fn push_err_return_mismatch(s: String) -> String {
-    let s1: String = string_push_byte(s, 114);
-    // r
-    let s2: String = string_push_byte(s1, 101);
-    // e
-    let s3: String = string_push_byte(s2, 116);
-    // t
-    let s4: String = string_push_byte(s3, 117);
-    // u
-    let s5: String = string_push_byte(s4, 114);
-    // r
-    let s6: String = string_push_byte(s5, 110);
-    // n
-    let s7: String = string_push_byte(s6, 32);
-    // SPACE
-    let s8: String = string_push_byte(s7, 116);
-    // t
-    let s9: String = string_push_byte(s8, 121);
-    // y
-    let s10: String = string_push_byte(s9, 112);
-    // p
-    let s11: String = string_push_byte(s10, 101);
-    // e
-    let s12: String = string_push_byte(s11, 32);
-    // SPACE
-    let s13: String = string_push_byte(s12, 109);
-    // m
-    let s14: String = string_push_byte(s13, 105);
-    // i
-    let s15: String = string_push_byte(s14, 115);
-    // s
-    let s16: String = string_push_byte(s15, 109);
-    // m
-    let s17: String = string_push_byte(s16, 97);
-    // a
-    let s18: String = string_push_byte(s17, 116);
-    // t
-    let s19: String = string_push_byte(s18, 99);
-    // c
-    string_push_byte(s19, 104)
-    // h
+    let s1: String = string_push_byte(s, 114);     // r
+    let s2: String = string_push_byte(s1, 101);    // e
+    let s3: String = string_push_byte(s2, 116);    // t
+    let s4: String = string_push_byte(s3, 117);    // u
+    let s5: String = string_push_byte(s4, 114);    // r
+    let s6: String = string_push_byte(s5, 110);    // n
+    let s7: String = string_push_byte(s6, 32);     // SPACE
+    let s8: String = string_push_byte(s7, 116);    // t
+    let s9: String = string_push_byte(s8, 121);    // y
+    let s10: String = string_push_byte(s9, 112);   // p
+    let s11: String = string_push_byte(s10, 101);  // e
+    let s12: String = string_push_byte(s11, 32);   // SPACE
+    let s13: String = string_push_byte(s12, 109);  // m
+    let s14: String = string_push_byte(s13, 105);  // i
+    let s15: String = string_push_byte(s14, 115);  // s
+    let s16: String = string_push_byte(s15, 109);  // m
+    let s17: String = string_push_byte(s16, 97);   // a
+    let s18: String = string_push_byte(s17, 116);  // t
+    let s19: String = string_push_byte(s18, 99);   // c
+    string_push_byte(s19, 104)                     // h
 }
 
 // ===== TcResult — threaded through every tc_* function =====
@@ -599,12 +465,8 @@ pub fn tc_new(env: Map, report: String) -> TcResult {
     TcResult { env: env, report: report }
 }
 
-pub fn tc_env(r: TcResult) -> Map {
-    r.env
-}
-pub fn tc_report(r: TcResult) -> String {
-    r.report
-}
+pub fn tc_env(r: TcResult) -> Map     { r.env }
+pub fn tc_report(r: TcResult) -> String { r.report }
 
 // ===== Expression type resolution =====
 //
@@ -615,9 +477,7 @@ pub fn tc_report(r: TcResult) -> String {
 pub fn type_of_expr(node: i64, env: Map, buf: i64) -> i64 {
     let k: i64 = ast_kind(node);
 
-    if k == ast_int_lit() {
-        return ty_i64();
-    }
+    if k == ast_int_lit() { return ty_i64(); }
 
     if k == ast_ident() {
         let lo: i64 = ast_span_lo(node);
@@ -627,15 +487,9 @@ pub fn type_of_expr(node: i64, env: Map, buf: i64) -> i64 {
 
     if k == ast_binop() {
         let op: i64 = ast_aux(node);
-        if op == op_lt() {
-            return ty_bool();
-        }
-        if op == op_gt() {
-            return ty_bool();
-        }
-        if op == op_eq() {
-            return ty_bool();
-        }
+        if op == op_lt() { return ty_bool(); }
+        if op == op_gt() { return ty_bool(); }
+        if op == op_eq() { return ty_bool(); }
         // +,-,*,/ — type of LHS (mindc's existing surface only
         // permits same-type operands at this layer; Phase 6.3b will
         // grow numeric promotion + mismatch diagnostics).
@@ -649,9 +503,7 @@ pub fn type_of_expr(node: i64, env: Map, buf: i64) -> i64 {
     }
 
     // ast_call → deferred to Phase 6.3b (full fn-sig matching).
-    if k == ast_call() {
-        return ty_unknown();
-    }
+    if k == ast_call() { return ty_unknown(); }
 
     ty_unknown()
 }
@@ -667,7 +519,7 @@ pub fn type_of_expr(node: i64, env: Map, buf: i64) -> i64 {
 // T in Phase 6.3 (deferred to 6.3b alongside numeric promotion).
 pub fn tc_let(node: i64, env: Map, buf: i64, report: String) -> TcResult {
     let name_node: i64 = ast_child0(node);
-    let ty_node: i64 = ast_child1(node);
+    let ty_node: i64   = ast_child1(node);
 
     let n_lo: i64 = ast_span_lo(name_node);
     let n_hi: i64 = ast_span_hi(name_node);
@@ -706,8 +558,7 @@ pub fn tc_return(node: i64, env: Map, buf: i64, report: String, expected_ret: i6
     let s4: String = push_i64(s3, lo);
     let s5: String = push_comma(s4);
     let s6: String = push_i64(s5, hi);
-    let s7: String = string_push_byte(s6, 41);
-    // ')'
+    let s7: String = string_push_byte(s6, 41);    // ')'
     let s8: String = push_newline(s7);
     tc_new(env, s8)
 }
@@ -717,12 +568,8 @@ pub fn tc_return(node: i64, env: Map, buf: i64, report: String, expected_ret: i6
 // emit; the fn-def header carries the declared return type.
 pub fn tc_stmt(node: i64, env: Map, buf: i64, report: String, expected_ret: i64) -> TcResult {
     let k: i64 = ast_kind(node);
-    if k == ast_let() {
-        return tc_let(node, env, buf, report);
-    }
-    if k == ast_return() {
-        return tc_return(node, env, buf, report, expected_ret);
-    }
+    if k == ast_let()    { return tc_let(node, env, buf, report); }
+    if k == ast_return() { return tc_return(node, env, buf, report, expected_ret); }
     // expression statement — type-check via type_of_expr so identifier
     // lookups still fire (we discard the result; no binding is created).
     let _: i64 = type_of_expr(node, env, buf);
@@ -732,17 +579,18 @@ pub fn tc_stmt(node: i64, env: Map, buf: i64, report: String, expected_ret: i64)
 // Walk every statement in an ast_block under the given env.
 pub fn tc_block(block: i64, env: Map, buf: i64, report: String, expected_ret: i64) -> TcResult {
     let stmts_addr: i64 = ast_child0(block);
-    let stmts_len: i64 = ast_aux(block);
+    let stmts_len: i64  = ast_aux(block);
     tc_block_stmts_rest(stmts_addr, stmts_len, 0, env, buf, report, expected_ret)
 }
 
-pub fn tc_block_stmts_rest(stmts_addr: i64, stmts_len: i64, i: i64, env: Map, buf: i64, report: String, expected_ret: i64) -> TcResult {
-    if i >= stmts_len {
-        return tc_new(env, report);
-    }
+pub fn tc_block_stmts_rest(stmts_addr: i64, stmts_len: i64, i: i64,
+                           env: Map, buf: i64, report: String,
+                           expected_ret: i64) -> TcResult {
+    if i >= stmts_len { return tc_new(env, report); }
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let after: TcResult = tc_stmt(stmt, env, buf, report, expected_ret);
-    tc_block_stmts_rest(stmts_addr, stmts_len, i + 1, tc_env(after), buf, tc_report(after), expected_ret)
+    tc_block_stmts_rest(stmts_addr, stmts_len, i + 1,
+                        tc_env(after), buf, tc_report(after), expected_ret)
 }
 
 // ===== Function-definition walker =====
@@ -765,9 +613,7 @@ pub fn tc_block_stmts_rest(stmts_addr: i64, stmts_len: i64, i: i64, env: Map, bu
 // fn in the fixture returns i64); Phase 6.3b widens the node shape
 // to carry the explicit return-type ident.
 
-pub fn fn_default_ret() -> i64 {
-    ty_i64()
-}
+pub fn fn_default_ret() -> i64 { ty_i64() }
 
 pub fn tc_fn_def(node: i64, env: Map, buf: i64, report: String) -> TcResult {
     let name_node: i64 = ast_child0(node);
@@ -779,7 +625,8 @@ pub fn tc_fn_def(node: i64, env: Map, buf: i64, report: String) -> TcResult {
     let n_hi: i64 = ast_span_hi(name_node);
 
     let fn_env: Map = env_new();
-    let after_params: TcResult = tc_params_rest(params_addr, params_len, 0, fn_env, buf, report, n_lo, n_hi, 1);
+    let after_params: TcResult = tc_params_rest(params_addr, params_len, 0,
+                                                 fn_env, buf, report, n_lo, n_hi, 1);
 
     // Close out the fn header: " -> i64\n"
     let header1: String = push_arrow(tc_report(after_params));
@@ -798,7 +645,9 @@ pub fn tc_fn_def(node: i64, env: Map, buf: i64, report: String) -> TcResult {
 // param's predecessor bytes should be "fn NAME : (" or ", " (we
 // thread `i` for that).  `is_first` (the trailing 1/0 i64) handles
 // the comma vs open-paren branch.
-pub fn tc_params_rest(params_addr: i64, params_len: i64, i: i64, env: Map, buf: i64, report: String, name_lo: i64, name_hi: i64, is_first: i64) -> TcResult {
+pub fn tc_params_rest(params_addr: i64, params_len: i64, i: i64,
+                      env: Map, buf: i64, report: String,
+                      name_lo: i64, name_hi: i64, is_first: i64) -> TcResult {
     if i >= params_len {
         // Finalise: if no params, emit "fn NAME : ()" now.
         if is_first == 1 {
@@ -837,7 +686,8 @@ pub fn tc_params_rest(params_addr: i64, params_len: i64, i: i64, env: Map, buf: 
     };
     let with_type: String = push_type_name(prefix, pt);
 
-    tc_params_rest(params_addr, params_len, i + 1, new_env, buf, with_type, name_lo, name_hi, 0)
+    tc_params_rest(params_addr, params_len, i + 1,
+                   new_env, buf, with_type, name_lo, name_hi, 0)
 }
 
 // ===== Top-level item walker =====
@@ -850,19 +700,17 @@ pub fn tc_params_rest(params_addr: i64, params_len: i64, i: i64, env: Map, buf: 
 
 pub fn tc_item(node: i64, env: Map, buf: i64, report: String) -> TcResult {
     let k: i64 = ast_kind(node);
-    if k == ast_fn_def() {
-        return tc_fn_def(node, env, buf, report);
-    }
+    if k == ast_fn_def() { return tc_fn_def(node, env, buf, report); }
     tc_new(env, report)
 }
 
-pub fn tc_items_rest(items_addr: i64, items_len: i64, i: i64, env: Map, buf: i64, report: String) -> TcResult {
-    if i >= items_len {
-        return tc_new(env, report);
-    }
+pub fn tc_items_rest(items_addr: i64, items_len: i64, i: i64,
+                     env: Map, buf: i64, report: String) -> TcResult {
+    if i >= items_len { return tc_new(env, report); }
     let item: i64 = __mind_load_i64(items_addr + i * 8);
     let after: TcResult = tc_item(item, env, buf, report);
-    tc_items_rest(items_addr, items_len, i + 1, tc_env(after), buf, tc_report(after))
+    tc_items_rest(items_addr, items_len, i + 1,
+                  tc_env(after), buf, tc_report(after))
 }
 
 // ===== Public entry =====
@@ -878,7 +726,7 @@ pub fn tc_items_rest(items_addr: i64, items_len: i64, i: i64, env: Map, buf: i64
 
 pub fn typecheck(ast_root: i64, buf: i64) -> String {
     let items_addr: i64 = ast_child0(ast_root);
-    let items_len: i64 = ast_aux(ast_root);
+    let items_len: i64  = ast_aux(ast_root);
     let env: Map = env_new();
     let report: String = string_new();
     let result: TcResult = tc_items_rest(items_addr, items_len, 0, env, buf, report);

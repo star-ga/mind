@@ -58,96 +58,50 @@
 
 // --- Kind constants ---
 
-pub fn jv_kind_null() -> i64 {
-    0
-}
-pub fn jv_kind_bool() -> i64 {
-    1
-}
-pub fn jv_kind_number() -> i64 {
-    2
-}
-pub fn jv_kind_string() -> i64 {
-    3
-}
-pub fn jv_kind_array() -> i64 {
-    4
-}
-pub fn jv_kind_object() -> i64 {
-    5
-}
+pub fn jv_kind_null()   -> i64 { 0 }
+pub fn jv_kind_bool()   -> i64 { 1 }
+pub fn jv_kind_number() -> i64 { 2 }
+pub fn jv_kind_string() -> i64 { 3 }
+pub fn jv_kind_array()  -> i64 { 4 }
+pub fn jv_kind_object() -> i64 { 5 }
 
 // --- Field accessors ---
 
-pub fn jv_kind(h: i64) -> i64 {
-    __mind_load_i64(h + 0)
-}
-pub fn jv_bval(h: i64) -> i64 {
-    __mind_load_i64(h + 8)
-}
-pub fn jv_n_int(h: i64) -> i64 {
-    __mind_load_i64(h + 16)
-}
-pub fn jv_n_frac(h: i64) -> i64 {
-    __mind_load_i64(h + 24)
-}
-pub fn jv_n_frac_d(h: i64) -> i64 {
-    __mind_load_i64(h + 32)
-}
-pub fn jv_n_neg(h: i64) -> i64 {
-    __mind_load_i64(h + 40)
-}
-pub fn jv_n_is_int(h: i64) -> i64 {
-    __mind_load_i64(h + 48)
-}
-pub fn jv_s_addr(h: i64) -> i64 {
-    __mind_load_i64(h + 56)
-}
-pub fn jv_s_len(h: i64) -> i64 {
-    __mind_load_i64(h + 64)
-}
-pub fn jv_s_cap(h: i64) -> i64 {
-    __mind_load_i64(h + 72)
-}
-pub fn jv_arr_addr(h: i64) -> i64 {
-    __mind_load_i64(h + 80)
-}
-pub fn jv_arr_len(h: i64) -> i64 {
-    __mind_load_i64(h + 88)
-}
-pub fn jv_arr_cap(h: i64) -> i64 {
-    __mind_load_i64(h + 96)
-}
-pub fn jv_tbl_keys(h: i64) -> i64 {
-    __mind_load_i64(h + 104)
-}
-pub fn jv_tbl_vals(h: i64) -> i64 {
-    __mind_load_i64(h + 112)
-}
-pub fn jv_tbl_len(h: i64) -> i64 {
-    __mind_load_i64(h + 120)
-}
-pub fn jv_tbl_cap(h: i64) -> i64 {
-    __mind_load_i64(h + 128)
-}
+pub fn jv_kind(h: i64)      -> i64 { __mind_load_i64(h + 0)   }
+pub fn jv_bval(h: i64)      -> i64 { __mind_load_i64(h + 8)   }
+pub fn jv_n_int(h: i64)     -> i64 { __mind_load_i64(h + 16)  }
+pub fn jv_n_frac(h: i64)    -> i64 { __mind_load_i64(h + 24)  }
+pub fn jv_n_frac_d(h: i64)  -> i64 { __mind_load_i64(h + 32)  }
+pub fn jv_n_neg(h: i64)     -> i64 { __mind_load_i64(h + 40)  }
+pub fn jv_n_is_int(h: i64)  -> i64 { __mind_load_i64(h + 48)  }
+pub fn jv_s_addr(h: i64)    -> i64 { __mind_load_i64(h + 56)  }
+pub fn jv_s_len(h: i64)     -> i64 { __mind_load_i64(h + 64)  }
+pub fn jv_s_cap(h: i64)     -> i64 { __mind_load_i64(h + 72)  }
+pub fn jv_arr_addr(h: i64)  -> i64 { __mind_load_i64(h + 80)  }
+pub fn jv_arr_len(h: i64)   -> i64 { __mind_load_i64(h + 88)  }
+pub fn jv_arr_cap(h: i64)   -> i64 { __mind_load_i64(h + 96)  }
+pub fn jv_tbl_keys(h: i64)  -> i64 { __mind_load_i64(h + 104) }
+pub fn jv_tbl_vals(h: i64)  -> i64 { __mind_load_i64(h + 112) }
+pub fn jv_tbl_len(h: i64)   -> i64 { __mind_load_i64(h + 120) }
+pub fn jv_tbl_cap(h: i64)   -> i64 { __mind_load_i64(h + 128) }
 
 // --- Allocator ---
 
 fn jv_alloc() -> i64 {
     let h: i64 = __mind_alloc(136);
-    __mind_store_i64(h + 0, 0);
-    __mind_store_i64(h + 8, 0);
-    __mind_store_i64(h + 16, 0);
-    __mind_store_i64(h + 24, 0);
-    __mind_store_i64(h + 32, 0);
-    __mind_store_i64(h + 40, 0);
-    __mind_store_i64(h + 48, 0);
-    __mind_store_i64(h + 56, 0);
-    __mind_store_i64(h + 64, 0);
-    __mind_store_i64(h + 72, 0);
-    __mind_store_i64(h + 80, 0);
-    __mind_store_i64(h + 88, 0);
-    __mind_store_i64(h + 96, 0);
+    __mind_store_i64(h + 0,   0);
+    __mind_store_i64(h + 8,   0);
+    __mind_store_i64(h + 16,  0);
+    __mind_store_i64(h + 24,  0);
+    __mind_store_i64(h + 32,  0);
+    __mind_store_i64(h + 40,  0);
+    __mind_store_i64(h + 48,  0);
+    __mind_store_i64(h + 56,  0);
+    __mind_store_i64(h + 64,  0);
+    __mind_store_i64(h + 72,  0);
+    __mind_store_i64(h + 80,  0);
+    __mind_store_i64(h + 88,  0);
+    __mind_store_i64(h + 96,  0);
     __mind_store_i64(h + 104, 0);
     __mind_store_i64(h + 112, 0);
     __mind_store_i64(h + 120, 0);
@@ -172,7 +126,7 @@ fn jv_make_bool(v: i64) -> i64 {
 
 fn jv_make_number(n_int: i64, n_frac: i64, n_frac_d: i64, n_neg: i64, n_is_int: i64) -> i64 {
     let h: i64 = jv_alloc();
-    __mind_store_i64(h + 0, jv_kind_number());
+    __mind_store_i64(h + 0,  jv_kind_number());
     __mind_store_i64(h + 16, n_int);
     __mind_store_i64(h + 24, n_frac);
     __mind_store_i64(h + 32, n_frac_d);
@@ -183,7 +137,7 @@ fn jv_make_number(n_int: i64, n_frac: i64, n_frac_d: i64, n_neg: i64, n_is_int: 
 
 fn jv_make_string(s_addr: i64, s_len: i64, s_cap: i64) -> i64 {
     let h: i64 = jv_alloc();
-    __mind_store_i64(h + 0, jv_kind_string());
+    __mind_store_i64(h + 0,  jv_kind_string());
     __mind_store_i64(h + 56, s_addr);
     __mind_store_i64(h + 64, s_len);
     __mind_store_i64(h + 72, s_cap);
@@ -241,65 +195,29 @@ fn jv_bytes_eq(aa: i64, ba: i64, n: i64) -> i64 {
 }
 
 fn jv_is_ws(b: i64) -> i64 {
-    if b == 32 {
-        return 1;
-    }
-    if b == 9 {
-        return 1;
-    }
-    if b == 10 {
-        return 1;
-    }
-    if b == 13 {
-        return 1;
-    }
+    if b == 32 { return 1; }
+    if b == 9  { return 1; }
+    if b == 10 { return 1; }
+    if b == 13 { return 1; }
     0
 }
 
 fn jv_is_digit(b: i64) -> i64 {
-    if b >= 48 {
-        if b <= 57 {
-            return 1;
-        }
-    }
+    if b >= 48 { if b <= 57 { return 1; } }
     0
 }
 
 fn jv_is_hex(b: i64) -> i64 {
-    if b >= 48 {
-        if b <= 57 {
-            return 1;
-        }
-    }
-    if b >= 65 {
-        if b <= 70 {
-            return 1;
-        }
-    }
-    if b >= 97 {
-        if b <= 102 {
-            return 1;
-        }
-    }
+    if b >= 48 { if b <= 57 { return 1; } }
+    if b >= 65 { if b <= 70 { return 1; } }
+    if b >= 97 { if b <= 102 { return 1; } }
     0
 }
 
 fn jv_hex_val(b: i64) -> i64 {
-    if b >= 48 {
-        if b <= 57 {
-            return b - 48;
-        }
-    }
-    if b >= 65 {
-        if b <= 70 {
-            return b - 55;
-        }
-    }
-    if b >= 97 {
-        if b <= 102 {
-            return b - 87;
-        }
-    }
+    if b >= 48 { if b <= 57  { return b - 48; } }
+    if b >= 65 { if b <= 70  { return b - 55; } }
+    if b >= 97 { if b <= 102 { return b - 87; } }
     0
 }
 
@@ -307,8 +225,8 @@ fn jv_hex_val(b: i64) -> i64 {
 
 fn jvsb_new() -> i64 {
     let h: i64 = __mind_alloc(24);
-    __mind_store_i64(h + 0, 0);
-    __mind_store_i64(h + 8, 0);
+    __mind_store_i64(h + 0,  0);
+    __mind_store_i64(h + 8,  0);
     __mind_store_i64(h + 16, 0);
     h
 }
@@ -334,8 +252,8 @@ fn jvsb_push(h: i64, b: i64) -> i64 {
         d
     };
     __mind_store_i8(new_dat + old_len, b);
-    __mind_store_i64(h + 0, new_dat);
-    __mind_store_i64(h + 8, old_len + 1);
+    __mind_store_i64(h + 0,  new_dat);
+    __mind_store_i64(h + 8,  old_len + 1);
     __mind_store_i64(h + 16, new_cap);
     0
 }
@@ -351,8 +269,8 @@ fn jvstr_alloc(src_addr: i64, src_len: i64) -> i64 {
         let _ = jv_copy_bytes(src_addr, d, src_len);
         d
     };
-    __mind_store_i64(h + 0, dat);
-    __mind_store_i64(h + 8, src_len);
+    __mind_store_i64(h + 0,  dat);
+    __mind_store_i64(h + 8,  src_len);
     __mind_store_i64(h + 16, src_len);
     h
 }
@@ -370,8 +288,8 @@ fn jvstr_eq_h(a: i64, b: i64) -> i64 {
 // --- Array push ---
 
 fn jv_arr_push(h: i64, elem: i64) -> i64 {
-    let old_len: i64 = __mind_load_i64(h + 88);
-    let old_cap: i64 = __mind_load_i64(h + 96);
+    let old_len: i64  = __mind_load_i64(h + 88);
+    let old_cap: i64  = __mind_load_i64(h + 96);
     let old_addr: i64 = __mind_load_i64(h + 80);
     let new_cap: i64 = if old_cap == 0 {
         4
@@ -403,8 +321,8 @@ pub fn jv_arr_get(h: i64, i: i64) -> i64 {
 // --- Object insert/lookup ---
 
 fn jv_tbl_set(h: i64, key_h: i64, val_h: i64) -> i64 {
-    let old_len: i64 = __mind_load_i64(h + 120);
-    let old_cap: i64 = __mind_load_i64(h + 128);
+    let old_len: i64  = __mind_load_i64(h + 120);
+    let old_cap: i64  = __mind_load_i64(h + 128);
     let old_keys: i64 = __mind_load_i64(h + 104);
     let old_vals: i64 = __mind_load_i64(h + 112);
     let mut idx: i64 = 0;
@@ -448,19 +366,19 @@ fn jv_tbl_set(h: i64, key_h: i64, val_h: i64) -> i64 {
         __mind_store_i64(h + 104, new_keys);
         __mind_store_i64(h + 112, new_vals);
         __mind_store_i64(h + 120, old_len + 1);
-        __mind_store_i64(h + 128, new_cap)
+        __mind_store_i64(h + 128, new_cap);
     }
     0
 }
 
 fn jv_tbl_get_raw(h: i64, key_addr: i64, key_len: i64) -> i64 {
-    let tbl_len: i64 = __mind_load_i64(h + 120);
+    let tbl_len: i64  = __mind_load_i64(h + 120);
     let tbl_keys: i64 = __mind_load_i64(h + 104);
     let tbl_vals: i64 = __mind_load_i64(h + 112);
-    let mut idx: i64 = 0;
+    let mut idx: i64  = 0;
     let mut found: i64 = 0;
     while idx < tbl_len {
-        let k: i64 = __mind_load_i64(tbl_keys + idx * 8);
+        let k: i64     = __mind_load_i64(tbl_keys + idx * 8);
         let k_len: i64 = __mind_load_i64(k + 8);
         if k_len == key_len {
             if jv_bytes_eq(__mind_load_i64(k + 0), key_addr, key_len) == 1 {
@@ -514,12 +432,8 @@ fn jvpr_new(pos: i64, h: i64) -> i64 {
     r
 }
 
-fn jvpr_pos(r: i64) -> i64 {
-    __mind_load_i64(r + 0)
-}
-fn jvpr_val(r: i64) -> i64 {
-    __mind_load_i64(r + 8)
-}
+fn jvpr_pos(r: i64) -> i64 { __mind_load_i64(r + 0) }
+fn jvpr_val(r: i64) -> i64 { __mind_load_i64(r + 8) }
 
 // --- Encode \uXXXX as UTF-8 ---
 
@@ -574,86 +488,51 @@ fn jv_parse_string(buf: i64, i: i64, len: i64) -> i64 {
                         done = 1;
                     } else {
                         let e: i64 = jv_load_byte(buf, pos);
-                        if e == 34 {
-                            let _ = jvsb_push(sb, 34);
+                        if e == 34  { let _ = jvsb_push(sb, 34);  pos = pos + 1; }
+                        else {
+                        if e == 92  { let _ = jvsb_push(sb, 92);  pos = pos + 1; }
+                        else {
+                        if e == 47  { let _ = jvsb_push(sb, 47);  pos = pos + 1; }
+                        else {
+                        if e == 110 { let _ = jvsb_push(sb, 10);  pos = pos + 1; }
+                        else {
+                        if e == 116 { let _ = jvsb_push(sb, 9);   pos = pos + 1; }
+                        else {
+                        if e == 114 { let _ = jvsb_push(sb, 13);  pos = pos + 1; }
+                        else {
+                        if e == 98  { let _ = jvsb_push(sb, 8);   pos = pos + 1; }
+                        else {
+                        if e == 102 { let _ = jvsb_push(sb, 12);  pos = pos + 1; }
+                        else {
+                        if e == 117 {
+                            // \uXXXX
                             pos = pos + 1;
+                            if pos + 3 < len {
+                                let h0: i64 = jv_load_byte(buf, pos);
+                                let h1: i64 = jv_load_byte(buf, pos + 1);
+                                let h2: i64 = jv_load_byte(buf, pos + 2);
+                                let h3: i64 = jv_load_byte(buf, pos + 3);
+                                if jv_is_hex(h0) == 1 {
+                                    if jv_is_hex(h1) == 1 {
+                                        if jv_is_hex(h2) == 1 {
+                                            if jv_is_hex(h3) == 1 {
+                                                let cp: i64 = jv_hex_val(h0) * 4096
+                                                            + jv_hex_val(h1) * 256
+                                                            + jv_hex_val(h2) * 16
+                                                            + jv_hex_val(h3);
+                                                let _ = jv_encode_utf8(sb, cp);
+                                                pos = pos + 4;
+                                            } else { ok = 0; done = 1; }
+                                        } else { ok = 0; done = 1; }
+                                    } else { ok = 0; done = 1; }
+                                } else { ok = 0; done = 1; }
+                            } else { ok = 0; done = 1; }
                         } else {
-                            if e == 92 {
-                                let _ = jvsb_push(sb, 92);
-                                pos = pos + 1;
-                            } else {
-                                if e == 47 {
-                                    let _ = jvsb_push(sb, 47);
-                                    pos = pos + 1;
-                                } else {
-                                    if e == 110 {
-                                        let _ = jvsb_push(sb, 10);
-                                        pos = pos + 1;
-                                    } else {
-                                        if e == 116 {
-                                            let _ = jvsb_push(sb, 9);
-                                            pos = pos + 1;
-                                        } else {
-                                            if e == 114 {
-                                                let _ = jvsb_push(sb, 13);
-                                                pos = pos + 1;
-                                            } else {
-                                                if e == 98 {
-                                                    let _ = jvsb_push(sb, 8);
-                                                    pos = pos + 1;
-                                                } else {
-                                                    if e == 102 {
-                                                        let _ = jvsb_push(sb, 12);
-                                                        pos = pos + 1;
-                                                    } else {
-                                                        if e == 117 {
-                                                            // \uXXXX
-                                                            pos = pos + 1;
-                                                            if pos + 3 < len {
-                                                                let h0: i64 = jv_load_byte(buf, pos);
-                                                                let h1: i64 = jv_load_byte(buf, pos + 1);
-                                                                let h2: i64 = jv_load_byte(buf, pos + 2);
-                                                                let h3: i64 = jv_load_byte(buf, pos + 3);
-                                                                if jv_is_hex(h0) == 1 {
-                                                                    if jv_is_hex(h1) == 1 {
-                                                                        if jv_is_hex(h2) == 1 {
-                                                                            if jv_is_hex(h3) == 1 {
-                                                                                let cp: i64 = jv_hex_val(h0) * 4096 + jv_hex_val(h1) * 256 + jv_hex_val(h2) * 16 + jv_hex_val(h3);
-                                                                                let _ = jv_encode_utf8(sb, cp);
-                                                                                pos = pos + 4;
-                                                                            } else {
-                                                                                ok = 0;
-                                                                                done = 1;
-                                                                            }
-                                                                        } else {
-                                                                            ok = 0;
-                                                                            done = 1;
-                                                                        }
-                                                                    } else {
-                                                                        ok = 0;
-                                                                        done = 1;
-                                                                    }
-                                                                } else {
-                                                                    ok = 0;
-                                                                    done = 1;
-                                                                }
-                                                            } else {
-                                                                ok = 0;
-                                                                done = 1;
-                                                            }
-                                                        } else {
-                                                            // invalid escape
-                                                            ok = 0;
-                                                            done = 1;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            // invalid escape
+                            ok = 0;
+                            done = 1;
                         }
+                        }}}}}}}}
                     }
                 } else {
                     // control characters are invalid in JSON strings
@@ -672,7 +551,7 @@ fn jv_parse_string(buf: i64, i: i64, len: i64) -> i64 {
         jvpr_new(pos, 0)
     } else {
         let sb_addr: i64 = __mind_load_i64(sb + 0);
-        let sb_len: i64 = __mind_load_i64(sb + 8);
+        let sb_len: i64  = __mind_load_i64(sb + 8);
         let jvs: i64 = jv_make_string(sb_addr, sb_len, sb_len);
         jvpr_new(pos, jvs)
     }
@@ -687,12 +566,8 @@ fn jv_parse_number(buf: i64, i: i64, len: i64) -> i64 {
         if jv_load_byte(buf, pos) == 45 {
             pos = pos + 1;
             1
-        } else {
-            0
-        }
-    } else {
-        0
-    };
+        } else { 0 }
+    } else { 0 };
     if pos >= len {
         return jvpr_new(pos, 0);
     }
@@ -745,12 +620,8 @@ fn jv_parse_number(buf: i64, i: i64, len: i64) -> i64 {
     // Phase 1: reject exponent notation
     if pos < len {
         let nb: i64 = jv_load_byte(buf, pos);
-        if nb == 101 {
-            return jvpr_new(pos, 0);
-        }
-        if nb == 69 {
-            return jvpr_new(pos, 0);
-        }
+        if nb == 101 { return jvpr_new(pos, 0); }
+        if nb == 69  { return jvpr_new(pos, 0); }
     }
     let h: i64 = jv_make_number(int_part, frac, frac_d, neg, is_int);
     jvpr_new(pos, h)
@@ -931,8 +802,8 @@ fn jv_parse_object(buf: i64, i: i64, len: i64) -> i64 {
                                     } else {
                                         // Build a String heap record from the JsonValue string
                                         let ks_addr: i64 = jv_s_addr(kh);
-                                        let ks_len: i64 = jv_s_len(kh);
-                                        let key_sh: i64 = jvstr_alloc(ks_addr, ks_len);
+                                        let ks_len: i64  = jv_s_len(kh);
+                                        let key_sh: i64  = jvstr_alloc(ks_addr, ks_len);
                                         let _ = jv_tbl_set(obj, key_sh, vh);
                                         first = 0;
                                         pos = jv_skip_ws(buf, vp, len);
@@ -969,7 +840,7 @@ pub fn jv_parse(buf: i64, buf_len: i64) -> i64 {
     }
     let r: i64 = jv_parse_value(buf, pos0, buf_len);
     let pos1: i64 = jvpr_pos(r);
-    let h: i64 = jvpr_val(r);
+    let h: i64    = jvpr_val(r);
     if h == 0 {
         return 0;
     }
@@ -1041,9 +912,7 @@ fn jv_dump_digits(sb: i64, v: i64) -> i64 {
 }
 
 fn jv_dump_pos_digits(sb: i64, v: i64) -> i64 {
-    if v == 0 {
-        return 0;
-    }
+    if v == 0 { return 0; }
     let _ = jv_dump_pos_digits(sb, v / 10);
     jvsb_push(sb, 48 + (v - (v / 10) * 10))
 }
@@ -1142,7 +1011,7 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
                     } else {
                         // object
                         let _ = jvsb_push(sb, 123);
-                        let tlen: i64 = jv_tbl_len(h);
+                        let tlen: i64  = jv_tbl_len(h);
                         let tkeys: i64 = jv_tbl_keys(h);
                         let tvals: i64 = jv_tbl_vals(h);
                         let mut ti: i64 = 0;
@@ -1191,9 +1060,7 @@ fn jv_dump_value(sb: i64, h: i64, pretty: i64, depth: i64) -> i64 {
 }
 
 fn jv_count_digits(v: i64) -> i64 {
-    if v == 0 {
-        return 1;
-    }
+    if v == 0 { return 1; }
     let mut n: i64 = 0;
     let mut x: i64 = v;
     while x > 0 {
@@ -1229,12 +1096,10 @@ pub fn jv_get(h: i64, key_addr: i64, key_len: i64) -> i64 {
 // path_addr: i64 address of UTF-8 path bytes; path_len: byte count.
 // Returns JsonValue handle or 0 if not found.
 pub fn jv_get_path(h: i64, path_addr: i64, path_len: i64) -> i64 {
-    if path_len == 0 {
-        return h;
-    }
-    let mut cur: i64 = h;
+    if path_len == 0 { return h; }
+    let mut cur: i64    = h;
     let mut seg_lo: i64 = 0;
-    let mut pos: i64 = 0;
+    let mut pos: i64    = 0;
     let mut running: i64 = 1;
     while running == 1 {
         if pos >= path_len {

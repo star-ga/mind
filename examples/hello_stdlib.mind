@@ -8,7 +8,7 @@
 // mindc binary since 0.4.2 (Phase C, RFC 0005), so `use std.vec` resolves
 // with zero external file dependency.
 
-import std.vec;
+use std.vec;
 
 fn main() -> i64 {
     // vec_new() allocates a fresh Vec on the heap via __mind_alloc.
@@ -22,10 +22,8 @@ fn main() -> i64 {
     let v = vec_push(v, 20);
     let v = vec_push(v, 30);
 
-    let n = vec_len(v);
-    // 3
-    let x = vec_get(v, 1);
-    // 20
+    let n = vec_len(v);       // 3
+    let x = vec_get(v, 1);    // 20
 
     // vec_free releases the heap record via __mind_free.
     vec_free(v);
