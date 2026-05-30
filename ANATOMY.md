@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,689,445
-**Generated:** 2026-05-30 12:22 UTC
+**Files:** 2670 | **Est. tokens:** ~6,689,975
+**Generated:** 2026-05-30 23:06 UTC
 
 ## Token Budget Guide
 
@@ -363,7 +363,7 @@
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,223 |
 | `src/ast/` | 1 | ~6,285 |
-| `src/autodiff/` | 3 | ~4,776 |
+| `src/autodiff/` | 3 | ~4,987 |
 | `src/bin/` | 2 | ~19,524 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 17 | ~82,560 |
-| `tests/` | 159 | ~274,473 |
+| `tests/` | 159 | ~274,792 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3562,7 +3562,7 @@
 
 - `engine.rs` (~2839 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~342 tok, medium) — Copyright 2025 STARGA Inc.
-- `rules.rs` (~1595 tok, huge) — Copyright 2025 STARGA Inc.
+- `rules.rs` (~1806 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3774,7 +3774,7 @@
 ### `tests/`
 
 - `autodiff_preview.rs` (~398 tok, medium) — Copyright 2025 STARGA Inc.
-- `autodiff.rs` (~1344 tok, large) — Gradient for x*x accumulates two paths: d/dx (x*x) = x + x.
+- `autodiff.rs` (~1663 tok, huge) — Gradient for x*x accumulates two paths: d/dx (x*x) = x + x.
 ### `tests/autodiff/`
 
 - `simple_gradient.mind` (~80 tok, small) — Autodiff test: Simple scalar gradient

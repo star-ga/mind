@@ -81,6 +81,40 @@ fn grad_of_relu() {
 }
 
 #[test]
+fn grad_of_div() {
+    let mut ir = IRModule::new();
+    let a = scalar_tensor(&mut ir);
+    let b = scalar_tensor(&mut ir);
+    let c = ir.fresh();
+    ir.instrs.push(Instr::BinOp {
+        dst: c,
+        op: BinOp::Div,
+        lhs: a,
+        rhs: b,
+    });
+    ir.instrs.push(Instr::Output(c));
+
+    let result = differentiate_function(&ir, "main").expect("div gradients");
+    assert_deterministic(&ir);
+
+    // Quotient rule: da = upstream / b, db = -(upstream * a) / (b * b). Both
+    // operands must get gradients — not UnsupportedOp. The backward introduces
+    // additional Div nodes beyond the single primal `a / b`.
+    result.gradients.get(&a).expect("gradient for a");
+    result.gradients.get(&b).expect("gradient for b");
+    let div_count = result
+        .gradient_module
+        .instrs
+        .iter()
+        .filter(|instr| matches!(instr, Instr::BinOp { op: BinOp::Div, .. }))
+        .count();
+    assert!(
+        div_count >= 2,
+        "div backward should add Div nodes beyond the primal, got {div_count}"
+    );
+}
+
+#[test]
 fn grad_of_bilinear() {
     let mut ir = IRModule::new();
     let x = scalar_tensor(&mut ir);
@@ -171,14 +205,17 @@ fn multiple_outputs_rejected() {
 }
 
 #[test]
-fn unsupported_division_errors() {
+fn unsupported_modulo_errors() {
+    // Division is now differentiable (quotient rule); modulo remains
+    // non-differentiable and must fail loud rather than emit a silent-wrong
+    // (or zero) gradient — the wedge forbids silently-wrong training.
     let mut ir = IRModule::new();
     let x = scalar_const(&mut ir, 4);
     let y = scalar_const(&mut ir, 2);
     let dst = ir.fresh();
     ir.instrs.push(Instr::BinOp {
         dst,
-        op: BinOp::Div,
+        op: BinOp::Mod,
         lhs: x,
         rhs: y,
     });
