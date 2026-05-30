@@ -89,3 +89,35 @@ fn ir_load_rejects_invalid_utf8() {
         err
     );
 }
+
+/// Regression: `tensor.relu` must survive the mic@1 text round-trip. The text
+/// is the canonical `trace_hash` source (RFC 0016) — a dropped relu would
+/// attest IR missing the activation. (Found by audit on the relu lowering work.)
+const RELU_PROGRAM: &str = r#"
+fn main() {
+    let a = tensor.rand(4, 8);
+    let r = tensor.relu(a);
+    return r;
+}
+"#;
+
+/// Regression: `tensor.relu` must survive the mic@1 text round-trip. The text
+/// is the canonical `trace_hash` source (RFC 0016) — a dropped relu would
+/// attest IR missing the activation. (Found by audit on the relu lowering work.)
+#[test]
+fn ir_save_load_round_trips_relu() {
+    let opts = CompileOptions::default();
+    let products = compile_source("let a: Tensor[f32,(4,8)] = 1;\ntensor.relu(a)", &opts)
+        .expect("compile relu");
+    let mic_text = ir::save(&products.ir);
+    assert!(
+        mic_text.contains(" relu "),
+        "mic@1 text must contain the relu node, got:\n{mic_text}"
+    );
+    let loaded = ir::load(mic_text.as_bytes()).expect("load relu mic@1");
+    assert_eq!(
+        ir::save(&loaded),
+        mic_text,
+        "relu save->load->save must be a fixed point"
+    );
+}
