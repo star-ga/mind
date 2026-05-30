@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,685,700
-**Generated:** 2026-05-30 08:52 UTC
+**Files:** 2670 | **Est. tokens:** ~6,686,587
+**Generated:** 2026-05-30 09:02 UTC
 
 ## Token Budget Guide
 
@@ -372,7 +372,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 13 | ~82,946 |
+| `src/eval/` | 13 | ~83,646 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,898 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 17 | ~82,560 |
-| `tests/` | 159 | ~273,384 |
+| `tests/` | 159 | ~273,571 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3608,10 +3608,10 @@
 
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
-- `ir_interp.rs` (~3424 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_interp.rs` (~3562 tok, huge) — Copyright 2025 STARGA Inc.
 - `lower.rs` (~22164 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4445 tok, huge) — Copyright 2025 STARGA Inc.
-- `mlir_export.rs` (~8482 tok, huge) — Copyright 2025 STARGA Inc.
+- `mlir_export.rs` (~9044 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
@@ -3987,7 +3987,7 @@
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_indexing.rs` (~414 tok, medium) — Copyright 2025 STARGA Inc.
-- `mlir_export_linalg.rs` (~338 tok, medium) — Copyright 2025 STARGA Inc.
+- `mlir_export_linalg.rs` (~525 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export_reductions.rs` (~610 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~328 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_export_shape.rs` (~348 tok, medium) — Copyright 2025 STARGA Inc.
