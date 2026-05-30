@@ -270,6 +270,7 @@ fn emit_instr(emitter: &mut MlirEmitter, instr: &Instr) {
             axes,
             keepdims,
         } => emit_tensor_reduce(emitter, *dst, *src, axes, *keepdims, ReduceKind::Mean),
+        Instr::Relu { dst, src } => emit_tensor_relu(emitter, *dst, *src),
         Instr::Reshape {
             dst,
             src,
@@ -403,6 +404,60 @@ fn emit_int_binop(emitter: &mut MlirEmitter, dst: ValueId, op: BinOp, lhs: Value
         "    %{} = {} %{}, %{} : i64\n",
         dst.0, op_str, lhs.0, rhs.0
     ));
+}
+
+/// Elementwise ReLU (`max(x, 0)`) — shape-preserving `linalg.generic`, mirroring
+/// the canonical pipeline emitter (`src/mlir/lowering.rs`): one `arith.maximumf`
+/// (`maxsi` for ints) against a captured zero constant. A pure elementwise map,
+/// so cross-substrate Q16.16 bit-identity is preserved.
+fn emit_tensor_relu(emitter: &mut MlirEmitter, dst: ValueId, src: ValueId) {
+    let src_info = emitter
+        .tensor_info(&src)
+        .cloned()
+        .unwrap_or_else(|| TensorInfo {
+            dtype: DType::F32,
+            shape: vec![],
+        });
+    let dtype = src_info.dtype.clone();
+    let dtype_str = dtype_to_mlir(&dtype);
+    let ty = tensor_type(&src_info.shape, dtype_str);
+    let rank = src_info.shape.len();
+    let dims = (0..rank)
+        .map(|d| format!("d{d}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let iters = vec!["\"parallel\""; rank].join(", ");
+    let id_map = format!("affine_map<({dims}) -> ({dims})>");
+    let (zero, max_op) = match dtype {
+        DType::F32 | DType::F16 | DType::BF16 => ("0.0", "arith.maximumf"),
+        _ => ("0", "arith.maxsi"),
+    };
+    let zname = emitter.tmp();
+    let empty = emitter.tmp();
+    let in_arg = emitter.tmp();
+    let out_arg = emitter.tmp();
+    let res = emitter.tmp();
+    emitter.write_fmt(format_args!(
+        "    {} = arith.constant {} : {}\n",
+        zname, zero, dtype_str
+    ));
+    emitter.write_fmt(format_args!("    {} = tensor.empty() : {}\n", empty, ty));
+    emitter.write_fmt(format_args!(
+        "    %{} = linalg.generic {{indexing_maps = [{id_map}, {id_map}], \
+         iterator_types = [{iters}]}} ins(%{} : {ty}) outs({} : {ty}) {{\n",
+        dst.0, src.0, empty
+    ));
+    emitter.write_fmt(format_args!(
+        "    ^bb0({}: {}, {}: {}):\n",
+        in_arg, dtype_str, out_arg, dtype_str
+    ));
+    emitter.write_fmt(format_args!(
+        "      {} = {} {}, {} : {}\n",
+        res, max_op, in_arg, zname, dtype_str
+    ));
+    emitter.write_fmt(format_args!("      linalg.yield {} : {}\n", res, dtype_str));
+    emitter.write_fmt(format_args!("    }} -> {}\n", ty));
+    emitter.record_tensor(dst, dtype, src_info.shape.clone());
 }
 
 fn emit_tensor_reduce(
