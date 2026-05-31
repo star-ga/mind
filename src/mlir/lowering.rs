@@ -730,7 +730,6 @@ impl LoweringContext {
                     // RFC 0010 Phase C / R-03: f32 in a varargs position must
                     // be promoted to f64 per C11 §6.5.2.2p6 default argument
                     // promotions. Vararg positions are indices >= n_concrete.
-                    let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
                     let n_concrete = param_types.len();
                     let param_type_str: Vec<String> = args
                         .iter()
@@ -755,20 +754,63 @@ impl LoweringContext {
                             }
                         })
                         .collect();
+                    // RFC 0010 — the std-surface runtime ABI carries every value
+                    // as i64, but an `extern "C"` signature can declare
+                    // `!llvm.ptr` parameters/return (e.g. `memset`, `inet_pton`,
+                    // `read`/`write`). MLIR is strongly typed: an i64 SSA value
+                    // cannot be passed where `!llvm.ptr` is declared. Bridge
+                    // each pointer-typed slot with `llvm.inttoptr` before the
+                    // call and recover the i64 address with `llvm.ptrtoint`
+                    // after, so the surrounding i64 dataflow stays intact and
+                    // mlir-opt sees consistent types. Non-pointer slots are
+                    // already i64 (narrow C ints are declared i64 in the ABI),
+                    // so they pass through untouched — no extra ops on the
+                    // common path.
+                    let mut arg_refs: Vec<String> = Vec::with_capacity(args.len());
+                    for (i, a) in args.iter().enumerate() {
+                        if param_type_str.get(i).map(|t| t == "!llvm.ptr").unwrap_or(false) {
+                            let pname = format!("%ptrarg_{}_{}", dst.0, i);
+                            self.emit_line(&format!(
+                                "    {pname} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+                                a.0
+                            ));
+                            arg_refs.push(pname);
+                        } else {
+                            arg_refs.push(format!("%{}", a.0));
+                        }
+                    }
                     let call_ret_ty = ret_type.as_deref().unwrap_or("i64");
                     let varargs_suffix = if is_varargs { ", ..." } else { "" };
                     // RFC 0010 Phase C: emit cconv attribute for Win64 calls.
                     let cconv_attr = cconv_attr_for(callconv);
-                    self.emit_line(&format!(
-                        "    %{} = llvm.call{} @{}({}) : ({}{}) -> {}",
-                        dst.0,
-                        cconv_attr,
-                        name,
-                        arg_refs.join(", "),
-                        param_type_str.join(", "),
-                        varargs_suffix,
-                        call_ret_ty,
-                    ));
+                    if call_ret_ty == "!llvm.ptr" {
+                        // Capture the pointer result, then convert to the i64
+                        // address the std-surface ABI threads everywhere else.
+                        let raw = format!("%ptrret_{}", dst.0);
+                        self.emit_line(&format!(
+                            "    {raw} = llvm.call{} @{}({}) : ({}{}) -> !llvm.ptr",
+                            cconv_attr,
+                            name,
+                            arg_refs.join(", "),
+                            param_type_str.join(", "),
+                            varargs_suffix,
+                        ));
+                        self.emit_line(&format!(
+                            "    %{} = llvm.ptrtoint {raw} : !llvm.ptr to i64",
+                            dst.0
+                        ));
+                    } else {
+                        self.emit_line(&format!(
+                            "    %{} = llvm.call{} @{}({}) : ({}{}) -> {}",
+                            dst.0,
+                            cconv_attr,
+                            name,
+                            arg_refs.join(", "),
+                            param_type_str.join(", "),
+                            varargs_suffix,
+                            call_ret_ty,
+                        ));
+                    }
                     self.values.insert(*dst, ValueKind::ScalarI64);
                 } else {
                     let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
@@ -995,6 +1037,11 @@ impl LoweringContext {
                 // Emit condition instructions. Substitute init_ids with header
                 // block arg names (wbl_*) since cond runs in the header block.
                 let mut cond_sub = LoweringContext::new();
+                // Inherit extern "C" signatures so calls to them inside this
+                // nested construct emit `llvm.call` consistently (not
+                // `func.call`), avoiding a dual `llvm.func`/`func.func`
+                // declaration of the same symbol (RFC 0010).
+                cond_sub.extern_c_fns = self.extern_c_fns.clone();
                 for (vid, kind) in &self.values {
                     cond_sub.values.insert(*vid, kind.clone());
                 }
@@ -1075,6 +1122,11 @@ impl LoweringContext {
                 // Emit body instructions. Substitute init_ids with body block
                 // arg names (wbod_*) since body runs in the body block.
                 let mut body_sub = LoweringContext::new();
+                // Inherit extern "C" signatures so calls to them inside this
+                // nested construct emit `llvm.call` consistently (not
+                // `func.call`), avoiding a dual `llvm.func`/`func.func`
+                // declaration of the same symbol (RFC 0010).
+                body_sub.extern_c_fns = self.extern_c_fns.clone();
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
@@ -1425,6 +1477,11 @@ impl LoweringContext {
 
                 // Emit the condition sub-instructions into the current block.
                 let mut cond_sub = LoweringContext::new();
+                // Inherit extern "C" signatures so calls to them inside this
+                // nested construct emit `llvm.call` consistently (not
+                // `func.call`), avoiding a dual `llvm.func`/`func.func`
+                // declaration of the same symbol (RFC 0010).
+                cond_sub.extern_c_fns = self.extern_c_fns.clone();
                 for (vid, kind) in &self.values {
                     cond_sub.values.insert(*vid, kind.clone());
                 }
@@ -1485,6 +1542,11 @@ impl LoweringContext {
                 // Then block.
                 self.emit_line(&format!("  ^if_then_{lbl}:"));
                 let mut then_sub = LoweringContext::new();
+                // Inherit extern "C" signatures so calls to them inside this
+                // nested construct emit `llvm.call` consistently (not
+                // `func.call`), avoiding a dual `llvm.func`/`func.func`
+                // declaration of the same symbol (RFC 0010).
+                then_sub.extern_c_fns = self.extern_c_fns.clone();
                 for (vid, kind) in &self.values {
                     then_sub.values.insert(*vid, kind.clone());
                 }
@@ -1517,6 +1579,11 @@ impl LoweringContext {
                 // Else block.
                 self.emit_line(&format!("  ^if_else_{lbl}:"));
                 let mut else_sub = LoweringContext::new();
+                // Inherit extern "C" signatures so calls to them inside this
+                // nested construct emit `llvm.call` consistently (not
+                // `func.call`), avoiding a dual `llvm.func`/`func.func`
+                // declaration of the same symbol (RFC 0010).
+                else_sub.extern_c_fns = self.extern_c_fns.clone();
                 for (vid, kind) in &self.values {
                     else_sub.values.insert(*vid, kind.clone());
                 }
@@ -1620,6 +1687,11 @@ impl LoweringContext {
 
                 // Lower body instructions; wrap alloc calls with track.
                 let mut body_sub = LoweringContext::new();
+                // Inherit extern "C" signatures so calls to them inside this
+                // nested construct emit `llvm.call` consistently (not
+                // `func.call`), avoiding a dual `llvm.func`/`func.func`
+                // declaration of the same symbol (RFC 0010).
+                body_sub.extern_c_fns = self.extern_c_fns.clone();
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
