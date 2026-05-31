@@ -119,7 +119,7 @@ fn process_mind_parses_and_lowers() {
         "spawn_capture",
         "wait",
         "proc_kill",
-        "getenv",
+        "proc_getenv",
         "proc_setenv",
         "proc_unsetenv",
         "current_dir",
@@ -201,7 +201,7 @@ mod cross_module {
         for want in [
             "spawn",
             "wait",
-            "getenv",
+            "proc_getenv",
             "proc_pid",
             "proc_exit",
             "current_dir",
@@ -501,10 +501,10 @@ lib = ctypes.CDLL('{so}')
 lib.__mind_alloc = getattr(lib, '__mind_alloc'); lib.__mind_alloc.restype = ctypes.c_int64; lib.__mind_alloc.argtypes = [ctypes.c_int64]
 lib.__mind_store_i64 = getattr(lib, '__mind_store_i64'); lib.__mind_store_i64.restype = None; lib.__mind_store_i64.argtypes = [ctypes.c_int64, ctypes.c_int64]
 lib.__mind_load_i64 = getattr(lib, '__mind_load_i64'); lib.__mind_load_i64.restype = ctypes.c_int64; lib.__mind_load_i64.argtypes = [ctypes.c_int64]
-lib.getenv.restype = ctypes.c_int64; lib.getenv.argtypes = [ctypes.c_int64]
+lib.proc_getenv.restype = ctypes.c_int64; lib.proc_getenv.argtypes = [ctypes.c_int64]
 name = b'PATH\x00'
 cbuf = (ctypes.c_uint8 * len(name))(*name)
-rec = lib.getenv(ctypes.addressof(cbuf))
+rec = lib.proc_getenv(ctypes.addressof(cbuf))
 rlen = lib.__mind_load_i64(rec + 8)
 assert rlen > 0, f'getenv("PATH") returned empty (len={{rlen}})'
 print('ok', rlen)

@@ -45,7 +45,7 @@ extern "C" {
 
 // Length of a NUL-terminated C string.
 fn proc_cstr_len_rec(addr: i64, i: i64) -> i64 {
-    let b: i64 = __mind_load_i64(addr + i) & 255;
+    let b: i64 = __mind_load_i8(addr + i);
     if b == 0 {
         i
     } else {
@@ -62,7 +62,7 @@ fn proc_copy_bytes_rec(src: i64, dst: i64, src_len: i64, i: i64) -> i64 {
     if i >= src_len {
         0
     } else {
-        __mind_store_i8(dst + i, __mind_load_i64(src + i) & 255);
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
         proc_copy_bytes_rec(src, dst, src_len, i + 1)
     }
 }
@@ -258,9 +258,18 @@ pub fn proc_kill(c: i64, sig: i64) -> i64 {
 // Public: environment variables
 // ---------------------------------------------------------------------------
 
-// getenv — return value of environment variable as String heap record.
+// proc_getenv — return value of environment variable as String heap record.
 // Returns len=0 string if not set.
-pub fn getenv(name_addr: i64) -> i64 {
+//
+// Named `proc_getenv` (not `getenv`) so the exported MIND symbol does not
+// collide with the libc `getenv` this wrapper imports: a cdylib cannot both
+// define and import the same symbol (the local definition would interpose,
+// turning the inner call into unbounded self-recursion). This mirrors the
+// `proc_*` convention used by every other wrapper in this module
+// (`proc_pid`, `proc_setenv`, `proc_kill`, …) and the `tcp_*` convention in
+// std.net. The bare `getenv(...)` call below now binds unambiguously to the
+// libc extern declared above.
+pub fn proc_getenv(name_addr: i64) -> i64 {
     let rec: i64 = __mind_alloc(24);
     __mind_store_i64(rec + 0, 0);
     __mind_store_i64(rec + 8, 0);
