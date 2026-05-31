@@ -165,6 +165,55 @@ impl CompileError {
     }
 }
 
+/// Compile-time phase instrumentation (feature `compile-timings`).
+///
+/// Entirely cfg-gated: in a default build this module does not exist and the
+/// `mark`/`report` call sites compile to nothing, so the frozen frontend
+/// criterion baselines and the bit-identity hot path pay ZERO cost. Build with
+/// `--features compile-timings` and set `MIND_TIMINGS=1` to print a per-phase
+/// waterfall to stderr (timings go to stderr only — never into any artifact,
+/// so `trace_hash` / cross-substrate byte-identity is unaffected).
+#[cfg(feature = "compile-timings")]
+mod timings {
+    use std::time::{Duration, Instant};
+
+    pub struct Timings {
+        start: Instant,
+        last: Instant,
+        phases: Vec<(&'static str, Duration)>,
+    }
+
+    impl Timings {
+        pub fn start() -> Self {
+            let now = Instant::now();
+            Self {
+                start: now,
+                last: now,
+                phases: Vec::new(),
+            }
+        }
+
+        pub fn mark(&mut self, name: &'static str) {
+            let now = Instant::now();
+            self.phases.push((name, now.duration_since(self.last)));
+            self.last = now;
+        }
+
+        pub fn report(&self, what: &str) {
+            // Opt-in at runtime too: a `compile-timings` build stays quiet
+            // unless explicitly asked, so it can be used as a normal binary.
+            if std::env::var_os("MIND_TIMINGS").is_none() {
+                return;
+            }
+            let total = self.last.duration_since(self.start).as_secs_f64() * 1e3;
+            eprintln!("[mind-timings] {what}: total {total:.3} ms");
+            for (name, d) in &self.phases {
+                eprintln!("[mind-timings]   {name:<14} {:.3} ms", d.as_secs_f64() * 1e3);
+            }
+        }
+    }
+}
+
 /// High-level compiler pipeline entry point: parse, type-check, lower to IR,
 /// verify, and canonicalize. Optionally run autodiff for the requested
 /// function.
@@ -192,14 +241,21 @@ pub fn compile_source_with_name(
         });
     }
 
+    #[cfg(feature = "compile-timings")]
+    let mut _tm = timings::Timings::start();
+
     let module = parser::parse_with_diagnostics_in_file(source, source_name)
         .map_err(CompileError::ParseError)?;
+    #[cfg(feature = "compile-timings")]
+    _tm.mark("parse");
 
     let type_diags =
         type_checker::check_module_types_in_file(&module, source, source_name, &HashMap::new());
     if !type_diags.is_empty() {
         return Err(CompileError::TypeError(type_diags));
     }
+    #[cfg(feature = "compile-timings")]
+    _tm.mark("typecheck");
 
     let mut ir = eval::lower_to_ir(&module);
     // RFC 0002 D3: merge manifest-declared exports into the IR set so
@@ -225,9 +281,17 @@ pub fn compile_source_with_name(
         }
         ir.exports.extend(opts.manifest_exports.iter().cloned());
     }
+    #[cfg(feature = "compile-timings")]
+    _tm.mark("ir-lower");
+
     ir::verify_module(&ir)?;
     opt::ir_canonical::canonicalize_module(&mut ir);
     ir::verify_module(&ir)?;
+    #[cfg(feature = "compile-timings")]
+    {
+        _tm.mark("verify+canon");
+        _tm.report("compile_source");
+    }
 
     #[cfg(feature = "autodiff")]
     let grad = if opts.enable_autodiff {
