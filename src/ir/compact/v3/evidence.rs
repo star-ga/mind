@@ -100,10 +100,11 @@ const KEY_TRACE_HASH: &str = "evidence_chain.trace_hash";
 
 /// Emit a mic@3 artifact with an embedded `evidence_chain.*` MAP epilogue.
 ///
-/// The `trace_hash` is SHA-256 of the canonical mic@1 IR text (via
+/// The `trace_hash` is SHA-256 of the canonical mic@3 bytes (via
 /// [`ir_trace_hash`]) — the RFC-0001 fixed-point encoding that the pipeline
-/// and self-host already produce.  The MAP is appended **after** the mic@3
-/// body so that a reader ignorant of the epilogue can still parse the IR.
+/// and self-host already produce, and which carries full function bodies.  The
+/// MAP is appended **after** the mic@3 body so that a reader ignorant of the
+/// epilogue can still parse the IR.
 ///
 /// ## Canonicalization
 ///
@@ -140,7 +141,7 @@ pub fn emit_mic3_with_evidence(
 /// embedded `evidence_chain` block.
 ///
 /// Returns an [`EvidenceReport`] with `trace_hash_valid = true` when the stored
-/// `trace_hash` equals the SHA-256 of the canonical mic@1 IR text of the parsed
+/// `trace_hash` equals the SHA-256 of the canonical mic@3 bytes of the parsed
 /// module.  A single flipped byte anywhere in the body or MAP flips
 /// `trace_hash_valid` to `false`.
 ///
@@ -351,7 +352,7 @@ pub(crate) enum ParseMapError {
 
 /// Decode and verify an evidence report from parsed MAP entries against `ir`.
 ///
-/// Recomputes `trace_hash = SHA-256(canonical mic@1 text)` and compares it to
+/// Recomputes `trace_hash = SHA-256(canonical mic@3 bytes)` and compares it to
 /// the stored value.  A single flipped byte in the IR body yields a mismatched
 /// hash and `trace_hash_valid = false`.
 fn decode_evidence_report(

@@ -17,7 +17,7 @@
 //!
 //! `mindc verify <artifact>` reads an artifact emitted by
 //! `mindc build --emit-evidence`, peels the `evidence_chain.*` MAP, recomputes
-//! the canonical mic@1 `trace_hash`, and confirms it matches. These tests
+//! the canonical mic@3 `trace_hash`, and confirms it matches. These tests
 //! exercise the four outcomes:
 //!
 //! * valid, untampered artifact      → exit 0
