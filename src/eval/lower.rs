@@ -1071,6 +1071,16 @@ fn lower_expr(
         // v1. The inner expression lowers directly; the ref tag is only
         // meaningful to the type-checker.
         ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env, struct_env, receiver_types),
+        // A cast `<expr> as <ty>` is value-preserving in the std-surface i64
+        // ABI: scalars and raw pointers are all carried as i64 SSA values, so
+        // the target type is purely a type-checker concern. Lower the operand
+        // transparently (mirrors `Ref` / `Paren`). Without this arm the cast
+        // fell through to the catch-all and was silently lowered to
+        // `const.i64 0`, which dropped the operand entirely — e.g.
+        // `memset(sa as *mut u8, 0, 16)` lost `sa`, then the FFI bridge in the
+        // MLIR backend `inttoptr`-ed a zero, producing a NULL-pointer memset
+        // and an `!llvm.ptr` vs `i64` mlir-opt type error.
+        ast::Node::As { expr, .. } => lower_expr(expr, ir, env, struct_env, receiver_types),
         // RFC 0005 Gap 1: `while cond { body }` lowering.
         //
         // The condition and body each lower into their own sub-modules so
