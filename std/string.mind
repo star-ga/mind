@@ -42,20 +42,18 @@ pub fn string_addr(s: String) -> i64 {
     s.addr
 }
 
-// string_get_byte — single byte read.  Lower 8 bits of a packed
-// i64-load.  Bounds-checks are the caller's responsibility at this
-// layer (std.option will wrap them once enum payloads are wired).
+// string_get_byte — single byte read via __mind_load_i8 (task #306).
+// Bytes are stored one-per-offset by __mind_store_i8; the matching
+// single-byte load reads exactly byte[i] and never touches the
+// neighbouring bytes i+1..i+7. This retires the up-to-7-byte
+// out-of-bounds read the previous packed `__mind_load_i64(addr+i) & 255`
+// form performed at a buffer's final offset (only the malloc pad masked
+// it). The result is zero-extended to i64, so callers that relied on the
+// masked form observe the identical byte value. Bounds-checks remain the
+// caller's responsibility at this layer (std.option will wrap them once
+// enum payloads are wired).
 pub fn string_get_byte(s: String, i: i64) -> i64 {
-    // Bytes are stored one-per-offset via __mind_store_i8 (task #306).
-    // The read side is deliberately left as a packed i64-load masked to
-    // the low byte: a load at offset `i` returns an i64 whose LOW byte is
-    // byte[i] and whose high 7 bytes are the neighbouring bytes i+1..i+7.
-    // Mask to the low byte to read a single byte correctly — without this,
-    // every byte comparison (is_double_dash, string_starts_with,
-    // equals-form flag detection) sees packed neighbour bytes and
-    // mis-compares on any non-final offset. (Migrating this load to
-    // __mind_load_i8 is a safe follow-on cleanup, not required here.)
-    __mind_load_i64(s.addr + i) & 255
+    __mind_load_i8(s.addr + i)
 }
 
 // string_validate_utf8 — minimal UTF-8 well-formedness pass over a
@@ -201,14 +199,14 @@ pub fn string_push_str(dst: String, src: String) -> String {
         let a: i64 = __mind_alloc(new_cap);
         let mut i: i64 = 0;
         while i < dst.len {
-            __mind_store_i8(a + i, __mind_load_i64(dst.addr + i));
+            __mind_store_i8(a + i, __mind_load_i8(dst.addr + i));
             i = i + 1;
         }
         a
     };
     let mut j: i64 = 0;
     while j < src.len {
-        __mind_store_i8(new_addr + dst.len + j, __mind_load_i64(src.addr + j));
+        __mind_store_i8(new_addr + dst.len + j, __mind_load_i8(src.addr + j));
         j = j + 1;
     }
     String { addr: new_addr, len: needed, cap: new_cap }

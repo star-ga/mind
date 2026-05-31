@@ -98,7 +98,7 @@ fn fs_copy_bytes_rec(src: i64, dst: i64, n: i64, i: i64) -> i64 {
     if i >= n {
         0
     } else {
-        __mind_store_i8(dst + i, __mind_load_i64(src + i) & 255);
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
         fs_copy_bytes_rec(src, dst, n, i + 1)
     }
 }
@@ -109,7 +109,7 @@ fn fs_copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
 
 // Return the length of a NUL-terminated C string.
 fn fs_cstr_len_rec(addr: i64, i: i64) -> i64 {
-    let b: i64 = __mind_load_i64(addr + i) & 255;
+    let b: i64 = __mind_load_i8(addr + i);
     if b == 0 {
         i
     } else {
@@ -293,16 +293,16 @@ fn fs_readdir_rec(vec_h: i64, dirp: i64) -> i64 {
     if ep == 0 {
         0
     } else {
-        let d_type: i64 = __mind_load_i64(ep + 18) & 255;
+        let d_type: i64 = __mind_load_i8(ep + 18);
         let name_ptr: i64 = ep + 19;
-        let b0: i64 = __mind_load_i64(name_ptr) & 255;
-        let b1: i64 = __mind_load_i64(name_ptr + 1) & 255;
+        let b0: i64 = __mind_load_i8(name_ptr);
+        let b1: i64 = __mind_load_i8(name_ptr + 1);
         let skip: i64 = if b0 == 46 {
             if b1 == 0 {
                 1
             } else {
                 if b1 == 46 {
-                    let b2: i64 = __mind_load_i64(name_ptr + 2) & 255;
+                    let b2: i64 = __mind_load_i8(name_ptr + 2);
                     if b2 == 0 {
                         1
                     } else {
@@ -377,7 +377,7 @@ fn mkdir_p_walk(work: i64, plen: i64, i: i64, mode: i64) -> i64 {
     if i > plen {
         0
     } else {
-        let b: i64 = __mind_load_i64(work + i) & 255;
+        let b: i64 = __mind_load_i8(work + i);
         if b == 47 {
             __mind_store_i8(work + i, 0);
             let _ = mkdir(work as *const u8, mode as i32);
