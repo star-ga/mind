@@ -112,6 +112,12 @@ debug = false
 [features]
 default = []
 autodiff = []
+# Compile-time phase instrumentation. OFF by default and fully cfg-gated, so
+# the frozen frontend criterion baselines and the bit-identity hot path incur
+# ZERO cost — the timing code does not exist in a default build. Build with
+# `--features compile-timings` and set `MIND_TIMINGS=1` to print a per-phase
+# waterfall (parse / typecheck / ir-lower / verify+canon) to stderr.
+compile-timings = []
 cpu-buffers = []
 cpu-exec = ["cpu-buffers"]
 cpu-conv = ["cpu-exec"]
