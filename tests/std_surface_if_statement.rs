@@ -293,6 +293,7 @@ fn if_return_mlir_does_not_place_return_mid_block() {
             else_result: cst0_else,
             dst,
             branch_bindings: vec![],
+            merges: vec![],
         },
         Instr::ConstI64(unit, 0),
         Instr::Return { value: Some(dst) },

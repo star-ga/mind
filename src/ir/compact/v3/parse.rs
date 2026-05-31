@@ -609,6 +609,9 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
                 body,
                 live_vars,
                 init_ids,
+                // F2: lowering-internal, not in the wire format. Reconstructed
+                // during AST->IR lowering; default empty on parse.
+                exit_ids: Vec::new(),
             })
         }
         #[cfg(feature = "std-surface")]
@@ -642,6 +645,9 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
                 else_result,
                 dst,
                 branch_bindings,
+                // F2: lowering-internal, not in the wire format. Reconstructed
+                // during AST->IR lowering; default empty on parse.
+                merges: Vec::new(),
             })
         }
         #[cfg(feature = "std-surface")]

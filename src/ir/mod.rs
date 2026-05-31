@@ -354,6 +354,17 @@ pub enum Instr {
         /// block-argument names in the header / body blocks.  Populated by
         /// `lower.rs`; parallel vec always has the same length as `live_vars`.
         init_ids: Vec<ValueId>,
+        /// F2 region-scoped exit env (LOWERING-INTERNAL, not in the mic wire
+        /// format). One fresh SSA id per loop-carried var, parallel to
+        /// `live_vars`. `^while_after_N` declares these as block args, and the
+        /// var is rebound to its `exit_id` for code AFTER the loop — so every
+        /// post-loop reference uses a value that dominates the after-block,
+        /// never a raw id defined inside `^while_body_N`.
+        ///
+        /// Reconstructed during AST->IR lowering; defaulted to `Vec::new()` on
+        /// compact/v3 parse and ignored by compact/v3 emit (matched via `..`).
+        /// fn bodies are not persisted to mic, so this is hash-neutral.
+        exit_ids: Vec<ValueId>,
     },
     /// Conditional branch (Phase 6.5 Stage 1a).
     ///
@@ -382,6 +393,20 @@ pub enum Instr {
         /// Variable bindings produced in either branch and visible after the
         /// if (Gap C: let bindings threaded back to outer fn_env).
         branch_bindings: Vec<(String, ValueId)>,
+        /// F2 merge phi list (LOWERING-INTERNAL, not in the mic wire format).
+        /// One entry per OUTER variable assigned in either branch:
+        /// `(merge_id, then_val, else_val)`. `^if_after_N` declares `merge_id`
+        /// as a block arg; the then-branch `cf.br` passes `then_val` and the
+        /// else-branch passes `else_val`. The crux of the F2 dominance fix:
+        /// `then_val`/`else_val` are each the value of that variable at the
+        /// EXIT of the respective branch (the branch's incoming value, a
+        /// top-level branch value, OR a NESTED region's exit/merge id) — never
+        /// a raw value defined inside a deeper nested branch. The variable is
+        /// rebound to `merge_id` for code AFTER the if.
+        ///
+        /// Reconstructed during AST->IR lowering; defaulted to `Vec::new()` on
+        /// compact/v3 parse and ignored by compact/v3 emit (matched via `..`).
+        merges: Vec<(ValueId, ValueId, ValueId)>,
     },
     /// RFC 0006 Track B (increment 1) — load `lanes` contiguous f32 values
     /// from a heap address into a SIMD vector value.

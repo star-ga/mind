@@ -323,6 +323,7 @@ fn while_mlir_lowering_emits_basic_blocks() {
             body: body_instrs,
             live_vars: vec![],
             init_ids: vec![],
+            exit_ids: vec![],
         },
         libmind::ir::Instr::ConstI64(unit_id, 0),
         libmind::ir::Instr::Return {
