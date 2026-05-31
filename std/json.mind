@@ -205,13 +205,13 @@ fn jv_make_object() -> i64 {
 // --- Byte helpers ---
 
 fn jv_load_byte(buf: i64, i: i64) -> i64 {
-    __mind_load_i64(buf + i) & 255
+    __mind_load_i8(buf + i)
 }
 
 fn jv_copy_bytes(src: i64, dst: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     while i < n {
-        __mind_store_i8(dst + i, __mind_load_i64(src + i) & 255);
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
         i = i + 1;
     }
     0
@@ -230,7 +230,7 @@ fn jv_bytes_eq(aa: i64, ba: i64, n: i64) -> i64 {
     let mut i: i64 = 0;
     let mut ok: i64 = 1;
     while i < n {
-        if (__mind_load_i64(aa + i) & 255) == (__mind_load_i64(ba + i) & 255) {
+        if (__mind_load_i8(aa + i)) == (__mind_load_i8(ba + i)) {
             i = i + 1;
         } else {
             ok = 0;

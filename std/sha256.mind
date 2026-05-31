@@ -8,9 +8,9 @@
 // Memory layout:
 //   - Input / output byte buffers: one byte per offset (byte i lives at
 //     base + i), matching std.string discipline.
-//     `__mind_store_i8(base + i, b)` writes byte b (task #306 — no longer
-//     clobbers the trailing 7 bytes); `__mind_load_i64(base + i) & 255`
-//     reads it back (packed-load + mask; load-side cleanup is optional).
+//     `__mind_store_i8(base + i, b)` writes byte b and
+//     `__mind_load_i8(base + i)` reads it back (task #306 — single-byte
+//     load/store throughout; no trailing-7-byte clobber, no tail OOB read).
 //   - W schedule (64 words): word k lives at base + k*8 (stride-8, like Vec).
 //   - H state (8 words): same stride-8 layout, 8*8=64 bytes.
 //
@@ -337,10 +337,10 @@ fn compress_block(block_addr: i64, h_addr: i64) -> i64 {
     let mut wi: i64 = 0;
     while wi < 16 {
         let base: i64 = wi * 4;
-        let b0: i64 = __mind_load_i64(block_addr + base + 0) & 255;
-        let b1: i64 = __mind_load_i64(block_addr + base + 1) & 255;
-        let b2: i64 = __mind_load_i64(block_addr + base + 2) & 255;
-        let b3: i64 = __mind_load_i64(block_addr + base + 3) & 255;
+        let b0: i64 = __mind_load_i8(block_addr + base + 0);
+        let b1: i64 = __mind_load_i8(block_addr + base + 1);
+        let b2: i64 = __mind_load_i8(block_addr + base + 2);
+        let b3: i64 = __mind_load_i8(block_addr + base + 3);
         let word: i64 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
         w_set(w_addr, wi, word);
         wi = wi + 1;
@@ -426,7 +426,7 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
     let buf: i64 = __mind_alloc(padded_len);
     let mut ci: i64 = 0;
     while ci < in_len {
-        __mind_store_i8(buf + ci, __mind_load_i64(in_addr + ci) & 255);
+        __mind_store_i8(buf + ci, __mind_load_i8(in_addr + ci));
         ci = ci + 1;
     }
 

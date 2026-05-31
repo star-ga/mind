@@ -259,7 +259,7 @@ fn rx_ranges_push(h: i64, lo: i64, hi: i64) -> i64 {
 // --- Pattern byte helpers ---
 
 fn rx_load_byte(buf: i64, i: i64) -> i64 {
-    __mind_load_i64(buf + i) & 255
+    __mind_load_i8(buf + i)
 }
 
 // --- Compile state: [pos | capture_count | class_table] ---
@@ -967,7 +967,7 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
         last_match = start;
     }
     while pos < inp_len {
-        let c: i64 = __mind_load_i64(inp_addr + pos) & 255;
+        let c: i64 = __mind_load_i8(inp_addr + pos);
         let at_start1: i64 = if pos == 0 {
             1
         } else {
@@ -1087,7 +1087,7 @@ pub fn rx_capture(rx_h: i64, inp_addr: i64, inp_len: i64, group: i64) -> i64 {
             if end >= 0 {
                 let mut ci: i64 = start;
                 while ci < end {
-                    let _ = jvsb_push_rx(sb, __mind_load_i64(inp_addr + ci) & 255);
+                    let _ = jvsb_push_rx(sb, __mind_load_i8(inp_addr + ci));
                     ci = ci + 1;
                 }
                 done = 1;
@@ -1127,7 +1127,7 @@ fn jvsb_push_rx(h: i64, b: i64) -> i64 {
         let d: i64 = __mind_alloc(new_cap);
         let mut ci: i64 = 0;
         while ci < old_len {
-            __mind_store_i8(d + ci, __mind_load_i64(old_dat + ci) & 255);
+            __mind_store_i8(d + ci, __mind_load_i8(old_dat + ci));
             ci = ci + 1;
         }
         d
