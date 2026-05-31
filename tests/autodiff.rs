@@ -183,6 +183,57 @@ fn grad_of_conv2d() {
 }
 
 #[test]
+fn grad_of_conv2d_dynamic_shape_fails_loud() {
+    use libmind::types::ConvPadding;
+
+    // A symbolic spatial dim means static_shape4 can't resolve the input shape.
+    // Conv2d backward must then fail loud (UnsupportedShape) rather than emit a
+    // gradient against a guessed shape — the wedge forbids silent-wrong training.
+    let mut ir = IRModule::new();
+    let input = ir.fresh();
+    ir.instrs.push(Instr::ConstTensor(
+        input,
+        DType::F32,
+        vec![
+            ShapeDim::Known(1),
+            ShapeDim::Sym("h"),
+            ShapeDim::Known(8),
+            ShapeDim::Known(3),
+        ],
+        None,
+    ));
+    let filter = ir.fresh();
+    ir.instrs.push(Instr::ConstTensor(
+        filter,
+        DType::F32,
+        vec![
+            ShapeDim::Known(3),
+            ShapeDim::Known(3),
+            ShapeDim::Known(3),
+            ShapeDim::Known(16),
+        ],
+        None,
+    ));
+    let y = ir.fresh();
+    ir.instrs.push(Instr::Conv2d {
+        dst: y,
+        input,
+        filter,
+        stride_h: 1,
+        stride_w: 1,
+        padding: ConvPadding::Same,
+    });
+    ir.instrs.push(Instr::Output(y));
+
+    let err = differentiate_function(&ir, "main").unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("shape") && msg.contains("statically known"),
+        "expected an UnsupportedShape error for a dynamic conv2d input, got: {msg}"
+    );
+}
+
+#[test]
 fn grad_of_bilinear() {
     let mut ir = IRModule::new();
     let x = scalar_tensor(&mut ir);

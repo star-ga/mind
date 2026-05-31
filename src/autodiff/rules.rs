@@ -23,7 +23,10 @@ pub(super) fn apply_rule(
     upstream: ValueId,
 ) -> Result<(), AutodiffError> {
     match instr {
-        Instr::ConstI64(..) | Instr::ConstTensor(..) => Ok(()),
+        // Constant leaves: no input to propagate a gradient into. ConstF64 is
+        // included because `x * 2.0`-style programs give a float literal an
+        // upstream gradient, and dropping it here is correct (it has no operands).
+        Instr::ConstI64(..) | Instr::ConstF64(..) | Instr::ConstTensor(..) => Ok(()),
         Instr::BinOp { op, lhs, rhs, .. } => {
             match op {
                 BinOp::Add => {
@@ -200,6 +203,14 @@ pub(super) fn apply_rule(
             Ok(())
         }
         Instr::Output(_) => Ok(()),
-        _ => Ok(()),
+        // No autodiff rule for this instruction. Fail loud rather than return a
+        // silent zero gradient — the wedge forbids silently-wrong training.
+        // Differentiation covers the Core-v1 tensor ops (see docs/autodiff.md);
+        // function/control-flow/std-surface ops are intentionally not handled.
+        _ => Err(as_invalid(
+            "no autodiff rule for this IR instruction; differentiation supports the \
+             Core-v1 tensor ops only (function, control-flow, and std-surface ops are \
+             not differentiable — see docs/autodiff.md)",
+        )),
     }
 }
