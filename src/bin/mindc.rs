@@ -293,7 +293,7 @@ enum Command {
     ///
     /// Reads an artifact written by `mindc build --emit-evidence` (or
     /// `--emit-mic3` plus a MAP epilogue), peels the `evidence_chain.*` MAP,
-    /// recomputes the canonical mic@1 `trace_hash` (RFC 0016 §3.2) over the
+    /// recomputes the canonical mic@3 `trace_hash` (RFC 0016 §3.2) over the
     /// parsed IR body, and confirms it matches the stored hash.  This is the
     /// consumer-side half of the wedge: generation without verification is
     /// security theatre (RFC 0021 §4 / #288 / #290 / #309).
