@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,691,802
-**Generated:** 2026-05-30 23:13 UTC
+**Files:** 2670 | **Est. tokens:** ~6,691,930
+**Generated:** 2026-05-31 00:31 UTC
 
 ## Token Budget Guide
 
@@ -36,7 +36,7 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 25 | ~34,473 |
+| `docs/` | 25 | ~34,601 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 2 | ~136 |
@@ -564,7 +564,7 @@
 ### `docs/`
 
 - `architecture.md` (~755 tok, large) — Architecture
-- `autodiff.md` (~467 tok, medium) — Static autodiff (public)
+- `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
 
 - `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract

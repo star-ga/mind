@@ -32,16 +32,23 @@ primal value IDs to their gradients. Gradients are emitted in canonical form
 and, by default, the autodiff engine runs IR verification on both the primal
 and gradient modules.
 
-## Supported ops (Phase 1)
+## Supported ops
 
-- Binary ops: add, sub, mul (div errors explicitly)
+- Binary ops: add, sub, mul, div (quotient rule). Modulo and bitwise/shift are
+  non-differentiable and error explicitly.
 - Matrix ops: dot, matmul (naïve transpose-based rules)
+- Activations: relu — masked backward `dx = grad * step(src)` emitted as a
+  dedicated `ReluGrad` op (elementwise `cmpf`/`select`, Q16.16-preserving)
+- Convolution: conv2d — backward reuses the `Conv2dGradInput` (dx) and
+  `Conv2dGradFilter` (dw) ops; requires statically-known input/filter shapes,
+  otherwise an `UnsupportedShape` error is returned rather than guessing
 - Shape-preserving ops: reshape, expand/squeeze dims, slice/index/gather (see
   [`docs/shapes.md`](./shapes.md) for the exact dimension rules)
 - Reduction ops: mean (explicit axes) and sum (passthrough)
 
 Unsupported or ambiguous cases return `AutodiffError` with structured messages
-so callers can fall back or report the limitation directly to users.
+so callers can fall back or report the limitation directly to users — the
+engine fails loud rather than emit a silently-wrong (zero) gradient.
 
 ## Testing determinism
 
