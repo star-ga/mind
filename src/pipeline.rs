@@ -174,7 +174,7 @@ impl CompileError {
 /// waterfall to stderr (timings go to stderr only — never into any artifact,
 /// so `trace_hash` / cross-substrate byte-identity is unaffected).
 #[cfg(feature = "compile-timings")]
-mod timings {
+pub(crate) mod timings {
     use std::time::{Duration, Instant};
 
     pub struct Timings {

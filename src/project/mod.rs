@@ -775,6 +775,13 @@ fn build_cdylib_from_entry(
     )
     .map_err(|e| anyhow!("cdylib compile failed for {}: {e}", entry_path.display()))?;
 
+    // Backend compile waterfall (feature `compile-timings`, `MIND_TIMINGS=1`).
+    // The frontend phases already printed via `compile_source_with_name`; this
+    // captures the backend cost — MLIR emit and the mlir-opt/translate/clang
+    // link — which is where whole-build time actually goes.
+    #[cfg(feature = "compile-timings")]
+    let mut _tmb = crate::pipeline::timings::Timings::start();
+
     // Mirror the standalone `--emit-shared` lowering: `core` preset, no extra
     // opt pipeline, host target triple. `lower_to_mlir` honours the `autodiff`
     // feature's two-arity signature via the same compat shim the CLI uses.
@@ -783,6 +790,8 @@ fn build_cdylib_from_entry(
         .map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
     #[cfg(not(feature = "autodiff"))]
     let mlir = lower_to_mlir(&products.ir).map_err(|e| anyhow!("MLIR lowering failed: {e}"))?;
+    #[cfg(feature = "compile-timings")]
+    _tmb.mark("mlir-emit");
 
     let tools =
         mlir_build::resolve_tools().map_err(|e| anyhow!("MLIR build tools unavailable: {e}"))?;
@@ -799,6 +808,11 @@ fn build_cdylib_from_entry(
 
     mlir_build::build_all(&mlir.primal_mlir, &tools, &build_opts)
         .map_err(|e| anyhow!("cdylib link failed: {e}"))?;
+    #[cfg(feature = "compile-timings")]
+    {
+        _tmb.mark("mlir-opt+link");
+        _tmb.report("cdylib-backend");
+    }
 
     Ok(())
 }

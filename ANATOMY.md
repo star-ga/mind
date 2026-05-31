@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,693,378
-**Generated:** 2026-05-31 16:34 UTC
+**Files:** 2670 | **Est. tokens:** ~6,693,531
+**Generated:** 2026-05-31 16:39 UTC
 
 ## Token Budget Guide
 
@@ -361,7 +361,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~16,771 |
+| `src/` | 7 | ~16,774 |
 | `src/ast/` | 1 | ~6,285 |
 | `src/autodiff/` | 3 | ~6,568 |
 | `src/bin/` | 2 | ~19,524 |
@@ -388,7 +388,7 @@
 | `src/opt/` | 4 | ~8,207 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~22,865 |
+| `src/project/` | 3 | ~23,015 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -3710,10 +3710,10 @@
 - `trivia.rs` (~3260 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~3844 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~3847 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~15756 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~15906 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3443 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
