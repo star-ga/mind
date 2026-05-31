@@ -212,18 +212,6 @@ struct LoweringContext {
             crate::ast::CallConv,
         ),
     >,
-    /// RFC 0005 Gap 1 (dominance fix): after-block substitutions registered
-    /// by the While emitter so that subsequent fn-body instructions emitted
-    /// into `^while_after_N` reference the correct block-arg names instead
-    /// of SSA values defined inside the (non-dominating) body block.
-    ///
-    /// Each entry is `(post_id, waft_name)` where `post_id` is the raw SSA
-    /// id defined inside `^while_body_N` and `waft_name` is the block-arg
-    /// name declared in `^while_after_N` (e.g. `"waft_51_0"`).  The
-    /// substitution is applied by `emit_line` to every line pushed after
-    /// the While instruction completes. Gated.
-    #[cfg(feature = "std-surface")]
-    pending_after_subs: Vec<(usize, String)>,
 }
 
 impl LoweringContext {
@@ -240,26 +228,10 @@ impl LoweringContext {
             defined_fns: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             extern_c_fns: std::collections::BTreeMap::new(),
-            #[cfg(feature = "std-surface")]
-            pending_after_subs: Vec::new(),
         }
     }
 
     fn emit_line(&mut self, line: &str) {
-        #[cfg(feature = "std-surface")]
-        if !self.pending_after_subs.is_empty() {
-            // Apply after-block substitutions: replace %{post_id} with
-            // %{waft_name} so dominance holds in ^while_after_N.
-            // Sort descending by post_id length to avoid partial matches.
-            let mut subs = self.pending_after_subs.clone();
-            subs.sort_by(|a, b| b.0.cmp(&a.0));
-            let mut text = line.to_owned();
-            for (post_id, waft_name) in &subs {
-                text = substitute_one(&text, *post_id, waft_name);
-            }
-            writeln!(&mut self.body, "{text}").expect("write to string cannot fail");
-            return;
-        }
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
     }
 
@@ -959,6 +931,7 @@ impl LoweringContext {
                 body,
                 live_vars,
                 init_ids,
+                exit_ids,
             } => {
                 let lbl = instr_index;
 
@@ -986,6 +959,11 @@ impl LoweringContext {
                     head_name: String, // %wbl_{lbl}_{k}
                     body_name: String, // %wbod_{lbl}_{k}
                     post_id: usize,
+                    // F2: real SSA id of the loop EXIT value, declared as the
+                    // ^while_after block arg. Downstream IR was rebound (in
+                    // lower.rs) to reference this id, so naming the block arg
+                    // by it makes every post-loop use dominate.
+                    exit_id: usize,
                 }
                 let mut loop_args: Vec<LoopArg> = Vec::new();
                 for (k, ((_vname, post_vid), init_vid)) in
@@ -994,11 +972,15 @@ impl LoweringContext {
                     if init_vid.0 == usize::MAX {
                         continue;
                     }
+                    // F2 exit id: parallel to live_vars. Falls back to a
+                    // synthetic name only if absent (older IR without exit_ids).
+                    let exit_id = exit_ids.get(k).map(|v| v.0).unwrap_or(usize::MAX);
                     loop_args.push(LoopArg {
                         init_id: init_vid.0,
                         head_name: format!("wbl_{lbl}_{k}"),
                         body_name: format!("wbod_{lbl}_{k}"),
                         post_id: post_vid.0,
+                        exit_id,
                     });
                 }
 
@@ -1180,30 +1162,31 @@ impl LoweringContext {
                     self.emit_line(&format!("    cf.br ^while_header_{lbl}{back_pass}"));
                 }
 
-                // After block: block args %waft_{lbl}_{k}: i64 carry the
-                // loop-variable values from the header into the successor
-                // block (dominance fix: header dominates both body and after,
-                // so threading header args into after is always valid).
+                // After block: block args carry the loop-variable values from
+                // the header into the successor code (dominance fix: the header
+                // dominates both body and after, so threading header args into
+                // after is always valid).
                 //
-                // Register pending_after_subs so subsequent emit_line calls
-                // (for fn-body instructions in ^while_after_{lbl}) rewrite
-                // %post_id → %waft_{lbl}_{k}, preserving SSA dominance.
+                // F2: the after-block args are named by the loop's EXIT SSA ids
+                // (`exit_id`), which lower.rs allocated and to which it rebound
+                // every post-loop reference to the loop variable. Naming the
+                // block arg by the exit id makes those references resolve to a
+                // value that dominates the after-block — no textual rewrite of
+                // body-internal post ids is needed (the old `pending_after_subs`
+                // mechanism is removed).
                 if loop_args.is_empty() {
                     self.emit_line(&format!("  ^while_after_{lbl}:"));
                 } else {
-                    // Declare after-block args %waft_{lbl}_{k}: i64.
                     let after_arg_decls: String = loop_args
                         .iter()
-                        .enumerate()
-                        .map(|(k, _a)| format!("%waft_{lbl}_{k}: i64"))
+                        .map(|a| format!("%{}: i64", a.exit_id))
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.emit_line(&format!("  ^while_after_{lbl}({after_arg_decls}):"));
-                    // Register substitutions: %post_id → %waft_{lbl}_{k}.
-                    // These are applied by emit_line to all subsequent output.
-                    for (k, a) in loop_args.iter().enumerate() {
-                        self.pending_after_subs
-                            .push((a.post_id, format!("waft_{lbl}_{k}")));
+                    // Register the exit ids as known scalar i64 values so any
+                    // downstream type lookup (e.g. function return) succeeds.
+                    for a in &loop_args {
+                        self.values.insert(ValueId(a.exit_id), ValueKind::ScalarI64);
                     }
                 }
             }
@@ -1465,6 +1448,7 @@ impl LoweringContext {
                 else_instrs,
                 else_result,
                 dst,
+                merges,
                 ..
             } => {
                 // Use `dst.0` (the unique SSA id of the result value) as the
@@ -1570,9 +1554,17 @@ impl LoweringContext {
                     .map(|i| matches!(i, Instr::Return { .. }))
                     .unwrap_or(false);
                 if !then_ends_with_return {
+                    // F2: pass the if-value (then_result) plus every merge phi's
+                    // then-edge value. Each then_val dominates this `cf.br`
+                    // because lower.rs computed it from the then-branch exit env
+                    // (incoming, top-level branch value, or nested region exit).
+                    let mut vals: Vec<String> = vec![format!("%{}", then_result.0)];
+                    for (_merge_id, then_val, _else_val) in merges.iter() {
+                        vals.push(format!("%{}", then_val.0));
+                    }
                     self.emit_line(&format!(
-                        "    cf.br ^if_after_{lbl}(%{} : i64)",
-                        then_result.0
+                        "    cf.br ^if_after_{lbl}{}",
+                        fmt_block_args(&vals)
                     ));
                 }
 
@@ -1603,23 +1595,36 @@ impl LoweringContext {
                     .map(|i| matches!(i, Instr::Return { .. }))
                     .unwrap_or(false);
                 if !else_ends_with_return {
+                    let mut vals: Vec<String> = vec![format!("%{}", else_result.0)];
+                    for (_merge_id, _then_val, else_val) in merges.iter() {
+                        vals.push(format!("%{}", else_val.0));
+                    }
                     self.emit_line(&format!(
-                        "    cf.br ^if_after_{lbl}(%{} : i64)",
-                        else_result.0
+                        "    cf.br ^if_after_{lbl}{}",
+                        fmt_block_args(&vals)
                     ));
                 }
 
-                // Join block: declare the block argument that carries the if-value.
-                // Both incoming `cf.br` edges supply an i64; the block argument
-                // becomes `%dst`.  If both branches returned, the block has no
-                // predecessors and mlir-opt will DCE it — that's fine.
-                self.emit_line(&format!("  ^if_after_{lbl}(%{} : i64):", dst.0));
-                // Register then_result and else_result as known values for any
-                // downstream code that directly references them (e.g. for
-                // branch_bindings threading in the fn-body loop).
+                // Join block: declare the block arguments carrying the if-value
+                // (`%dst`) plus one F2 merge phi per outer variable assigned in
+                // either branch (`%merge_id`). Both `cf.br` edges supply a
+                // matching i64 tuple; each merge id dominates all post-if code
+                // (lower.rs rebound those variables to the merge ids).
+                {
+                    let mut decls: Vec<String> = vec![format!("%{} : i64", dst.0)];
+                    for (merge_id, _t, _e) in merges.iter() {
+                        decls.push(format!("%{} : i64", merge_id.0));
+                    }
+                    self.emit_line(&format!("  ^if_after_{lbl}({}):", decls.join(", ")));
+                }
+                // Register then_result/else_result, dst, and every merge id as
+                // known scalar i64 values for downstream type lookups.
                 self.values.insert(*then_result, ValueKind::ScalarI64);
                 self.values.insert(*else_result, ValueKind::ScalarI64);
                 self.values.insert(*dst, ValueKind::ScalarI64);
+                for (merge_id, _t, _e) in merges.iter() {
+                    self.values.insert(*merge_id, ValueKind::ScalarI64);
+                }
             }
             // RFC 0010 Phase A: register an extern "C" declaration so that
             // subsequent `Instr::Call` ops to the same name emit `llvm.call`

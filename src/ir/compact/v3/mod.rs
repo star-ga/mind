@@ -827,6 +827,7 @@ mod tests {
                 body: vec![Instr::ConstI64(body_v, 42)],
                 live_vars: vec![("i".into(), live_v)],
                 init_ids: vec![init_v],
+                exit_ids: Vec::new(),
             });
             m.instrs.push(Instr::Output(cond));
 
@@ -867,6 +868,7 @@ mod tests {
                 else_result: else_r,
                 dst,
                 branch_bindings: vec![("x".into(), dst)],
+                merges: Vec::new(),
             });
             m.instrs.push(Instr::Output(dst));
 
@@ -1116,6 +1118,7 @@ mod tests {
                 body: vec![],
                 live_vars: vec![],
                 init_ids: vec![],
+                exit_ids: Vec::new(),
             });
             m.struct_defs.insert("S".into(), vec!["a".into()]);
             m.const_array_defs.insert("T".into(), vec![1, 2]);

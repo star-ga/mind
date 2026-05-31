@@ -940,6 +940,7 @@ mod tests {
             body: vec![Instr::ConstI64(bv, 42)],
             live_vars: vec![("i".into(), lv)],
             init_ids: vec![iv],
+            exit_ids: Vec::new(),
         });
         m.instrs.push(Instr::Output(cond));
 

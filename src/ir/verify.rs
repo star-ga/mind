@@ -200,9 +200,28 @@ fn validate_operands(
                 // them as block arguments; the IR verifier must treat those
                 // post-body ValueIds as defined in the fn body after the While.
                 #[cfg(feature = "std-surface")]
-                if let Instr::While { live_vars, .. } = body_instr {
+                if let Instr::While {
+                    live_vars,
+                    exit_ids,
+                    ..
+                } = body_instr
+                {
                     for (_name, post_id) in live_vars {
                         body_defined.insert(*post_id);
+                    }
+                    // F2: post-loop code references the EXIT ids (^while_after
+                    // block args), so they too are defined in fn scope after
+                    // the While.
+                    for exit_id in exit_ids {
+                        body_defined.insert(*exit_id);
+                    }
+                }
+                // F2: an If exposes its merge ids (^if_after block args) plus
+                // its `dst` into the enclosing scope after the branch.
+                #[cfg(feature = "std-surface")]
+                if let Instr::If { merges, .. } = body_instr {
+                    for (merge_id, _t, _e) in merges {
+                        body_defined.insert(*merge_id);
                     }
                 }
                 // Check operand references within body scope
