@@ -1022,6 +1022,9 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             body,
             live_vars,
             init_ids,
+            // F2 exit_ids is lowering-internal: not serialised to the mic
+            // wire format (fn bodies are not persisted to mic; hash-neutral).
+            ..
         } => {
             w.write_all(&[OP_WHILE]).unwrap();
             write_vid(w, *cond_id).unwrap();
@@ -1046,6 +1049,9 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             else_result,
             dst,
             branch_bindings,
+            // F2 merges is lowering-internal: not serialised to the mic wire
+            // format (fn bodies are not persisted to mic; hash-neutral).
+            ..
         } => {
             w.write_all(&[OP_IF]).unwrap();
             write_vid(w, *cond_id).unwrap();

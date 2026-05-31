@@ -772,9 +772,19 @@ fn lower_expr(
                         {
                             let n = fn_ir.instrs.len();
                             if n >= 2 {
-                                if let Instr::While { live_vars, .. } = &fn_ir.instrs[n - 2] {
-                                    for (vname, vid) in live_vars.clone() {
-                                        fn_env.insert(vname, vid);
+                                if let Instr::While {
+                                    live_vars,
+                                    exit_ids,
+                                    ..
+                                } = &fn_ir.instrs[n - 2]
+                                {
+                                    // F2: rebind to the loop EXIT id (dominating
+                                    // ^while_after block arg), not the
+                                    // body-internal post_id.
+                                    for (k, (vname, _post)) in live_vars.iter().enumerate() {
+                                        let exit =
+                                            exit_ids.get(k).copied().unwrap_or(live_vars[k].1);
+                                        fn_env.insert(vname.clone(), exit);
                                     }
                                 }
                             }
@@ -860,7 +870,17 @@ fn lower_expr(
             //      Starts from cond_ir's highest id.
             let mut then_ir = sub_ir_from_after(&cond_ir, ir);
             let mut then_env = env.clone();
-            let mut branch_bindings: Vec<(String, ValueId)> = Vec::new();
+            // F2: names this branch writes — outer-var Assigns, branch-local
+            // Lets, and any outer var rebound by a NESTED region (loop/if).
+            // The union of then/else writes becomes the merge phi set, and each
+            // merged var's per-branch value is taken from this env (dominating
+            // at the branch's exit).
+            let mut then_writes: Vec<String> = Vec::new();
+            let record_then_write = |name: &str, writes: &mut Vec<String>| {
+                if !writes.iter().any(|n| n == name) {
+                    writes.push(name.to_owned());
+                }
+            };
             let mut then_result = then_ir.fresh();
             then_ir.instrs.push(Instr::ConstI64(then_result, 0));
             for stmt in then_branch {
@@ -897,23 +917,26 @@ fn lower_expr(
                             ),
                         };
                         then_env.insert(name.clone(), id);
-                        // Gap C: record binding so it is visible after the if.
-                        if let Some(pos) = branch_bindings.iter().position(|(n, _)| n == name) {
-                            branch_bindings[pos].1 = id;
-                        } else {
-                            branch_bindings.push((name.clone(), id));
-                        }
+                        record_then_write(name, &mut then_writes);
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
                         let id =
                             lower_expr(value, &mut then_ir, &then_env, struct_env, receiver_types);
                         then_env.insert(name.clone(), id);
+                        record_then_write(name, &mut then_writes);
                         then_result = id;
                     }
                     other => {
                         then_result =
                             lower_expr(other, &mut then_ir, &then_env, struct_env, receiver_types);
+                        // F2: thread a nested region's EXIT/merge ids upward so
+                        // an outer var mutated inside it is visible (and
+                        // dominating) at this branch's exit.
+                        for (nm, eid) in last_region_exit_rebindings(&then_ir.instrs) {
+                            then_env.insert(nm.clone(), eid);
+                            record_then_write(&nm, &mut then_writes);
+                        }
                     }
                 }
             }
@@ -922,6 +945,12 @@ fn lower_expr(
             //      Starts from then_ir's highest id.
             let mut else_ir = sub_ir_from_after(&then_ir, ir);
             let mut else_env = env.clone();
+            let mut else_writes: Vec<String> = Vec::new();
+            let record_else_write = |name: &str, writes: &mut Vec<String>| {
+                if !writes.iter().any(|n| n == name) {
+                    writes.push(name.to_owned());
+                }
+            };
             let mut else_result = else_ir.fresh();
             else_ir.instrs.push(Instr::ConstI64(else_result, 0));
             if let Some(else_stmts) = else_branch {
@@ -961,11 +990,7 @@ fn lower_expr(
                                 ),
                             };
                             else_env.insert(name.clone(), id);
-                            if let Some(pos) = branch_bindings.iter().position(|(n, _)| n == name) {
-                                branch_bindings[pos].1 = id;
-                            } else {
-                                branch_bindings.push((name.clone(), id));
-                            }
+                            record_else_write(name, &mut else_writes);
                             else_result = id;
                         }
                         ast::Node::Assign { name, value, .. } => {
@@ -977,6 +1002,7 @@ fn lower_expr(
                                 receiver_types,
                             );
                             else_env.insert(name.clone(), id);
+                            record_else_write(name, &mut else_writes);
                             else_result = id;
                         }
                         other => {
@@ -987,14 +1013,83 @@ fn lower_expr(
                                 struct_env,
                                 receiver_types,
                             );
+                            for (nm, eid) in last_region_exit_rebindings(&else_ir.instrs) {
+                                else_env.insert(nm.clone(), eid);
+                                record_else_write(&nm, &mut else_writes);
+                            }
                         }
                     }
                 }
             }
 
-            // ── 4. Emit Instr::If into the parent IR stream ───────────────────
-            // Advance the parent's SSA counter to after all sub-module ids.
+            // ── 4. Build the merge phi set ────────────────────────────────────
+            //
+            // F2 dominance fix. For every variable written in EITHER branch,
+            // allocate a fresh merge id (declared as an `^if_after` block arg)
+            // and record, per branch, the value of that variable at the branch
+            // EXIT (`then_env`/`else_env`). These per-branch values dominate the
+            // branch's `cf.br ^if_after` because they are either the incoming
+            // value, a top-level branch value, or a nested region's exit id
+            // (threaded above) — never a raw value defined in a deeper branch.
+            //
+            // A branch that does not write the variable passes its incoming
+            // value (`env[name]`). If the variable does not exist in the outer
+            // env either (a branch-local `let`), that branch synthesises a unit
+            // 0 inside its own block so both edges still pass a dominating
+            // value of matching type.
+            //
+            // `branch_bindings[i].1` is set to the merge id so post-if code and
+            // upward threading (`region_exit_rebindings`) pick up the
+            // dominating merge value, never a branch-internal id.
             ir.next_id = ir.next_id.max(else_ir.next_id);
+            let mut merged_names: Vec<String> = Vec::new();
+            for n in then_writes.iter().chain(else_writes.iter()) {
+                if !merged_names.iter().any(|m| m == n) {
+                    merged_names.push(n.clone());
+                }
+            }
+            // A branch that ends in `return` does not fall through to
+            // `^if_after`; its `cf.br` is omitted and it must not pass a merge
+            // value (and must not get a dead const pushed after its terminator).
+            let then_falls_through = !matches!(then_ir.instrs.last(), Some(Instr::Return { .. }));
+            let else_falls_through = !matches!(else_ir.instrs.last(), Some(Instr::Return { .. }));
+            let mut branch_bindings: Vec<(String, ValueId)> = Vec::new();
+            let mut merges: Vec<(ValueId, ValueId, ValueId)> = Vec::new();
+            for name in &merged_names {
+                // then-edge value (only meaningful if then falls through).
+                let then_val = if then_falls_through {
+                    match then_env.get(name) {
+                        Some(&id) => id,
+                        None => {
+                            let z = ir.fresh();
+                            then_ir.instrs.push(Instr::ConstI64(z, 0));
+                            z
+                        }
+                    }
+                } else {
+                    // No then-edge; reuse the else value as the placeholder so
+                    // the tuple is well-formed (the then `cf.br` is not emitted).
+                    *else_env.get(name).unwrap_or(&ValueId(usize::MAX))
+                };
+                // else-edge value (only meaningful if else falls through).
+                let else_val = if else_falls_through {
+                    match else_env.get(name) {
+                        Some(&id) => id,
+                        None => {
+                            let z = ir.fresh();
+                            else_ir.instrs.push(Instr::ConstI64(z, 0));
+                            z
+                        }
+                    }
+                } else {
+                    *then_env.get(name).unwrap_or(&ValueId(usize::MAX))
+                };
+                let merge_id = ir.fresh();
+                merges.push((merge_id, then_val, else_val));
+                branch_bindings.push((name.clone(), merge_id));
+            }
+
+            // ── 5. Emit Instr::If into the parent IR stream ───────────────────
             let dst = ir.fresh();
             ir.instrs.push(Instr::If {
                 cond_id,
@@ -1005,6 +1100,7 @@ fn lower_expr(
                 else_result,
                 dst,
                 branch_bindings,
+                merges,
             });
 
             // Gap C: branch_bindings are stored on the Instr::If node so
@@ -1131,6 +1227,24 @@ fn lower_expr(
             // emitter can produce `cf.br ^while_header(init_0, init_1, ...)`.
             let mut init_ids: Vec<ValueId> = Vec::new();
 
+            // Record that `name` is loop-carried with post-body value `new_id`.
+            // The first time the loop sees a variable mutated, capture its
+            // pre-loop init id from `body_env` (parallel to `mutated`).
+            fn record_loop_mut(
+                name: &str,
+                new_id: ValueId,
+                mutated: &mut Vec<(String, ValueId)>,
+                init_ids: &mut Vec<ValueId>,
+                pre_init: Option<ValueId>,
+            ) {
+                if let Some(pos) = mutated.iter().position(|(n, _)| n == name) {
+                    mutated[pos].1 = new_id;
+                } else {
+                    init_ids.push(pre_init.unwrap_or(ValueId(usize::MAX)));
+                    mutated.push((name.to_owned(), new_id));
+                }
+            }
+
             for stmt in body {
                 match stmt {
                     ast::Node::Let { name, value, .. } => {
@@ -1144,33 +1258,40 @@ fn lower_expr(
                         body_env.insert(name.clone(), new_id);
                     }
                     ast::Node::Assign { name, value, .. } => {
-                        // Record the pre-loop init ValueId the first time we
-                        // see this variable being assigned (subsequent assigns
-                        // in the same body update the post-body id only).
-                        if !mutated.iter().any(|(n, _)| n == name) {
-                            // The init ValueId is whatever `name` resolves to
-                            // in body_env right now (i.e. the pre-loop value).
-                            if let Some(&init_id) = body_env.get(name.as_str()) {
-                                init_ids.push(init_id);
-                            } else {
-                                // Variable not in env yet (declared inside the
-                                // loop body before being assigned) — use a
-                                // dummy that the emitter will ignore.
-                                init_ids.push(ValueId(usize::MAX));
-                            }
-                        }
+                        let pre_init = body_env.get(name.as_str()).copied();
                         let new_id =
                             lower_expr(value, &mut body_ir, &body_env, struct_env, receiver_types);
                         body_env.insert(name.clone(), new_id);
-                        // Record the variable and its post-body value.
-                        if let Some(pos) = mutated.iter().position(|(n, _)| n == name) {
-                            mutated[pos].1 = new_id;
-                        } else {
-                            mutated.push((name.clone(), new_id));
-                        }
+                        record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
                     }
                     other => {
                         lower_expr(other, &mut body_ir, &body_env, struct_env, receiver_types);
+                        // F2: a nested region (if/while) inside the loop body may
+                        // mutate an OUTER (loop-carried) variable. Thread the
+                        // nested region's EXIT/merge id into body_env AND record
+                        // the variable as loop-carried, so the back-edge passes a
+                        // dominating value and the header re-feeds it next
+                        // iteration. Without this, mutations buried in a nested
+                        // branch (e.g. `while c { if p { x = 0 } }`) are invisible
+                        // to the loop and it never makes progress.
+                        {
+                            for (nm, eid) in last_region_exit_rebindings(&body_ir.instrs) {
+                                // Only loop-carry variables that exist in the
+                                // pre-loop scope (genuine outer vars); a binding
+                                // local to the nested region is not loop state.
+                                if env.contains_key(&nm) {
+                                    let pre_init = body_env.get(nm.as_str()).copied();
+                                    body_env.insert(nm.clone(), eid);
+                                    record_loop_mut(
+                                        &nm,
+                                        eid,
+                                        &mut mutated,
+                                        &mut init_ids,
+                                        pre_init,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1188,12 +1309,24 @@ fn lower_expr(
                 ir.next_id = ir.next_id.max(cond_ir.next_id).max(body_ir.next_id);
             }
 
+            // F2 region-scoped exit env: one fresh SSA id per loop-carried var.
+            // `^while_after_N` declares these as block args (fed by the
+            // header→after cond_br edge with header args, which dominate), and
+            // code AFTER the loop is rebound to these exit ids instead of the
+            // body-internal `post_id`s — guaranteeing dominance for every
+            // post-loop reference, at every nesting level.
+            #[cfg(feature = "std-surface")]
+            let exit_ids: Vec<ValueId> = mutated.iter().map(|_| ir.fresh()).collect();
+            #[cfg(not(feature = "std-surface"))]
+            let exit_ids: Vec<ValueId> = Vec::new();
+
             ir.instrs.push(Instr::While {
                 cond_id,
                 cond_instrs: cond_ir.instrs,
                 body: body_ir.instrs,
                 live_vars: mutated,
                 init_ids,
+                exit_ids,
             });
 
             // `while` is a statement; produce a unit i64 placeholder.
@@ -1696,6 +1829,67 @@ fn sub_ir_from_after(prev: &IRModule, meta_src: &IRModule) -> IRModule {
     m.struct_defs = meta_src.struct_defs.clone();
     m.const_array_defs = meta_src.const_array_defs.clone();
     m
+}
+
+/// F2: extract the variable rebindings produced by a nested control-flow
+/// instruction so they can be threaded into the enclosing region's env at
+/// EVERY nesting level (fn-body, while-body, then-branch, else-branch).
+///
+/// Returns `(name, exit_id)` pairs where `exit_id` is a DOMINATING value for
+/// the enclosing region — the loop's `^while_after` exit block-arg id
+/// (`While.exit_ids`) or the if's `^if_after` merge block-arg id (the value in
+/// `If.branch_bindings`, which the F2 If lowering sets to the merge id).
+///
+/// This is the recursion crux: when an if-branch or loop-body contains a nested
+/// loop/if that mutates an outer variable, the enclosing region picks up the
+/// nested region's EXIT id (not a raw value defined inside the deeper branch),
+/// so any value later passed on a branch/back edge is guaranteed to dominate.
+#[cfg(feature = "std-surface")]
+fn region_exit_rebindings(instr: &Instr) -> Vec<(String, ValueId)> {
+    match instr {
+        Instr::While {
+            live_vars,
+            exit_ids,
+            ..
+        } => live_vars
+            .iter()
+            .enumerate()
+            .map(|(k, (name, post))| {
+                let exit = exit_ids.get(k).copied().unwrap_or(*post);
+                (name.clone(), exit)
+            })
+            .collect(),
+        Instr::If {
+            branch_bindings, ..
+        } => branch_bindings.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// F2: the rebindings produced by the LAST control-flow statement pushed into
+/// `instrs`. A `While` arm pushes the `Instr::While` followed by a trailing
+/// unit `ConstI64`, so a bare last-instruction check would miss it — we look
+/// past that trailing placeholder. An `If` arm pushes only the `Instr::If`
+/// (its `dst` is the value), so the last instruction is the node itself.
+#[cfg(feature = "std-surface")]
+fn last_region_exit_rebindings(instrs: &[Instr]) -> Vec<(String, ValueId)> {
+    let n = instrs.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    // Direct match (If, or While with no trailing placeholder).
+    let direct = region_exit_rebindings(&instrs[n - 1]);
+    if !direct.is_empty() {
+        return direct;
+    }
+    // While pushes a trailing unit ConstI64 after the loop node; the loop is
+    // the second-to-last instruction.
+    if n >= 2 {
+        if let Instr::ConstI64(..) = &instrs[n - 1] {
+            return region_exit_rebindings(&instrs[n - 2]);
+        }
+    }
+    Vec::new()
 }
 
 fn parse_tensor_ann(dtype: &str, dims: &[String]) -> Option<(DType, Vec<ShapeDim>)> {
