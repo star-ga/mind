@@ -82,10 +82,10 @@ fn net_build_sockaddr_in(ip_str_addr: i64, port: i64) -> i64 {
     __mind_store_i8(sa + 3, np & 255);
     let inet_buf: i64 = __mind_alloc(4);
     let _ = inet_pton(2, ip_str_addr as *const u8, inet_buf as *mut u8);
-    __mind_store_i8(sa + 4, __mind_load_i64(inet_buf + 0) & 255);
-    __mind_store_i8(sa + 5, __mind_load_i64(inet_buf + 1) & 255);
-    __mind_store_i8(sa + 6, __mind_load_i64(inet_buf + 2) & 255);
-    __mind_store_i8(sa + 7, __mind_load_i64(inet_buf + 3) & 255);
+    __mind_store_i8(sa + 4, __mind_load_i8(inet_buf + 0));
+    __mind_store_i8(sa + 5, __mind_load_i8(inet_buf + 1));
+    __mind_store_i8(sa + 6, __mind_load_i8(inet_buf + 2));
+    __mind_store_i8(sa + 7, __mind_load_i8(inet_buf + 3));
     sa
 }
 
@@ -107,8 +107,8 @@ fn net_getsockname_port(fd: i64) -> i64 {
     __mind_store_i8(lenptr + 2, 0);
     __mind_store_i8(lenptr + 3, 0);
     let _ = getsockname(fd as i32, sa as *mut u8, lenptr as *mut u8);
-    let b0: i64 = __mind_load_i64(sa + 2) & 255;
-    let b1: i64 = __mind_load_i64(sa + 3) & 255;
+    let b0: i64 = __mind_load_i8(sa + 2);
+    let b1: i64 = __mind_load_i8(sa + 3);
     b0 * 256 + b1
 }
 

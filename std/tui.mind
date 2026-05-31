@@ -447,14 +447,14 @@ pub fn tui_text_sgr(t: Text) -> i64 {
 }
 
 // text_push_payload_rec — append `count` bytes from `payload_addr` to
-// `s`, one byte at a time. Matches the byte-load pattern used by
-// `string_get_byte` / `fs_copy_bytes_rec`: `__mind_load_i64(addr+i) &
-// 255` peels the low byte off the i64-shaped load.
+// `s`, one byte at a time. Matches the single-byte load pattern used by
+// `string_get_byte` / `fs_copy_bytes_rec`: `__mind_load_i8(addr+i)` reads
+// exactly byte[i] (task #306 — no tail OOB read).
 fn text_push_payload_rec(s: String, payload_addr: i64, count: i64, i: i64) -> String {
     if i >= count {
         s
     } else {
-        let b: i64 = __mind_load_i64(payload_addr + i) & 255;
+        let b: i64 = __mind_load_i8(payload_addr + i);
         let s2: String = string_push_byte(s, b);
         text_push_payload_rec(s2, payload_addr, count, i + 1)
     }

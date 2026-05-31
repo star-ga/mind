@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,692,497
-**Generated:** 2026-05-31 03:45 UTC
+**Files:** 2670 | **Est. tokens:** ~6,692,730
+**Generated:** 2026-05-31 16:27 UTC
 
 ## Token Budget Guide
 
@@ -372,7 +372,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 13 | ~84,523 |
+| `src/eval/` | 13 | ~84,714 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,591 |
 | `src/ffi/` | 3 | ~3,898 |
@@ -395,8 +395,8 @@
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 17 | ~82,560 |
-| `tests/` | 159 | ~275,605 |
+| `std/` | 17 | ~82,596 |
+| `tests/` | 159 | ~275,611 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3609,7 +3609,7 @@
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
-- `lower.rs` (~22164 tok, huge) — Copyright 2025 STARGA Inc.
+- `lower.rs` (~22355 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~4445 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_export.rs` (~9665 tok, huge) — Copyright 2025 STARGA Inc.
 - `mlir_gpu.rs` (~301 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3754,19 +3754,19 @@
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
-- `fs.mind` (~4338 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
+- `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
-- `json.mind` (~10201 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
+- `json.mind` (~10194 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~935 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
-- `net.mind` (~2315 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
-- `process.mind` (~2933 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
-- `regex.mind` (~8929 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
-- `sha256.mind` (~3432 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
-- `string.mind` (~2374 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
-- `toml.mind` (~9913 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
-- `tui.mind` (~4814 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
+- `net.mind` (~2305 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
+- `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
+- `regex.mind` (~8922 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
+- `sha256.mind` (~3419 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
+- `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `toml.mind` (~9906 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
+- `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~765 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
@@ -4059,7 +4059,7 @@
 - `std_surface_io_module.rs` (~1571 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~4349 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_map_module.rs` (~2044 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_net_fs_process.rs` (~7339 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_net_fs_process.rs` (~7345 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4507 tok, huge) — Copyright 2025 STARGA Inc.
