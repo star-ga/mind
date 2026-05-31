@@ -949,16 +949,35 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
         0
     };
     let _ = rx_sq_add_eps(cur, nfa);
-    // Handle zero-width anchors at the start position
+    // Handle zero-width anchors live in `cur` at the start position: `^`
+    // always fires (offset 0), and `$` fires only when the input is empty
+    // (start == end). Follow ONLY anchor transitions and eps-close their
+    // out-states into `cur` so the main loop sees the post-anchor states at
+    // the *same* position — a `^` / `$` consumes no input. We must NOT run a
+    // full `rx_step` with a sentinel char here: its `.`/negated-class arms
+    // would match a phantom byte and produce false positives (e.g. `[^abc]+`
+    // matching `"aaa"`). `alen` is re-read after each insertion so an anchor
+    // whose out-state is another anchor (`^$` on empty input) is followed in
+    // the same pass.
     if at_start0 == 1 {
-        let _ = rx_step(cur, next, 0 - 1, cls_tbl, 1, if inp_len == 0 {
-            1
-        } else {
-            0
-        });
-        if rx_sq_len(next) > 0 {
+        let mut ai: i64 = 0;
+        let mut alen: i64 = rx_sq_len(cur);
+        while ai < alen {
+            let st: i64 = rx_sq_get(cur, ai);
+            let k: i64 = rx_st_kind(st);
+            if k == rx_kind_anchor_start() {
+                let _ = rx_sq_add_eps(cur, rx_st_out1(st));
+                alen = rx_sq_len(cur);
+            } else {
+                if k == rx_kind_anchor_end() {
+                    if inp_len == 0 {
+                        let _ = rx_sq_add_eps(cur, rx_st_out1(st));
+                        alen = rx_sq_len(cur);
+                    }
+                }
+            }
+            ai = ai + 1;
         }
-        // Merge next back (epsilon anchors consumed)
     }
     let mut pos: i64 = start;
     let mut last_match: i64 = 0 - 1;
@@ -997,6 +1016,24 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
         } else {
             pos = pos + 1;
         }
+    }
+    // End-of-input: fire any `$` end anchors still live in `cur`. `$` matches a
+    // position (not a byte), so it is reached only after the last byte has been
+    // consumed and the loop above has exited. Only `anchor_end` states are
+    // followed here — reusing `rx_step` would let `.`/classes falsely consume a
+    // phantom character past the end of input.
+    let mut ei: i64 = 0;
+    let mut elen: i64 = rx_sq_len(cur);
+    while ei < elen {
+        let st: i64 = rx_sq_get(cur, ei);
+        if rx_st_kind(st) == rx_kind_anchor_end() {
+            let _ = rx_sq_add_eps(cur, rx_st_out1(st));
+            elen = rx_sq_len(cur);
+        }
+        ei = ei + 1;
+    }
+    if rx_is_match_state(cur) == 1 {
+        last_match = inp_len;
     }
     last_match
 }
