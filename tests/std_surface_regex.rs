@@ -430,6 +430,40 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
                 "^hello must NOT match in middle"
             );
 
+            // Fixture 6b: $ end anchor
+            let pat6c = b"world$";
+            let rx6c = compile_fn(pat6c.as_ptr() as i64, pat6c.len() as i64);
+            assert!(rx6c != 0, "world$ must compile");
+            let inp6c = b"hello world";
+            let inp6d = b"world peace";
+            assert_eq!(
+                is_match_fn(rx6c, inp6c.as_ptr() as i64, inp6c.len() as i64),
+                1,
+                "world$ must match at end"
+            );
+            assert_eq!(
+                is_match_fn(rx6c, inp6d.as_ptr() as i64, inp6d.len() as i64),
+                0,
+                "world$ must NOT match in middle"
+            );
+
+            // Fixture 6c: ^...$ both anchors (whole-string match)
+            let pat6e = b"^hi$";
+            let rx6e = compile_fn(pat6e.as_ptr() as i64, pat6e.len() as i64);
+            assert!(rx6e != 0, "^hi$ must compile");
+            let inp6e = b"hi";
+            let inp6f = b"hi there";
+            assert_eq!(
+                is_match_fn(rx6e, inp6e.as_ptr() as i64, inp6e.len() as i64),
+                1,
+                "^hi$ must match the whole string \"hi\""
+            );
+            assert_eq!(
+                is_match_fn(rx6e, inp6f.as_ptr() as i64, inp6f.len() as i64),
+                0,
+                "^hi$ must NOT match \"hi there\""
+            );
+
             // Fixture 7: find_all count
             let pat7 = b"[0-9]+";
             let rx7 = compile_fn(pat7.as_ptr() as i64, pat7.len() as i64);
