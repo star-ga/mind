@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2670 | **Est. tokens:** ~6,698,312
-**Generated:** 2026-05-31 19:45 UTC
+**Files:** 2670 | **Est. tokens:** ~6,698,388
+**Generated:** 2026-06-01 03:33 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 17 | ~83,051 |
+| `std/` | 17 | ~83,127 |
 | `tests/` | 159 | ~275,960 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -3760,7 +3760,7 @@
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~935 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
-- `net.mind` (~2305 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
+- `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `regex.mind` (~9377 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `sha256.mind` (~3419 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
