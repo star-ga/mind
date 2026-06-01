@@ -47,6 +47,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.fs", include_str!("../../std/fs.mind")),
     ("std.io", include_str!("../../std/io.mind")),
     ("std.io_canon", include_str!("../../std/io_canon.mind")),
+    ("std.iouring", include_str!("../../std/iouring.mind")),
     ("std.json", include_str!("../../std/json.mind")),
     ("std.map", include_str!("../../std/map.mind")),
     ("std.net", include_str!("../../std/net.mind")),
