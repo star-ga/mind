@@ -302,6 +302,39 @@ fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, Buil
         obj_tmp.path().to_string_lossy().into_owned(),
     ];
 
+    // ---------------------------------------------------------------------
+    // Disk cache (perf only — output-neutral by construction).
+    //
+    // The emitted .o is a pure function of: (1) the embedded C source bytes,
+    // (2) the clang argument vector, (3) the clang binary itself, and
+    // (4) the subset of the environment clang honours. The cache key mixes
+    // ALL FOUR:
+    //   * the source bytes;
+    //   * every literal arg EXCEPT the two random per-build path args (the
+    //     source path input and the `-o` output path) — these vary per
+    //     invocation but never affect the object bytes thanks to the fixed
+    //     `mind_intrinsics.c` basename + `-ffile-prefix-map` determinism
+    //     contract above (and the C source carries no `__FILE__`/`__DATE__`
+    //     /`__TIME__`/`__COUNTER__`);
+    //   * the clang *binary identity* — resolved path + size + mtime + the
+    //     `--version` banner (NOT the banner alone: the cache dir is
+    //     machine-global, so a same-banner `CLANG=` swap or in-place rebuild
+    //     must still miss);
+    //   * the clang-honoured env vars that can change codegen
+    //     (`SOURCE_DATE_EPOCH`, `CPATH`, include-path vars, …).
+    // Any change to any of these yields a different key, so a stale/foreign
+    // .o is never reused. The cached bytes are byte-identical to what the
+    // non-cached clang invocation below produces.
+    // ---------------------------------------------------------------------
+    let cache_path = runtime_obj_cache_path(tools, &args);
+    if let Some(ref cached) = cache_path {
+        if let Ok(bytes) = std::fs::read(cached) {
+            std::fs::write(obj_tmp.path(), &bytes)?;
+            drop(src_dir);
+            return Ok(obj_tmp);
+        }
+    }
+
     let output = run_command(&tools.clang, &args, None, tools.timeout, "clang")?;
     if !output.status.success() {
         return Err(BuildError::Subprocess {
@@ -314,7 +347,170 @@ fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, Buil
     // drop it explicitly now that the object is written.
     drop(src_dir);
 
+    // Populate the cache (best-effort, atomic temp-then-rename). A cache
+    // write failure never fails the build — the freshly compiled obj_tmp is
+    // already valid.
+    if let Some(ref cached) = cache_path {
+        if let Ok(obj_bytes) = std::fs::read(obj_tmp.path()) {
+            let _ = write_runtime_obj_cache(cached, &obj_bytes);
+        }
+    }
+
     Ok(obj_tmp)
+}
+
+/// Environment variables clang reads that can alter emitted object bytes.
+/// Folded into the runtime-obj cache key so an env change never yields a
+/// false cache hit (the key is conservative: a different value — or set vs
+/// unset — produces a different key, never a wrong reuse).
+#[cfg(feature = "mlir-build")]
+const CLANG_CACHE_ENV_VARS: &[&str] = &[
+    "SOURCE_DATE_EPOCH",
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "OBJC_INCLUDE_PATH",
+    "CCC_OVERRIDE_OPTIONS",
+    "COMPILER_PATH",
+    "SDKROOT",
+    "MACOSX_DEPLOYMENT_TARGET",
+];
+
+/// Compute the on-disk cache path for the runtime-support `.o`, or `None`
+/// if no cache directory is available.
+///
+/// Key = sha256(version-prefix ++ clang binary identity ++ clang-honoured
+/// env ++ canonical arg vector ++ embedded C source bytes). The two random
+/// per-build path args (the source-file input and the `-o` output) are
+/// excluded — they vary per invocation but cannot change the emitted object
+/// bytes under the fixed-basename + `-ffile-prefix-map` determinism contract.
+/// The cache directory is machine-global, so the key pins the clang *binary*
+/// (path + size + mtime + version), not merely its `--version` banner.
+#[cfg(feature = "mlir-build")]
+fn runtime_obj_cache_path(tools: &BuildTools, args: &[String]) -> Option<std::path::PathBuf> {
+    let cache_dir = dirs::cache_dir()?.join("mind").join("runtime-obj");
+
+    let clang_identity = clang_identity_string(&tools.clang);
+
+    let mut data: Vec<u8> = Vec::with_capacity(512 + MIND_RUNTIME_SUPPORT_C.len());
+    data.extend_from_slice(b"mind-runtime-obj-v2\n");
+    data.extend_from_slice(b"clang-identity=\n");
+    data.extend_from_slice(clang_identity.as_bytes());
+    data.push(b'\n');
+    data.extend_from_slice(b"env=\n");
+    for var in CLANG_CACHE_ENV_VARS {
+        data.extend_from_slice(var.as_bytes());
+        data.push(b'=');
+        if let Ok(v) = std::env::var(var) {
+            data.extend_from_slice(v.as_bytes());
+        }
+        data.push(b'\n');
+    }
+    data.extend_from_slice(b"args=\n");
+    // Exclude the two random per-build path args (the source input that
+    // follows `-x c`, and the `-o` output path). They never affect the
+    // object bytes but would otherwise defeat the cache.
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "-o" {
+            // Skip "-o" and its operand.
+            i += 2;
+            continue;
+        }
+        if a == "-x" {
+            // Keep "-x c" (the mode), but the source path is the arg
+            // immediately after "c"; the prefix-map arg also embeds the
+            // random dir, so normalise it out below.
+            data.extend_from_slice(a.as_bytes());
+            data.push(b'\n');
+            if i + 1 < args.len() {
+                data.extend_from_slice(args[i + 1].as_bytes());
+                data.push(b'\n');
+            }
+            // Skip the source-path operand that follows "-x c".
+            i += 3;
+            continue;
+        }
+        if let Some(stripped) = a.strip_prefix("-ffile-prefix-map=") {
+            // The map RHS (`=.`) is what lands in the object; the LHS is the
+            // random tempdir. Record only the stable RHS so the key is
+            // path-independent yet flag-sensitive.
+            data.extend_from_slice(b"-ffile-prefix-map=");
+            if let Some(rhs) = stripped.split_once('=').map(|(_, r)| r) {
+                data.extend_from_slice(rhs.as_bytes());
+            }
+            data.push(b'\n');
+            i += 1;
+            continue;
+        }
+        data.extend_from_slice(a.as_bytes());
+        data.push(b'\n');
+        i += 1;
+    }
+    data.extend_from_slice(b"source=\n");
+    data.extend_from_slice(MIND_RUNTIME_SUPPORT_C.as_bytes());
+
+    let key = crate::build::cache::sha256_hex(&data);
+    Some(cache_dir.join(format!("{key}.o")))
+}
+
+/// Atomically write the cached runtime `.o` (temp file in the same dir +
+/// rename, so a concurrent reader never observes a partial write).
+#[cfg(feature = "mlir-build")]
+fn write_runtime_obj_cache(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut tmp = NamedTempFile::new_in(dest.parent().unwrap_or_else(|| Path::new(".")))?;
+    tmp.write_all(bytes)?;
+    tmp.flush()?;
+    // `persist` performs the rename atomically on POSIX.
+    tmp.persist(dest).map_err(|e| e.error)?;
+    Ok(())
+}
+
+/// Return clang's `--version` output as a single normalised string, or a
+/// stable sentinel if it cannot be queried. Used to invalidate the runtime
+/// `.o` cache (and the module cache) when the toolchain changes.
+#[cfg(feature = "mlir-build")]
+pub fn clang_version_string(clang: &str) -> String {
+    match Command::new(clang).arg("--version").output() {
+        Ok(out) if out.status.success() => decode_to_string(&out.stdout).trim().to_string(),
+        _ => "unknown".to_string(),
+    }
+}
+
+/// Return a stable *binary-identity* string for clang: resolved path, file
+/// size, mtime (nanos since epoch) and the `--version` banner, joined by
+/// `|`. Folded into the runtime-obj cache key so a different clang binary —
+/// even one reporting an identical `--version` (a vendor/distro rebuild, an
+/// in-place upgrade, or a `CLANG=` override to a same-banner binary) — yields
+/// a different key and is never reused from the machine-global cache. The
+/// `--version` banner alone is NOT a content hash of the compiler, so the
+/// path+size+mtime triple guards the realistic same-banner-swap cases; a
+/// binary deliberately forged to identical path+size+mtime yet different
+/// codegen is an out-of-scope attack, not a determinism failure mode.
+#[cfg(feature = "mlir-build")]
+pub fn clang_identity_string(clang: &str) -> String {
+    let version = clang_version_string(clang);
+    // clang may be a bare command name resolved via PATH; resolve to the
+    // real binary so the identity is path-stable.
+    let resolved = which::which(clang)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| clang.to_string());
+    let (size, mtime_ns) = std::fs::metadata(&resolved)
+        .map(|m| {
+            let mtime_ns = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            (m.len(), mtime_ns)
+        })
+        .unwrap_or((0, 0));
+    format!("{resolved}|{size}|{mtime_ns}|{version}")
 }
 
 #[cfg(feature = "mlir-build")]
@@ -460,7 +656,7 @@ fn run_command(
                     let _ = child.wait();
                     return Err(BuildError::Timeout(label));
                 }
-                std::thread::sleep(Duration::from_millis(25));
+                std::thread::sleep(Duration::from_millis(1));
             }
             Err(err) => return Err(BuildError::Io(err)),
         }
