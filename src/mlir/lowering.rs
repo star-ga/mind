@@ -740,7 +740,11 @@ impl LoweringContext {
                     // common path.
                     let mut arg_refs: Vec<String> = Vec::with_capacity(args.len());
                     for (i, a) in args.iter().enumerate() {
-                        if param_type_str.get(i).map(|t| t == "!llvm.ptr").unwrap_or(false) {
+                        if param_type_str
+                            .get(i)
+                            .map(|t| t == "!llvm.ptr")
+                            .unwrap_or(false)
+                        {
                             let pname = format!("%ptrarg_{}_{}", dst.0, i);
                             self.emit_line(&format!(
                                 "    {pname} = llvm.inttoptr %{} : i64 to !llvm.ptr",
