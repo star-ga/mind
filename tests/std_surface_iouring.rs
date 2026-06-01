@@ -70,6 +70,9 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_uring_pread",
         "io_uring_pwrite",
         "io_uring_storage_rw_demo",
+        "io_reactor_pin_cpu",
+        "io_reactor_affinity_mask",
+        "io_reactor_pin_demo",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -164,6 +167,12 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   import os\n\
          \x20   try: os.unlink('/tmp/mind_iouring_std_storage.tmp')\n\
          \x20   except OSError: pass\n\
+         \x20   before = os.sched_getaffinity(0)\n\
+         \x20   lib.io_reactor_pin_demo.restype = ctypes.c_int64\n\
+         \x20   lib.io_reactor_pin_demo.argtypes = [ctypes.c_int64]\n\
+         \x20   pin = lib.io_reactor_pin_demo(1)\n\
+         \x20   assert pin == 1 or pin < 0, f'core-pin returned unexpected {{pin}}'\n\
+         \x20   assert os.sched_getaffinity(0) == before, 'core-pin did not restore affinity'\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -177,7 +186,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'pin', pin, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
