@@ -1276,19 +1276,31 @@ fn lower_expr(
                         // to the loop and it never makes progress.
                         {
                             for (nm, eid) in last_region_exit_rebindings(&body_ir.instrs) {
-                                // Only loop-carry variables that exist in the
-                                // pre-loop scope (genuine outer vars); a binding
-                                // local to the nested region is not loop state.
-                                if env.contains_key(&nm) {
+                                // Update body_env for any variable the nested
+                                // region modified that is visible in the current
+                                // outer loop body scope (including `let mut`
+                                // bindings declared earlier in this body that are
+                                // NOT pre-loop vars, e.g. `let mut min = i`).
+                                // This ensures reads AFTER the inner loop within
+                                // the same outer-loop iteration see the updated id.
+                                //
+                                // Only call record_loop_mut (make it loop-carried
+                                // across the back-edge) for variables that exist in
+                                // the pre-loop env (`env`) — genuine outer vars.
+                                // Body-local `let` bindings are re-initialised each
+                                // iteration and must not cross the back-edge.
+                                if body_env.contains_key(&nm) {
                                     let pre_init = body_env.get(nm.as_str()).copied();
                                     body_env.insert(nm.clone(), eid);
-                                    record_loop_mut(
-                                        &nm,
-                                        eid,
-                                        &mut mutated,
-                                        &mut init_ids,
-                                        pre_init,
-                                    );
+                                    if env.contains_key(&nm) {
+                                        record_loop_mut(
+                                            &nm,
+                                            eid,
+                                            &mut mutated,
+                                            &mut init_ids,
+                                            pre_init,
+                                        );
+                                    }
                                 }
                             }
                         }
