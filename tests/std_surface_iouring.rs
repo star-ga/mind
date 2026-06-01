@@ -56,6 +56,7 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_uring_loopback_echo_n",
         "io_ring_submit_accept_multishot",
         "io_uring_multishot_accept_demo",
+        "io_uring_echo_bench",
     ] {
         assert!(
             names.contains(&required),
@@ -121,7 +122,11 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_multishot_accept_demo.restype = ctypes.c_int64\n\
          \x20   ms = lib.io_uring_multishot_accept_demo()\n\
          \x20   assert ms == 2 or ms < 0, f'multishot accept returned unexpected {{ms}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'tcp', le, 'loop', ln, 'multishot', ms)\n",
+         \x20   lib.io_uring_echo_bench.restype = ctypes.c_int64\n\
+         \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
+         \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
+         \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
+         \x20   print('OK', hex(r), 'sp', e, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
