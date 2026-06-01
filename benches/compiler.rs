@@ -44,20 +44,6 @@ const LARGE_NETWORK: &str = r#"
     matmul3 + b3
 "#;
 
-/// Complex autodiff target: Nested operations
-#[cfg(feature = "autodiff")]
-const AUTODIFF_TARGET: &str = r#"
-    let pred: Tensor[f32,(128,10)] = 0;
-    let target: Tensor[f32,(128,10)] = 1;
-    let weights: Tensor[f32,(784,512)] = 0;
-
-    let diff = pred - target;
-    let squared = diff * diff;
-    let loss = tensor.mean(squared);
-    let reg = tensor.mean(weights * weights);
-    loss + reg
-"#;
-
 fn bench_compilation_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("compiler_pipeline");
 
@@ -148,7 +134,6 @@ fn bench_autodiff_generation(c: &mut Criterion) {
     for (name, source) in [
         ("simple_matmul", SMALL_MATMUL),
         ("mlp_with_relu", MEDIUM_MLP),
-        ("loss_function", AUTODIFF_TARGET),
     ] {
         // Pre-compile to IR
         let products =

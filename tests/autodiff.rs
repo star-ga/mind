@@ -313,14 +313,30 @@ fn matmul_rule_applied() {
 }
 
 #[test]
-fn multiple_outputs_rejected() {
+fn multiple_outputs_differentiate_final() {
+    // Script-mode programs export every top-level binding as an Output, so a
+    // single-result program compiles to multiple Output instructions. The
+    // engine differentiates w.r.t. the function's RESULT — the final Output —
+    // and treats earlier outputs as auxiliary exports. Here `a` is an exported
+    // intermediate and `sum = a + b` is the result, so the backward pass still
+    // reaches both leaves (d(sum)/da == d(sum)/db == 1).
     let mut ir = IRModule::new();
-    let x = scalar_const(&mut ir, 1);
-    ir.instrs.push(Instr::Output(x));
-    ir.instrs.push(Instr::Output(x));
+    let a = scalar_const(&mut ir, 2);
+    let b = scalar_const(&mut ir, 3);
+    let sum = ir.fresh();
+    ir.instrs.push(Instr::BinOp {
+        dst: sum,
+        op: BinOp::Add,
+        lhs: a,
+        rhs: b,
+    });
+    ir.instrs.push(Instr::Output(a)); // auxiliary exported binding
+    ir.instrs.push(Instr::Output(sum)); // the function result
 
-    let err = differentiate_function(&ir, "main").unwrap_err();
-    assert!(format!("{}", err).contains("multiple outputs"));
+    let result =
+        differentiate_function(&ir, "main").expect("multiple outputs differentiate the final");
+    assert!(result.gradients.contains_key(&a));
+    assert!(result.gradients.contains_key(&b));
 }
 
 #[test]

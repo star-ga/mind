@@ -40,9 +40,6 @@ pub enum AutodiffError {
     /// The IR module did not provide an output instruction.
     #[error("IR module does not contain any Output instruction")]
     MissingOutput,
-    /// Multiple outputs are not yet supported by the static autodiff pipeline.
-    #[error("IR module contains multiple outputs; expected a single scalar output")]
-    MultipleOutputs,
     /// The autodiff engine does not have a rule for the encountered operation.
     #[error("unsupported operation for autodiff: {op}")]
     UnsupportedOp { op: &'static str },
@@ -103,10 +100,15 @@ pub fn differentiate_with_options(
         })
         .collect();
 
+    // Gradients are taken w.r.t. the function's RESULT — its final Output. A
+    // proper `fn main() -> T { ...; result }` emits exactly one Output (`result`).
+    // Script-mode programs additionally export every top-level `let` binding as an
+    // Output; those are auxiliary, so the trailing expression (the last Output in
+    // program order) is the differentiation target.
     let output = match outputs.as_slice() {
         [] => return Err(AutodiffError::MissingOutput),
         [single] => *single,
-        _ => return Err(AutodiffError::MultipleOutputs),
+        multiple => *multiple.last().expect("non-empty slice has a last element"),
     };
 
     if opts.verify_gradients {
