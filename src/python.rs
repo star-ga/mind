@@ -45,6 +45,8 @@ fn compile(source: &str) -> PyResult<String> {
         func: None,
         enable_autodiff: false,
         target: crate::runtime::types::BackendTarget::Cpu,
+        manifest_exports: Vec::new(),
+        profile: crate::cache::ProfileTag::Default,
     };
 
     match compile_source(source, &options) {
@@ -97,6 +99,8 @@ fn compile_with_autodiff(source: &str, func: Option<String>) -> PyResult<String>
         func: Some(func_name),
         enable_autodiff: true,
         target: crate::runtime::types::BackendTarget::Cpu,
+        manifest_exports: Vec::new(),
+        profile: crate::cache::ProfileTag::Default,
     };
 
     let products = compile_source(source, &options)
