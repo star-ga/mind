@@ -87,7 +87,7 @@ pub mod capi {
     /// # Safety
     ///
     /// `meta_out` must point to a valid, properly aligned `MindModelMeta`.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn mind_model_meta(meta_out: *mut MindModelMeta) -> c_int {
         clear_error();
         if meta_out.is_null() {
@@ -103,7 +103,7 @@ pub mod capi {
         0
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn mind_model_io(
         inputs_out: *mut MindIO,
         cap_inputs: u32,
@@ -122,7 +122,7 @@ pub mod capi {
         0
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn mind_infer(
         inputs: *const MindIO,
         _inputs_len: u32,
@@ -141,7 +141,7 @@ pub mod capi {
     /// Returns null if `size` is zero or cannot fit in `usize`. Zero-sized
     /// requests return null without setting `LAST_ERROR`; overflow cases record
     /// an error so callers can retrieve the cause via `mind_last_error()`.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn mind_alloc(size: u64) -> *mut c_void {
         if size == 0 {
             return ptr::null_mut();
@@ -159,7 +159,7 @@ pub mod capi {
     /// # Safety
     ///
     /// `ptr` must be null or a pointer previously returned by `mind_alloc`.
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub unsafe extern "C" fn mind_free(ptr: *mut c_void) {
         if ptr.is_null() {
             return;
@@ -169,7 +169,7 @@ pub mod capi {
         }
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     pub extern "C" fn mind_last_error() -> *const c_char {
         LAST_ERROR.with(|slot| {
             if let Some(s) = slot.borrow().as_ref() {

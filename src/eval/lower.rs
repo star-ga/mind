@@ -2139,7 +2139,7 @@ pub enum Win64Class {
 ///   (the caller passes a pointer to the aligned copy, which is the safe and
 ///   correct ABI implementation).
 ///
-/// This function returns the Vec<String> of MLIR type tokens, matching the
+/// This function returns the `Vec<String>` of MLIR type tokens, matching the
 /// calling convention of `sysv_classify_struct`.
 #[cfg(feature = "std-surface")]
 pub fn win64_classify_struct(
