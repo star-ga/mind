@@ -173,6 +173,42 @@ pub fn canon_sort(h: i64) -> i64 {
     0
 }
 
+// Serialize the canonical-ordered completion sequence into `out_addr` as
+// contiguous 32-byte records `[ conn_id | req_id | op | result ]` (i64 each),
+// in canonical (conn_id, req_id) order. Sorts first (idempotent — selection
+// sort is deterministic and the key is total, so re-draining is stable).
+// Writes ONLY events in `[0, canon_len)`, never the backing buffer, so stale
+// prior-tick bytes can never taint the output. Returns the number of BYTES
+// written, or -1 if `cap_bytes` cannot hold the drained sequence.
+//
+// This drained byte sequence is the deterministic I/O input the evidence chain
+// anchors: a pure function of the completion multiset, byte-identical
+// regardless of the physical (interrupt/queue-arrival) order the completions
+// were reaped in. Feed it to `std.sha256` at the reactor boundary — BEFORE any
+// application logic runs — to produce the signed evidence anchor over the
+// ordered completion sequence read out of the ring.
+pub fn canon_drain(h: i64, out_addr: i64, cap_bytes: i64) -> i64 {
+    if h == 0 {
+        return 0 - 1;
+    }
+    let _ = canon_sort(h);
+    let n: i64 = canon_len(h);
+    let need: i64 = n * canon_evt_size();
+    if cap_bytes < need {
+        return 0 - 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        let base: i64 = out_addr + i * canon_evt_size();
+        __mind_store_i64(base + 0, canon_conn(h, i));
+        __mind_store_i64(base + 8, canon_req(h, i));
+        __mind_store_i64(base + 16, canon_op(h, i));
+        __mind_store_i64(base + 24, canon_result(h, i));
+        i = i + 1;
+    }
+    need
+}
+
 // Reset the batch for the next reactor tick without freeing the buffer.
 // Bytes beyond the new `len` (0) are left stale and undefined: an evidence
 // anchor MUST serialize only events in `[0, canon_len)`, never the backing
