@@ -74,6 +74,7 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_reactor_affinity_mask",
         "io_reactor_pin_demo",
         "io_uring_ktls_echo",
+        "io_uring_dmabuf_io_demo",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -179,6 +180,14 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_ktls_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          \x20   kt = lib.io_uring_ktls_echo(ctypes.cast(ktbuf, ctypes.c_void_p).value, 18)\n\
          \x20   assert kt == 1 or kt < 0, f'kTLS echo returned unexpected {{kt}}'\n\
+         \x20   dbpath = ctypes.create_string_buffer(b'/tmp/mind_iouring_std_dmabuf.tmp\\x00')\n\
+         \x20   dbdata = ctypes.create_string_buffer(b'MIND-io_uring-dmabuf')\n\
+         \x20   lib.io_uring_dmabuf_io_demo.restype = ctypes.c_int64\n\
+         \x20   lib.io_uring_dmabuf_io_demo.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
+         \x20   db = lib.io_uring_dmabuf_io_demo(ctypes.cast(dbpath, ctypes.c_void_p).value, ctypes.cast(dbdata, ctypes.c_void_p).value, 20)\n\
+         \x20   assert db == 1 or db < 0, f'dmabuf io returned unexpected {{db}}'\n\
+         \x20   try: os.unlink('/tmp/mind_iouring_std_dmabuf.tmp')\n\
+         \x20   except OSError: pass\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -192,7 +201,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'pin', pin, 'ktls', kt, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'pin', pin, 'ktls', kt, 'dmabuf', db, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
