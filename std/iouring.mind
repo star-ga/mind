@@ -10,8 +10,11 @@
 //
 // Phase 2: registered (fixed) buffers — io_ring_register_buffers pins a set of
 // buffers once; READ_FIXED/WRITE_FIXED then reference one by index, skipping
-// per-op page-pinning. The data path is byte-identical to plain READ/WRITE, so
-// the deterministic anchor is unaffected — this is a pure setup-cost win.
+// per-op page-pinning. Provided-buffer rings add the recv side: the app
+// publishes a ring of free buffers once and a BUFFER_SELECT recv lets the
+// KERNEL pick one (its id in cqe.flags>>16). Both data paths are byte-identical
+// to plain READ/WRITE, so the deterministic anchor is unaffected — pure setup
+// wins, not new bytes in the chain.
 //
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
@@ -421,6 +424,153 @@ pub fn io_uring_fixed_buffer_echo(msg: i64, len: i64) -> i64 {
     }
     let _ = munmap(rgn, 8192);
     let _ = __mind_free(iovecs);
+    let _ = io_ring_free(h);
+    let _ = close(fd0 as i32);
+    let _ = close(fd1 as i32);
+    let _ = __mind_free(sv);
+    result
+}
+
+// ── Phase 2: provided-buffer rings (kernel-selected zero-copy recv) ──────────
+// The recv-side companion to registered buffers: instead of pinning a fixed
+// buffer per op, the app publishes a ring of available buffers once, and on a
+// BUFFER_SELECT recv the KERNEL picks one and reports its id in cqe.flags>>16.
+// This is what feeds zero-copy multishot recv without pre-posting a buffer per
+// connection. io_uring_buf is 16B {addr@0; len@8; bid u16@12}; the ring's tail
+// (u16 @14) overlaps bufs[0].resv — writing addr/len/bid never touches it.
+//
+// Register a provided-buffer ring: io_uring_register(IORING_REGISTER_PBUF_RING=
+// 22) with an io_uring_buf_reg (40B) {ring_addr@0; ring_entries u32@8; bgid
+// u16@12; flags u16@14; resv@16}. `ring_addr` must be page-aligned. Returns 0 or
+// a negative errno (kernel without provided-buffer rings).
+pub fn io_ring_register_pbuf_ring(h: i64, ring_addr: i64, entries: i64, bgid: i64) -> i64 {
+    let reg: i64 = __mind_alloc(40);
+    let mut z: i64 = 0;
+    while z < 40 {
+        __mind_store_i8(reg + z, 0);
+        z = z + 1;
+    }
+    __mind_store_i64(reg + 0, ring_addr);
+    __mind_store_i32(reg + 8, entries);
+    __mind_store_i8(reg + 12, bgid);
+    __mind_store_i8(reg + 13, bgid / 256);
+    let fd: i64 = __mind_load_i64(h + 0);
+    let r: i64 = syscall(427, fd, 22, reg, 1, 0, 0);
+    let _ = __mind_free(reg);
+    r
+}
+
+// Submit a buffer-select RECV at `slot`: the kernel will pick a buffer from the
+// provided-buffer ring with group `bgid`. Sets IOSQE_BUFFER_SELECT (32) in the
+// SQE flags (u8 @1) and buf_group (u16 @40); addr is left 0 (kernel fills it).
+pub fn io_ring_submit_recv_provided(h: i64, slot: i64, fd: i64, len: i64, bgid: i64, user_data: i64) -> i64 {
+    let _ = io_ring_submit_op(h, slot, iouring_op_recv(), fd, 0, len, user_data);
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
+    let sqe: i64 = __mind_load_i64(h + 16) + pos * 64;
+    __mind_store_i8(sqe + 1, 32);
+    __mind_store_i8(sqe + 40, bgid);
+    __mind_store_i8(sqe + 41, bgid / 256);
+    0
+}
+
+// Phase-2 proof: receive into a KERNEL-SELECTED provided buffer. Publish a
+// 4-entry buffer ring with one 4 KiB buffer (bid 0); SEND `len` bytes on fd0 and
+// BUFFER_SELECT-RECV on fd1; the kernel lands the bytes in our provided buffer.
+// Verify they match. Returns 1 on a byte-identical recv, or a negative code
+// (and SKIPS — negative — where the kernel lacks provided-buffer rings). Proves
+// the kernel-selected zero-copy recv path preserves the exact anchored bytes.
+pub fn io_uring_provided_buffer_recv(msg: i64, len: i64) -> i64 {
+    let sv: i64 = __mind_alloc(8);
+    if socketpair(1, 1, 0, sv) < 0 {
+        let _ = __mind_free(sv);
+        return 0 - 10;
+    }
+    let fd0: i64 = __mind_load_i32(sv + 0);
+    let fd1: i64 = __mind_load_i32(sv + 4);
+    let h: i64 = io_ring_new(8);
+    if h == 0 {
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return 0 - 11;
+    }
+    // Page-aligned region: buf_ring @ rgn+0, the single data buffer @ rgn+4096.
+    let neg1: i64 = 0 - 1;
+    let rgn: i64 = mmap(0, 8192, 3, 34, neg1 as i32, 0);
+    if rgn < 0 {
+        let _ = io_ring_free(h);
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return 0 - 12;
+    }
+    let data: i64 = rgn + 4096;
+    // Zero the ring header/first entries, then publish bufs[0] = {data,4096,bid 0}
+    // and set the ring tail (u16 @14) to 1 — one buffer available at index 0.
+    let mut z: i64 = 0;
+    while z < 64 {
+        __mind_store_i8(rgn + z, 0);
+        z = z + 1;
+    }
+    __mind_store_i64(rgn + 0, data);
+    __mind_store_i32(rgn + 8, 4096);
+    __mind_store_i8(rgn + 12, 0);
+    __mind_store_i8(rgn + 13, 0);
+    __mind_store_i8(rgn + 14, 1);
+    __mind_store_i8(rgn + 15, 0);
+    let reg: i64 = io_ring_register_pbuf_ring(h, rgn, 4, 0);
+    if reg < 0 {
+        let _ = munmap(rgn, 8192);
+        let _ = io_ring_free(h);
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return reg;
+    }
+    let _ = io_ring_submit_op(h, 0, iouring_op_send(), fd0, msg, len, 1);
+    let _ = io_ring_submit_recv_provided(h, 1, fd1, 4096, 0, 2);
+    let _ = io_ring_publish(h, 2);
+    let er: i64 = io_ring_enter(h, 2, 2);
+    let mut result: i64 = 0 - 14;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(64);
+        let res: i64 = __mind_alloc(64);
+        let count: i64 = io_ring_reap(h, ud, res, 8);
+        // Find the RECV completion (user_data 2); its res is the byte count, and
+        // the kernel placed the data in our provided buffer (bid 0 -> `data`).
+        let mut got: i64 = 0 - 1;
+        let mut i: i64 = 0;
+        while i < count {
+            if __mind_load_i64(ud + i * 8) == 2 {
+                got = __mind_load_i64(res + i * 8);
+            }
+            i = i + 1;
+        }
+        if got == len {
+            let mut ok: i64 = 1;
+            let mut j: i64 = 0;
+            while j < len {
+                if __mind_load_i8(data + j) != __mind_load_i8(msg + j) {
+                    ok = 0;
+                }
+                j = j + 1;
+            }
+            if ok == 1 {
+                result = 1;
+            } else {
+                result = 0 - 15;
+            }
+        } else {
+            result = 0 - 16;
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = munmap(rgn, 8192);
     let _ = io_ring_free(h);
     let _ = close(fd0 as i32);
     let _ = close(fd1 as i32);
