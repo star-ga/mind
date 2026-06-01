@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2685 | **Est. tokens:** ~6,742,157
-**Generated:** 2026-06-01 23:01 UTC
+**Files:** 2685 | **Est. tokens:** ~6,742,297
+**Generated:** 2026-06-01 23:39 UTC
 
 ## Token Budget Guide
 
@@ -27,7 +27,7 @@
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 9 | ~9,757 |
+| `benches/` | 9 | ~9,645 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -363,7 +363,7 @@
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,834 |
 | `src/ast/` | 1 | ~6,285 |
-| `src/autodiff/` | 3 | ~6,568 |
+| `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~19,524 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~106,274 |
-| `tests/` | 166 | ~289,402 |
+| `tests/` | 166 | ~289,598 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -486,7 +486,7 @@
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `compiler.rs` (~1754 tok, huge) — Small program: Simple matrix multiplication
+- `compiler.rs` (~1642 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
@@ -3563,7 +3563,7 @@
 - `mod.rs` (~6285 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
-- `engine.rs` (~3834 tok, huge) — Copyright 2025 STARGA Inc.
+- `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~342 tok, medium) — Copyright 2025 STARGA Inc.
 - `rules.rs` (~2392 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
@@ -3782,7 +3782,7 @@
 ### `tests/`
 
 - `autodiff_preview.rs` (~398 tok, medium) — Copyright 2025 STARGA Inc.
-- `autodiff.rs` (~2476 tok, huge) — Gradient for x*x accumulates two paths: d/dx (x*x) = x + x.
+- `autodiff.rs` (~2672 tok, huge) — Gradient for x*x accumulates two paths: d/dx (x*x) = x + x.
 ### `tests/autodiff/`
 
 - `simple_gradient.mind` (~80 tok, small) — Autodiff test: Simple scalar gradient
