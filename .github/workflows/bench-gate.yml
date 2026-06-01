@@ -105,6 +105,6 @@ jobs:
         # tolerating the slower / noisier hosted runners.
         run: |
           python3 tools/bench_gate.py \
-            --baseline .bench-baseline-2026-05-18-rfc0005.txt \
+            --baseline .bench-baseline-2026-06-01-correctness.txt \
             --current bench.out \
             --threshold 0.07
