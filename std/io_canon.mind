@@ -1,0 +1,183 @@
+// std.io_canon — canonical completion ordering for deterministic I/O.
+//
+// The defining property of MIND's I/O path: physical completion order off the
+// hardware (interrupt/queue-arrival order) is NON-deterministic and varies run
+// to run and across substrates, but the LOGICAL order in which the reactor
+// reacts to those completions must be bit-identical so the evidence chain and
+// any replay reproduce exactly. This module is that re-ordering stage.
+//
+// Each completion event is a 4-field record:
+//   [ conn_id (i64) | req_id (i64) | op (i64) | result (i64) ]   = 32 bytes
+//
+// A batch is reaped in arbitrary physical order, then sorted into the canonical
+// total order (conn_id ascending, then req_id ascending). Because the sort key
+// is assigned from request CONTENT at accept/submit time — never from arrival
+// timing — the drained sequence is a pure function of the event multiset and is
+// therefore identical regardless of the order completions physically arrived.
+//
+// Pure compute: no syscalls, no shared state, no allocation beyond the batch
+// buffer. Deterministic by construction; safe to anchor the evidence chain on
+// the drained sequence.
+//
+// Handle layout (24 bytes): [ data_ptr (i64) | len (i64) | cap (i64) ].
+// Data layout: cap * 32 contiguous bytes.
+
+// Caller contract for determinism: `(conn_id, req_id)` MUST be unique per
+// in-flight operation within a batch. The key is a total order only under that
+// contract; two events sharing a key would tie under `canon_less` and the sort
+// would leave them in physical-arrival order — reintroducing the very
+// nondeterminism this module removes. The reactor assigns req_id monotonically
+// per connection at submit time, which guarantees it.
+
+// Bytes per event record. MUST stay a multiple of 8 (i64 stride): `canon_swap`
+// and the field stores assume i64-aligned fields.
+fn canon_evt_size() -> i64 {
+    32
+}
+
+// Largest batch a single reactor tick may hold. Bounds client-controlled work
+// and guards the `cap * canon_evt_size()` allocation against i64 overflow.
+fn canon_max_batch() -> i64 {
+    1048576
+}
+
+// Create a batch able to hold `cap` completion events. Returns a handle, or 0
+// if `cap` is not positive or exceeds the per-tick bound.
+pub fn canon_new(cap: i64) -> i64 {
+    if cap <= 0 {
+        return 0;
+    }
+    if cap > canon_max_batch() {
+        return 0;
+    }
+    let h: i64 = __mind_alloc(24);
+    let data: i64 = __mind_alloc(cap * canon_evt_size());
+    __mind_store_i64(h + 0, data);
+    __mind_store_i64(h + 8, 0);
+    __mind_store_i64(h + 16, cap);
+    h
+}
+
+// Number of events currently in the batch.
+pub fn canon_len(h: i64) -> i64 {
+    __mind_load_i64(h + 8)
+}
+
+fn canon_data(h: i64) -> i64 {
+    __mind_load_i64(h + 0)
+}
+
+fn canon_cap(h: i64) -> i64 {
+    __mind_load_i64(h + 16)
+}
+
+// Address of event `i`'s first field.
+fn canon_evt_addr(h: i64, i: i64) -> i64 {
+    canon_data(h) + i * canon_evt_size()
+}
+
+// Append a completion event reaped from the ring. Returns 1 on success, 0 if
+// the batch is full. The physical order of `canon_push` calls does NOT affect
+// the drained order after `canon_sort`.
+pub fn canon_push(h: i64, conn_id: i64, req_id: i64, op: i64, result: i64) -> i64 {
+    let len: i64 = canon_len(h);
+    if len >= canon_cap(h) {
+        return 0;
+    }
+    let base: i64 = canon_evt_addr(h, len);
+    __mind_store_i64(base + 0, conn_id);
+    __mind_store_i64(base + 8, req_id);
+    __mind_store_i64(base + 16, op);
+    __mind_store_i64(base + 24, result);
+    __mind_store_i64(h + 8, len + 1);
+    1
+}
+
+// Field getters for a sorted/unsorted event by index.
+pub fn canon_conn(h: i64, i: i64) -> i64 {
+    __mind_load_i64(canon_evt_addr(h, i) + 0)
+}
+
+pub fn canon_req(h: i64, i: i64) -> i64 {
+    __mind_load_i64(canon_evt_addr(h, i) + 8)
+}
+
+pub fn canon_op(h: i64, i: i64) -> i64 {
+    __mind_load_i64(canon_evt_addr(h, i) + 16)
+}
+
+pub fn canon_result(h: i64, i: i64) -> i64 {
+    __mind_load_i64(canon_evt_addr(h, i) + 24)
+}
+
+// Total order on events: conn_id ascending, then req_id ascending. (conn_id,
+// req_id) is unique per in-flight operation, so the order is total — no ties,
+// hence no tie-break ambiguity that could differ across runs. Returns 1 if
+// event at `a` must sort before event at `b`, else 0.
+fn canon_less(h: i64, a: i64, b: i64) -> i64 {
+    let ca: i64 = canon_conn(h, a);
+    let cb: i64 = canon_conn(h, b);
+    if ca < cb {
+        return 1;
+    }
+    if ca > cb {
+        return 0;
+    }
+    let ra: i64 = canon_req(h, a);
+    let rb: i64 = canon_req(h, b);
+    if ra < rb {
+        return 1;
+    }
+    0
+}
+
+// Swap events at indices `a` and `b` (all four fields). Returns 0 (std
+// side-effecting-helper idiom: callers discard with `let _ = ...`).
+fn canon_swap(h: i64, a: i64, b: i64) -> i64 {
+    let pa: i64 = canon_evt_addr(h, a);
+    let pb: i64 = canon_evt_addr(h, b);
+    let mut k: i64 = 0;
+    while k < canon_evt_size() {
+        let ta: i64 = __mind_load_i64(pa + k);
+        let tb: i64 = __mind_load_i64(pb + k);
+        __mind_store_i64(pa + k, tb);
+        __mind_store_i64(pb + k, ta);
+        k = k + 8;
+    }
+    0
+}
+
+// Sort the batch into canonical order in place. Selection sort: O(n^2) but
+// branch-deterministic and allocation-free — batches are one reactor tick's
+// worth of completions (bounded small), and a fixed comparison/swap schedule
+// keeps the result bit-identical across substrates. Stability is irrelevant
+// because the key is total (unique per op, per the caller contract above).
+// Returns 0 (side-effecting-helper idiom).
+pub fn canon_sort(h: i64) -> i64 {
+    let n: i64 = canon_len(h);
+    let mut i: i64 = 0;
+    while i < n {
+        let mut min: i64 = i;
+        let mut j: i64 = i + 1;
+        while j < n {
+            if canon_less(h, j, min) == 1 {
+                min = j;
+            }
+            j = j + 1;
+        }
+        if min != i {
+            let _ = canon_swap(h, i, min);
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// Reset the batch for the next reactor tick without freeing the buffer.
+// Bytes beyond the new `len` (0) are left stale and undefined: an evidence
+// anchor MUST serialize only events in `[0, canon_len)`, never the backing
+// buffer, or residual prior-tick content would taint the hash. Returns 0.
+pub fn canon_clear(h: i64) -> i64 {
+    __mind_store_i64(h + 8, 0);
+    0
+}
