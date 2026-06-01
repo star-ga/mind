@@ -52,6 +52,9 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_ring_register_buffers",
         "io_ring_submit_fixed",
         "io_uring_fixed_buffer_echo",
+        "io_ring_register_pbuf_ring",
+        "io_ring_submit_recv_provided",
+        "io_uring_provided_buffer_recv",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -121,6 +124,11 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_fixed_buffer_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          \x20   fx = lib.io_uring_fixed_buffer_echo(ctypes.cast(fbuf, ctypes.c_void_p).value, 26)\n\
          \x20   assert fx == 1 or fx < 0, f'fixed-buffer echo returned unexpected {{fx}}'\n\
+         \x20   pbuf = ctypes.create_string_buffer(b'MIND-io_uring-PROVIDED-buffer')\n\
+         \x20   lib.io_uring_provided_buffer_recv.restype = ctypes.c_int64\n\
+         \x20   lib.io_uring_provided_buffer_recv.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
+         \x20   pv = lib.io_uring_provided_buffer_recv(ctypes.cast(pbuf, ctypes.c_void_p).value, 29)\n\
+         \x20   assert pv == 1 or pv < 0, f'provided-buffer recv returned unexpected {{pv}}'\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -134,7 +142,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
