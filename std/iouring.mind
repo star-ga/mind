@@ -20,6 +20,8 @@
 // connection setup and teardown inside the submission ring, off the syscall
 // path. Pure control-plane ops (no payload bytes), so they never touch the
 // evidence chain; they are the basis for direct (registered) descriptors next.
+// Direct (registered) descriptors: sockets installed into the ring's fixed-file
+// table by index, never a process fd number (OP_SOCKET file_index + close-direct).
 // Capstone: RECV_MULTISHOT over a provided-buffer ring — ONE submission, a
 // completion per arriving message into a kernel-selected buffer = the zero-copy
 // async server recv (Phase 2 provided buffers × the Phase 3 multishot pattern).
@@ -753,6 +755,113 @@ pub fn io_uring_socket_lifecycle_demo() -> i64 {
     }
     let _ = __mind_free(ud);
     let _ = __mind_free(res);
+    let _ = io_ring_free(h);
+    if cres == 0 {
+        return 1;
+    }
+    0 - 4
+}
+
+// ── Phase 3: direct (registered) descriptors ────────────────────────────────
+// A ring can own a fixed-file table; sockets/files installed into it are "direct
+// descriptors" addressed by table index, never materializing a process fd
+// number (cheaper, and immune to fd-table contention). OP_SOCKET installs the
+// new socket at sqe.file_index (u32 @44, stored as index+1 — 0 means "normal
+// fd", 0xffffffff = IORING_FILE_INDEX_ALLOC auto-allocates); OP_CLOSE with
+// file_index set closes a direct descriptor. IOSQE_FIXED_FILE (=1) on a later op
+// addresses the table slot as its fd.
+
+// Set sqe.file_index (u32 @44) on the SQE at `slot` (recomputing its ring
+// position the same way the submit helpers do). `fidx` is the +1-encoded index.
+fn io_ring_set_file_index(h: i64, slot: i64, fidx: i64) -> i64 {
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
+    let sqe: i64 = __mind_load_i64(h + 16) + pos * 64;
+    __mind_store_i32(sqe + 44, fidx);
+    0
+}
+
+// Register a sparse fixed-file table of `n` empty slots (io_uring_register
+// IORING_REGISTER_FILES=2 with an int array of -1 sentinels). Direct descriptors
+// then fill the slots. Returns 0 or a negative errno.
+pub fn io_ring_register_files_sparse(h: i64, n: i64) -> i64 {
+    let arr: i64 = __mind_alloc(n * 4);
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i32(arr + i * 4, 0 - 1);
+        i = i + 1;
+    }
+    let fd: i64 = __mind_load_i64(h + 0);
+    let r: i64 = syscall(427, fd, 2, arr, n, 0, 0);
+    let _ = __mind_free(arr);
+    r
+}
+
+// Create a socket as a DIRECT descriptor at table `index` on ring `h` (which
+// must already own a fixed-file table). Returns the CQE res (0 on success).
+pub fn io_uring_socket_direct(h: i64, domain: i64, type_: i64, protocol: i64, index: i64) -> i64 {
+    let _ = io_ring_submit_raw(h, 0, iouring_op_socket(), domain, type_, 0, protocol, 1);
+    let _ = io_ring_set_file_index(h, 0, index + 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    r
+}
+
+// Close the direct descriptor at table `index` on ring `h` (OP_CLOSE with
+// file_index set, fd 0). Returns the CQE res (0 on success).
+pub fn io_uring_close_direct(h: i64, index: i64) -> i64 {
+    let _ = io_ring_submit_op(h, 0, iouring_op_close(), 0, 0, 0, 1);
+    let _ = io_ring_set_file_index(h, 0, index + 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    r
+}
+
+// Phase-3 proof: a full DIRECT-descriptor lifecycle. Register a sparse 4-slot
+// fixed-file table, create a TCP socket straight into slot 0 as a direct
+// descriptor (never a process fd number), then close that direct descriptor —
+// all over one ring. Returns 1 on success, or a negative code (and SKIPS —
+// negative — where the kernel lacks direct descriptors). Proves the registered
+// descriptor table the high-throughput reactor uses to dodge fd-table cost.
+pub fn io_uring_direct_descriptor_demo() -> i64 {
+    let h: i64 = io_ring_new(4);
+    if h == 0 {
+        return 0 - 1;
+    }
+    let reg: i64 = io_ring_register_files_sparse(h, 4);
+    if reg < 0 {
+        let _ = io_ring_free(h);
+        return reg;
+    }
+    let sres: i64 = io_uring_socket_direct(h, 2, 1, 0, 0);
+    if sres < 0 {
+        let _ = io_ring_free(h);
+        return sres;
+    }
+    let cres: i64 = io_uring_close_direct(h, 0);
     let _ = io_ring_free(h);
     if cres == 0 {
         return 1;
