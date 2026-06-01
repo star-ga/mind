@@ -26,6 +26,10 @@
 // completion per arriving message into a kernel-selected buffer = the zero-copy
 // async server recv (Phase 2 provided buffers × the Phase 3 multishot pattern).
 //
+// Phase 4: deterministic scheduling — pin the reactor thread to one core
+// (sched_setaffinity) so completion timing is jitter-free and the canonicaliser
+// reorders a smaller window. Scheduling only; never enters the evidence chain.
+//
 // Phase 5: storage I/O — OP_OPENAT / OP_READ / OP_WRITE drive files through the
 // same submit/reap engine (the deterministic storage path the NVMe/SPDK fast
 // path later optimizes; bytes are byte-identical, so the anchor is unchanged).
@@ -1024,6 +1028,79 @@ pub fn io_uring_multishot_recv_demo(msg: i64, len: i64, n: i64) -> i64 {
     let _ = close(fd1 as i32);
     let _ = __mind_free(sv);
     matched
+}
+
+// ── Phase 4: deterministic scheduling (reactor core-pinning) ────────────────
+// Completion ORDER is canonicalised by std.io_canon, but completion TIMING —
+// and thus the physical interleave the reactor must re-sort — is only stable if
+// the reactor thread is not migrated across cores by the scheduler. Pinning the
+// reactor to one (ideally isolated, `isolcpus=`) core removes that jitter, the
+// lightweight half of "sched_ext core-pinning hardening": fewer cross-core
+// wakeups, a steadier reap cadence, and a smaller window the canonicaliser must
+// reorder. sched_setaffinity (203) / sched_getaffinity (204); a CPU mask is a
+// bitset (bit i = CPU i). Scheduling only — it never enters the evidence chain.
+
+// Pin the calling thread to a single CPU `core`. Returns 0 or a negative errno.
+pub fn io_reactor_pin_cpu(core: i64) -> i64 {
+    let m: i64 = __mind_alloc(8);
+    let mut bit: i64 = 1;
+    let mut j: i64 = 0;
+    while j < core {
+        bit = bit * 2;
+        j = j + 1;
+    }
+    __mind_store_i64(m + 0, bit);
+    let r: i64 = syscall(203, 0, 8, m, 0, 0, 0);
+    let _ = __mind_free(m);
+    r
+}
+
+// Return the calling thread's current CPU-affinity mask (low 64 CPUs), or -1.
+pub fn io_reactor_affinity_mask() -> i64 {
+    let m: i64 = __mind_alloc(8);
+    __mind_store_i64(m + 0, 0);
+    let r: i64 = syscall(204, 0, 8, m, 0, 0, 0);
+    let mut mask: i64 = 0 - 1;
+    if r >= 0 {
+        mask = __mind_load_i64(m + 0);
+    }
+    let _ = __mind_free(m);
+    mask
+}
+
+// Phase-4 proof: pin the reactor thread to `core`, confirm the affinity mask is
+// exactly that core, then RESTORE the original affinity (so a pin probe never
+// leaves the caller stuck on one CPU). Returns 1 on success, or a negative code.
+pub fn io_reactor_pin_demo(core: i64) -> i64 {
+    let save: i64 = __mind_alloc(8);
+    __mind_store_i64(save + 0, 0);
+    if syscall(204, 0, 8, save, 0, 0, 0) < 0 {
+        let _ = __mind_free(save);
+        return 0 - 1;
+    }
+    let orig: i64 = __mind_load_i64(save + 0);
+    let pr: i64 = io_reactor_pin_cpu(core);
+    if pr < 0 {
+        let _ = __mind_free(save);
+        return pr;
+    }
+    let now: i64 = io_reactor_affinity_mask();
+    let mut want: i64 = 1;
+    let mut j: i64 = 0;
+    while j < core {
+        want = want * 2;
+        j = j + 1;
+    }
+    // Restore the original affinity mask.
+    let rm: i64 = __mind_alloc(8);
+    __mind_store_i64(rm + 0, orig);
+    let _ = syscall(203, 0, 8, rm, 0, 0, 0);
+    let _ = __mind_free(rm);
+    let _ = __mind_free(save);
+    if now == want {
+        return 1;
+    }
+    0 - 2
 }
 
 // ── Phase 5: storage I/O (files through the ring) ───────────────────────────
