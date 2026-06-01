@@ -1,0 +1,152 @@
+// std.reactor — deterministic per-connection request-id allocation.
+//
+// The deterministic I/O reactor sorts completions into a canonical total order
+// by the key `(conn_id, req_id)` (see std.io_canon). That order is total — and
+// therefore replayable and bit-identical across substrates — ONLY if the key is
+// unique per in-flight operation. This module supplies that guarantee: it
+// assigns `req_id` MONOTONICALLY per connection at submit time, from a counter
+// that is a pure function of how many operations a connection has submitted —
+// never from arrival timing, address layout, or interrupt order.
+//
+// Together with std.io_canon (canonical ordering + canon_drain), std.ring
+// (per-connection staging), and std.arena (per-connection buffers), this is the
+// connection-bookkeeping layer of the reactor: physical I/O happens at hardware
+// speed; the logical reaction order is fixed by content-assigned keys minted
+// here, so a SHA-256 over the drained completion sequence is a stable evidence
+// anchor regardless of the physical order completions arrived in.
+//
+// Pure compute: a fixed-capacity connection table, linear scan in a fixed slot
+// order. No syscalls, no shared state, no timing. Deterministic by construction.
+//
+// Handle layout (24 bytes): [ table_ptr (i64) | count (i64) | cap (i64) ].
+// Table layout: cap * 16 bytes, each slot [ conn_id (i64) | next_req (i64) ].
+
+// Bytes per connection slot. MUST stay a multiple of 8 (i64 stride).
+fn reactor_slot_size() -> i64 {
+    16
+}
+
+// Upper bound on tracked connections per reactor — bounds the table allocation
+// against i64 overflow and caps client-controlled footprint.
+fn reactor_max_conns() -> i64 {
+    1048576
+}
+
+// Create a reactor connection table holding up to `max_conns` connections.
+// Returns a handle, or 0 if `max_conns` is not positive, exceeds the bound, or
+// the backing allocation fails.
+pub fn reactor_new(max_conns: i64) -> i64 {
+    if max_conns <= 0 {
+        return 0;
+    }
+    if max_conns > reactor_max_conns() {
+        return 0;
+    }
+    let table: i64 = __mind_alloc(max_conns * reactor_slot_size());
+    if table == 0 {
+        return 0;
+    }
+    let h: i64 = __mind_alloc(24);
+    if h == 0 {
+        let _ = __mind_free(table);
+        return 0;
+    }
+    __mind_store_i64(h + 0, table);
+    __mind_store_i64(h + 8, 0);
+    __mind_store_i64(h + 16, max_conns);
+    h
+}
+
+// Number of connections currently tracked.
+pub fn reactor_conn_count(r: i64) -> i64 {
+    __mind_load_i64(r + 8)
+}
+
+// Address of connection slot `i` (0-based). No bounds check — callers stay in
+// `[0, count)` via reactor_conn_count.
+fn reactor_slot_addr(r: i64, i: i64) -> i64 {
+    __mind_load_i64(r + 0) + i * reactor_slot_size()
+}
+
+// Find the table index of `conn_id`, or -1 if it is not tracked. Linear scan
+// in fixed slot order — deterministic, no hashing (a randomized hash seed would
+// be a nondeterminism source).
+fn reactor_index_of(r: i64, conn_id: i64) -> i64 {
+    let count: i64 = __mind_load_i64(r + 8);
+    let mut i: i64 = 0;
+    let mut found: i64 = 0 - 1;
+    while i < count {
+        if found < 0 {
+            if __mind_load_i64(reactor_slot_addr(r, i) + 0) == conn_id {
+                found = i;
+            }
+        }
+        i = i + 1;
+    }
+    found
+}
+
+// Register a connection. Idempotent: re-accepting a tracked connection leaves
+// its req counter untouched and returns 1. Returns 1 on success (registered or
+// already present), 0 if the table is full.
+pub fn reactor_accept(r: i64, conn_id: i64) -> i64 {
+    if reactor_index_of(r, conn_id) >= 0 {
+        return 1;
+    }
+    let count: i64 = __mind_load_i64(r + 8);
+    let cap: i64 = __mind_load_i64(r + 16);
+    if count >= cap {
+        return 0;
+    }
+    let slot: i64 = reactor_slot_addr(r, count);
+    __mind_store_i64(slot + 0, conn_id);
+    __mind_store_i64(slot + 8, 0);
+    __mind_store_i64(r + 8, count + 1);
+    1
+}
+
+// Mint the next monotonic `req_id` for `conn_id` and advance its counter.
+// Returns the assigned req_id (0, 1, 2, … per connection), or -1 if the
+// connection is not tracked. This is the content-assigned key half of the
+// canonical-ordering contract: `(conn_id, req_id)` is unique per in-flight
+// operation because each connection's counter only ever increases.
+pub fn reactor_next_req(r: i64, conn_id: i64) -> i64 {
+    let idx: i64 = reactor_index_of(r, conn_id);
+    if idx < 0 {
+        return 0 - 1;
+    }
+    let slot: i64 = reactor_slot_addr(r, idx);
+    let req: i64 = __mind_load_i64(slot + 8);
+    __mind_store_i64(slot + 8, req + 1);
+    req
+}
+
+// Stop tracking `conn_id` (connection closed). Swaps the last slot into the
+// freed position to keep the table dense; the slot ORDER is not observable
+// (lookups are by conn_id), so this does not affect determinism. Returns 1 if
+// the connection was tracked and removed, 0 otherwise.
+pub fn reactor_close(r: i64, conn_id: i64) -> i64 {
+    let idx: i64 = reactor_index_of(r, conn_id);
+    if idx < 0 {
+        return 0;
+    }
+    let count: i64 = __mind_load_i64(r + 8);
+    let last: i64 = count - 1;
+    if idx != last {
+        let dst: i64 = reactor_slot_addr(r, idx);
+        let src: i64 = reactor_slot_addr(r, last);
+        __mind_store_i64(dst + 0, __mind_load_i64(src + 0));
+        __mind_store_i64(dst + 8, __mind_load_i64(src + 8))
+    }
+    __mind_store_i64(r + 8, last);
+    1
+}
+
+// Release the table and the handle. The handle is invalid afterward — any
+// subsequent reactor_* call on it is use-after-free. Returns 0.
+pub fn reactor_free(r: i64) -> i64 {
+    let table: i64 = __mind_load_i64(r + 0);
+    let _ = __mind_free(table);
+    let _ = __mind_free(r);
+    0
+}
