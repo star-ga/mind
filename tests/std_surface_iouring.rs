@@ -66,6 +66,10 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_uring_socket_direct",
         "io_uring_close_direct",
         "io_uring_direct_descriptor_demo",
+        "io_uring_openat",
+        "io_uring_pread",
+        "io_uring_pwrite",
+        "io_uring_storage_rw_demo",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -151,6 +155,15 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_direct_descriptor_demo.restype = ctypes.c_int64\n\
          \x20   dd = lib.io_uring_direct_descriptor_demo()\n\
          \x20   assert dd == 1 or dd < 0, f'direct descriptor returned unexpected {{dd}}'\n\
+         \x20   spath = ctypes.create_string_buffer(b'/tmp/mind_iouring_std_storage.tmp\\x00')\n\
+         \x20   sdata = ctypes.create_string_buffer(b'MIND-io_uring-storage')\n\
+         \x20   lib.io_uring_storage_rw_demo.restype = ctypes.c_int64\n\
+         \x20   lib.io_uring_storage_rw_demo.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
+         \x20   st = lib.io_uring_storage_rw_demo(ctypes.cast(spath, ctypes.c_void_p).value, ctypes.cast(sdata, ctypes.c_void_p).value, 21)\n\
+         \x20   assert st == 1 or st < 0, f'storage rw returned unexpected {{st}}'\n\
+         \x20   import os\n\
+         \x20   try: os.unlink('/tmp/mind_iouring_std_storage.tmp')\n\
+         \x20   except OSError: pass\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -164,7 +177,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
