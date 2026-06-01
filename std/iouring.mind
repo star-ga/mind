@@ -26,6 +26,10 @@
 // completion per arriving message into a kernel-selected buffer = the zero-copy
 // async server recv (Phase 2 provided buffers × the Phase 3 multishot pattern).
 //
+// Phase 5: storage I/O — OP_OPENAT / OP_READ / OP_WRITE drive files through the
+// same submit/reap engine (the deterministic storage path the NVMe/SPDK fast
+// path later optimizes; bytes are byte-identical, so the anchor is unchanged).
+//
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
 // bytes (user_data u64@0, res i32@8). All ring fields are u32, accessed via the
@@ -90,6 +94,16 @@ pub fn iouring_op_shutdown() -> i64 {
 }
 pub fn iouring_op_socket() -> i64 {
     45
+}
+// File (storage) ops (Phase 5): open/read/write a file through the ring.
+pub fn iouring_op_openat() -> i64 {
+    18
+}
+pub fn iouring_op_read() -> i64 {
+    22
+}
+pub fn iouring_op_write() -> i64 {
+    23
 }
 
 // Ring handle (96 bytes): the post-setup state the submit/reap paths need.
@@ -1010,6 +1024,145 @@ pub fn io_uring_multishot_recv_demo(msg: i64, len: i64, n: i64) -> i64 {
     let _ = close(fd1 as i32);
     let _ = __mind_free(sv);
     matched
+}
+
+// ── Phase 5: storage I/O (files through the ring) ───────────────────────────
+// The same submit/reap engine drives storage: OP_OPENAT opens a file (dfd in
+// fd, path in addr, mode in len, open_flags in rw_flags@28), OP_READ/OP_WRITE
+// move bytes at a given offset. This is the deterministic storage read/write
+// path — the substrate the NVMe/SPDK fast path (IOPOLL, O_DIRECT) optimizes
+// later, but the correctness/ordering/anchor story is identical here on a plain
+// file. Buffered (not yet O_DIRECT, which needs 512-byte alignment) — bytes are
+// byte-identical, so canon_drain over storage completions anchors the same way.
+
+// Set sqe.rw_flags (u32 @28) on the SQE at `slot` — used as open_flags for
+// OP_OPENAT. Recomputes the ring position like the other SQE-patch helpers.
+fn io_ring_set_rw_flags(h: i64, slot: i64, flags: i64) -> i64 {
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
+    let sqe: i64 = __mind_load_i64(h + 16) + pos * 64;
+    __mind_store_i32(sqe + 28, flags);
+    0
+}
+
+// Open `path` (a NUL-terminated string) via the ring. dfd is AT_FDCWD (-100);
+// `flags` are open(2) flags, `mode` the create mode. Returns the new fd (>=0) or
+// a negative errno.
+pub fn io_uring_openat(path: i64, flags: i64, mode: i64) -> i64 {
+    let h: i64 = io_ring_new(2);
+    if h == 0 {
+        return 0 - 1;
+    }
+    // OP_OPENAT: fd=AT_FDCWD, addr=path, len=mode, rw_flags=flags.
+    let _ = io_ring_submit_raw(h, 0, iouring_op_openat(), 0 - 100, 0, path, mode, 1);
+    let _ = io_ring_set_rw_flags(h, 0, flags);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = io_ring_free(h);
+    r
+}
+
+// Write `len` bytes from `buf` to `fd` at `offset` via the ring. Returns the
+// CQE res (bytes written, or a negative errno).
+pub fn io_uring_pwrite(fd: i64, buf: i64, len: i64, offset: i64) -> i64 {
+    let h: i64 = io_ring_new(2);
+    if h == 0 {
+        return 0 - 1;
+    }
+    let _ = io_ring_submit_raw(h, 0, iouring_op_write(), fd, offset, buf, len, 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = io_ring_free(h);
+    r
+}
+
+// Read `len` bytes into `buf` from `fd` at `offset` via the ring. Returns the
+// CQE res (bytes read, or a negative errno).
+pub fn io_uring_pread(fd: i64, buf: i64, len: i64, offset: i64) -> i64 {
+    let h: i64 = io_ring_new(2);
+    if h == 0 {
+        return 0 - 1;
+    }
+    let _ = io_ring_submit_raw(h, 0, iouring_op_read(), fd, offset, buf, len, 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = io_ring_free(h);
+    r
+}
+
+// Phase-5 proof: a deterministic storage round-trip entirely through io_uring.
+// Open `path` (O_CREAT|O_RDWR|O_TRUNC=578, mode 0644=420), WRITE `len` bytes from
+// `data` at offset 0, READ them back into a fresh buffer, verify byte-identical,
+// then CLOSE (in-ring). Returns 1 on a byte-identical round-trip, or a negative
+// code (and SKIPS — negative — where the kernel lacks io_uring file ops). Proves
+// the storage read/write path preserves the exact bytes the evidence chain
+// anchors — the same correctness story the NVMe/SPDK fast path will optimize.
+pub fn io_uring_storage_rw_demo(path: i64, data: i64, len: i64) -> i64 {
+    let fd: i64 = io_uring_openat(path, 578, 420);
+    if fd < 0 {
+        return fd;
+    }
+    let w: i64 = io_uring_pwrite(fd, data, len, 0);
+    let rbuf: i64 = __mind_alloc(len);
+    let r: i64 = io_uring_pread(fd, rbuf, len, 0);
+    let mut result: i64 = 0 - 14;
+    if w == len {
+        if r == len {
+            let mut ok: i64 = 1;
+            let mut i: i64 = 0;
+            while i < len {
+                if __mind_load_i8(rbuf + i) != __mind_load_i8(data + i) {
+                    ok = 0;
+                }
+                i = i + 1;
+            }
+            if ok == 1 {
+                result = 1;
+            } else {
+                result = 0 - 15;
+            }
+        } else {
+            result = 0 - 16;
+        }
+    } else {
+        result = 0 - 17;
+    }
+    let _ = __mind_free(rbuf);
+    let _ = io_uring_close(fd);
+    result
 }
 
 // Loopback TCP echo over io_uring. Binds a listener on 127.0.0.1:ephemeral,
