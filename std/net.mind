@@ -50,7 +50,6 @@ extern "C" {
     unsafe fn sendto(sockfd: i32, buf: *const u8, len: i64, flags: i32, dest_addr: *const u8, addrlen: i32) -> i64;
     unsafe fn recvfrom(sockfd: i32, buf: *mut u8, len: i64, flags: i32, src_addr: *mut u8, addrlen: *mut u8) -> i64;
     unsafe fn close(fd: i32) -> i32;
-    unsafe fn htons(hostshort: i32) -> i32;
     unsafe fn ntohs(netshort: i32) -> i32;
     unsafe fn inet_pton(af: i32, src: *const u8, dst: *mut u8) -> i32;
     unsafe fn getsockname(sockfd: i32, addr: *mut u8, addrlen: *mut u8) -> i32;
@@ -77,9 +76,13 @@ fn net_build_sockaddr_in(ip_str_addr: i64, port: i64) -> i64 {
     let _ = memset(sa as *mut u8, 0, 16);
     __mind_store_i8(sa + 0, 2);
     __mind_store_i8(sa + 1, 0);
-    let np: i64 = htons(port as i32) as i64;
-    __mind_store_i8(sa + 2, (np >> 8) & 255);
-    __mind_store_i8(sa + 3, np & 255);
+    // sin_port is ALWAYS network byte order (big-endian): high byte first.
+    // Write it explicitly rather than via htons() so the encoding is correct
+    // and identical on every substrate regardless of host endianness. (The
+    // previous code applied htons AND this big-endian split, double-swapping
+    // the port on little-endian hosts and sending datagrams to the wrong port.)
+    __mind_store_i8(sa + 2, (port >> 8) & 255);
+    __mind_store_i8(sa + 3, port & 255);
     let inet_buf: i64 = __mind_alloc(4);
     let _ = inet_pton(2, ip_str_addr as *const u8, inet_buf as *mut u8);
     __mind_store_i8(sa + 4, __mind_load_i8(inet_buf + 0));
