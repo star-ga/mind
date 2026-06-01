@@ -304,10 +304,14 @@ pub fn io_uring_socketpair_echo(msg: i64, len: i64) -> i64 {
 // round-trip, or a negative code on any failure. This is the reactor's
 // accept->recv->send shape, single-connection; the multishot server loop adds
 // IORING_OP_*_MULTISHOT on top of the same submit/reap API.
-pub fn io_uring_loopback_echo(msg: i64, len: i64) -> i64 {
+// Reactor connection handle (64 bytes): one accepted loopback TCP connection
+// plus its ring and scratch, so the same ring is REUSED across many echo
+// rounds (the long-lived-reactor pattern the ring-reuse fix above enables).
+//   0 h | 8 cfd | 16 connfd | 24 lfd | 32 addr | 40 alen | 48 ud | 56 res
+pub fn io_uring_tcp_accept_one() -> i64 {
     let lfd: i64 = socket(2, 1, 0);
     if lfd < 0 {
-        return 0 - 20;
+        return 0;
     }
     // sockaddr_in: sin_family=AF_INET(2)@0, sin_port=0@2 (ephemeral),
     // sin_addr=127.0.0.1 (bytes 127,0,0,1)@4, sin_zero@8.
@@ -322,35 +326,37 @@ pub fn io_uring_loopback_echo(msg: i64, len: i64) -> i64 {
     __mind_store_i8(addr + 7, 1);
     if bind(lfd as i32, addr, 16) < 0 {
         let _ = close(lfd as i32);
-        return 0 - 21;
+        let _ = __mind_free(addr);
+        return 0;
     }
     if listen(lfd as i32, 1) < 0 {
         let _ = close(lfd as i32);
-        return 0 - 22;
+        let _ = __mind_free(addr);
+        return 0;
     }
     let alen: i64 = __mind_alloc(8);
     __mind_store_i32(alen + 0, 16);
     if getsockname(lfd as i32, addr, alen) < 0 {
         let _ = close(lfd as i32);
-        return 0 - 23;
+        let _ = __mind_free(addr);
+        let _ = __mind_free(alen);
+        return 0;
     }
     let cfd: i64 = socket(2, 1, 0);
+    let h: i64 = io_ring_new(8);
     if cfd < 0 {
-        let _ = close(lfd as i32);
-        return 0 - 24;
+        return 0;
     }
-    let h: i64 = io_ring_new(4);
     if h == 0 {
         let _ = close(cfd as i32);
-        let _ = close(lfd as i32);
-        return 0 - 25;
+        return 0;
     }
     let _ = io_ring_submit_raw(h, 0, iouring_op_connect(), cfd, 16, addr, 0, 100);
     let _ = io_ring_submit_op(h, 1, iouring_op_accept(), lfd, 0, 0, 200);
     let _ = io_ring_publish(h, 2);
     let er: i64 = io_ring_enter(h, 2, 2);
-    let ud: i64 = __mind_alloc(64);
-    let res: i64 = __mind_alloc(64);
+    let ud: i64 = __mind_alloc(128);
+    let res: i64 = __mind_alloc(128);
     let mut connfd: i64 = 0 - 1;
     if er >= 0 {
         let count: i64 = io_ring_reap(h, ud, res, 8);
@@ -362,18 +368,84 @@ pub fn io_uring_loopback_echo(msg: i64, len: i64) -> i64 {
             i = i + 1;
         }
     }
-    let result: i64 = io_uring_echo_one(h, cfd, connfd, msg, len, ud, res);
-    if connfd >= 0 {
-        let _ = close(connfd as i32);
+    if connfd < 0 {
+        let _ = io_ring_free(h);
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+        let _ = close(cfd as i32);
+        let _ = close(lfd as i32);
+        let _ = __mind_free(addr);
+        let _ = __mind_free(alen);
+        return 0;
     }
-    let _ = io_ring_free(h);
-    let _ = __mind_free(ud);
-    let _ = __mind_free(res);
-    let _ = close(cfd as i32);
-    let _ = close(lfd as i32);
-    let _ = __mind_free(addr);
-    let _ = __mind_free(alen);
-    result
+    let rh: i64 = __mind_alloc(64);
+    __mind_store_i64(rh + 0, h);
+    __mind_store_i64(rh + 8, cfd);
+    __mind_store_i64(rh + 16, connfd);
+    __mind_store_i64(rh + 24, lfd);
+    __mind_store_i64(rh + 32, addr);
+    __mind_store_i64(rh + 40, alen);
+    __mind_store_i64(rh + 48, ud);
+    __mind_store_i64(rh + 56, res);
+    rh
+}
+
+// One echo round on a reactor connection, reusing its ring. Returns 1 on match.
+pub fn io_uring_tcp_echo_round(rh: i64, msg: i64, len: i64) -> i64 {
+    io_uring_echo_one(__mind_load_i64(rh + 0), __mind_load_i64(rh + 8), __mind_load_i64(rh + 16), msg, len, __mind_load_i64(rh + 48), __mind_load_i64(rh + 56))
+}
+
+// Release a reactor connection (ring, fds, scratch, handle).
+pub fn io_uring_tcp_close(rh: i64) -> i64 {
+    let _ = io_ring_free(__mind_load_i64(rh + 0));
+    let _ = close((__mind_load_i64(rh + 8)) as i32);
+    let _ = close((__mind_load_i64(rh + 16)) as i32);
+    let _ = close((__mind_load_i64(rh + 24)) as i32);
+    let _ = __mind_free(__mind_load_i64(rh + 32));
+    let _ = __mind_free(__mind_load_i64(rh + 40));
+    let _ = __mind_free(__mind_load_i64(rh + 48));
+    let _ = __mind_free(__mind_load_i64(rh + 56));
+    let _ = __mind_free(rh);
+    0
+}
+
+// Single-round loopback echo (back-compat): accept a connection, echo once.
+pub fn io_uring_loopback_echo(msg: i64, len: i64) -> i64 {
+    let rh: i64 = io_uring_tcp_accept_one();
+    if rh == 0 {
+        return 0 - 20;
+    }
+    let r: i64 = io_uring_tcp_echo_round(rh, msg, len);
+    let _ = io_uring_tcp_close(rh);
+    r
+}
+
+// The reactor server loop: accept one connection, then echo `rounds` exchanges
+// over the SAME reused ring (each round is a fresh submit/enter/reap batch on
+// the long-lived ring). Returns `rounds` on full success, or a negative code.
+pub fn io_uring_loopback_echo_n(msg: i64, len: i64, rounds: i64) -> i64 {
+    let rh: i64 = io_uring_tcp_accept_one();
+    if rh == 0 {
+        return 0 - 20;
+    }
+    let mut done: i64 = 0;
+    let mut ok: i64 = 1;
+    while ok == 1 {
+        if done >= rounds {
+            ok = 2;
+        } else {
+            if io_uring_tcp_echo_round(rh, msg, len) == 1 {
+                done = done + 1;
+            } else {
+                ok = 0;
+            }
+        }
+    }
+    let _ = io_uring_tcp_close(rh);
+    if ok == 2 {
+        return done;
+    }
+    0 - 30
 }
 
 // One echo exchange on an established connection (kept separate from the

@@ -49,7 +49,11 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_ring_free",
         "io_uring_nop",
         "io_uring_socketpair_echo",
+        "io_uring_tcp_accept_one",
+        "io_uring_tcp_echo_round",
+        "io_uring_tcp_close",
         "io_uring_loopback_echo",
+        "io_uring_loopback_echo_n",
     ] {
         assert!(
             names.contains(&required),
@@ -95,6 +99,8 @@ fn iouring_nop_roundtrips_user_data() {
          lib.io_uring_socketpair_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          lib.io_uring_loopback_echo.restype = ctypes.c_int64\n\
          lib.io_uring_loopback_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
+         lib.io_uring_loopback_echo_n.restype = ctypes.c_int64\n\
+         lib.io_uring_loopback_echo_n.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          r = lib.io_uring_nop(0x4242)\n\
          if r < 0:\n\
          \x20   print('SKIP', r)  # io_uring unavailable in this environment\n\
@@ -108,7 +114,9 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
          \x20   assert le == 1 or le < 0, f'loopback echo returned unexpected {{le}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'tcp', le)\n",
+         \x20   ln = lib.io_uring_loopback_echo_n(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 5)\n\
+         \x20   assert ln == 5 or ln < 0, f'reactor server loop returned unexpected {{ln}}'\n\
+         \x20   print('OK', hex(r), 'sp', e, 'tcp', le, 'loop', ln)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
