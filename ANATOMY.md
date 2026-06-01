@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2675 | **Est. tokens:** ~6,703,688
-**Generated:** 2026-06-01 09:09 UTC
+**Files:** 2675 | **Est. tokens:** ~6,703,817
+**Generated:** 2026-06-01 09:58 UTC
 
 ## Token Budget Guide
 
@@ -377,7 +377,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,717 |
-| `src/ir/` | 4 | ~17,217 |
+| `src/ir/` | 4 | ~17,201 |
 | `src/ir/compact/` | 3 | ~14,839 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
 | `src/ir/compact/v3/` | 4 | ~35,480 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 19 | ~85,781 |
-| `tests/` | 160 | ~277,381 |
+| `tests/` | 160 | ~277,526 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3665,7 +3665,7 @@
 - `parse.rs` (~7584 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
-- `evidence.rs` (~1929 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~8433 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~3315 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3896,7 +3896,7 @@
 - `mic3_cli_emit.rs` (~2386 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4637 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5332 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_deps_phase_de.rs` (~6331 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_deps_phase_de.rs` (~6476 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_doc_phase1.rs` (~2566 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/`
 

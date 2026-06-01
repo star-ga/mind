@@ -37,7 +37,7 @@
 //! signature surface, not the computation, defeating the evidence chain.
 //!
 //! The compiler's full-fidelity, deterministic, platform-portable canonical
-//! artifact is **mic@3** — [`emit_mic3`](crate::ir::compact::emit_mic3), the
+//! artifact is **mic@3** — [`emit_mic3`], the
 //! binary IR that carries complete function bodies and is itself the object the
 //! cross-substrate byte-identity gate compares. It is the substrate-independent
 //! **IR link** of the RFC 0016 §4 Merkle DAG, and exactly the object whose
@@ -59,7 +59,7 @@ use crate::ir::compact::emit_mic3;
 /// The RFC 0016 §3.2/§3.3 `trace_hash` for a compiled artifact's **IR link**:
 /// SHA-256 of the canonical mic@3 bytes of `ir`.
 ///
-/// [`emit_mic3`](crate::ir::compact::emit_mic3) is RFC-0001 deterministic —
+/// [`emit_mic3`] is RFC-0001 deterministic —
 /// byte-identical across runs and platforms, with `emit → parse → emit` a fixed
 /// point — and, unlike mic@1 text, it carries complete function bodies, so the
 /// hash depends on what each exported function computes, not just its signature.
