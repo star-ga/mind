@@ -45,6 +45,21 @@ fn write_source(dir: &Path) {
     fs::write(dir.join("src/main.mind"), "fn main() -> i64 { 42 }\n").unwrap();
 }
 
+/// Build a `file://` URL for a local path that is valid on both Unix and
+/// Windows. A native Windows path (`C:\a\b`) contains backslashes, which are
+/// invalid escape sequences inside a TOML double-quoted string AND wrong for a
+/// URL; convert to forward slashes and ensure a single leading slash so the
+/// result is the canonical `file:///<path>` form (`file:///tmp/x`,
+/// `file:///C:/x`) on either platform.
+fn file_url(p: &Path) -> String {
+    let s = p.display().to_string().replace('\\', "/");
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
+}
+
 /// Load a `ProjectManifest` from a directory containing `Mind.toml`.
 fn load_manifest(dir: &Path) -> libmind::project::ProjectManifest {
     libmind::project::load_manifest(dir).unwrap()
@@ -415,8 +430,8 @@ fn mindc_deps_phase_de_e_git_dep_rev_resolves_and_caches() {
         &app,
         "app",
         &format!(
-            "\n[dependencies]\nremote-lib = {{ git = \"file://{bare}\", rev = \"{sha}\" }}\n",
-            bare = bare.display()
+            "\n[dependencies]\nremote-lib = {{ git = \"{url}\", rev = \"{sha}\" }}\n",
+            url = file_url(&bare)
         ),
     );
     write_source(&app);
@@ -458,8 +473,8 @@ fn mindc_deps_phase_de_e_git_dep_branch_resolves_to_sha() {
         &app,
         "app",
         &format!(
-            "\n[dependencies]\nbranch-lib = {{ git = \"file://{bare}\", branch = \"main\" }}\n",
-            bare = bare.display()
+            "\n[dependencies]\nbranch-lib = {{ git = \"{url}\", branch = \"main\" }}\n",
+            url = file_url(&bare)
         ),
     );
     write_source(&app);
@@ -491,8 +506,8 @@ fn mindc_deps_phase_de_e_lock_check_absent_fails() {
         &app,
         "app",
         &format!(
-            "\n[dependencies]\nlib = {{ git = \"file://{bare}\", rev = \"{sha}\" }}\n",
-            bare = bare.display()
+            "\n[dependencies]\nlib = {{ git = \"{url}\", rev = \"{sha}\" }}\n",
+            url = file_url(&bare)
         ),
     );
     write_source(&app);
@@ -525,8 +540,8 @@ fn mindc_deps_phase_de_e_fetch_populates_cache_no_lock_change() {
         &app,
         "app",
         &format!(
-            "\n[dependencies]\ncached-lib = {{ git = \"file://{bare}\", rev = \"{sha}\" }}\n",
-            bare = bare.display()
+            "\n[dependencies]\ncached-lib = {{ git = \"{url}\", rev = \"{sha}\" }}\n",
+            url = file_url(&bare)
         ),
     );
     write_source(&app);
@@ -558,8 +573,8 @@ fn mindc_deps_phase_de_e_absent_lock_fails_build_ap2() {
         &app,
         "app",
         &format!(
-            "\n[dependencies]\nlib = {{ git = \"file://{bare}\", rev = \"{sha}\" }}\n",
-            bare = bare.display()
+            "\n[dependencies]\nlib = {{ git = \"{url}\", rev = \"{sha}\" }}\n",
+            url = file_url(&bare)
         ),
     );
     write_source(&app);
