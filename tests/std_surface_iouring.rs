@@ -59,6 +59,9 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_uring_shutdown",
         "io_uring_close",
         "io_uring_socket_lifecycle_demo",
+        "io_ring_reap_full",
+        "io_ring_submit_recv_multishot",
+        "io_uring_multishot_recv_demo",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -136,6 +139,11 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_socket_lifecycle_demo.restype = ctypes.c_int64\n\
          \x20   lc = lib.io_uring_socket_lifecycle_demo()\n\
          \x20   assert lc == 1 or lc < 0, f'socket lifecycle returned unexpected {{lc}}'\n\
+         \x20   mbuf = ctypes.create_string_buffer(b'MIND-multishot-recv-zerocopy')\n\
+         \x20   lib.io_uring_multishot_recv_demo.restype = ctypes.c_int64\n\
+         \x20   lib.io_uring_multishot_recv_demo.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
+         \x20   mr = lib.io_uring_multishot_recv_demo(ctypes.cast(mbuf, ctypes.c_void_p).value, 28, 3)\n\
+         \x20   assert mr == 3 or mr < 0, f'multishot recv returned unexpected {{mr}}'\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -149,7 +157,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
