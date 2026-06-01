@@ -41,6 +41,7 @@ fn iouring_parses_and_lowers_with_ring_api() {
         .collect();
     for required in [
         "io_ring_new",
+        "io_ring_submit_raw",
         "io_ring_submit_op",
         "io_ring_publish",
         "io_ring_enter",
@@ -48,6 +49,7 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_ring_free",
         "io_uring_nop",
         "io_uring_socketpair_echo",
+        "io_uring_loopback_echo",
     ] {
         assert!(
             names.contains(&required),
@@ -91,6 +93,8 @@ fn iouring_nop_roundtrips_user_data() {
          lib.io_uring_nop.restype = ctypes.c_int64\n\
          lib.io_uring_socketpair_echo.restype = ctypes.c_int64\n\
          lib.io_uring_socketpair_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
+         lib.io_uring_loopback_echo.restype = ctypes.c_int64\n\
+         lib.io_uring_loopback_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          r = lib.io_uring_nop(0x4242)\n\
          if r < 0:\n\
          \x20   print('SKIP', r)  # io_uring unavailable in this environment\n\
@@ -99,11 +103,12 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   msg = b'MIND-io_uring-echo'\n\
          \x20   buf = ctypes.create_string_buffer(msg)\n\
          \x20   e = lib.io_uring_socketpair_echo(ctypes.cast(buf, ctypes.c_void_p).value, len(msg))\n\
-         \x20   assert e == 1 or e < 0, f'echo returned unexpected {{e}}'\n\
-         \x20   if e == 1:\n\
-         \x20       print('OK', hex(r), 'echo')\n\
-         \x20   else:\n\
-         \x20       print('OK', hex(r), 'echo-skip', e)\n",
+         \x20   assert e == 1 or e < 0, f'socketpair echo returned unexpected {{e}}'\n\
+         \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
+         \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
+         \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
+         \x20   assert le == 1 or le < 0, f'loopback echo returned unexpected {{le}}'\n\
+         \x20   print('OK', hex(r), 'sp', e, 'tcp', le)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
