@@ -18,7 +18,7 @@
 //! These provide correct results for learning, prototyping, and small workloads.
 //!
 //! For production performance (SIMD, tiled matmul, GPU backends), see:
-//! https://mindlang.dev/enterprise
+//! <https://mindlang.dev/enterprise>
 
 use crate::eval::value::TensorVal;
 use crate::types::ShapeDim;

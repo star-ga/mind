@@ -16,7 +16,7 @@ pub mod linux {
     pub const PTRACE_TRACEME: c_int = 0;
     pub const PTRACE_DETACH: c_int = 17;
 
-    extern "C" {
+    unsafe extern "C" {
         pub fn ptrace(request: c_int, pid: i32, addr: *mut c_void, data: *mut c_void) -> c_long;
     }
 
@@ -125,7 +125,7 @@ pub mod macos {
         _rest: [u8; 616], // Total struct is ~648 bytes
     }
 
-    extern "C" {
+    unsafe extern "C" {
         fn sysctl(
             name: *const c_int,
             namelen: u32,
@@ -215,20 +215,20 @@ pub fn platform_name() -> &'static str {
 // ============================================================================
 
 /// Expose to Mind language as `sys.is_debugger_present()`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mind_sys_is_debugger_present() -> c_int {
     if is_debugger_present() { 1 } else { 0 }
 }
 
 /// Expose to Mind language as `sys.platform()`
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mind_sys_platform() -> *const u8 {
     platform_name().as_ptr()
 }
 
 /// Timing-based debugger detection
 /// Returns 1 if timing anomaly detected (likely debugger stepping)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn mind_sys_timing_check() -> c_int {
     let start = std::time::Instant::now();
 
