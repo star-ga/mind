@@ -111,6 +111,25 @@ pub fn build_all(
     tools: &BuildTools,
     opts: &BuildOptions<'_>,
 ) -> Result<BuildProducts, BuildError> {
+    // Thin wrapper: no caller-supplied objects. The zero-extra-objects path is
+    // byte-identical to the historical behaviour — only `emit_shared` links the
+    // runtime-support stub, exactly as before — so the keystone is unaffected.
+    build_all_with_objects(mlir_src, tools, opts, &[])
+}
+
+/// Like [`build_all`], but links additional caller-provided object files into
+/// the `emit_shared` output (after the runtime-support stub). Used for native
+/// cross-module linking: a consumer cdylib that imports a self-contained `std`
+/// substrate module passes that module's compiled `.o` here so its symbols
+/// resolve natively. With an empty `extra_objects` slice this is identical to
+/// [`build_all`].
+#[cfg(feature = "mlir-build")]
+pub fn build_all_with_objects(
+    mlir_src: &str,
+    tools: &BuildTools,
+    opts: &BuildOptions<'_>,
+    extra_objects: &[std::path::PathBuf],
+) -> Result<BuildProducts, BuildError> {
     let preset_name = opts.preset;
     let lowered = crate::eval::mlir_export::apply_lowering(mlir_src, preset_name)
         .map_err(BuildError::Internal)?;
@@ -141,7 +160,8 @@ pub fn build_all(
         // and link it into the shared library so vec_new / vec_push /
         // __mind_load_i64 etc. are resolved without an external dependency.
         let runtime_obj = compile_runtime_support_obj(tools)?;
-        let extra = [runtime_obj.path().to_path_buf()];
+        let mut extra = vec![runtime_obj.path().to_path_buf()];
+        extra.extend(extra_objects.iter().cloned());
         run_clang_codegen(&llvm_ir, tools, opts.target_triple, path, true, &extra)?;
     }
 
