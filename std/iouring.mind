@@ -20,6 +20,9 @@
 // connection setup and teardown inside the submission ring, off the syscall
 // path. Pure control-plane ops (no payload bytes), so they never touch the
 // evidence chain; they are the basis for direct (registered) descriptors next.
+// Capstone: RECV_MULTISHOT over a provided-buffer ring — ONE submission, a
+// completion per arriving message into a kernel-selected buffer = the zero-copy
+// async server recv (Phase 2 provided buffers × the Phase 3 multishot pattern).
 //
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
@@ -230,6 +233,42 @@ pub fn io_ring_reap(h: i64, out_ud: i64, out_res: i64, max: i64) -> i64 {
                 let cqe: i64 = cqes + idx * 16;
                 __mind_store_i64(out_ud + count * 8, __mind_load_i64(cqe + 0));
                 __mind_store_i64(out_res + count * 8, __mind_load_i32(cqe + 8));
+                head = head + 1;
+                count = count + 1;
+            }
+        }
+    }
+    __mind_store_i32(head_addr, head);
+    count
+}
+
+// Like io_ring_reap but also captures each completion's `flags` (u32 @12) into
+// `out_flags`. Needed for provided-buffer completions, where the selected buffer
+// id is carried in cqe.flags>>16 (and IORING_CQE_F_MORE=2 signals a multishot op
+// will keep posting). Returns the count drained.
+pub fn io_ring_reap_full(h: i64, out_ud: i64, out_res: i64, out_flags: i64, max: i64) -> i64 {
+    let cring: i64 = __mind_load_i64(h + 8);
+    let head_addr: i64 = cring + __mind_load_i64(h + 64);
+    let tail_addr: i64 = cring + __mind_load_i64(h + 72);
+    let cqes: i64 = cring + __mind_load_i64(h + 80);
+    let cmask: i64 = __mind_load_i64(h + 88);
+    let centries: i64 = cmask + 1;
+    let mut head: i64 = __mind_load_i32(head_addr);
+    let tail: i64 = __mind_load_i32(tail_addr);
+    let mut count: i64 = 0;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if head >= tail {
+            go = 0;
+        } else {
+            if count >= max {
+                go = 0;
+            } else {
+                let idx: i64 = head - (head / centries) * centries;
+                let cqe: i64 = cqes + idx * 16;
+                __mind_store_i64(out_ud + count * 8, __mind_load_i64(cqe + 0));
+                __mind_store_i64(out_res + count * 8, __mind_load_i32(cqe + 8));
+                __mind_store_i64(out_flags + count * 8, __mind_load_i32(cqe + 12));
                 head = head + 1;
                 count = count + 1;
             }
@@ -719,6 +758,149 @@ pub fn io_uring_socket_lifecycle_demo() -> i64 {
         return 1;
     }
     0 - 4
+}
+
+// ── Phase 3 capstone: multishot recv over provided buffers (zero-copy) ───────
+// The async server recv path: ONE submission, IORING_RECV_MULTISHOT (=2 in the
+// SQE ioprio @2) + BUFFER_SELECT, so the kernel posts a completion per arriving
+// message, each into a KERNEL-selected provided buffer (Phase 2) — no per-message
+// submit and no per-connection buffer pre-post. Combines provided-buffer rings
+// (Phase 2) with the multishot pattern (Phase 3) into the real recv loop.
+
+// Submit a multishot buffer-select RECV at `slot`: BUFFER_SELECT + buf_group as
+// in io_ring_submit_recv_provided, plus IORING_RECV_MULTISHOT in the SQE ioprio.
+pub fn io_ring_submit_recv_multishot(h: i64, slot: i64, fd: i64, len: i64, bgid: i64, user_data: i64) -> i64 {
+    let _ = io_ring_submit_recv_provided(h, slot, fd, len, bgid, user_data);
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
+    let sqe: i64 = __mind_load_i64(h + 16) + pos * 64;
+    __mind_store_i8(sqe + 2, 2);
+    0
+}
+
+// Phase-3 capstone proof: receive `n` datagrams through ONE multishot recv, each
+// landing in a distinct kernel-selected provided buffer. Build an `n`-buffer
+// provided ring (bid i -> data+i*256); SEND `n` copies of `msg` on fd0 of a
+// DGRAM socketpair (datagrams preserve message boundaries); submit ONE multishot
+// BUFFER_SELECT recv on fd1; drain `n` completions and verify each landed the
+// exact bytes in its buffer (bid taken from cqe.flags>>16). Returns `n` on full
+// byte-identical success, or a negative code (and SKIPS — negative — where the
+// kernel lacks multishot/provided buffers). The zero-copy async server recv,
+// proven to preserve every byte the evidence chain anchors.
+pub fn io_uring_multishot_recv_demo(msg: i64, len: i64, n: i64) -> i64 {
+    let sv: i64 = __mind_alloc(8);
+    // socketpair(AF_UNIX=1, SOCK_DGRAM=2, 0, sv) — datagrams keep message bounds.
+    if socketpair(1, 2, 0, sv) < 0 {
+        let _ = __mind_free(sv);
+        return 0 - 10;
+    }
+    let fd0: i64 = __mind_load_i32(sv + 0);
+    let fd1: i64 = __mind_load_i32(sv + 4);
+    let h: i64 = io_ring_new(32);
+    if h == 0 {
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return 0 - 11;
+    }
+    // Page-aligned region: 16-entry buf_ring @ rgn+0 (256B), data buffers @
+    // rgn+4096 (256B each, bid i -> rgn+4096+i*256).
+    let neg1: i64 = 0 - 1;
+    let rgn: i64 = mmap(0, 8192, 3, 34, neg1 as i32, 0);
+    if rgn < 0 {
+        let _ = io_ring_free(h);
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return 0 - 12;
+    }
+    let mut z: i64 = 0;
+    while z < 256 {
+        __mind_store_i8(rgn + z, 0);
+        z = z + 1;
+    }
+    let mut i: i64 = 0;
+    while i < n {
+        let e: i64 = rgn + i * 16;
+        let d: i64 = rgn + 4096 + i * 256;
+        __mind_store_i64(e + 0, d);
+        __mind_store_i32(e + 8, 256);
+        __mind_store_i8(e + 12, i);
+        __mind_store_i8(e + 13, i / 256);
+        i = i + 1;
+    }
+    // Publish the ring tail (u16 @14 — overlaps bufs[0].resv, set last) = n.
+    __mind_store_i8(rgn + 14, n);
+    __mind_store_i8(rgn + 15, n / 256);
+    let reg: i64 = io_ring_register_pbuf_ring(h, rgn, 16, 0);
+    if reg < 0 {
+        let _ = munmap(rgn, 8192);
+        let _ = io_ring_free(h);
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return reg;
+    }
+    // Batch 1: SEND n datagrams on fd0.
+    let mut s: i64 = 0;
+    while s < n {
+        let _ = io_ring_submit_op(h, s, iouring_op_send(), fd0, msg, len, 1);
+        s = s + 1;
+    }
+    let _ = io_ring_publish(h, n);
+    let _ = io_ring_enter(h, n, n);
+    let sud: i64 = __mind_alloc(256);
+    let sres: i64 = __mind_alloc(256);
+    let _ = io_ring_reap(h, sud, sres, n);
+    let _ = __mind_free(sud);
+    let _ = __mind_free(sres);
+    // Batch 2: ONE multishot recv on fd1 over the reused ring; wait for n CQEs.
+    let _ = io_ring_submit_recv_multishot(h, 0, fd1, 256, 0, 2);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, n);
+    let mut matched: i64 = 0 - 14;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(256);
+        let res: i64 = __mind_alloc(256);
+        let fl: i64 = __mind_alloc(256);
+        let count: i64 = io_ring_reap_full(h, ud, res, fl, 32);
+        let mut ok: i64 = 0;
+        let mut k: i64 = 0;
+        while k < count {
+            if __mind_load_i64(ud + k * 8) == 2 {
+                let rr: i64 = __mind_load_i64(res + k * 8);
+                let bid: i64 = __mind_load_i64(fl + k * 8) / 65536;
+                if rr == len {
+                    let d: i64 = rgn + 4096 + bid * 256;
+                    let mut same: i64 = 1;
+                    let mut j: i64 = 0;
+                    while j < len {
+                        if __mind_load_i8(d + j) != __mind_load_i8(msg + j) {
+                            same = 0;
+                        }
+                        j = j + 1;
+                    }
+                    if same == 1 {
+                        ok = ok + 1;
+                    }
+                }
+            }
+            k = k + 1;
+        }
+        matched = ok;
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+        let _ = __mind_free(fl);
+    }
+    let _ = munmap(rgn, 8192);
+    let _ = io_ring_free(h);
+    let _ = close(fd0 as i32);
+    let _ = close(fd1 as i32);
+    let _ = __mind_free(sv);
+    matched
 }
 
 // Loopback TCP echo over io_uring. Binds a listener on 127.0.0.1:ephemeral,
