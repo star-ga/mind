@@ -1,0 +1,143 @@
+// std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
+// for the deterministic reactor: io_uring delivers completions in a physically
+// non-deterministic order; std.io_canon re-orders them into a canonical total
+// order and std (canon_drain + sha256) anchors the result. This module is ONLY
+// the OS surface — it carries no determinism itself.
+//
+// Phase 1 seed: a single-entry ring + one IORING_OP_NOP submit/reap round-trip,
+// the minimal proof of the setup -> mmap -> submit -> enter -> reap protocol.
+// Socket ops (multishot accept/recv) build on the same handle shape next.
+//
+// ABI offsets are the Linux io_uring UAPI (io_uring_params is 120 bytes;
+// sq_off @40, cq_off @80; sqe 64 bytes, cqe 16 bytes). All ring fields are u32,
+// accessed via the __mind_*_i32 4-byte intrinsics so a head/tail store never
+// clobbers an adjacent u32.
+
+// ── libc / syscall surface ──────────────────────────────────────────────────
+extern "C" {
+    unsafe fn syscall(num: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64) -> i64;
+    unsafe fn mmap(addr: i64, length: i64, prot: i32, flags: i32, fd: i32, offset: i64) -> i64;
+    unsafe fn munmap(addr: i64, length: i64) -> i32;
+    unsafe fn close(fd: i32) -> i32;
+}
+
+// io_uring syscall numbers (shared across x86_64/arm64).
+fn sys_io_uring_setup() -> i64 {
+    425
+}
+fn sys_io_uring_enter() -> i64 {
+    426
+}
+
+// mmap protection/flags are inlined at the call sites: PROT_READ|PROT_WRITE = 3;
+// MAP_SHARED|MAP_POPULATE = 1 | 0x8000 = 32769.
+// Ring mmap offset (the kernel's IORING_OFF_SQES magic file offset).
+fn off_sqes() -> i64 {
+    268435456
+}
+
+// IORING_ENTER_GETEVENTS = 1; IORING_OP_NOP = 0.
+
+// Submit a single NOP on a fresh 1-entry ring and reap its completion. Returns
+// the completed event's `user_data` on success (caller asserts == the value it
+// passed), or a negative code on failure (setup/mmap/enter errno or a sentinel).
+//
+// Single-threaded: the submit happens entirely before io_uring_enter, and the
+// reap entirely after it returns, so no SQ/CQ memory barriers are required for
+// this NOP round-trip (the socket/SQPOLL path will add them).
+pub fn io_uring_nop(user_data: i64) -> i64 {
+    // Zeroed io_uring_params (120 bytes); the kernel fills sq/cq offsets.
+    let p: i64 = __mind_alloc(120);
+    if p == 0 {
+        return 0 - 1;
+    }
+    let mut z: i64 = 0;
+    while z < 120 {
+        __mind_store_i8(p + z, 0);
+        z = z + 1;
+    }
+
+    let fd: i64 = syscall(sys_io_uring_setup(), 1, p, 0, 0, 0, 0);
+    if fd < 0 {
+        let _ = __mind_free(p);
+        return fd;
+    }
+
+    // io_uring_params field reads.
+    let sq_entries: i64 = __mind_load_i32(p + 0);
+    let sq_off_tail: i64 = __mind_load_i32(p + 44);
+    let sq_off_mask: i64 = __mind_load_i32(p + 48);
+    let sq_off_array: i64 = __mind_load_i32(p + 64);
+    let cq_off_head: i64 = __mind_load_i32(p + 80);
+    let cq_off_tail: i64 = __mind_load_i32(p + 84);
+    let cq_off_mask: i64 = __mind_load_i32(p + 88);
+    let cq_off_cqes: i64 = __mind_load_i32(p + 100);
+
+    // Single mmap covers SQ+CQ rings (IORING_FEAT_SINGLE_MMAP on modern kernels).
+    let sq_ring_sz: i64 = sq_off_array + sq_entries * 4;
+    let sring: i64 = mmap(0, sq_ring_sz, 3, 32769, fd as i32, 0);
+    if sring < 0 {
+        let _ = close(fd as i32);
+        let _ = __mind_free(p);
+        return 0 - 2;
+    }
+    let sqes_sz: i64 = sq_entries * 64;
+    let sqes: i64 = mmap(0, sqes_sz, 3, 32769, fd as i32, off_sqes());
+    if sqes < 0 {
+        let _ = munmap(sring, sq_ring_sz);
+        let _ = close(fd as i32);
+        let _ = __mind_free(p);
+        return 0 - 3;
+    }
+    let cring: i64 = sring;
+
+    // Build the NOP SQE at slot (tail mod entries). entries is a power of two,
+    // so `tail mod entries` is `tail - (tail / entries) * entries`.
+    let sq_tail_addr: i64 = sring + sq_off_tail;
+    let sq_mask: i64 = __mind_load_i32(sring + sq_off_mask);
+    let entries: i64 = sq_mask + 1;
+    let tail: i64 = __mind_load_i32(sq_tail_addr);
+    let index: i64 = tail - (tail / entries) * entries;
+    let sqe: i64 = sqes + index * 64;
+    let mut k: i64 = 0;
+    while k < 64 {
+        __mind_store_i8(sqe + k, 0);
+        k = k + 1;
+    }
+    // opcode (u8 @0) = IORING_OP_NOP = 0 (already zeroed); user_data (u64 @32).
+    __mind_store_i64(sqe + 32, user_data);
+    // SQ array[index] = index; publish the new tail.
+    __mind_store_i32(sring + sq_off_array + index * 4, index);
+    __mind_store_i32(sq_tail_addr, tail + 1);
+
+    // Submit 1, wait for 1 completion (IORING_ENTER_GETEVENTS = 1).
+    let er: i64 = syscall(sys_io_uring_enter(), fd, 1, 1, 1, 0, 0);
+    if er < 0 {
+        let _ = munmap(sqes, sqes_sz);
+        let _ = munmap(sring, sq_ring_sz);
+        let _ = close(fd as i32);
+        let _ = __mind_free(p);
+        return er;
+    }
+
+    // Reap the completion.
+    let cq_head_addr: i64 = cring + cq_off_head;
+    let cq_tail_addr: i64 = cring + cq_off_tail;
+    let chead: i64 = __mind_load_i32(cq_head_addr);
+    let ctail: i64 = __mind_load_i32(cq_tail_addr);
+    let mut got: i64 = 0 - 4;
+    if chead != ctail {
+        let cq_mask: i64 = __mind_load_i32(cring + cq_off_mask);
+        let centries: i64 = cq_mask + 1;
+        let cidx: i64 = chead - (chead / centries) * centries;
+        let cqe: i64 = cring + cq_off_cqes + cidx * 16;
+        got = __mind_load_i64(cqe + 0);
+        __mind_store_i32(cq_head_addr, chead + 1)
+    }
+
+    let _ = munmap(sqes, sqes_sz);
+    let _ = munmap(sring, sq_ring_sz);
+    let _ = close(fd as i32);
+    let _ = __mind_free(p);
+    got
+}
