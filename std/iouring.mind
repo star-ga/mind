@@ -8,6 +8,11 @@
 // plus two end-to-end proofs — a NOP round-trip and a socketpair SEND/RECV echo
 // that exercises real socket I/O and the multi-completion reap loop.
 //
+// Phase 2: registered (fixed) buffers — io_ring_register_buffers pins a set of
+// buffers once; READ_FIXED/WRITE_FIXED then reference one by index, skipping
+// per-op page-pinning. The data path is byte-identical to plain READ/WRITE, so
+// the deterministic anchor is unaffected — this is a pure setup-cost win.
+//
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
 // bytes (user_data u64@0, res i32@8). All ring fields are u32, accessed via the
@@ -53,6 +58,14 @@ pub fn iouring_op_accept() -> i64 {
 }
 pub fn iouring_op_connect() -> i64 {
     16
+}
+// Fixed-buffer (registered) read/write: same data path, but the kernel skips
+// per-op page-pinning because the buffer was registered once up front.
+pub fn iouring_op_read_fixed() -> i64 {
+    4
+}
+pub fn iouring_op_write_fixed() -> i64 {
+    5
 }
 
 // Ring handle (96 bytes): the post-setup state the submit/reap paths need.
@@ -291,6 +304,123 @@ pub fn io_uring_socketpair_echo(msg: i64, len: i64) -> i64 {
         let _ = __mind_free(res);
     }
     let _ = __mind_free(rbuf);
+    let _ = io_ring_free(h);
+    let _ = close(fd0 as i32);
+    let _ = close(fd1 as i32);
+    let _ = __mind_free(sv);
+    result
+}
+
+// ── Phase 2: registered (fixed) buffers ─────────────────────────────────────
+// Register `nr` fixed buffers (an array of `nr` struct iovec {ptr@0; len@8},
+// 16 bytes each) with the ring via io_uring_register(IORING_REGISTER_BUFFERS=0).
+// Once registered, READ_FIXED/WRITE_FIXED reference a buffer by index and the
+// kernel skips per-op get_user_pages — the buffer's pages are pinned once. The
+// data path is byte-identical to plain READ/WRITE, so the deterministic anchor
+// over canon_drain is unaffected; this is purely a setup-cost optimization.
+// Returns 0 on success or a negative errno (kernel without REGISTER_BUFFERS).
+pub fn io_ring_register_buffers(h: i64, iovecs: i64, nr: i64) -> i64 {
+    let fd: i64 = __mind_load_i64(h + 0);
+    syscall(427, fd, 0, iovecs, nr, 0, 0)
+}
+
+// Submit a fixed-buffer op at `slot`: like io_ring_submit_op but also sets the
+// SQE buf_index (u16 @40) selecting which registered buffer to use. Written as
+// two i8 stores so the adjacent personality field (u16 @42) is never touched.
+pub fn io_ring_submit_fixed(h: i64, slot: i64, opcode: i64, fd: i64, addr: i64, len: i64, buf_index: i64, user_data: i64) -> i64 {
+    let _ = io_ring_submit_op(h, slot, opcode, fd, addr, len, user_data);
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
+    let sqe: i64 = __mind_load_i64(h + 16) + pos * 64;
+    __mind_store_i8(sqe + 40, buf_index);
+    __mind_store_i8(sqe + 41, buf_index / 256);
+    0
+}
+
+// Phase-2 proof: round-trip `len` bytes through TWO registered buffers over a
+// socketpair. mmap one anonymous rgn split into a send half (buf_index 0)
+// and a recv half (buf_index 1); register both; WRITE_FIXED the send half on
+// fd0, READ_FIXED into the recv half on fd1; verify the bytes match. Returns 1
+// on a byte-identical round-trip, or a negative code (and SKIPS — negative —
+// where the kernel lacks REGISTER_BUFFERS / fixed ops). Proves the zero-copy
+// registered-buffer path preserves the exact bytes the evidence chain anchors.
+pub fn io_uring_fixed_buffer_echo(msg: i64, len: i64) -> i64 {
+    let sv: i64 = __mind_alloc(8);
+    if socketpair(1, 1, 0, sv) < 0 {
+        let _ = __mind_free(sv);
+        return 0 - 10;
+    }
+    let fd0: i64 = __mind_load_i32(sv + 0);
+    let fd1: i64 = __mind_load_i32(sv + 4);
+    let h: i64 = io_ring_new(4);
+    if h == 0 {
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return 0 - 11;
+    }
+    // One 8 KiB anonymous region: send half @ rgn, recv half @ rgn+4096.
+    // mmap(NULL, 8192, PROT_READ|WRITE=3, MAP_PRIVATE|MAP_ANONYMOUS=0x22, -1, 0).
+    let neg1: i64 = 0 - 1;
+    let rgn: i64 = mmap(0, 8192, 3, 34, neg1 as i32, 0);
+    if rgn < 0 {
+        let _ = io_ring_free(h);
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return 0 - 12;
+    }
+    let iovecs: i64 = __mind_alloc(32);
+    __mind_store_i64(iovecs + 0, rgn);
+    __mind_store_i64(iovecs + 8, 4096);
+    __mind_store_i64(iovecs + 16, rgn + 4096);
+    __mind_store_i64(iovecs + 24, 4096);
+    let reg: i64 = io_ring_register_buffers(h, iovecs, 2);
+    if reg < 0 {
+        let _ = munmap(rgn, 8192);
+        let _ = __mind_free(iovecs);
+        let _ = io_ring_free(h);
+        let _ = close(fd0 as i32);
+        let _ = close(fd1 as i32);
+        let _ = __mind_free(sv);
+        return reg;
+    }
+    // Stage the message into the send half.
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(rgn + i, __mind_load_i8(msg + i));
+        i = i + 1;
+    }
+    let _ = io_ring_submit_fixed(h, 0, iouring_op_write_fixed(), fd0, rgn, len, 0, 1);
+    let _ = io_ring_submit_fixed(h, 1, iouring_op_read_fixed(), fd1, rgn + 4096, len, 1, 2);
+    let _ = io_ring_publish(h, 2);
+    let er: i64 = io_ring_enter(h, 2, 2);
+    let mut result: i64 = 0 - 14;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(64);
+        let res: i64 = __mind_alloc(64);
+        let _ = io_ring_reap(h, ud, res, 8);
+        let mut ok: i64 = 1;
+        let mut j: i64 = 0;
+        while j < len {
+            if __mind_load_i8(rgn + 4096 + j) != __mind_load_i8(msg + j) {
+                ok = 0;
+            }
+            j = j + 1;
+        }
+        if ok == 1 {
+            result = 1;
+        } else {
+            result = 0 - 15;
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = munmap(rgn, 8192);
+    let _ = __mind_free(iovecs);
     let _ = io_ring_free(h);
     let _ = close(fd0 as i32);
     let _ = close(fd1 as i32);
