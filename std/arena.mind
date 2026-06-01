@@ -1,0 +1,140 @@
+// std.arena — bump-pointer region allocator.
+//
+// The runtime backing store for MIND's deterministic I/O path: a single
+// statically-sized block is reserved once, allocations bump a pointer within
+// it, and the whole region is freed in O(1) by resetting the offset (per
+// reactor tick) or releasing the block (at end of life). No per-object free,
+// no GC, no fragmentation — the allocation schedule within a region is a pure
+// function of the request sequence, so offsets are deterministic and identical
+// across runs and substrates.
+//
+// This is the substrate coroutine frames and per-connection buffers allocate
+// from: a connection's state machine and its registered I/O buffers live in one
+// arena, reset wholesale when the connection closes.
+//
+// Determinism contract: the OFFSETS this allocator hands out are deterministic.
+// The absolute ADDRESSES (backing block + returned pointers) come from
+// __mind_alloc and are NOT — exactly as for a bare __mind_alloc. Address values
+// must never enter a trace_hash or program output; only the deterministic
+// content stored through them may. The extent is fixed at arena_new time and
+// never grows implicitly: an allocation that would overflow returns 0, so a
+// region's memory footprint is a compile-time-knowable bound, not a
+// runtime-variable heap.
+//
+// Handle layout (32 bytes):
+//   [ base (i64) | cap (i64) | off (i64) | high_water (i64) ]
+
+// Round a byte count up to the next multiple of 8 so every returned pointer is
+// i64-aligned (all std record code stores i64s through these pointers). The
+// caller guarantees `n` is in `[1, cap] ⊆ [1, arena_max_cap()]`, so `n + 7`
+// never overflows i64.
+fn arena_align8(n: i64) -> i64 {
+    ((n + 7) / 8) * 8
+}
+
+// Upper bound on a region's reserved capacity (1 TiB). Far below i64::MAX, so
+// `off + asize` and `n + 7` can never wrap for any in-range allocation; this
+// makes the overflow safety total rather than relying on caller discipline.
+fn arena_max_cap() -> i64 {
+    1099511627776
+}
+
+// Reserve an arena with a fixed `cap`-byte backing block. Returns a handle, or
+// 0 if `cap` is not positive, exceeds the per-region bound, or the backing
+// allocation fails.
+pub fn arena_new(cap: i64) -> i64 {
+    if cap <= 0 {
+        return 0;
+    }
+    if cap > arena_max_cap() {
+        return 0;
+    }
+    let base: i64 = __mind_alloc(cap);
+    if base == 0 {
+        return 0;
+    }
+    let h: i64 = __mind_alloc(32);
+    if h == 0 {
+        let _ = __mind_free(base);
+        return 0;
+    }
+    __mind_store_i64(h + 0, base);
+    __mind_store_i64(h + 8, cap);
+    __mind_store_i64(h + 16, 0);
+    __mind_store_i64(h + 24, 0);
+    h
+}
+
+// Bump-allocate `size` bytes (rounded up to an i64-aligned stride) from `a`.
+// Returns the start address, or 0 if `size` is not positive or the region has
+// insufficient remaining capacity. Never grows the backing block.
+pub fn arena_alloc(a: i64, size: i64) -> i64 {
+    let cap: i64 = __mind_load_i64(a + 8);
+    // Reject non-positive sizes and any single request larger than the whole
+    // region (it can never fit a fixed extent). The `size <= cap` bound also
+    // keeps `arena_align8`'s `size + 7` well inside i64.
+    if size <= 0 {
+        return 0;
+    }
+    if size > cap {
+        return 0;
+    }
+    let asize: i64 = arena_align8(size);
+    let off: i64 = __mind_load_i64(a + 16);
+    // Overflow-safe bound: the invariant `off <= cap` holds, so `cap - off`
+    // is a non-negative remaining-byte count and cannot wrap. Testing
+    // `asize > cap - off` (subtract, never add) avoids the `off + asize`
+    // overflow that a naive sum would admit for adversarial sizes.
+    if asize > cap - off {
+        return 0;
+    }
+    let base: i64 = __mind_load_i64(a + 0);
+    let ptr: i64 = base + off;
+    let new_off: i64 = off + asize;
+    __mind_store_i64(a + 16, new_off);
+    let hw: i64 = __mind_load_i64(a + 24);
+    if new_off > hw {
+        __mind_store_i64(a + 24, new_off);
+    }
+    ptr
+}
+
+// Release every allocation in `a` in O(1) by rewinding the bump offset to 0.
+// The backing block is retained for reuse (the per-tick fast path). Bytes past
+// the new offset are left stale — callers must re-initialize what they reuse.
+// Returns 0 (side-effecting-helper idiom: discard with `let _ = ...`).
+pub fn arena_reset(a: i64) -> i64 {
+    __mind_store_i64(a + 16, 0);
+    0
+}
+
+// Bytes currently allocated from the region.
+pub fn arena_used(a: i64) -> i64 {
+    __mind_load_i64(a + 16)
+}
+
+// Total reserved capacity of the region.
+pub fn arena_cap(a: i64) -> i64 {
+    __mind_load_i64(a + 8)
+}
+
+// Bytes still available before the next allocation would fail.
+pub fn arena_remaining(a: i64) -> i64 {
+    __mind_load_i64(a + 8) - __mind_load_i64(a + 16)
+}
+
+// High-water mark: the largest `used` value ever reached, across resets. Lets a
+// reactor size regions from observed peak demand. Deterministic for a given
+// request sequence. Survives arena_reset (cleared only by arena_new).
+pub fn arena_high_water(a: i64) -> i64 {
+    __mind_load_i64(a + 24)
+}
+
+// Release the backing block and the handle. The handle is invalid afterward.
+// Returns 0.
+pub fn arena_free(a: i64) -> i64 {
+    let base: i64 = __mind_load_i64(a + 0);
+    let _ = __mind_free(base);
+    let _ = __mind_free(a);
+    0
+}

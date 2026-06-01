@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2675 | **Est. tokens:** ~6,704,164
-**Generated:** 2026-06-01 10:14 UTC
+**Files:** 2676 | **Est. tokens:** ~6,705,769
+**Generated:** 2026-06-01 10:29 UTC
 
 ## Token Budget Guide
 
@@ -395,8 +395,8 @@
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 19 | ~85,781 |
-| `tests/` | 160 | ~277,873 |
+| `std/` | 19 | ~86,038 |
+| `tests/` | 161 | ~279,221 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3753,7 +3753,7 @@
 - `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `arena.mind` (~1066 tok, large) — std.arena — bump-pointer region allocator.
+- `arena.mind` (~1323 tok, large) — std.arena — bump-pointer region allocator.
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
@@ -4046,6 +4046,7 @@
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2647 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4814 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_arena.rs` (~1348 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~1334 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_async.rs` (~4345 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bitwise_binops.rs` (~2414 tok, huge) — Copyright 2025 STARGA Inc.
