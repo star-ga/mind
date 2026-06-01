@@ -480,3 +480,90 @@ fn io_uring_echo_one(h: i64, cfd: i64, connfd: i64, msg: i64, len: i64, ud: i64,
     let _ = __mind_free(rbuf);
     result
 }
+
+// Submit a MULTISHOT accept at `slot`: one submission that yields a CQE per
+// incoming connection (each tagged with the same `user_data` and the
+// IORING_CQE_F_MORE flag until cancelled). IORING_ACCEPT_MULTISHOT=1 lives in
+// the SQE ioprio (u16 @2).
+pub fn io_ring_submit_accept_multishot(h: i64, slot: i64, fd: i64, user_data: i64) -> i64 {
+    let _ = io_ring_submit_op(h, slot, iouring_op_accept(), fd, 0, 0, user_data);
+    // Set ioprio@2 = IORING_ACCEPT_MULTISHOT on the SQE we just wrote. Recompute
+    // its ring position the same way io_ring_submit_raw did.
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
+    let sqe: i64 = __mind_load_i64(h + 16) + pos * 64;
+    __mind_store_i8(sqe + 2, 1);
+    0
+}
+
+// Demonstrate multishot accept: bind a listener, submit ONE multishot accept,
+// io_uring-CONNECT two clients, and confirm BOTH accepted connections arrive as
+// completions of the single multishot submission. Returns the number of accept
+// completions (2 on success), or a negative code.
+pub fn io_uring_multishot_accept_demo() -> i64 {
+    let lfd: i64 = socket(2, 1, 0);
+    if lfd < 0 {
+        return 0 - 1;
+    }
+    let addr: i64 = __mind_alloc(16);
+    let mut z: i64 = 0;
+    while z < 16 {
+        __mind_store_i8(addr + z, 0);
+        z = z + 1;
+    }
+    __mind_store_i8(addr + 0, 2);
+    __mind_store_i8(addr + 4, 127);
+    __mind_store_i8(addr + 7, 1);
+    if bind(lfd as i32, addr, 16) < 0 {
+        let _ = close(lfd as i32);
+        let _ = __mind_free(addr);
+        return 0 - 2;
+    }
+    if listen(lfd as i32, 8) < 0 {
+        let _ = close(lfd as i32);
+        let _ = __mind_free(addr);
+        return 0 - 3;
+    }
+    let alen: i64 = __mind_alloc(8);
+    __mind_store_i32(alen + 0, 16);
+    let _ = getsockname(lfd as i32, addr, alen);
+    let h: i64 = io_ring_new(8);
+    if h == 0 {
+        let _ = close(lfd as i32);
+        let _ = __mind_free(addr);
+        let _ = __mind_free(alen);
+        return 0 - 4;
+    }
+    let c0: i64 = socket(2, 1, 0);
+    let c1: i64 = socket(2, 1, 0);
+    let _ = io_ring_submit_accept_multishot(h, 0, lfd, 200);
+    let _ = io_ring_submit_raw(h, 1, iouring_op_connect(), c0, 16, addr, 0, 1);
+    let _ = io_ring_submit_raw(h, 2, iouring_op_connect(), c1, 16, addr, 0, 2);
+    let _ = io_ring_publish(h, 3);
+    let er: i64 = io_ring_enter(h, 3, 4);
+    let ud: i64 = __mind_alloc(256);
+    let res: i64 = __mind_alloc(256);
+    let mut accepts: i64 = 0;
+    if er >= 0 {
+        let count: i64 = io_ring_reap(h, ud, res, 16);
+        let mut i: i64 = 0;
+        while i < count {
+            if __mind_load_i64(ud + i * 8) == 200 {
+                accepts = accepts + 1;
+            }
+            i = i + 1;
+        }
+    }
+    let _ = io_ring_free(h);
+    let _ = __mind_free(ud);
+    let _ = __mind_free(res);
+    let _ = close(c0 as i32);
+    let _ = close(c1 as i32);
+    let _ = close(lfd as i32);
+    let _ = __mind_free(addr);
+    let _ = __mind_free(alen);
+    accepts
+}
