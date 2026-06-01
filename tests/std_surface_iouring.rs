@@ -28,13 +28,32 @@ use std::process::Command;
 const SRC: &str = include_str!("../std/iouring.mind");
 
 #[test]
-fn iouring_parses_and_lowers_with_nop_api() {
+fn iouring_parses_and_lowers_with_ring_api() {
     let module = parser::parse(SRC).expect("std/iouring.mind must parse cleanly");
     let ir = lower_to_ir(&module);
-    let has_nop = ir.instrs.iter().any(
-        |i| matches!(i, Instr::FnDef { name, .. } if name == "io_uring_nop"),
-    );
-    assert!(has_nop, "std.iouring must define `io_uring_nop`");
+    let names: Vec<&str> = ir
+        .instrs
+        .iter()
+        .filter_map(|i| match i {
+            Instr::FnDef { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for required in [
+        "io_ring_new",
+        "io_ring_submit_op",
+        "io_ring_publish",
+        "io_ring_enter",
+        "io_ring_reap",
+        "io_ring_free",
+        "io_uring_nop",
+        "io_uring_socketpair_echo",
+    ] {
+        assert!(
+            names.contains(&required),
+            "std.iouring must define `{required}`; found {names:?}"
+        );
+    }
 }
 
 #[test]
@@ -64,17 +83,27 @@ fn iouring_nop_roundtrips_user_data() {
         return;
     }
 
-    // user_data sentinel that round-trips through the completion ring.
+    // (1) NOP user_data round-trip; (2) socketpair SEND/RECV echo through the
+    // ring. Both SKIP (not fail) where the kernel io_uring is unavailable.
     let py = format!(
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
          lib.io_uring_nop.restype = ctypes.c_int64\n\
+         lib.io_uring_socketpair_echo.restype = ctypes.c_int64\n\
+         lib.io_uring_socketpair_echo.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          r = lib.io_uring_nop(0x4242)\n\
          if r < 0:\n\
          \x20   print('SKIP', r)  # io_uring unavailable in this environment\n\
          else:\n\
          \x20   assert r == 0x4242, f'NOP user_data corrupted: got {{hex(r)}}'\n\
-         \x20   print('OK', hex(r))\n",
+         \x20   msg = b'MIND-io_uring-echo'\n\
+         \x20   buf = ctypes.create_string_buffer(msg)\n\
+         \x20   e = lib.io_uring_socketpair_echo(ctypes.cast(buf, ctypes.c_void_p).value, len(msg))\n\
+         \x20   assert e == 1 or e < 0, f'echo returned unexpected {{e}}'\n\
+         \x20   if e == 1:\n\
+         \x20       print('OK', hex(r), 'echo')\n\
+         \x20   else:\n\
+         \x20       print('OK', hex(r), 'echo-skip', e)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
