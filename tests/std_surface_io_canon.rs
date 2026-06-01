@@ -50,6 +50,7 @@ fn io_canon_parses_and_lowers_with_api() {
         "canon_op",
         "canon_result",
         "canon_clear",
+        "canon_drain",
     ] {
         assert!(
             names.iter().any(|n| n == required),
@@ -108,6 +109,7 @@ mod mlir_functional {
             type Sort = unsafe extern "C" fn(i64) -> i64;
             type Len = unsafe extern "C" fn(i64) -> i64;
             type Get = unsafe extern "C" fn(i64, i64) -> i64;
+            type Drain = unsafe extern "C" fn(i64, i64, i64) -> i64;
 
             let canon_new = lib.get::<New>(b"canon_new\0").unwrap();
             let canon_push = lib.get::<Push>(b"canon_push\0").unwrap();
@@ -115,6 +117,7 @@ mod mlir_functional {
             let canon_len = lib.get::<Len>(b"canon_len\0").unwrap();
             let canon_conn = lib.get::<Get>(b"canon_conn\0").unwrap();
             let canon_req = lib.get::<Get>(b"canon_req\0").unwrap();
+            let canon_drain = lib.get::<Drain>(b"canon_drain\0").unwrap();
 
             // (conn_id, req_id, op, result)
             let order_a: [(i64, i64, i64, i64); 5] = [
@@ -158,6 +161,55 @@ mod mlir_functional {
                 da, db,
                 "canonical drain order must be identical regardless of physical push order"
             );
+
+            // canon_drain: the serialized 32-byte canonical records must be
+            // byte-identical regardless of physical push order — this drained
+            // sequence is the deterministic I/O input the evidence chain
+            // anchors (a SHA-256 over it, at the reactor boundary, is stable
+            // across runs and substrates because physical arrival order never
+            // enters it).
+            let drain_bytes = |events: &[(i64, i64, i64, i64)]| -> Vec<u8> {
+                let h = canon_new(16);
+                assert!(h != 0, "canon_new failed");
+                for &(c, r, o, res) in events {
+                    assert_eq!(canon_push(h, c, r, o, res), 1, "canon_push failed");
+                }
+                let mut buf = vec![0u8; events.len() * 32];
+                let n = canon_drain(h, buf.as_mut_ptr() as i64, buf.len() as i64);
+                assert_eq!(n, (events.len() * 32) as i64, "canon_drain byte count");
+                buf
+            };
+            let ba = drain_bytes(&order_a);
+            let bb = drain_bytes(&order_b);
+            assert_eq!(
+                ba, bb,
+                "canon_drain bytes must be identical regardless of physical push \
+                 order (the deterministic completion sequence the evidence anchor hashes)"
+            );
+            // First drained record must be the canonical minimum (conn=1, req=1).
+            assert_eq!(
+                i64::from_le_bytes(ba[0..8].try_into().unwrap()),
+                1,
+                "first drained conn_id must be 1 (canonical order)"
+            );
+            assert_eq!(
+                i64::from_le_bytes(ba[8..16].try_into().unwrap()),
+                1,
+                "first drained req_id must be 1 (canonical order)"
+            );
+            // An undersized destination must be rejected with -1, no partial write.
+            {
+                let h = canon_new(16);
+                for &(c, r, o, res) in &order_a {
+                    canon_push(h, c, r, o, res);
+                }
+                let mut small = vec![0u8; 16];
+                assert_eq!(
+                    canon_drain(h, small.as_mut_ptr() as i64, small.len() as i64),
+                    -1,
+                    "canon_drain must reject an undersized buffer"
+                );
+            }
         }
     }
 }
