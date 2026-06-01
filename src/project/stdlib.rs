@@ -40,16 +40,20 @@ use crate::ast::Module;
 /// table's deterministic-insertion contract is preserved when the
 /// project loader prepends these to the user's own modules.
 pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
+    ("std.arena", include_str!("../../std/arena.mind")),
     ("std.async", include_str!("../../std/async.mind")),
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
     ("std.io", include_str!("../../std/io.mind")),
+    ("std.io_canon", include_str!("../../std/io_canon.mind")),
     ("std.json", include_str!("../../std/json.mind")),
     ("std.map", include_str!("../../std/map.mind")),
     ("std.net", include_str!("../../std/net.mind")),
     ("std.process", include_str!("../../std/process.mind")),
+    ("std.reactor", include_str!("../../std/reactor.mind")),
     ("std.regex", include_str!("../../std/regex.mind")),
+    ("std.ring", include_str!("../../std/ring.mind")),
     ("std.sha256", include_str!("../../std/sha256.mind")),
     ("std.string", include_str!("../../std/string.mind")),
     ("std.toml", include_str!("../../std/toml.mind")),

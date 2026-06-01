@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2679 | **Est. tokens:** ~6,713,763
-**Generated:** 2026-06-01 15:09 UTC
+**Files:** 2681 | **Est. tokens:** ~6,716,574
+**Generated:** 2026-06-01 15:28 UTC
 
 ## Token Budget Guide
 
@@ -388,15 +388,15 @@
 | `src/opt/` | 4 | ~8,207 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~23,015 |
+| `src/project/` | 3 | ~23,074 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 20 | ~87,843 |
-| `tests/` | 162 | ~281,161 |
+| `std/` | 21 | ~89,263 |
+| `tests/` | 163 | ~282,493 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3718,7 +3718,7 @@
 
 - `mod.rs` (~15906 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3443 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3502 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
@@ -3767,6 +3767,7 @@
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
+- `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
 - `regex.mind` (~9377 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
 - `sha256.mind` (~3419 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
@@ -4070,6 +4071,7 @@
 - `std_surface_net_fs_process.rs` (~7345 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_reactor.rs` (~1332 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4841 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_ring.rs` (~1316 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
