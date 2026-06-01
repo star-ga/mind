@@ -504,10 +504,8 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
             st.intern(name);
         }
         #[cfg(feature = "std-surface")]
-        Instr::ConstArray { name, .. } => {
-            if let Some(n) = name {
-                st.intern(n);
-            }
+        Instr::ConstArray { name: Some(n), .. } => {
+            st.intern(n);
         }
         #[cfg(feature = "std-surface")]
         Instr::While {

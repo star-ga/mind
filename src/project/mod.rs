@@ -868,7 +868,7 @@ fn compile_sources(
     #[cfg(feature = "cross-module-imports")]
     {
         let src_root = project_root.join(&manifest.build.entry);
-        let src_root = src_root.parent().unwrap_or(&project_root);
+        let src_root = src_root.parent().unwrap_or(project_root);
         // RFC 0005 Phase C — seed the parsed-modules list with the
         // bundled stdlib (`std.vec` / `std.string` / `std.map` /
         // `std.io`) before walking the project's own src tree. This
