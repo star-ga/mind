@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2682 | **Est. tokens:** ~6,719,056
-**Generated:** 2026-06-01 16:27 UTC
+**Files:** 2682 | **Est. tokens:** ~6,719,468
+**Generated:** 2026-06-01 16:32 UTC
 
 ## Token Budget Guide
 
@@ -388,7 +388,7 @@
 | `src/opt/` | 4 | ~8,207 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~24,049 |
+| `src/project/` | 3 | ~24,053 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 21 | ~89,263 |
-| `tests/` | 164 | ~283,751 |
+| `tests/` | 164 | ~284,159 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3716,7 +3716,7 @@
 - `pipeline.rs` (~3862 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~16881 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~16885 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3502 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3823,7 +3823,7 @@
 - `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
-- `cross_module_cdylib_compose.rs` (~1258 tok, large) — Copyright 2025 STARGA Inc.
+- `cross_module_cdylib_compose.rs` (~1666 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/dot-l1-q16/`
 
