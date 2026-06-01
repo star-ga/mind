@@ -32,6 +32,7 @@ const MAIN_MIND: &str = r#"
 import std.io_canon;
 import std.reactor;
 import std.ring;
+import std.sha256;
 
 // Compose all three substrate modules: assign a deterministic key via the
 // reactor, stage in a ring, order completions canonically, drain to bytes.
@@ -43,6 +44,30 @@ pub fn compose_tick(out_addr: i64, cap: i64) -> i64 {
     let _ = canon_push(h, 2, 1, 9, 100)
     let _ = canon_push(h, 1, 1, 9, 200)
     canon_drain(h, out_addr, cap)
+}
+
+// L4 evidence anchor: SHA-256 over the canonically-ordered completion
+// sequence. `anchor_a` and `anchor_b` push the SAME completion multiset in
+// DIFFERENT physical orders; their anchors must be byte-identical (physical
+// arrival order never enters the deterministic I/O input).
+pub fn anchor_a(out_addr: i64) -> i64 {
+    let h: i64 = canon_new(8)
+    let _ = canon_push(h, 3, 1, 9, 30)
+    let _ = canon_push(h, 1, 1, 9, 10)
+    let _ = canon_push(h, 2, 1, 9, 20)
+    let buf: i64 = __mind_alloc(96)
+    let n: i64 = canon_drain(h, buf, 96)
+    sha256(buf, n, out_addr)
+}
+
+pub fn anchor_b(out_addr: i64) -> i64 {
+    let h: i64 = canon_new(8)
+    let _ = canon_push(h, 1, 1, 9, 10)
+    let _ = canon_push(h, 2, 1, 9, 20)
+    let _ = canon_push(h, 3, 1, 9, 30)
+    let buf: i64 = __mind_alloc(96)
+    let n: i64 = canon_drain(h, buf, 96)
+    sha256(buf, n, out_addr)
 }
 "#;
 
@@ -104,7 +129,14 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
         .output()
         .expect("nm on PATH");
     let text = String::from_utf8_lossy(&nm.stdout);
-    for sym in ["canon_new", "canon_drain", "canon_push", "reactor_new", "ring_new"] {
+    for sym in [
+        "canon_new",
+        "canon_drain",
+        "canon_push",
+        "reactor_new",
+        "ring_new",
+        "sha256",
+    ] {
         let defined = text
             .lines()
             .any(|l| l.split_whitespace().last() == Some(sym) && l.contains(" T "));
@@ -127,7 +159,17 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
          n = lib.compose_tick(ctypes.cast(buf, ctypes.c_void_p), 64)\n\
          assert n == 64, f'expected 64 drained bytes, got {{n}}'\n\
          assert buf[0] == 1 and buf[1] == 1, f'canonical order wrong: {{buf[0]}},{{buf[1]}}'\n\
-         print('ok', n)\n"
+         # L4 evidence anchor must be deterministic: same completion multiset,\n\
+         # different physical push order -> byte-identical SHA-256.\n\
+         lib.anchor_a.restype = ctypes.c_int64\n\
+         lib.anchor_b.restype = ctypes.c_int64\n\
+         da = (ctypes.c_uint8 * 32)()\n\
+         db = (ctypes.c_uint8 * 32)()\n\
+         lib.anchor_a(ctypes.cast(da, ctypes.c_void_p))\n\
+         lib.anchor_b(ctypes.cast(db, ctypes.c_void_p))\n\
+         assert bytes(da) == bytes(db), 'evidence anchor not deterministic across physical order'\n\
+         assert bytes(da) != bytes(32), 'evidence anchor is all-zero (sha256 did not run)'\n\
+         print('ok', n, bytes(da).hex()[:16])\n"
     );
     let out = Command::new("python3")
         .args(["-c", &py])
