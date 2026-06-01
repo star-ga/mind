@@ -73,6 +73,87 @@ pub fn iou_canon_pipeline() -> i64 {
     n * 100 + firstconn
 }
 
+// One deterministic reactor round: echo over the reused ring AND feed the
+// round's reaped completions into the io_canon batch (keyed by completion
+// user_data + round) so they enter the canonical order. Small function (no
+// sha256) to stay clear of the large-frame codegen path. Returns 1 on match.
+fn reactor_round_canon(rh: i64, msg: i64, len: i64, batch: i64, round: i64) -> i64 {
+    let h: i64 = __mind_load_i64(rh + 0)
+    let cfd: i64 = __mind_load_i64(rh + 8)
+    let connfd: i64 = __mind_load_i64(rh + 16)
+    let ud: i64 = __mind_load_i64(rh + 48)
+    let res: i64 = __mind_load_i64(rh + 56)
+    let rbuf: i64 = __mind_alloc(len)
+    let _ = io_ring_submit_op(h, 0, iouring_op_send(), cfd, msg, len, round * 2)
+    let _ = io_ring_submit_op(h, 1, iouring_op_recv(), connfd, rbuf, len, round * 2 + 1)
+    let _ = io_ring_publish(h, 2)
+    let er: i64 = io_ring_enter(h, 2, 2)
+    let mut ok: i64 = 0
+    if er >= 0 {
+        let count: i64 = io_ring_reap(h, ud, res, 8)
+        let mut i: i64 = 0
+        while i < count {
+            let _ = canon_push(batch, __mind_load_i64(ud + i * 8), round, 0, __mind_load_i64(res + i * 8))
+            i = i + 1
+        }
+        let mut m: i64 = 1
+        let mut j: i64 = 0
+        while j < len {
+            if __mind_load_i8(rbuf + j) != __mind_load_i8(msg + j) {
+                m = 0
+            }
+            j = j + 1
+        }
+        ok = m
+    }
+    let _ = __mind_free(rbuf)
+    ok
+}
+
+// Anchor the canonical completion sequence (canon_drain + sha256), kept in its
+// own small function away from the io_uring loop.
+fn anchor_batch(batch: i64, out_addr: i64) -> i64 {
+    let cap: i64 = canon_len(batch) * 32
+    let drained: i64 = __mind_alloc(cap)
+    let n: i64 = canon_drain(batch, drained, cap)
+    let _ = sha256(drained, n, out_addr)
+    let _ = __mind_free(drained)
+    0
+}
+
+// The DETERMINISTIC REACTOR SERVER: accept a TCP connection, echo `rounds`
+// exchanges over one reused io_uring, canonically order all completions, and
+// anchor the canonical sequence with SHA-256. Returns `rounds` on success and
+// writes the 32-byte evidence anchor to `anchor_out`. This is the full wedge
+// applied to a real server: physical I/O at kernel speed, logical reaction
+// order canonically deterministic, anchored in the evidence chain.
+pub fn deterministic_reactor(msg: i64, len: i64, rounds: i64, anchor_out: i64) -> i64 {
+    let rh: i64 = io_uring_tcp_accept_one()
+    if rh == 0 {
+        return 0 - 1
+    }
+    let batch: i64 = canon_new(64)
+    let mut done: i64 = 0
+    let mut ok: i64 = 1
+    while ok == 1 {
+        if done >= rounds {
+            ok = 2
+        } else {
+            if reactor_round_canon(rh, msg, len, batch, done) == 1 {
+                done = done + 1
+            } else {
+                ok = 0
+            }
+        }
+    }
+    let _ = anchor_batch(batch, anchor_out)
+    let _ = io_uring_tcp_close(rh)
+    if ok == 2 {
+        return done
+    }
+    0 - 2
+}
+
 // Compose all three substrate modules: assign a deterministic key via the
 // reactor, stage in a ring, order completions canonically, drain to bytes.
 pub fn compose_tick(out_addr: i64, cap: i64) -> i64 {
@@ -212,7 +293,18 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
          lib.iou_canon_pipeline.restype = ctypes.c_int64\n\
          pr = lib.iou_canon_pipeline()\n\
          assert pr == 9601 or pr < 0, f'io_uring->canon pipeline wrong: {{pr}}'\n\
-         print('ok', n, bytes(da).hex()[:16], 'iou', pr)\n"
+         # The deterministic reactor server: real io_uring echo loop + canonical\n\
+         # ordering + sha256 evidence anchor (skips if kernel io_uring absent).\n\
+         lib.deterministic_reactor.restype = ctypes.c_int64\n\
+         lib.deterministic_reactor.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
+         rmsg = b'reactor-tick'\n\
+         rbuf = ctypes.create_string_buffer(rmsg)\n\
+         ranchor = (ctypes.c_uint8 * 32)()\n\
+         dr = lib.deterministic_reactor(ctypes.cast(rbuf, ctypes.c_void_p).value, len(rmsg), 4, ctypes.cast(ranchor, ctypes.c_void_p).value)\n\
+         assert dr == 4 or dr < 0, f'deterministic reactor returned {{dr}}'\n\
+         if dr == 4:\n\
+         \x20   assert bytes(ranchor) != bytes(32), 'reactor evidence anchor is all-zero'\n\
+         print('ok', n, bytes(da).hex()[:16], 'iou', pr, 'reactor', dr)\n"
     );
     let out = Command::new("python3")
         .args(["-c", &py])

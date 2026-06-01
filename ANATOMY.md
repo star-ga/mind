@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2685 | **Est. tokens:** ~6,726,727
-**Generated:** 2026-06-01 17:37 UTC
+**Files:** 2685 | **Est. tokens:** ~6,727,675
+**Generated:** 2026-06-01 17:42 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~93,676 |
-| `tests/` | 166 | ~286,798 |
+| `tests/` | 166 | ~287,746 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3824,7 +3824,7 @@
 - `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
-- `cross_module_cdylib_compose.rs` (~2104 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_module_cdylib_compose.rs` (~3052 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/dot-l1-q16/`
 
