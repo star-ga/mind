@@ -814,7 +814,7 @@ fn build_cdylib_from_entry(
     // historical single-entry path (the keystone never imports these).
     let extra_objects: Vec<PathBuf> = {
         use std::collections::BTreeSet;
-        const SUBSTRATE: &[&str] = &["std.arena", "std.io_canon", "std.reactor", "std.ring"];
+        const SUBSTRATE: &[&str] = &["std.arena", "std.io_canon", "std.reactor", "std.ring", "std.sha256"];
         let mut imported: BTreeSet<&'static str> = BTreeSet::new();
         if let Ok(entry_ast) = crate::parser::parse(&source_code) {
             for item in &entry_ast.items {
