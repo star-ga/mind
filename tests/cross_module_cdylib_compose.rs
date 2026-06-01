@@ -239,7 +239,10 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
         return;
     }
 
-    let so = proj.join("target").join("release").join("libcompose_probe.so");
+    let so = proj
+        .join("target")
+        .join("release")
+        .join("libcompose_probe.so");
     assert!(so.exists(), "consumer cdylib not produced at {so:?}");
 
     // 1. The substrate symbols must be DEFINED (T), not undefined (U).

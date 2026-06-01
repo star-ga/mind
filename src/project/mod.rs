@@ -813,77 +813,99 @@ fn build_cdylib_from_entry(
     // object is complete. An empty set leaves the link byte-identical to the
     // historical single-entry path (the keystone never imports these).
     let extra_objects: Vec<PathBuf> = {
-        use std::collections::BTreeSet;
-        const SUBSTRATE: &[&str] = &["std.arena", "std.io_canon", "std.iouring", "std.reactor", "std.ring", "std.sha256"];
-        let mut imported: BTreeSet<&'static str> = BTreeSet::new();
-        if let Ok(entry_ast) = crate::parser::parse(&source_code) {
-            for item in &entry_ast.items {
-                if let crate::ast::Node::Import { path, .. } = item {
-                    let key = path.join(".");
-                    for &name in SUBSTRATE {
-                        if key == name {
-                            imported.insert(name);
+        // The substrate-object link path below reads the embedded stdlib
+        // sources, which exist only under `cross-module-imports`. Without that
+        // feature (e.g. the keystone's `mlir-build`-only build) nothing can
+        // import a substrate module, so the object set is empty and the link
+        // stays byte-identical to the historical single-entry path.
+        #[cfg(feature = "cross-module-imports")]
+        {
+            use std::collections::BTreeSet;
+            const SUBSTRATE: &[&str] = &[
+                "std.arena",
+                "std.io_canon",
+                "std.iouring",
+                "std.reactor",
+                "std.ring",
+                "std.sha256",
+            ];
+            let mut imported: BTreeSet<&'static str> = BTreeSet::new();
+            if let Ok(entry_ast) = crate::parser::parse(&source_code) {
+                for item in &entry_ast.items {
+                    if let crate::ast::Node::Import { path, .. } = item {
+                        let key = path.join(".");
+                        for &name in SUBSTRATE {
+                            if key == name {
+                                imported.insert(name);
+                            }
                         }
                     }
                 }
             }
-        }
-        let sub_opts = CompileOptions {
-            func: None,
-            enable_autodiff: false,
-            target,
-            manifest_exports: Vec::new(),
-            ..Default::default()
-        };
-        let obj_dir = output
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let mut objs: Vec<PathBuf> = Vec::new();
-        for modname in imported {
-            if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
-                .iter()
-                .find(|(n, _)| *n == modname)
-            {
-                let prod = compile_source_with_name(src, Some(modname), &sub_opts)
-                    .map_err(|e| anyhow!("substrate compile failed for {modname}: {e}"))?;
-                #[cfg(feature = "autodiff")]
-                let sub_mlir = lower_to_mlir(&prod.ir, prod.grad.as_ref())
-                    .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
-                #[cfg(not(feature = "autodiff"))]
-                let sub_mlir = lower_to_mlir(&prod.ir)
-                    .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
-                let short = modname.rsplit('.').next().unwrap_or(modname);
-                let obj_path = obj_dir.join(format!("__std_{short}.o"));
-                let sub_bo = mlir_build::BuildOptions {
-                    preset: "core",
-                    emit_mlir_file: None,
-                    emit_llvm_file: None,
-                    emit_obj_file: Some(&obj_path),
-                    emit_shared: None,
-                    opt_pipeline: None,
-                    target_triple: None,
-                };
-                mlir_build::build_all(&sub_mlir.primal_mlir, &tools, &sub_bo)
-                    .map_err(|e| anyhow!("substrate object build for {modname}: {e}"))?;
-                // The MLIR emit gives every module object a synthetic `main`;
-                // localize it in substrate objects so it does not collide with
-                // the consumer entry's `main` at link time (the substrate
-                // module's public `canon_*`/`ring_*`/… symbols stay global).
-                let st = std::process::Command::new("objcopy")
-                    .arg("--localize-symbol=main")
-                    .arg(&obj_path)
-                    .status()
-                    .map_err(|e| anyhow!("objcopy spawn failed for {modname}: {e}"))?;
-                if !st.success() {
-                    return Err(anyhow!(
-                        "objcopy --localize-symbol=main failed for {modname}"
-                    ));
+            let sub_opts = CompileOptions {
+                func: None,
+                enable_autodiff: false,
+                target,
+                manifest_exports: Vec::new(),
+                ..Default::default()
+            };
+            let obj_dir = output
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from("."));
+            let mut objs: Vec<PathBuf> = Vec::new();
+            for modname in imported {
+                if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
+                    .iter()
+                    .find(|(n, _)| *n == modname)
+                {
+                    let prod = compile_source_with_name(src, Some(modname), &sub_opts)
+                        .map_err(|e| anyhow!("substrate compile failed for {modname}: {e}"))?;
+                    #[cfg(feature = "autodiff")]
+                    let sub_mlir = lower_to_mlir(&prod.ir, prod.grad.as_ref())
+                        .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
+                    #[cfg(not(feature = "autodiff"))]
+                    let sub_mlir = lower_to_mlir(&prod.ir)
+                        .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
+                    let short = modname.rsplit('.').next().unwrap_or(modname);
+                    let obj_path = obj_dir.join(format!("__std_{short}.o"));
+                    let sub_bo = mlir_build::BuildOptions {
+                        preset: "core",
+                        emit_mlir_file: None,
+                        emit_llvm_file: None,
+                        emit_obj_file: Some(&obj_path),
+                        emit_shared: None,
+                        opt_pipeline: None,
+                        target_triple: None,
+                    };
+                    mlir_build::build_all(&sub_mlir.primal_mlir, &tools, &sub_bo)
+                        .map_err(|e| anyhow!("substrate object build for {modname}: {e}"))?;
+                    // The MLIR emit gives every module object a synthetic `main`;
+                    // localize it in substrate objects so it does not collide with
+                    // the consumer entry's `main` at link time (the substrate
+                    // module's public `canon_*`/`ring_*`/… symbols stay global).
+                    let st = std::process::Command::new("objcopy")
+                        .arg("--localize-symbol=main")
+                        .arg(&obj_path)
+                        .status()
+                        .map_err(|e| anyhow!("objcopy spawn failed for {modname}: {e}"))?;
+                    if !st.success() {
+                        return Err(anyhow!(
+                            "objcopy --localize-symbol=main failed for {modname}"
+                        ));
+                    }
+                    objs.push(obj_path);
                 }
-                objs.push(obj_path);
             }
+            objs
         }
-        objs
+        #[cfg(not(feature = "cross-module-imports"))]
+        {
+            // No substrate imports are possible without the embedded stdlib,
+            // so there is nothing extra to link — keystone-safe (byte-identical).
+            let _ = &source_code;
+            Vec::<PathBuf>::new()
+        }
     };
 
     mlir_build::build_all_with_objects(&mlir.primal_mlir, &tools, &build_opts, &extra_objects)

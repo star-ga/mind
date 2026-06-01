@@ -125,12 +125,20 @@ mod mlir_functional {
             // Accept is idempotent: re-accepting preserves the counter.
             assert_eq!(reactor_accept(r, 100), 1);
             assert_eq!(reactor_conn_count(r), 2, "idempotent accept must not grow");
-            assert_eq!(reactor_next_req(r, 100), 3, "counter preserved across re-accept");
+            assert_eq!(
+                reactor_next_req(r, 100),
+                3,
+                "counter preserved across re-accept"
+            );
 
             // Close removes a connection; its key space is gone.
             assert_eq!(reactor_close(r, 100), 1);
             assert_eq!(reactor_conn_count(r), 1);
-            assert_eq!(reactor_next_req(r, 100), -1, "closed connection is untracked");
+            assert_eq!(
+                reactor_next_req(r, 100),
+                -1,
+                "closed connection is untracked"
+            );
             // The surviving connection keeps its counter.
             assert_eq!(reactor_next_req(r, 200), 2);
 
