@@ -55,6 +55,10 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_ring_register_pbuf_ring",
         "io_ring_submit_recv_provided",
         "io_uring_provided_buffer_recv",
+        "io_uring_socket",
+        "io_uring_shutdown",
+        "io_uring_close",
+        "io_uring_socket_lifecycle_demo",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -129,6 +133,9 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_provided_buffer_recv.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          \x20   pv = lib.io_uring_provided_buffer_recv(ctypes.cast(pbuf, ctypes.c_void_p).value, 29)\n\
          \x20   assert pv == 1 or pv < 0, f'provided-buffer recv returned unexpected {{pv}}'\n\
+         \x20   lib.io_uring_socket_lifecycle_demo.restype = ctypes.c_int64\n\
+         \x20   lc = lib.io_uring_socket_lifecycle_demo()\n\
+         \x20   assert lc == 1 or lc < 0, f'socket lifecycle returned unexpected {{lc}}'\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -142,7 +149,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
