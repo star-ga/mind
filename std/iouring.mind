@@ -38,6 +38,12 @@
 // crypto into the kernel; send/recv move plaintext while the wire is encrypted
 // (NIC-offloadable). Plaintext in == out, so the anchor is unchanged.
 //
+// Phase 7: dma-buf device-memory I/O — io_uring lands bytes directly in a
+// dma-buf (the device-memory handle GPU Device-Memory-TCP / GPUDirect Storage
+// use), verified with the `udmabuf` software provider the kernel's own
+// devmem-TCP selftest uses. Same machinery, hardware buffer later; bytes
+// byte-identical, anchor unchanged.
+//
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
 // bytes (user_data u64@0, res i32@8). All ring fields are u32, accessed via the
@@ -1106,6 +1112,121 @@ pub fn io_reactor_pin_demo(core: i64) -> i64 {
         return 1;
     }
     0 - 2
+}
+
+// ── Phase 7: dma-buf device-memory I/O substrate ────────────────────────────
+// GPU Device-Memory-TCP and GPUDirect Storage land I/O directly in a dma-buf —
+// the kernel's device-memory handle. The dma-buf *I/O machinery* (allocate a
+// dma-buf, make it an I/O target, land bytes in it) is exactly what those paths
+// build on, and it is verifiable WITHOUT a GPU or a devmem-capable NIC using the
+// `udmabuf` software dma-buf provider — the same provider the kernel's own
+// devmem-TCP selftest uses. This proves the device-memory I/O substrate; the GPU
+// (DMA-BUF export) and network-devmem (header-split NIC) variants are the same
+// machinery pointed at hardware buffers, byte-identical, so the anchor is
+// unchanged. x86_64 host syscalls (memfd_create 319 / ftruncate 77 / fcntl 72 /
+// ioctl 16) — setup only, never in the deterministic compiled output.
+
+// Land file bytes directly into a dma-buf-backed buffer via io_uring, proving
+// the device-memory I/O target works: create a sealed memfd, wrap it as a
+// dma-buf through /dev/udmabuf, mmap it, then io_uring-WRITE `data` to a temp
+// file at `path` and io_uring-READ it back INTO the dma-buf; verify the dma-buf
+// holds the exact bytes. Returns 1 on a byte-identical landing, or a negative
+// code (and SKIPS — negative — without udmabuf access / on a kernel lacking it).
+pub fn io_uring_dmabuf_io_demo(path: i64, data: i64, len: i64) -> i64 {
+    // memfd_create("mind", MFD_ALLOW_SEALING=2).
+    let nm: i64 = __mind_alloc(8);
+    __mind_store_i8(nm + 0, 109);
+    __mind_store_i8(nm + 1, 105);
+    __mind_store_i8(nm + 2, 110);
+    __mind_store_i8(nm + 3, 100);
+    __mind_store_i8(nm + 4, 0);
+    let memfd: i64 = syscall(319, nm, 2, 0, 0, 0, 0);
+    let _ = __mind_free(nm);
+    if memfd < 0 {
+        return 0 - 1;
+    }
+    let _ = syscall(77, memfd, 4096, 0, 0, 0, 0);
+    // fcntl(memfd, F_ADD_SEALS=1033, F_SEAL_SHRINK=2) — udmabuf needs a seal.
+    let _ = syscall(72, memfd, 1033, 2, 0, 0, 0);
+    // open("/dev/udmabuf", O_RDWR=2).
+    let up: i64 = __mind_alloc(16);
+    __mind_store_i8(up + 0, 47);
+    __mind_store_i8(up + 1, 100);
+    __mind_store_i8(up + 2, 101);
+    __mind_store_i8(up + 3, 118);
+    __mind_store_i8(up + 4, 47);
+    __mind_store_i8(up + 5, 117);
+    __mind_store_i8(up + 6, 100);
+    __mind_store_i8(up + 7, 109);
+    __mind_store_i8(up + 8, 97);
+    __mind_store_i8(up + 9, 98);
+    __mind_store_i8(up + 10, 117);
+    __mind_store_i8(up + 11, 102);
+    __mind_store_i8(up + 12, 0);
+    let ud: i64 = syscall(2, up, 2, 0, 0, 0, 0);
+    let _ = __mind_free(up);
+    if ud < 0 {
+        let _ = close(memfd as i32);
+        return 0 - 2;
+    }
+    // struct udmabuf_create { u32 memfd; u32 flags; u64 offset; u64 size; }.
+    let cr: i64 = __mind_alloc(24);
+    __mind_store_i32(cr + 0, memfd);
+    __mind_store_i32(cr + 4, 0);
+    __mind_store_i64(cr + 8, 0);
+    __mind_store_i64(cr + 16, 4096);
+    // ioctl(ud, UDMABUF_CREATE=0x40187542, &cr) -> dma-buf fd.
+    let dmabuf: i64 = syscall(16, ud, 1075344706, cr, 0, 0, 0);
+    let _ = __mind_free(cr);
+    if dmabuf < 0 {
+        let _ = close(ud as i32);
+        let _ = close(memfd as i32);
+        return 0 - 3;
+    }
+    // mmap the dma-buf (CPU view of the device-memory-style buffer).
+    let dbuf: i64 = mmap(0, 4096, 3, 1, dmabuf as i32, 0);
+    if dbuf < 0 {
+        let _ = close(dmabuf as i32);
+        let _ = close(ud as i32);
+        let _ = close(memfd as i32);
+        return 0 - 4;
+    }
+    // io_uring-WRITE data to a temp file, then io_uring-READ it INTO the dma-buf.
+    let tfd: i64 = io_uring_openat(path, 578, 420);
+    let mut result: i64 = 0 - 5;
+    if tfd >= 0 {
+        let w: i64 = io_uring_pwrite(tfd, data, len, 0);
+        let r: i64 = io_uring_pread(tfd, dbuf, len, 0);
+        if w == len {
+            if r == len {
+                let mut ok: i64 = 1;
+                let mut i: i64 = 0;
+                while i < len {
+                    if __mind_load_i8(dbuf + i) != __mind_load_i8(data + i) {
+                        ok = 0;
+                    }
+                    i = i + 1;
+                }
+                if ok == 1 {
+                    result = 1;
+                } else {
+                    result = 0 - 6;
+                }
+            } else {
+                result = 0 - 7;
+            }
+        } else {
+            result = 0 - 8;
+        }
+        let _ = io_uring_close(tfd);
+    } else {
+        result = tfd;
+    }
+    let _ = munmap(dbuf, 4096);
+    let _ = close(dmabuf as i32);
+    let _ = close(ud as i32);
+    let _ = close(memfd as i32);
+    result
 }
 
 // ── Phase 6: kernel TLS transport (kTLS) ────────────────────────────────────
