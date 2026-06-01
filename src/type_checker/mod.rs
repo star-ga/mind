@@ -2931,7 +2931,7 @@ fn check_genref_in_stmt_seq(stmts: &[Node], src: &str, file: Option<&str>, errs:
                 name, value, span, ..
             } if is_genderef_call(value) => {
                 let next = stmts.get(i + 1);
-                let guarded = next.map_or(false, |n| is_zero_guard_on(n, name));
+                let guarded = next.is_some_and(|n| is_zero_guard_on(n, name));
                 if !guarded {
                     errs.push(diag_from_span(
                         src,
