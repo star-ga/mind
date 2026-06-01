@@ -1,0 +1,58 @@
+=== Correctness-milestone baseline (mindc 0.7.0, 2026-06-01) ===
+
+Re-baseline after a cluster of frontend CORRECTNESS work landed since the
+2026-05-18 RFC-0005 baseline. The prior numbers predate, and were partly
+made artificially low by, lowering bugs that have since been fixed — the
+old frontend was faster in part because it was WRONG. Per project policy
+(determinism/correctness rank above raw compile speed; speed is a
+pitchdeck line, not the wedge), we lock the post-correctness numbers in
+as the new floor rather than chase a baseline that rewarded the bugs.
+
+What changed in the `parse_typecheck_ir` hot path since 2026-05-18:
+
+  - Region-scoped exit-environment SSA construction (replaces the old
+    hand-rolled textual `pending_after_subs` substitution). Computes a
+    per-region union-of-modified-vars and threads nested-region EXIT
+    block-arg ids so every value crossing a branch/back edge dominates.
+    This is strictly more work per loop/conditional than the old
+    substitution — and it is what makes deeply nested control flow
+    lower correctly at all.
+  - Nested-loop exit-env rebinding fix: an enclosing-scope `let mut`
+    mutated inside a nested loop now correctly survives the inner loop
+    (the old code silently dropped it → miscompiled selection sort).
+    Adds a body_env lookup per nested-region exit rebinding.
+  - C-ABI pointer FFI lowering + as-cast transparency in lower_expr.
+
+Net effect on the three canonical pipeline benches vs
+`.bench-baseline-2026-05-18-rfc0005.txt`:
+
+  small_matmul:   2.80 µs → 2.98 µs   (+6.4%)
+  medium_mlp:     6.55 µs → 6.93 µs   (+5.8%)
+  large_network: 17.10 µs → 18.43 µs  (+7.8%)
+
+The shifts are uniform and modest (a few hundred ns on microbenchmarks),
+consistent with "every loop/branch now does correct dominance-preserving
+SSA" rather than any algorithmic regression — there is no super-linear
+blow-up. The loop-heavy fixtures (large_network) move most, as expected.
+
+Frozen reference measurement (local box, three back-to-back criterion
+runs, `cargo bench --bench compiler -- --warm-up-time 3
+--measurement-time 8 --output-format bencher`, trimmed-median of 3):
+
+  small_matmul:   2.98 µs   (3-run: 2.93 / 2.98 / 3.16)
+  medium_mlp:     6.93 µs   (3-run: 6.80 / 6.93 / 7.28)
+  large_network:  18.43 µs  (3-run: 17.95 / 18.43 / 19.52)
+
+Gate threshold: 7% over these numbers (the bench-gate.yml `--threshold
+0.07`). GitHub `ubuntu-latest` runner-to-runner variance empirically
+tracks within ±2-3% of a local reference, leaving comfortable headroom
+inside the 7% gate. Future commits cannot exceed 7% over these numbers
+without an explicit re-baseline + sign-off documented here.
+
+Next natural frontend optimisation (unchanged recommendation from prior
+baselines): cache `module_has_reap_threshold` as a bool set on IRModule
+at lower time, and consider memoising the per-region modified-var set so
+the exit-env union is computed once per region rather than per exit edge.
+That work, if taken, would recover part of this baseline's headroom — but
+it is an optimisation, not a correctness requirement, and is not on the
+critical path.
