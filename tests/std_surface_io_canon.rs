@@ -141,14 +141,19 @@ mod mlir_functional {
                 }
                 canon_sort(h);
                 let n = canon_len(h);
-                (0..n).map(|i| (canon_conn(h, i), canon_req(h, i))).collect()
+                (0..n)
+                    .map(|i| (canon_conn(h, i), canon_req(h, i)))
+                    .collect()
             };
 
             let da = drain(&order_a);
             let db = drain(&order_b);
             let expected = vec![(1, 1), (1, 2), (2, 0), (2, 1), (3, 5)];
 
-            assert_eq!(da, expected, "canon_sort must produce the canonical total order");
+            assert_eq!(
+                da, expected,
+                "canon_sort must produce the canonical total order"
+            );
             assert_eq!(
                 da, db,
                 "canonical drain order must be identical regardless of physical push order"
