@@ -16,6 +16,11 @@
 // to plain READ/WRITE, so the deterministic anchor is unaffected — pure setup
 // wins, not new bytes in the chain.
 //
+// Phase 3: in-ring socket lifecycle — OP_SOCKET / OP_SHUTDOWN / OP_CLOSE move
+// connection setup and teardown inside the submission ring, off the syscall
+// path. Pure control-plane ops (no payload bytes), so they never touch the
+// evidence chain; they are the basis for direct (registered) descriptors next.
+//
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
 // bytes (user_data u64@0, res i32@8). All ring fields are u32, accessed via the
@@ -69,6 +74,17 @@ pub fn iouring_op_read_fixed() -> i64 {
 }
 pub fn iouring_op_write_fixed() -> i64 {
     5
+}
+// In-ring socket lifecycle ops (Phase 3): create/close/shutdown a socket
+// through the ring itself, with no socket()/close()/shutdown() syscall.
+pub fn iouring_op_close() -> i64 {
+    19
+}
+pub fn iouring_op_shutdown() -> i64 {
+    34
+}
+pub fn iouring_op_socket() -> i64 {
+    45
 }
 
 // Ring handle (96 bytes): the post-setup state the submit/reap paths need.
@@ -576,6 +592,133 @@ pub fn io_uring_provided_buffer_recv(msg: i64, len: i64) -> i64 {
     let _ = close(fd1 as i32);
     let _ = __mind_free(sv);
     result
+}
+
+// ── Phase 3: in-ring socket lifecycle ───────────────────────────────────────
+// Create, shut down, and close sockets through the ring itself — no socket()/
+// shutdown()/close() syscall on the hot path. OP_SOCKET carries domain in the
+// fd field, type in off, protocol in len (the io_uring_prep_socket layout);
+// OP_SHUTDOWN carries `how` in len; OP_CLOSE carries the fd. Each returns its
+// CQE res. This is the reactor's connection-setup/teardown moving inside the
+// submission ring (the basis for FIXED_FD_INSTALL'd direct descriptors next).
+
+// Create a socket via the ring. Returns the new fd (>=0) or a negative errno.
+pub fn io_uring_socket(domain: i64, type_: i64, protocol: i64) -> i64 {
+    let h: i64 = io_ring_new(2);
+    if h == 0 {
+        return 0 - 1;
+    }
+    // OP_SOCKET: fd=domain, off=type, addr=0, len=protocol (rw_flags@28 stays 0).
+    let _ = io_ring_submit_raw(h, 0, iouring_op_socket(), domain, type_, 0, protocol, 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut fd: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            fd = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = io_ring_free(h);
+    fd
+}
+
+// Shut down a socket via the ring (how: 0=RD, 1=WR, 2=RDWR). Returns the CQE res
+// (0 on success, or a negative errno such as -ENOTCONN on an unconnected fd).
+pub fn io_uring_shutdown(fd: i64, how: i64) -> i64 {
+    let h: i64 = io_ring_new(2);
+    if h == 0 {
+        return 0 - 1;
+    }
+    // OP_SHUTDOWN: fd=fd, len=how.
+    let _ = io_ring_submit_raw(h, 0, iouring_op_shutdown(), fd, 0, 0, how, 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = io_ring_free(h);
+    r
+}
+
+// Close a socket via the ring. Returns the CQE res (0 on success).
+pub fn io_uring_close(fd: i64) -> i64 {
+    let h: i64 = io_ring_new(2);
+    if h == 0 {
+        return 0 - 1;
+    }
+    let _ = io_ring_submit_op(h, 0, iouring_op_close(), fd, 0, 0, 1);
+    let _ = io_ring_publish(h, 1);
+    let er: i64 = io_ring_enter(h, 1, 1);
+    let mut r: i64 = 0 - 2;
+    if er >= 0 {
+        let ud: i64 = __mind_alloc(8);
+        let res: i64 = __mind_alloc(8);
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            r = __mind_load_i64(res + 0);
+        }
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+    }
+    let _ = io_ring_free(h);
+    r
+}
+
+// Phase-3 proof: a full in-ring socket lifecycle over ONE reused ring — create a
+// TCP socket with OP_SOCKET, then close it with OP_CLOSE, neither touching the
+// socket()/close() syscalls. Returns 1 if both ring ops succeed (fd>=0, close
+// res 0), or a negative code (and SKIPS — negative — on a kernel without
+// OP_SOCKET). Proves connection setup/teardown can live entirely in the ring.
+pub fn io_uring_socket_lifecycle_demo() -> i64 {
+    let h: i64 = io_ring_new(4);
+    if h == 0 {
+        return 0 - 1;
+    }
+    // Batch 1: OP_SOCKET(AF_INET=2, SOCK_STREAM=1, 0).
+    let _ = io_ring_submit_raw(h, 0, iouring_op_socket(), 2, 1, 0, 0, 1);
+    let _ = io_ring_publish(h, 1);
+    let e1: i64 = io_ring_enter(h, 1, 1);
+    let ud: i64 = __mind_alloc(8);
+    let res: i64 = __mind_alloc(8);
+    let mut fd: i64 = 0 - 2;
+    if e1 >= 0 {
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            fd = __mind_load_i64(res + 0);
+        }
+    }
+    if fd < 0 {
+        let _ = __mind_free(ud);
+        let _ = __mind_free(res);
+        let _ = io_ring_free(h);
+        return fd;
+    }
+    // Batch 2: OP_CLOSE(fd) on the SAME reused ring.
+    let _ = io_ring_submit_op(h, 0, iouring_op_close(), fd, 0, 0, 2);
+    let _ = io_ring_publish(h, 1);
+    let e2: i64 = io_ring_enter(h, 1, 1);
+    let mut cres: i64 = 0 - 3;
+    if e2 >= 0 {
+        if io_ring_reap(h, ud, res, 1) == 1 {
+            cres = __mind_load_i64(res + 0);
+        }
+    }
+    let _ = __mind_free(ud);
+    let _ = __mind_free(res);
+    let _ = io_ring_free(h);
+    if cres == 0 {
+        return 1;
+    }
+    0 - 4
 }
 
 // Loopback TCP echo over io_uring. Binds a listener on 127.0.0.1:ephemeral,
