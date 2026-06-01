@@ -75,15 +75,6 @@ fn matmul_1024x1024(
 }
 "#;
 
-const MATMUL_BATCHED: &str = r#"
-fn matmul_batched(
-    a: Tensor<F32, [32, 128, 256]>,
-    b: Tensor<F32, [32, 256, 512]>
-) -> Tensor<F32, [32, 128, 512]> {
-    tensor.matmul(a, b)
-}
-"#;
-
 /// Conv2D with various kernel sizes and strides
 const CONV_3X3: &str = r#"
 fn conv_3x3(
@@ -144,7 +135,6 @@ fn bench_shape_inference_matmul(c: &mut Criterion) {
         ("8x8", MATMUL_SMALL),
         ("128x256", MATMUL_MEDIUM),
         ("1024x2048", MATMUL_LARGE),
-        ("batched_32x128x256", MATMUL_BATCHED),
     ] {
         group.bench_with_input(BenchmarkId::new("matmul", name), source, |b, src| {
             b.iter(|| {
