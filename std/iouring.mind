@@ -34,6 +34,10 @@
 // same submit/reap engine (the deterministic storage path the NVMe/SPDK fast
 // path later optimizes; bytes are byte-identical, so the anchor is unchanged).
 //
+// Phase 6: kTLS transport — setsockopt(TCP_ULP,"tls") + AES-GCM keys push record
+// crypto into the kernel; send/recv move plaintext while the wire is encrypted
+// (NIC-offloadable). Plaintext in == out, so the anchor is unchanged.
+//
 // ABI: io_uring_params is 120 bytes (sq_off @40, cq_off @80); sqe 64 bytes
 // (opcode u8@0, fd i32@4, addr u64@16, len u32@24, user_data u64@32); cqe 16
 // bytes (user_data u64@0, res i32@8). All ring fields are u32, accessed via the
@@ -50,6 +54,7 @@ extern "C" {
     unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
     unsafe fn getsockname(sockfd: i32, addr: i64, addrlen: i64) -> i32;
     unsafe fn clock_gettime(clockid: i32, tp: i64) -> i32;
+    unsafe fn setsockopt(fd: i32, level: i32, optname: i32, optval: i64, optlen: i32) -> i32;
     unsafe fn close(fd: i32) -> i32;
 }
 
@@ -1101,6 +1106,78 @@ pub fn io_reactor_pin_demo(core: i64) -> i64 {
         return 1;
     }
     0 - 2
+}
+
+// ── Phase 6: kernel TLS transport (kTLS) ────────────────────────────────────
+// kTLS pushes record encryption into the kernel: after a connection is set up,
+// setsockopt(TCP_ULP,"tls") attaches the TLS upper-layer protocol, then
+// setsockopt(SOL_TLS, TLS_TX/TLS_RX, crypto_info) installs the keys. From then
+// on ordinary send/recv (including io_uring SEND/RECV) move PLAINTEXT to/from
+// userspace while the wire carries AES-GCM records — and later the NIC can
+// offload the crypto. The application bytes are unchanged (plaintext in ==
+// plaintext out), so canon_drain anchors exactly as before; this is a transport
+// layer under the deterministic I/O, not a new determinism property.
+
+// Echo `len` bytes over a kTLS-encrypted loopback connection. Set up a connected
+// pair (io_uring_tcp_accept_one), attach the TLS ULP and AES-GCM-128 keys to
+// both ends (TX on the sender, matching RX on the receiver), then run one echo
+// round: the bytes travel as TLS records and arrive decrypted. Returns 1 if the
+// plaintext round-trips, or a negative code (and SKIPS — negative — where the
+// kernel `tls` ULP is unavailable). A deterministic all-zero test key is used so
+// the proof is reproducible; production keys come from a handshake.
+pub fn io_uring_ktls_echo(msg: i64, len: i64) -> i64 {
+    let rh: i64 = io_uring_tcp_accept_one();
+    if rh == 0 {
+        return 0 - 20;
+    }
+    let cfd: i64 = __mind_load_i64(rh + 8);
+    let connfd: i64 = __mind_load_i64(rh + 16);
+    // setsockopt(SOL_TCP=6, TCP_ULP=31, "tls\0", 4) on both ends.
+    let ulp: i64 = __mind_alloc(4);
+    __mind_store_i8(ulp + 0, 116);
+    __mind_store_i8(ulp + 1, 108);
+    __mind_store_i8(ulp + 2, 115);
+    __mind_store_i8(ulp + 3, 0);
+    let u1: i64 = setsockopt(cfd as i32, 6, 31, ulp, 4);
+    if u1 < 0 {
+        let _ = __mind_free(ulp);
+        let _ = io_uring_tcp_close(rh);
+        return 0 - 21;
+    }
+    let u2: i64 = setsockopt(connfd as i32, 6, 31, ulp, 4);
+    let _ = __mind_free(ulp);
+    if u2 < 0 {
+        let _ = io_uring_tcp_close(rh);
+        return 0 - 22;
+    }
+    // tls12_crypto_info_aes_gcm_128 (40 bytes): version 0x0303 @0, cipher_type
+    // TLS_CIPHER_AES_GCM_128=51 @2, iv@4, key@12, salt@28, rec_seq@32 — all-zero
+    // (deterministic test key; identical on TX and RX so the RX side decrypts).
+    let c: i64 = __mind_alloc(40);
+    let mut z: i64 = 0;
+    while z < 40 {
+        __mind_store_i8(c + z, 0);
+        z = z + 1;
+    }
+    __mind_store_i8(c + 0, 3);
+    __mind_store_i8(c + 1, 3);
+    __mind_store_i8(c + 2, 51);
+    // setsockopt(SOL_TLS=282, TLS_TX=1, ...) on sender; TLS_RX=2 on receiver.
+    let t1: i64 = setsockopt(cfd as i32, 282, 1, c, 40);
+    let t2: i64 = setsockopt(connfd as i32, 282, 2, c, 40);
+    let _ = __mind_free(c);
+    if t1 < 0 {
+        let _ = io_uring_tcp_close(rh);
+        return 0 - 23;
+    }
+    if t2 < 0 {
+        let _ = io_uring_tcp_close(rh);
+        return 0 - 24;
+    }
+    // One echo round — now TLS-encrypted on the wire, decrypted on recv.
+    let r: i64 = io_uring_tcp_echo_round(rh, msg, len);
+    let _ = io_uring_tcp_close(rh);
+    r
 }
 
 // ── Phase 5: storage I/O (files through the ring) ───────────────────────────
