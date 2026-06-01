@@ -33,6 +33,45 @@ import std.io_canon;
 import std.reactor;
 import std.ring;
 import std.sha256;
+import std.iouring;
+
+// Full physical->logical reactor pipeline: io_uring delivers NOP completions
+// (user_data 3,1,2) in physically non-deterministic order; reap them, then
+// re-order canonically by the content key. Returns n_bytes*100 + first_conn
+// (so 96*100+1 = 9601 when the 3 completions sort to conn 1,2,3), or a negative
+// value if the kernel io_uring is unavailable.
+pub fn iou_canon_pipeline() -> i64 {
+    let h: i64 = io_ring_new(4)
+    if h == 0 {
+        return 0 - 1
+    }
+    let _ = io_ring_submit_op(h, 0, iouring_op_nop(), 0, 0, 0, 3)
+    let _ = io_ring_submit_op(h, 1, iouring_op_nop(), 0, 0, 0, 1)
+    let _ = io_ring_submit_op(h, 2, iouring_op_nop(), 0, 0, 0, 2)
+    let _ = io_ring_publish(h, 3)
+    let er: i64 = io_ring_enter(h, 3, 3)
+    if er < 0 {
+        let _ = io_ring_free(h)
+        return 0 - 2
+    }
+    let ud: i64 = __mind_alloc(64)
+    let res: i64 = __mind_alloc(64)
+    let count: i64 = io_ring_reap(h, ud, res, 8)
+    let _ = io_ring_free(h)
+    let batch: i64 = canon_new(8)
+    let mut i: i64 = 0
+    while i < count {
+        let _ = canon_push(batch, __mind_load_i64(ud + i * 8), 0, 0, __mind_load_i64(res + i * 8))
+        i = i + 1
+    }
+    let drained: i64 = __mind_alloc(count * 32)
+    let n: i64 = canon_drain(batch, drained, count * 32)
+    let firstconn: i64 = __mind_load_i64(drained + 0)
+    let _ = __mind_free(drained)
+    let _ = __mind_free(ud)
+    let _ = __mind_free(res)
+    n * 100 + firstconn
+}
 
 // Compose all three substrate modules: assign a deterministic key via the
 // reactor, stage in a ring, order completions canonically, drain to bytes.
@@ -169,7 +208,11 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
          lib.anchor_b(ctypes.cast(db, ctypes.c_void_p))\n\
          assert bytes(da) == bytes(db), 'evidence anchor not deterministic across physical order'\n\
          assert bytes(da) != bytes(32), 'evidence anchor is all-zero (sha256 did not run)'\n\
-         print('ok', n, bytes(da).hex()[:16])\n"
+         # io_uring -> canonical-ordering pipeline (skips if kernel io_uring absent).\n\
+         lib.iou_canon_pipeline.restype = ctypes.c_int64\n\
+         pr = lib.iou_canon_pipeline()\n\
+         assert pr == 9601 or pr < 0, f'io_uring->canon pipeline wrong: {{pr}}'\n\
+         print('ok', n, bytes(da).hex()[:16], 'iou', pr)\n"
     );
     let out = Command::new("python3")
         .args(["-c", &py])
