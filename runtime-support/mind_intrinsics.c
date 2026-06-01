@@ -156,6 +156,24 @@ MIND_EXPORT int64_t __mind_store_i8(int64_t addr, int64_t val) {
     return 0;
 }
 
+// 4-byte load/store — a proper i32 ABI for the u32-field structs of kernel
+// interfaces (notably the io_uring SQ/CQ ring head/tail and other ABI fields).
+// `__mind_load_i32` zero-extends to i64 (unsigned 32-bit semantics);
+// `__mind_store_i32` writes EXACTLY 4 bytes, so it never clobbers the adjacent
+// u32 the way `__mind_store_i64` at a 4-byte-aligned offset would. memcpy keeps
+// it alignment-safe and cross-substrate byte-identical.
+MIND_EXPORT int64_t __mind_load_i32(int64_t addr) {
+    uint32_t w;
+    memcpy(&w, (void *)(uintptr_t)addr, 4);
+    return (int64_t)w;
+}
+
+MIND_EXPORT int64_t __mind_store_i32(int64_t addr, int64_t val) {
+    uint32_t w = (uint32_t)(val & 0xFFFFFFFF);
+    memcpy((void *)(uintptr_t)addr, &w, 4);
+    return 0;
+}
+
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
 // offset == -1 means "use current stream position" (plain read).
 MIND_EXPORT int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {
