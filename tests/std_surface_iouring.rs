@@ -54,6 +54,8 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_uring_tcp_close",
         "io_uring_loopback_echo",
         "io_uring_loopback_echo_n",
+        "io_ring_submit_accept_multishot",
+        "io_uring_multishot_accept_demo",
     ] {
         assert!(
             names.contains(&required),
@@ -116,7 +118,10 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   assert le == 1 or le < 0, f'loopback echo returned unexpected {{le}}'\n\
          \x20   ln = lib.io_uring_loopback_echo_n(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 5)\n\
          \x20   assert ln == 5 or ln < 0, f'reactor server loop returned unexpected {{ln}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'tcp', le, 'loop', ln)\n",
+         \x20   lib.io_uring_multishot_accept_demo.restype = ctypes.c_int64\n\
+         \x20   ms = lib.io_uring_multishot_accept_demo()\n\
+         \x20   assert ms == 2 or ms < 0, f'multishot accept returned unexpected {{ms}}'\n\
+         \x20   print('OK', hex(r), 'sp', e, 'tcp', le, 'loop', ln, 'multishot', ms)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
