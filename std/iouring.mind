@@ -19,6 +19,10 @@ extern "C" {
     unsafe fn mmap(addr: i64, length: i64, prot: i32, flags: i32, fd: i32, offset: i64) -> i64;
     unsafe fn munmap(addr: i64, length: i64) -> i32;
     unsafe fn socketpair(domain: i32, type_: i32, protocol: i32, sv: i64) -> i32;
+    unsafe fn socket(domain: i32, type_: i32, protocol: i32) -> i32;
+    unsafe fn bind(sockfd: i32, addr: i64, addrlen: i32) -> i32;
+    unsafe fn listen(sockfd: i32, backlog: i32) -> i32;
+    unsafe fn getsockname(sockfd: i32, addr: i64, addrlen: i64) -> i32;
     unsafe fn close(fd: i32) -> i32;
 }
 
@@ -42,6 +46,12 @@ pub fn iouring_op_send() -> i64 {
 }
 pub fn iouring_op_recv() -> i64 {
     27
+}
+pub fn iouring_op_accept() -> i64 {
+    13
+}
+pub fn iouring_op_connect() -> i64 {
+    16
 }
 
 // Ring handle (96 bytes): the post-setup state the submit/reap paths need.
@@ -113,9 +123,17 @@ pub fn io_ring_new(entries: i64) -> i64 {
 // Fill SQE `slot` with an operation and point the SQ array entry at it. Caller
 // submits slots 0..n-1 then calls io_ring_publish(h, n). `fd`/`buf`/`len` are
 // ignored by NOP; for SEND/RECV they are the socket fd, buffer addr, byte count.
-pub fn io_ring_submit_op(h: i64, slot: i64, opcode: i64, fd: i64, buf: i64, len: i64, user_data: i64) -> i64 {
+pub fn io_ring_submit_raw(h: i64, slot: i64, opcode: i64, fd: i64, off: i64, addr: i64, len: i64, user_data: i64) -> i64 {
+    // The ring position is (current sq_tail + slot) mod entries — NOT `slot`
+    // itself — so a reused ring (a second batch after the tail has advanced)
+    // places its SQEs and SQ-array entries where the kernel actually reads them.
+    let sring: i64 = __mind_load_i64(h + 8);
+    let tail: i64 = __mind_load_i32(sring + __mind_load_i64(h + 40));
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    let want: i64 = tail + slot;
+    let pos: i64 = want - (want / entries) * entries;
     let sqes: i64 = __mind_load_i64(h + 16);
-    let sqe: i64 = sqes + slot * 64;
+    let sqe: i64 = sqes + pos * 64;
     let mut k: i64 = 0;
     while k < 64 {
         __mind_store_i8(sqe + k, 0);
@@ -123,13 +141,18 @@ pub fn io_ring_submit_op(h: i64, slot: i64, opcode: i64, fd: i64, buf: i64, len:
     }
     __mind_store_i8(sqe + 0, opcode);
     __mind_store_i32(sqe + 4, fd);
-    __mind_store_i64(sqe + 16, buf);
+    __mind_store_i64(sqe + 8, off);
+    __mind_store_i64(sqe + 16, addr);
     __mind_store_i32(sqe + 24, len);
     __mind_store_i64(sqe + 32, user_data);
-    let sring: i64 = __mind_load_i64(h + 8);
     let sq_array: i64 = sring + __mind_load_i64(h + 48);
-    __mind_store_i32(sq_array + slot * 4, slot);
+    __mind_store_i32(sq_array + pos * 4, pos);
     0
+}
+
+// Convenience: an op with no off/addr2 field (NOP, SEND, RECV, ACCEPT).
+pub fn io_ring_submit_op(h: i64, slot: i64, opcode: i64, fd: i64, buf: i64, len: i64, user_data: i64) -> i64 {
+    io_ring_submit_raw(h, slot, opcode, fd, 0, buf, len, user_data)
 }
 
 // Publish `n` freshly-filled SQEs by advancing the SQ tail.
@@ -271,5 +294,117 @@ pub fn io_uring_socketpair_echo(msg: i64, len: i64) -> i64 {
     let _ = close(fd0 as i32);
     let _ = close(fd1 as i32);
     let _ = __mind_free(sv);
+    result
+}
+
+// Loopback TCP echo over io_uring. Binds a listener on 127.0.0.1:ephemeral,
+// then io_uring-CONNECTs a client and io_uring-ACCEPTs the connection
+// concurrently (single ring, single enter), and finally SENDs `len` bytes from
+// the client and RECVs them on the accepted server fd. Returns 1 if the bytes
+// round-trip, or a negative code on any failure. This is the reactor's
+// accept->recv->send shape, single-connection; the multishot server loop adds
+// IORING_OP_*_MULTISHOT on top of the same submit/reap API.
+pub fn io_uring_loopback_echo(msg: i64, len: i64) -> i64 {
+    let lfd: i64 = socket(2, 1, 0);
+    if lfd < 0 {
+        return 0 - 20;
+    }
+    // sockaddr_in: sin_family=AF_INET(2)@0, sin_port=0@2 (ephemeral),
+    // sin_addr=127.0.0.1 (bytes 127,0,0,1)@4, sin_zero@8.
+    let addr: i64 = __mind_alloc(16);
+    let mut z: i64 = 0;
+    while z < 16 {
+        __mind_store_i8(addr + z, 0);
+        z = z + 1;
+    }
+    __mind_store_i8(addr + 0, 2);
+    __mind_store_i8(addr + 4, 127);
+    __mind_store_i8(addr + 7, 1);
+    if bind(lfd as i32, addr, 16) < 0 {
+        let _ = close(lfd as i32);
+        return 0 - 21;
+    }
+    if listen(lfd as i32, 1) < 0 {
+        let _ = close(lfd as i32);
+        return 0 - 22;
+    }
+    let alen: i64 = __mind_alloc(8);
+    __mind_store_i32(alen + 0, 16);
+    if getsockname(lfd as i32, addr, alen) < 0 {
+        let _ = close(lfd as i32);
+        return 0 - 23;
+    }
+    let cfd: i64 = socket(2, 1, 0);
+    if cfd < 0 {
+        let _ = close(lfd as i32);
+        return 0 - 24;
+    }
+    let h: i64 = io_ring_new(4);
+    if h == 0 {
+        let _ = close(cfd as i32);
+        let _ = close(lfd as i32);
+        return 0 - 25;
+    }
+    let _ = io_ring_submit_raw(h, 0, iouring_op_connect(), cfd, 16, addr, 0, 100);
+    let _ = io_ring_submit_op(h, 1, iouring_op_accept(), lfd, 0, 0, 200);
+    let _ = io_ring_publish(h, 2);
+    let er: i64 = io_ring_enter(h, 2, 2);
+    let ud: i64 = __mind_alloc(64);
+    let res: i64 = __mind_alloc(64);
+    let mut connfd: i64 = 0 - 1;
+    if er >= 0 {
+        let count: i64 = io_ring_reap(h, ud, res, 8);
+        let mut i: i64 = 0;
+        while i < count {
+            if __mind_load_i64(ud + i * 8) == 200 {
+                connfd = __mind_load_i64(res + i * 8);
+            }
+            i = i + 1;
+        }
+    }
+    let result: i64 = io_uring_echo_one(h, cfd, connfd, msg, len, ud, res);
+    if connfd >= 0 {
+        let _ = close(connfd as i32);
+    }
+    let _ = io_ring_free(h);
+    let _ = __mind_free(ud);
+    let _ = __mind_free(res);
+    let _ = close(cfd as i32);
+    let _ = close(lfd as i32);
+    let _ = __mind_free(addr);
+    let _ = __mind_free(alen);
+    result
+}
+
+// One echo exchange on an established connection (kept separate from the
+// connect/accept setup so neither function grows large). SEND `len` bytes from
+// `cfd`, RECV them on `connfd`, return 1 iff they match else a negative code.
+fn io_uring_echo_one(h: i64, cfd: i64, connfd: i64, msg: i64, len: i64, ud: i64, res: i64) -> i64 {
+    if connfd < 0 {
+        return 0 - 26;
+    }
+    let rbuf: i64 = __mind_alloc(len);
+    let _ = io_ring_submit_op(h, 0, iouring_op_send(), cfd, msg, len, 1);
+    let _ = io_ring_submit_op(h, 1, iouring_op_recv(), connfd, rbuf, len, 2);
+    let _ = io_ring_publish(h, 2);
+    let er: i64 = io_ring_enter(h, 2, 2);
+    let mut result: i64 = 0 - 28;
+    if er >= 0 {
+        let _ = io_ring_reap(h, ud, res, 8);
+        let mut ok: i64 = 1;
+        let mut j: i64 = 0;
+        while j < len {
+            if __mind_load_i8(rbuf + j) != __mind_load_i8(msg + j) {
+                ok = 0;
+            }
+            j = j + 1;
+        }
+        if ok == 1 {
+            result = 1;
+        } else {
+            result = 0 - 27;
+        }
+    }
+    let _ = __mind_free(rbuf);
     result
 }
