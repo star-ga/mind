@@ -167,6 +167,17 @@ enum ValueKind {
     },
 }
 
+/// `extern "C"` fn signature stored in `LoweringContext::extern_c_fns`:
+/// (param_types, ret_type, is_varargs, vararg_hints, callconv).
+#[cfg(feature = "std-surface")]
+type ExternCFnSig = (
+    Vec<String>,
+    Option<String>,
+    bool,
+    Vec<String>,
+    crate::ast::CallConv,
+);
+
 struct LoweringContext {
     values: BTreeMap<ValueId, ValueKind>,
     outputs: Vec<ValueId>,
@@ -201,17 +212,7 @@ struct LoweringContext {
     /// Phase C adds `callconv` so the `llvm.func` / `llvm.call` emitter can
     /// attach `cconv = #llvm.cconv<win64cc>` for Win64 declarations. Gated.
     #[cfg(feature = "std-surface")]
-    extern_c_fns: std::collections::BTreeMap<
-        String,
-        // (param_types, ret_type, is_varargs, vararg_hints, callconv)
-        (
-            Vec<String>,
-            Option<String>,
-            bool,
-            Vec<String>,
-            crate::ast::CallConv,
-        ),
-    >,
+    extern_c_fns: std::collections::BTreeMap<String, ExternCFnSig>,
 }
 
 impl LoweringContext {
@@ -3333,7 +3334,7 @@ fn fmt_block_args(values: &[String]) -> String {
 fn substitute_ids(text: &str, args: &[(usize, String, usize)]) -> String {
     // Sort descending by init_id so longer numeric ids are replaced first.
     let mut sorted: Vec<&(usize, String, usize)> = args.iter().collect();
-    sorted.sort_by(|a, b| b.0.cmp(&a.0));
+    sorted.sort_by_key(|b| std::cmp::Reverse(b.0));
 
     let mut result = text.to_owned();
     for (init_id, arg_name, _) in &sorted {
