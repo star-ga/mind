@@ -208,7 +208,10 @@ pub(crate) mod timings {
             let total = self.last.duration_since(self.start).as_secs_f64() * 1e3;
             eprintln!("[mind-timings] {what}: total {total:.3} ms");
             for (name, d) in &self.phases {
-                eprintln!("[mind-timings]   {name:<14} {:.3} ms", d.as_secs_f64() * 1e3);
+                eprintln!(
+                    "[mind-timings]   {name:<14} {:.3} ms",
+                    d.as_secs_f64() * 1e3
+                );
             }
         }
     }
