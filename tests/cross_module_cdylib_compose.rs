@@ -302,9 +302,15 @@ fn substrate_modules_link_natively_into_consumer_cdylib() {
          ranchor = (ctypes.c_uint8 * 32)()\n\
          dr = lib.deterministic_reactor(ctypes.cast(rbuf, ctypes.c_void_p).value, len(rmsg), 4, ctypes.cast(ranchor, ctypes.c_void_p).value)\n\
          assert dr == 4 or dr < 0, f'deterministic reactor returned {{dr}}'\n\
-         if dr == 4:\n\
+         # Determinism gate: a SECOND independent run of the reactor over the same\n\
+         # workload must yield a BIT-IDENTICAL evidence anchor — physical\n\
+         # completion order never enters it (the wedge, proven on the live server).\n\
+         ranchor2 = (ctypes.c_uint8 * 32)()\n\
+         dr2 = lib.deterministic_reactor(ctypes.cast(rbuf, ctypes.c_void_p).value, len(rmsg), 4, ctypes.cast(ranchor2, ctypes.c_void_p).value)\n\
+         if dr == 4 and dr2 == 4:\n\
          \x20   assert bytes(ranchor) != bytes(32), 'reactor evidence anchor is all-zero'\n\
-         print('ok', n, bytes(da).hex()[:16], 'iou', pr, 'reactor', dr)\n"
+         \x20   assert bytes(ranchor) == bytes(ranchor2), 'reactor evidence anchor not deterministic across runs'\n\
+         print('ok', n, bytes(da).hex()[:16], 'iou', pr, 'reactor', dr, 'det', bytes(ranchor).hex()[:12])\n"
     );
     let out = Command::new("python3")
         .args(["-c", &py])
