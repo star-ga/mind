@@ -23,9 +23,14 @@ use std::process::Command;
 use tempfile::TempDir;
 
 use libmind::deps::{
-    CleanOpts, FetchOpts, LockOpts, MindLock, compute_tree_sha256, resolve_and_verify_deps,
-    run_clean, run_fetch, run_lock,
+    CleanOpts, LockOpts, MindLock, compute_tree_sha256, resolve_and_verify_deps, run_clean,
+    run_lock,
 };
+// FetchOpts/run_fetch are exercised only by the Unix-gated git-dep fetch test
+// (the fetch path drives the Linux-only native build); importing them on
+// Windows would be unused (clippy -D warnings).
+#[cfg(unix)]
+use libmind::deps::{FetchOpts, run_fetch};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,6 +56,7 @@ fn write_source(dir: &Path) {
 /// URL; convert to forward slashes and ensure a single leading slash so the
 /// result is the canonical `file:///<path>` form (`file:///tmp/x`,
 /// `file:///C:/x`) on either platform.
+#[cfg(unix)] // only used by the Unix-gated git-dep build tests
 fn file_url(p: &Path) -> String {
     let s = p.display().to_string().replace('\\', "/");
     if s.starts_with('/') {
@@ -73,6 +79,7 @@ fn load_lock(dir: &Path) -> MindLock {
 
 /// Create a local bare git repository in `bare_dir` with a single commit
 /// that contains a `Mind.toml` + `src/main.mind`. Returns the commit SHA.
+#[cfg(unix)] // only used by the Unix-gated git-dep build tests
 fn create_local_bare_repo(bare_dir: &Path, pkg_name: &str) -> String {
     // Work tree for initial commit.
     let work = bare_dir.parent().unwrap().join("work_repo");
@@ -119,11 +126,13 @@ fn create_local_bare_repo(bare_dir: &Path, pkg_name: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+#[cfg(unix)] // only used by the Unix-gated git-dep build tests
 fn run_git(args: &[&str]) {
     let status = Command::new("git").args(args).status().unwrap();
     assert!(status.success(), "git {:?} failed", args);
 }
 
+#[cfg(unix)] // only used by the Unix-gated git-dep build tests
 fn run_git_in(args: &[&str], dir: &Path) {
     let status = Command::new("git")
         .args(args)
@@ -418,6 +427,14 @@ fn mindc_deps_phase_de_d_multiple_path_deps_all_recorded() {
 // ---------------------------------------------------------------------------
 
 /// E-1: Git dep with explicit `rev` resolves and caches.
+// The git-dependency tests fetch a real dep and drive it through the native
+// binary-emit path, whose host launcher is Linux-only by design (it emits C
+// that `#include <dlfcn.h>` and `dlopen`s `libmind_..._linux-x64.so` with
+// `-ldl` — see src/project/mod.rs). `dlfcn.h` does not exist on Windows/MSVC,
+// so these are gated to Unix, consistent with the keystone and the other
+// compile/exec-invoking tests (cli_exec, relu_exec, …). The metadata-only
+// Phase-E tests (clean / tree_sha256 / schema / lock_update) stay cross-platform.
+#[cfg(unix)]
 #[test]
 fn mindc_deps_phase_de_e_git_dep_rev_resolves_and_caches() {
     let tmp = TempDir::new().unwrap();
@@ -461,6 +478,7 @@ fn mindc_deps_phase_de_e_git_dep_rev_resolves_and_caches() {
 }
 
 /// E-2: Git dep with `branch` resolves to a commit SHA at lock time.
+#[cfg(unix)] // git-dep native build is Linux-only (dlfcn.h / linux-x64.so launcher)
 #[test]
 fn mindc_deps_phase_de_e_git_dep_branch_resolves_to_sha() {
     let tmp = TempDir::new().unwrap();
@@ -494,6 +512,7 @@ fn mindc_deps_phase_de_e_git_dep_branch_resolves_to_sha() {
 }
 
 /// E-3: `mindc lock --check` exits 1 when lockfile is absent.
+#[cfg(unix)] // git-dep native build is Linux-only (dlfcn.h / linux-x64.so launcher)
 #[test]
 fn mindc_deps_phase_de_e_lock_check_absent_fails() {
     let tmp = TempDir::new().unwrap();
@@ -528,6 +547,7 @@ fn mindc_deps_phase_de_e_lock_check_absent_fails() {
 }
 
 /// E-4: `mindc fetch` populates cache without touching lockfile.
+#[cfg(unix)] // git-dep native build is Linux-only (dlfcn.h / linux-x64.so launcher)
 #[test]
 fn mindc_deps_phase_de_e_fetch_populates_cache_no_lock_change() {
     let tmp = TempDir::new().unwrap();
@@ -561,6 +581,7 @@ fn mindc_deps_phase_de_e_fetch_populates_cache_no_lock_change() {
 
 /// E-5: Absent `Mind.lock` fails `mindc build` with AP-2 error.
 /// (Tests the public API `resolve_and_verify_deps`.)
+#[cfg(unix)] // git-dep native build is Linux-only (dlfcn.h / linux-x64.so launcher)
 #[test]
 fn mindc_deps_phase_de_e_absent_lock_fails_build_ap2() {
     let tmp = TempDir::new().unwrap();

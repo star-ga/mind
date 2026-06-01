@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2675 | **Est. tokens:** ~6,703,817
-**Generated:** 2026-06-01 09:59 UTC
+**Files:** 2675 | **Est. tokens:** ~6,704,164
+**Generated:** 2026-06-01 10:14 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 19 | ~85,781 |
-| `tests/` | 160 | ~277,526 |
+| `tests/` | 160 | ~277,873 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3896,7 +3896,7 @@
 - `mic3_cli_emit.rs` (~2386 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4637 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5332 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc_deps_phase_de.rs` (~6476 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc_deps_phase_de.rs` (~6823 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_doc_phase1.rs` (~2566 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/mindcraft/check/`
 
