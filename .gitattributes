@@ -1,0 +1,18 @@
+# Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
+# cross-substrate IR/trace_hash byte-identity) behave identically on Windows,
+# where git's autocrlf would otherwise check files out with CRLF.
+* text=auto eol=lf
+
+# Source and fixtures whose bytes are compared verbatim: pin LF explicitly.
+*.rs   text eol=lf
+*.mind text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+
+# Binary artifacts: never normalize.
+*.so   binary
+*.a    binary
+*.o    binary
+*.png  binary
+*.wasm binary
