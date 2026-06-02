@@ -30,6 +30,11 @@
 // change the drained bytes. The order is therefore total and arrival-independent
 // by construction, not merely by caller contract.
 
+// canon_anchor (at the bottom) hashes the drained sequence — bring in the
+// FIPS-180-4 SHA-256 from std (the same primitive the compiler's trace_hash
+// uses), so an adopter gets drain+anchor in one call. Transitively linked.
+import std.sha256;
+
 // Bytes per event record. MUST stay a multiple of 8 (i64 stride): `canon_swap`
 // and the field stores assume i64-aligned fields.
 fn canon_evt_size() -> i64 {
@@ -240,4 +245,39 @@ pub fn canon_drain(h: i64, out_addr: i64, cap_bytes: i64) -> i64 {
 pub fn canon_clear(h: i64) -> i64 {
     __mind_store_i64(h + 8, 0);
     0
+}
+
+// canon_anchor — the one-pass evidence seam every adopter audit asked for: sort
+// + drain the canonical completion sequence into a self-sized scratch buffer and
+// SHA-256 it, writing the 32-byte anchor to `out_addr`. Removes the per-caller
+// buffer-sizing footgun (canon_drain's `cap_bytes < need -> -1`) and the
+// drain-then-hash boilerplate (the reactor's anchor_batch hand-rolls exactly
+// this). The anchor is a pure function of the completion multiset — physical
+// arrival order never enters it — so it is the deterministic evidence hash to
+// commit at the I/O boundary, byte-identical across runs and substrates.
+// Returns the number of events anchored (canon_len), or -1 on alloc/drain
+// failure. A zero-event batch anchors the empty sequence (a well-defined
+// SHA-256), never stale buffer bytes.
+pub fn canon_anchor(h: i64, out_addr: i64) -> i64 {
+    if h == 0 {
+        return 0 - 1;
+    }
+    let n: i64 = canon_len(h);
+    let cap: i64 = n * canon_evt_size();
+    let mut sz: i64 = cap;
+    if sz < 1 {
+        sz = 1;
+    }
+    let buf: i64 = __mind_alloc(sz);
+    if buf == 0 {
+        return 0 - 1;
+    }
+    let written: i64 = canon_drain(h, buf, cap);
+    if written < 0 {
+        let _ = __mind_free(buf);
+        return 0 - 1;
+    }
+    let _ = sha256(buf, written, out_addr);
+    let _ = __mind_free(buf);
+    n
 }

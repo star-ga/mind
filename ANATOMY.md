@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2685 | **Est. tokens:** ~6,745,746
-**Generated:** 2026-06-02 06:43 UTC
+**Files:** 2685 | **Est. tokens:** ~6,747,343
+**Generated:** 2026-06-02 07:07 UTC
 
 ## Token Budget Guide
 
@@ -388,15 +388,15 @@
 | `src/opt/` | 4 | ~8,207 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~24,358 |
+| `src/project/` | 3 | ~24,734 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 22 | ~108,097 |
-| `tests/` | 166 | ~291,224 |
+| `std/` | 22 | ~108,498 |
+| `tests/` | 166 | ~292,044 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3716,7 +3716,7 @@
 - `pipeline.rs` (~3862 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~17175 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~17551 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3517 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3759,7 +3759,7 @@
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
-- `io_canon.mind` (~2223 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
+- `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18597 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
 - `json.mind` (~10194 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
@@ -4067,7 +4067,7 @@
 - `std_surface_if_statement.rs` (~3282 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2350 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_ansi.rs` (~790 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_io_canon.rs` (~2452 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_io_canon.rs` (~3272 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_io_module.rs` (~1571 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_iouring.rs` (~3091 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~4349 tok, huge) — Copyright 2025 STARGA Inc.
