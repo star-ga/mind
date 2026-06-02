@@ -873,6 +873,11 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         const_array_defs: std::collections::BTreeMap::new(),
         #[cfg(feature = "std-surface")]
         repr_c_structs: std::collections::BTreeMap::new(),
+        // The enum-discriminant table is a lowering-only side-table; it is
+        // never serialised into mic@3, so the parse path leaves it empty (no
+        // wire-format change, no version bump).
+        #[cfg(feature = "std-surface")]
+        enum_variant_tags: std::collections::BTreeMap::new(),
     };
 
     // std-surface registries
