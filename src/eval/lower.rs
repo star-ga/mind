@@ -330,6 +330,125 @@ fn lower_expr(
                 dst
             }
         },
+        #[cfg(feature = "std-surface")]
+        ast::Node::Lit(Literal::Str(s), _) => {
+            // Materialize the literal into a real `String { addr, len, cap }`
+            // value, reusing the StructLit machinery verbatim:
+            //
+            //   addr = __mind_alloc(n)               // n = UTF-8 byte length
+            //   __mind_store_i8(addr + i, byte_i)    // for each UTF-8 byte
+            //   rec  = __mind_alloc(24)              // 3-field i64 String record
+            //   __mind_store_i64(rec + 0,  addr)     // field 0: addr
+            //   __mind_store_i64(rec + 8,  n)        // field 1: len
+            //   __mind_store_i64(rec + 16, n)        // field 2: cap
+            //   rec                                  // ← the String value
+            //
+            // The literal then IS a normal String value that string_len /
+            // string_slice_from / string_eq operate on with zero further
+            // change. No new Instr / MLIR codegen / ABI surface — every
+            // intrinsic here is already used by std (the same __mind_store_i8
+            // that string_push_byte calls at std/string.mind:99).
+            let bytes = s.as_bytes();
+            let n = bytes.len() as i64;
+
+            // n_const = number of UTF-8 bytes
+            let n_const = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(n_const, n));
+
+            // addr = __mind_alloc(n)  — backing buffer for the bytes
+            let addr = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: addr,
+                name: "__mind_alloc".to_string(),
+                args: vec![n_const],
+            });
+
+            // __mind_store_i8(addr + i, byte_i) for each UTF-8 byte.
+            for (i, &b) in bytes.iter().enumerate() {
+                let byte_addr = if i == 0 {
+                    addr
+                } else {
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, i as i64));
+                    let sum = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: sum,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+                    sum
+                };
+                let byte_val = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(byte_val, b as i64));
+                let store_ret = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: store_ret,
+                    name: "__mind_store_i8".to_string(),
+                    args: vec![byte_addr, byte_val],
+                });
+            }
+
+            // Build the 3-field i64 String record (24 bytes), exactly as the
+            // StructLit arm does: rec = __mind_alloc(24); store addr/len/cap.
+            let rec_bytes = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(rec_bytes, 24));
+            let rec = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: rec,
+                name: "__mind_alloc".to_string(),
+                args: vec![rec_bytes],
+            });
+
+            // field 0 (addr) at offset 0
+            let store0 = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: store0,
+                name: "__mind_store_i64".to_string(),
+                args: vec![rec, addr],
+            });
+
+            // field 1 (len) at offset 8
+            let off8 = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(off8, 8));
+            let rec8 = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: rec8,
+                op: BinOp::Add,
+                lhs: rec,
+                rhs: off8,
+            });
+            let len_val = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(len_val, n));
+            let store1 = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: store1,
+                name: "__mind_store_i64".to_string(),
+                args: vec![rec8, len_val],
+            });
+
+            // field 2 (cap) at offset 16
+            let off16 = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(off16, 16));
+            let rec16 = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: rec16,
+                op: BinOp::Add,
+                lhs: rec,
+                rhs: off16,
+            });
+            let cap_val = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(cap_val, n));
+            let store2 = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: store2,
+                name: "__mind_store_i64".to_string(),
+                args: vec![rec16, cap_val],
+            });
+
+            rec
+        }
+        #[cfg(not(feature = "std-surface"))]
         ast::Node::Lit(Literal::Str(_), _) => {
             // Strings don't have IR representation yet; emit placeholder
             let id = ir.fresh();
