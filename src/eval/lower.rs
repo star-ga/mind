@@ -2061,6 +2061,94 @@ fn lower_expr(
 
             result
         }
+        // RFC 0005 method-as-field brick — a zero-arg method whose name
+        // matches a field of the receiver's struct type is a field accessor
+        // (`s.len()` on a String == `s.len`). We resolve the receiver's
+        // struct exactly like the `FieldAccess` arm — Step 1 is the
+        // `struct_env` Ident fast-path, Step 2 is the `receiver_types`
+        // side-table keyed on this MethodCall's span (populated by the
+        // struct_resolver pre-pass) — then emit the identical
+        // `__mind_load_i64(base + idx*8)`. No new IR, no new ABI: this is a
+        // pure desugar onto the existing field-load machinery. Methods that
+        // take args or whose name isn't a field fall through to the const-0
+        // placeholder below, exactly matching today's behaviour — so this is
+        // additive and keystone-safe (no method calls appear in the keystone
+        // or std).
+        #[cfg(feature = "std-surface")]
+        ast::Node::MethodCall {
+            receiver,
+            method,
+            args,
+            span,
+        } if args.is_empty() => {
+            // Step 1 — cheap Ident-bound lookup in struct_env.
+            let step1 = match receiver.as_ref() {
+                ast::Node::Lit(Literal::Ident(var_name), _) => {
+                    struct_env.get(var_name).and_then(|struct_name| {
+                        ir.struct_defs
+                            .get(struct_name)
+                            .and_then(|fields| fields.iter().position(|f| f == method))
+                            .map(|idx| (Some(var_name.clone()), idx))
+                    })
+                }
+                _ => None,
+            };
+            // Step 2 — side-table fallback keyed on the MethodCall span.
+            let step2 = if step1.is_none() {
+                receiver_types.get(span).and_then(|struct_name| {
+                    ir.struct_defs
+                        .get(struct_name)
+                        .and_then(|fields| fields.iter().position(|f| f == method))
+                        .map(|idx| (None::<String>, idx))
+                })
+            } else {
+                None
+            };
+
+            match step1.or(step2) {
+                Some((var_name_opt, idx)) => {
+                    let addr = match var_name_opt {
+                        Some(var_name) => match env.get(&var_name) {
+                            Some(id) => *id,
+                            None => {
+                                let id = ir.fresh();
+                                ir.instrs.push(Instr::ConstI64(id, 0));
+                                return id;
+                            }
+                        },
+                        None => lower_expr(receiver, ir, env, struct_env, receiver_types),
+                    };
+                    let field_addr = if idx == 0 {
+                        addr
+                    } else {
+                        let offset = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                        let sum = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: sum,
+                            op: BinOp::Add,
+                            lhs: addr,
+                            rhs: offset,
+                        });
+                        sum
+                    };
+                    let result = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: result,
+                        name: "__mind_load_i64".to_string(),
+                        args: vec![field_addr],
+                    });
+                    result
+                }
+                None => {
+                    // Not a field accessor (unknown receiver type or method
+                    // isn't a field) — preserve the prior const-0 placeholder.
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(id, 0));
+                    id
+                }
+            }
+        }
         _ => {
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
