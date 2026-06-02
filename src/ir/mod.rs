@@ -770,6 +770,19 @@ pub struct IRModule {
     /// `BTreeMap` for deterministic ordering. Gated.
     #[cfg(feature = "std-surface")]
     pub repr_c_structs: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+    /// "finish MIND" Step 2 — enum-discriminant registry.
+    ///
+    /// Maps a fully-qualified enum-variant path (e.g. `"Mode::On"`) to its
+    /// ordinal i64 tag, assigned `0, 1, 2, …` in declaration order when the
+    /// lowering pass visits the `Node::EnumDef`. Read by the `Lit(Ident)` arm
+    /// (so a variant used as a value lowers to its tag, not `const.i64 0`) and
+    /// by `desugar_match_to_if` (so a `Mode::On => …` arm compares the
+    /// scrutinee against the variant's tag). `BTreeMap` keeps iteration
+    /// deterministic for the mic@1 round-trip. Gated; `enum`/`match` are absent
+    /// from the keystone source and all of std, so the default + keystone
+    /// artifacts are unaffected.
+    #[cfg(feature = "std-surface")]
+    pub enum_variant_tags: std::collections::BTreeMap<String, i64>,
 }
 
 impl IRModule {
@@ -784,6 +797,8 @@ impl IRModule {
             const_array_defs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             repr_c_structs: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            enum_variant_tags: std::collections::BTreeMap::new(),
         }
     }
 
