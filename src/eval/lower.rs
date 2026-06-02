@@ -1149,9 +1149,39 @@ fn lower_expr(
             });
             dst
         }
-        // Phase 10.7: `match scrutinee { arms }` — lower to sequential
-        // arm evaluation in v1 (chain-of-if-else semantics). The last
-        // arm's value is the result; the runtime interprets patterns.
+        // Phase 10.7 / "finish MIND" Step 1: `match scrutinee { arms }` —
+        // DESUGAR to a right-nested chain of `Instr::If`. Each integer/bool
+        // (`Literal::Int`) arm becomes `if scrutinee == <lit> { body } else
+        // { rest }`; a `Wildcard` (`_`) or bare `Ident` arm becomes the
+        // terminal `else` (an `Ident` first binds the scrutinee under that
+        // name). The desugar is purely at the AST level and recurses into the
+        // existing `ast::Node::If` lowering, so it reuses the keystone-
+        // protected `exit_ids`/`merges`/`region_exit_rebindings` machinery
+        // untouched. Enum-discriminant and payload-binding patterns are a
+        // later step and fall back to the old sequential lowering.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Match {
+            scrutinee, arms, ..
+        } => {
+            match desugar_match_to_if(scrutinee, arms) {
+                Some(if_node) => lower_expr(&if_node, ir, env, struct_env, receiver_types),
+                None => {
+                    // Unsupported pattern kind (enum variant / non-int
+                    // literal) — preserve the prior sequential behaviour so
+                    // those matches are not regressed by this step.
+                    let _scrut_id = lower_expr(scrutinee, ir, env, struct_env, receiver_types);
+                    let mut last_id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(last_id, 0));
+                    for arm in arms {
+                        last_id = lower_expr(&arm.body, ir, env, struct_env, receiver_types);
+                    }
+                    last_id
+                }
+            }
+        }
+        // Non-gated fallback: default builds have no branching `If` lowering,
+        // so retain the sequential-flatten behaviour.
+        #[cfg(not(feature = "std-surface"))]
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
@@ -1719,6 +1749,95 @@ fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
             }
         }
     }
+}
+
+/// "finish MIND" Step 1: desugar a `match` expression into a right-nested
+/// chain of `ast::Node::If` so the existing branching `If` lowering executes
+/// the match (instead of evaluating every arm unconditionally).
+///
+/// Supported in this step: integer/bool arms (`Pattern::Literal(Literal::Int)`,
+/// which is also how `true`/`false` patterns parse) plus a single terminal
+/// catch-all (`Wildcard` or bare `Ident`). An `Ident` catch-all binds the
+/// scrutinee under that name before its arm body via a synthetic `let`.
+///
+/// Returns `None` for any unsupported pattern kind (enum variants, string/
+/// float literals) so the caller can fall back to the prior behaviour; those
+/// are handled by later steps.
+///
+/// The result is a pure AST rewrite: it constructs standard `Node::If` /
+/// `Node::Binary(Eq)` nodes and is lowered through the unchanged
+/// `ast::Node::If` arm, so none of the dominance/merge machinery is touched.
+#[cfg(feature = "std-surface")]
+fn desugar_match_to_if(scrutinee: &ast::Node, arms: &[ast::MatchArm]) -> Option<ast::Node> {
+    let span = scrutinee.span();
+    // Split the arms into the leading literal arms and the terminal else.
+    // Only the FINAL arm may be a catch-all (`_` / bare ident); a catch-all
+    // in a non-final position would shadow the rest — leave such (malformed)
+    // matches to the fallback path.
+    let mut else_branch: Option<Vec<ast::Node>> = None;
+    let mut last_idx = arms.len();
+    if let Some(last) = arms.last() {
+        match &last.pattern {
+            ast::Pattern::Wildcard => {
+                else_branch = Some(vec![last.body.clone()]);
+                last_idx = arms.len() - 1;
+            }
+            ast::Pattern::Ident(name) => {
+                // Bind the scrutinee under `name` before the arm body.
+                let bind = ast::Node::Let {
+                    name: name.clone(),
+                    mutable: false,
+                    ann: None,
+                    value: Box::new(scrutinee.clone()),
+                    span,
+                };
+                else_branch = Some(vec![bind, last.body.clone()]);
+                last_idx = arms.len() - 1;
+            }
+            _ => {}
+        }
+    }
+
+    // Every remaining arm must be an integer/bool literal for this step.
+    let literal_arms = &arms[..last_idx];
+    for arm in literal_arms {
+        match &arm.pattern {
+            ast::Pattern::Literal(Literal::Int(_)) => {}
+            _ => return None,
+        }
+    }
+    // Need at least one literal arm to form a branch; a lone catch-all is
+    // already handled fine by the fallback (and has no comparison to make).
+    if literal_arms.is_empty() {
+        return None;
+    }
+
+    // Build the chain from the tail backwards so the first arm ends up
+    // outermost. `else_stmts` is the body of the current innermost `else`:
+    // the terminal catch-all arm initially, then each enclosing `If`.
+    let mut else_stmts: Option<Vec<ast::Node>> = else_branch;
+    for arm in literal_arms.iter().rev() {
+        let lit = match &arm.pattern {
+            ast::Pattern::Literal(l) => l.clone(),
+            _ => unreachable!(),
+        };
+        let cond = ast::Node::Binary {
+            op: ast::BinOp::Eq,
+            left: Box::new(scrutinee.clone()),
+            right: Box::new(ast::Node::Lit(lit, span)),
+            span,
+        };
+        let if_node = ast::Node::If {
+            cond: Box::new(cond),
+            then_branch: vec![arm.body.clone()],
+            else_branch: else_stmts.take(),
+            span,
+        };
+        else_stmts = Some(vec![if_node]);
+    }
+    // `else_stmts` now holds the single outermost `If` (literal_arms is
+    // non-empty, so exactly one node).
+    else_stmts.and_then(|mut v| v.pop())
 }
 
 /// Lower a sequence of `Let` / `Assign` / expression body statements into
