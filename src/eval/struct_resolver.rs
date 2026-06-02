@@ -31,9 +31,22 @@
 
 #![cfg(feature = "std-surface")]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::ast::{Literal, Module, Node, Span, TypeAnn};
+
+/// Maps `(struct_name, field_name)` → the **struct-type name of that
+/// field**, for every struct field whose declared type names a known
+/// struct. Built once from the module's `StructDef` nodes. Empty for any
+/// field that is scalar / slice-of-scalar / not a struct.
+///
+/// This is what lets [`infer_struct`] chain through a nested
+/// `FieldAccess` receiver: given `o.inner` where `o: Outer`, we look up
+/// `(Outer, inner)` and learn the receiver resolves to `Inner`, so the
+/// outer `.v` can then resolve. `BTreeMap` keeps construction
+/// deterministic for byte-identity (the map is lookup-only at
+/// resolution time, but we keep the deterministic container regardless).
+type FieldTypes = BTreeMap<(String, String), String>;
 
 /// The side-table produced by [`build_field_access_types`]. Maps each
 /// `FieldAccess` node's span to the **struct-type name of its receiver**
@@ -58,22 +71,41 @@ pub type FieldAccessTypes = HashMap<Span, String>;
 ///   parameter list (any `Param` whose `ty` is `Named(T)` for a known
 ///   `StructDef` gets `param_name → T`).
 ///
-/// Out of scope for Step 2 (intentionally — Step 3 / generics):
-/// - Fields *of* struct types being themselves structs that we'd then
-///   want to load further. Today every struct field is i64-shaped
-///   (heap-record ABI Option C, P0e). When std-surface adds nested
-///   struct fields, the recursion in (1) needs to consult
-///   `StructDef.fields[i].ty` to find the inner struct's name —
-///   straightforward extension, but not needed for `std.vec`'s shape.
+/// - (4) **Nested struct-typed field** `a.b.c` where field `b` is itself
+///   a struct: the per-field type table (built from `StructDef.fields[i].ty`)
+///   lets `infer_struct` chain `a → S`, `(S, b) → Inner`, so `.c`
+///   resolves against `Inner`. Both reads (`o.inner.v`) and writes
+///   (`o.inner.v = x`) light up — the lowering re-lowers the inner
+///   `FieldAccess` receiver to its base address and adds the field offset.
+///
+/// Out of scope (intentionally — Step 3 / generics):
+/// - Generic / type-parameterised struct fields. Scalar fields stay
+///   i64-shaped (heap-record ABI Option C, P0e); the table only records
+///   fields whose declared type names a concrete known struct.
 pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
     let mut types = FieldAccessTypes::new();
 
-    // First pass — collect known struct names + fn-return mappings.
+    // First pass — collect known struct names + fn-return mappings +
+    // per-field struct types (for nested-access chaining).
     let mut struct_defs: Vec<String> = Vec::new();
+    let mut field_types: FieldTypes = FieldTypes::new();
     let mut fn_returns: HashMap<String, String> = HashMap::new();
     for item in &module.items {
         match item {
-            Node::StructDef { name, .. } => struct_defs.push(name.clone()),
+            Node::StructDef { name, fields, .. } => {
+                struct_defs.push(name.clone());
+                // Record `(struct, field) → inner-struct-name` for every
+                // field whose declared type names a struct (peeling
+                // `&T` / `&mut T` / `[T]` / `&[T]`). The "is this a real
+                // struct?" filter runs in the second pass below, after
+                // all struct names are known, since a field's struct may
+                // be declared textually later.
+                for f in fields {
+                    if let Some(t) = unwrap_to_named(&f.ty) {
+                        field_types.insert((name.clone(), f.name.clone()), t.to_string());
+                    }
+                }
+            }
             Node::FnDef {
                 name,
                 ret_type: Some(ret),
@@ -93,22 +125,40 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
     }
     // Filter fn_returns to only those whose return-type is a real struct.
     fn_returns.retain(|_, t| struct_defs.iter().any(|s| s == t));
+    // Likewise keep only field types that name a real struct — scalar
+    // fields and slices-of-scalar drop out, so `infer_struct`'s
+    // FieldAccess arm only ever returns a known struct name.
+    field_types.retain(|_, t| struct_defs.iter().any(|s| s == t));
 
     // Second pass — walk every expression, tracking var→struct bindings.
     let mut var_to_struct: HashMap<String, String> = HashMap::new();
     for item in &module.items {
         match item {
             Node::Let { name, value, .. } => {
-                walk_expr(value, &var_to_struct, &fn_returns, &struct_defs, &mut types);
-                if let Some(t) = infer_struct(value, &var_to_struct, &fn_returns) {
+                walk_expr(
+                    value,
+                    &var_to_struct,
+                    &fn_returns,
+                    &struct_defs,
+                    &field_types,
+                    &mut types,
+                );
+                if let Some(t) = infer_struct(value, &var_to_struct, &fn_returns, &field_types) {
                     if struct_defs.iter().any(|s| s == &t) {
                         var_to_struct.insert(name.clone(), t);
                     }
                 }
             }
             Node::Assign { name, value, .. } => {
-                walk_expr(value, &var_to_struct, &fn_returns, &struct_defs, &mut types);
-                if let Some(t) = infer_struct(value, &var_to_struct, &fn_returns) {
+                walk_expr(
+                    value,
+                    &var_to_struct,
+                    &fn_returns,
+                    &struct_defs,
+                    &field_types,
+                    &mut types,
+                );
+                if let Some(t) = infer_struct(value, &var_to_struct, &fn_returns, &field_types) {
                     if struct_defs.iter().any(|s| s == &t) {
                         var_to_struct.insert(name.clone(), t);
                     }
@@ -128,13 +178,27 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
                     }
                 }
                 for stmt in body {
-                    walk_stmt(stmt, &mut fn_vars, &fn_returns, &struct_defs, &mut types);
+                    walk_stmt(
+                        stmt,
+                        &mut fn_vars,
+                        &fn_returns,
+                        &struct_defs,
+                        &field_types,
+                        &mut types,
+                    );
                 }
             }
             // Items that are themselves expressions used for their side
             // effect (rare at module scope, but the catch-all in lower.rs
             // does invoke lower_expr on them).
-            other => walk_expr(other, &var_to_struct, &fn_returns, &struct_defs, &mut types),
+            other => walk_expr(
+                other,
+                &var_to_struct,
+                &fn_returns,
+                &struct_defs,
+                &field_types,
+                &mut types,
+            ),
         }
     }
 
@@ -147,21 +211,22 @@ fn walk_stmt(
     fn_vars: &mut HashMap<String, String>,
     fn_returns: &HashMap<String, String>,
     struct_defs: &[String],
+    field_types: &FieldTypes,
     types: &mut FieldAccessTypes,
 ) {
     match stmt {
         Node::Let { name, value, .. } | Node::Assign { name, value, .. } => {
-            walk_expr(value, fn_vars, fn_returns, struct_defs, types);
-            if let Some(t) = infer_struct(value, fn_vars, fn_returns) {
+            walk_expr(value, fn_vars, fn_returns, struct_defs, field_types, types);
+            if let Some(t) = infer_struct(value, fn_vars, fn_returns, field_types) {
                 if struct_defs.iter().any(|s| s == &t) {
                     fn_vars.insert(name.clone(), t);
                 }
             }
         }
         Node::Return { value: Some(v), .. } => {
-            walk_expr(v, fn_vars, fn_returns, struct_defs, types);
+            walk_expr(v, fn_vars, fn_returns, struct_defs, field_types, types);
         }
-        other => walk_expr(other, fn_vars, fn_returns, struct_defs, types),
+        other => walk_expr(other, fn_vars, fn_returns, struct_defs, field_types, types),
     }
 }
 
@@ -172,46 +237,53 @@ fn walk_expr(
     vars: &HashMap<String, String>,
     fn_returns: &HashMap<String, String>,
     struct_defs: &[String],
+    field_types: &FieldTypes,
     types: &mut FieldAccessTypes,
 ) {
     match expr {
         Node::FieldAccess { receiver, span, .. } => {
             // Recurse first so nested FieldAccess entries get recorded
             // before we look up the outer one.
-            walk_expr(receiver, vars, fn_returns, struct_defs, types);
-            if let Some(t) = infer_struct(receiver, vars, fn_returns) {
+            walk_expr(receiver, vars, fn_returns, struct_defs, field_types, types);
+            if let Some(t) = infer_struct(receiver, vars, fn_returns, field_types) {
                 if struct_defs.iter().any(|s| s == &t) {
                     types.insert(*span, t);
                 }
             }
         }
         Node::Binary { left, right, .. } => {
-            walk_expr(left, vars, fn_returns, struct_defs, types);
-            walk_expr(right, vars, fn_returns, struct_defs, types);
+            walk_expr(left, vars, fn_returns, struct_defs, field_types, types);
+            walk_expr(right, vars, fn_returns, struct_defs, field_types, types);
         }
         Node::Logical { left, right, .. } => {
-            walk_expr(left, vars, fn_returns, struct_defs, types);
-            walk_expr(right, vars, fn_returns, struct_defs, types);
+            walk_expr(left, vars, fn_returns, struct_defs, field_types, types);
+            walk_expr(right, vars, fn_returns, struct_defs, field_types, types);
         }
-        Node::Neg { operand, .. } => walk_expr(operand, vars, fn_returns, struct_defs, types),
-        Node::Paren(inner, _) => walk_expr(inner, vars, fn_returns, struct_defs, types),
-        Node::Ref { inner, .. } => walk_expr(inner, vars, fn_returns, struct_defs, types),
+        Node::Neg { operand, .. } => {
+            walk_expr(operand, vars, fn_returns, struct_defs, field_types, types)
+        }
+        Node::Paren(inner, _) => {
+            walk_expr(inner, vars, fn_returns, struct_defs, field_types, types)
+        }
+        Node::Ref { inner, .. } => {
+            walk_expr(inner, vars, fn_returns, struct_defs, field_types, types)
+        }
         Node::Call { args, .. } => {
             for a in args {
-                walk_expr(a, vars, fn_returns, struct_defs, types);
+                walk_expr(a, vars, fn_returns, struct_defs, field_types, types);
             }
         }
         Node::MethodCall { receiver, args, .. } => {
-            walk_expr(receiver, vars, fn_returns, struct_defs, types);
+            walk_expr(receiver, vars, fn_returns, struct_defs, field_types, types);
             for a in args {
-                walk_expr(a, vars, fn_returns, struct_defs, types);
+                walk_expr(a, vars, fn_returns, struct_defs, field_types, types);
             }
         }
         Node::Block { stmts, .. } => {
             // Inner Let/Assign in a block can shadow — use a snapshot.
             let mut local = vars.clone();
             for stmt in stmts {
-                walk_stmt(stmt, &mut local, fn_returns, struct_defs, types);
+                walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
             }
         }
         Node::If {
@@ -220,29 +292,55 @@ fn walk_expr(
             else_branch,
             ..
         } => {
-            walk_expr(cond, vars, fn_returns, struct_defs, types);
+            walk_expr(cond, vars, fn_returns, struct_defs, field_types, types);
             let mut local = vars.clone();
             for stmt in then_branch {
-                walk_stmt(stmt, &mut local, fn_returns, struct_defs, types);
+                walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
             }
             if let Some(else_b) = else_branch {
                 let mut local = vars.clone();
                 for stmt in else_b {
-                    walk_stmt(stmt, &mut local, fn_returns, struct_defs, types);
+                    walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
                 }
             }
         }
         Node::StructLit { fields, .. } => {
             for f in fields {
-                walk_expr(&f.value, vars, fn_returns, struct_defs, types);
+                walk_expr(&f.value, vars, fn_returns, struct_defs, field_types, types);
             }
+        }
+        // RFC 0005 P0g — `receiver.field = value`. Two records are needed
+        // for a nested write (`o.inner.v = x`):
+        //   * walking the receiver records the inner `o.inner` FieldAccess
+        //     span, so the write arm's `lower_expr(receiver, …)` resolves
+        //     `o.inner` to the inner record's base address; and
+        //   * the FieldAssign's *own* span must map to the receiver's
+        //     struct type (`Inner`), since the write arm's Step-2 looks up
+        //     `receiver_types[FieldAssign.span]` to index the field being
+        //     stored. This mirrors how a FieldAccess read keys its own
+        //     span on the receiver's struct name.
+        // The RHS is walked too for any field accesses it contains.
+        #[cfg(feature = "std-surface")]
+        Node::FieldAssign {
+            receiver,
+            span,
+            value,
+            ..
+        } => {
+            walk_expr(receiver, vars, fn_returns, struct_defs, field_types, types);
+            if let Some(t) = infer_struct(receiver, vars, fn_returns, field_types) {
+                if struct_defs.iter().any(|s| s == &t) {
+                    types.insert(*span, t);
+                }
+            }
+            walk_expr(value, vars, fn_returns, struct_defs, field_types, types);
         }
         // RFC 0010 Phase J-A: region body — same walk as Block.
         #[cfg(feature = "std-surface")]
         Node::Region { body, .. } => {
             let mut local = vars.clone();
             for stmt in body {
-                walk_stmt(stmt, &mut local, fn_returns, struct_defs, types);
+                walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
             }
         }
         // Other nodes either don't contain expressions or are
@@ -275,20 +373,31 @@ fn infer_struct(
     expr: &Node,
     vars: &HashMap<String, String>,
     fn_returns: &HashMap<String, String>,
+    field_types: &FieldTypes,
 ) -> Option<String> {
     match expr {
         // The most common cases first — direct StructLit + Ident lookup.
         Node::StructLit { name, .. } => Some(name.clone()),
         Node::Lit(Literal::Ident(v), _) => vars.get(v).cloned(),
         Node::Call { callee, .. } => fn_returns.get(callee).cloned(),
-        Node::Paren(inner, _) => infer_struct(inner, vars, fn_returns),
-        Node::Ref { inner, .. } => infer_struct(inner, vars, fn_returns),
-        // Chained access — `a.b` returns whatever field `b`'s type is.
-        // For Step 2 we don't track nested struct fields (every field is
-        // i64-shaped under the P0e Option-C ABI); when `std-surface`
-        // grows nested struct fields, extend this arm to look up
-        // `StructDef.fields[idx].ty` and return the inner struct name.
-        Node::FieldAccess { .. } => None,
+        Node::Paren(inner, _) => infer_struct(inner, vars, fn_returns, field_types),
+        Node::Ref { inner, .. } => infer_struct(inner, vars, fn_returns, field_types),
+        // Chained access — `a.b` resolves to the struct type of field `b`
+        // when that field is itself struct-typed. We first resolve the
+        // receiver `a` to its struct name `S` (recursively, so deeper
+        // chains `a.b.c` work), then look up `(S, b)` in the per-field
+        // type table built from the `StructDef` declarations. The table
+        // already peeled `&T` / `[T]` wrappers and dropped scalar fields,
+        // so a hit is always a known inner struct name and a scalar field
+        // (`o.tag`) returns `None` exactly as before — keeping this arm
+        // purely additive (nested struct-typed fields are absent from the
+        // keystone and all of std, so no currently-emitted byte changes).
+        Node::FieldAccess {
+            receiver, field, ..
+        } => {
+            let recv_struct = infer_struct(receiver, vars, fn_returns, field_types)?;
+            field_types.get(&(recv_struct, field.clone())).cloned()
+        }
         _ => None,
     }
 }
