@@ -181,6 +181,24 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 env.insert(name.clone(), id);
                 ir.instrs.push(Instr::Output(id));
             }
+            // "finish MIND" Step 2 — record each enum variant's ordinal i64
+            // tag (`0, 1, 2, …` in declaration order) under its fully-qualified
+            // path (`"Mode::On"`) so that (a) the `Lit(Ident)` arm can lower a
+            // variant used as a value to its tag and (b) `desugar_match_to_if`
+            // can compare a scrutinee against a fieldless variant's tag. An
+            // enum declaration is a no-op at the value level, so the
+            // `ConstI64(0)`/`Output` placeholder is preserved for the
+            // declaration-only IR-shape contract (mirrors `StructDef`).
+            #[cfg(feature = "std-surface")]
+            ast::Node::EnumDef { name, variants, .. } => {
+                for (ordinal, variant) in variants.iter().enumerate() {
+                    let path = format!("{name}::{}", variant.name);
+                    ir.enum_variant_tags.insert(path, ordinal as i64);
+                }
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, 0));
+                ir.instrs.push(Instr::Output(id));
+            }
             other => {
                 let id = lower_expr(other, &mut ir, &env, &struct_env, receiver_types);
                 ir.instrs.push(Instr::Output(id));
@@ -335,6 +353,19 @@ fn lower_expr(
                     name: Some(name.clone()),
                     values,
                 });
+                return id;
+            }
+            // "finish MIND" Step 2 (Defect B fix): a fully-qualified enum
+            // variant used as a VALUE (e.g. `Mode::On`) lowers to its ordinal
+            // i64 discriminant tag instead of falling through to the
+            // placeholder `const.i64 0`. The path string (`"Mode::On"`) is the
+            // exact key the parser accumulates for a `Type::Variant`
+            // identifier, matching the `enum_variant_tags` registry built when
+            // the `EnumDef` was lowered.
+            #[cfg(feature = "std-surface")]
+            if let Some(tag) = ir.enum_variant_tags.get(name).copied() {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, tag));
                 return id;
             }
             // Undefined — emit placeholder.
@@ -638,6 +669,10 @@ fn lower_expr(
                 // Phase 6.2b Gap 2: inherit const-array data so that
                 // fn bodies can re-emit ConstArray nodes on demand.
                 fn_ir.const_array_defs = ir.const_array_defs.clone();
+                // "finish MIND" Step 2: inherit the enum-discriminant table so
+                // a variant referenced inside a fn body (as a value or a match
+                // arm) resolves to its tag rather than the placeholder 0.
+                fn_ir.enum_variant_tags = ir.enum_variant_tags.clone();
             }
             // Build fn_env from env, but do NOT carry over const-array
             // SSA ids from the outer module — those ids are only valid in
@@ -1163,7 +1198,7 @@ fn lower_expr(
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
-            match desugar_match_to_if(scrutinee, arms) {
+            match desugar_match_to_if(scrutinee, arms, &ir.enum_variant_tags) {
                 Some(if_node) => lower_expr(&if_node, ir, env, struct_env, receiver_types),
                 None => {
                     // Unsupported pattern kind (enum variant / non-int
@@ -1751,26 +1786,34 @@ fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
     }
 }
 
-/// "finish MIND" Step 1: desugar a `match` expression into a right-nested
+/// "finish MIND" Step 1/2: desugar a `match` expression into a right-nested
 /// chain of `ast::Node::If` so the existing branching `If` lowering executes
 /// the match (instead of evaluating every arm unconditionally).
 ///
-/// Supported in this step: integer/bool arms (`Pattern::Literal(Literal::Int)`,
-/// which is also how `true`/`false` patterns parse) plus a single terminal
-/// catch-all (`Wildcard` or bare `Ident`). An `Ident` catch-all binds the
-/// scrutinee under that name before its arm body via a synthetic `let`.
+/// Supported: integer/bool arms (`Pattern::Literal(Literal::Int)`, which is
+/// also how `true`/`false` patterns parse) and — Step 2 — FIELDLESS
+/// enum-variant arms (`Pattern::EnumVariant` with no payload), which compare
+/// the scrutinee against the variant's ordinal discriminant tag looked up in
+/// `enum_tags`. Both forms may be followed by a single terminal catch-all
+/// (`Wildcard` or bare `Ident`); an `Ident` catch-all binds the scrutinee
+/// under that name before its arm body via a synthetic `let`.
 ///
-/// Returns `None` for any unsupported pattern kind (enum variants, string/
-/// float literals) so the caller can fall back to the prior behaviour; those
+/// Returns `None` for any unsupported pattern kind (payload-binding variants
+/// such as `Some(v)`, string/float literals, or an enum-variant path absent
+/// from `enum_tags`) so the caller can fall back to the prior behaviour; those
 /// are handled by later steps.
 ///
 /// The result is a pure AST rewrite: it constructs standard `Node::If` /
 /// `Node::Binary(Eq)` nodes and is lowered through the unchanged
 /// `ast::Node::If` arm, so none of the dominance/merge machinery is touched.
 #[cfg(feature = "std-surface")]
-fn desugar_match_to_if(scrutinee: &ast::Node, arms: &[ast::MatchArm]) -> Option<ast::Node> {
+fn desugar_match_to_if(
+    scrutinee: &ast::Node,
+    arms: &[ast::MatchArm],
+    enum_tags: &std::collections::BTreeMap<String, i64>,
+) -> Option<ast::Node> {
     let span = scrutinee.span();
-    // Split the arms into the leading literal arms and the terminal else.
+    // Split the arms into the leading test arms and the terminal else.
     // Only the FINAL arm may be a catch-all (`_` / bare ident); a catch-all
     // in a non-final position would shadow the rest — leave such (malformed)
     // matches to the fallback path.
@@ -1798,17 +1841,35 @@ fn desugar_match_to_if(scrutinee: &ast::Node, arms: &[ast::MatchArm]) -> Option<
         }
     }
 
-    // Every remaining arm must be an integer/bool literal for this step.
-    let literal_arms = &arms[..last_idx];
-    for arm in literal_arms {
-        match &arm.pattern {
-            ast::Pattern::Literal(Literal::Int(_)) => {}
+    // Each remaining arm becomes a `scrutinee == <rhs>` comparison. Build the
+    // RHS literal node per pattern kind: an integer/bool literal compares
+    // against itself; a FIELDLESS enum variant compares against its ordinal
+    // discriminant tag. Any other pattern (payload-binding variant, unknown
+    // variant path, non-int literal) bails the whole match to the fallback.
+    let test_arms = &arms[..last_idx];
+    let mut rhs_nodes: Vec<ast::Node> = Vec::with_capacity(test_arms.len());
+    for arm in test_arms {
+        let rhs = match &arm.pattern {
+            ast::Pattern::Literal(Literal::Int(_)) => {
+                let lit = match &arm.pattern {
+                    ast::Pattern::Literal(l) => l.clone(),
+                    _ => unreachable!(),
+                };
+                ast::Node::Lit(lit, span)
+            }
+            // Step 2: fieldless enum-discriminant arm. Payload-binding
+            // variants (non-empty `args`) stay deferred — fall back.
+            ast::Pattern::EnumVariant { path, args } if args.is_empty() => {
+                let tag = enum_tags.get(path).copied()?;
+                ast::Node::Lit(Literal::Int(tag), span)
+            }
             _ => return None,
-        }
+        };
+        rhs_nodes.push(rhs);
     }
-    // Need at least one literal arm to form a branch; a lone catch-all is
+    // Need at least one test arm to form a branch; a lone catch-all is
     // already handled fine by the fallback (and has no comparison to make).
-    if literal_arms.is_empty() {
+    if test_arms.is_empty() {
         return None;
     }
 
@@ -1816,15 +1877,11 @@ fn desugar_match_to_if(scrutinee: &ast::Node, arms: &[ast::MatchArm]) -> Option<
     // outermost. `else_stmts` is the body of the current innermost `else`:
     // the terminal catch-all arm initially, then each enclosing `If`.
     let mut else_stmts: Option<Vec<ast::Node>> = else_branch;
-    for arm in literal_arms.iter().rev() {
-        let lit = match &arm.pattern {
-            ast::Pattern::Literal(l) => l.clone(),
-            _ => unreachable!(),
-        };
+    for (arm, rhs) in test_arms.iter().zip(rhs_nodes.iter()).rev() {
         let cond = ast::Node::Binary {
             op: ast::BinOp::Eq,
             left: Box::new(scrutinee.clone()),
-            right: Box::new(ast::Node::Lit(lit, span)),
+            right: Box::new(rhs.clone()),
             span,
         };
         let if_node = ast::Node::If {
@@ -1835,7 +1892,7 @@ fn desugar_match_to_if(scrutinee: &ast::Node, arms: &[ast::MatchArm]) -> Option<
         };
         else_stmts = Some(vec![if_node]);
     }
-    // `else_stmts` now holds the single outermost `If` (literal_arms is
+    // `else_stmts` now holds the single outermost `If` (test_arms is
     // non-empty, so exactly one node).
     else_stmts.and_then(|mut v| v.pop())
 }
@@ -1946,6 +2003,7 @@ fn sub_ir_from(parent: &IRModule) -> IRModule {
     m.next_id = parent.next_id;
     m.struct_defs = parent.struct_defs.clone();
     m.const_array_defs = parent.const_array_defs.clone();
+    m.enum_variant_tags = parent.enum_variant_tags.clone();
     m
 }
 
@@ -1959,6 +2017,7 @@ fn sub_ir_from_after(prev: &IRModule, meta_src: &IRModule) -> IRModule {
     m.next_id = prev.next_id;
     m.struct_defs = meta_src.struct_defs.clone();
     m.const_array_defs = meta_src.const_array_defs.clone();
+    m.enum_variant_tags = meta_src.enum_variant_tags.clone();
     m
 }
 
