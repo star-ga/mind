@@ -144,3 +144,119 @@ fn probe_cap() -> i64 {
         ir.instrs
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// UFCS desugar — a method call WITH ARGS whose name is not a field of the
+// receiver's struct lowers to a real free-function call
+// `{lowercase(Type)}_{method}(recv, args…)` — NOT the const-0 placeholder.
+//
+// `v.push(42)` on `struct Vec { addr, len, cap }` desugars to
+// `vec_push(v, 42)` with the receiver threaded as the first argument. This
+// guards the #1 silent-miscompile blocker: before this brick, every
+// method-with-args call returned 0 instead of executing.
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Recursively count `Instr::ConstI64(_, 0)` so we can assert the call site is
+/// NOT a const-0 placeholder. (Struct-literal builds legitimately use const-0
+/// for an `addr: 0` field, so we assert on the presence of the real call, not
+/// the absence of all zeros.)
+fn vec_push_call_threads_receiver(instrs: &[Instr]) -> bool {
+    for instr in instrs {
+        match instr {
+            // The receiver must be the FIRST argument and there must be a
+            // second (the pushed value) — proving it is the desugared
+            // `vec_push(recv, value)`, not a zero-arg accessor or const-0.
+            Instr::Call { name, args, .. } if name == "vec_push" && args.len() == 2 => return true,
+            Instr::FnDef { body, .. } => {
+                if vec_push_call_threads_receiver(body) {
+                    return true;
+                }
+            }
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                if vec_push_call_threads_receiver(cond_instrs)
+                    || vec_push_call_threads_receiver(then_instrs)
+                    || vec_push_call_threads_receiver(else_instrs)
+                {
+                    return true;
+                }
+            }
+            Instr::While {
+                body, cond_instrs, ..
+            } => {
+                if vec_push_call_threads_receiver(cond_instrs)
+                    || vec_push_call_threads_receiver(body)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+#[test]
+fn method_with_args_ufcs_desugars_to_free_function_call() {
+    let src = r#"
+struct Vec { addr: i64, len: i64, cap: i64 }
+fn vec_push(v: Vec, value: i64) -> Vec {
+    Vec { addr: v.addr, len: v.len + 1, cap: v.cap }
+}
+fn probe() -> i64 {
+    let v = Vec { addr: 0, len: 0, cap: 0 }
+    let w = v.push(42)
+    w.len
+}
+"#;
+    let module = must_parse(src);
+    let ir = lower_to_ir(&module);
+    // The whole point: `v.push(42)` is a REAL call to `vec_push`, with the
+    // receiver `v` as the first argument and `42` as the second — not a
+    // silent const-0 placeholder.
+    assert!(
+        vec_push_call_threads_receiver(&ir.instrs),
+        "`v.push(42)` must desugar to `vec_push(v, 42)` (a 2-arg func.call with \
+         the receiver threaded first), NOT a const-0 placeholder.\nIR: {:?}",
+        ir.instrs
+    );
+    // And it must have produced NO new const-0 *at the call site*: confirm a
+    // `vec_push` call exists at all (the strong signal above already does this,
+    // but assert the count is exactly one for clarity).
+    assert_eq!(
+        count_calls_named(&ir.instrs, "vec_push"),
+        1,
+        "exactly one vec_push call expected from the single `v.push(42)`.\nIR: {:?}",
+        ir.instrs
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Fail-loud — a method call WITH ARGS whose receiver type cannot be resolved
+// must NOT silently lower to const-0. Under the old fallthrough this was a
+// silent miscompile; now it is a clear, loud failure (panic in the lowering
+// pass) per the #306 fail-closed philosophy.
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn method_with_args_on_unresolved_receiver_fails_loud_not_const_zero() {
+    // `x: i64` is not a struct, so `x.frobnicate(7)` cannot desugar to any
+    // `<type>_frobnicate` free function. The lowering pass must refuse to emit
+    // a const-0 placeholder.
+    let src = r#"
+fn probe(x: i64) -> i64 {
+    x.frobnicate(7)
+}
+"#;
+    let module = must_parse(src);
+    let result = std::panic::catch_unwind(|| lower_to_ir(&module));
+    assert!(
+        result.is_err(),
+        "an unresolved method-with-args call must fail loud (panic), NOT silently \
+         lower to const-0 — that would be a miscompile (#306 fail-closed)."
+    );
+}

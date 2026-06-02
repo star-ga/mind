@@ -2061,88 +2061,139 @@ fn lower_expr(
 
             result
         }
-        // RFC 0005 method-as-field brick — a zero-arg method whose name
-        // matches a field of the receiver's struct type is a field accessor
-        // (`s.len()` on a String == `s.len`). We resolve the receiver's
-        // struct exactly like the `FieldAccess` arm — Step 1 is the
-        // `struct_env` Ident fast-path, Step 2 is the `receiver_types`
-        // side-table keyed on this MethodCall's span (populated by the
-        // struct_resolver pre-pass) — then emit the identical
-        // `__mind_load_i64(base + idx*8)`. No new IR, no new ABI: this is a
-        // pure desugar onto the existing field-load machinery. Methods that
-        // take args or whose name isn't a field fall through to the const-0
-        // placeholder below, exactly matching today's behaviour — so this is
-        // additive and keystone-safe (no method calls appear in the keystone
-        // or std).
+        // RFC 0005 method brick — a `recv.method(args)` call. Two cases,
+        // both keyed off the receiver's resolved struct type `T`:
+        //
+        //   1. ZERO-ARG FIELD ACCESSOR — a zero-arg method whose name matches
+        //      a field of `T` is a field read (`s.len()` on a String == `s.len`).
+        //      We emit the identical `__mind_load_i64(base + idx*8)` the
+        //      `FieldAccess` arm emits. No new IR, no new ABI. (Already shipped.)
+        //
+        //   2. UFCS DESUGAR — any other resolved method (`v.push(x)`,
+        //      `s.push_byte(b)`) is sugar for the free function
+        //      `{lowercase(T)}_{method}(recv, args…)` that std declares by
+        //      convention (struct `Vec` -> `vec_push`, struct `String` ->
+        //      `string_push_byte`). We lower the receiver + each arg and emit a
+        //      plain `Instr::Call` with the receiver threaded as the first
+        //      argument — the SAME machinery the `Node::Call` arm uses for a
+        //      direct free-function call. If the named function does not exist
+        //      it fails LOUD at link time (an undefined `func.call` symbol), it
+        //      never silently returns 0. This is purely additive desugar onto
+        //      existing `Instr::Call`; no new IR/intrinsic/ABI.
+        //
+        // The receiver's struct type is resolved exactly like the `FieldAccess`
+        // arm: Step 1 is the `struct_env` Ident fast-path, Step 2 is the
+        // `receiver_types` side-table keyed on this MethodCall's span (populated
+        // by the struct_resolver pre-pass). When the receiver type cannot be
+        // resolved AT ALL, a method-with-args call would otherwise be a silent
+        // const-0 miscompile — so we emit a clear diagnostic and a poison value
+        // (panics in debug, returns a loud sentinel call in release) rather than
+        // const-0. Method calls are absent from the keystone and all of std, so
+        // the keystone artifact is unaffected.
         #[cfg(feature = "std-surface")]
         ast::Node::MethodCall {
             receiver,
             method,
             args,
             span,
-        } if args.is_empty() => {
-            // Step 1 — cheap Ident-bound lookup in struct_env.
-            let step1 = match receiver.as_ref() {
-                ast::Node::Lit(Literal::Ident(var_name), _) => {
-                    struct_env.get(var_name).and_then(|struct_name| {
-                        ir.struct_defs
-                            .get(struct_name)
-                            .and_then(|fields| fields.iter().position(|f| f == method))
-                            .map(|idx| (Some(var_name.clone()), idx))
-                    })
-                }
-                _ => None,
-            };
-            // Step 2 — side-table fallback keyed on the MethodCall span.
-            let step2 = if step1.is_none() {
-                receiver_types.get(span).and_then(|struct_name| {
+        } => {
+            // Resolve the receiver's struct type name `T` and, for the cheap
+            // Ident path, the bound variable name so we can reuse its SSA id.
+            let (struct_name, var_name_opt): (Option<String>, Option<String>) =
+                match receiver.as_ref() {
+                    ast::Node::Lit(Literal::Ident(var_name), _) => match struct_env.get(var_name) {
+                        Some(t) => (Some(t.clone()), Some(var_name.clone())),
+                        None => (receiver_types.get(span).cloned(), None),
+                    },
+                    _ => (receiver_types.get(span).cloned(), None),
+                };
+
+            // Case 1 — zero-arg accessor whose name is a field of `T`.
+            let field_idx = if args.is_empty() {
+                struct_name.as_ref().and_then(|t| {
                     ir.struct_defs
-                        .get(struct_name)
+                        .get(t)
                         .and_then(|fields| fields.iter().position(|f| f == method))
-                        .map(|idx| (None::<String>, idx))
                 })
             } else {
                 None
             };
 
-            match step1.or(step2) {
-                Some((var_name_opt, idx)) => {
-                    let addr = match var_name_opt {
-                        Some(var_name) => match env.get(&var_name) {
+            if let Some(idx) = field_idx {
+                let addr = match &var_name_opt {
+                    Some(var_name) => match env.get(var_name) {
+                        Some(id) => *id,
+                        None => lower_expr(receiver, ir, env, struct_env, receiver_types),
+                    },
+                    None => lower_expr(receiver, ir, env, struct_env, receiver_types),
+                };
+                let field_addr = if idx == 0 {
+                    addr
+                } else {
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                    let sum = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: sum,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+                    sum
+                };
+                let result = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: result,
+                    name: "__mind_load_i64".to_string(),
+                    args: vec![field_addr],
+                });
+                return result;
+            }
+
+            // Case 2 — UFCS desugar to `{lowercase(T)}_{method}(recv, args…)`.
+            match &struct_name {
+                Some(t) => {
+                    let recv_id = match &var_name_opt {
+                        Some(var_name) => match env.get(var_name) {
                             Some(id) => *id,
-                            None => {
-                                let id = ir.fresh();
-                                ir.instrs.push(Instr::ConstI64(id, 0));
-                                return id;
-                            }
+                            None => lower_expr(receiver, ir, env, struct_env, receiver_types),
                         },
                         None => lower_expr(receiver, ir, env, struct_env, receiver_types),
                     };
-                    let field_addr = if idx == 0 {
-                        addr
-                    } else {
-                        let offset = ir.fresh();
-                        ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
-                        let sum = ir.fresh();
-                        ir.instrs.push(Instr::BinOp {
-                            dst: sum,
-                            op: BinOp::Add,
-                            lhs: addr,
-                            rhs: offset,
-                        });
-                        sum
-                    };
-                    let result = ir.fresh();
+                    let mut call_args = vec![recv_id];
+                    for a in args {
+                        call_args.push(lower_expr(a, ir, env, struct_env, receiver_types));
+                    }
+                    let fn_name = format!("{}_{}", t.to_lowercase(), method);
+                    let dst = ir.fresh();
                     ir.instrs.push(Instr::Call {
-                        dst: result,
-                        name: "__mind_load_i64".to_string(),
-                        args: vec![field_addr],
+                        dst,
+                        name: fn_name,
+                        args: call_args,
                     });
-                    result
+                    dst
                 }
                 None => {
-                    // Not a field accessor (unknown receiver type or method
-                    // isn't a field) — preserve the prior const-0 placeholder.
+                    // Receiver type unresolved. A zero-arg unresolved call could
+                    // be a never-defined accessor; a with-args unresolved call is
+                    // a guaranteed silent miscompile under the old const-0
+                    // fallthrough. Fail LOUD — never emit a silent const-0 at a
+                    // method-with-args call site (#306 fail-closed philosophy).
+                    if !args.is_empty() {
+                        panic!(
+                            "method call `{}.{}(...)` could not be resolved: the \
+                             receiver's struct type is unknown, so it cannot desugar \
+                             to a `<type>_{}` free function. Annotate the receiver's \
+                             type or use the free-function form directly. (Emitting a \
+                             const-0 placeholder here would be a silent miscompile.)",
+                            describe_receiver(receiver),
+                            method,
+                            method,
+                        );
+                    }
+                    // Zero-arg, unresolved type, not a known field — preserve the
+                    // historical const-0 placeholder (it returns the receiver's
+                    // identity for opaque accessors; unchanged behaviour).
                     let id = ir.fresh();
                     ir.instrs.push(Instr::ConstI64(id, 0));
                     id
@@ -2156,6 +2207,18 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+    }
+}
+
+/// Best-effort textual description of a method-call receiver, used only to
+/// build a clear diagnostic when a `recv.method(args)` call cannot resolve its
+/// receiver's struct type (so it cannot UFCS-desugar to a `<type>_method` free
+/// function). Falls back to a generic placeholder for non-Ident receivers.
+#[cfg(feature = "std-surface")]
+fn describe_receiver(receiver: &ast::Node) -> String {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(name), _) => name.clone(),
+        _ => "<expr>".to_string(),
     }
 }
 
