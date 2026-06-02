@@ -243,4 +243,76 @@ mod mlir_functional {
             }
         }
     }
+
+    #[test]
+    fn canon_anchor_links_sha256_transitively_via_manifest() {
+        // An entry that imports ONLY std.io_canon (NOT std.sha256) and calls
+        // canon_anchor must still link: io_canon imports std.sha256, and the
+        // substrate linker must pull sha256.o TRANSITIVELY. Without the
+        // transitive walk in build_cdylib_from_entry this fails with an
+        // undefined `sha256` symbol. Also exercises canon_anchor end-to-end.
+        let mindc = mindc_bin();
+        if !mindc.exists() {
+            println!("canon_anchor: mindc not found; skipping");
+            return;
+        }
+        let proj = std::env::temp_dir().join("mind_canon_anchor_probe");
+        let _ = std::fs::remove_dir_all(&proj);
+        std::fs::create_dir_all(proj.join("src")).expect("create project src");
+        std::fs::write(
+            proj.join("Mind.toml"),
+            "[package]\nname = \"canon_anchor_probe\"\nversion = \"0.1.0\"\n\
+             license = \"Apache-2.0\"\n\n[build]\ntarget = \"cpu\"\n\
+             emit = \"cdylib\"\noptimize = \"release\"\nentry = \"src/main.mind\"\n",
+        )
+        .expect("write Mind.toml");
+        // Imports ONLY std.io_canon — sha256 must arrive transitively.
+        std::fs::write(
+            proj.join("src").join("main.mind"),
+            "import std.io_canon;\n\
+             pub fn probe_anchor(out_addr: i64) -> i64 {\n\
+             \x20   let h: i64 = canon_new(8)\n\
+             \x20   let _ = canon_push(h, 3, 1, 9, 30)\n\
+             \x20   let _ = canon_push(h, 1, 1, 9, 10)\n\
+             \x20   let _ = canon_push(h, 2, 1, 9, 20)\n\
+             \x20   canon_anchor(h, out_addr)\n\
+             }\n",
+        )
+        .expect("write main.mind");
+        let status = Command::new(&mindc)
+            .arg("build")
+            .current_dir(&proj)
+            .status()
+            .expect("spawn mindc build");
+        if !status.success() {
+            println!("canon_anchor: mindc build failed (no MLIR backend?); skipping");
+            return;
+        }
+        let so = proj
+            .join("target")
+            .join("release")
+            .join("libcanon_anchor_probe.so");
+        assert!(so.exists(), "consumer cdylib not produced at {so:?}");
+        // sha256 must be DEFINED (transitively linked), not undefined.
+        let nm = Command::new("nm").arg("-D").arg(&so).output().expect("nm");
+        let text = String::from_utf8_lossy(&nm.stdout);
+        assert!(
+            !text.lines().any(|l| l.contains(" U sha256")),
+            "sha256 is undefined in the cdylib -- transitive substrate linking \
+             failed:\n{text}"
+        );
+        // probe_anchor returns 3 events and writes a non-zero 32-byte anchor.
+        unsafe {
+            let lib = libloading::Library::new(&so).expect("dlopen probe .so");
+            type Anchor = unsafe extern "C" fn(i64) -> i64;
+            let probe = lib.get::<Anchor>(b"probe_anchor\0").unwrap();
+            let mut anchor = [0u8; 32];
+            let n = probe(anchor.as_mut_ptr() as i64);
+            assert_eq!(n, 3, "canon_anchor must report 3 anchored events");
+            assert_ne!(
+                anchor, [0u8; 32],
+                "evidence anchor must be non-zero (sha256 ran)"
+            );
+        }
+    }
 }
