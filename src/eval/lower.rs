@@ -1716,6 +1716,110 @@ fn lower_expr(
                 }
             }
         }
+        // RFC 0005 P0g — `receiver.field = value` writes IN PLACE to the
+        // heap record produced by P0e StructLit lowering. Exact inverse of
+        // the FieldAccess read arm above: the same Step-1 (struct_env Ident
+        // lookup) + Step-2 (receiver_types side-table) resolver computes the
+        // field index, the same idx==0 fast path computes the field address,
+        // and the RHS is lowered to an SSA value — but we emit a
+        // `__mind_store_i64(field_addr, value)` instead of a load.
+        //
+        //   offset      = index_of(field, struct_defs[T]) * 8
+        //   field_addr  = base + offset      (or base itself when offset == 0)
+        //   __mind_store_i64(field_addr, value)
+        //
+        // The base address is the SAME allocation already bound in `env`
+        // (Step 1) or produced by re-lowering the receiver (Step 2), so this
+        // is a pure in-place mutation — no new struct-value SSA id is created
+        // or threaded, and no exit_ids/merges/region rebinding changes are
+        // needed. Scope is flat fields only (`s.f = v` where `s` is a
+        // local/param/return struct); nested struct-typed field writes
+        // (`o.inner.v = x`) need the struct_resolver Step-2 extension and are
+        // deferred. Unresolved receivers fall through to a `ConstI64(0)`
+        // placeholder, matching the read arm, so older modules still compile.
+        #[cfg(feature = "std-surface")]
+        ast::Node::FieldAssign {
+            receiver,
+            field,
+            value,
+            span,
+        } => {
+            // ── Step 1: cheap Ident-bound lookup ─────────────────────
+            let step1 = match receiver.as_ref() {
+                ast::Node::Lit(Literal::Ident(var_name), _) => {
+                    struct_env.get(var_name).and_then(|struct_name| {
+                        ir.struct_defs
+                            .get(struct_name)
+                            .and_then(|fields| fields.iter().position(|f| f == field))
+                            .map(|idx| (Some(var_name.clone()), idx))
+                    })
+                }
+                _ => None,
+            };
+            // ── Step 2: side-table fallback (general path) ───────────
+            // Only consulted when Step 1 fast-path failed.
+            let step2 = if step1.is_none() {
+                receiver_types.get(span).and_then(|struct_name| {
+                    ir.struct_defs
+                        .get(struct_name)
+                        .and_then(|fields| fields.iter().position(|f| f == field))
+                        .map(|idx| (None::<String>, idx))
+                })
+            } else {
+                None
+            };
+
+            let resolved = step1.or(step2);
+
+            match resolved {
+                Some((var_name_opt, idx)) => {
+                    // Step 1 takes the base addr straight from env (no
+                    // re-lowering); Step 2 must lower the receiver to get it.
+                    let addr = match var_name_opt {
+                        Some(var_name) => match env.get(&var_name) {
+                            Some(id) => *id,
+                            None => {
+                                let id = ir.fresh();
+                                ir.instrs.push(Instr::ConstI64(id, 0));
+                                return id;
+                            }
+                        },
+                        None => lower_expr(receiver, ir, env, struct_env, receiver_types),
+                    };
+                    let field_addr = if idx == 0 {
+                        addr
+                    } else {
+                        let offset = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                        let sum = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: sum,
+                            op: BinOp::Add,
+                            lhs: addr,
+                            rhs: offset,
+                        });
+                        sum
+                    };
+                    let rhs = lower_expr(value, ir, env, struct_env, receiver_types);
+                    let store_ret = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: store_ret,
+                        name: "__mind_store_i64".to_string(),
+                        args: vec![field_addr, rhs],
+                    });
+                    // A field assignment is a statement; the store's return
+                    // (unit) id is the value this expression yields.
+                    store_ret
+                }
+                None => {
+                    // Receiver type unresolvable — emit a stable placeholder,
+                    // mirroring the read arm, so older modules still compile.
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(id, 0));
+                    id
+                }
+            }
+        }
         // RFC 0005 Phase 6.2b Gap 2 — anonymous array literal `[v0, v1, …]`
         // in expression position.  Elements are extracted iteratively
         // (not by recursing once per element) so a 4,096-entry literal
