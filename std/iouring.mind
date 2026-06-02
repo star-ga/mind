@@ -63,6 +63,17 @@ extern "C" {
     unsafe fn getsockname(sockfd: i32, addr: i64, addrlen: i64) -> i32;
     unsafe fn clock_gettime(clockid: i32, tp: i64) -> i32;
     unsafe fn setsockopt(fd: i32, level: i32, optname: i32, optval: i64, optlen: i32) -> i32;
+    // libc wrappers for the otherwise arch-specific syscalls (memfd_create,
+    // ftruncate, fcntl, ioctl, open, sched_*affinity) — the libc form keeps these
+    // portable across x86_64 / aarch64, where the raw syscall numbers differ
+    // (io_uring setup/enter/register 425/426/427 are arch-shared, so stay raw).
+    unsafe fn memfd_create(name: i64, flags: i32) -> i32;
+    unsafe fn ftruncate(fd: i32, length: i64) -> i32;
+    unsafe fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32;
+    unsafe fn ioctl(fd: i32, request: i64, arg: i64) -> i32;
+    unsafe fn open(path: i64, flags: i32) -> i32;
+    unsafe fn sched_setaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
+    unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
     unsafe fn close(fd: i32) -> i32;
 }
 
@@ -1079,7 +1090,7 @@ pub fn io_reactor_pin_cpu(core: i64) -> i64 {
         j = j + 1;
     }
     __mind_store_i64(m + 0, bit);
-    let r: i64 = syscall(203, 0, 8, m, 0, 0, 0);
+    let r: i64 = sched_setaffinity(0, 8, m);
     let _ = __mind_free(m);
     r
 }
@@ -1088,7 +1099,7 @@ pub fn io_reactor_pin_cpu(core: i64) -> i64 {
 pub fn io_reactor_affinity_mask() -> i64 {
     let m: i64 = __mind_alloc(8);
     __mind_store_i64(m + 0, 0);
-    let r: i64 = syscall(204, 0, 8, m, 0, 0, 0);
+    let r: i64 = sched_getaffinity(0, 8, m);
     let mut mask: i64 = 0 - 1;
     if r >= 0 {
         mask = __mind_load_i64(m + 0);
@@ -1103,7 +1114,7 @@ pub fn io_reactor_affinity_mask() -> i64 {
 pub fn io_reactor_pin_demo(core: i64) -> i64 {
     let save: i64 = __mind_alloc(8);
     __mind_store_i64(save + 0, 0);
-    if syscall(204, 0, 8, save, 0, 0, 0) < 0 {
+    if sched_getaffinity(0, 8, save) < 0 {
         let _ = __mind_free(save);
         return 0 - 1;
     }
@@ -1123,7 +1134,7 @@ pub fn io_reactor_pin_demo(core: i64) -> i64 {
     // Restore the original affinity mask.
     let rm: i64 = __mind_alloc(8);
     __mind_store_i64(rm + 0, orig);
-    let _ = syscall(203, 0, 8, rm, 0, 0, 0);
+    let _ = sched_setaffinity(0, 8, rm);
     let _ = __mind_free(rm);
     let _ = __mind_free(save);
     if now == want {
@@ -1158,14 +1169,14 @@ pub fn io_uring_dmabuf_io_demo(path: i64, data: i64, len: i64) -> i64 {
     __mind_store_i8(nm + 2, 110);
     __mind_store_i8(nm + 3, 100);
     __mind_store_i8(nm + 4, 0);
-    let memfd: i64 = syscall(319, nm, 2, 0, 0, 0, 0);
+    let memfd: i64 = memfd_create(nm, 2);
     let _ = __mind_free(nm);
     if memfd < 0 {
         return 0 - 1;
     }
-    let _ = syscall(77, memfd, 4096, 0, 0, 0, 0);
+    let _ = ftruncate(memfd as i32, 4096);
     // fcntl(memfd, F_ADD_SEALS=1033, F_SEAL_SHRINK=2) — udmabuf needs a seal.
-    let _ = syscall(72, memfd, 1033, 2, 0, 0, 0);
+    let _ = fcntl(memfd as i32, 1033, 2);
     // open("/dev/udmabuf", O_RDWR=2).
     let up: i64 = __mind_alloc(16);
     __mind_store_i8(up + 0, 47);
@@ -1181,7 +1192,7 @@ pub fn io_uring_dmabuf_io_demo(path: i64, data: i64, len: i64) -> i64 {
     __mind_store_i8(up + 10, 117);
     __mind_store_i8(up + 11, 102);
     __mind_store_i8(up + 12, 0);
-    let ud: i64 = syscall(2, up, 2, 0, 0, 0, 0);
+    let ud: i64 = open(up, 2);
     let _ = __mind_free(up);
     if ud < 0 {
         let _ = close(memfd as i32);
@@ -1194,7 +1205,7 @@ pub fn io_uring_dmabuf_io_demo(path: i64, data: i64, len: i64) -> i64 {
     __mind_store_i64(cr + 8, 0);
     __mind_store_i64(cr + 16, 4096);
     // ioctl(ud, UDMABUF_CREATE=0x40187542, &cr) -> dma-buf fd.
-    let dmabuf: i64 = syscall(16, ud, 1075344706, cr, 0, 0, 0);
+    let dmabuf: i64 = ioctl(ud as i32, 1075344706, cr);
     let _ = __mind_free(cr);
     if dmabuf < 0 {
         let _ = close(ud as i32);
