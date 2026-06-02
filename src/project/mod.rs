@@ -821,22 +821,49 @@ fn build_cdylib_from_entry(
         #[cfg(feature = "cross-module-imports")]
         {
             use std::collections::BTreeSet;
-            const SUBSTRATE: &[&str] = &[
-                "std.arena",
-                "std.io_canon",
-                "std.iouring",
-                "std.reactor",
-                "std.ring",
-                "std.sha256",
-            ];
+            // Substrate modules whose `.o` we compile + link when imported.
+            fn scan_substrate_imports(src: &str) -> Vec<&'static str> {
+                const SUBSTRATE: &[&str] = &[
+                    "std.arena",
+                    "std.io_canon",
+                    "std.iouring",
+                    "std.reactor",
+                    "std.ring",
+                    "std.sha256",
+                ];
+                let mut found = Vec::new();
+                if let Ok(ast) = crate::parser::parse(src) {
+                    for item in &ast.items {
+                        if let crate::ast::Node::Import { path, .. } = item {
+                            let key = path.join(".");
+                            for &name in SUBSTRATE {
+                                if key == name {
+                                    found.push(name);
+                                }
+                            }
+                        }
+                    }
+                }
+                found
+            }
+            // BFS the import graph: collect substrate modules imported by the
+            // entry AND transitively by any imported substrate module (e.g.
+            // io_canon importing std.sha256 pulls sha256.o even when the entry
+            // only imports io_canon). Without the transitive walk a substrate
+            // module's own substrate imports would link-fail with undefined
+            // symbols. An empty set still leaves the link byte-identical to the
+            // single-entry path (the keystone imports no substrate module).
             let mut imported: BTreeSet<&'static str> = BTreeSet::new();
-            if let Ok(entry_ast) = crate::parser::parse(&source_code) {
-                for item in &entry_ast.items {
-                    if let crate::ast::Node::Import { path, .. } = item {
-                        let key = path.join(".");
-                        for &name in SUBSTRATE {
-                            if key == name {
-                                imported.insert(name);
+            let mut worklist: Vec<&'static str> = scan_substrate_imports(&source_code);
+            while let Some(modname) = worklist.pop() {
+                if imported.insert(modname) {
+                    if let Some((_, src)) = crate::project::stdlib::STDLIB_MIND_SOURCES
+                        .iter()
+                        .find(|(n, _)| *n == modname)
+                    {
+                        for dep in scan_substrate_imports(src) {
+                            if !imported.contains(dep) {
+                                worklist.push(dep);
                             }
                         }
                     }
