@@ -273,10 +273,28 @@ fn walk_expr(
                 walk_expr(a, vars, fn_returns, struct_defs, field_types, types);
             }
         }
-        Node::MethodCall { receiver, args, .. } => {
+        Node::MethodCall {
+            receiver,
+            args,
+            span,
+            ..
+        } => {
             walk_expr(receiver, vars, fn_returns, struct_defs, field_types, types);
             for a in args {
                 walk_expr(a, vars, fn_returns, struct_defs, field_types, types);
+            }
+            // RFC 0005 method-as-field brick — record the receiver's
+            // struct type at the MethodCall's own span so the lowering
+            // arm can resolve a zero-arg accessor method (`s.len()`) to
+            // the same field load the `FieldAccess` arm emits for `s.len`.
+            // Mirror of the `FieldAccess` arm: lowering keys the side-table
+            // on the node span and looks up the field offset in
+            // `ir.struct_defs[T]`. Purely additive — method calls are absent
+            // from the keystone and all of std, so no emitted bytes change.
+            if let Some(t) = infer_struct(receiver, vars, fn_returns, field_types) {
+                if struct_defs.iter().any(|s| s == &t) {
+                    types.insert(*span, t);
+                }
             }
         }
         Node::Block { stmts, .. } => {

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2684 | **Est. tokens:** ~6,724,185
-**Generated:** 2026-06-02 15:46 UTC
+**Files:** 2685 | **Est. tokens:** ~6,725,940
+**Generated:** 2026-06-02 16:39 UTC
 
 ## Token Budget Guide
 
@@ -372,7 +372,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~66,361 |
+| `src/eval/` | 12 | ~66,579 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,498 |
-| `tests/` | 166 | ~292,044 |
+| `tests/` | 167 | ~293,581 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3625,7 +3625,7 @@
 - `tensor.rs` (~8346 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~4508 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~4726 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~1770 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -4071,6 +4071,7 @@
 - `std_surface_iouring.rs` (~3091 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_json.rs` (~4349 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_map_module.rs` (~2044 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_method_call.rs` (~1537 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~7345 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
