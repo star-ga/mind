@@ -22,12 +22,13 @@
 // Handle layout (24 bytes): [ data_ptr (i64) | len (i64) | cap (i64) ].
 // Data layout: cap * 32 contiguous bytes.
 
-// Caller contract for determinism: `(conn_id, req_id)` MUST be unique per
-// in-flight operation within a batch. The key is a total order only under that
-// contract; two events sharing a key would tie under `canon_less` and the sort
-// would leave them in physical-arrival order — reintroducing the very
-// nondeterminism this module removes. The reactor assigns req_id monotonically
-// per connection at submit time, which guarantees it.
+// Caller contract: `(conn_id, req_id)` SHOULD be unique per in-flight operation
+// (the reactor assigns req_id monotonically per connection at submit time, which
+// guarantees it). The drained order is deterministic regardless: `canon_less` is
+// a full lexicographic compare on (conn_id, req_id, op, result), so even if keys
+// collide the only remaining tie is between byte-identical events — which cannot
+// change the drained bytes. The order is therefore total and arrival-independent
+// by construction, not merely by caller contract.
 
 // Bytes per event record. MUST stay a multiple of 8 (i64 stride): `canon_swap`
 // and the field stores assume i64-aligned fields.
@@ -110,9 +111,16 @@ pub fn canon_result(h: i64, i: i64) -> i64 {
     __mind_load_i64(canon_evt_addr(h, i) + 24)
 }
 
-// Total order on events: conn_id ascending, then req_id ascending. (conn_id,
-// req_id) is unique per in-flight operation, so the order is total — no ties,
-// hence no tie-break ambiguity that could differ across runs. Returns 1 if
+// Total order on events: a full lexicographic compare on ALL four fields
+// (conn_id, then req_id, then op, then result), each ascending. (conn_id,
+// req_id) is unique per in-flight operation under the caller contract, so for
+// valid input the op/result comparisons never decide — the drained output is
+// byte-identical to the (conn_id, req_id)-only order. The extra fields make the
+// order TOTAL even if a caller violates uniqueness (or genuinely needs colliding
+// keys, e.g. labeled/multi-stream adopters): a remaining tie can occur only
+// between byte-identical events, whose relative order does not affect the
+// drained bytes. So the drained sequence is a pure function of the event
+// multiset, never arrival order — no caller-contract fragility. Returns 1 if
 // event at `a` must sort before event at `b`, else 0.
 fn canon_less(h: i64, a: i64, b: i64) -> i64 {
     let ca: i64 = canon_conn(h, a);
@@ -126,6 +134,22 @@ fn canon_less(h: i64, a: i64, b: i64) -> i64 {
     let ra: i64 = canon_req(h, a);
     let rb: i64 = canon_req(h, b);
     if ra < rb {
+        return 1;
+    }
+    if ra > rb {
+        return 0;
+    }
+    let oa: i64 = canon_op(h, a);
+    let ob: i64 = canon_op(h, b);
+    if oa < ob {
+        return 1;
+    }
+    if oa > ob {
+        return 0;
+    }
+    let sa: i64 = canon_result(h, a);
+    let sb: i64 = canon_result(h, b);
+    if sa < sb {
         return 1;
     }
     0

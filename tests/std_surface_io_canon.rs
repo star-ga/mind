@@ -210,6 +210,37 @@ mod mlir_functional {
                     "canon_drain must reject an undersized buffer"
                 );
             }
+
+            // Total-order robustness: events SHARING (conn_id, req_id) but
+            // differing in (op, result) still drain deterministically — the
+            // lexicographic tie-break on op then result orders them totally, so
+            // two physical push orders of the same multiset are byte-identical
+            // even when the (conn_id, req_id) uniqueness contract is violated.
+            {
+                let coll_a: [(i64, i64, i64, i64); 4] =
+                    [(1, 1, 9, 5), (1, 1, 2, 8), (1, 1, 9, 3), (2, 1, 1, 1)];
+                let coll_b: [(i64, i64, i64, i64); 4] =
+                    [(2, 1, 1, 1), (1, 1, 9, 3), (1, 1, 9, 5), (1, 1, 2, 8)];
+                let cba = drain_bytes(&coll_a);
+                let cbb = drain_bytes(&coll_b);
+                assert_eq!(
+                    cba, cbb,
+                    "colliding (conn,req) keys must still drain byte-identically \
+                     via the op/result tie-break (total order, arrival-independent)"
+                );
+                // Canonical first record = (1,1,2,8): lexicographic min on all
+                // four fields, so the op tie-break (2 < 9) decides ahead of req.
+                assert_eq!(
+                    i64::from_le_bytes(cba[16..24].try_into().unwrap()),
+                    2,
+                    "op tie-break orders the colliding-key minimum first"
+                );
+                assert_eq!(
+                    i64::from_le_bytes(cba[24..32].try_into().unwrap()),
+                    8,
+                    "result of the canonical-first colliding-key record"
+                );
+            }
         }
     }
 }
