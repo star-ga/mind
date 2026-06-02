@@ -1810,11 +1810,14 @@ fn lower_expr(
         // (Step 1) or produced by re-lowering the receiver (Step 2), so this
         // is a pure in-place mutation — no new struct-value SSA id is created
         // or threaded, and no exit_ids/merges/region rebinding changes are
-        // needed. Scope is flat fields only (`s.f = v` where `s` is a
-        // local/param/return struct); nested struct-typed field writes
-        // (`o.inner.v = x`) need the struct_resolver Step-2 extension and are
-        // deferred. Unresolved receivers fall through to a `ConstI64(0)`
-        // placeholder, matching the read arm, so older modules still compile.
+        // needed. Both flat fields (`s.f = v`) and nested struct-typed field
+        // writes (`o.inner.v = x`) are supported: the Step-2 side-table now
+        // resolves a `FieldAccess` receiver (struct_resolver chains through
+        // the inner field's declared type), so `lower_expr(receiver, …)`
+        // re-lowers `o.inner` to the inner record's base address and the
+        // store targets `base + idx*8` exactly like the flat case.
+        // Unresolved receivers fall through to a `ConstI64(0)` placeholder,
+        // matching the read arm, so older modules still compile.
         #[cfg(feature = "std-surface")]
         ast::Node::FieldAssign {
             receiver,
