@@ -1470,10 +1470,13 @@ pub fn io_uring_storage_rw_demo(path: i64, data: i64, len: i64) -> i64 {
 //
 // `use_iopoll=1` routes the READ through an IORING_SETUP_IOPOLL ring (the ring
 // constructs and the op submits; busy-polled completions are a pure latency win,
-// not a determinism property). NOTE: reaping the polled read completion does not
-// land on every ext4/NVMe/kernel combo — that path returns a skip (negative)
-// there; the proven deterministic round-trip is `use_iopoll=0`. Follow-up:
-// IOPOLL completion-reap likely needs RWF_HIPRI / a preallocated extent.
+// not a determinism property). DIAGNOSED root cause of the skip: the submit
+// enter returns OK (1) but the polled completion never appears (reap=0) — a
+// regular ext4 FILE has no block-layer polling path, so IORING_SETUP_IOPOLL
+// reads of a file are never reaped on this kernel. IOPOLL is reaped on RAW block
+// devices (/dev/nvmeXn1) and XFS/iomap; a spare raw NVMe (or XFS) completes it.
+// The path returns a skip (negative) on ext4; the proven deterministic
+// round-trip is `use_iopoll=0`.
 pub fn io_uring_odirect_roundtrip(path: i64, data: i64, len: i64, use_iopoll: i64) -> i64 {
     // O_CREAT|O_RDWR|O_TRUNC|O_DIRECT = 64|2|512|16384 = 16962, mode 0644 = 420.
     let fd: i64 = io_uring_openat(path, 16962, 420);
