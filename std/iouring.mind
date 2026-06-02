@@ -31,8 +31,10 @@
 // reorders a smaller window. Scheduling only; never enters the evidence chain.
 //
 // Phase 5: storage I/O — OP_OPENAT / OP_READ / OP_WRITE drive files through the
-// same submit/reap engine (the deterministic storage path the NVMe/SPDK fast
-// path later optimizes; bytes are byte-identical, so the anchor is unchanged).
+// same submit/reap engine; the O_DIRECT round-trip bypasses the page cache
+// (direct device DMA) — deterministic storage, the anchored bytes come straight
+// off the device. IORING_SETUP_IOPOLL ring is the busy-polled NVMe fast path
+// (latency only). bytes byte-identical, so the anchor is unchanged.
 //
 // Phase 6: kTLS transport — setsockopt(TCP_ULP,"tls") + AES-GCM keys push record
 // crypto into the kernel; send/recv move plaintext while the wire is encrypted
@@ -126,9 +128,10 @@ pub fn iouring_op_write() -> i64 {
 //   40 sq_off_tail | 48 sq_off_array | 56 sq_mask
 //   64 cq_off_head | 72 cq_off_tail | 80 cq_off_cqes | 88 cq_mask
 
-// Create an io_uring with `entries` SQ slots, mmap its rings, and return a
-// handle, or 0 on failure (setup/mmap error). entries should be a power of two.
-pub fn io_ring_new(entries: i64) -> i64 {
+// Create an io_uring with `entries` SQ slots and `setup_flags` in the
+// io_uring_params flags field (@8), mmap its rings, and return a handle, or 0 on
+// failure. entries should be a power of two. setup_flags=0 is the default ring.
+pub fn io_ring_new_flags(entries: i64, setup_flags: i64) -> i64 {
     let p: i64 = __mind_alloc(120);
     if p == 0 {
         return 0;
@@ -138,6 +141,9 @@ pub fn io_ring_new(entries: i64) -> i64 {
         __mind_store_i8(p + z, 0);
         z = z + 1;
     }
+    // io_uring_params.flags @8 — e.g. IORING_SETUP_IOPOLL (1) for busy-polled
+    // completions on the NVMe O_DIRECT fast path (no completion IRQ).
+    __mind_store_i32(p + 8, setup_flags);
     let fd: i64 = syscall(sys_io_uring_setup(), entries, p, 0, 0, 0, 0);
     if fd < 0 {
         let _ = __mind_free(p);
@@ -185,6 +191,18 @@ pub fn io_ring_new(entries: i64) -> i64 {
     __mind_store_i64(h + 88, cq_mask);
     let _ = __mind_free(p);
     h
+}
+
+// Default ring (no setup flags) — the common case.
+pub fn io_ring_new(entries: i64) -> i64 {
+    io_ring_new_flags(entries, 0)
+}
+
+// IORING_SETUP_IOPOLL ring: completions are reaped by busy-polling (io_ring_enter
+// already passes GETEVENTS). Ops on this ring MUST target O_DIRECT files on a
+// pollable device (NVMe) — the storage fast path with no completion interrupt.
+pub fn io_ring_new_iopoll(entries: i64) -> i64 {
+    io_ring_new_flags(entries, 1)
 }
 
 // Fill SQE `slot` with an operation and point the SQ array entry at it. Caller
@@ -1436,6 +1454,127 @@ pub fn io_uring_storage_rw_demo(path: i64, data: i64, len: i64) -> i64 {
         result = 0 - 17;
     }
     let _ = __mind_free(rbuf);
+    let _ = io_uring_close(fd);
+    result
+}
+
+// Phase-5 NVMe fast path: a deterministic O_DIRECT storage round-trip that
+// bypasses the page cache (direct DMA to/from the device). O_DIRECT requires the
+// buffer, offset, and length all aligned to the device block size, so this
+// writes/reads one 4096-byte block from a 4096-aligned buffer. `path` must live
+// on a real block-device filesystem (ext4 on NVMe), NOT tmpfs. Returns 1 on a
+// byte-identical round-trip, or a negative code (and SKIPS — negative — where
+// O_DIRECT is unsupported, e.g. tmpfs). Removes page-cache nondeterminism from
+// the storage path: the bytes the evidence chain anchors come straight off the
+// device — the wedge-relevant property.
+//
+// `use_iopoll=1` routes the READ through an IORING_SETUP_IOPOLL ring (the ring
+// constructs and the op submits; busy-polled completions are a pure latency win,
+// not a determinism property). NOTE: reaping the polled read completion does not
+// land on every ext4/NVMe/kernel combo — that path returns a skip (negative)
+// there; the proven deterministic round-trip is `use_iopoll=0`. Follow-up:
+// IOPOLL completion-reap likely needs RWF_HIPRI / a preallocated extent.
+pub fn io_uring_odirect_roundtrip(path: i64, data: i64, len: i64, use_iopoll: i64) -> i64 {
+    // O_CREAT|O_RDWR|O_TRUNC|O_DIRECT = 64|2|512|16384 = 16962, mode 0644 = 420.
+    let fd: i64 = io_uring_openat(path, 16962, 420);
+    if fd < 0 {
+        return fd;
+    }
+    // The file-EXTENDING write goes on a plain ring — ext4 can't busy-poll a
+    // block-allocating write, so IOPOLL is exercised on the READ (existing
+    // block, fully pollable), which is where polled completions matter anyway.
+    let wr: i64 = io_ring_new(4);
+    if wr == 0 {
+        let _ = io_uring_close(fd);
+        return 0 - 11;
+    }
+    let mut rr: i64 = 0;
+    if use_iopoll == 1 {
+        rr = io_ring_new_iopoll(4);
+    } else {
+        rr = io_ring_new(4);
+    }
+    if rr == 0 {
+        let _ = io_ring_free(wr);
+        let _ = io_uring_close(fd);
+        return 0 - 12;
+    }
+    // 4096-aligned write block: alloc 8192, round the address up to 4096.
+    let wraw: i64 = __mind_alloc(8192);
+    let wbuf: i64 = ((wraw + 4095) / 4096) * 4096;
+    let mut z: i64 = 0;
+    while z < 4096 {
+        __mind_store_i8(wbuf + z, 0);
+        z = z + 1;
+    }
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(wbuf + i, __mind_load_i8(data + i));
+        i = i + 1;
+    }
+    let ud: i64 = __mind_alloc(8);
+    let res: i64 = __mind_alloc(8);
+    // WRITE one aligned block at offset 0 (plain ring, may extend the file).
+    let _ = io_ring_submit_raw(wr, 0, iouring_op_write(), fd, 0, wbuf, 4096, 1);
+    let _ = io_ring_publish(wr, 1);
+    let ew: i64 = io_ring_enter(wr, 1, 1);
+    let mut wn: i64 = 0 - 1;
+    if ew >= 0 {
+        if io_ring_reap(wr, ud, res, 1) == 1 {
+            wn = __mind_load_i64(res + 0);
+        }
+    }
+    // READ the block back into a fresh aligned buffer (IOPOLL ring if selected).
+    let rraw: i64 = __mind_alloc(8192);
+    let rbuf: i64 = ((rraw + 4095) / 4096) * 4096;
+    let _ = io_ring_submit_raw(rr, 0, iouring_op_read(), fd, 0, rbuf, 4096, 2);
+    let _ = io_ring_publish(rr, 1);
+    // IOPOLL completions are found by (re-)entering with GETEVENTS — poll until
+    // the read's completion is reaped (bounded so a stuck op can't hang).
+    let mut rn: i64 = 0 - 1;
+    let mut submit_n: i64 = 1;
+    let mut tries: i64 = 0;
+    while tries < 200000 {
+        let er: i64 = io_ring_enter(rr, submit_n, 1);
+        submit_n = 0;
+        if er < 0 {
+            tries = 200000;
+        } else {
+            if io_ring_reap(rr, ud, res, 1) == 1 {
+                rn = __mind_load_i64(res + 0);
+                tries = 200000;
+            }
+        }
+        tries = tries + 1;
+    }
+    let mut result: i64 = 0 - 14;
+    if wn == 4096 {
+        if rn == 4096 {
+            let mut ok: i64 = 1;
+            let mut j: i64 = 0;
+            while j < len {
+                if __mind_load_i8(rbuf + j) != __mind_load_i8(data + j) {
+                    ok = 0;
+                }
+                j = j + 1;
+            }
+            if ok == 1 {
+                result = 1;
+            } else {
+                result = 0 - 15;
+            }
+        } else {
+            result = 0 - 16;
+        }
+    } else {
+        result = 0 - 17;
+    }
+    let _ = __mind_free(ud);
+    let _ = __mind_free(res);
+    let _ = __mind_free(wraw);
+    let _ = __mind_free(rraw);
+    let _ = io_ring_free(wr);
+    let _ = io_ring_free(rr);
     let _ = io_uring_close(fd);
     result
 }
