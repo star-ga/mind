@@ -76,13 +76,17 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
             Node::StructDef { name, .. } => struct_defs.push(name.clone()),
             Node::FnDef {
                 name,
-                ret_type: Some(TypeAnn::Named(t)),
+                ret_type: Some(ret),
                 ..
             } => {
-                // Defer "is this t a struct?" check to the second
-                // pass, since StructDef may appear textually below
-                // the FnDef. Just record the candidate name.
-                fn_returns.insert(name.clone(), t.clone());
+                // Peel `&T` / `&mut T` / `[T]` / `&[T]` to the inner
+                // `Named(T)` so a `-> &Cfg` return type resolves its
+                // struct just like a `-> Cfg` one. Defer the "is this t
+                // a struct?" check to the second pass, since StructDef
+                // may appear textually below the FnDef.
+                if let Some(t) = unwrap_to_named(ret) {
+                    fn_returns.insert(name.clone(), t.to_string());
+                }
             }
             _ => {}
         }
@@ -114,9 +118,12 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
                 // Seed fn scope with module-level bindings, then add params.
                 let mut fn_vars = var_to_struct.clone();
                 for p in params {
-                    if let TypeAnn::Named(t) = &p.ty {
+                    // Peel `&T` / `&mut T` / `[T]` / `&[T]` down to the
+                    // inner `Named(T)` so by-reference struct params
+                    // (`c: &Cfg`) seed the same way by-value ones do.
+                    if let Some(t) = unwrap_to_named(&p.ty) {
                         if struct_defs.iter().any(|s| s == t) {
-                            fn_vars.insert(p.name.clone(), t.clone());
+                            fn_vars.insert(p.name.clone(), t.to_string());
                         }
                     }
                 }
@@ -241,6 +248,24 @@ fn walk_expr(
         // Other nodes either don't contain expressions or are
         // declaration-shaped (StructDef, EnumDef, …) — nothing to walk.
         _ => {}
+    }
+}
+
+/// Peel borrow / slice wrappers off a type annotation and return the
+/// inner `Named` type name, if any. `&Cfg` / `&mut Cfg` / `[Cfg]` /
+/// `&[Cfg]` all resolve to `Cfg`; a bare `Named(Cfg)` passes through.
+///
+/// This is what lets a by-reference struct parameter (`c: &Cfg`) or a
+/// `-> &Cfg` return type seed the same field-access machinery that a
+/// by-value `c: Cfg` parameter already used. It is purely additive:
+/// non-`Ref`/`Slice` annotations that aren't `Named` still return
+/// `None`, so no previously-emitted byte changes.
+fn unwrap_to_named(ty: &TypeAnn) -> Option<&str> {
+    match ty {
+        TypeAnn::Named(t) => Some(t.as_str()),
+        TypeAnn::Ref { target, .. } => unwrap_to_named(target),
+        TypeAnn::Slice { element, .. } => unwrap_to_named(element),
+        _ => None,
     }
 }
 
