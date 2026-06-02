@@ -1291,6 +1291,84 @@ fn lower_expr(
             })
         }
         ast::Node::Call { callee, args, .. } => {
+            // "finish MIND" Step 5 — payload-carrying enum constructor.
+            // When the callee resolves to an enum variant in
+            // `enum_variant_tags` AND the call has at least one argument
+            // (e.g. `Opt::Some(42)`), the variant is a payload-carrying
+            // constructor, NOT a runtime function call. Build the same
+            // 2-field heap record the StructLit arm builds —
+            // `[tag @ +0, payload @ +8]` — so the matching
+            // `Opt::Some(v) => …` arm (desugared below) can load the tag
+            // from `scrutinee + 0` and the bound payload from
+            // `scrutinee + 8`. A FIELDLESS variant is never a `Call`
+            // (it parses to `Lit(Ident)` and lowers to its bare tag in the
+            // `Lit(Ident)` arm above), so this only fires for tuple
+            // variants. The record shape is identical to StructLit's
+            // (`__mind_alloc` + `__mind_store_i64` at 8-byte offsets), so
+            // no new Instr/intrinsic/ABI is introduced.
+            #[cfg(feature = "std-surface")]
+            if !args.is_empty() {
+                if let Some(tag) = ir.enum_variant_tags.get(callee).copied() {
+                    // Lower the single payload argument first (mirrors the
+                    // StructLit per-field lowering order). v1 tuple variants
+                    // carry exactly one payload slot; additional args are a
+                    // type error elsewhere and ignored here.
+                    let payload = lower_expr(&args[0], ir, env, struct_env, receiver_types);
+
+                    // bytes = 8 * 2 — two i64 slots: tag + payload. Emit
+                    // const*const*Mul to mirror StructLit's heap-record build.
+                    let eight = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(eight, 8));
+                    let count = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(count, 2));
+                    let bytes = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: bytes,
+                        op: BinOp::Mul,
+                        lhs: eight,
+                        rhs: count,
+                    });
+
+                    // addr = __mind_alloc(bytes)
+                    let addr = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: addr,
+                        name: "__mind_alloc".to_string(),
+                        args: vec![bytes],
+                    });
+
+                    // __mind_store_i64(addr + 0, tag)
+                    let tag_id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(tag_id, tag));
+                    let store_tag = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: store_tag,
+                        name: "__mind_store_i64".to_string(),
+                        args: vec![addr, tag_id],
+                    });
+
+                    // payload_addr = addr + 8
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, 8));
+                    let payload_addr = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: payload_addr,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+
+                    // __mind_store_i64(payload_addr, payload)
+                    let store_payload = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: store_payload,
+                        name: "__mind_store_i64".to_string(),
+                        args: vec![payload_addr, payload],
+                    });
+
+                    return addr;
+                }
+            }
             let arg_ids: Vec<ValueId> = args
                 .iter()
                 .map(|a| lower_expr(a, ir, env, struct_env, receiver_types))
@@ -2064,11 +2142,43 @@ fn desugar_match_to_if(
         }
     }
 
-    // Each remaining arm becomes a `scrutinee == <rhs>` comparison. Build the
+    // "finish MIND" Step 5 — does this match scrutinise a PAYLOAD-carrying
+    // enum value? If ANY arm binds a payload (`Some(v)` — a non-empty
+    // `EnumVariant.args`), the scrutinee is a 2-field heap record
+    // `[tag @ +0, payload @ +8]` (built by the enum-constructor path in the
+    // `Node::Call` arm), NOT a bare discriminant. In that case every
+    // enum-variant comparison must test the LOADED tag
+    // (`__mind_load_i64(scrutinee + 0)`) rather than the scrutinee value
+    // itself, and a payload-binding arm prepends a synthetic
+    // `let <ident> = __mind_load_i64(scrutinee + 8)` so the payload binds —
+    // exactly the synthetic-let shape the terminal `Ident` catch-all above
+    // already uses. Pure fieldless (C-like) enums keep comparing the bare
+    // scrutinee value, so this never perturbs Step-2 fieldless matches.
+    let scrutinee_carries_payload = arms
+        .iter()
+        .any(|a| matches!(&a.pattern, ast::Pattern::EnumVariant { args, .. } if !args.is_empty()));
+
+    // Build the comparison LHS node: for a payload-carrying scrutinee this is
+    // `__mind_load_i64(scrutinee + 0)` (mirrors the FieldAccess +0 fast path,
+    // which passes the base address with no offset); otherwise the bare
+    // scrutinee.
+    let load_i64 = |addr: ast::Node| ast::Node::Call {
+        callee: "__mind_load_i64".to_string(),
+        args: vec![addr],
+        span,
+    };
+    let cmp_lhs: ast::Node = if scrutinee_carries_payload {
+        load_i64(scrutinee.clone())
+    } else {
+        scrutinee.clone()
+    };
+
+    // Each remaining arm becomes a `<cmp_lhs> == <rhs>` comparison. Build the
     // RHS literal node per pattern kind: an integer/bool literal compares
-    // against itself; a FIELDLESS enum variant compares against its ordinal
-    // discriminant tag. Any other pattern (payload-binding variant, unknown
-    // variant path, non-int literal) bails the whole match to the fallback.
+    // against itself; an enum variant (fieldless OR payload-carrying)
+    // compares against its ordinal discriminant tag. Any other pattern
+    // (unknown variant path, non-int literal) bails the whole match to the
+    // fallback.
     let test_arms = &arms[..last_idx];
     let mut rhs_nodes: Vec<ast::Node> = Vec::with_capacity(test_arms.len());
     for arm in test_arms {
@@ -2080,9 +2190,11 @@ fn desugar_match_to_if(
                 };
                 ast::Node::Lit(lit, span)
             }
-            // Step 2: fieldless enum-discriminant arm. Payload-binding
-            // variants (non-empty `args`) stay deferred — fall back.
-            ast::Pattern::EnumVariant { path, args } if args.is_empty() => {
+            // Step 2/5: enum-discriminant arm. Fieldless variants compare the
+            // bare scrutinee against the tag; payload variants compare the
+            // loaded tag and bind their payload (handled below when the arm
+            // body is assembled).
+            ast::Pattern::EnumVariant { path, .. } => {
                 let tag = enum_tags.get(path).copied()?;
                 ast::Node::Lit(Literal::Int(tag), span)
             }
@@ -2103,13 +2215,43 @@ fn desugar_match_to_if(
     for (arm, rhs) in test_arms.iter().zip(rhs_nodes.iter()).rev() {
         let cond = ast::Node::Binary {
             op: ast::BinOp::Eq,
-            left: Box::new(scrutinee.clone()),
+            left: Box::new(cmp_lhs.clone()),
             right: Box::new(rhs.clone()),
             span,
         };
+        // Step 5: for a payload-binding arm (`Some(v) => …`), PREPEND a
+        // synthetic `let v = __mind_load_i64(scrutinee + 8)` to the arm body
+        // so the bound identifier resolves to the record's payload slot. Only
+        // a single-`Ident` sub-pattern is supported (v1 tuple variants carry
+        // one payload); anything else bails the whole match to the fallback.
+        let then_branch: Vec<ast::Node> = match &arm.pattern {
+            ast::Pattern::EnumVariant { args, .. } if !args.is_empty() => {
+                let bound = match args.as_slice() {
+                    [ast::Pattern::Ident(name)] => name.clone(),
+                    _ => return None,
+                };
+                // payload_addr = scrutinee + 8
+                let offset = ast::Node::Lit(Literal::Int(8), span);
+                let payload_addr = ast::Node::Binary {
+                    op: ast::BinOp::Add,
+                    left: Box::new(scrutinee.clone()),
+                    right: Box::new(offset),
+                    span,
+                };
+                let bind = ast::Node::Let {
+                    name: bound,
+                    mutable: false,
+                    ann: None,
+                    value: Box::new(load_i64(payload_addr)),
+                    span,
+                };
+                vec![bind, arm.body.clone()]
+            }
+            _ => vec![arm.body.clone()],
+        };
         let if_node = ast::Node::If {
             cond: Box::new(cond),
-            then_branch: vec![arm.body.clone()],
+            then_branch,
             else_branch: else_stmts.take(),
             span,
         };
