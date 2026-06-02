@@ -75,6 +75,9 @@ fn iouring_parses_and_lowers_with_ring_api() {
         "io_reactor_pin_demo",
         "io_uring_ktls_echo",
         "io_uring_dmabuf_io_demo",
+        "io_ring_new_flags",
+        "io_ring_new_iopoll",
+        "io_uring_odirect_roundtrip",
         "io_uring_tcp_accept_one",
         "io_uring_tcp_echo_round",
         "io_uring_tcp_close",
@@ -188,6 +191,16 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   assert db == 1 or db < 0, f'dmabuf io returned unexpected {{db}}'\n\
          \x20   try: os.unlink('/tmp/mind_iouring_std_dmabuf.tmp')\n\
          \x20   except OSError: pass\n\
+         \x20   odpath = ctypes.create_string_buffer(b'/tmp/mind_iouring_std_odirect.bin\\x00')\n\
+         \x20   oddata = ctypes.create_string_buffer(b'MIND-io_uring-odirect')\n\
+         \x20   lib.io_uring_odirect_roundtrip.restype = ctypes.c_int64\n\
+         \x20   lib.io_uring_odirect_roundtrip.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
+         \x20   od = lib.io_uring_odirect_roundtrip(ctypes.cast(odpath, ctypes.c_void_p).value, ctypes.cast(oddata, ctypes.c_void_p).value, 21, 0)\n\
+         \x20   assert od == 1 or od < 0, f'O_DIRECT returned unexpected {{od}}'\n\
+         \x20   odp = lib.io_uring_odirect_roundtrip(ctypes.cast(odpath, ctypes.c_void_p).value, ctypes.cast(oddata, ctypes.c_void_p).value, 21, 1)\n\
+         \x20   assert odp == 1 or odp < 0, f'O_DIRECT+IOPOLL returned unexpected {{odp}}'\n\
+         \x20   try: os.unlink('/tmp/mind_iouring_std_odirect.bin')\n\
+         \x20   except OSError: pass\n\
          \x20   tmsg = b'MIND-io_uring-tcp-echo'\n\
          \x20   tbuf = ctypes.create_string_buffer(tmsg)\n\
          \x20   le = lib.io_uring_loopback_echo(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg))\n\
@@ -201,7 +214,7 @@ fn iouring_nop_roundtrips_user_data() {
          \x20   lib.io_uring_echo_bench.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]\n\
          \x20   bench = lib.io_uring_echo_bench(ctypes.cast(tbuf, ctypes.c_void_p).value, len(tmsg), 500)\n\
          \x20   assert bench > 0 or bench < 0, f'echo bench returned {{bench}}'\n\
-         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'pin', pin, 'ktls', kt, 'dmabuf', db, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
+         \x20   print('OK', hex(r), 'sp', e, 'fixed', fx, 'pbuf', pv, 'life', lc, 'msrecv', mr, 'direct', dd, 'storage', st, 'odirect', od, 'pin', pin, 'ktls', kt, 'dmabuf', db, 'tcp', le, 'loop', ln, 'multishot', ms, 'reqs', bench)\n",
         so.to_string_lossy()
     );
     let out = Command::new("python3")
