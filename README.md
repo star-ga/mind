@@ -268,11 +268,15 @@ model, SemVer policy, and CLI guarantees are documented in
 
 The `IRModule` data shape has two canonical serialisations:
 
-- **`mic@1`** — text form (`libmind::ir::save` / `load`). The load-bearing
-  anchor for the evidence-chain `trace_hash` (RFC 0016 GAP-1).
+- **`mic@1`** — text form (`libmind::ir::save` / `load`). The documented stable
+  contract for the `IRModule` data shape.
 - **`mic@3`** — binary form (magic `MIC3`, `src/ir/compact/v3/`). Round-trip
   equivalent to `mic@1`; emit via `mindc --emit-mic3`. Carries the evidence
-  MAP epilogue via a `0x4D`-sentinel form (RFC 0021 step 2).
+  MAP epilogue via a `0x4D`-sentinel form (RFC 0021 step 2). The load-bearing
+  anchor for the evidence-chain `trace_hash`: `trace_hash = SHA-256(canonical
+  mic@3 bytes)` (re-anchored from mic@1 text on 2026-05-31 after a collision
+  audit — mic@1 text can drop function-body semantics; mic@3 binary commits the
+  full `IRModule`; supersedes the original RFC 0016 GAP-1 mic@1-text rule).
 
 Compile-time evidence-chain attestation ships via `mindc --emit-evidence`
 (RFC 0016 Phase A + B, opt-in). `mic@2`/`mic@2.1` are preserved back-compat
