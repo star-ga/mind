@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2688 | **Est. tokens:** ~6,753,001
-**Generated:** 2026-06-03 13:32 UTC
+**Files:** 2688 | **Est. tokens:** ~6,753,508
+**Generated:** 2026-06-03 17:13 UTC
 
 ## Token Budget Guide
 
@@ -27,7 +27,7 @@
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 9 | ~9,645 |
+| `benches/` | 9 | ~10,152 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -486,7 +486,7 @@
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `compiler.rs` (~1642 tok, huge) — Small program: Simple matrix multiplication
+- `compiler.rs` (~2149 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
