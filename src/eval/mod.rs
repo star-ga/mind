@@ -1210,11 +1210,36 @@ pub(crate) fn eval_value_expr_mode(
             }
             Ok(Value::Tuple(items))
         }
-        // Phase 10.6: index access `receiver[index]`. Preview eval
-        // returns the underlying receiver value as a placeholder; full
-        // tensor/slice indexing semantics land when the runtime
-        // handle-table is threaded through eval.
-        Node::IndexAccess { receiver, .. } => eval_value_expr_mode(receiver, env, tensor_env, mode),
+        // Phase 10.6: index access `receiver[index]`. For an array/tuple value
+        // (what `[a, b, c]` literals evaluate to) the interpreter returns the
+        // indexed element with bounds checking. Tensor/slice indexing still
+        // needs the runtime handle-table threaded through eval, so a non-tuple
+        // receiver preserves the previous receiver-placeholder behavior.
+        Node::IndexAccess {
+            receiver, index, ..
+        } => {
+            let recv = eval_value_expr_mode(receiver, env, tensor_env, mode.clone())?;
+            match recv {
+                Value::Tuple(items) => {
+                    let idx = match eval_value_expr_mode(index, env, tensor_env, mode)? {
+                        Value::Int(i) => i,
+                        other => {
+                            return Err(EvalError::UnsupportedMsg(format!(
+                                "array index must be an integer, got {other:?}"
+                            )));
+                        }
+                    };
+                    if idx < 0 || idx as usize >= items.len() {
+                        return Err(EvalError::UnsupportedMsg(format!(
+                            "array index {idx} out of bounds (len {})",
+                            items.len()
+                        )));
+                    }
+                    Ok(items[idx as usize].clone())
+                }
+                other => Ok(other),
+            }
+        }
         // Phase 10.6: indexed assignment is a statement, not an
         // expression. Evaluating it as an expression returns the
         // assigned value (matches C-style semantics).
@@ -2166,6 +2191,29 @@ mod tests {
             Value::Int(n) => assert_eq!(n, 99, "unmatched scrutinee hits `_`"),
             other => panic!("expected Int(99), got {other:?}"),
         }
+    }
+
+    #[test]
+    fn eval_array_index_access() {
+        // Phase 10.6: array literals evaluate to tuples; indexing returns the
+        // bounds-checked element.
+        let src = "let arr = [10, 20, 30]; arr[1]";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 20, "arr[1] should be 20"),
+            other => panic!("expected Int(20), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_array_index_out_of_bounds_errors() {
+        let src = "let arr = [10, 20, 30]; arr[5]";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let err = eval_module_value_with_env(&module, &mut env, Some(src));
+        assert!(err.is_err(), "out-of-bounds index should error, got {err:?}");
     }
 }
 
