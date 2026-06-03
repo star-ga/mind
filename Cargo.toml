@@ -110,7 +110,14 @@ codegen-units = 1
 debug = false
 
 [features]
-default = []
+# Stage 2 — promote the high-level surface to default. `std-surface` carries the
+# 10 verified-executing bricks (match/enum/Option/String/struct-field/method-as-
+# field/method-with-args-UFCS); the unpromoted constructs (aggregate Tuple
+# returns, region{}) are re-gated behind `std-surface-experimental` and FAIL LOUD
+# by default (never silent const-0). Keystone byte-identity is preserved: the
+# keystone test always builds with `std-surface` explicitly, so this flip changes
+# zero keystone bytes. `--no-default-features` restores the low-level-only subset.
+default = ["std-surface"]
 autodiff = []
 # Compile-time phase instrumentation. OFF by default and fully cfg-gated, so
 # the frozen frontend criterion baselines and the bit-identity hot path incur
