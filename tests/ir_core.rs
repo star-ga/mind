@@ -117,3 +117,48 @@ fn prepare_pipeline_runs_verifier_and_canonicalizer() {
         printed
     );
 }
+
+/// Regression: a value consumed ONLY as a `Call` argument must be marked live
+/// and survive dead-code elimination in `canonicalize_module`.
+///
+/// Before the fix, `instruction_operands` returned an empty operand set for
+/// `Instr::Call` (the `_ => vec![]` catch-all), so the argument value was never
+/// inserted into the `used` set and was pruned — a silent miscompile. The
+/// std-surface UFCS bricks lower `v.push(x)` into exactly such a `Call`, so a
+/// pruned argument drops a real side-effecting/identity operand.
+#[test]
+fn canonicalization_keeps_value_used_only_as_call_arg() {
+    let mut module = IRModule::new();
+    // %0 is referenced ONLY as the argument to the call below.
+    let arg = scalar_const(&mut module, 42);
+    let call_dst = module.fresh();
+    module.instrs.push(Instr::Call {
+        dst: call_dst,
+        name: "sink".to_string(),
+        args: vec![arg],
+    });
+    module.instrs.push(Instr::Output(call_dst));
+    module.next_id = module.next_id.max(call_dst.0 + 1);
+
+    canonicalize_module(&mut module);
+
+    let arg_kept = module
+        .instrs
+        .iter()
+        .any(|i| matches!(i, Instr::ConstI64(id, 42) if *id == arg));
+    assert!(
+        arg_kept,
+        "value used only as a Call argument was pruned: {}",
+        format_ir_module(&module)
+    );
+    // And the call still carries the argument.
+    let call_keeps_arg = module.instrs.iter().any(|i| {
+        matches!(i, Instr::Call { args, name, .. }
+            if name == "sink" && args.first() == Some(&arg))
+    });
+    assert!(
+        call_keeps_arg,
+        "Call lost its argument after canonicalization: {}",
+        format_ir_module(&module)
+    );
+}

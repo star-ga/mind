@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — dead-code elimination operand coverage (silent prune of call/return operands)
+
+- **DCE no longer prunes a value used only as a `Call` argument or `Return` value.**
+  `ir_canonical::instruction_operands` previously ended in a `_ => vec![]` catch-all,
+  so it reported an empty operand set for `Call`, `Return`, `Param`, and every
+  std-surface instruction. A value consumed *only* as a call argument was therefore
+  never marked live and was pruned — a silent miscompile (the std-surface UFCS bricks
+  lower `v.push(x)` to a `vec_push` call, so the pruned argument dropped a real
+  operand). The match is now **exhaustive with no catch-all**, so any future `Instr`
+  variant is a compile error here until its operands are declared.
+- **The IR verifier now checks operands for every straight-line instruction**, not
+  just `BinOp`. A use-before-definition reaching through a `Call`/`Return`/`Vec*`
+  operand previously slipped past `validate_operands`; both the DCE liveness pass and
+  the verifier now share the same exhaustive operand enumeration, so they cannot
+  disagree. Nested control-flow (`While`/`If`/`Region`/`FnDef`) is correctly skipped —
+  its operands live in their own SSA sub-namespaces.
+- Regression test `canonicalization_keeps_value_used_only_as_call_arg` pins the fix.
+
 ### Added — RFC 0012 tensor-native surface syntax (the differentiation layer)
 
 - **Phase A — shape-typed tensors.** `Tensor<dtype,[dims]>` carries shape and

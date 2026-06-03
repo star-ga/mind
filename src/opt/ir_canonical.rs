@@ -263,9 +263,28 @@ fn next_sequential_id(module: &IRModule) -> usize {
         .unwrap_or(0)
 }
 
-fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
+/// Enumerate every SSA value an instruction *reads* from the scope that
+/// `prune_dead` iterates (the flat top-level / fn-body instruction stream).
+///
+/// This match is intentionally **exhaustive with no `_` catch-all**: a wildcard
+/// previously returned an empty operand set for `Call`, `Return`, `Param` and
+/// every std-surface instruction, so a value consumed *only* as a call argument
+/// or return value was never marked live and got pruned — a silent miscompile
+/// (the std-surface UFCS bricks lower `v.push(x)` to a `vec_push` `Instr::Call`).
+/// Removing the catch-all makes any future `Instr` variant a compile error here,
+/// forcing the author to declare its operands.
+///
+/// Control-flow instructions (`While`/`If`/`Region`) carry sub-instruction
+/// streams in their own SSA namespaces; only the ids they read from the
+/// *enclosing* scope are returned here (`While::init_ids` pre-loop values, and
+/// the `then_val`/`else_val` of `If::merges`, which may forward an enclosing
+/// value for a var unassigned on one branch). The sub-body result/exit/merge
+/// ids are produced by the region, not consumed from the enclosing scope.
+pub(crate) fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
     match instr {
-        Instr::ConstI64(_, _) | Instr::ConstTensor(_, _, _, _) => Vec::new(),
+        Instr::ConstI64(_, _) | Instr::ConstF64(_, _) | Instr::ConstTensor(_, _, _, _) => {
+            Vec::new()
+        }
         Instr::BinOp { lhs, rhs, .. } => vec![*lhs, *rhs],
         Instr::Sum { src, .. }
         | Instr::Mean { src, .. }
@@ -284,6 +303,52 @@ fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         Instr::ReluGrad { grad, src, .. } => vec![*grad, *src],
         Instr::Gather { src, indices, .. } => vec![*src, *indices],
         Instr::Output(id) => vec![*id],
-        _ => vec![],
+        Instr::Call { args, .. } => args.clone(),
+        Instr::Return { value } => value.into_iter().copied().collect(),
+        // A parameter defines a value; it reads no SSA operands.
+        Instr::Param { .. } => Vec::new(),
+        // A function definition reads no top-level operands; its body
+        // instructions live in a separate stream and are pruned in their own
+        // right when the body is lowered into its own module.
+        Instr::FnDef { .. } => Vec::new(),
+        #[cfg(feature = "std-surface")]
+        Instr::ConstArray { .. } => Vec::new(),
+        #[cfg(feature = "std-surface")]
+        Instr::ArrayLoad { base, index, .. } => vec![*base, *index],
+        // `init_ids` are the pre-loop (enclosing-scope) values threaded into the
+        // header; `cond_id`/`live_vars`/`exit_ids`/body live in the loop's own
+        // SSA namespace.
+        #[cfg(feature = "std-surface")]
+        Instr::While { init_ids, .. } => init_ids.clone(),
+        // `then_val`/`else_val` of each merge may forward an enclosing-scope
+        // value for a var left unassigned on one branch (F2 exit env); cond and
+        // branch results live in the branches' own SSA namespaces.
+        #[cfg(feature = "std-surface")]
+        Instr::If { merges, .. } => merges
+            .iter()
+            .flat_map(|(_merge, then_val, else_val)| [*then_val, *else_val])
+            .collect(),
+        #[cfg(feature = "std-surface")]
+        Instr::VecLoad { base, offset, .. } | Instr::VecLoadI32 { base, offset, .. } => {
+            vec![*base, *offset]
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecFma { a, b, acc, .. } | Instr::VecMulAddQ16 { a, b, acc, .. } => {
+            vec![*a, *b, *acc]
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::VecReduceAdd { src, .. } | Instr::VecReduceAddI64 { src, .. } => vec![*src],
+        #[cfg(feature = "std-surface")]
+        Instr::VecStore {
+            src, base, offset, ..
+        } => vec![*src, *base, *offset],
+        // A pure declaration — no SSA operands.
+        #[cfg(feature = "std-surface")]
+        Instr::ExternFnDecl { .. } => Vec::new(),
+        // `result`/`enter_id`/`exit_id`/`alloc_ids` are all produced inside the
+        // region body's own SSA namespace; nothing is read from the enclosing
+        // scope at this node.
+        #[cfg(feature = "std-surface")]
+        Instr::Region { .. } => Vec::new(),
     }
 }
