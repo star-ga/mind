@@ -118,8 +118,17 @@ fn binary_cross_entropy(pred: diff tensor<f32[]>, label: tensor<f32[]>) -> diff 
     return loss;
 }
 
+// Updated parameters returned by a training step
+// (passed by address as a #[repr(C)] struct, not a by-value tuple)
+#[repr(C)]
+struct EdgeParams {
+    w1: diff tensor<f32[10, 16]>,
+    w2: diff tensor<f32[16, 8]>,
+    w3: diff tensor<f32[8, 1]>,
+}
+
 // SGD training step
-fn train_step(x: diff tensor<f32[10]>, label: tensor<f32[]>, w1: diff tensor<f32[10, 16]>, w2: diff tensor<f32[16, 8]>, w3: diff tensor<f32[8, 1]>, lr: f32) -> (diff tensor<f32[10, 16]>, diff tensor<f32[16, 8]>, diff tensor<f32[8, 1]>) {
+fn train_step(x: diff tensor<f32[10]>, label: tensor<f32[]>, w1: diff tensor<f32[10, 16]>, w2: diff tensor<f32[16, 8]>, w3: diff tensor<f32[8, 1]>, lr: f32) -> EdgeParams {
     // Forward
     let pred = predict(x, w1, w2, w3);
     let loss = binary_cross_entropy(pred, label);
@@ -134,7 +143,7 @@ fn train_step(x: diff tensor<f32[10]>, label: tensor<f32[]>, w1: diff tensor<f32
     let w2_new = w2 - lr * grad_w2;
     let w3_new = w3 - lr * grad_w3;
 
-    return (w1_new, w2_new, w3_new);
+    return EdgeParams { w1: w1_new, w2: w2_new, w3: w3_new };
 }
 
 // ============================================================================
