@@ -65,7 +65,7 @@ pub mod v3;
 pub use emit::{MicEmitter, emit_mic};
 pub use parse::{MicParseError, parse_mic};
 pub use v2::{MicFormat, detect_format};
-pub use v3::{Determinism, EvidenceError, EvidenceReport};
+pub use v3::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};
 pub use v3::{Mic3Error, emit_mic3, emit_mic3_with_evidence, mic3_evidence_report, parse_mic3};
 
 /// MIC format version.

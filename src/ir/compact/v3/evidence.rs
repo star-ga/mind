@@ -73,7 +73,7 @@ use crate::ir::evidence::ir_trace_hash;
 
 // Re-export the canonical evidence vocabulary from v2 — one set of types for
 // the whole codebase (RFC 0021 §3.2: "reuse, don't rebuild").
-pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport};
+pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};
 
 // ─── MAP sentinel ─────────────────────────────────────────────────────────────
 
@@ -95,6 +95,7 @@ const KEY_SCHEMA: &str = "evidence_chain.schema";
 const KEY_SUBSTRATE: &str = "evidence_chain.substrate";
 const KEY_TOOLCHAIN: &str = "evidence_chain.toolchain";
 const KEY_TRACE_HASH: &str = "evidence_chain.trace_hash";
+const KEY_TRACE_HASH_KIND: &str = "evidence_chain.trace_hash_kind";
 
 // ─── Emit ─────────────────────────────────────────────────────────────────────
 
@@ -195,6 +196,14 @@ fn append_map_epilogue(
         (KEY_SUBSTRATE, MapEntryValue::Str(substrate)),
         (KEY_TOOLCHAIN, MapEntryValue::Str(toolchain)),
         (KEY_TRACE_HASH, MapEntryValue::Bytes(&trace_hash)),
+        // In-band anchor descriptor: every artifact emitted here uses the mic@3
+        // bytes anchor (ir_trace_hash). Makes the artifact self-describing so a
+        // verifier need not infer the anchor from `schema`. Keys are sorted
+        // below, so insertion position is irrelevant.
+        (
+            KEY_TRACE_HASH_KIND,
+            MapEntryValue::Str(TraceHashKind::Mic3Bytes.as_str()),
+        ),
     ];
     if let Some(ref p) = parent {
         entries.push((KEY_PARENT, MapEntryValue::Bytes(p)));
@@ -385,6 +394,18 @@ fn decode_evidence_report(
 
     let stored_hash = find_bytes32(entries, KEY_TRACE_HASH)?;
 
+    // `trace_hash_kind` is the in-band anchor descriptor. ABSENT (a legacy
+    // artifact that predates this field) ⇒ default to mic@3 bytes: every
+    // artifact emitted since the 2026-05-31 re-anchor uses mic@3, and the
+    // recomputation below (`ir_trace_hash`, mic@3 bytes) is what those artifacts
+    // actually stored, so the default keeps untampered legacy artifacts green.
+    let trace_hash_kind = match find_str_opt(entries, KEY_TRACE_HASH_KIND)? {
+        Some(s) => {
+            TraceHashKind::from_str(&s).ok_or(EvidenceError::Malformed(KEY_TRACE_HASH_KIND))?
+        }
+        None => TraceHashKind::default(),
+    };
+
     // Recompute via the same FIPS-180-4 seam as ir_trace_hash.
     let recomputed = ir_trace_hash(ir);
     let trace_hash_valid = recomputed == stored_hash;
@@ -395,6 +416,7 @@ fn decode_evidence_report(
         toolchain,
         parent,
         trace_hash: stored_hash,
+        trace_hash_kind,
         trace_hash_valid,
     })
 }
@@ -408,6 +430,19 @@ fn find_str(entries: &[ParsedEntry], key: &'static str) -> Result<String, Eviden
         Some(ParsedValue::Str(s)) => Ok(s.clone()),
         Some(_) => Err(EvidenceError::Malformed(key)),
         None => Err(EvidenceError::MissingKey(key)),
+    }
+}
+
+/// Read an optional string-valued MAP entry. `None` if the key is absent;
+/// `Err(Malformed)` if present with a non-string value.
+fn find_str_opt(
+    entries: &[ParsedEntry],
+    key: &'static str,
+) -> Result<Option<String>, EvidenceError> {
+    match find_entry(entries, key) {
+        Some(ParsedValue::Str(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(EvidenceError::Malformed(key)),
+        None => Ok(None),
     }
 }
 
@@ -447,6 +482,7 @@ mod tests {
     use crate::ir::compact::v3::{emit_mic3, parse_mic3};
     use crate::ir::{BinOp, IRModule, Instr};
     use crate::types::{DType, ShapeDim};
+    use std::io::Write;
 
     // -------------------------------------------------------------------------
     // Module generators — spread of IRModule shapes for differential coverage
@@ -956,5 +992,120 @@ mod tests {
         let report = mic3_evidence_report(&bytes).unwrap();
         assert!(report.trace_hash_valid);
         assert_eq!(report.substrate, "x86_avx2");
+    }
+
+    // -------------------------------------------------------------------------
+    // (m) trace_hash_kind round-trips through emit→parse as "mic3-bytes"
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn trace_hash_kind_round_trips_as_mic3_bytes() {
+        for (name, ir) in all_modules() {
+            let bytes =
+                emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+
+            // The key is present in the raw MAP with the expected string value.
+            let body_end = find_map_sentinel(&bytes).unwrap();
+            let entries = parse_map_epilogue(&bytes[body_end..]).unwrap();
+            let kind_entry = entries
+                .iter()
+                .find(|e| e.key == KEY_TRACE_HASH_KIND)
+                .unwrap_or_else(|| {
+                    panic!("module '{}': trace_hash_kind key must be present", name)
+                });
+            match &kind_entry.value {
+                ParsedValue::Str(s) => {
+                    assert_eq!(s, "mic3-bytes", "module '{}': trace_hash_kind value", name)
+                }
+                other => panic!(
+                    "module '{}': trace_hash_kind must be Str, got {:?}",
+                    name, other
+                ),
+            }
+
+            // It decodes into the report as Mic3Bytes.
+            let report = mic3_evidence_report(&bytes).unwrap();
+            assert_eq!(
+                report.trace_hash_kind,
+                TraceHashKind::Mic3Bytes,
+                "module '{}': decoded trace_hash_kind",
+                name
+            );
+            assert!(report.trace_hash_valid, "module '{}'", name);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // (n) Back-compat: a legacy MAP with NO trace_hash_kind key decodes as
+    //     "mic3-bytes" (the default) and still verifies.
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn legacy_map_without_kind_defaults_to_mic3_bytes() {
+        // Synthesize a legacy artifact by emitting a current one, parsing the
+        // MAP, dropping the trace_hash_kind entry, and re-encoding the MAP
+        // epilogue with the remaining keys (sorted) onto the same body.
+        let ir = mod_binop();
+        let bytes =
+            emit_mic3_with_evidence(&ir, "x86_avx2", None, Determinism::Deterministic, "0.8.0");
+        let body_end = find_map_sentinel(&bytes).unwrap();
+        let entries = parse_map_epilogue(&bytes[body_end..]).unwrap();
+
+        // Confirm the modern artifact carries the key (so the drop is meaningful).
+        assert!(
+            entries.iter().any(|e| e.key == KEY_TRACE_HASH_KIND),
+            "precondition: modern artifact must carry trace_hash_kind"
+        );
+
+        // Rebuild a MAP epilogue from all entries EXCEPT trace_hash_kind.
+        let mut kept: Vec<&ParsedEntry> = entries
+            .iter()
+            .filter(|e| e.key != KEY_TRACE_HASH_KIND)
+            .collect();
+        kept.sort_by(|a, b| a.key.as_bytes().cmp(b.key.as_bytes()));
+
+        let mut legacy = bytes[..body_end].to_vec();
+        legacy.push(MAP_SENTINEL);
+        uleb128_write(&mut legacy, kept.len() as u64).unwrap();
+        for e in &kept {
+            let kb = e.key.as_bytes();
+            uleb128_write(&mut legacy, kb.len() as u64).unwrap();
+            legacy.write_all(kb).unwrap();
+            match &e.value {
+                ParsedValue::Str(s) => {
+                    legacy.push(TAG_STRING);
+                    uleb128_write(&mut legacy, s.len() as u64).unwrap();
+                    legacy.write_all(s.as_bytes()).unwrap();
+                }
+                ParsedValue::Int(i) => {
+                    legacy.push(TAG_INT);
+                    uleb128_write(&mut legacy, zigzag_encode(*i)).unwrap();
+                }
+                ParsedValue::Bytes(b) => {
+                    legacy.push(TAG_BYTES);
+                    uleb128_write(&mut legacy, b.len() as u64).unwrap();
+                    legacy.write_all(b).unwrap();
+                }
+            }
+        }
+
+        // No trace_hash_kind key in the synthesized legacy MAP.
+        let legacy_entries = parse_map_epilogue(&legacy[body_end..]).unwrap();
+        assert!(
+            !legacy_entries.iter().any(|e| e.key == KEY_TRACE_HASH_KIND),
+            "synthesized legacy MAP must NOT carry trace_hash_kind"
+        );
+
+        // Decodes with the back-compat default and still verifies green.
+        let report = mic3_evidence_report(&legacy).unwrap();
+        assert_eq!(
+            report.trace_hash_kind,
+            TraceHashKind::Mic3Bytes,
+            "absent trace_hash_kind must default to mic3-bytes"
+        );
+        assert!(
+            report.trace_hash_valid,
+            "untampered legacy artifact must still verify under the default anchor"
+        );
     }
 }
