@@ -1222,9 +1222,46 @@ pub(crate) fn eval_value_expr_mode(
         // Phase 10.6: field assignment is also a statement; the
         // expression-position evaluation returns the assigned value.
         Node::FieldAssign { value, .. } => eval_value_expr_mode(value, env, tensor_env, mode),
-        // Phase 10.7 constructs — not yet implemented in the evaluator.
-        Node::Match { .. } | Node::Ref { .. } => Err(EvalError::UnsupportedMsg(
-            "Phase 10.7 constructs not yet implemented".into(),
+        // Phase 10.7: `match`. Evaluate the scrutinee and take the first arm
+        // whose pattern matches — `Wildcard`, `Ident` (binds the value), or
+        // `Literal` (Int/Float/Str equality). Enum-variant patterns need a
+        // sum-type value model the interpreter does not have yet, so they can
+        // never match a scalar value and fall through to a `_`/ident arm.
+        Node::Match { scrutinee, arms, .. } => {
+            let val = eval_value_expr_mode(scrutinee, env, tensor_env, mode.clone())?;
+            for arm in arms {
+                let (is_match, bind): (bool, Option<&str>) = match &arm.pattern {
+                    crate::ast::Pattern::Wildcard => (true, None),
+                    crate::ast::Pattern::Ident(name) => (true, Some(name.as_str())),
+                    crate::ast::Pattern::Literal(lit) => {
+                        let eq = match (lit, &val) {
+                            (crate::ast::Literal::Int(m), Value::Int(n)) => n == m,
+                            (crate::ast::Literal::Float(a), Value::Float(b)) => a == b,
+                            (crate::ast::Literal::Str(s), Value::Str(v)) => v == s,
+                            _ => false,
+                        };
+                        (eq, None)
+                    }
+                    crate::ast::Pattern::EnumVariant { .. } => (false, None),
+                };
+                if is_match {
+                    let mut arm_env = env.clone();
+                    if let Some(name) = bind {
+                        arm_env.insert(name.to_string(), val.clone());
+                    }
+                    return eval_value_expr_mode(&arm.body, &arm_env, tensor_env, mode);
+                }
+            }
+            Err(EvalError::UnsupportedMsg(
+                "no match arm matched (enum-variant patterns require the \
+                 interpreter's sum-type value model, not yet implemented)"
+                    .into(),
+            ))
+        }
+        // Phase 10.7: reference-taking `&expr` / `&mut expr`. The interpreter
+        // has no heap/handle model, so taking a reference is not yet supported.
+        Node::Ref { .. } => Err(EvalError::UnsupportedMsg(
+            "reference-taking (`&`) not yet implemented in the interpreter".into(),
         )),
         // RFC 0005 Gap 1: while loop. Mirrors the `For`-loop interpreter
         // contract — a fresh loop scope inheriting the outer env, with
@@ -2101,6 +2138,33 @@ mod tests {
         match value {
             Value::Int(n) => assert_eq!(n, 0, "zero-iteration while should be Int(0)"),
             other => panic!("expected Int(0), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_match_selects_literal_arm() {
+        // Phase 10.7: the interpreter takes the first arm whose literal pattern
+        // equals the scrutinee.
+        let src = "let x = 2; match x { 1 => 10, 2 => 20, _ => 99 }";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 20, "match should select the `2 =>` arm"),
+            other => panic!("expected Int(20), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_match_wildcard_fallthrough() {
+        // An unmatched scrutinee falls through to the wildcard arm.
+        let src = "let x = 7; match x { 1 => 10, 2 => 20, _ => 99 }";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 99, "unmatched scrutinee hits `_`"),
+            other => panic!("expected Int(99), got {other:?}"),
         }
     }
 }
