@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2687 | **Est. tokens:** ~6,740,927
-**Generated:** 2026-06-03 09:18 UTC
+**Files:** 2688 | **Est. tokens:** ~6,750,692
+**Generated:** 2026-06-03 10:42 UTC
 
 ## Token Budget Guide
 
@@ -39,7 +39,7 @@
 | `docs/` | 25 | ~34,761 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
-| `docs/design/` | 2 | ~136 |
+| `docs/design/` | 3 | ~8,185 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~115,475 |
@@ -377,7 +377,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,717 |
-| `src/ir/` | 4 | ~17,434 |
+| `src/ir/` | 4 | ~17,827 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,293 |
 | `src/ir/compact/v3/` | 4 | ~39,553 |
@@ -385,7 +385,7 @@
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 2 | ~1,967 |
 | `src/ops/` | 3 | ~4,764 |
-| `src/opt/` | 4 | ~8,207 |
+| `src/opt/` | 4 | ~9,112 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
 | `src/project/` | 3 | ~24,734 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 168 | ~300,731 |
+| `tests/` | 168 | ~301,149 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -585,6 +585,7 @@
 - `cli.md` (~582 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
+- `execution-plan-performance-mode.md` (~8049 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
 - `README.md` (~26 tok, tiny) — Design Docs
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
@@ -3669,7 +3670,7 @@
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~8666 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~3315 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~3708 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -3701,7 +3702,7 @@
 ### `src/opt/`
 
 - `fold.rs` (~1175 tok, large) — Copyright 2025 STARGA Inc.
-- `ir_canonical.rs` (~2742 tok, huge) — Copyright 2025 STARGA Inc.
+- `ir_canonical.rs` (~3647 tok, huge) — Copyright 2025 STARGA Inc.
 - `memory_layout.rs` (~4110 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~180 tok, small) — Copyright 2025 STARGA Inc.
 ### `src/package/`
@@ -3878,7 +3879,7 @@
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
-- `ir_core.rs` (~847 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
+- `ir_core.rs` (~1265 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
 - `ir_load_save.rs` (~1348 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~1331 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_negative_literals.rs` (~1722 tok, huge) — Copyright 2025 STARGA Inc.
