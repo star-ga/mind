@@ -2268,6 +2268,20 @@ fn desugar_match_to_if(
     enum_tags: &std::collections::BTreeMap<String, i64>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
+    // An arm body written with braces (`1 => { x = 100 }`) parses to a single
+    // `Node::Block` wrapping the arm's statements, whereas a parsed `if { … }`
+    // produces a FLAT `Vec<Node>` of statements. The If lowering only treats
+    // top-level `Assign`/`Let` nodes as branch writes that merge into the
+    // post-`if` scope (its `then_writes`/`else_writes` → `branch_bindings`);
+    // a `Block` falls through to the expression arm and its enclosing-scope
+    // mutations are dropped at the merge. So splice a braced body's statements
+    // directly into the branch list to mirror the parsed-`if` shape exactly.
+    let flatten_body = |body: ast::Node| -> Vec<ast::Node> {
+        match body {
+            ast::Node::Block { stmts, .. } => stmts,
+            other => vec![other],
+        }
+    };
     // Split the arms into the leading test arms and the terminal else.
     // Only the FINAL arm may be a catch-all (`_` / bare ident); a catch-all
     // in a non-final position would shadow the rest — leave such (malformed)
@@ -2277,7 +2291,7 @@ fn desugar_match_to_if(
     if let Some(last) = arms.last() {
         match &last.pattern {
             ast::Pattern::Wildcard => {
-                else_branch = Some(vec![last.body.clone()]);
+                else_branch = Some(flatten_body(last.body.clone()));
                 last_idx = arms.len() - 1;
             }
             ast::Pattern::Ident(name) => {
@@ -2289,7 +2303,9 @@ fn desugar_match_to_if(
                     value: Box::new(scrutinee.clone()),
                     span,
                 };
-                else_branch = Some(vec![bind, last.body.clone()]);
+                let mut stmts = vec![bind];
+                stmts.extend(flatten_body(last.body.clone()));
+                else_branch = Some(stmts);
                 last_idx = arms.len() - 1;
             }
             _ => {}
@@ -2399,9 +2415,11 @@ fn desugar_match_to_if(
                     value: Box::new(load_i64(payload_addr)),
                     span,
                 };
-                vec![bind, arm.body.clone()]
+                let mut stmts = vec![bind];
+                stmts.extend(flatten_body(arm.body.clone()));
+                stmts
             }
-            _ => vec![arm.body.clone()],
+            _ => flatten_body(arm.body.clone()),
         };
         let if_node = ast::Node::If {
             cond: Box::new(cond),
