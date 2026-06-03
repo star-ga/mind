@@ -51,7 +51,11 @@ and will not change in incompatible ways without a major-version bump:
   lineage carries the lighter dataflow IR + the provenance MAP, but it is **not**
   the compiled-artifact IR — `IRModule`/`mic@1` is (it is what the pipeline and
   the self-host compiler produce, and the RFC 0016 evidence anchor
-  `ir::ir_trace_hash` hashes its canonical `mic@1` text). RFC 0021 unifies on the
+  `ir::ir_trace_hash` hashes its canonical `mic@3` bytes — `trace_hash =
+  SHA-256(canonical mic@3 bytes)`, re-anchored from mic@1 text on 2026-05-31
+  after a collision audit found mic@1 text can drop function-body semantics;
+  mic@3 binary commits the full `IRModule`, so it supersedes the original RFC
+  0016 GAP-1 mic@1-text rule). RFC 0021 unifies on the
   `IRModule` data shape with two canonical serialisations: `mic@1` for text and
   **`mic@3` for binary** (magic `MIC3`, round-trip equivalent to `mic@1`). The
   provenance MAP attaches to `mic@3` as a `0x4D`-sentinel epilogue using the

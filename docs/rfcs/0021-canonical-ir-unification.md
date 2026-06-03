@@ -169,9 +169,12 @@ today; convergence is a tracked deliverable**, not a shipped fact.
 
 ## 4. Migration path (must not regress the self-host bootstrap)
 
-0. **(SHIPPED, db5cb76)** `ir::ir_trace_hash` anchors `trace_hash` on canonical mic@1
+0. **(SHIPPED, db5cb76; re-anchored 2026-05-31)** `ir::ir_trace_hash` anchored `trace_hash` on canonical mic@1
    IR bytes — immediate correctness for "evidence attests the real IR," independent of
-   the container work below.
+   the container work below. *(Subsequently re-anchored to mic@3 bytes on 2026-05-31
+   after a collision audit found mic@1 text can drop function-body semantics; mic@3
+   binary commits the full `IRModule`. Current rule: `trace_hash = SHA-256(canonical
+   mic@3 bytes)`, superseding the mic@1-text anchor.)*
 1. **(SHIPPED, 5c29f0d)** `mic@3` binary encoding of the full `IRModule`
    (`src/ir/compact/v3/`: `emit_mic3`/`parse_mic3`/`Mic3Error`) — all 37 `Instr`
    variants incl. nested control-flow regions + the std-surface registries. Canonical +
@@ -185,11 +188,15 @@ today; convergence is a tracked deliverable**, not a shipped fact.
    `emit_mic3_with_evidence` appends a self-contained, lexicographically-sorted MAP
    (`evidence_chain.{determinism,schema=1,substrate,toolchain,trace_hash[,parent]}`) after
    the canonical mic@3 body; `mic3_evidence_report` peels the body, recomputes
-   `ir_trace_hash` (canonical mic@1), and verifies. Reuses v2 `Determinism`/`EvidenceReport`/
+   `ir_trace_hash` (canonical mic@1 at ship time; re-anchored to mic@3 2026-05-31, see note below), and verifies. Reuses v2 `Determinism`/`EvidenceReport`/
    `EvidenceError` (one vocabulary). 12 differential-fuzz/canonical-gate tests
    (byte-determinism, round-trip, tamper-detection, sorted-keys); no-evidence bytes
    byte-identical; verified v3 33/45, full workspace green, bootstrap 7/7. `trace_hash` is
    over the canonical mic@1 IR (the §3.1 anchor), MAP excluded per §3.2.
+   *(Both `ir_trace_hash` callsites above were subsequently re-anchored to mic@3 bytes on
+   2026-05-31 after a collision audit found mic@1 text can drop function-body semantics;
+   mic@3 binary commits the full `IRModule`. Current rule: `trace_hash = SHA-256(canonical
+   mic@3 bytes)`, superseding the mic@1-text anchor.)*
 3. **(SHIPPED, 7fc10d2)** `mindc <file> --emit-mic3 <path>` / `--emit-evidence <path>` emit
    a mic@3 artifact (the latter with the embedded `evidence_chain` MAP: substrate =
    `--target` id, toolchain = mindc version, determinism = Deterministic w/ TODO(#289),

@@ -101,27 +101,38 @@ checks the §6 signature over MAP-minus-`signature.*` (which *includes* the
 now-populated `trace_hash`). Two nested exclusions, two checks — mirrors mic@2.1
 §6.1's signature-omits-itself discipline.
 
-### 3.3 What `trace_hash` covers — the canonical mic@1 IR (GAP-1 correction)
+### 3.3 What `trace_hash` covers — the canonical mic@3 IR (GAP-1, re-anchored)
 
 > **Correction (architecture audit 2026-05-26).** Phase A/B computed `trace_hash`
 > over the v2 compact [`Graph`](../../src/ir/compact/v2) (mic@2.1). But the
 > compile pipeline never produces that graph for a real program — it has 22
 > pure-dataflow opcodes (no control flow / functions / SIMD) and the only
 > non-test `Graph` is a hardcoded fixture, so that hash attested a toy, not the
-> shipped artifact. **For a compiled artifact the attested object is the
-> canonical mic@1 IR text** (`ir::save(&IRModule)`), computed by
-> [`ir::ir_trace_hash`](../../src/ir/evidence.rs). mic@1 is the documented stable
-> contract (`docs/ir-stability.md`), RFC-0001 deterministic (`save → load → save`
-> is a byte-identical fixed point across runs and platforms), and *loadable
-> back* — it is the substrate-independent **IR link** of the §4 DAG and the
-> object whose cross-substrate equality RFC 0015 asserts. The mic@2.1 `Graph`
-> path is the **model-exchange** carrier (rfn-mind / MindLLM tensor graphs that
-> *are* expressible in the v2 opcodes) and the evidence **container** (the MAP
-> holds `evidence_chain.*` + the §6 signature); it is not the general
-> compiled-artifact anchor.
+> shipped artifact. The 2026-05-26 fix re-anchored the attested object onto the
+> canonical `IRModule` (`ir::save(&IRModule)`), computed by
+> [`ir::ir_trace_hash`](../../src/ir/evidence.rs).
+>
+> **Re-anchor (collision audit 2026-05-31).** The 2026-05-26 fix anchored on
+> mic@1 IR *text*, but mic@1 text is **lossy for function bodies**: `ir::print`
+> emits an `Instr::FnDef` as a bare `// fn <name>` comment and drops its
+> `params`/`ret_id`/`body`, so two exported functions that differ only in body
+> (e.g. `f(x) { x + 2 }` vs `f(x) { x * 999 }`) serialize to byte-identical
+> mic@1 text and collide to the same SHA-256 — attesting the signature surface,
+> not the computation. **The attested object is therefore the canonical mic@3
+> bytes** (`emit_mic3(&IRModule)`), the full-fidelity binary IR that commits
+> complete function bodies. mic@3 is round-trip equivalent to mic@1 (the
+> documented stable contract, `docs/ir-stability.md`), RFC-0001 deterministic (a
+> byte-identical fixed point across runs and platforms), and is itself the object
+> the cross-substrate byte-identity gate compares — the substrate-independent
+> **IR link** of the §4 DAG whose cross-substrate equality RFC 0015 asserts. This
+> supersedes the original GAP-1 mic@1-text rule. The mic@2.1 `Graph` path is the
+> **model-exchange** carrier (rfn-mind / MindLLM tensor graphs that *are*
+> expressible in the v2 opcodes) and the evidence **container** (the MAP holds
+> `evidence_chain.*` + the §6 signature); it is not the general compiled-artifact
+> anchor.
 
 For a *compiled* artifact the production is pure (parse/lower are deterministic
-functions of source + toolchain), so `trace_hash = SHA-256(canonical mic@1 text)`
+functions of source + toolchain), so `trace_hash = SHA-256(canonical mic@3 bytes)`
 via the FIPS-180-4 seam (§5.4). For an artifact that has been *executed* under
 the RFC 0011 `ReplayScheduler` (e.g. a mind-bench workload, an agent step), the
 executed trace-hash (`std.async.trace_hash`) is folded in:
