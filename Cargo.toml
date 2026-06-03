@@ -144,6 +144,15 @@ ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI w
 # hot path is untouched.
 cross-module-imports = ["std-surface"]  # Phase 10.6 item 9 / Phase 15: `use crate::x::y` module table + resolver
 std-surface = []  # RFC 0005 Phase 0: generic Instr::Call -> MLIR func.call lowering (i64 ABI)
+# Per-construct std-surface promotion (Stage 0a). The 10 promoted std bricks
+# stay under `std-surface`. The UNPROMOTED constructs — genuine collapsing
+# aggregate (tuple) returns, type-variable generics, and `region { }` — are
+# re-gated behind this experimental flag. Under a plain `std-surface` build
+# those constructs FAIL LOUD at lowering (a clear compile error, never a
+# silent const-0/i64 collapse). Enabling this flag restores the prior
+# best-effort lowering for them. `default` stays `[]`; the bit-identity hot
+# path is untouched.
+std-surface-experimental = ["std-surface"]
 ffi-examples = []
 pkg = ["tar", "flate2", "sha2"]
 registry = []

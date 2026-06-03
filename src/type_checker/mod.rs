@@ -3528,6 +3528,30 @@ fn check_determinism_annotations(
         };
         let a = fn_annot(attrs);
 
+        // Check 0 — by-value tuple return fail-loud. A `fn` whose declared
+        // return type is `TypeAnn::Tuple` has no multi-slot return ABI today:
+        // lowering collapses it to a single `i64`, a silent miscompile. Reject
+        // it with a clear diagnostic unless the experimental std surface is on
+        // (where today's best-effort behavior is retained). Named(struct)
+        // returns use the address path (return the __mind_alloc base as i64)
+        // and stay legal — only `TypeAnn::Tuple` is rejected here.
+        #[cfg(not(feature = "std-surface-experimental"))]
+        if let Some(TypeAnn::Tuple { .. }) = ret_type {
+            errs.push(diag_from_span(
+                src,
+                file,
+                format!(
+                    "`{name}` returns a by-value tuple, which has no multi-slot \
+                     return ABI and would silently collapse to a single `i64`; \
+                     return a `#[repr(C)]` struct (passed by address) instead, \
+                     or build with the `std-surface-experimental` feature \
+                     (safety::tuple_return_unsupported)"
+                ),
+                *span,
+                "safety::tuple_return_unsupported",
+            ));
+        }
+
         // Check 1 — `[target(...)]` / `[q16]` name validity. Local, no call
         // graph: a malformed or unknown backend name is unambiguously wrong.
         for at in attrs {
