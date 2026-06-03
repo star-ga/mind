@@ -67,6 +67,56 @@ fn bench_compilation_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark the WEDGE path, not just the parser: canonical mic@3 serialization
+/// (`emit_mic3`) plus the `ir_trace_hash` that anchors the embedded evidence
+/// chain. This gates the performance of the moat machinery — the cross-substrate-
+/// identical serialization + hash — alongside parse latency.
+///
+/// Before timing, it asserts the load-bearing property once per input: `emit_mic3`
+/// and `ir_trace_hash` are byte-identical across calls. Determinism *is* the wedge;
+/// if this ever fails, the bench would be measuring a non-deterministic path that
+/// breaks cross-substrate byte-identity.
+fn bench_wedge_evidence(c: &mut Criterion) {
+    use libmind::ir::compact::emit_mic3;
+    use libmind::ir::ir_trace_hash;
+
+    let mut group = c.benchmark_group("wedge_evidence");
+
+    for (name, source) in [
+        ("small_matmul", SMALL_MATMUL),
+        ("medium_mlp", MEDIUM_MLP),
+        ("large_network", LARGE_NETWORK),
+    ] {
+        let products =
+            compile_source(source, &CompileOptions::default()).expect("compilation failed");
+
+        // Wedge invariant, checked once outside the timed loop.
+        assert_eq!(
+            emit_mic3(&products.ir),
+            emit_mic3(&products.ir),
+            "mic@3 emission must be byte-identical (wedge determinism) for {name}"
+        );
+        assert_eq!(
+            ir_trace_hash(&products.ir),
+            ir_trace_hash(&products.ir),
+            "trace_hash must be deterministic (wedge) for {name}"
+        );
+
+        group.bench_with_input(BenchmarkId::new("emit_mic3", name), &products.ir, |b, m| {
+            b.iter(|| black_box(emit_mic3(black_box(m))));
+        });
+        group.bench_with_input(
+            BenchmarkId::new("ir_trace_hash", name),
+            &products.ir,
+            |b, m| {
+                b.iter(|| black_box(ir_trace_hash(black_box(m))));
+            },
+        );
+    }
+
+    group.finish();
+}
+
 #[cfg(feature = "mlir-lowering")]
 fn bench_mlir_lowering(c: &mut Criterion) {
     let mut group = c.benchmark_group("mlir_lowering");
@@ -191,6 +241,7 @@ fn bench_c_export_lowering(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_compilation_pipeline,
+    bench_wedge_evidence,
     bench_mlir_lowering,
     bench_end_to_end_compilation,
     bench_autodiff_generation,
@@ -201,6 +252,7 @@ criterion_group!(
 criterion_group!(
     benches,
     bench_compilation_pipeline,
+    bench_wedge_evidence,
     bench_mlir_lowering,
     bench_end_to_end_compilation,
     bench_c_export_lowering
@@ -210,11 +262,17 @@ criterion_group!(
 criterion_group!(
     benches,
     bench_compilation_pipeline,
+    bench_wedge_evidence,
     bench_autodiff_generation,
     bench_c_export_lowering
 );
 
 #[cfg(all(not(feature = "mlir-lowering"), not(feature = "autodiff")))]
-criterion_group!(benches, bench_compilation_pipeline, bench_c_export_lowering);
+criterion_group!(
+    benches,
+    bench_compilation_pipeline,
+    bench_wedge_evidence,
+    bench_c_export_lowering
+);
 
 criterion_main!(benches);
