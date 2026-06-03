@@ -301,7 +301,14 @@ fn walk_expr(
             // Inner Let/Assign in a block can shadow — use a snapshot.
             let mut local = vars.clone();
             for stmt in stmts {
-                walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
+                walk_stmt(
+                    stmt,
+                    &mut local,
+                    fn_returns,
+                    struct_defs,
+                    field_types,
+                    types,
+                );
             }
         }
         Node::If {
@@ -313,12 +320,26 @@ fn walk_expr(
             walk_expr(cond, vars, fn_returns, struct_defs, field_types, types);
             let mut local = vars.clone();
             for stmt in then_branch {
-                walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
+                walk_stmt(
+                    stmt,
+                    &mut local,
+                    fn_returns,
+                    struct_defs,
+                    field_types,
+                    types,
+                );
             }
             if let Some(else_b) = else_branch {
                 let mut local = vars.clone();
                 for stmt in else_b {
-                    walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
+                    walk_stmt(
+                        stmt,
+                        &mut local,
+                        fn_returns,
+                        struct_defs,
+                        field_types,
+                        types,
+                    );
                 }
             }
         }
@@ -358,7 +379,14 @@ fn walk_expr(
         Node::Region { body, .. } => {
             let mut local = vars.clone();
             for stmt in body {
-                walk_stmt(stmt, &mut local, fn_returns, struct_defs, field_types, types);
+                walk_stmt(
+                    stmt,
+                    &mut local,
+                    fn_returns,
+                    struct_defs,
+                    field_types,
+                    types,
+                );
             }
         }
         // Other nodes either don't contain expressions or are
