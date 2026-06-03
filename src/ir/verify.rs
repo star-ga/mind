@@ -224,19 +224,41 @@ fn validate_operands(
                         body_defined.insert(*merge_id);
                     }
                 }
-                // Check operand references within body scope
-                if let Instr::BinOp { lhs, rhs, .. } = body_instr {
-                    if !body_defined.contains(lhs) {
-                        return Err(IrVerifyError::UseBeforeDefinition {
-                            value: *lhs,
-                            instr_index: body_idx,
-                        });
-                    }
-                    if !body_defined.contains(rhs) {
-                        return Err(IrVerifyError::UseBeforeDefinition {
-                            value: *rhs,
-                            instr_index: body_idx,
-                        });
+                // Check operand references within body scope.
+                //
+                // Bug 2 fix: previously only `BinOp` operands were validated,
+                // so a use-before-def of a value consumed by a `Call` arg,
+                // `Return` value, `ArrayLoad`/`Vec*` etc. went undetected.
+                // We now validate *every* body instruction's operands against
+                // `body_defined`, reusing the same exhaustive operand
+                // enumeration as the DCE pass (`instruction_operands`).
+                //
+                // EXCEPTION: nested control-flow / region / fn instructions
+                // (`While`/`If`/`Region`/`FnDef`) carry operands that live in
+                // their *own* SSA sub-namespaces (e.g. a fall-through `If`
+                // merge value defined inside a branch body, or a `usize::MAX`
+                // non-fall-through placeholder). Those are not defined in this
+                // fn-body scope, so validating them here would be a false
+                // positive — the verifier already treats those nodes as opaque
+                // control-flow units (see the `validate_operands` arms above),
+                // and their exposed ids are inserted into `body_defined` for
+                // subsequent instructions. We therefore skip operand checking
+                // for those variants and validate only straight-line ops.
+                let is_nested_region = matches!(body_instr, Instr::FnDef { .. });
+                #[cfg(feature = "std-surface")]
+                let is_nested_region = is_nested_region
+                    || matches!(
+                        body_instr,
+                        Instr::While { .. } | Instr::If { .. } | Instr::Region { .. }
+                    );
+                if !is_nested_region {
+                    for operand in crate::opt::ir_canonical::instruction_operands(body_instr) {
+                        if !body_defined.contains(&operand) {
+                            return Err(IrVerifyError::UseBeforeDefinition {
+                                value: operand,
+                                instr_index: body_idx,
+                            });
+                        }
                     }
                 }
             }
