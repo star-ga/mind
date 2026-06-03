@@ -147,6 +147,12 @@ pub fn emit_mic3_with_evidence(
 ///
 /// Returns [`EvidenceError::Missing`] if no `evidence_chain.*` keys are present.
 pub fn mic3_evidence_report(bytes: &[u8]) -> Result<EvidenceReport, EvidenceError> {
+    // DoS guard: reject oversized input up front, before scanning for the MAP
+    // sentinel or any allocation. Mirrors the mic@3 body parser's input cap.
+    if bytes.len() > super::parse::MAX_MIC3_INPUT {
+        return Err(EvidenceError::Malformed("evidence_chain.trace_hash"));
+    }
+
     // Locate the MAP sentinel.
     let body_end = find_map_sentinel(bytes).ok_or(EvidenceError::Missing)?;
 
