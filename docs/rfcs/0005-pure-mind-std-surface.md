@@ -2,14 +2,35 @@
 
 - **Start Date**: 2026-05-18
 - **RFC PR**: TBD
-- **Status**: **Shipped through Phase C in v0.4.2** (2026-05-18) —
-  see "Adoption plan" below for the per-phase landing record.  The
-  document itself stays *Draft* for the future Phase D+ items
-  (cross-arg type matching across Named structs, env-var stdlib
-  root for the single-file mindc CLI, dependency-style Mind.toml
+- **Status**: **Executing on the shipped compiler — promoted to the
+  default build in v0.7.1** (2026-06-02).  The high-level execution
+  surface now lowers and runs on the shipped `mindc` through ten
+  desugaring "bricks", each verified keystone-7/7: integer/literal
+  match, enum-discriminant match, `Option`/payload match, string
+  literals, struct field-write, nested-struct + borrow field access,
+  method-as-field accessors (`s.len()`), and method-with-args UFCS
+  (`v.push(x)` → `vec_push(v, x)`, unresolved calls fail loud).  In
+  v0.7.1 the `std-surface` feature is **promoted to the shipped
+  default** (`default = ["std-surface"]`) so the high-level surface
+  executes on every shipped binary.  The constructs that have **not**
+  yet been promoted — by-value tuple/aggregate returns and `region { }`
+  — are re-gated behind the new `std-surface-experimental` flag and
+  **fail loud** under a default build (a clear compile error, never a
+  silent miscompile / const-0 collapse); generics have no surface
+  syntax yet and are parser-rejected.  Cross-substrate Q16.16
+  byte-identity is preserved across the flip (keystone 7/7 unchanged —
+  the keystone test always builds `std-surface` explicitly, so the
+  default change alters zero keystone bytes).  `--no-default-features`
+  restores the low-level-only subset.  See "Adoption plan" below for
+  the per-phase landing record.  The document itself stays *Draft* for
+  the unpromoted/future items (by-value aggregate returns, `region`,
+  generics; cross-arg type matching across Named structs; env-var
+  stdlib root for the single-file mindc CLI; dependency-style Mind.toml
   declaration of external modules).
-- **Target Release**: v0.4.x (Phase 2 + Phase B + Phase C all
-  landed under the same minor; future phases pin to v0.4.x+).
+- **Target Release**: v0.4.x landed Phases 2 + B + C under one minor;
+  the high-level execution surface (10 bricks) and the std-surface
+  default promotion land in **v0.7.1**; unpromoted constructs pin to
+  v0.7.x+ behind `std-surface-experimental`.
 - **Normative reference**: `mind-spec` v1.0 (type system, slices,
   determinism contract); RFC 0003 (cdylib/`llc` shell-out seam used by
   the I/O layer).
@@ -343,6 +364,8 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
 | D₁    | `$MIND_STDLIB_PATH` override for the bundled stdlib | mindc v0.4.3 | **shipped** |
 | D₂a   | Named-struct param names preserved in Phase B error messages | mindc v0.4.4 | **shipped** |
 | D₂b   | Cross-arg Named-struct *identity* matching (Vec ≠ String at call site) | TBD | deferred (design note at `docs/rfcs/0005-phase-d2b-design-note.md`) |
+| RUNS  | High-level execution surface lowers + runs (10 bricks, each keystone-7/7) | v0.7.1 | **shipped** |
+| Default | `std-surface` promoted to shipped default; unpromoted aggregate-return/`region` re-gated behind `std-surface-experimental` (fail-loud); cross-substrate byte-identity preserved | v0.7.1 | **shipped** |
 | 6.1   | Self-host smoke — pure-MIND lexer (tail-recursive) | mindc v0.4.4 | **shipped** (`examples/lexer/`) |
 | 6.2a  | Pure-MIND Pratt parser on top of lexer (12 AST kinds, Option-C heap records) | mindc v0.4.4 | **shipped** (`examples/parser/`, 1,257 LOC) |
 | 6.2b  | mindc `while`-statement support + array literals + cdylib const-blob linkage | TBD | open (design at `docs/rfcs/0005-phase-6-2-mindc-gaps.md`) |
