@@ -312,3 +312,10 @@ implicit-determinism predicate.
   precedent)
 - JAX issue #26795 — XLA explicit cross-device non-determinism (the
   contrast this RFC defines MIND against)
+- Attribution-as-trace-scoring (Khan, Jun 2026) — external *evaluation-side*
+  corroboration of this RFC's precondition: a trace-level attribution score is
+  well-defined only against a deterministic substrate ("without bit-identical
+  computation across runs, the attribution score is measuring partly noise").
+  Independent confirmation that cross-substrate bit-identity is the precondition
+  for trustworthy evaluation, not only for reproducibility. (STARGA-internal
+  signal `SIG-20260603-011`.)

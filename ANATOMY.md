@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2688 | **Est. tokens:** ~6,750,692
-**Generated:** 2026-06-03 11:21 UTC
+**Files:** 2688 | **Est. tokens:** ~6,750,818
+**Generated:** 2026-06-03 12:15 UTC
 
 ## Token Budget Guide
 
@@ -42,7 +42,7 @@
 | `docs/design/` | 3 | ~8,185 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~115,475 |
+| `docs/rfcs/` | 28 | ~115,601 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,006 |
 | `examples/c/` | 2 | ~400 |
@@ -632,7 +632,7 @@
 - `0012-tensor-native-syntax.md` (~11307 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
 - `0013-cli-agent-harness-stack.md` (~6787 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~4898 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
-- `0015-cross-substrate-bit-identity.md` (~3531 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
+- `0015-cross-substrate-bit-identity.md` (~3657 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~5901 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
 - `0017-mindc-verify.md` (~3507 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
