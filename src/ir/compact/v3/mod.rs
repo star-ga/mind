@@ -734,8 +734,7 @@ mod tests {
             .stack_size(64 * 1024 * 1024)
             .spawn(|| {
                 let bytes = nested_fndef_bytes(4096);
-                let err =
-                    parse_mic3(&bytes).expect_err("deeply-nested input must be rejected");
+                let err = parse_mic3(&bytes).expect_err("deeply-nested input must be rejected");
                 assert!(
                     err.message.contains("nesting depth exceeds limit"),
                     "expected depth-limit error, got: {}",

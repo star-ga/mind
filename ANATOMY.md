@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2686 | **Est. tokens:** ~6,736,499
-**Generated:** 2026-06-03 05:34 UTC
+**Files:** 2687 | **Est. tokens:** ~6,737,761
+**Generated:** 2026-06-03 06:01 UTC
 
 ## Token Budget Guide
 
@@ -44,7 +44,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~115,051 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 15 | ~31,892 |
+| `examples/` | 15 | ~32,006 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -56,10 +56,10 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 7 | ~7,406 |
+| `.github/workflows/` | 7 | ~7,642 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
-| `scripts/` | 4 | ~5,178 |
+| `scripts/` | 5 | ~5,953 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/node_modules/` | 1 | ~13,764 |
@@ -372,7 +372,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~66,884 |
+| `src/eval/` | 12 | ~67,030 |
 | `src/eval/stdlib/` | 2 | ~8,515 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -380,7 +380,7 @@
 | `src/ir/` | 4 | ~17,434 |
 | `src/ir/compact/` | 3 | ~14,839 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
-| `src/ir/compact/v3/` | 4 | ~37,917 |
+| `src/ir/compact/v3/` | 4 | ~37,912 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 2 | ~1,967 |
@@ -395,7 +395,7 @@
 | `src/test/` | 1 | ~5,848 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 22 | ~108,498 |
+| `std/` | 22 | ~108,494 |
 | `tests/` | 168 | ~300,731 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -666,7 +666,7 @@
 - `mind.h` (~318 tok, medium) — Copyright 2025 STARGA Inc.
 ### `examples/`
 
-- `cnn_classifier.mind` (~999 tok, large) — CNN Classifier Example
+- `cnn_classifier.mind` (~1060 tok, large) — CNN Classifier Example
 ### `examples/compliance/`
 
 - `auditable_model.mind` (~1932 tok, huge) — auditable_model.mind -- Compliance-Ready MLP with Provenance Metadata
@@ -720,7 +720,7 @@
 - `remizov_inverse.mind` (~2511 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `remizov_solver.mind` (~3699 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `remizov_verify.mind` (~3618 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `tiny_edge_model.mind` (~1823 tok, huge) — Tiny Edge Model Example
+- `tiny_edge_model.mind` (~1876 tok, huge) — Tiny Edge Model Example
 ### `examples/typecheck/`
 
 - `bootstrap_smoke.py` (~2608 tok, huge)
@@ -753,7 +753,7 @@
 - `release-drafter.yml` (~85 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~1053 tok, large) — name: Bench gate
+- `bench-gate.yml` (~1289 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
 - `ci.yml` (~3764 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
@@ -775,6 +775,7 @@
 - `anatomy.sh` (~2010 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
 - `install.sh` (~1054 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
+- `preflight.sh` (~775 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 ### `sdk/ts/mic-map/dist/`
 
 - `errors.d.ts` (~209 tok, medium)
@@ -3625,7 +3626,7 @@
 - `tensor.rs` (~8346 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~5031 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~5177 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~1770 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -3661,7 +3662,7 @@
 
 - `emit.rs` (~10079 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~9219 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~10100 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10095 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~8519 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
@@ -3760,7 +3761,7 @@
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
-- `iouring.mind` (~18597 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
+- `iouring.mind` (~18593 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
 - `json.mind` (~10194 tok, huge) — std/json.mind -- RFC 8259 / ECMA-404 subset parser (task #269, cargo-retirement track).
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~935 tok, large) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.

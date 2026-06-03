@@ -63,10 +63,6 @@ extern "C" {
     unsafe fn getsockname(sockfd: i32, addr: i64, addrlen: i64) -> i32;
     unsafe fn clock_gettime(clockid: i32, tp: i64) -> i32;
     unsafe fn setsockopt(fd: i32, level: i32, optname: i32, optval: i64, optlen: i32) -> i32;
-    // libc wrappers for the otherwise arch-specific syscalls (memfd_create,
-    // ftruncate, fcntl, ioctl, open, sched_*affinity) — the libc form keeps these
-    // portable across x86_64 / aarch64, where the raw syscall numbers differ
-    // (io_uring setup/enter/register 425/426/427 are arch-shared, so stay raw).
     unsafe fn memfd_create(name: i64, flags: i32) -> i32;
     unsafe fn ftruncate(fd: i32, length: i64) -> i32;
     unsafe fn fcntl(fd: i32, cmd: i32, arg: i64) -> i32;
@@ -76,6 +72,10 @@ extern "C" {
     unsafe fn sched_getaffinity(pid: i32, cpusetsize: i64, mask: i64) -> i32;
     unsafe fn close(fd: i32) -> i32;
 }
+// libc wrappers for the otherwise arch-specific syscalls (memfd_create,
+// ftruncate, fcntl, ioctl, open, sched_*affinity) — the libc form keeps these
+// portable across x86_64 / aarch64, where the raw syscall numbers differ
+// (io_uring setup/enter/register 425/426/427 are arch-shared, so stay raw).
 
 // io_uring syscall numbers (shared across x86_64/arm64).
 fn sys_io_uring_setup() -> i64 {

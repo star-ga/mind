@@ -94,7 +94,7 @@ pub fn arena_alloc(a: i64, size: i64) -> i64 {
     __mind_store_i64(a + 16, new_off);
     let hw: i64 = __mind_load_i64(a + 24);
     if new_off > hw {
-        __mind_store_i64(a + 24, new_off);
+        __mind_store_i64(a + 24, new_off)
     }
     ptr
 }
