@@ -1355,7 +1355,7 @@ fn json_escape(s: &str) -> String {
 /// Returns the process exit code: 0 = valid, 1 = verification failed
 /// (tampered / unattested / malformed), 2 = I/O error reading the artifact.
 fn run_verify(artifact: &str, json: bool) -> i32 {
-    use libmind::ir::compact::{Determinism, EvidenceError, mic3_evidence_report};
+    use libmind::ir::compact::{Determinism, EvidenceError, TraceHashKind, mic3_evidence_report};
 
     let bytes = match fs::read(artifact) {
         Ok(b) => b,
@@ -1373,6 +1373,12 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
             };
             let parent = report.parent.map(|p| hex_encode(&p));
             let trace_hash = hex_encode(&report.trace_hash);
+            // `mic3-bytes` for every current artifact; a key-less legacy artifact
+            // decodes to the same default (the anchor in use since 2026-05-31).
+            let trace_hash_kind = match report.trace_hash_kind {
+                TraceHashKind::Mic3Bytes => "mic3-bytes",
+                TraceHashKind::Mic1Text => "mic1-text",
+            };
 
             if json {
                 // Hand-formatted JSON keeps the binary free of a serde dependency
@@ -1384,7 +1390,7 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                     None => "null".to_string(),
                 };
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_valid\":{}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{}}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
@@ -1400,6 +1406,7 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                     parent.as_deref().unwrap_or("(root)")
                 );
                 println!("trace_hash:       {trace_hash}");
+                println!("trace_hash_kind:  {trace_hash_kind}");
                 println!(
                     "trace_hash_valid: {}",
                     if report.trace_hash_valid { "yes" } else { "NO" }
