@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2685 | **Est. tokens:** ~6,727,399
-**Generated:** 2026-06-03 02:37 UTC
+**Files:** 2686 | **Est. tokens:** ~6,732,394
+**Generated:** 2026-06-03 02:57 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,498 |
-| `tests/` | 167 | ~294,892 |
+| `tests/` | 168 | ~299,887 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4075,6 +4075,7 @@
 - `std_surface_net_fs_process.rs` (~7345 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_promotion_compose.rs` (~4995 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_reactor.rs` (~1363 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4841 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_ring.rs` (~1316 tok, large) — Copyright 2025 STARGA Inc.
