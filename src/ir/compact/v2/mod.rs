@@ -53,8 +53,8 @@ mod varint;
 pub use binary::{MicbError, emit_micb, parse_micb};
 pub use emit::{Mic2Emitter, emit_mic2};
 pub use evidence::{
-    Determinism, EvidenceError, EvidenceReport, attach_evidence_chain, compute_trace_hash,
-    remove_evidence_chain, verify_evidence_chain,
+    Determinism, EvidenceError, EvidenceReport, TraceHashKind, attach_evidence_chain,
+    compute_trace_hash, remove_evidence_chain, verify_evidence_chain,
 };
 pub use parse::{Mic2ParseError, parse_mic2};
 pub use types::{DType, Graph, GraphEq, Map, MapValue, Opcode, TensorType, Value};

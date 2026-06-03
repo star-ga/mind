@@ -102,7 +102,7 @@ pub use emit::emit_mic3;
 pub use evidence::{emit_mic3_with_evidence, mic3_evidence_report};
 pub use parse::{Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.
-pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport};
+pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};
 
 /// Magic header bytes for MIC@3 binary format.
 pub const MIC3_MAGIC: [u8; 4] = *b"MIC3";

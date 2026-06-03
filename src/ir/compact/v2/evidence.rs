@@ -224,6 +224,56 @@ fn strip_prefixes(map: &Map, prefixes: &[&str]) -> Map {
 // §3.2 / §4 verification (Phase B core)
 // ---------------------------------------------------------------------------
 
+/// Which canonical serialization the stored `trace_hash` was computed over.
+///
+/// Recorded **in-band** in the MAP epilogue (`evidence_chain.trace_hash_kind`)
+/// so an evidence artifact is self-describing about its anchor — an old artifact
+/// read by a new verifier no longer has to guess. See [`TraceHashKind::default`]
+/// for the back-compat default applied to artifacts that predate the field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TraceHashKind {
+    /// `trace_hash = SHA-256(canonical mic@3 bytes)` — the current anchor
+    /// (`ir_trace_hash`), in use for every artifact emitted since 2026-05-31.
+    Mic3Bytes,
+    /// `trace_hash = SHA-256(canonical mic@1 text)` — the legacy anchor in use
+    /// before 2026-05-31. Retained so a verifier can recognise (and report) a
+    /// legacy artifact that explicitly tags itself as mic@1-text-anchored.
+    Mic1Text,
+}
+
+impl TraceHashKind {
+    /// Wire string carried in `evidence_chain.trace_hash_kind`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TraceHashKind::Mic3Bytes => "mic3-bytes",
+            TraceHashKind::Mic1Text => "mic1-text",
+        }
+    }
+
+    /// Parse the wire string, or `None` if unrecognised.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "mic3-bytes" => Some(TraceHashKind::Mic3Bytes),
+            "mic1-text" => Some(TraceHashKind::Mic1Text),
+            _ => None,
+        }
+    }
+}
+
+impl Default for TraceHashKind {
+    /// Back-compat default for artifacts with NO `trace_hash_kind` key.
+    ///
+    /// Schema-1 artifacts predate the in-band field. The anchor was re-pointed
+    /// from mic@1 text to mic@3 bytes on 2026-05-31, and **every** artifact
+    /// emitted since then uses mic@3. A key-less artifact is therefore decoded
+    /// as [`TraceHashKind::Mic3Bytes`] — the recomputation the verifier performs
+    /// (`ir_trace_hash`, mic@3 bytes) matches what those artifacts actually
+    /// stored, so this default keeps untampered legacy artifacts verifying green.
+    fn default() -> Self {
+        TraceHashKind::Mic3Bytes
+    }
+}
+
 /// The decoded, validated contents of an artifact's `evidence_chain` block —
 /// the reusable core a `mindc verify --evidence` CLI (RFC 0016 Phase B) wraps.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,6 +288,10 @@ pub struct EvidenceReport {
     pub parent: Option<[u8; 32]>,
     /// The stored `trace_hash` exactly as carried in the MAP.
     pub trace_hash: [u8; 32],
+    /// Which serialization the `trace_hash` anchors on, read from the in-band
+    /// `evidence_chain.trace_hash_kind` key. Absent in the artifact ⇒
+    /// [`TraceHashKind::default`] (`mic3-bytes`) — see that impl for why.
+    pub trace_hash_kind: TraceHashKind,
     /// `true` iff a §3.2 recomputation reproduces `trace_hash` (i.e. the
     /// artifact has not been tampered with). The whole point of the chain.
     pub trace_hash_valid: bool,
@@ -333,12 +387,22 @@ pub fn verify_evidence_chain(graph: &Graph) -> Result<EvidenceReport, EvidenceEr
     let recomputed = compute_trace_hash(graph);
     let trace_hash_valid = recomputed == trace_hash;
 
+    // The mic@2.1 MAP verifier recomputes over MIC-B bytes; it has never carried
+    // a `trace_hash_kind` key, so it reports the back-compat default.
+    let trace_hash_kind = match map_get(&graph.map, "evidence_chain.trace_hash_kind") {
+        Some(MapValue::String(s)) => TraceHashKind::from_str(s)
+            .ok_or(EvidenceError::Malformed("evidence_chain.trace_hash_kind"))?,
+        Some(_) => return Err(EvidenceError::Malformed("evidence_chain.trace_hash_kind")),
+        None => TraceHashKind::default(),
+    };
+
     Ok(EvidenceReport {
         substrate,
         determinism,
         toolchain,
         parent,
         trace_hash,
+        trace_hash_kind,
         trace_hash_valid,
     })
 }
