@@ -435,11 +435,20 @@ fn parses_multiline_arithmetic() {
     assert!(parses(src), "multi-line `+` continuation must parse");
 }
 
-// Step 8l — tuple types `-> (T, U)` (Phase 10.6).
+// Step 8l — tuple return types `-> (T, U)` (Phase 10.6).
+// They PARSE, but a by-value tuple return has NO multi-slot return ABI and
+// previously collapsed SILENTLY to i64 (a miscompile). Stage-0a promotion makes
+// the type-checker reject it fail-loud (safety::tuple_return_unsupported); it is
+// accepted only under `--features std-surface-experimental`. Before the
+// `default = ["std-surface"]` flip this file did not run on the default build, so
+// the old `must parse` assertion masked the silent-collapse bug.
 #[test]
-fn parses_tuple_return_type() {
+fn tuple_return_type_fails_loud() {
     let src = "module m { fn pair() -> (i32, u32) { 0 } }\n";
-    assert!(parses(src), "`-> (T, U)` tuple return type must parse");
+    assert!(
+        !parses(src),
+        "`-> (T, U)` tuple return must be rejected fail-loud (no aggregate-return ABI)"
+    );
 }
 
 #[test]

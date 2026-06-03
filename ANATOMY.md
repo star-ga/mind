@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2686 | **Est. tokens:** ~6,733,410
-**Generated:** 2026-06-03 03:28 UTC
+**Files:** 2686 | **Est. tokens:** ~6,734,128
+**Generated:** 2026-06-03 04:22 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~22,920 |
+| `./` | 34 | ~23,064 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
@@ -42,7 +42,7 @@
 | `docs/design/` | 2 | ~136 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~114,610 |
+| `docs/rfcs/` | 28 | ~115,051 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~31,892 |
 | `examples/c/` | 2 | ~400 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,498 |
-| `tests/` | 168 | ~300,598 |
+| `tests/` | 168 | ~300,731 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -441,7 +441,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1257 tok, large) — [package]
+- `Cargo.toml` (~1401 tok, large) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -620,7 +620,7 @@
 - `0004-evidence-token-types.md` (~1907 tok, huge) — RFC 0004: Compile-Time Evidence Token Types
 - `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
-- `0005-pure-mind-std-surface.md` (~5071 tok, huge) — RFC 0005: Pure-MIND Standard Surface
+- `0005-pure-mind-std-surface.md` (~5512 tok, huge) — RFC 0005: Pure-MIND Standard Surface
 - `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3497 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
@@ -4007,7 +4007,7 @@
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2699 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse_phase10_surface.rs` (~4410 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parse_phase10_surface.rs` (~4543 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `phase_g_keystone_bootstrap.rs` (~6288 tok, huge) — Copyright 2025 STARGA Inc.
