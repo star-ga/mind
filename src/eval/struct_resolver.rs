@@ -416,6 +416,25 @@ fn infer_struct(
             let recv_struct = infer_struct(receiver, vars, fn_returns, field_types)?;
             field_types.get(&(recv_struct, field.clone())).cloned()
         }
+        // BLOCKER 2 — UFCS method call bound to a `let`. `let s2 = s.grow(b)`
+        // desugars in lowering to the free function `{lowercase(T)}_{method}`
+        // (here `buf_grow`) with the receiver threaded first. For a later
+        // `s2.field` access to resolve, `s2` must be recorded as the desugared
+        // target's *return* struct type — exactly as the direct-call form
+        // (`let s2 = buf_grow(s, b)`) already resolves through the `Node::Call`
+        // arm above. We resolve the receiver's struct `T`, form the same
+        // `{T.to_lowercase()}_{method}` name the lowering arm emits, and look
+        // up its return type in `fn_returns`. A zero-arg accessor that names a
+        // field of `T` (`s.len()`) is a scalar field read, not a struct value,
+        // so it correctly returns `None` (the UFCS target `{t}_len` will not be
+        // a registered struct-returning free function).
+        Node::MethodCall {
+            receiver, method, ..
+        } => {
+            let recv_struct = infer_struct(receiver, vars, fn_returns, field_types)?;
+            let fn_name = format!("{}_{}", recv_struct.to_lowercase(), method);
+            fn_returns.get(&fn_name).cloned()
+        }
         _ => None,
     }
 }
