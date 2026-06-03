@@ -213,6 +213,18 @@ struct LoweringContext {
     /// attach `cconv = #llvm.cconv<win64cc>` for Win64 declarations. Gated.
     #[cfg(feature = "std-surface")]
     extern_c_fns: std::collections::BTreeMap<String, ExternCFnSig>,
+    /// RFC 0005 Gap 1 (collision fix): function-global monotonic counter that
+    /// labels every `while` block triple (`^while_header_N` / `^while_body_N`
+    /// / `^while_after_N`). The old key — the While's per-region
+    /// `instr_index` — collided when a nested inner loop and a sibling loop
+    /// shared the same index, emitting duplicate block labels that mlir-opt
+    /// rejects (`redefinition of block`). A single counter threaded through
+    /// every recursive sub-context (cond/body of a while, then/else of an if,
+    /// and each FnDef body) guarantees a unique label per loop. It increments
+    /// in fixed pre-order traversal order, so the label numbering is
+    /// deterministic and reproducible.
+    #[cfg(feature = "std-surface")]
+    while_label: usize,
 }
 
 impl LoweringContext {
@@ -229,6 +241,8 @@ impl LoweringContext {
             defined_fns: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             extern_c_fns: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            while_label: 0,
         }
     }
 
@@ -938,7 +952,16 @@ impl LoweringContext {
                 init_ids,
                 exit_ids,
             } => {
-                let lbl = instr_index;
+                // Function-global unique label for this loop's block triple.
+                // Keyed on a monotonic counter (NOT `instr_index`) so a nested
+                // inner loop and a sibling loop at the same per-region index
+                // never emit duplicate `^while_header_N`/`^while_body_N`/
+                // `^while_after_N` labels — which mlir-opt rejects with
+                // `redefinition of block`. The counter is threaded through the
+                // recursive cond/body sub-contexts below, advancing in fixed
+                // traversal order for deterministic numbering.
+                let lbl = self.while_label;
+                self.while_label += 1;
 
                 // Build two arg-substitution tables.
                 //
@@ -1029,12 +1052,17 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
+                // Thread the function-global while-label counter so any nested
+                // loop in the condition gets a unique label, and pull the
+                // advanced value back afterward.
+                cond_sub.while_label = self.while_label;
                 for (vid, kind) in &self.values {
                     cond_sub.values.insert(*vid, kind.clone());
                 }
                 for (idx, ci) in cond_instrs.iter().enumerate() {
                     cond_sub.emit_instr(idx, ci)?;
                 }
+                self.while_label = cond_sub.while_label;
                 let cond_text = substitute_ids(&cond_sub.body, &head_args);
                 self.body.push_str(&cond_text);
                 for (vid, kind) in cond_sub.values {
@@ -1114,12 +1142,16 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
+                // Thread the function-global while-label counter into the body
+                // so nested loops get unique labels; pull it back afterward.
+                body_sub.while_label = self.while_label;
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
                 for (idx, bi) in body.iter().enumerate() {
                     body_sub.emit_instr(idx, bi)?;
                 }
+                self.while_label = body_sub.while_label;
                 let body_text = substitute_ids(&body_sub.body, &body_args);
                 self.body.push_str(&body_text);
                 for (vid, kind) in body_sub.values {
@@ -1471,12 +1503,16 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
+                // Thread the function-global while-label counter so any nested
+                // loop in the if-condition gets a unique label.
+                cond_sub.while_label = self.while_label;
                 for (vid, kind) in &self.values {
                     cond_sub.values.insert(*vid, kind.clone());
                 }
                 for (idx, ci) in cond_instrs.iter().enumerate() {
                     cond_sub.emit_instr(idx, ci)?;
                 }
+                self.while_label = cond_sub.while_label;
                 self.body.push_str(&cond_sub.body);
                 for (vid, kind) in cond_sub.values {
                     self.values.insert(vid, kind);
@@ -1536,12 +1572,16 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 then_sub.extern_c_fns = self.extern_c_fns.clone();
+                // Thread the function-global while-label counter into the
+                // then-branch so nested loops get unique labels.
+                then_sub.while_label = self.while_label;
                 for (vid, kind) in &self.values {
                     then_sub.values.insert(*vid, kind.clone());
                 }
                 for (idx, ti) in then_instrs.iter().enumerate() {
                     then_sub.emit_instr(idx, ti)?;
                 }
+                self.while_label = then_sub.while_label;
                 self.body.push_str(&then_sub.body);
                 for (vid, kind) in then_sub.values {
                     self.values.insert(vid, kind);
@@ -1581,12 +1621,16 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 else_sub.extern_c_fns = self.extern_c_fns.clone();
+                // Thread the function-global while-label counter into the
+                // else-branch so nested loops get unique labels.
+                else_sub.while_label = self.while_label;
                 for (vid, kind) in &self.values {
                     else_sub.values.insert(*vid, kind.clone());
                 }
                 for (idx, ei) in else_instrs.iter().enumerate() {
                     else_sub.emit_instr(idx, ei)?;
                 }
+                self.while_label = else_sub.while_label;
                 self.body.push_str(&else_sub.body);
                 for (vid, kind) in else_sub.values {
                     self.values.insert(vid, kind);
@@ -1702,6 +1746,9 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
+                // Thread the function-global while-label counter into the
+                // region body so nested loops get unique labels.
+                body_sub.while_label = self.while_label;
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
@@ -1735,6 +1782,7 @@ impl LoweringContext {
                         }
                     }
                 }
+                self.while_label = body_sub.while_label;
                 self.body.push_str(&body_sub.body);
                 for (vid, kind) in body_sub.values {
                     self.values.insert(vid, kind);
