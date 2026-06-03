@@ -140,7 +140,10 @@ The mind-runtime embedded parser has drifted from mindc's surface parser;
 shipping `.mic` IR instead of source is the canonical path forward.
 
 ### Compile-speed invariant (non-negotiable)
-The 1.8–15.5 µs frontend latency is the IP moat. Every Phase 10.6 feature
+The IP moat is cross-substrate bit-identity + the embedded evidence chain; the
+1.8–15.5 µs frontend latency is a **protected compile-speed budget** that defends
+it, not the moat itself (speed is a budget, not the wedge — see
+`.bench-baseline-2026-06-01-correctness.txt`). Every Phase 10.6 feature
 is gated **module-level only** — no statement-level cfg, no runtime
 dispatch. Each item below ships a dedicated sub-benchmark that does not
 move the headline numbers. CI gate: ±2% per size / ±1% mean.
@@ -448,8 +451,9 @@ is the shape of an MLSys / OSDI methods paper.
 
 ### Speed-preservation discipline
 
-The 1.8–15.5 µs frontend latency is the IP moat. Distributed primitives
-must **never** widen it. Same rules as the language-profiles plan:
+The 1.8–15.5 µs frontend latency is a **protected compile-speed budget** (the IP
+moat is cross-substrate bit-identity + the embedded evidence chain; speed is a
+budget, not the wedge). Distributed primitives must **never** widen it. Same rules as the language-profiles plan:
 
 | Risk | What it looks like | Forbidden in mindc |
 |------|--------------------|--------------------|
