@@ -95,8 +95,12 @@ The verifier executes the RFC 0016 §3.2 self-reference rule:
 
 1. Parse the mic@3 artifact; peel the MAP epilogue.
 2. Extract `evidence_chain.trace_hash` from the MAP.
-3. Recompute `ir_trace_hash` over the canonical mic@1 IR bytes embedded in the
-   mic@3 body (`SHA-256` per FIPS 180-4, the same seam as `deps::mini_sha256`).
+3. Recompute `ir_trace_hash` over the canonical mic@3 bytes embedded in the
+   mic@3 body — `trace_hash = SHA-256(canonical mic@3 bytes)` per FIPS 180-4, the
+   same seam as `deps::mini_sha256` (re-anchored from mic@1 text on 2026-05-31
+   after a collision audit — mic@1 text can drop function-body semantics; mic@3
+   binary commits the full `IRModule`; supersedes the original RFC 0016 GAP-1
+   mic@1-text rule).
 4. Compare the recomputed hash to the stored value byte-for-byte.
 5. Optionally: validate the Ed25519 signature over MAP-minus-`signature.*` (mic@2.1
    §6 discipline, reused for mic@3).
