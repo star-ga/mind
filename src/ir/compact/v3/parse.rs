@@ -62,6 +62,31 @@ macro_rules! err {
     };
 }
 
+// ─── DoS hardening limits ─────────────────────────────────────────────────────
+
+/// Maximum accepted mic@3 input size (bytes). Mirrors the mic@1 / v2 parser
+/// `MAX_INPUT_SIZE` policy so the binary serialization is bounded the same way
+/// the textual ones are. Inputs larger than this are rejected up front, before
+/// any allocation, so an untrusted artifact cannot drive unbounded memory use.
+pub const MAX_MIC3_INPUT: usize = 10 * 1024 * 1024;
+
+/// Maximum recursion depth for the nested instruction / type-annotation
+/// decoders. Mirrors the v2 parser's `MAX_NESTING` discipline. A few hundred
+/// frames comfortably covers any legitimate deeply-nested control flow while
+/// failing long before native stack exhaustion (~8–12k frames).
+const MAX_MIC3_DEPTH: usize = 256;
+
+/// Bound an untrusted element count against the total input length so that a
+/// tiny crafted header cannot request a huge `Vec::with_capacity`. Every wire
+/// element occupies at least one byte, so a valid count never exceeds the input
+/// length — this clamp is therefore a no-op for well-formed input (byte-identity
+/// preserved) and only caps adversarial counts. The reader still validates the
+/// real element bytes as it pushes, so under-reservation is harmless.
+#[inline]
+fn bounded_cap(n: usize, limit: usize) -> usize {
+    n.min(limit)
+}
+
 // ─── Low-level helpers ────────────────────────────────────────────────────────
 
 fn read_u8<R: Read>(r: &mut R) -> Result<u8, Mic3Error> {
@@ -139,18 +164,18 @@ fn read_opt_i64<R: Read>(r: &mut R) -> Result<Option<i64>, Mic3Error> {
     }
 }
 
-fn read_i64_vec<R: Read>(r: &mut R) -> Result<Vec<i64>, Mic3Error> {
+fn read_i64_vec<R: Read>(r: &mut R, limit: usize) -> Result<Vec<i64>, Mic3Error> {
     let n = read_uleb(r)? as usize;
-    let mut v = Vec::with_capacity(n);
+    let mut v = Vec::with_capacity(bounded_cap(n, limit));
     for _ in 0..n {
         v.push(read_i64(r)?);
     }
     Ok(v)
 }
 
-fn read_vid_vec<R: Read>(r: &mut R) -> Result<Vec<ValueId>, Mic3Error> {
+fn read_vid_vec<R: Read>(r: &mut R, limit: usize) -> Result<Vec<ValueId>, Mic3Error> {
     let n = read_uleb(r)? as usize;
-    let mut v = Vec::with_capacity(n);
+    let mut v = Vec::with_capacity(bounded_cap(n, limit));
     for _ in 0..n {
         v.push(read_vid(r)?);
     }
@@ -160,9 +185,10 @@ fn read_vid_vec<R: Read>(r: &mut R) -> Result<Vec<ValueId>, Mic3Error> {
 fn read_named_vids<R: Read>(
     r: &mut R,
     strings: &[String],
+    limit: usize,
 ) -> Result<Vec<(String, ValueId)>, Mic3Error> {
     let n = read_uleb(r)? as usize;
-    let mut v = Vec::with_capacity(n);
+    let mut v = Vec::with_capacity(bounded_cap(n, limit));
     for _ in 0..n {
         let name = read_string(r, strings)?;
         let id = read_vid(r)?;
@@ -185,9 +211,13 @@ fn read_shape_dim<R: Read>(r: &mut R, strings: &[String]) -> Result<ShapeDim, Mi
     }
 }
 
-fn read_shape<R: Read>(r: &mut R, strings: &[String]) -> Result<Vec<ShapeDim>, Mic3Error> {
+fn read_shape<R: Read>(
+    r: &mut R,
+    strings: &[String],
+    limit: usize,
+) -> Result<Vec<ShapeDim>, Mic3Error> {
     let n = read_uleb(r)? as usize;
-    let mut dims = Vec::with_capacity(n);
+    let mut dims = Vec::with_capacity(bounded_cap(n, limit));
     for _ in 0..n {
         dims.push(read_shape_dim(r, strings)?);
     }
@@ -197,9 +227,22 @@ fn read_shape<R: Read>(r: &mut R, strings: &[String]) -> Result<Vec<ShapeDim>, M
 // ─── TypeAnn decode (std-surface) ─────────────────────────────────────────────
 
 #[cfg(feature = "std-surface")]
-fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::TypeAnn, Mic3Error> {
+fn read_type_ann<R: Read>(
+    r: &mut R,
+    strings: &[String],
+    depth: usize,
+    limit: usize,
+) -> Result<crate::ast::TypeAnn, Mic3Error> {
     use super::emit::byte_to_sparse_layout;
     use crate::ast::TypeAnn;
+
+    if depth >= MAX_MIC3_DEPTH {
+        return Err(err!(
+            "type-annotation nesting depth exceeds limit {}",
+            MAX_MIC3_DEPTH
+        ));
+    }
+    let depth = depth + 1;
 
     let tag = read_u8(r)?;
     match tag {
@@ -212,7 +255,7 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         0x07 | 0x08 => {
             let dtype = read_string(r, strings)?;
             let nd = read_uleb(r)? as usize;
-            let mut dims = Vec::with_capacity(nd);
+            let mut dims = Vec::with_capacity(bounded_cap(nd, limit));
             for _ in 0..nd {
                 dims.push(read_string(r, strings)?);
             }
@@ -228,7 +271,7 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         }
         0x0A => {
             let mutable = read_bool(r)?;
-            let element = read_type_ann(r, strings)?;
+            let element = read_type_ann(r, strings, depth, limit)?;
             Ok(TypeAnn::Slice {
                 mutable,
                 element: Box::new(element),
@@ -236,7 +279,7 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         }
         0x0B => {
             let length = read_uleb(r)? as u32;
-            let element = read_type_ann(r, strings)?;
+            let element = read_type_ann(r, strings, depth, limit)?;
             Ok(TypeAnn::Array {
                 element: Box::new(element),
                 length,
@@ -244,7 +287,7 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         }
         0x0C => {
             let mutable = read_bool(r)?;
-            let target = read_type_ann(r, strings)?;
+            let target = read_type_ann(r, strings, depth, limit)?;
             Ok(TypeAnn::Ref {
                 mutable,
                 target: Box::new(target),
@@ -253,17 +296,17 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         0x0D => {
             let name = read_string(r, strings)?;
             let na = read_uleb(r)? as usize;
-            let mut args = Vec::with_capacity(na);
+            let mut args = Vec::with_capacity(bounded_cap(na, limit));
             for _ in 0..na {
-                args.push(read_type_ann(r, strings)?);
+                args.push(read_type_ann(r, strings, depth, limit)?);
             }
             Ok(TypeAnn::Generic { name, args })
         }
         0x0E => {
             let ne = read_uleb(r)? as usize;
-            let mut elements = Vec::with_capacity(ne);
+            let mut elements = Vec::with_capacity(bounded_cap(ne, limit));
             for _ in 0..ne {
-                elements.push(read_type_ann(r, strings)?);
+                elements.push(read_type_ann(r, strings, depth, limit)?);
             }
             Ok(TypeAnn::Tuple { elements })
         }
@@ -271,9 +314,9 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
             let layout_byte = read_u8(r)?;
             let layout = byte_to_sparse_layout(layout_byte)
                 .ok_or_else(|| err!("unknown sparse layout byte: {}", layout_byte))?;
-            let element = read_type_ann(r, strings)?;
+            let element = read_type_ann(r, strings, depth, limit)?;
             let ns = read_uleb(r)? as usize;
-            let mut shape = Vec::with_capacity(ns);
+            let mut shape = Vec::with_capacity(bounded_cap(ns, limit));
             for _ in 0..ns {
                 shape.push(read_shape_dim(r, strings)?);
             }
@@ -285,7 +328,7 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         }
         0x10 => {
             let mutable = read_bool(r)?;
-            let pointee = read_type_ann(r, strings)?;
+            let pointee = read_type_ann(r, strings, depth, limit)?;
             Ok(TypeAnn::RawPtr {
                 mutable,
                 pointee: Box::new(pointee),
@@ -293,13 +336,13 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
         }
         0x11 => {
             let np = read_uleb(r)? as usize;
-            let mut params = Vec::with_capacity(np);
+            let mut params = Vec::with_capacity(bounded_cap(np, limit));
             for _ in 0..np {
-                params.push(read_type_ann(r, strings)?);
+                params.push(read_type_ann(r, strings, depth, limit)?);
             }
             let has_ret = read_u8(r)? != 0;
             let ret = if has_ret {
-                Some(Box::new(read_type_ann(r, strings)?))
+                Some(Box::new(read_type_ann(r, strings, depth, limit)?))
             } else {
                 None
             };
@@ -311,7 +354,20 @@ fn read_type_ann<R: Read>(r: &mut R, strings: &[String]) -> Result<crate::ast::T
 
 // ─── Instruction decoder ──────────────────────────────────────────────────────
 
-fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Error> {
+fn decode_instr<R: Read>(
+    r: &mut R,
+    strings: &[String],
+    depth: usize,
+    limit: usize,
+) -> Result<Instr, Mic3Error> {
+    if depth >= MAX_MIC3_DEPTH {
+        return Err(err!(
+            "instruction nesting depth exceeds limit {}",
+            MAX_MIC3_DEPTH
+        ));
+    }
+    let depth = depth + 1;
+
     let op = read_u8(r)?;
     match op {
         OP_CONST_I64 => {
@@ -329,7 +385,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let dtype_byte = read_u8(r)?;
             let dtype = byte_to_dtype(dtype_byte)
                 .ok_or_else(|| err!("unknown dtype byte: {}", dtype_byte))?;
-            let shape = read_shape(r, strings)?;
+            let shape = read_shape(r, strings, limit)?;
             let fill = read_opt_f64(r)?;
             Ok(Instr::ConstTensor(dst, dtype, shape, fill))
         }
@@ -345,7 +401,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         OP_SUM => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
-            let axes = read_i64_vec(r)?;
+            let axes = read_i64_vec(r, limit)?;
             let keepdims = read_bool(r)?;
             Ok(Instr::Sum {
                 dst,
@@ -357,7 +413,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         OP_MEAN => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
-            let axes = read_i64_vec(r)?;
+            let axes = read_i64_vec(r, limit)?;
             let keepdims = read_bool(r)?;
             Ok(Instr::Mean {
                 dst,
@@ -380,7 +436,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         OP_RESHAPE => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
-            let new_shape = read_shape(r, strings)?;
+            let new_shape = read_shape(r, strings, limit)?;
             Ok(Instr::Reshape {
                 dst,
                 src,
@@ -396,13 +452,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         OP_SQUEEZE => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
-            let axes = read_i64_vec(r)?;
+            let axes = read_i64_vec(r, limit)?;
             Ok(Instr::Squeeze { dst, src, axes })
         }
         OP_TRANSPOSE => {
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
-            let perm = read_i64_vec(r)?;
+            let perm = read_i64_vec(r, limit)?;
             Ok(Instr::Transpose { dst, src, perm })
         }
         OP_DOT => {
@@ -485,7 +541,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
             let n = read_uleb(r)? as usize;
-            let mut indices = Vec::with_capacity(n);
+            let mut indices = Vec::with_capacity(bounded_cap(n, limit));
             for _ in 0..n {
                 let axis = read_i64(r)?;
                 let index = read_i64(r)?;
@@ -497,7 +553,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let dst = read_vid(r)?;
             let src = read_vid(r)?;
             let n = read_uleb(r)? as usize;
-            let mut dims = Vec::with_capacity(n);
+            let mut dims = Vec::with_capacity(bounded_cap(n, limit));
             for _ in 0..n {
                 let axis = read_i64(r)?;
                 let start = read_i64(r)?;
@@ -538,13 +594,13 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         }
         OP_FN_DEF => {
             let name = read_string(r, strings)?;
-            let params = read_named_vids(r, strings)?;
+            let params = read_named_vids(r, strings, limit)?;
             let ret_id = read_opt_vid(r)?;
             let reap_threshold = read_opt_f64(r)?;
             let body_len = read_uleb(r)? as usize;
             let mut body = Vec::with_capacity(body_len);
             for _ in 0..body_len {
-                body.push(decode_instr(r, strings)?);
+                body.push(decode_instr(r, strings, depth, limit)?);
             }
             Ok(Instr::FnDef {
                 name,
@@ -557,7 +613,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
         OP_CALL => {
             let dst = read_vid(r)?;
             let name = read_string(r, strings)?;
-            let args = read_vid_vec(r)?;
+            let args = read_vid_vec(r, limit)?;
             Ok(Instr::Call { dst, name, args })
         }
         OP_RETURN => {
@@ -575,7 +631,7 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let dst = read_vid(r)?;
             let name = read_opt_string(r, strings)?;
             let n = read_uleb(r)? as usize;
-            let mut values = Vec::with_capacity(n);
+            let mut values = Vec::with_capacity(bounded_cap(n, limit));
             for _ in 0..n {
                 values.push(zigzag_decode(read_uleb(r)?));
             }
@@ -594,15 +650,15 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let cond_len = read_uleb(r)? as usize;
             let mut cond_instrs = Vec::with_capacity(cond_len);
             for _ in 0..cond_len {
-                cond_instrs.push(decode_instr(r, strings)?);
+                cond_instrs.push(decode_instr(r, strings, depth, limit)?);
             }
             let body_len = read_uleb(r)? as usize;
             let mut body = Vec::with_capacity(body_len);
             for _ in 0..body_len {
-                body.push(decode_instr(r, strings)?);
+                body.push(decode_instr(r, strings, depth, limit)?);
             }
-            let live_vars = read_named_vids(r, strings)?;
-            let init_ids = read_vid_vec(r)?;
+            let live_vars = read_named_vids(r, strings, limit)?;
+            let init_ids = read_vid_vec(r, limit)?;
             Ok(Instr::While {
                 cond_id,
                 cond_instrs,
@@ -620,22 +676,22 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let cond_len = read_uleb(r)? as usize;
             let mut cond_instrs = Vec::with_capacity(cond_len);
             for _ in 0..cond_len {
-                cond_instrs.push(decode_instr(r, strings)?);
+                cond_instrs.push(decode_instr(r, strings, depth, limit)?);
             }
             let then_len = read_uleb(r)? as usize;
             let mut then_instrs = Vec::with_capacity(then_len);
             for _ in 0..then_len {
-                then_instrs.push(decode_instr(r, strings)?);
+                then_instrs.push(decode_instr(r, strings, depth, limit)?);
             }
             let then_result = read_vid(r)?;
             let else_len = read_uleb(r)? as usize;
             let mut else_instrs = Vec::with_capacity(else_len);
             for _ in 0..else_len {
-                else_instrs.push(decode_instr(r, strings)?);
+                else_instrs.push(decode_instr(r, strings, depth, limit)?);
             }
             let else_result = read_vid(r)?;
             let dst = read_vid(r)?;
-            let branch_bindings = read_named_vids(r, strings)?;
+            let branch_bindings = read_named_vids(r, strings, limit)?;
             Ok(Instr::If {
                 cond_id,
                 cond_instrs,
@@ -738,12 +794,12 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
             let body_len = read_uleb(r)? as usize;
             let mut body = Vec::with_capacity(body_len);
             for _ in 0..body_len {
-                body.push(decode_instr(r, strings)?);
+                body.push(decode_instr(r, strings, depth, limit)?);
             }
             let result = read_vid(r)?;
             let enter_id = read_vid(r)?;
             let exit_id = read_vid(r)?;
-            let alloc_ids = read_vid_vec(r)?;
+            let alloc_ids = read_vid_vec(r, limit)?;
             Ok(Instr::Region {
                 body,
                 result,
@@ -810,6 +866,19 @@ fn decode_instr<R: Read>(r: &mut R, strings: &[String]) -> Result<Instr, Mic3Err
 /// Returns [`Mic3Error`] if the bytes are malformed or the magic / version do
 /// not match. No other format is accepted — detect `MIC3` magic before calling.
 pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
+    // DoS guard: reject oversized input up front, before any allocation, so an
+    // untrusted artifact cannot drive unbounded work. Mirrors the mic@1 / v2
+    // parser `MAX_INPUT_SIZE` policy.
+    if data.len() > MAX_MIC3_INPUT {
+        return Err(err!(
+            "mic@3 input too large: {} bytes (max {})",
+            data.len(),
+            MAX_MIC3_INPUT
+        ));
+    }
+    // Every wire element occupies at least one byte; the input length is a hard
+    // ceiling on any untrusted element count, used to bound pre-allocation.
+    let limit = data.len();
     let mut r = Cursor::new(data);
 
     // Magic
@@ -835,9 +904,16 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
 
     // String table
     let n_strings = read_uleb(&mut r)? as usize;
-    let mut strings: Vec<String> = Vec::with_capacity(n_strings);
+    let mut strings: Vec<String> = Vec::with_capacity(bounded_cap(n_strings, limit));
     for _ in 0..n_strings {
         let len = read_uleb(&mut r)? as usize;
+        if len > limit {
+            return Err(err!(
+                "string-table entry length {} exceeds input size {}",
+                len,
+                limit
+            ));
+        }
         let mut buf = vec![0u8; len];
         r.read_exact(&mut buf)?;
         let s = String::from_utf8(buf).map_err(|_| err!("invalid UTF-8 in string table"))?;
@@ -857,9 +933,9 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
 
     // Instructions
     let n_instrs = read_uleb(&mut r)? as usize;
-    let mut instrs = Vec::with_capacity(n_instrs);
+    let mut instrs = Vec::with_capacity(bounded_cap(n_instrs, limit));
     for _ in 0..n_instrs {
-        instrs.push(decode_instr(&mut r, &strings)?);
+        instrs.push(decode_instr(&mut r, &strings, 0, limit)?);
     }
 
     #[allow(unused_mut)]
@@ -888,7 +964,7 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         for _ in 0..n_sd {
             let name = read_string(&mut r, &strings)?;
             let nf = read_uleb(&mut r)? as usize;
-            let mut fields = Vec::with_capacity(nf);
+            let mut fields = Vec::with_capacity(bounded_cap(nf, limit));
             for _ in 0..nf {
                 fields.push(read_string(&mut r, &strings)?);
             }
@@ -900,7 +976,7 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         for _ in 0..n_cad {
             let name = read_string(&mut r, &strings)?;
             let nv = read_uleb(&mut r)? as usize;
-            let mut vals = Vec::with_capacity(nv);
+            let mut vals = Vec::with_capacity(bounded_cap(nv, limit));
             for _ in 0..nv {
                 vals.push(zigzag_decode(read_uleb(&mut r)?));
             }
@@ -912,9 +988,9 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         for _ in 0..n_rcs {
             let name = read_string(&mut r, &strings)?;
             let nf = read_uleb(&mut r)? as usize;
-            let mut fields = Vec::with_capacity(nf);
+            let mut fields = Vec::with_capacity(bounded_cap(nf, limit));
             for _ in 0..nf {
-                fields.push(read_type_ann(&mut r, &strings)?);
+                fields.push(read_type_ann(&mut r, &strings, 0, limit)?);
             }
             module.repr_c_structs.insert(name, fields);
         }
