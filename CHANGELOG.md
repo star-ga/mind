@@ -190,6 +190,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `docs/byte-store-migration.md` for the playbook + the stub-tolerant-test
   caveat.
 
+## [0.7.1] - 2026-06-02 — High-level execution surface ships (RFC 0005): the 10 desugaring bricks run on the shipped compiler; `std-surface` promoted to the default build (fail-loud on unfinished constructs); cross-substrate byte-identity preserved
+
+### Added — High-level execution surface (RFC 0005 "RUNS")
+
+The high-level execution surface now lowers and **runs** on the shipped `mindc`
+through ten desugaring "bricks", each verified keystone-7/7 (byte-identical across
+the seven substrate targets):
+
+- integer / literal `match`
+- enum-discriminant `match`
+- `Option` / payload `match`
+- string literals
+- struct field-write
+- nested-struct + borrow field access
+- method-as-field accessors (`s.len()`)
+- method-with-args UFCS (`v.push(x)` → `vec_push(v, x)`)
+
+A method-with-args call that does not resolve to a known free function **fails
+loud** (a clear compile error) rather than silently miscompiling.
+
+### Changed — `std-surface` promoted to the shipped default
+
+- The `std-surface` feature is now the **default** (`default = ["std-surface"]`),
+  so the high-level surface executes on every shipped binary — no opt-in flag
+  required. `--no-default-features` restores the low-level-only subset.
+- The constructs **not yet promoted** — by-value tuple / aggregate returns and
+  `region { }` — are re-gated behind a new `std-surface-experimental` feature and
+  **fail loud** under a default build (a clear compile error, never a silent
+  const-0 / i64-collapse miscompile). Generics still have no surface syntax and
+  are parser-rejected.
+- **Cross-substrate Q16.16 byte-identity is preserved across the flip.** The
+  keystone test always builds `std-surface` explicitly, so promoting it to the
+  default changes zero keystone bytes (keystone 7/7 unchanged).
+
 ## [0.7.0] - 2026-05-21 — Credibility-ladder rung 3 graduation: Mindcraft + RFC 0008 KEYSTONE + RFC 0010 foundations + 13 stdlib modules + mindc doc + standalone binary release
 
 ### Added — Standalone binary distribution (task #265)
@@ -2300,7 +2334,9 @@ change.
 - Documentation: https://github.com/star-ga/mind/tree/main/docs
 - Issues: https://github.com/star-ga/mind/issues
 
-[Unreleased]: https://github.com/star-ga/mind/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/star-ga/mind/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/star-ga/mind/compare/v0.7.0...v0.7.1
+[0.7.0]: https://github.com/star-ga/mind/compare/v0.6.8...v0.7.0
 [0.2.1]: https://github.com/star-ga/mind/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/star-ga/mind/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/star-ga/mind/releases/tag/v0.1.9
