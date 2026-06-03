@@ -1406,6 +1406,27 @@ fn eval_method_call(receiver: Value, method: &str, _args: &[Value]) -> Result<Va
                 other
             ))),
         },
+        "shape" => match &receiver {
+            Value::Tensor(t) => {
+                let mut dims = Vec::with_capacity(t.shape.len());
+                for d in &t.shape {
+                    match d {
+                        ShapeDim::Known(n) => dims.push(Value::Int(*n as i64)),
+                        ShapeDim::Sym(_) => {
+                            return Err(EvalError::UnsupportedMsg(
+                                "cannot return .shape() on a tensor with symbolic dimensions"
+                                    .into(),
+                            ));
+                        }
+                    }
+                }
+                Ok(Value::Tuple(dims))
+            }
+            other => Err(EvalError::UnsupportedMsg(format!(
+                "no method .shape() for {:?}",
+                other
+            ))),
+        },
         "last" => match &receiver {
             Value::Tuple(items) => {
                 if items.is_empty() {
@@ -2204,6 +2225,24 @@ mod tests {
         match value {
             Value::Int(n) => assert_eq!(n, 20, "arr[1] should be 20"),
             other => panic!("expected Int(20), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_tensor_shape_method() {
+        // `.shape()` on a tensor returns its dimensions as a tuple — which
+        // composes with array indexing (`t.shape()[0]`).
+        let src = "let t: Tensor[f32,(2,3)] = 0; t.shape()";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Tuple(items) => {
+                assert_eq!(items.len(), 2, "shape of (2,3) has 2 dims");
+                assert!(matches!(items[0], Value::Int(2)), "dim0 = 2");
+                assert!(matches!(items[1], Value::Int(3)), "dim1 = 3");
+            }
+            other => panic!("expected shape tuple [2, 3], got {other:?}"),
         }
     }
 
