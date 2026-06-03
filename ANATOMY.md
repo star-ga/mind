@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2686 | **Est. tokens:** ~6,734,128
-**Generated:** 2026-06-03 04:23 UTC
+**Files:** 2686 | **Est. tokens:** ~6,736,499
+**Generated:** 2026-06-03 05:34 UTC
 
 ## Token Budget Guide
 
@@ -380,7 +380,7 @@
 | `src/ir/` | 4 | ~17,434 |
 | `src/ir/compact/` | 3 | ~14,839 |
 | `src/ir/compact/v2/` | 8 | ~36,554 |
-| `src/ir/compact/v3/` | 4 | ~35,546 |
+| `src/ir/compact/v3/` | 4 | ~37,917 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 2 | ~1,967 |
@@ -3660,9 +3660,9 @@
 ### `src/ir/compact/v3/`
 
 - `emit.rs` (~10079 tok, huge) — Copyright 2025 STARGA Inc.
-- `evidence.rs` (~9147 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~8659 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~7661 tok, huge) — Copyright 2025 STARGA Inc.
+- `evidence.rs` (~9219 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10100 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~8519 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.

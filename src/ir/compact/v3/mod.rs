@@ -629,6 +629,134 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
+    // 1b. DoS-hardening regression tests (untrusted-input parsing)
+    // -------------------------------------------------------------------------
+
+    /// Oversized input is rejected up front with a clean `Mic3Error`, never an
+    /// OOM. The buffer starts with valid magic so we exercise the size guard
+    /// rather than the magic check.
+    #[test]
+    fn reject_oversized_input() {
+        let too_big = super::parse::MAX_MIC3_INPUT + 1;
+        let mut bytes = Vec::with_capacity(too_big);
+        bytes.extend_from_slice(&MIC3_MAGIC);
+        bytes.resize(too_big, 0u8);
+        let err = parse_mic3(&bytes).expect_err("oversized input must be rejected");
+        assert!(
+            err.message.contains("too large"),
+            "expected size-cap error, got: {}",
+            err.message
+        );
+    }
+
+    /// A tiny header that declares a huge element count must fail cleanly
+    /// (truncated-input error) rather than attempting a giant `with_capacity`
+    /// that aborts the process. We claim ~4 billion string-table entries in a
+    /// ~14-byte buffer.
+    #[test]
+    fn reject_count_overflow() {
+        use crate::ir::compact::v2::uleb128_write;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MIC3_MAGIC);
+        bytes.push(MIC3_VERSION);
+        // n_strings = u32::MAX — far more entries than the buffer can hold.
+        uleb128_write(&mut bytes, u32::MAX as u64).unwrap();
+        // No further bytes: the first per-entry read must hit EOF.
+        let err = parse_mic3(&bytes).expect_err("count overflow must be rejected");
+        // Clean error, not a panic/abort. (The exact message is the truncation
+        // hit while reading the first entry.)
+        assert!(
+            !err.message.is_empty(),
+            "expected a clean Mic3Error message"
+        );
+    }
+
+    /// Build a mic@3 buffer whose single top-level instruction is a `FnDef`
+    /// chain nested `depth` levels deep, by emitting the wire bytes directly.
+    /// We hand-roll the bytes (rather than constructing an `IRModule` and
+    /// calling `emit_mic3`) so the *parser* is the only recursive code path
+    /// under test — building/dropping a deeply-nested `IRModule` would itself
+    /// overflow the stack and mask the parser behaviour we want to verify.
+    #[cfg(feature = "std-surface")]
+    fn nested_fndef_bytes(depth: usize) -> Vec<u8> {
+        use crate::ir::compact::v2::uleb128_write;
+        // FnDef opcode (mic@3 opcode table: 0x15).
+        const OP_FN_DEF: u8 = 0x15;
+
+        let mut b = Vec::new();
+        b.extend_from_slice(&MIC3_MAGIC);
+        b.push(MIC3_VERSION);
+        // String table: one entry, "f" (the FnDef name, idx 0).
+        uleb128_write(&mut b, 1).unwrap(); // n_strings
+        uleb128_write(&mut b, 1).unwrap(); // len("f")
+        b.push(b'f');
+        uleb128_write(&mut b, 0).unwrap(); // next_id
+        uleb128_write(&mut b, 0).unwrap(); // n_exports
+        uleb128_write(&mut b, 1).unwrap(); // n_instrs
+
+        // `depth` nesting frames, each carrying one body instruction.
+        for _ in 0..depth {
+            b.push(OP_FN_DEF);
+            uleb128_write(&mut b, 0).unwrap(); // name idx 0 -> "f"
+            uleb128_write(&mut b, 0).unwrap(); // params: named_vids count 0
+            b.push(0); // ret_id: opt-vid None
+            b.push(0); // reap_threshold: opt-f64 None
+            uleb128_write(&mut b, 1).unwrap(); // body_len = 1
+        }
+        // Innermost FnDef with an empty body.
+        b.push(OP_FN_DEF);
+        uleb128_write(&mut b, 0).unwrap();
+        uleb128_write(&mut b, 0).unwrap();
+        b.push(0);
+        b.push(0);
+        uleb128_write(&mut b, 0).unwrap(); // body_len = 0
+
+        // std-surface trailing registries: struct_defs / const_array_defs /
+        // repr_c_structs, all empty.
+        uleb128_write(&mut b, 0).unwrap();
+        uleb128_write(&mut b, 0).unwrap();
+        uleb128_write(&mut b, 0).unwrap();
+        b
+    }
+
+    /// A deeply-nested instruction tree must be rejected by the depth bound
+    /// before native stack exhaustion, returning a clean `Mic3Error`.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn reject_excessive_nesting() {
+        // The parser recurses up to MAX_MIC3_DEPTH (256) before rejecting. In a
+        // debug build those frames are large, so reaching the bound needs more
+        // than the 2 MiB default test-thread stack — run the parse on a generous
+        // stack to exercise the bound. (Production parses on the main thread,
+        // >= 8 MiB, where MAX_MIC3_DEPTH frames are far below the overflow
+        // threshold of ~8-12k frames — this is a test-harness concern only.)
+        let handle = std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(|| {
+                let bytes = nested_fndef_bytes(4096);
+                let err =
+                    parse_mic3(&bytes).expect_err("deeply-nested input must be rejected");
+                assert!(
+                    err.message.contains("nesting depth exceeds limit"),
+                    "expected depth-limit error, got: {}",
+                    err.message
+                );
+            })
+            .expect("spawn depth-limit test thread");
+        handle.join().expect("depth-limit test thread panicked");
+    }
+
+    /// Valid, modestly-nested input still parses (the depth bound does not
+    /// reject legitimate control flow).
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn accept_legitimate_nesting() {
+        let bytes = nested_fndef_bytes(32);
+        let parsed = parse_mic3(&bytes).expect("32-deep nesting must parse");
+        assert_eq!(parsed.instrs.len(), 1);
+    }
+
+    // -------------------------------------------------------------------------
     // 2. Fixed-point test
     // -------------------------------------------------------------------------
 
