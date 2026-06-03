@@ -1226,13 +1226,60 @@ pub(crate) fn eval_value_expr_mode(
         Node::Match { .. } | Node::Ref { .. } => Err(EvalError::UnsupportedMsg(
             "Phase 10.7 constructs not yet implemented".into(),
         )),
-        // RFC 0005 Gap 1: while loop. Full evaluation lands with the Gap 1
-        // lowering pass; the evaluator stub returns 0 so feature-gated tests
-        // that touch other nodes in the same file still compile.
+        // RFC 0005 Gap 1: while loop. Mirrors the `For`-loop interpreter
+        // contract — a fresh loop scope inheriting the outer env, with
+        // `let`/`assign` statements in the body propagated back into that scope
+        // so the loop condition can make progress. Truthiness matches `If`:
+        // `Value::Int(0)` is false, anything else is true. A hard iteration cap
+        // makes a non-terminating loop fail loudly: this runs at COMPILE-TIME
+        // evaluation, so `while 1 { }` must error, not hang the compiler.
         #[cfg(feature = "std-surface")]
-        Node::While { .. } => Err(EvalError::UnsupportedMsg(
-            "`while` evaluation not yet implemented in interpreter".into(),
-        )),
+        Node::While { cond, body, .. } => {
+            const MAX_EVAL_ITERS: u64 = 1_000_000;
+            let mut loop_env = env.clone();
+            let mut result = Value::Int(0);
+            let mut iters: u64 = 0;
+            loop {
+                let cond_val =
+                    eval_value_expr_mode(cond, &loop_env, tensor_env, mode.clone())?;
+                if matches!(cond_val, Value::Int(0)) {
+                    break;
+                }
+                iters += 1;
+                if iters > MAX_EVAL_ITERS {
+                    return Err(EvalError::UnsupportedMsg(
+                        "`while` exceeded the compile-time evaluation iteration cap \
+                         (possible non-terminating loop)"
+                            .into(),
+                    ));
+                }
+                for stmt in body {
+                    // Propagate `let`/`assign` into the loop scope so the next
+                    // condition check sees the update (same handling as `For`).
+                    match stmt {
+                        Node::Assign { name, value, .. } | Node::Let { name, value, .. } => {
+                            let val = eval_value_expr_mode(
+                                value,
+                                &loop_env,
+                                tensor_env,
+                                mode.clone(),
+                            )?;
+                            loop_env.insert(name.clone(), val.clone());
+                            result = val;
+                        }
+                        _ => {
+                            result = eval_value_expr_mode(
+                                stmt,
+                                &loop_env,
+                                tensor_env,
+                                mode.clone(),
+                            )?;
+                        }
+                    }
+                }
+            }
+            Ok(result)
+        }
         // RFC 0010 Phase A: `extern "C"` blocks are declarations, not
         // expressions. The interpreter returns a unit placeholder; the
         // actual call site is handled by the MLIR lowering path.
@@ -2023,6 +2070,37 @@ mod tests {
                 assert_eq!(t.fill, Some(1.0));
             }
             _ => panic!("expected tensor"),
+        }
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn eval_while_loop_counts() {
+        // RFC 0005 Gap 1: the interpreter executes `while`. `i` is incremented
+        // in the loop scope until the condition fails; the loop value is the
+        // last body statement's result (i after the final increment).
+        let src = "let i = 0; while i < 3 { i = i + 1 }";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 3, "while should count i to 3"),
+            other => panic!("expected Int(3), got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn eval_while_false_condition_is_zero() {
+        // A while whose condition is immediately false runs zero iterations and
+        // evaluates to the unit placeholder (Int(0)), never touching the body.
+        let src = "let i = 5; while i < 3 { i = i + 1 }";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 0, "zero-iteration while should be Int(0)"),
+            other => panic!("expected Int(0), got {other:?}"),
         }
     }
 }
