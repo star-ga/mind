@@ -488,6 +488,47 @@ pub fn eval_module_value_with_env_mode(
                                 venv.insert(name.clone(), rhs.clone());
                                 last = rhs;
                             }
+                            // `arr[i] = v` inside the loop body: rebuild + rebind
+                            // the array tuple (mirrors the module-level handler).
+                            Node::IndexAssign {
+                                receiver,
+                                index,
+                                value,
+                                ..
+                            } => {
+                                let val = eval_value_expr_mode(
+                                    value,
+                                    &venv,
+                                    &tensor_env,
+                                    mode.clone(),
+                                )?;
+                                if let Node::Lit(Literal::Ident(arr), _) = receiver.as_ref() {
+                                    if let Some(Value::Tuple(mut items)) = venv.get(arr).cloned() {
+                                        let idx = match eval_value_expr_mode(
+                                            index,
+                                            &venv,
+                                            &tensor_env,
+                                            mode.clone(),
+                                        )? {
+                                            Value::Int(i) => i,
+                                            other => {
+                                                return Err(EvalError::UnsupportedMsg(format!(
+                                                    "array index must be an integer, got {other:?}"
+                                                )));
+                                            }
+                                        };
+                                        if idx < 0 || idx as usize >= items.len() {
+                                            return Err(EvalError::UnsupportedMsg(format!(
+                                                "array index {idx} out of bounds (len {})",
+                                                items.len()
+                                            )));
+                                        }
+                                        items[idx as usize] = val.clone();
+                                        venv.insert(arr.clone(), Value::Tuple(items));
+                                    }
+                                }
+                                last = val;
+                            }
                             _ => {
                                 last =
                                     eval_value_expr_mode(stmt, &venv, &tensor_env, mode.clone())?;
@@ -2301,6 +2342,20 @@ mod tests {
         let mut env = HashMap::new();
         let err = eval_module_value_with_env(&module, &mut env, Some(src));
         assert!(err.is_err(), "out-of-bounds index should error, got {err:?}");
+    }
+
+    #[test]
+    fn eval_for_loop_array_fill() {
+        // Array-building in a for loop: each iteration writes arr[i]; the final
+        // read sees all writes.
+        let src = "let arr = [0, 0, 0]; for i in 0..3 { arr[i] = i + 10 }; arr[2]";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 12, "arr[2] should be 12 after the fill loop"),
+            other => panic!("expected Int(12), got {other:?}"),
+        }
     }
 }
 
