@@ -711,6 +711,86 @@ fn lower_expr(
             ir.instrs.push(Instr::BinOp { dst, op, lhs, rhs });
             dst
         }
+        // Logical `&&` / `||` (Phase 10.5 `Node::Logical`, kept separate from
+        // `BinOp`). The IR has no logical-and/or instruction, so we DESUGAR to
+        // the existing, keystone-stable `Node::If` lowering — the same proven
+        // technique as `desugar_match_to_if`. Without this arm `a && b` falls
+        // through the master catch-all below and silently lowers to `const 0`
+        // (a release-silent miscompile).
+        //
+        // The desugar is interpreter-faithful (src/eval/mod.rs `Node::Logical`):
+        // short-circuit + 0/1 normalisation. Crucially every BRANCH RESULT is a
+        // literal i64 `0`/`1` (never a bare comparison), so no `i1` value ever
+        // reaches an If-merge block-arg (which would mis-type as i64); the
+        // conditions are `e != 0` comparisons — the i1 fast-path of the
+        // If/While `cond_already_i1` check.
+        //
+        //   a && b  ->  if a != 0 { if b != 0 { 1 } else { 0 } } else { 0 }
+        //   a || b  ->  if a != 0 { 1 } else { if b != 0 { 1 } else { 0 } }
+        //
+        // Additive: only code that previously degenerated to `const 0` (i.e.
+        // was already broken) changes emitted text, so existing artifacts and
+        // the keystone byte-identity are unaffected.
+        ast::Node::Logical {
+            op, left, right, span,
+        } => {
+            let span = *span;
+            let lit = |n: i64| ast::Node::Lit(ast::Literal::Int(n), span);
+            // Turn an operand into a boolean If-condition. A comparison already
+            // produces the MLIR `i1` the If lowering wants on its fast path, so
+            // it is used DIRECTLY — wrapping it in `e != 0` would emit
+            // `cmpi ne <i1>, 0 : i64` (an i1 used as i64, which mlir-opt
+            // rejects). Any non-comparison operand is an i64, so `e != 0` gives
+            // correct truthiness (matching the interpreter) and lowers cleanly.
+            let is_cmp = |e: &ast::Node| {
+                matches!(
+                    e,
+                    ast::Node::Binary {
+                        op: ast::BinOp::Lt
+                            | ast::BinOp::Le
+                            | ast::BinOp::Gt
+                            | ast::BinOp::Ge
+                            | ast::BinOp::Eq
+                            | ast::BinOp::Ne,
+                        ..
+                    }
+                )
+            };
+            let as_cond = |e: ast::Node| {
+                if is_cmp(&e) {
+                    e
+                } else {
+                    ast::Node::Binary {
+                        op: ast::BinOp::Ne,
+                        left: Box::new(e),
+                        right: Box::new(ast::Node::Lit(ast::Literal::Int(0), span)),
+                        span,
+                    }
+                }
+            };
+            // `if b { 1 } else { 0 }` — normalise the RHS to a true i64 0/1.
+            let norm_right = ast::Node::If {
+                cond: Box::new(as_cond((**right).clone())),
+                then_branch: vec![lit(1)],
+                else_branch: Some(vec![lit(0)]),
+                span,
+            };
+            let desugared = match op {
+                ast::LogicalOp::And => ast::Node::If {
+                    cond: Box::new(as_cond((**left).clone())),
+                    then_branch: vec![norm_right],
+                    else_branch: Some(vec![lit(0)]),
+                    span,
+                },
+                ast::LogicalOp::Or => ast::Node::If {
+                    cond: Box::new(as_cond((**left).clone())),
+                    then_branch: vec![lit(1)],
+                    else_branch: Some(vec![norm_right]),
+                    span,
+                },
+            };
+            lower_expr(&desugared, ir, env, struct_env, receiver_types)
+        }
         // Phase 6.5 Stage 1a — bitwise binary operators.
         // `ast::Node::Bitwise` is kept separate from `Node::Binary` by design
         // (see ast/mod.rs comments). Map each BitOp to its IR BinOp variant.
