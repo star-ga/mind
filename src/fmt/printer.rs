@@ -1072,7 +1072,9 @@ fn emit_match_inline(p: &mut Printer, scrutinee: &Node, arms: &[MatchArm]) {
 fn emit_expr(p: &mut Printer, node: &Node) {
     match node {
         Node::Lit(lit, _) => emit_literal(p, lit),
+        #[cfg(feature = "std-surface")]
         Node::Break { .. } => p.push("break"),
+        #[cfg(feature = "std-surface")]
         Node::Continue { .. } => p.push("continue"),
         Node::Binary {
             op, left, right, ..

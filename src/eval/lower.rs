@@ -144,6 +144,9 @@ fn try_register_mono_instance(callee: &str, args: &[ast::Node]) -> Option<String
 /// Synthesize the concrete (non-generic) `FnDef` AST for one instance:
 /// clone the template, rename it to `mangled`, drop `type_params`, and rewrite
 /// every parameter typed by the (single) type parameter to the concrete type.
+// Used by the next monomorphization slice (call-site instantiation); kept so
+// that slice does not have to re-derive the template-rewrite logic.
+#[allow(dead_code)]
 fn instantiate_template(
     template: &ast::Node,
     mangled: &str,
@@ -2512,6 +2515,18 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+        // A `struct`/`enum` type definition carries no runtime value — it is a
+        // compile-time declaration collected in an earlier pass (see the
+        // struct/enum item-collection arms above). When a top-level type def is
+        // walked through the module statement loop into `lower_expr`, emit the
+        // unit placeholder EXPLICITLY — a documented compile-time no-op, same as
+        // the `use`/import arm. Same bytes as the old silent catch-all, so
+        // emitted artifacts (and the keystone) stay byte-identical.
+        ast::Node::StructDef { .. } | ast::Node::EnumDef { .. } => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
         // `break` / `continue` — emit a loop-control marker carrying a snapshot
         // of every in-scope var → its CURRENT ValueId at this point. The
         // `Instr::While` MLIR arm forwards each loop-carried var's current value
@@ -2545,10 +2560,7 @@ fn lower_expr(
         // wrong runtime value.
         node => {
             let dbg = format!("{node:?}");
-            let kind = dbg
-                .split(|c: char| c == '(' || c == ' ' || c == '{')
-                .next()
-                .unwrap_or("<node>");
+            let kind = dbg.split(['(', ' ', '{']).next().unwrap_or("<node>");
             panic!(
                 "lower_expr: no IR lowering for `{kind}` in value position — \
                  refusing to emit a const-0 placeholder (that would be a silent \
