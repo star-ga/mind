@@ -420,6 +420,10 @@ pub fn eval_module_value_with_env_mode(
         .collect();
     let mut tensor_env: HashMap<String, TensorEnvEntry> = HashMap::new();
 
+    // Register all top-level functions so calls can dispatch to them (generic or
+    // not). Restored after the module finishes so nested module evals don't leak.
+    let _fn_prev = fn_table_install(m);
+
     let mut last = Value::Int(0_i64);
     for item in &m.items {
         match item {
@@ -860,6 +864,31 @@ pub(crate) fn eval_value_expr_mode(
                     variant: callee.clone(),
                     payload,
                 });
+            }
+            // User-defined function call: look up the installed function table,
+            // bind args to params in a fresh scope, evaluate the body (last
+            // statement's value wins). Generic fns work for free — the dynamically
+            // typed interpreter binds the concrete arg Values; type params are
+            // only recorded on the FnDef. Checked before the tensor stdlib so a
+            // user fn shadowing a stdlib name resolves to the user fn.
+            if let Some(func) = fn_table_lookup(callee) {
+                if func.params.len() != args.len() {
+                    return Err(EvalError::UnsupportedMsg(format!(
+                        "function `{callee}` expects {} argument(s), got {}",
+                        func.params.len(),
+                        args.len()
+                    )));
+                }
+                let mut call_env = env.clone();
+                for (p, a) in func.params.iter().zip(args.iter()) {
+                    let v = eval_value_expr_mode(a, env, tensor_env, mode.clone())?;
+                    call_env.insert(p.clone(), v);
+                }
+                let mut result = Value::Int(0);
+                for stmt in &func.body {
+                    result = eval_value_expr_mode(stmt, &call_env, tensor_env, mode.clone())?;
+                }
+                return Ok(result);
             }
             stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
         }
@@ -2679,10 +2708,85 @@ mod tests {
             other => panic!("expected Int(7), got {other:?}"),
         }
     }
+
+    #[test]
+    fn eval_generic_fn_call_runs() {
+        // Phase 10.x: a generic function call executes in the interpreter. Type
+        // params are recorded on the FnDef but the dynamically-typed evaluator
+        // just binds the concrete argument Value, so `id<T>(x) = x` instantiated
+        // at int runs. (Real codegen monomorphization is a later slice.)
+        let src = "fn id<T>(x: T) -> T { x }\nid(5)";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 5, "generic id(5) should run and return 5"),
+            other => panic!("expected Int(5), got {other:?}"),
+        }
+    }
 }
 
 // GPU runtime dispatch — set by the runtime before eval
 use std::cell::RefCell;
+
+// ── User-defined function table (interpreter) ────────────────────────
+//
+// The immutable value-interpreter previously had no way to *call* a
+// user-defined `fn`: `Node::Call` fell through to the tensor stdlib,
+// which returns `EvalError::Unsupported` for an unknown callee. This
+// table is populated from the module's `FnDef` items before the
+// statement loop runs and cleared afterward, so a call like `id(5)`
+// resolves to the function body bound against the concrete argument
+// `Value`s.
+//
+// Generics are free here: the interpreter is dynamically typed over
+// `Value`, so a generic `fn id<T>(x: T) -> T { x }` is evaluated with
+// the concrete argument value — no monomorphization is needed at this
+// level. `type_params` is recorded on the AST node for later codegen
+// monomorphization; the interpreter simply ignores it.
+#[derive(Clone)]
+struct UserFn {
+    params: Vec<String>,
+    body: Vec<Node>,
+}
+
+thread_local! {
+    static FN_TABLE: RefCell<HashMap<String, UserFn>> = RefCell::new(HashMap::new());
+}
+
+/// Register every top-level `FnDef` (generic or not) so `Node::Call`
+/// can resolve a user-defined callee. Returns the previous table so the
+/// caller can restore it (nested module evals are not expected, but this
+/// keeps the thread-local re-entrant and leak-free).
+fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
+    let mut table: HashMap<String, UserFn> = HashMap::new();
+    for item in &m.items {
+        if let Node::FnDef {
+            name, params, body, ..
+        } = item
+        {
+            table.insert(
+                name.clone(),
+                UserFn {
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    body: body.clone(),
+                },
+            );
+        }
+    }
+    FN_TABLE.with(|t| std::mem::replace(&mut *t.borrow_mut(), table))
+}
+
+/// Restore a previously-saved function table (paired with
+/// `fn_table_install`).
+fn fn_table_restore(prev: HashMap<String, UserFn>) {
+    FN_TABLE.with(|t| *t.borrow_mut() = prev);
+}
+
+/// Look up a user-defined function by callee name.
+fn fn_table_lookup(name: &str) -> Option<UserFn> {
+    FN_TABLE.with(|t| t.borrow().get(name).cloned())
+}
 
 thread_local! {
     static GPU_RUNTIME: RefCell<Option<Box<dyn crate::runtime_interface::MindRuntime>>> = RefCell::new(None);

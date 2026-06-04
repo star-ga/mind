@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2687 | **Est. tokens:** ~6,731,840
-**Generated:** 2026-06-04 02:21 UTC
+**Files:** 2687 | **Est. tokens:** ~6,731,957
+**Generated:** 2026-06-04 02:44 UTC
 
 ## Token Budget Guide
 
@@ -362,7 +362,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~16,834 |
-| `src/ast/` | 1 | ~6,285 |
+| `src/ast/` | 1 | ~6,402 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~19,644 |
 | `src/build/` | 2 | ~11,359 |
@@ -3562,7 +3562,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~6285 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6402 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
