@@ -16,13 +16,13 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Autodiff engine (reverse-mode, all Core v1 ops) | ✅ Complete | v0.2.x | [`docs/autodiff.md`](docs/autodiff.md) |
 | MLIR lowering (arith, tensor, linalg, func, scf, vector dialects) | ✅ Complete | v0.2.x | [`docs/ir-mlir.md`](docs/ir-mlir.md) |
 | CPU execution | ✅ Complete | v0.2.x | [`docs/gpu.md`](docs/gpu.md) |
-| GPU / multi-backend (CUDA, ROCm, Metal, WebGPU, WebNN) | ✅ Complete | enterprise | [`docs/gpu.md`](docs/gpu.md) |
+| GPU / multi-backend (CUDA, ROCm, Metal, WebGPU, WebNN) | ⏳ Not implemented — CPU-only today; `mindc` returns a structured "no backend for target gpu" error. Native deterministic GPU backend (NVIDIA SASS / AMD) roadmapped. | — | [`docs/gpu.md`](docs/gpu.md) |
 | Systems programming (enum, struct, while, bitwise, u32) | ✅ Complete | v0.5.0 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Library output + C ABI (`--emit-shared`, Mind.toml exports) | ✅ Complete | v0.2.6–v0.2.11 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Language profiles (`default` / `systems` / `embedded`) | ✅ Complete | v0.2.8 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Match expressions, `&expr`, REAP MoE, sparse tensors | ✅ Complete | v0.2.11 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Pure-MIND standard library RFC 0005 (std.vec/string/map/io) | ✅ Complete | v0.4.0–v0.4.4 | [`docs/rfcs/0005-pure-mind-stdlib.md`](docs/rfcs/) |
-| Self-hosted compiler — bootstrap fixed-point | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
+| Self-hosted compiler — **front-end** bootstrap fixed-point (lex/parse/typecheck/emit; real-codegen self-host in progress) | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
 | mind-blas (RFC 0006) Track A + Track B inc 1–4 | ✅ Complete | v0.6.3–v0.6.7 | [`docs/rfcs/0006-mind-blas.md`](docs/rfcs/0006-mind-blas.md) |
 | **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ **Fully Shipped** | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
 | **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.7.0** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
