@@ -28,8 +28,194 @@ use crate::ir::ValueId;
 use crate::types::DType;
 use crate::types::ShapeDim;
 
+// ---------------------------------------------------------------------------
+// Codegen monomorphization (bounded slice) — generic fns reach the IR backend.
+//
+// A generic `fn id<T>(x: T) -> T { x }` is a TEMPLATE: it is never emitted as
+// an `Instr::FnDef` itself. Instead, every concrete call site (`id(5)`) records
+// a monomorphization request keyed on the deterministic mangled instance name
+// (`id$i64`); after the module body is lowered, each distinct instance is
+// emitted once, in sorted-by-mangled-name order, so `emit_mic3`/`trace_hash`
+// stay byte-identical across runs (no HashMap iteration, no clocks, no rng).
+//
+// WEDGE: non-generic code is untouched — a function with empty `type_params`
+// flows through the existing FnDef path verbatim, and a call whose callee is
+// not a registered generic flows through the existing Call path verbatim. The
+// state below lives in a `thread_local!` scoped to a single `lower_to_ir` call,
+// so no existing `lower_expr` signature changes (and the non-generic lowering
+// is literally the same code).
+//
+// Bounded to: a single type parameter, scalar concrete arg types inferred from
+// a literal call argument (`Int -> i64`, `Float -> f64`), identity/min shape.
+// Multi-param / nested generics / trait bounds are a later slice.
+// ---------------------------------------------------------------------------
+
+/// One pending monomorphization: the generic fn name plus the concrete type
+/// substituted for its single type parameter, both already reflected in the
+/// mangled instance name used as the map key.
+#[derive(Clone)]
+struct MonoRequest {
+    /// Source-level generic fn name (e.g. `id`).
+    generic_name: String,
+    /// Concrete type bound to the (single) type parameter.
+    concrete: TypeAnn,
+}
+
+#[derive(Default)]
+struct MonoCtx {
+    /// Generic fn templates by source name (only fns with non-empty
+    /// `type_params`). Read-only after the pre-pass.
+    templates: std::collections::BTreeMap<String, ast::Node>,
+    /// Requested instances keyed on mangled name (e.g. `id$i64`). `BTreeMap`
+    /// so draining is deterministic.
+    requests: std::collections::BTreeMap<String, MonoRequest>,
+}
+
+thread_local! {
+    static MONO: std::cell::RefCell<MonoCtx> = std::cell::RefCell::new(MonoCtx::default());
+}
+
+/// Short, deterministic mangle suffix for a concrete scalar type.
+/// Returns `None` for shapes outside the bounded slice (the call then lowers
+/// through the ordinary, non-monomorphized path — no behavior change).
+fn mangle_suffix(ty: &TypeAnn) -> Option<&'static str> {
+    match ty {
+        TypeAnn::ScalarI64 => Some("i64"),
+        TypeAnn::ScalarI32 => Some("i32"),
+        TypeAnn::ScalarF64 => Some("f64"),
+        TypeAnn::ScalarF32 => Some("f32"),
+        TypeAnn::ScalarBool => Some("bool"),
+        _ => None,
+    }
+}
+
+/// Infer the concrete scalar type of a call argument from its literal form.
+/// Bounded slice: only literal `Int`/`Float` operands are recognised; anything
+/// else returns `None` so the call falls back to the ordinary path.
+fn infer_concrete_arg_type(arg: &ast::Node) -> Option<TypeAnn> {
+    match arg {
+        ast::Node::Lit(Literal::Int(_), _) => Some(TypeAnn::ScalarI64),
+        ast::Node::Lit(Literal::Float(_), _) => Some(TypeAnn::ScalarF64),
+        ast::Node::Neg { operand, .. } => match operand.as_ref() {
+            ast::Node::Lit(Literal::Int(_), _) => Some(TypeAnn::ScalarI64),
+            ast::Node::Lit(Literal::Float(_), _) => Some(TypeAnn::ScalarF64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// If `callee` names a registered generic and the call's single argument has an
+/// inferable concrete scalar type, register the instance and return its mangled
+/// name. Returns `None` (caller keeps the original name) when the callee is not
+/// generic or the shape is outside the bounded slice.
+fn try_register_mono_instance(callee: &str, args: &[ast::Node]) -> Option<String> {
+    MONO.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        if !ctx.templates.contains_key(callee) {
+            return None;
+        }
+        // Bounded slice: exactly one argument bound to the single type param.
+        if args.len() != 1 {
+            return None;
+        }
+        let concrete = infer_concrete_arg_type(&args[0])?;
+        let suffix = mangle_suffix(&concrete)?;
+        let mangled = format!("{callee}${suffix}");
+        ctx.requests
+            .entry(mangled.clone())
+            .or_insert_with(|| MonoRequest {
+                generic_name: callee.to_string(),
+                concrete: concrete.clone(),
+            });
+        Some(mangled)
+    })
+}
+
+/// Synthesize the concrete (non-generic) `FnDef` AST for one instance:
+/// clone the template, rename it to `mangled`, drop `type_params`, and rewrite
+/// every parameter typed by the (single) type parameter to the concrete type.
+fn instantiate_template(
+    template: &ast::Node,
+    mangled: &str,
+    concrete: &TypeAnn,
+) -> Option<ast::Node> {
+    if let ast::Node::FnDef {
+        is_pub,
+        is_test,
+        type_params,
+        params,
+        ret_type,
+        body,
+        reap_threshold,
+        attrs,
+        span,
+        ..
+    } = template
+    {
+        // Bounded slice: a single type parameter.
+        let tp = type_params.first()?.clone();
+        let new_params: Vec<ast::Param> = params
+            .iter()
+            .map(|p| {
+                let ty = if matches!(&p.ty, TypeAnn::Named(n) if *n == tp) {
+                    concrete.clone()
+                } else {
+                    p.ty.clone()
+                };
+                ast::Param {
+                    name: p.name.clone(),
+                    ty,
+                    span: p.span,
+                }
+            })
+            .collect();
+        let new_ret = ret_type.as_ref().map(|r| {
+            if matches!(r, TypeAnn::Named(n) if *n == tp) {
+                concrete.clone()
+            } else {
+                r.clone()
+            }
+        });
+        Some(ast::Node::FnDef {
+            is_pub: *is_pub,
+            is_test: *is_test,
+            name: mangled.to_string(),
+            type_params: Vec::new(),
+            params: new_params,
+            ret_type: new_ret,
+            body: body.clone(),
+            reap_threshold: *reap_threshold,
+            attrs: attrs.clone(),
+            span: *span,
+        })
+    } else {
+        None
+    }
+}
+
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let mut ir = IRModule::new();
+    // Codegen monomorphization pre-pass — collect generic fn TEMPLATES (those
+    // with a non-empty `type_params`) so call sites can route to a concrete
+    // instance. The thread-local is reset at entry so a prior `lower_to_ir`
+    // call on this thread can never leak templates/requests into this one
+    // (which would perturb `emit_mic3`/`trace_hash`). Functions with empty
+    // `type_params` are never registered, so the non-generic path is untouched.
+    MONO.with(|cell| {
+        let mut ctx = cell.borrow_mut();
+        *ctx = MonoCtx::default();
+        for item in &module.items {
+            if let ast::Node::FnDef {
+                name, type_params, ..
+            } = item
+            {
+                if !type_params.is_empty() {
+                    ctx.templates.insert(name.clone(), item.clone());
+                }
+            }
+        }
+    });
     let mut env: HashMap<String, ValueId> = HashMap::new();
     // RFC 0005 P0f Step 1 — track `let x = Foo { ... }` so a later
     // `x.field` can resolve `Foo`'s canonical field-name order from
@@ -768,11 +954,22 @@ fn lower_expr(
         }
         ast::Node::FnDef {
             name,
+            type_params,
             params,
             body,
             reap_threshold,
             ..
         } => {
+            // Codegen monomorphization: a generic fn is a TEMPLATE, never
+            // emitted as an `Instr::FnDef` here. It was registered in the
+            // pre-pass; concrete instances are emitted after the module body
+            // is lowered (sorted by mangled name). Like every other declaration
+            // arm, a template produces no value — return the unit placeholder.
+            if !type_params.is_empty() {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, 0));
+                return id;
+            }
             // Lower function definition
             let mut fn_ir = IRModule::new();
             // RFC 0005 P0f Step 1 — the FieldAccess read-path resolves
@@ -1373,10 +1570,16 @@ fn lower_expr(
                 .iter()
                 .map(|a| lower_expr(a, ir, env, struct_env, receiver_types))
                 .collect();
+            // Codegen monomorphization: if the callee is a registered generic
+            // and the concrete arg type is inferable, route this call to the
+            // mangled instance (`id$i64`) and queue that instance for emission.
+            // A non-generic callee (or a shape outside the bounded slice) keeps
+            // the original name, so non-generic call lowering is byte-identical.
+            let name = try_register_mono_instance(callee, args).unwrap_or_else(|| callee.clone());
             let dst = ir.fresh();
             ir.instrs.push(Instr::Call {
                 dst,
-                name: callee.clone(),
+                name,
                 args: arg_ids,
             });
             dst
