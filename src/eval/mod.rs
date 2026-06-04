@@ -411,6 +411,41 @@ pub fn eval_module_value_with_env_mode(
                     }
                 }
             }
+            // Phase 10.6: `arr[i] = v` for an array variable. The interpreter is
+            // immutable-value, so we rebuild the tuple with the element replaced and
+            // rebind it (no in-place mutation). Only a simple variable receiver is
+            // supported here; tensor/slice writes need the runtime handle-table and
+            // keep the prior placeholder behavior (the statement evaluates to its RHS).
+            Node::IndexAssign {
+                receiver,
+                index,
+                value,
+                ..
+            } => {
+                let val = eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
+                if let Node::Lit(Literal::Ident(name), _) = receiver.as_ref() {
+                    if let Some(Value::Tuple(mut items)) = venv.get(name).cloned() {
+                        let idx =
+                            match eval_value_expr_mode(index, &venv, &tensor_env, mode.clone())? {
+                                Value::Int(i) => i,
+                                other => {
+                                    return Err(EvalError::UnsupportedMsg(format!(
+                                        "array index must be an integer, got {other:?}"
+                                    )));
+                                }
+                            };
+                        if idx < 0 || idx as usize >= items.len() {
+                            return Err(EvalError::UnsupportedMsg(format!(
+                                "array index {idx} out of bounds (len {})",
+                                items.len()
+                            )));
+                        }
+                        items[idx as usize] = val.clone();
+                        venv.insert(name.clone(), Value::Tuple(items));
+                    }
+                }
+                last = val;
+            }
             Node::For {
                 var,
                 start,
@@ -2243,6 +2278,19 @@ mod tests {
                 assert!(matches!(items[1], Value::Int(3)), "dim1 = 3");
             }
             other => panic!("expected shape tuple [2, 3], got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_array_index_assign() {
+        // Phase 10.6: `arr[i] = v` rebinds the array; a later read sees the write.
+        let src = "let arr = [1, 2, 3]; arr[1] = 20; arr[1]";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 20, "arr[1] should be 20 after assignment"),
+            other => panic!("expected Int(20), got {other:?}"),
         }
     }
 
