@@ -1984,6 +1984,161 @@ pub fn emit_fn_def(s: EmitState, buf: i64, node: i64) -> EmitState {
     emit_lit_output(s7, id)
 }
 
+// ===== Real-body lowering (param-resolving) — additive, isolated from the
+//       canary path (mindc_compile->lower_program->emit_fn_def stays stubbed).
+//       Resolves a parameter NAME to its SSA id (param i == %i), so function
+//       bodies emit real ops (`%2 = add %0, %1` / `output %2`) instead of a
+//       const.i64-0 placeholder. =====
+
+// 1 if buf[alo..ahi] equals buf[blo..bhi] byte-for-byte, else 0.
+pub fn span_bytes_equal(buf: i64, alo: i64, ahi: i64, blo: i64, bhi: i64) -> i64 {
+    if (ahi - alo) == (bhi - blo) {
+        span_bytes_equal_loop(buf, alo, ahi, blo, 0)
+    } else {
+        0
+    }
+}
+pub fn span_bytes_equal_loop(buf: i64, alo: i64, ahi: i64, blo: i64, k: i64) -> i64 {
+    if alo + k >= ahi {
+        1
+    } else {
+        if load_byte(buf, alo + k) == load_byte(buf, blo + k) {
+            span_bytes_equal_loop(buf, alo, ahi, blo, k + 1)
+        } else {
+            0
+        }
+    }
+}
+
+// Return the SSA id (== param index) for the identifier buf[lo..hi] if it names
+// a parameter of `params` (a block of ast_param nodes), else -1.
+pub fn resolve_param(params_addr: i64, n_params: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    resolve_param_loop(buf, lo, hi, params_addr, n_params, 0)
+}
+pub fn resolve_param_loop(buf: i64, lo: i64, hi: i64, addr: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        0 - 1
+    } else {
+        let pnode: i64 = __mind_load_i64(addr + i * 8);
+        let name_leaf: i64 = ast_child0(pnode);
+        if span_bytes_equal(buf, lo, hi, ast_span_lo(name_leaf), ast_span_hi(name_leaf)) == 1 {
+            i
+        } else {
+            resolve_param_loop(buf, lo, hi, addr, n, i + 1)
+        }
+    }
+}
+
+// Expression lowering with a parameter environment. Identical to emit_expr
+// except the ident branch resolves a param to its %SSA id (no instruction).
+pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        let val: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        let id: i64 = s.next_id;
+        let s1: EmitState = emit_lit_const_i64_head(s, id);
+        let s2: EmitState = emit_i64(s1, val);
+        let s3: EmitState = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx >= 0 {
+            return EmitState { buf: s.buf, next_id: s.next_id, last_id: idx };
+        }
+        let id: i64 = s.next_id;
+        let s1: EmitState = emit_lit_const_i64_head(s, id);
+        let s2: EmitState = es_push(s1, 48);
+        let s3: EmitState = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    }
+    if k == ast_binop() {
+        let s1: EmitState = emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+        let lhs_id: i64 = s1.last_id;
+        let s2: EmitState = emit_expr_env(s1, buf, ast_child1(node), params_addr, n_params);
+        let rhs_id: i64 = s2.last_id;
+        let id: i64 = s2.next_id;
+        let s3: EmitState = es_push(s2, ch_space());
+        let s4: EmitState = es_push(s3, ch_space());
+        let s5: EmitState = es_push(s4, ch_percent());
+        let s6: EmitState = emit_i64(s5, id);
+        let s7: EmitState = es_push(s6, ch_space());
+        let s8: EmitState = es_push(s7, ch_eq_sign());
+        let s9: EmitState = es_push(s8, ch_space());
+        let s10: EmitState = emit_op_mnemonic(s9, ast_aux(node));
+        let s11: EmitState = es_push(s10, ch_space());
+        let s12: EmitState = es_push(s11, ch_percent());
+        let s13: EmitState = emit_i64(s12, lhs_id);
+        let s14: EmitState = es_push(s13, ch_comma());
+        let s15: EmitState = es_push(s14, ch_space());
+        let s16: EmitState = es_push(s15, ch_percent());
+        let s17: EmitState = emit_i64(s16, rhs_id);
+        let s18: EmitState = es_push(s17, ch_newline());
+        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id };
+    }
+    if k == ast_paren() {
+        return emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+    }
+    let id: i64 = s.next_id;
+    let s1: EmitState = emit_lit_const_i64_head(s, id);
+    let s2: EmitState = es_push(s1, 48);
+    let s3: EmitState = es_push(s2, ch_newline());
+    EmitState { buf: s3.buf, next_id: id + 1, last_id: id }
+}
+
+pub fn emit_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    let k: i64 = ast_kind(node);
+    if k == ast_let() {
+        return emit_expr_env(s, buf, ast_child2(node), params_addr, n_params);
+    }
+    if k == ast_return() {
+        let s1: EmitState = emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+        return emit_lit_output(s1, s1.last_id);
+    }
+    emit_expr_env(s, buf, node, params_addr, n_params)
+}
+
+pub fn emit_block_stmts_env(s: EmitState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> EmitState {
+    if i >= stmts_len {
+        return s;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let s1: EmitState = emit_stmt_env(s, buf, stmt_node, params_addr, n_params);
+    emit_block_stmts_env(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
+}
+
+// Real-body function lowering: params occupy SSA ids 0..n-1; the body emits
+// real ops starting at %n, then the trailing value is `output`-ed.
+pub fn emit_fn_def_with_body(s: EmitState, buf: i64, node: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(node);
+    let n_params: i64 = ast_aux(node) / 2;
+    let body: i64 = ast_child2(node);
+    let s0: EmitState = EmitState { buf: s.buf, next_id: n_params, last_id: 0 };
+    let s1: EmitState = emit_block_stmts_env(s0, buf, ast_child0(body), ast_aux(body), 0, params_addr, n_params);
+    emit_lit_output(s1, s1.last_id)
+}
+
+// Self-test entry: lex+parse `src`, find the first fn_def, lower its body with
+// param resolution, return the EmitState (Python harness decodes EmitState.buf).
+pub fn selftest_emit_fn_body(src_addr: i64, src_len: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let fn_node: i64 = find_first_fn(ast_child0(ast_root), ast_aux(ast_root), 0);
+    emit_fn_def_with_body(es_new(), src_addr, fn_node)
+}
+pub fn find_first_fn(addr: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        0
+    } else {
+        let item: i64 = __mind_load_i64(addr + i * 8);
+        if ast_kind(item) == ast_fn_def() {
+            item
+        } else {
+            find_first_fn(addr, n, i + 1)
+        }
+    }
+}
+
 // ===== Program-level lowering =====
 
 // Emit a single const.i64 0 / output stub for items that lower to a placeholder
