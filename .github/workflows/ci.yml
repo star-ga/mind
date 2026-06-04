@@ -238,14 +238,16 @@ jobs:
           restore-keys: |
             ${{ matrix.runner }}-xsi-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 18)
-        # Stock noble universe ships llvm-18 by default on both x86_64 and
-        # arm64; the gate shells out to unversioned mlir-opt / mlir-translate /
-        # clang, all of which live in /usr/lib/llvm-18/bin.
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+        # Noble universe also packages llvm-20 (1:20.1.2); we pin it on both
+        # x86_64 and arm64 so the gate shells out to unversioned mlir-opt /
+        # mlir-translate / clang in /usr/lib/llvm-20/bin. The wedge is
+        # LLVM-version-independent (the gate hashes the Q16.16 result, not
+        # codegen) — verified to match the llvm-18-blessed references.
         run: |
           sudo apt-get update
-          sudo apt-get install -y mlir-18-tools clang-18
-          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y mlir-20-tools clang-20
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         run: |
@@ -328,15 +330,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mindcraft-self-host-
 
-      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 18)
-        # Mirror cross_substrate_identity: the cdylib emit shells out to
-        # unversioned mlir-opt / mlir-translate / clang to link a real ELF, all
-        # of which live in /usr/lib/llvm-18/bin. Without this the self-host
-        # build falls back to a launcher stub and MIND_BENCH_REQUIRE fails it.
+      - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
+        # The cdylib/self-host emit uses mindc's native-ELF backend (no LLVM
+        # shell-out since the 2026-05-21 melior/inkwell removal), so the keystone
+        # does not depend on this. Pinned to llvm-20 for parity with the
+        # cross-substrate gate's toolchain and any --emit-shared sub-steps.
         run: |
           sudo apt-get update
-          sudo apt-get install -y mlir-18-tools clang-18
-          echo "/usr/lib/llvm-18/bin" >> "$GITHUB_PATH"
+          sudo apt-get install -y mlir-20-tools clang-20
+          echo "/usr/lib/llvm-20/bin" >> "$GITHUB_PATH"
 
       - name: Verify toolchain on PATH
         run: |

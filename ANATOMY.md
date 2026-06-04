@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2691 | **Est. tokens:** ~6,736,998
-**Generated:** 2026-06-04 11:55 UTC
+**Files:** 2691 | **Est. tokens:** ~6,737,038
+**Generated:** 2026-06-04 12:08 UTC
 
 ## Token Budget Guide
 
@@ -56,7 +56,7 @@
 | `.githooks/` | 1 | ~98 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 7 | ~7,642 |
+| `.github/workflows/` | 7 | ~7,682 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
 | `scripts/` | 5 | ~5,953 |
@@ -756,7 +756,7 @@
 
 - `bench-gate.yml` (~1289 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~3764 tok, huge) — name: CI
+- `ci.yml` (~3804 tok, huge) — name: CI
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
