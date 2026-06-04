@@ -304,7 +304,7 @@ pub(crate) fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         Instr::Gather { src, indices, .. } => vec![*src, *indices],
         Instr::Output(id) => vec![*id],
         Instr::Call { args, .. } => args.clone(),
-        Instr::Return { value } => value.into_iter().copied().collect(),
+        Instr::Return { value } => value.iter().copied().collect(),
         // A parameter defines a value; it reads no SSA operands.
         Instr::Param { .. } => Vec::new(),
         // A function definition reads no top-level operands; its body

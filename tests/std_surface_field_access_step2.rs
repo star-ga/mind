@@ -102,6 +102,7 @@ fn step2_struct_typed_parameter_resolves_field_access() {
                 span: sp(),
             },
             Node::FnDef {
+                type_params: vec![],
                 is_pub: false,
                 is_test: false,
                 name: "read".to_string(),
@@ -156,6 +157,7 @@ fn step2_fn_return_receiver_resolves_field_access() {
                 span: sp(),
             },
             Node::FnDef {
+                type_params: vec![],
                 is_pub: false,
                 is_test: false,
                 name: "make".to_string(),
@@ -211,6 +213,7 @@ fn step2_fn_with_non_struct_return_does_not_pollute_side_table() {
     let module = Module {
         items: vec![
             Node::FnDef {
+                type_params: vec![],
                 is_pub: false,
                 is_test: false,
                 name: "raw".to_string(),
