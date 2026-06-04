@@ -949,6 +949,24 @@ impl<'a> P<'a> {
         if self.at_keyword(b"region") {
             return self.parse_region();
         }
+        // Loop control: `break` / `continue`. Intercepted here, before the
+        // expr/assign fallthrough, so they do not parse as `Node::Lit(Ident)`.
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"break") {
+            let start = self.pos;
+            self.pos += 5; // "break"
+            return Ok(Node::Break {
+                span: Span::new(start, self.pos),
+            });
+        }
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"continue") {
+            let start = self.pos;
+            self.pos += 8; // "continue"
+            return Ok(Node::Continue {
+                span: Span::new(start, self.pos),
+            });
+        }
         // Expression or assignment
         let start = self.pos;
         let expr = self.parse_expr()?;

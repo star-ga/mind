@@ -290,6 +290,9 @@ fn validate_operands(
         // check_defined closure references the wrong scope.
         #[cfg(feature = "std-surface")]
         Instr::While { .. } => {}
+        // Loop control markers: pure terminators with no operands.
+        #[cfg(feature = "std-surface")]
+        Instr::Break { .. } | Instr::Continue { .. } => {}
         // RFC 0005 Phase 6.2b Gap 2: array constant — values are literals,
         // no SSA operand references to check.
         #[cfg(feature = "std-surface")]

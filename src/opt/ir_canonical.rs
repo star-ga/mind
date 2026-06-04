@@ -350,5 +350,11 @@ pub(crate) fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         // scope at this node.
         #[cfg(feature = "std-surface")]
         Instr::Region { .. } => Vec::new(),
+        // break/continue READ their `live` snapshot values (forwarded as loop
+        // block-args), so they are genuine operands — DCE must keep them alive.
+        #[cfg(feature = "std-surface")]
+        Instr::Break { live } | Instr::Continue { live } => {
+            live.iter().map(|(_, v)| *v).collect()
+        }
     }
 }
