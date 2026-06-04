@@ -213,6 +213,25 @@ pub fn classify_ident(buf: i64, lo: i64, hi: i64) -> i64 {
             }
         }
     }
+    if n == 6 {
+        // `import` (105,109,112,111,114,116) lowers like `use`: one placeholder
+        // stub per item, matching mindc-Rust lower_to_ir's Import arm. The token
+        // shape `import std . vec ;` is identical to `use std . vec ;`, so the
+        // existing parse_use offsets apply unchanged.
+        if load_byte(buf, lo + 0) == 105 {
+            if load_byte(buf, lo + 1) == 109 {
+                if load_byte(buf, lo + 2) == 112 {
+                    if load_byte(buf, lo + 3) == 111 {
+                        if load_byte(buf, lo + 4) == 114 {
+                            if load_byte(buf, lo + 5) == 116 {
+                                return tk_kw_use();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     tk_ident()
 }
 
