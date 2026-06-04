@@ -113,6 +113,102 @@ mod tensor_tests {
     }
 }
 
+#[cfg(test)]
+mod enum_value_tests {
+    use super::*;
+    use crate::ast::{Literal, MatchArm, Node, Pattern, Span};
+
+    fn sp() -> Span {
+        Span::new(0, 0)
+    }
+
+    fn eval_expr(node: &Node) -> Result<Value, EvalError> {
+        let env: HashMap<String, Value> = HashMap::new();
+        let tensor_env: HashMap<String, autodiff::TensorEnvEntry> = HashMap::new();
+        eval_value_expr_mode(node, &env, &tensor_env, ExecMode::Preview)
+    }
+
+    /// `Result::Ok(7)` constructs a `Value::Enum` carrying the payload.
+    #[test]
+    fn enum_ctor_call_builds_value_enum() {
+        let ctor = Node::Call {
+            callee: "Result::Ok".to_string(),
+            args: vec![Node::Lit(Literal::Int(7), sp())],
+            span: sp(),
+        };
+        let got = eval_expr(&ctor).expect("enum ctor should evaluate");
+        assert_eq!(
+            got,
+            Value::Enum {
+                variant: "Result::Ok".to_string(),
+                payload: vec![Value::Int(7)],
+            }
+        );
+    }
+
+    /// `match Result::Ok(7) { Result::Ok(x) => x, _ => 0 }` yields 7, binding
+    /// the payload element to `x`.
+    #[test]
+    fn match_enum_variant_binds_payload() {
+        let scrutinee = Node::Call {
+            callee: "Result::Ok".to_string(),
+            args: vec![Node::Lit(Literal::Int(7), sp())],
+            span: sp(),
+        };
+        let m = Node::Match {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::EnumVariant {
+                        path: "Result::Ok".to_string(),
+                        args: vec![Pattern::Ident("x".to_string())],
+                    },
+                    body: Node::Lit(Literal::Ident("x".to_string()), sp()),
+                    span: sp(),
+                },
+                MatchArm {
+                    pattern: Pattern::Wildcard,
+                    body: Node::Lit(Literal::Int(0), sp()),
+                    span: sp(),
+                },
+            ],
+            span: sp(),
+        };
+        assert_eq!(eval_expr(&m).expect("match should evaluate"), Value::Int(7));
+    }
+
+    /// A non-matching variant (`Result::Err(...)` against `Result::Ok`) falls
+    /// through to the wildcard arm.
+    #[test]
+    fn match_enum_variant_non_matching_falls_through() {
+        let scrutinee = Node::Call {
+            callee: "Result::Err".to_string(),
+            args: vec![Node::Lit(Literal::Int(7), sp())],
+            span: sp(),
+        };
+        let m = Node::Match {
+            scrutinee: Box::new(scrutinee),
+            arms: vec![
+                MatchArm {
+                    pattern: Pattern::EnumVariant {
+                        path: "Result::Ok".to_string(),
+                        args: vec![Pattern::Ident("x".to_string())],
+                    },
+                    body: Node::Lit(Literal::Ident("x".to_string()), sp()),
+                    span: sp(),
+                },
+                MatchArm {
+                    pattern: Pattern::Wildcard,
+                    body: Node::Lit(Literal::Int(0), sp()),
+                    span: sp(),
+                },
+            ],
+            span: sp(),
+        };
+        assert_eq!(eval_expr(&m).expect("match should evaluate"), Value::Int(0));
+    }
+}
+
 pub use ir_interp::eval_ir;
 pub use lower::lower_to_ir;
 #[cfg(feature = "mlir-build")]
@@ -660,6 +756,61 @@ pub fn eval_first_expr(m: &Module) -> Result<i64, EvalError> {
     eval_module(m)
 }
 
+/// Phase 10.7: does this call-callee denote an enum/`Option`/`Result` variant
+/// constructor with a payload? A `Type::Variant` path (carrying `::`) is the
+/// canonical form; `Some` is the only bare payload-carrying constructor the
+/// interpreter recognizes by name. Tensor-stdlib callees never use `::` and are
+/// never named `Some`, so this never shadows them.
+fn is_enum_variant_ctor(callee: &str) -> bool {
+    callee.contains("::") || callee == "Some"
+}
+
+/// Phase 10.7: does this bare identifier denote a payload-less (unit) variant?
+/// `Type::Variant` paths and the bare `None` constructor qualify.
+fn is_enum_unit_ctor(name: &str) -> bool {
+    name.contains("::") || name == "None"
+}
+
+/// Phase 10.7: bind an enum-variant pattern's payload sub-patterns against the
+/// matched payload values. Returns `false` (no match) if any sub-pattern fails;
+/// successful bindings are appended to `out`. Ident sub-patterns bind the
+/// corresponding payload element; literals must compare equal; nested
+/// enum-variant sub-patterns recurse; wildcard always matches.
+fn match_enum_payload(
+    patterns: &[crate::ast::Pattern],
+    values: &[Value],
+    out: &mut Vec<(String, Value)>,
+) -> bool {
+    for (pat, value) in patterns.iter().zip(values.iter()) {
+        match pat {
+            crate::ast::Pattern::Wildcard => {}
+            crate::ast::Pattern::Ident(name) => out.push((name.clone(), value.clone())),
+            crate::ast::Pattern::Literal(lit) => {
+                let eq = match (lit, value) {
+                    (crate::ast::Literal::Int(m), Value::Int(n)) => n == m,
+                    (crate::ast::Literal::Float(a), Value::Float(b)) => a == b,
+                    (crate::ast::Literal::Str(s), Value::Str(v)) => v == s,
+                    _ => false,
+                };
+                if !eq {
+                    return false;
+                }
+            }
+            crate::ast::Pattern::EnumVariant { path, args } => match value {
+                Value::Enum { variant, payload }
+                    if variant == path && payload.len() == args.len() =>
+                {
+                    if !match_enum_payload(args, payload, out) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            },
+        }
+    }
+    true
+}
+
 pub(crate) fn eval_value_expr_mode(
     node: &Node,
     env: &HashMap<String, Value>,
@@ -670,10 +821,21 @@ pub(crate) fn eval_value_expr_mode(
         Node::Lit(Literal::Int(n), _) => Ok(Value::Int(*n)),
         Node::Lit(Literal::Float(f), _) => Ok(Value::Float(*f)),
         Node::Lit(Literal::Str(s), _) => Ok(Value::Str(s.clone())),
-        Node::Lit(Literal::Ident(name), _) => env
-            .get(name)
-            .cloned()
-            .ok_or_else(|| EvalError::UnknownVar(name.clone())),
+        Node::Lit(Literal::Ident(name), _) => {
+            if let Some(v) = env.get(name) {
+                return Ok(v.clone());
+            }
+            // Phase 10.7: a bare unit enum/`Option` variant (`Mode::On`, `None`)
+            // that is not a bound variable evaluates to a payload-less
+            // `Value::Enum`.
+            if is_enum_unit_ctor(name) {
+                return Ok(Value::Enum {
+                    variant: name.clone(),
+                    payload: Vec::new(),
+                });
+            }
+            Err(EvalError::UnknownVar(name.clone()))
+        }
         Node::Paren(inner, _) => eval_value_expr_mode(inner, env, tensor_env, mode.clone()),
         Node::Tuple { elements, .. } => {
             let mut items = Vec::with_capacity(elements.len());
@@ -683,6 +845,22 @@ pub(crate) fn eval_value_expr_mode(
             Ok(Value::Tuple(items))
         }
         Node::Call { callee, args, .. } => {
+            // Phase 10.7: enum/`Option`/`Result` variant construction. A callee
+            // written as a `Type::Variant` path (e.g. `Result::Ok(x)`,
+            // `Mode::On(v)`) or the bare `Option` constructors `Some`/`None`
+            // builds a `Value::Enum` carrying the evaluated positional payload.
+            // This is detected before the tensor-stdlib dispatch because those
+            // callees never use `::` and are never named `Some`/`None`.
+            if is_enum_variant_ctor(callee) {
+                let mut payload = Vec::with_capacity(args.len());
+                for arg in args {
+                    payload.push(eval_value_expr_mode(arg, env, tensor_env, mode.clone())?);
+                }
+                return Ok(Value::Enum {
+                    variant: callee.clone(),
+                    payload,
+                });
+            }
             stdlib::tensor::dispatch(callee, args, env, tensor_env, mode.clone())
         }
         Node::CallTensorSum {
@@ -1331,32 +1509,45 @@ pub(crate) fn eval_value_expr_mode(
         Node::Match { scrutinee, arms, .. } => {
             let val = eval_value_expr_mode(scrutinee, env, tensor_env, mode.clone())?;
             for arm in arms {
-                let (is_match, bind): (bool, Option<&str>) = match &arm.pattern {
-                    crate::ast::Pattern::Wildcard => (true, None),
-                    crate::ast::Pattern::Ident(name) => (true, Some(name.as_str())),
-                    crate::ast::Pattern::Literal(lit) => {
-                        let eq = match (lit, &val) {
-                            (crate::ast::Literal::Int(m), Value::Int(n)) => n == m,
-                            (crate::ast::Literal::Float(a), Value::Float(b)) => a == b,
-                            (crate::ast::Literal::Str(s), Value::Str(v)) => v == s,
-                            _ => false,
-                        };
-                        (eq, None)
+                // `bindings` carries the names introduced by this arm and the
+                // values they bind to (a simple ident binding binds the whole
+                // scrutinee; enum-variant sub-patterns bind payload elements).
+                let mut bindings: Vec<(String, Value)> = Vec::new();
+                let is_match = match &arm.pattern {
+                    crate::ast::Pattern::Wildcard => true,
+                    crate::ast::Pattern::Ident(name) => {
+                        bindings.push((name.clone(), val.clone()));
+                        true
                     }
-                    crate::ast::Pattern::EnumVariant { .. } => (false, None),
+                    crate::ast::Pattern::Literal(lit) => match (lit, &val) {
+                        (crate::ast::Literal::Int(m), Value::Int(n)) => n == m,
+                        (crate::ast::Literal::Float(a), Value::Float(b)) => a == b,
+                        (crate::ast::Literal::Str(s), Value::Str(v)) => v == s,
+                        _ => false,
+                    },
+                    // Phase 10.7: enum-variant pattern. Matches when the
+                    // scrutinee is a `Value::Enum` whose variant path equals the
+                    // pattern path and whose payload arity matches the
+                    // sub-pattern count, recursively binding each sub-pattern.
+                    crate::ast::Pattern::EnumVariant { path, args } => match &val {
+                        Value::Enum { variant, payload }
+                            if variant == path && payload.len() == args.len() =>
+                        {
+                            match_enum_payload(args, payload, &mut bindings)
+                        }
+                        _ => false,
+                    },
                 };
                 if is_match {
                     let mut arm_env = env.clone();
-                    if let Some(name) = bind {
-                        arm_env.insert(name.to_string(), val.clone());
+                    for (name, bound) in bindings {
+                        arm_env.insert(name, bound);
                     }
                     return eval_value_expr_mode(&arm.body, &arm_env, tensor_env, mode);
                 }
             }
             Err(EvalError::UnsupportedMsg(
-                "no match arm matched (enum-variant patterns require the \
-                 interpreter's sum-type value model, not yet implemented)"
-                    .into(),
+                "no match arm matched (non-exhaustive match)".into(),
             ))
         }
         // Phase 10.7: reference-taking `&expr` / `&mut expr`. The immutable

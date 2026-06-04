@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2688 | **Est. tokens:** ~6,756,962
-**Generated:** 2026-06-04 02:16 UTC
+**Files:** 2687 | **Est. tokens:** ~6,731,840
+**Generated:** 2026-06-04 02:21 UTC
 
 ## Token Budget Guide
 
@@ -372,8 +372,8 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~72,667 |
-| `src/eval/stdlib/` | 2 | ~8,515 |
+| `src/eval/` | 11 | ~47,531 |
+| `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,717 |
@@ -3620,15 +3620,14 @@
 - `mlir_jit.rs` (~501 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_opt.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_run.rs` (~1535 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~25369 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/stdlib/`
 
 - `mod.rs` (~169 tok, small) — Copyright 2025 STARGA Inc.
-- `tensor.rs` (~8346 tok, huge) — Copyright 2025 STARGA Inc.
+- `tensor.rs` (~8360 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
 - `struct_resolver.rs` (~5177 tok, huge) — Copyright 2025 STARGA Inc.
-- `value.rs` (~1770 tok, huge) — Copyright 2025 STARGA Inc.
+- `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
 - `conv.rs` (~435 tok, medium) — Copyright 2025 STARGA Inc.
