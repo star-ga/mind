@@ -1586,6 +1586,37 @@ impl<'a> P<'a> {
             .ok_or_else(|| self.err("expected function name".into()))?
             .to_string();
         self.skip_ws_and_newlines();
+        // Optional generic type-parameter list: `<T, U, ...>`.
+        //
+        // Empty for non-generic functions, so their AST and all downstream
+        // lowering/codegen are byte-identical to before. Each name is a plain
+        // identifier; the interpreter binds it to the concrete argument value
+        // at the call site (no monomorphization at the interpreter level).
+        let mut type_params: Vec<String> = Vec::new();
+        if self.at(b'<') {
+            self.pos += 1; // '<'
+            self.skip_ws_and_newlines();
+            if !self.at(b'>') {
+                loop {
+                    let tp = self
+                        .word()
+                        .ok_or_else(|| self.err("expected type parameter name".into()))?
+                        .to_string();
+                    type_params.push(tp);
+                    self.skip_ws_and_newlines();
+                    if !self.eat(b',') {
+                        break;
+                    }
+                    self.skip_ws_and_newlines();
+                    if self.at(b'>') {
+                        break;
+                    }
+                }
+            }
+            self.skip_ws_and_newlines();
+            self.expect(b'>')?;
+            self.skip_ws_and_newlines();
+        }
         // Parameter list
         self.expect(b'(')?;
         let mut params = Vec::new();
@@ -1636,6 +1667,7 @@ impl<'a> P<'a> {
             is_pub,
             is_test,
             name,
+            type_params,
             params,
             ret_type,
             body,

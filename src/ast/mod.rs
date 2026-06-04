@@ -427,6 +427,14 @@ pub enum Node {
         /// Whether the `[test]` attribute was present (RFC 0008 Phase B).
         is_test: bool,
         name: String,
+        /// Generic type-parameter names declared as `fn name<T, U>(...)`.
+        ///
+        /// Empty for every non-generic function, so existing functions are
+        /// unchanged and lowering/codegen for them stays byte-identical. The
+        /// interpreter treats each name as an opaque type that binds to the
+        /// concrete argument `Value` at the call site; real codegen
+        /// monomorphization is a later slice.
+        type_params: Vec<String>,
         params: Vec<Param>,
         ret_type: Option<TypeAnn>,
         body: Vec<Node>,
