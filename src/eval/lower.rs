@@ -2492,12 +2492,43 @@ fn lower_expr(
                 }
             }
         }
-        _ => {
-            #[cfg(debug_assertions)]
-            eprintln!("[WARN] lower_expr: unhandled AST node kind, defaulting to 0");
+        // A `use`/import statement carries no runtime value — it is resolved at
+        // module-load time. When it reaches `lower_expr` (e.g. a top-level
+        // `use` routed through the module loop) emit the unit placeholder
+        // EXPLICITLY — a documented compile-time no-op, not a mystery const-0
+        // from the silent catch-all. Same bytes as the old catch-all path, so
+        // emitted artifacts (and the keystone) are byte-identical.
+        ast::Node::Import { .. } => {
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
+        }
+        // `print(...)` is NOT yet lowered in the compiled (codegen) path — the
+        // side effect is dropped (KNOWN GAP, tracked #54; the tree-walking
+        // interpreter DOES execute print). Emit the unit placeholder explicitly
+        // rather than via the silent catch-all. Byte-identical to the old path.
+        ast::Node::Print { .. } => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
+        }
+        // Genuinely-unhandled value-position node. After the explicit Import /
+        // Print arms above, std/ + examples/ no longer reach here (verified by
+        // the #54 sweep). FAIL CLOSED (#306 philosophy): a const-0 placeholder
+        // here would be a release-silent miscompile, and a future `ast::Node`
+        // variant added without a lowering arm must surface loudly — never as a
+        // wrong runtime value.
+        node => {
+            let dbg = format!("{node:?}");
+            let kind = dbg
+                .split(|c: char| c == '(' || c == ' ' || c == '{')
+                .next()
+                .unwrap_or("<node>");
+            panic!(
+                "lower_expr: no IR lowering for `{kind}` in value position — \
+                 refusing to emit a const-0 placeholder (that would be a silent \
+                 miscompile). Add an explicit lowering arm or handle it upstream."
+            );
         }
     }
 }
