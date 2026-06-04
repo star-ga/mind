@@ -2512,6 +2512,31 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+        // `break` / `continue` — emit a loop-control marker carrying a snapshot
+        // of every in-scope var → its CURRENT ValueId at this point. The
+        // `Instr::While` MLIR arm forwards each loop-carried var's current value
+        // (looked up by name) as the `^while_after` (break) / `^while_header`
+        // (continue) block-arg. `env` here is the live body/branch env, so for a
+        // break/continue nested inside an `if` we capture the correct
+        // mid-iteration values. The snapshot is sorted by name so the IR (and
+        // its mic@3 serialization / trace_hash) is deterministic. The cf.br
+        // terminates the block, so the trailing const-0 "value" is unreachable.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Break { .. } | ast::Node::Continue { .. } => {
+            let mut live: Vec<(String, ValueId)> =
+                env.iter().map(|(k, v)| (k.clone(), *v)).collect();
+            live.sort_by(|a, b| a.0.cmp(&b.0));
+            // Emit the (unreachable) unit value FIRST, then the terminator
+            // marker, so the MLIR block ends on the `cf.br` — never a stray
+            // instruction after the terminator.
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            match node {
+                ast::Node::Break { .. } => ir.instrs.push(Instr::Break { live }),
+                _ => ir.instrs.push(Instr::Continue { live }),
+            }
+            id
+        }
         // Genuinely-unhandled value-position node. After the explicit Import /
         // Print arms above, std/ + examples/ no longer reach here (verified by
         // the #54 sweep). FAIL CLOSED (#306 philosophy): a const-0 placeholder

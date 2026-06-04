@@ -1277,6 +1277,11 @@ pub(crate) fn eval_value_expr_mode(
                 Ok(Value::Int(0))
             }
         }
+        // Best-effort only: the const-fold evaluator has no control-flow
+        // signal (Node::Return above does not early-exit either). Mid-iteration
+        // break/continue semantics are honored solely by the MLIR codegen path.
+        #[cfg(feature = "std-surface")]
+        Node::Break { .. } | Node::Continue { .. } => Ok(Value::Int(0)),
         Node::Block { stmts, .. } => {
             let mut result = Value::Int(0);
             for stmt in stmts {

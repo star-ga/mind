@@ -497,6 +497,14 @@ pub enum Node {
         body: Vec<Node>,
         span: Span,
     },
+    /// Loop break: `break` — exits the innermost enclosing `while`.
+    /// Lowers to `cf.br ^while_after_N(<loop-carried args>)`. std-surface only.
+    #[cfg(feature = "std-surface")]
+    Break { span: Span },
+    /// Loop continue: `continue` — restarts the innermost enclosing `while`.
+    /// Lowers to `cf.br ^while_header_N(<loop-carried args>)`. std-surface only.
+    #[cfg(feature = "std-surface")]
+    Continue { span: Span },
     /// Print statement: `print("msg", expr)`
     Print {
         args: Vec<Node>,
@@ -808,6 +816,8 @@ impl Node {
             | Node::ExternBlock { span, .. } => *span,
             #[cfg(feature = "std-surface")]
             Node::While { span, .. } => *span,
+            #[cfg(feature = "std-surface")]
+            Node::Break { span } | Node::Continue { span } => *span,
             #[cfg(feature = "std-surface")]
             Node::Region { span, .. } => *span,
         }

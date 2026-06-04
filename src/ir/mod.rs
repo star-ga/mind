@@ -366,6 +366,19 @@ pub enum Instr {
         /// fn bodies are not persisted to mic, so this is hash-neutral.
         exit_ids: Vec<ValueId>,
     },
+    /// `break` — exit the innermost enclosing `while`. Carries `live`: a
+    /// snapshot of `name -> current ValueId` for in-scope variables at the
+    /// break point. The `While` MLIR arm forwards, for each loop-carried var,
+    /// its CURRENT (mid-iteration) value from this snapshot as the
+    /// `^while_after` block-arg — NOT the back-edge's post-body value, which is
+    /// not computed on the break path (that would be an SSA dominance error).
+    #[cfg(feature = "std-surface")]
+    Break { live: Vec<(String, ValueId)> },
+    /// `continue` — re-test the innermost enclosing `while`'s condition. Same
+    /// `live` snapshot as `Break`, forwarded to the `^while_header` block-arg so
+    /// the next iteration sees the current mid-iteration carried values.
+    #[cfg(feature = "std-surface")]
+    Continue { live: Vec<(String, ValueId)> },
     /// Conditional branch (Phase 6.5 Stage 1a).
     ///
     /// Lowers `if cond { then } else { else }` into separate sub-instruction
@@ -680,6 +693,8 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::ExternFnDecl { .. } => None,
         #[cfg(feature = "std-surface")]
         Instr::While { .. } => None,
+        #[cfg(feature = "std-surface")]
+        Instr::Break { .. } | Instr::Continue { .. } => None,
         #[cfg(feature = "std-surface")]
         Instr::ConstArray { dst, .. } | Instr::ArrayLoad { dst, .. } => Some(*dst),
         #[cfg(feature = "std-surface")]

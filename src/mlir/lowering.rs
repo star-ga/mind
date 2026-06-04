@@ -236,6 +236,36 @@ struct LoweringContext {
     /// emitted text, so existing artifacts stay byte-identical.
     #[cfg(feature = "std-surface")]
     i1_values: std::collections::BTreeSet<ValueId>,
+    /// Stack of enclosing `while` loops (innermost last). Each frame carries the
+    /// loop's block label and its loop-carried `(var_name, init_id)` list, so an
+    /// `Instr::Break`/`Instr::Continue` in the body can emit a `cf.br` to the
+    /// loop's `^while_after`/`^while_header` forwarding the current values of
+    /// each carried var (looked up by name in the instr's `live` snapshot).
+    #[cfg(feature = "std-surface")]
+    loop_stack: Vec<LoopFrame>,
+}
+
+/// One enclosing `while` loop, for break/continue codegen.
+#[cfg(feature = "std-surface")]
+#[derive(Clone)]
+struct LoopFrame {
+    lbl: usize,
+    /// `(var_name, init_id)` per loop-carried var, in the canonical loop-arg
+    /// order — the order the `^while_header`/`^while_after` block-args expect.
+    carried: Vec<(String, usize)>,
+}
+
+/// True if `i` terminates its MLIR block (no fall-through): `return`, or — under
+/// std-surface — `break`/`continue` (each lowers to a `cf.br`). The If lowering
+/// uses this so it never appends a second terminator after a self-terminated
+/// branch (mlir-opt rejects an op with successors that is not block-final).
+fn instr_is_block_terminator(i: &Instr) -> bool {
+    match i {
+        Instr::Return { .. } => true,
+        #[cfg(feature = "std-surface")]
+        Instr::Break { .. } | Instr::Continue { .. } => true,
+        _ => false,
+    }
 }
 
 impl LoweringContext {
@@ -256,6 +286,8 @@ impl LoweringContext {
             while_label: 0,
             #[cfg(feature = "std-surface")]
             i1_values: std::collections::BTreeSet::new(),
+            #[cfg(feature = "std-surface")]
+            loop_stack: Vec::new(),
         }
     }
 
@@ -1028,9 +1060,12 @@ impl LoweringContext {
                     // lower.rs) to reference this id, so naming the block arg
                     // by it makes every post-loop use dominate.
                     exit_id: usize,
+                    // Loop-carried variable name — used to match a break/continue
+                    // `live` snapshot entry to this slot (order-independent).
+                    name: String,
                 }
                 let mut loop_args: Vec<LoopArg> = Vec::new();
-                for (k, ((_vname, post_vid), init_vid)) in
+                for (k, ((vname, post_vid), init_vid)) in
                     live_vars.iter().zip(init_ids.iter()).enumerate()
                 {
                     if init_vid.0 == usize::MAX {
@@ -1045,6 +1080,7 @@ impl LoweringContext {
                         body_name: format!("wbod_{lbl}_{k}"),
                         post_id: post_vid.0,
                         exit_id,
+                        name: vname.clone(),
                     });
                 }
 
@@ -1181,6 +1217,22 @@ impl LoweringContext {
                 // Thread the function-global while-label counter into the body
                 // so nested loops get unique labels; pull it back afterward.
                 body_sub.while_label = self.while_label;
+                // Push THIS loop's frame so break/continue in the body (and only
+                // the innermost) emit a cf.br to ^while_after_{lbl}/^while_header
+                // forwarding each carried var's current value by name. Inherit
+                // outer frames so an inner loop still scopes break/continue to
+                // itself.
+                #[cfg(feature = "std-surface")]
+                {
+                    body_sub.loop_stack = self.loop_stack.clone();
+                    body_sub.loop_stack.push(LoopFrame {
+                        lbl,
+                        carried: loop_args
+                            .iter()
+                            .map(|a| (a.name.clone(), a.init_id))
+                            .collect(),
+                    });
+                }
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
@@ -1611,6 +1663,12 @@ impl LoweringContext {
                 // Thread the function-global while-label counter into the
                 // then-branch so nested loops get unique labels.
                 then_sub.while_label = self.while_label;
+                // Inherit the enclosing-loop stack so break/continue inside this
+                // branch targets the correct (innermost) loop.
+                #[cfg(feature = "std-surface")]
+                {
+                    then_sub.loop_stack = self.loop_stack.clone();
+                }
                 for (vid, kind) in &self.values {
                     then_sub.values.insert(*vid, kind.clone());
                 }
@@ -1632,7 +1690,7 @@ impl LoweringContext {
                 // join block via a block-argument branch.
                 let then_ends_with_return = then_instrs
                     .last()
-                    .map(|i| matches!(i, Instr::Return { .. }))
+                    .map(instr_is_block_terminator)
                     .unwrap_or(false);
                 if !then_ends_with_return {
                     // F2: pass the if-value (then_result) plus every merge phi's
@@ -1660,6 +1718,10 @@ impl LoweringContext {
                 // Thread the function-global while-label counter into the
                 // else-branch so nested loops get unique labels.
                 else_sub.while_label = self.while_label;
+                #[cfg(feature = "std-surface")]
+                {
+                    else_sub.loop_stack = self.loop_stack.clone();
+                }
                 for (vid, kind) in &self.values {
                     else_sub.values.insert(*vid, kind.clone());
                 }
@@ -1677,7 +1739,7 @@ impl LoweringContext {
                 }
                 let else_ends_with_return = else_instrs
                     .last()
-                    .map(|i| matches!(i, Instr::Return { .. }))
+                    .map(instr_is_block_terminator)
                     .unwrap_or(false);
                 if !else_ends_with_return {
                     let mut vals: Vec<String> = vec![format!("%{}", else_result.0)];
@@ -1785,6 +1847,10 @@ impl LoweringContext {
                 // Thread the function-global while-label counter into the
                 // region body so nested loops get unique labels.
                 body_sub.while_label = self.while_label;
+                #[cfg(feature = "std-surface")]
+                {
+                    body_sub.loop_stack = self.loop_stack.clone();
+                }
                 for (vid, kind) in &self.values {
                     body_sub.values.insert(*vid, kind.clone());
                 }
@@ -1838,6 +1904,38 @@ impl LoweringContext {
                 // The region's result value was already registered by the
                 // body sub-context. Ensure the parent sees it.
                 self.values.insert(*result, ValueKind::ScalarI64);
+            }
+            // break / continue — branch to the innermost enclosing loop's
+            // ^while_after / ^while_header, forwarding each loop-carried var's
+            // CURRENT value (by name from the `live` snapshot; falling back to
+            // the loop init, which `substitute_ids` maps to the body block-arg =
+            // this iteration's incoming value). cf.br is a terminator; the body
+            // lowering never emits anything after a break/continue statement.
+            #[cfg(feature = "std-surface")]
+            Instr::Break { live } | Instr::Continue { live } => {
+                let frame = self.loop_stack.last().cloned().ok_or_else(|| {
+                    MlirLowerError::UnsupportedOp {
+                        instr_index,
+                        op: "break/continue outside a loop".to_string(),
+                    }
+                })?;
+                let live_map: std::collections::HashMap<&str, usize> =
+                    live.iter().map(|(n, v)| (n.as_str(), v.0)).collect();
+                let args: Vec<String> = frame
+                    .carried
+                    .iter()
+                    .map(|(name, init_id)| {
+                        let id = live_map.get(name.as_str()).copied().unwrap_or(*init_id);
+                        format!("%{id}")
+                    })
+                    .collect();
+                let arg_pass = fmt_block_args(&args);
+                let target = if matches!(instr, Instr::Break { .. }) {
+                    "after"
+                } else {
+                    "header"
+                };
+                self.emit_line(&format!("    cf.br ^while_{target}_{}{arg_pass}", frame.lbl));
             }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
