@@ -338,6 +338,7 @@ fn q16_compatible_binding_no_diag() {
 fn symbolic_dim_same_n_no_conflict() {
     // Build the module AST directly: FnDef + two let + call.
     let fn_node = Node::FnDef {
+        type_params: vec![],
         is_pub: false,
         is_test: false,
         name: "f".to_string(),
@@ -425,6 +426,7 @@ fn symbolic_dim_same_n_no_conflict() {
 #[test]
 fn symbolic_dim_mismatch_n_conflict() {
     let fn_node = Node::FnDef {
+        type_params: vec![],
         is_pub: false,
         is_test: false,
         name: "f".to_string(),
@@ -555,6 +557,7 @@ fn shape_check_inside_fn_body() {
     // Build a fn body with a mismatched let binding.
     let body_let = let_tensor("x", "f32", &["4", "16"], "body_src");
     let fn_node = Node::FnDef {
+        type_params: vec![],
         is_pub: false,
         is_test: false,
         name: "check_body".to_string(),

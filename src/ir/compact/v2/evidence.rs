@@ -251,6 +251,9 @@ impl TraceHashKind {
     }
 
     /// Parse the wire string, or `None` if unrecognised.
+    // Intentionally fallible-as-`Option` (not the `FromStr` trait, which would
+    // force a `Result` + `Err` type for a closed two-variant wire enum).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "mic3-bytes" => Some(TraceHashKind::Mic3Bytes),

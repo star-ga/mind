@@ -626,6 +626,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         Node::Lit(Literal::Float(_), span) => Ok((ValueType::ScalarF64, *span)),
         Node::Lit(Literal::Str(_), span) => Ok((ValueType::ScalarI32, *span)), // strings treated as opaque
         // Loop-control statements carry no value; type as the benign scalar.
+        #[cfg(feature = "std-surface")]
         Node::Break { span } | Node::Continue { span } => Ok((ValueType::ScalarI32, *span)),
         Node::Lit(Literal::Ident(name), span) => env
             .get(name)

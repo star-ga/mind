@@ -2685,6 +2685,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "std-surface")]
     #[test]
     fn eval_while_loop_array_mutation() {
         // `arr[i] = v` inside a while body: the write is visible to a later read in
@@ -2784,6 +2785,10 @@ fn fn_table_install(m: &Module) -> HashMap<String, UserFn> {
 
 /// Restore a previously-saved function table (paired with
 /// `fn_table_install`).
+// Wired up when generic-call execution gains scoped fn-tables (the install
+// site at `fn_table_install` currently discards `_fn_prev`); kept to land that
+// slice without re-deriving the restore half.
+#[allow(dead_code)]
 fn fn_table_restore(prev: HashMap<String, UserFn>) {
     FN_TABLE.with(|t| *t.borrow_mut() = prev);
 }
