@@ -1485,6 +1485,43 @@ pub(crate) fn eval_value_expr_mode(
                         region_env.insert(name.clone(), val.clone());
                         result = val;
                     }
+                    // `arr[i] = v` inside a region block: rebuild + rebind the array
+                    // tuple in the region scope (same as for / while / module level).
+                    Node::IndexAssign {
+                        receiver,
+                        index,
+                        value,
+                        ..
+                    } => {
+                        let val =
+                            eval_value_expr_mode(value, &region_env, tensor_env, mode.clone())?;
+                        if let Node::Lit(Literal::Ident(arr), _) = receiver.as_ref() {
+                            if let Some(Value::Tuple(mut items)) = region_env.get(arr).cloned() {
+                                let idx = match eval_value_expr_mode(
+                                    index,
+                                    &region_env,
+                                    tensor_env,
+                                    mode.clone(),
+                                )? {
+                                    Value::Int(i) => i,
+                                    other => {
+                                        return Err(EvalError::UnsupportedMsg(format!(
+                                            "array index must be an integer, got {other:?}"
+                                        )));
+                                    }
+                                };
+                                if idx < 0 || idx as usize >= items.len() {
+                                    return Err(EvalError::UnsupportedMsg(format!(
+                                        "array index {idx} out of bounds (len {})",
+                                        items.len()
+                                    )));
+                                }
+                                items[idx as usize] = val.clone();
+                                region_env.insert(arr.clone(), Value::Tuple(items));
+                            }
+                        }
+                        result = val;
+                    }
                     _ => {
                         result = eval_value_expr_mode(stmt, &region_env, tensor_env, mode.clone())?;
                     }
@@ -2407,6 +2444,20 @@ mod tests {
         match value {
             Value::Int(n) => assert_eq!(n, 18, "5 + 6 + 7 = 18"),
             other => panic!("expected Int(18), got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn eval_region_array_mutation() {
+        // `arr[i] = v` inside a region block mutates within the region scope.
+        let src = "region { let a = [0, 0, 0]; a[1] = 7; a[1] }";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 7, "a[1] should be 7 after region mutation"),
+            other => panic!("expected Int(7), got {other:?}"),
         }
     }
 }
