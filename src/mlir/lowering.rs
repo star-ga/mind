@@ -225,6 +225,17 @@ struct LoweringContext {
     /// deterministic and reproducible.
     #[cfg(feature = "std-surface")]
     while_label: usize,
+    /// Value-ids whose underlying MLIR value is an `i1` (an `arith.cmpi`
+    /// boolean result). The BinOp comparison arm tags every comparison result
+    /// as `ScalarI64` so downstream arithmetic keeps working, but the real
+    /// MLIR value is `i1`. When such a value flows straight into the `-> i64`
+    /// ABI return slot, mlir-opt rejects `return %v : i64` ("'i64' vs 'i1'"),
+    /// so a `-> bool` function never lowers. Tracked here so the return sites
+    /// can zero-extend it (`arith.extui %v : i1 to i64`) before returning.
+    /// Additive: only return-of-comparison (previously uncompilable) changes
+    /// emitted text, so existing artifacts stay byte-identical.
+    #[cfg(feature = "std-surface")]
+    i1_values: std::collections::BTreeSet<ValueId>,
 }
 
 impl LoweringContext {
@@ -243,6 +254,8 @@ impl LoweringContext {
             extern_c_fns: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             while_label: 0,
+            #[cfg(feature = "std-surface")]
+            i1_values: std::collections::BTreeSet::new(),
         }
     }
 
@@ -432,6 +445,17 @@ impl LoweringContext {
                             dst.0, mlir_op, lhs.0, rhs.0
                         ));
                         self.values.insert(*dst, ValueKind::ScalarI64);
+                        // A comparison op lowers to `arith.cmpi`, whose result
+                        // is `i1` (not the `: i64` operand type above). Record
+                        // it so the return sites can zero-extend an i1 that
+                        // flows into the `-> i64` ABI return slot.
+                        #[cfg(feature = "std-surface")]
+                        if matches!(
+                            op,
+                            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
+                        ) {
+                            self.i1_values.insert(*dst);
+                        }
                     }
                 }
             }
@@ -876,6 +900,13 @@ impl LoweringContext {
                     || last_line.starts_with("cf.cond_br ");
                 if !already_terminated {
                     match ret_id {
+                        // A fall-off-the-end comparison result is `i1`; widen it
+                        // to the i64 ABI return slot (same reason as the explicit
+                        // `Instr::Return` arm).
+                        Some(rid) if sub.i1_values.contains(rid) => fn_text.push_str(&format!(
+                            "    %bext{0} = arith.extui %{0} : i1 to i64\n    return %bext{0} : i64\n",
+                            rid.0
+                        )),
                         Some(rid) => fn_text.push_str(&format!("    return %{} : i64\n", rid.0)),
                         None => fn_text
                             .push_str("    %z = arith.constant 0 : i64\n    return %z : i64\n"),
@@ -910,6 +941,11 @@ impl LoweringContext {
             // P0d: explicit `return %v : i64` inside a user fn body.
             #[cfg(feature = "std-surface")]
             Instr::Return { value } => match value {
+                // A bare comparison result is `i1`; widen to the i64 ABI slot.
+                Some(v) if self.i1_values.contains(v) => {
+                    self.emit_line(&format!("    %bext{0} = arith.extui %{0} : i1 to i64", v.0));
+                    self.emit_line(&format!("    return %bext{} : i64", v.0));
+                }
                 Some(v) => self.emit_line(&format!("    return %{} : i64", v.0)),
                 None => self.emit_line("    return"),
             },
