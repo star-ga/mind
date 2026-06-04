@@ -142,7 +142,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         BuildTarget::Cpu,
         OptimizeLevel::Release,
         &[],
-        "0.6.8",
+        env!("CARGO_PKG_VERSION"),
         2024,
     )
 }
@@ -169,8 +169,8 @@ fn phase_g_01_mind_toml_exists_and_is_valid() {
         "Mind.toml [package].name must be 'mind'"
     );
     assert_eq!(
-        manifest.package.version, "0.6.8",
-        "Mind.toml [package].version must be '0.6.8'"
+        manifest.package.version, env!("CARGO_PKG_VERSION"),
+        "Mind.toml [package].version must match Cargo.toml (single version source of truth)"
     );
 
     use libmind::project::{EmitKind, OptimizeLevel};
