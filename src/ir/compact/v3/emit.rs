@@ -68,6 +68,12 @@ pub(super) const OP_RELU: u8 = 0x26;
 /// Backward ReLU (`{dst, grad, src}`): `dx = grad * step(src)`. Appended after
 /// `OP_RELU` so existing mic@3 byte streams and their `trace_hash` are unchanged.
 pub(super) const OP_RELU_GRAD: u8 = 0x27;
+/// Loop `break` marker (zero operands). Appended in previously-unused op-space
+/// so existing mic@3 byte streams and their `trace_hash` are unchanged
+/// (backward-compatible additive extension — no MIC3_VERSION bump).
+pub(super) const OP_BREAK: u8 = 0x28;
+/// Loop `continue` marker (zero operands). Appended after `OP_BREAK`.
+pub(super) const OP_CONTINUE: u8 = 0x29;
 
 // ─── DType byte tags ─────────────────────────────────────────────────────────
 
@@ -1194,6 +1200,16 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
                 encode_string_idx(w, h, st).unwrap();
             }
             w.write_all(&[callconv_to_byte(*callconv)]).unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::Break { live } => {
+            w.write_all(&[OP_BREAK]).unwrap();
+            encode_named_vids(w, live, st).unwrap();
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::Continue { live } => {
+            w.write_all(&[OP_CONTINUE]).unwrap();
+            encode_named_vids(w, live, st).unwrap();
         }
     }
 }
