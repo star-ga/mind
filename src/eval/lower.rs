@@ -53,7 +53,10 @@ use crate::types::ShapeDim;
 /// One pending monomorphization: the generic fn name plus the concrete type
 /// substituted for its single type parameter, both already reflected in the
 /// mangled instance name used as the map key.
+// `generic_name` / `concrete` are retained for the multi-param / nested-generics
+// slices; the registry currently keys on the mangled name only.
 #[derive(Clone)]
+#[allow(dead_code)]
 struct MonoRequest {
     /// Source-level generic fn name (e.g. `id`).
     generic_name: String,
@@ -111,6 +114,12 @@ fn infer_concrete_arg_type(arg: &ast::Node) -> Option<TypeAnn> {
 /// generic or the shape is outside the bounded slice.
 fn try_register_mono_instance(callee: &str, args: &[ast::Node]) -> Option<String> {
     MONO.with(|cell| {
+        // Fast path: a module with no generic templates (the overwhelmingly common
+        // case) pays only this O(1) is_empty check on the lowering hot path —
+        // avoids a borrow_mut + per-call HashMap probe for every non-generic call.
+        if cell.borrow().templates.is_empty() {
+            return None;
+        }
         let mut ctx = cell.borrow_mut();
         if !ctx.templates.contains_key(callee) {
             return None;
