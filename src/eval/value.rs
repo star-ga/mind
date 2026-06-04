@@ -113,6 +113,14 @@ pub enum Value {
     Tuple(Vec<Value>),
     Tensor(TensorVal),
     GradMap(BTreeMap<VarId, TensorVal>),
+    /// Sum-type value (Phase 10.7): an enum/`Option`/`Result` variant with an
+    /// optional positional payload. `variant` is the full path string as written
+    /// in source (e.g. `"Result::Ok"`, `"Some"`, `"Mode::On"`); `payload` holds
+    /// the constructor arguments (empty for unit variants).
+    Enum {
+        variant: String,
+        payload: Vec<Value>,
+    },
 }
 
 impl Value {
@@ -184,6 +192,23 @@ pub fn format_value_human(v: &Value) -> String {
                 parts.push(format!("{}: {}", var.0, tensor_str));
             }
             format!("grad{{ {} }}", parts.join(", "))
+        }
+        Value::Enum { variant, payload } => {
+            if payload.is_empty() {
+                variant.clone()
+            } else {
+                let mut out = String::new();
+                out.push_str(variant);
+                out.push('(');
+                for (i, item) in payload.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&format_value_human(item));
+                }
+                out.push(')');
+                out
+            }
         }
     }
 }
