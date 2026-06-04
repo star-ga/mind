@@ -580,6 +580,46 @@ fn broadcast_shapes(a: &[ShapeDim], b: &[ShapeDim]) -> Option<Vec<ShapeDim>> {
     Some(out)
 }
 
+/// Levenshtein edit distance between two identifiers (for "did you mean" hints).
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut curr = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        curr[0] = i;
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b.len()]
+}
+
+/// The known identifier closest to `name` within a small edit distance, for a
+/// "did you mean" hint. Deterministic regardless of `env` iteration order: picks the
+/// minimum distance, breaking ties by the lexicographically-smallest name — so the
+/// suggestion never depends on HashMap ordering.
+fn closest_identifier(name: &str, env: &TypeEnv) -> Option<String> {
+    let max_dist = (name.chars().count() / 2).clamp(1, 2);
+    let mut best: Option<(usize, &String)> = None;
+    for known in env.keys() {
+        let d = levenshtein(name, known);
+        if d == 0 || d > max_dist {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some((bd, bk)) => d < *bd || (d == *bd && known < *bk),
+        };
+        if better {
+            best = Some((d, known));
+        }
+    }
+    best.map(|(_, k)| k.clone())
+}
+
 fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
     match node {
         Node::Lit(Literal::Int(_), span) => Ok((ValueType::ScalarI32, *span)),
@@ -590,7 +630,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             .cloned()
             .map(|t| (t, *span))
             .ok_or_else(|| TypeErrSpan {
-                msg: format!("unknown identifier `{name}`"),
+                msg: match closest_identifier(name, env) {
+                    Some(s) => format!("unknown identifier `{name}` — did you mean `{s}`?"),
+                    None => format!("unknown identifier `{name}`"),
+                },
                 span: *span,
             }),
         Node::Paren(inner, span) => {
@@ -3745,5 +3788,34 @@ fn classify_error_code(msg: &str) -> &'static str {
         SHAPE_RANK_CODE
     } else {
         TYPE_ERR_CODE
+    }
+}
+
+#[cfg(test)]
+mod did_you_mean_tests {
+    use super::*;
+
+    #[test]
+    fn closest_identifier_suggests_near_typo() {
+        let mut env: TypeEnv = HashMap::new();
+        env.insert("count".to_string(), ValueType::ScalarI32);
+        env.insert("amount".to_string(), ValueType::ScalarI32);
+        // one-char typo -> the close name
+        assert_eq!(closest_identifier("cout", &env).as_deref(), Some("count"));
+        // nothing close enough -> no suggestion
+        assert_eq!(closest_identifier("zzzzz", &env), None);
+    }
+
+    #[test]
+    fn closest_identifier_is_deterministic_on_ties() {
+        // Two equidistant candidates: the suggestion must be the lexicographically
+        // smaller one regardless of HashMap iteration order (wedge: deterministic).
+        let mut env: TypeEnv = HashMap::new();
+        env.insert("bat".to_string(), ValueType::ScalarI32);
+        env.insert("cat".to_string(), ValueType::ScalarI32);
+        // "aat" is distance 1 from both "bat" and "cat"; "bat" < "cat".
+        for _ in 0..20 {
+            assert_eq!(closest_identifier("aat", &env).as_deref(), Some("bat"));
+        }
     }
 }
