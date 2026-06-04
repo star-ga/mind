@@ -1405,6 +1405,43 @@ pub(crate) fn eval_value_expr_mode(
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
+                        // `arr[i] = v` inside the while body: rebuild + rebind the
+                        // array tuple in the loop scope (same as For / module level).
+                        Node::IndexAssign {
+                            receiver,
+                            index,
+                            value,
+                            ..
+                        } => {
+                            let val =
+                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
+                            if let Node::Lit(Literal::Ident(arr), _) = receiver.as_ref() {
+                                if let Some(Value::Tuple(mut items)) = loop_env.get(arr).cloned() {
+                                    let idx = match eval_value_expr_mode(
+                                        index,
+                                        &loop_env,
+                                        tensor_env,
+                                        mode.clone(),
+                                    )? {
+                                        Value::Int(i) => i,
+                                        other => {
+                                            return Err(EvalError::UnsupportedMsg(format!(
+                                                "array index must be an integer, got {other:?}"
+                                            )));
+                                        }
+                                    };
+                                    if idx < 0 || idx as usize >= items.len() {
+                                        return Err(EvalError::UnsupportedMsg(format!(
+                                            "array index {idx} out of bounds (len {})",
+                                            items.len()
+                                        )));
+                                    }
+                                    items[idx as usize] = val.clone();
+                                    loop_env.insert(arr.clone(), Value::Tuple(items));
+                                }
+                            }
+                            result = val;
+                        }
                         _ => {
                             result = eval_value_expr_mode(
                                 stmt,
@@ -2355,6 +2392,21 @@ mod tests {
         match value {
             Value::Int(n) => assert_eq!(n, 12, "arr[2] should be 12 after the fill loop"),
             other => panic!("expected Int(12), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_while_loop_array_mutation() {
+        // `arr[i] = v` inside a while body: the write is visible to a later read in
+        // the same loop scope. (The while value is its last body statement.)
+        let src = "let arr = [0, 0, 0]; let i = 0; let sum = 0; \
+                   while i < 3 { arr[i] = i + 5; i = i + 1; sum = sum + arr[i - 1] }";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 18, "5 + 6 + 7 = 18"),
+            other => panic!("expected Int(18), got {other:?}"),
         }
     }
 }
