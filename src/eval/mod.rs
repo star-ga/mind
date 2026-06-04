@@ -1359,11 +1359,11 @@ pub(crate) fn eval_value_expr_mode(
                     .into(),
             ))
         }
-        // Phase 10.7: reference-taking `&expr` / `&mut expr`. The interpreter
-        // has no heap/handle model, so taking a reference is not yet supported.
-        Node::Ref { .. } => Err(EvalError::UnsupportedMsg(
-            "reference-taking (`&`) not yet implemented in the interpreter".into(),
-        )),
+        // Phase 10.7: reference-taking `&expr` / `&mut expr`. The immutable
+        // interpreter has no heap/handle model, so a borrow in expression
+        // position is simply a READ of the inner expression: `&x` (and
+        // `&mut x`) evaluates the inner expression and yields its value.
+        Node::Ref { inner, .. } => eval_value_expr_mode(inner, env, tensor_env, mode.clone()),
         // RFC 0005 Gap 1: while loop. Mirrors the `For`-loop interpreter
         // contract — a fresh loop scope inheriting the outer env, with
         // `let`/`assign` statements in the body propagated back into that scope
@@ -2303,6 +2303,34 @@ mod tests {
                 assert_eq!(t.fill, Some(1.0));
             }
             _ => panic!("expected tensor"),
+        }
+    }
+
+    #[test]
+    fn eval_borrow_read_yields_inner_value() {
+        // Phase 10.7: the immutable interpreter has no real handles, so a borrow
+        // expression `&x` (and `&mut x`) is a READ that evaluates the inner
+        // expression and yields its value.
+        let src = "let x = 5; &x";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 5, "`&x` should read x's value"),
+            other => panic!("expected Int(5), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_mut_borrow_read_yields_inner_value() {
+        // `&mut x` in expression position is also a read in the interpreter.
+        let src = "let x = 7; &mut x";
+        let module = parser::parse(src).unwrap();
+        let mut env = HashMap::new();
+        let value = eval_module_value_with_env(&module, &mut env, Some(src)).unwrap();
+        match value {
+            Value::Int(n) => assert_eq!(n, 7, "`&mut x` should read x's value"),
+            other => panic!("expected Int(7), got {other:?}"),
         }
     }
 
