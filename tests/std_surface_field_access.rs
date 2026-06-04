@@ -326,6 +326,7 @@ fn field_access_module_scope_binding_visible_inside_fn_body() {
                 is_pub: false,
                 is_test: false,
                 name: "read".to_string(),
+                type_params: vec![],
                 params: vec![],
                 ret_type: None,
                 body: vec![Node::Return {

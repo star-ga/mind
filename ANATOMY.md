@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2690 | **Est. tokens:** ~6,734,651
-**Generated:** 2026-06-04 05:20 UTC
+**Files:** 2690 | **Est. tokens:** ~6,734,660
+**Generated:** 2026-06-04 05:47 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 171 | ~303,843 |
+| `tests/` | 171 | ~303,852 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4062,7 +4062,7 @@
 - `std_surface_cli_equals_form.rs` (~871 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1005 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_subcommand.rs` (~796 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_field_access.rs` (~2903 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_field_access.rs` (~2912 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3384 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_i32_intrinsics.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
