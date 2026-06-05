@@ -112,6 +112,27 @@ const VEC_MATMUL_RMAJOR_Q16_INTRINSIC: &str = "__mind_blas_matmul_rmajor_q16_v";
 #[cfg(feature = "std-surface")]
 const VEC_MATMUL_MM_Q16_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_v";
 
+/// Multithreaded fused outer-product Q16.16 GEMM surface name.
+///
+/// Signature: `(a_addr, b_addr, c_addr, m, k, n) -> i64` (returns 0). ABI
+/// and semantics are byte-for-byte identical to the single-thread
+/// `__mind_blas_matmul_mm_q16_v`; the kernel is internally parallelised with
+/// raw POSIX threads (no libomp, no extra runtime dependency — the schedule
+/// is baked into the emitted artifact).
+///
+/// Determinism (the wedge): the output rows `[0, M)` are split into `T`
+/// **contiguous owner-computes bands** (`band = ceildiv(M, T)`), and each
+/// thread computes `C[row_start:row_end, 0:N]` ENTIRELY with the SAME fused
+/// outer-product math as the single-thread kernel. Every output element is
+/// written by exactly one thread — there is NO cross-thread reduction, NO
+/// atomic, NO shared accumulator — so the result is byte-for-byte identical
+/// to the single-thread kernel REGARDLESS of the thread count `T`. The
+/// runtime thread count therefore does not enter the output: it may be read
+/// from `sysconf(_SC_NPROCESSORS_ONLN)` at runtime (and is, here) without
+/// affecting cross-substrate bit-identity.
+#[cfg(feature = "std-surface")]
+const VEC_MATMUL_MM_Q16_MT_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_mt_v";
+
 /// "int-dot" tier (RFC 0006 Track B) — the pure-MIND surface name whose
 /// `Instr::Call` lowers to a native MLIR `vector`-dialect **int16** dot
 /// product. Inputs are i16 row-major; the kernel computes the scalar oracle
@@ -312,6 +333,18 @@ struct LoweringContext {
     /// each carried var (looked up by name in the instr's `live` snapshot).
     #[cfg(feature = "std-surface")]
     loop_stack: Vec<LoopFrame>,
+    /// Pre-formatted top-level `llvm.func @mind_mt_worker_q16_<id>(...)` worker
+    /// bodies emitted by the multithreaded Q16.16 GEMM intrinsic. The module
+    /// assembler concatenates these before `@main` (alongside `user_fns`). The
+    /// worker runs the fused row-band kernel and is referenced by
+    /// `llvm.mlir.addressof` as the `pthread_create` start routine.
+    #[cfg(feature = "std-surface")]
+    mt_workers: String,
+    /// Set when any multithreaded intrinsic was lowered, so the module
+    /// assembler emits the `pthread_create` / `pthread_join` / `sysconf`
+    /// `llvm.func` externs exactly once.
+    #[cfg(feature = "std-surface")]
+    needs_pthread: bool,
 }
 
 /// One enclosing `while` loop, for break/continue codegen.
@@ -357,6 +390,10 @@ impl LoweringContext {
             i1_values: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             loop_stack: Vec::new(),
+            #[cfg(feature = "std-surface")]
+            mt_workers: String::new(),
+            #[cfg(feature = "std-surface")]
+            needs_pthread: false,
         }
     }
 
@@ -859,6 +896,21 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
+                // Multithreaded fused outer-product Q16.16 GEMM. Same ABI and
+                // semantics as the single-thread `__mind_blas_matmul_mm_q16_v`,
+                // but split into `T` contiguous owner-computes M-row bands run
+                // on raw POSIX threads. Each output element is written by
+                // exactly one thread (no cross-thread reduction / atomics /
+                // shared accumulator), so the result is byte-for-byte identical
+                // to the single-thread kernel regardless of `T`. Additive: the
+                // single-thread path above is untouched.
+                if name == VEC_MATMUL_MM_Q16_MT_INTRINSIC && args.len() == 6 {
+                    self.emit_vec_matmul_mm_q16_mt(
+                        *dst, args[0], args[1], args[2], args[3], args[4], args[5],
+                    );
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
                 // "int-dot" tier — row-major int16 matmul. Outer `scf.for`
                 // over rows with the proven int16 reduction from
                 // `emit_vec_dot_i16` (sext i16->i64, i64-lane accumulate,
@@ -1074,6 +1126,11 @@ impl LoweringContext {
                     self.extern_c_fns.insert(efn_name, sig);
                 }
                 self.user_fns.push_str(&sub.user_fns);
+                // Bubble up any multithreaded-GEMM worker functions and the
+                // pthread-extern requirement discovered inside the body, so the
+                // module assembler emits them at top level exactly once.
+                self.mt_workers.push_str(&sub.mt_workers);
+                self.needs_pthread |= sub.needs_pthread;
             }
             // P0d: function parameters bind a ValueId to the i64 ABI; the
             // value is named in the enclosing `func.func` signature so we
@@ -3201,9 +3258,7 @@ impl LoweringContext {
         ));
         // Base pointer to each of the RB W-rows in this block: W[r+t, 0].
         for t in 0..RB {
-            self.emit_line(&format!(
-                "      %vmmq_rt{t}_{d} = arith.constant {t} : i64"
-            ));
+            self.emit_line(&format!("      %vmmq_rt{t}_{d} = arith.constant {t} : i64"));
             self.emit_line(&format!(
                 "      %vmmq_rit{t}_{d} = arith.addi %vmmq_ri_{d}, %vmmq_rt{t}_{d} : i64"
             ));
@@ -3402,7 +3457,9 @@ impl LoweringContext {
         self.emit_line(&format!(
             "        %vmmqr_na_{d} = arith.addi %vmmqr_acc_{d}, %vmmqr_sh_{d} : vector<{l}xi64>"
         ));
-        self.emit_line(&format!("        scf.yield %vmmqr_na_{d} : vector<{l}xi64>"));
+        self.emit_line(&format!(
+            "        scf.yield %vmmqr_na_{d} : vector<{l}xi64>"
+        ));
         self.emit_line("      }");
         self.emit_line(&format!(
             "      %vmmqr_vs_{d} = vector.reduction <add>, %vmmqr_vacc_{d} : \
@@ -3925,6 +3982,741 @@ impl LoweringContext {
         self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
     }
 
+    /// Emit the fused outer-product Q16.16 GEMM kernel restricted to a
+    /// **contiguous band of output rows** `[row_start, row_end)`, used by the
+    /// multithreaded `__mind_blas_matmul_mm_q16_mt_v` worker.
+    ///
+    /// This is the EXACT register-tiled microkernel of `emit_vec_matmul_mm_q16`
+    /// (same NR-wide column accumulator, MR A-rows per tile, individual
+    /// `>> 16`-shift-then-i64-accumulate, single i64→i32 truncation at the
+    /// store, and identical scalar column/row tails), with the row loops bounded
+    /// by `[row_start, row_end)` instead of `[0, M)`. Because each output
+    /// element `C[i, *]` (i in the band) is computed independently — every term
+    /// shifted to a fixed i64 value before an associative i64 add — the bytes a
+    /// worker writes for its band are identical to what the single-thread kernel
+    /// would write for the same rows. The bands partition `[0, M)`, so the union
+    /// is byte-for-byte the single-thread output regardless of how `[0, M)` is
+    /// split (owner-computes: no shared accumulator, no cross-band reduction).
+    ///
+    /// `prefix` namespaces every SSA value so multiple workers (and the worker
+    /// vs `@main`) never collide. `ap`/`bp`/`cp` are `!llvm.ptr` SSA value
+    /// *names* (already materialised in the caller). `k64`/`n64` are i64 SSA
+    /// value names for K and N. `row_start`/`row_end` are `index` SSA value
+    /// names bounding the band. Text is appended to `buf`; the caller wraps it
+    /// in a function body.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mm_q16_row_band(
+        buf: &mut String,
+        prefix: &str,
+        ap: &str,
+        bp: &str,
+        cp: &str,
+        k64: &str,
+        n64: &str,
+        ki: &str,
+        ni: &str,
+        row_start: &str,
+        row_end: &str,
+    ) {
+        use std::fmt::Write;
+        let p = prefix;
+        const NR: usize = 8;
+        const MR: usize = 4;
+        let elem_bytes = std::mem::size_of::<i32>() as i64;
+        let mut line = |s: &str| {
+            writeln!(buf, "{s}").expect("write to string cannot fail");
+        };
+
+        // ── constants ────────────────────────────────────────────────────────
+        line(&format!("    %{p}_c0 = arith.constant 0 : index"));
+        line(&format!("    %{p}_c1 = arith.constant 1 : index"));
+        line(&format!("    %{p}_nr = arith.constant {NR} : index"));
+        line(&format!("    %{p}_mr = arith.constant {MR} : index"));
+        line(&format!("    %{p}_eb = arith.constant {elem_bytes} : i64"));
+        line(&format!("    %{p}_s16 = arith.constant 16 : i64"));
+        line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
+        line(&format!(
+            "    %{p}_s16v = arith.constant dense<16> : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "    %{p}_zv = arith.constant dense<0> : vector<{NR}xi64>"
+        ));
+
+        // ── column bounds (N-derived, row-band-invariant) ────────────────────
+        line(&format!(
+            "    %{p}_nnb = arith.divui %{ni}, %{p}_nr : index"
+        ));
+        line(&format!(
+            "    %{p}_nmain = arith.muli %{p}_nnb, %{p}_nr : index"
+        ));
+        // m_main relative to the band: row_start + ((row_end-row_start)/MR)*MR.
+        line(&format!(
+            "    %{p}_rb = arith.subi %{row_end}, %{row_start} : index"
+        ));
+        line(&format!(
+            "    %{p}_mmb = arith.divui %{p}_rb, %{p}_mr : index"
+        ));
+        line(&format!(
+            "    %{p}_mbk = arith.muli %{p}_mmb, %{p}_mr : index"
+        ));
+        line(&format!(
+            "    %{p}_mmain = arith.addi %{row_start}, %{p}_mbk : index"
+        ));
+
+        // ════════════════════════════════════════════════════════════════════
+        //  Region A — vector tile: MR rows × NR columns, k-reduced.
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "    scf.for %{p}_j0 = %{p}_c0 to %{p}_nmain step %{p}_nr {{"
+        ));
+        line(&format!(
+            "      %{p}_j0i = arith.index_cast %{p}_j0 : index to i64"
+        ));
+        line(&format!(
+            "      scf.for %{p}_i0 = %{row_start} to %{p}_mmain step %{p}_mr {{"
+        ));
+        line(&format!(
+            "        %{p}_i0i = arith.index_cast %{p}_i0 : index to i64"
+        ));
+        let acc_init = (0..MR)
+            .map(|t| format!("%{p}_acc{t} = %{p}_zv"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let acc_ty = (0..MR)
+            .map(|_| format!("vector<{NR}xi64>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(&format!(
+            "        %{p}_va:{MR} = scf.for %{p}_k = %{p}_c0 to %{ki} \
+             step %{p}_c1 iter_args({acc_init}) -> ({acc_ty}) {{"
+        ));
+        line(&format!(
+            "          %{p}_ki64 = arith.index_cast %{p}_k : index to i64"
+        ));
+        line(&format!(
+            "          %{p}_kn = arith.muli %{p}_ki64, %{n64} : i64"
+        ));
+        line(&format!(
+            "          %{p}_bidx = arith.addi %{p}_kn, %{p}_j0i : i64"
+        ));
+        line(&format!(
+            "          %{p}_bbo = arith.muli %{p}_bidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "          %{p}_bptr = llvm.getelementptr %{bp}[%{p}_bbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}_bv = llvm.load %{p}_bptr {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{NR}xi32>"
+        ));
+        line(&format!(
+            "          %{p}_bw = arith.extsi %{p}_bv : vector<{NR}xi32> to vector<{NR}xi64>"
+        ));
+        let mut yields = Vec::with_capacity(MR);
+        for t in 0..MR {
+            line(&format!("          %{p}_rt{t} = arith.constant {t} : i64"));
+            line(&format!(
+                "          %{p}_it{t} = arith.addi %{p}_i0i, %{p}_rt{t} : i64"
+            ));
+            line(&format!(
+                "          %{p}_ik{t} = arith.muli %{p}_it{t}, %{k64} : i64"
+            ));
+            line(&format!(
+                "          %{p}_aidx{t} = arith.addi %{p}_ik{t}, %{p}_ki64 : i64"
+            ));
+            line(&format!(
+                "          %{p}_abo{t} = arith.muli %{p}_aidx{t}, %{p}_eb : i64"
+            ));
+            line(&format!(
+                "          %{p}_aptr{t} = llvm.getelementptr %{ap}[%{p}_abo{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "          %{p}_as{t} = llvm.load %{p}_aptr{t} : !llvm.ptr -> i32"
+            ));
+            line(&format!(
+                "          %{p}_aw{t} = arith.extsi %{p}_as{t} : i32 to i64"
+            ));
+            line(&format!(
+                "          %{p}_ab{t} = vector.broadcast %{p}_aw{t} : i64 to vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_pp{t} = arith.muli %{p}_ab{t}, %{p}_bw : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_ps{t} = arith.shrsi %{p}_pp{t}, %{p}_s16v : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_ps{t} : vector<{NR}xi64>"
+            ));
+            yields.push(format!("%{p}_na{t}"));
+        }
+        line(&format!(
+            "          scf.yield {} : {acc_ty}",
+            yields.join(", ")
+        ));
+        line("        }");
+        for t in 0..MR {
+            line(&format!("        %{p}_strt{t} = arith.constant {t} : i64"));
+            line(&format!(
+                "        %{p}_sit{t} = arith.addi %{p}_i0i, %{p}_strt{t} : i64"
+            ));
+            line(&format!(
+                "        %{p}_cin{t} = arith.muli %{p}_sit{t}, %{n64} : i64"
+            ));
+            line(&format!(
+                "        %{p}_cidx{t} = arith.addi %{p}_cin{t}, %{p}_j0i : i64"
+            ));
+            line(&format!(
+                "        %{p}_cbo{t} = arith.muli %{p}_cidx{t}, %{p}_eb : i64"
+            ));
+            line(&format!(
+                "        %{p}_cptr{t} = llvm.getelementptr %{cp}[%{p}_cbo{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "        %{p}_lo{t} = arith.trunci %{p}_va#{t} : vector<{NR}xi64> to vector<{NR}xi32>"
+            ));
+            line(&format!(
+                "        llvm.store %{p}_lo{t}, %{p}_cptr{t} {{alignment = 4 : i64}} : \
+                 vector<{NR}xi32>, !llvm.ptr"
+            ));
+        }
+        line("      }");
+        line("    }");
+
+        // ════════════════════════════════════════════════════════════════════
+        //  Region B — band M row tail: rows [m_main..row_end), cols [0..n_main).
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "    scf.for %{p}b_j0 = %{p}_c0 to %{p}_nmain step %{p}_nr {{"
+        ));
+        line(&format!(
+            "      %{p}b_j0i = arith.index_cast %{p}b_j0 : index to i64"
+        ));
+        line(&format!(
+            "      scf.for %{p}b_i = %{p}_mmain to %{row_end} step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "        %{p}b_ii = arith.index_cast %{p}b_i : index to i64"
+        ));
+        line(&format!(
+            "        %{p}b_vacc = scf.for %{p}b_k = %{p}_c0 to %{ki} \
+             step %{p}_c1 iter_args(%{p}b_acc = %{p}_zv) -> (vector<{NR}xi64>) {{"
+        ));
+        line(&format!(
+            "          %{p}b_ki64 = arith.index_cast %{p}b_k : index to i64"
+        ));
+        line(&format!(
+            "          %{p}b_kn = arith.muli %{p}b_ki64, %{n64} : i64"
+        ));
+        line(&format!(
+            "          %{p}b_bidx = arith.addi %{p}b_kn, %{p}b_j0i : i64"
+        ));
+        line(&format!(
+            "          %{p}b_bbo = arith.muli %{p}b_bidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "          %{p}b_bptr = llvm.getelementptr %{bp}[%{p}b_bbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}b_bv = llvm.load %{p}b_bptr {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{NR}xi32>"
+        ));
+        line(&format!(
+            "          %{p}b_bw = arith.extsi %{p}b_bv : vector<{NR}xi32> to vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_ik = arith.muli %{p}b_ii, %{k64} : i64"
+        ));
+        line(&format!(
+            "          %{p}b_aidx = arith.addi %{p}b_ik, %{p}b_ki64 : i64"
+        ));
+        line(&format!(
+            "          %{p}b_abo = arith.muli %{p}b_aidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "          %{p}b_aptr = llvm.getelementptr %{ap}[%{p}b_abo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}b_as = llvm.load %{p}b_aptr : !llvm.ptr -> i32"
+        ));
+        line(&format!(
+            "          %{p}b_aw = arith.extsi %{p}b_as : i32 to i64"
+        ));
+        line(&format!(
+            "          %{p}b_ab = vector.broadcast %{p}b_aw : i64 to vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_pp = arith.muli %{p}b_ab, %{p}b_bw : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_ps = arith.shrsi %{p}b_pp, %{p}_s16v : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_na = arith.addi %{p}b_acc, %{p}b_ps : vector<{NR}xi64>"
+        ));
+        line(&format!("          scf.yield %{p}b_na : vector<{NR}xi64>"));
+        line("        }");
+        line(&format!(
+            "        %{p}b_cin = arith.muli %{p}b_ii, %{n64} : i64"
+        ));
+        line(&format!(
+            "        %{p}b_cidx = arith.addi %{p}b_cin, %{p}b_j0i : i64"
+        ));
+        line(&format!(
+            "        %{p}b_cbo = arith.muli %{p}b_cidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "        %{p}b_cptr = llvm.getelementptr %{cp}[%{p}b_cbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "        %{p}b_lo = arith.trunci %{p}b_vacc : vector<{NR}xi64> to vector<{NR}xi32>"
+        ));
+        line(&format!(
+            "        llvm.store %{p}b_lo, %{p}b_cptr {{alignment = 4 : i64}} : \
+             vector<{NR}xi32>, !llvm.ptr"
+        ));
+        line("      }");
+        line("    }");
+
+        // ════════════════════════════════════════════════════════════════════
+        //  Region C — N column tail: cols [n_main..N), all band rows.
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "    scf.for %{p}c_j = %{p}_nmain to %{ni} step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "      %{p}c_ji = arith.index_cast %{p}c_j : index to i64"
+        ));
+        line(&format!(
+            "      scf.for %{p}c_i = %{row_start} to %{row_end} step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "        %{p}c_ii = arith.index_cast %{p}c_i : index to i64"
+        ));
+        line(&format!(
+            "        %{p}c_iK = arith.muli %{p}c_ii, %{k64} : i64"
+        ));
+        line(&format!(
+            "        %{p}c_acc = scf.for %{p}c_k = %{p}_c0 to %{ki} \
+             step %{p}_c1 iter_args(%{p}c_s = %{p}_z0) -> (i64) {{"
+        ));
+        line(&format!(
+            "          %{p}c_ki64 = arith.index_cast %{p}c_k : index to i64"
+        ));
+        line(&format!(
+            "          %{p}c_aidx = arith.addi %{p}c_iK, %{p}c_ki64 : i64"
+        ));
+        line(&format!(
+            "          %{p}c_abo = arith.muli %{p}c_aidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "          %{p}c_aptr = llvm.getelementptr %{ap}[%{p}c_abo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}c_as = llvm.load %{p}c_aptr : !llvm.ptr -> i32"
+        ));
+        line(&format!(
+            "          %{p}c_aw = arith.extsi %{p}c_as : i32 to i64"
+        ));
+        line(&format!(
+            "          %{p}c_kn = arith.muli %{p}c_ki64, %{n64} : i64"
+        ));
+        line(&format!(
+            "          %{p}c_bidx = arith.addi %{p}c_kn, %{p}c_ji : i64"
+        ));
+        line(&format!(
+            "          %{p}c_bbo = arith.muli %{p}c_bidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "          %{p}c_bptr = llvm.getelementptr %{bp}[%{p}c_bbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}c_bs = llvm.load %{p}c_bptr : !llvm.ptr -> i32"
+        ));
+        line(&format!(
+            "          %{p}c_bw = arith.extsi %{p}c_bs : i32 to i64"
+        ));
+        line(&format!(
+            "          %{p}c_pp = arith.muli %{p}c_aw, %{p}c_bw : i64"
+        ));
+        line(&format!(
+            "          %{p}c_ps = arith.shrsi %{p}c_pp, %{p}_s16 : i64"
+        ));
+        line(&format!(
+            "          %{p}c_na = arith.addi %{p}c_s, %{p}c_ps : i64"
+        ));
+        line(&format!("          scf.yield %{p}c_na : i64"));
+        line("        }");
+        line(&format!(
+            "        %{p}c_lo = arith.trunci %{p}c_acc : i64 to i32"
+        ));
+        line(&format!(
+            "        %{p}c_iN = arith.muli %{p}c_ii, %{n64} : i64"
+        ));
+        line(&format!(
+            "        %{p}c_cidx = arith.addi %{p}c_iN, %{p}c_ji : i64"
+        ));
+        line(&format!(
+            "        %{p}c_cbo = arith.muli %{p}c_cidx, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "        %{p}c_cptr = llvm.getelementptr %{cp}[%{p}c_cbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "        llvm.store %{p}c_lo, %{p}c_cptr : i32, !llvm.ptr"
+        ));
+        line("      }");
+        line("    }");
+    }
+
+    /// Emit the multithreaded fused outer-product Q16.16 GEMM
+    /// (`__mind_blas_matmul_mm_q16_mt_v`).
+    ///
+    /// Mechanism: raw POSIX threads emitted directly in the LLVM dialect (no
+    /// libomp). The output rows `[0, M)` are split into `T` contiguous
+    /// owner-computes bands; each thread runs the fused row-band kernel
+    /// (`emit_mm_q16_row_band`) over its `[row_start, row_end)` and writes
+    /// `C[row_start:row_end, 0:N]` with the SAME math as the single-thread
+    /// kernel. No cross-thread reduction, no atomics, no shared accumulator —
+    /// every output element is written by exactly one thread, so the result is
+    /// byte-for-byte identical to the single-thread kernel for any `T`. `T` is
+    /// read at runtime from `sysconf(_SC_NPROCESSORS_ONLN)` (clamped to
+    /// `[1, M]`); because the output does not depend on `T`, this is safe for
+    /// cross-substrate bit-identity.
+    ///
+    /// The thread-arg struct is `{a:i64, b:i64, c:i64, k:i64, n:i64,
+    /// row_start:i64, row_end:i64}` (the worker re-derives `!llvm.ptr`s and
+    /// `index` bounds from these i64 fields). `@main` stack-allocates `T` arg
+    /// structs and `T` `pthread_t` (i64) handles, spawns, then joins.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_vec_matmul_mm_q16_mt(
+        &mut self,
+        dst: ValueId,
+        a_addr: ValueId,
+        b_addr: ValueId,
+        c_addr: ValueId,
+        m: ValueId,
+        k: ValueId,
+        n: ValueId,
+    ) {
+        use std::fmt::Write;
+        let d = dst.0;
+        self.needs_pthread = true;
+
+        // ── worker function (top-level llvm.func) ────────────────────────────
+        // Arg struct layout (all i64): [0]=a [1]=b [2]=c [3]=k [4]=n
+        //                              [5]=row_start [6]=row_end
+        let wname = format!("mind_mt_worker_q16_{d}");
+        let mut w = String::new();
+        writeln!(
+            &mut w,
+            "  llvm.func @{wname}(%arg0: !llvm.ptr) -> !llvm.ptr {{"
+        )
+        .unwrap();
+        // Load the 7 i64 fields from the packed arg struct (contiguous i64s).
+        for (idx, fld) in [
+            (0usize, "a"),
+            (1, "b"),
+            (2, "c"),
+            (3, "k"),
+            (4, "n"),
+            (5, "rs"),
+            (6, "re"),
+        ] {
+            let off = (idx as i64) * 8;
+            writeln!(
+                &mut w,
+                "    %wk_{d}_o{idx} = llvm.mlir.constant({off} : i64) : i64"
+            )
+            .unwrap();
+            writeln!(
+                &mut w,
+                "    %wk_{d}_p{idx} = llvm.getelementptr %arg0[%wk_{d}_o{idx}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            )
+            .unwrap();
+            writeln!(
+                &mut w,
+                "    %wk_{d}_{fld} = llvm.load %wk_{d}_p{idx} : !llvm.ptr -> i64"
+            )
+            .unwrap();
+        }
+        // Re-derive pointers and band bounds.
+        writeln!(
+            &mut w,
+            "    %wk_{d}_ap = llvm.inttoptr %wk_{d}_a : i64 to !llvm.ptr"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wk_{d}_bp = llvm.inttoptr %wk_{d}_b : i64 to !llvm.ptr"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wk_{d}_cp = llvm.inttoptr %wk_{d}_c : i64 to !llvm.ptr"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wk_{d}_ki = arith.index_cast %wk_{d}_k : i64 to index"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wk_{d}_ni = arith.index_cast %wk_{d}_n : i64 to index"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wk_{d}_rsi = arith.index_cast %wk_{d}_rs : i64 to index"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wk_{d}_rei = arith.index_cast %wk_{d}_re : i64 to index"
+        )
+        .unwrap();
+        Self::emit_mm_q16_row_band(
+            &mut w,
+            &format!("mtk_{d}"),
+            &format!("wk_{d}_ap"),
+            &format!("wk_{d}_bp"),
+            &format!("wk_{d}_cp"),
+            &format!("wk_{d}_k"),
+            &format!("wk_{d}_n"),
+            &format!("wk_{d}_ki"),
+            &format!("wk_{d}_ni"),
+            &format!("wk_{d}_rsi"),
+            &format!("wk_{d}_rei"),
+        );
+        writeln!(&mut w, "    %wk_{d}_null = llvm.mlir.zero : !llvm.ptr").unwrap();
+        writeln!(&mut w, "    llvm.return %wk_{d}_null : !llvm.ptr").unwrap();
+        writeln!(&mut w, "  }}").unwrap();
+        self.mt_workers.push_str(&w);
+
+        // ── entry (inside @main): spawn + join T threads ─────────────────────
+        // Thread count T = clamp(sysconf(_SC_NPROCESSORS_ONLN), 1, M). On linux
+        // _SC_NPROCESSORS_ONLN == 84. Owner-computes => output is T-invariant.
+        const SC_NPROCESSORS_ONLN: i64 = 84;
+        // Cap the number of stack-allocated thread slots so the `alloca` extent
+        // is a compile-time constant (statically reserved — no pointer bits in
+        // the output, ASLR-independent results). T is clamped to this at run.
+        const MAX_THREADS: i64 = 256;
+        let struct_bytes: i64 = 7 * 8; // 7 i64 fields per thread-arg struct.
+
+        // Zero constant used to materialise i64 SSA copies of the i64 ABI args
+        // (MLIR has no bare SSA-alias form; `addi x, 0` is a trivial value copy).
+        self.emit_line(&format!("    %mt{d}_zc = arith.constant 0 : i64"));
+        self.emit_line(&format!(
+            "    %mt{d}_scq = llvm.mlir.constant({SC_NPROCESSORS_ONLN} : i32) : i32"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_ncpu = llvm.call @sysconf(%mt{d}_scq) : (i32) -> i64"
+        ));
+        // m as a named i64 SSA value (trivial copy of the i64 ABI arg).
+        self.emit_line(&format!(
+            "    %mt{d}_m64 = arith.addi %{}, %mt{d}_zc : i64",
+            m.0
+        ));
+        // Clamp T into [1, min(M, MAX_THREADS)].
+        self.emit_line(&format!(
+            "    %mt{d}_one64 = llvm.mlir.constant(1 : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_maxt = llvm.mlir.constant({MAX_THREADS} : i64) : i64"
+        ));
+        // upper = min(M, MAX_THREADS)
+        self.emit_line(&format!(
+            "    %mt{d}_mlt = arith.cmpi slt, %mt{d}_m64, %mt{d}_maxt : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_upper = arith.select %mt{d}_mlt, %mt{d}_m64, %mt{d}_maxt : i64"
+        ));
+        // T = max(1, min(ncpu, upper))
+        self.emit_line(&format!(
+            "    %mt{d}_clt = arith.cmpi slt, %mt{d}_ncpu, %mt{d}_upper : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_tcap = arith.select %mt{d}_clt, %mt{d}_ncpu, %mt{d}_upper : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_tlt1 = arith.cmpi slt, %mt{d}_tcap, %mt{d}_one64 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_T = arith.select %mt{d}_tlt1, %mt{d}_one64, %mt{d}_tcap : i64"
+        ));
+        // band = ceildiv(M, T) = (M + T - 1) / T.
+        self.emit_line(&format!(
+            "    %mt{d}_tm1 = arith.subi %mt{d}_T, %mt{d}_one64 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_msum = arith.addi %mt{d}_m64, %mt{d}_tm1 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_band = arith.divsi %mt{d}_msum, %mt{d}_T : i64"
+        ));
+        // Stack-alloc MAX_THREADS arg structs (MAX_THREADS*56 bytes) + handles.
+        let argbuf_bytes = MAX_THREADS * struct_bytes;
+        self.emit_line(&format!(
+            "    %mt{d}_abnum = llvm.mlir.constant({argbuf_bytes} : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_argbuf = llvm.alloca %mt{d}_abnum x i8 : (i64) -> !llvm.ptr"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_hnum = llvm.mlir.constant({MAX_THREADS} : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_handles = llvm.alloca %mt{d}_hnum x i64 : (i64) -> !llvm.ptr"
+        ));
+        // Worker function pointer.
+        self.emit_line(&format!(
+            "    %mt{d}_wfp = llvm.mlir.addressof @{wname} : !llvm.ptr"
+        ));
+        self.emit_line(&format!("    %mt{d}_pnull = llvm.mlir.zero : !llvm.ptr"));
+        // Common constants for the spawn/join loops.
+        self.emit_line(&format!(
+            "    %mt{d}_sb = llvm.mlir.constant({struct_bytes} : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_hsz = llvm.mlir.constant(8 : i64) : i64"
+        ));
+        self.emit_line(&format!("    %mt{d}_c0idx = arith.constant 0 : index"));
+        self.emit_line(&format!("    %mt{d}_c1idx = arith.constant 1 : index"));
+        self.emit_line(&format!(
+            "    %mt{d}_Ti = arith.index_cast %mt{d}_T : i64 to index"
+        ));
+        // Pre-pack the i64 a/b/c addresses once.
+        self.emit_line(&format!(
+            "    %mt{d}_a64 = arith.addi %{}, %mt{d}_zc : i64",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_b64 = arith.addi %{}, %mt{d}_zc : i64",
+            b_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_c64 = arith.addi %{}, %mt{d}_zc : i64",
+            c_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_k64 = arith.addi %{}, %mt{d}_zc : i64",
+            k.0
+        ));
+        self.emit_line(&format!(
+            "    %mt{d}_n64 = arith.addi %{}, %mt{d}_zc : i64",
+            n.0
+        ));
+
+        // Spawn loop: for t in 0..T.
+        self.emit_line(&format!(
+            "    scf.for %mt{d}_t = %mt{d}_c0idx to %mt{d}_Ti step %mt{d}_c1idx {{"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_ti = arith.index_cast %mt{d}_t : index to i64"
+        ));
+        // row_start = min(t*band, M) ; row_end = min(row_start+band, M).
+        self.emit_line(&format!(
+            "      %mt{d}_rs0 = arith.muli %mt{d}_ti, %mt{d}_band : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_rslt = arith.cmpi slt, %mt{d}_rs0, %mt{d}_m64 : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_rs = arith.select %mt{d}_rslt, %mt{d}_rs0, %mt{d}_m64 : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_re0 = arith.addi %mt{d}_rs, %mt{d}_band : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_relt = arith.cmpi slt, %mt{d}_re0, %mt{d}_m64 : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_re = arith.select %mt{d}_relt, %mt{d}_re0, %mt{d}_m64 : i64"
+        ));
+        // arg = argbuf + t*struct_bytes.
+        self.emit_line(&format!(
+            "      %mt{d}_aoff = arith.muli %mt{d}_ti, %mt{d}_sb : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_argp = llvm.getelementptr %mt{d}_argbuf[%mt{d}_aoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        // Store the 7 i64 fields.
+        for (idx, val) in [
+            (0usize, format!("%mt{d}_a64")),
+            (1, format!("%mt{d}_b64")),
+            (2, format!("%mt{d}_c64")),
+            (3, format!("%mt{d}_k64")),
+            (4, format!("%mt{d}_n64")),
+            (5, format!("%mt{d}_rs")),
+            (6, format!("%mt{d}_re")),
+        ] {
+            let off = (idx as i64) * 8;
+            self.emit_line(&format!(
+                "      %mt{d}_so{idx} = llvm.mlir.constant({off} : i64) : i64"
+            ));
+            self.emit_line(&format!(
+                "      %mt{d}_sp{idx} = llvm.getelementptr %mt{d}_argp[%mt{d}_so{idx}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            self.emit_line(&format!(
+                "      llvm.store {val}, %mt{d}_sp{idx} : i64, !llvm.ptr"
+            ));
+        }
+        // handle slot = handles + t*8.
+        self.emit_line(&format!(
+            "      %mt{d}_hoff = arith.muli %mt{d}_ti, %mt{d}_hsz : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_hp = llvm.getelementptr %mt{d}_handles[%mt{d}_hoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_crc = llvm.call @pthread_create(%mt{d}_hp, %mt{d}_pnull, %mt{d}_wfp, %mt{d}_argp) : \
+             (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32"
+        ));
+        self.emit_line("    }");
+
+        // Join loop: for t in 0..T.
+        self.emit_line(&format!(
+            "    scf.for %mt{d}_jt = %mt{d}_c0idx to %mt{d}_Ti step %mt{d}_c1idx {{"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_jti = arith.index_cast %mt{d}_jt : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_jhoff = arith.muli %mt{d}_jti, %mt{d}_hsz : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_jhp = llvm.getelementptr %mt{d}_handles[%mt{d}_jhoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_tid = llvm.load %mt{d}_jhp : !llvm.ptr -> i64"
+        ));
+        self.emit_line(&format!(
+            "      %mt{d}_jrc = llvm.call @pthread_join(%mt{d}_tid, %mt{d}_pnull) : \
+             (i64, !llvm.ptr) -> i32"
+        ));
+        self.emit_line("    }");
+
+        // The intrinsic returns 0 (i64) — matches the single-thread sibling.
+        self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
+    }
+
     /// "int-dot" tier — emit a native MLIR `vector`-dialect **int16**
     /// row-major matrix-vector multiply. The fast deterministic integer GEMM
     /// tier, composed over rows.
@@ -4058,9 +4850,7 @@ impl LoweringContext {
         ));
         // Base pointer to each of the RB W-rows in this block: W[r+t, 0].
         for t in 0..RB {
-            self.emit_line(&format!(
-                "      %vmmi_rt{t}_{d} = arith.constant {t} : i64"
-            ));
+            self.emit_line(&format!("      %vmmi_rt{t}_{d} = arith.constant {t} : i64"));
             self.emit_line(&format!(
                 "      %vmmi_rit{t}_{d} = arith.addi %vmmi_ri_{d}, %vmmi_rt{t}_{d} : i64"
             ));
@@ -4245,7 +5035,9 @@ impl LoweringContext {
         self.emit_line(&format!(
             "        %vmmir_na_{d} = arith.addi %vmmir_acc_{d}, %vmmir_pw_{d} : vector<{p}xi64>"
         ));
-        self.emit_line(&format!("        scf.yield %vmmir_na_{d} : vector<{p}xi64>"));
+        self.emit_line(&format!(
+            "        scf.yield %vmmir_na_{d} : vector<{p}xi64>"
+        ));
         self.emit_line("      }");
         self.emit_line(&format!(
             "      %vmmir_vs_{d} = vector.reduction <add>, %vmmir_vacc_{d} : \
@@ -4382,6 +5174,24 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     // `func.call`s inside @main resolve. Gated; default build emits none.
     #[cfg(feature = "std-surface")]
     out.push_str(&ctx.user_fns);
+
+    // Multithreaded Q16.16 GEMM: emit the pthread / sysconf externs once and
+    // the per-call worker `llvm.func` bodies, all before `@main`. The pthread
+    // ABI here is the linux-x86_64 / aarch64 one (`pthread_t` is `i64`); the
+    // worker runs the fused owner-computes row-band kernel. Output is
+    // byte-identical to the single-thread kernel regardless of thread count, so
+    // none of this perturbs the cross-substrate trace_hash of programs that do
+    // not call the MT intrinsic (the whole block is empty for them).
+    #[cfg(feature = "std-surface")]
+    if ctx.needs_pthread {
+        out.push_str(
+            "  llvm.func @pthread_create(!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32\n",
+        );
+        out.push_str("  llvm.func @pthread_join(i64, !llvm.ptr) -> i32\n");
+        out.push_str("  llvm.func @sysconf(i32) -> i64\n");
+    }
+    #[cfg(feature = "std-surface")]
+    out.push_str(&ctx.mt_workers);
 
     // RFC 0010 Phase A/C: one `llvm.func @name(type...) -> type` declaration
     // per `extern "C"` symbol referenced via `Instr::ExternFnDecl`. Emitted

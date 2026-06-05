@@ -597,6 +597,13 @@ fn run_clang_codegen(
     if shared {
         args.push("-shared".into());
         args.push("-fPIC".into());
+        // Link libpthread so the multithreaded GEMM intrinsic's
+        // pthread_create / pthread_join externs resolve. This is a pure LINK
+        // flag — it adds no codegen and does not change a single output byte of
+        // the integer kernels, so the cross-substrate trace_hash / keystone
+        // byte-identity is unaffected (programs that never spawn threads link
+        // an unused libpthread, a no-op on glibc).
+        args.push("-pthread".into());
     } else {
         args.push("-c".into());
     }
