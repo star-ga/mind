@@ -19,11 +19,13 @@
 //! ## Why this is the wedge, not a speed brag
 //!
 //! `C[M,N] = A[M,K] · B[K,N]` in Q16.16 fixed-point is integer
-//! multiply-accumulate. Integer add is **associative**, so the compiler /
-//! hardware is free to reorder and vectorise the reduction (the `vector`-dialect
-//! widen-multiply-arithmetic-shift-accumulate loop mindc lowers
-//! `__mind_blas_matmul_rmajor_q16_v` into) **without changing a single output
-//! byte**. That gives us *both* axes at once:
+//! multiply-accumulate. Integer add is **associative** *and commutative*, so the
+//! compiler / hardware is free to reorder, tile and vectorise the reduction (the
+//! fused outer-product `vector`-dialect widen-multiply-arithmetic-shift-accumulate
+//! microkernel mindc lowers `__mind_blas_matmul_mm_q16_v` into) **without changing
+//! a single output byte** — each product term is `>> 16`-shifted to a fixed i64
+//! value *before* it is added, so any lane grouping or k-order yields the same
+//! sum. That gives us *both* axes at once:
 //!
 //!   1. **Throughput** — a vectorised reduction, timed here at 16×16, 64×64 and
 //!      128×128 square shapes (criterion, microsecond-scale).
@@ -38,14 +40,19 @@
 //! is exactly what makes GEMM fast. MIND keeps the reordering *and* the
 //! byte-identity because the accumulation is integer.
 //!
-//! ## Additive, self-skipping, reuses the existing gate
+//! ## Additive, self-skipping, asserts the same committed output hash
 //!
-//! This bench adds **nothing** to `src/`. It drives the same kernel and the
-//! same reference the `cross_substrate_identity` test gate uses — the LCG, the
-//! seed, the deterministic Bᵀ transpose, the `i32_le → sha256` canonical
-//! encoding, and the committed hash are all byte-for-byte what
+//! This bench adds **nothing** to `src/`. It drives the fused
+//! `__mind_blas_matmul_mm_q16_v` kernel (B passed **un-transposed**, K×N
+//! row-major) rather than the gemv-composed path the `cross_substrate_identity`
+//! gate builds, so it no longer constructs the byte-identical *gate artifact*.
+//! What it does assert is the *same committed output hash*: the per-element math
+//! `C[i,j] = Σ_k (A[i,k]*B[k,j])>>16` is identical — only the data layout passed
+//! to the kernel changed (B is K×N here, the gate transposes it to Bᵀ and feeds
+//! the gemv) — so the LCG, the seed, the `i32_le → sha256` canonical encoding,
+//! and the committed reference hash remain byte-for-byte what
 //! `tests/cross_substrate_identity.rs::gemm_q16_reproducibility_gate` pins. The
-//! assertion is therefore *wired to* the merge gate, not reinvented.
+//! gemv merge gate in that test file is untouched and stays green independently.
 //!
 //! Like the gated test harnesses, it self-skips when the MLIR toolchain
 //! (`mlir-opt` / `mlir-translate` / `clang`) is not on PATH, because it must
@@ -79,30 +86,17 @@ const ANCHOR_ID: &str = "gemm-q16-64x64x64";
 const ANCHOR_N: usize = 64;
 const ANCHOR_SEED: u64 = 0xDEAD_BEEF;
 
-/// Kernel ABI: `gemmq(a, bt, c, m, k, n) -> 0`. Computes `C[M,N] = A[M,K]·B[K,N]`
-/// in Q16.16 by composing the `__mind_blas_matmul_rmajor_q16_v` intrinsic over
-/// rows against Bᵀ — byte-for-byte the source in `cross_substrate_identity.rs`.
+/// Kernel ABI: `gemmq(a, b, c, m, k, n) -> 0`. Computes `C[M,N] = A[M,K]·B[K,N]`
+/// in Q16.16 via the fused outer-product `__mind_blas_matmul_mm_q16_v` intrinsic,
+/// with B passed **un-transposed** (K×N row-major).
 type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
 
-/// `gemmq(a, bt, c, m, k, n)` plus the row-loop helper it recurses through.
-/// Identical to the `cross_substrate_identity.rs` SRC so the `.so` this bench
-/// builds is the same artifact the merge gate verifies.
+/// `gemmq(a, b, c, m, k, n)` — a thin wrapper over the fused outer-product GEMM
+/// intrinsic. B is K×N row-major (un-transposed); the kernel handles the full
+/// M×N output (including N%8 / M%4 tails) in one call.
 const SRC: &str = r#"
-pub fn mmq(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
-    __mind_blas_matmul_rmajor_q16_v(w, x, y, rows, cols)
-}
-fn gemmq_row(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64, i: i64) -> i64 {
-    if i >= m {
-        return 0;
-    }
-    // Q16.16 elements are i32 (4 bytes); row strides are in i32 units.
-    let a_i: i64 = a + i * k * 4;
-    let c_i: i64 = c + i * n * 4;
-    __mind_blas_matmul_rmajor_q16_v(bt, a_i, c_i, n, k);
-    gemmq_row(a, bt, c, m, k, n, i + 1)
-}
-pub fn gemmq(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
-    gemmq_row(a, bt, c, m, k, n, 0)
+pub fn gemmq(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
+    __mind_blas_matmul_mm_q16_v(a, b, c, m, k, n)
 }
 "#;
 
@@ -192,42 +186,31 @@ impl Lcg {
 }
 
 /// Regenerate the seeded GEMM inputs: an M×K matrix A and a K×N matrix B, both
-/// row-major Q16.16, A generated before B (order is part of the seed contract).
-/// Returns `(A, Bᵀ)` where Bᵀ (N×K, row-major) is the exact transpose the kernel
-/// consumes. Byte-for-byte `cross_substrate_identity.rs::make_gemm_q16`.
+/// row-major Q16.16, A generated before B (order is part of the seed contract —
+/// byte-for-byte the LCG draw order of `cross_substrate_identity.rs::make_gemm_q16`).
+/// Returns `(A, B)` with B **un-transposed** (K×N row-major) — the layout the
+/// fused outer-product intrinsic consumes directly.
 fn make_gemm_q16(m: usize, k: usize, n: usize, seed: u64) -> (Vec<i32>, Vec<i32>) {
     let mut g = Lcg::new(seed);
     let a: Vec<i32> = (0..m * k).map(|_| g.next_q16()).collect();
     let b: Vec<i32> = (0..k * n).map(|_| g.next_q16()).collect();
-    // Bᵀ[j, kk] = B[kk, j] — exact data movement, no arithmetic.
-    let mut bt = vec![0i32; n * k];
-    for kk in 0..k {
-        for j in 0..n {
-            bt[j * k + kk] = b[kk * n + j];
-        }
-    }
-    (a, bt)
+    (a, b)
 }
 
-/// Track A scalar oracle (byte-for-byte `mind_blas_dot_q16_scalar`): the
-/// independent reference the vector reduction must match exactly within a run.
-fn ref_dot_q16_scalar(a: &[i32], b: &[i32]) -> i64 {
-    let mut acc: i64 = 0;
-    for i in 0..a.len() {
-        acc += ((a[i] as i64) * (b[i] as i64)) >> 16;
-    }
-    (acc as i32) as i64
-}
-
-/// Scalar GEMM oracle over Bᵀ — M·N scalar dot products, byte-for-byte the
-/// accumulation the kernel performs via the gemv intrinsic.
-fn ref_gemm_q16_scalar(a: &[i32], bt: &[i32], m: usize, k: usize, n: usize) -> Vec<i32> {
+/// Scalar GEMM oracle over B (K×N row-major) — M·N per-element Q16.16 dots,
+/// `C[i,j] = trunc_i32( Σ_k (A[i,k]*B[k,j]) >> 16 )`, byte-for-byte the
+/// per-element accumulation the fused kernel performs (each term shifted before
+/// it is summed; truncated once). The independent reference the vector kernel
+/// must match exactly within a run.
+fn ref_gemm_q16_scalar(a: &[i32], b: &[i32], m: usize, k: usize, n: usize) -> Vec<i32> {
     let mut c = vec![0i32; m * n];
     for i in 0..m {
-        let a_row = &a[i * k..(i + 1) * k];
         for j in 0..n {
-            let bt_row = &bt[j * k..(j + 1) * k];
-            c[i * n + j] = ref_dot_q16_scalar(a_row, bt_row) as i32;
+            let mut acc: i64 = 0;
+            for kk in 0..k {
+                acc += ((a[i * k + kk] as i64) * (b[kk * n + j] as i64)) >> 16;
+            }
+            c[i * n + j] = acc as i32;
         }
     }
     c
@@ -267,14 +250,15 @@ fn reference_hash(id: &str, substrate: &str) -> Option<String> {
     None
 }
 
-/// Run the GEMM once on host, returning the M×N output matrix.
-fn run_gemm(lib: &Library, a: &[i32], bt: &[i32], m: usize, k: usize, n: usize) -> Vec<i32> {
+/// Run the GEMM once on host, returning the M×N output matrix. B is K×N
+/// row-major (un-transposed), consumed directly by the fused intrinsic.
+fn run_gemm(lib: &Library, a: &[i32], b: &[i32], m: usize, k: usize, n: usize) -> Vec<i32> {
     let gemmq: Symbol<GemmFn> = unsafe { lib.get(b"gemmq").expect("gemmq symbol") };
     let mut c = vec![0i32; m * n];
     let rc = unsafe {
         gemmq(
             a.as_ptr() as i64,
-            bt.as_ptr() as i64,
+            b.as_ptr() as i64,
             c.as_mut_ptr() as i64,
             m as i64,
             k as i64,
@@ -298,11 +282,11 @@ fn run_gemm(lib: &Library, a: &[i32], bt: &[i32], m: usize, k: usize, n: usize) 
 /// changed the bytes could never be reported as a clean throughput number.
 fn assert_byte_identity(lib: &Library) {
     let n = ANCHOR_N;
-    let (a, bt) = make_gemm_q16(n, n, n, ANCHOR_SEED);
-    let c = run_gemm(lib, &a, &bt, n, n, n);
+    let (a, b) = make_gemm_q16(n, n, n, ANCHOR_SEED);
+    let c = run_gemm(lib, &a, &b, n, n, n);
 
     // (3) within-run exactness vs the scalar oracle.
-    let oracle = ref_gemm_q16_scalar(&a, &bt, n, n, n);
+    let oracle = ref_gemm_q16_scalar(&a, &b, n, n, n);
     assert_eq!(
         c, oracle,
         "{ANCHOR_ID}: vector GEMM diverged from the scalar oracle within a single run"
@@ -366,7 +350,7 @@ fn bench_det_matmul_q16(c: &mut Criterion) {
         } else {
             0xDEAD_BEEF_0000_0000 ^ (n as u64)
         };
-        let (a, bt) = make_gemm_q16(n, n, n, seed);
+        let (a, b) = make_gemm_q16(n, n, n, seed);
         let mut out = vec![0i32; n * n];
         let gemmq: Symbol<GemmFn> = unsafe { lib.get(b"gemmq").expect("gemmq symbol") };
 
@@ -378,7 +362,7 @@ fn bench_det_matmul_q16(c: &mut Criterion) {
                     let rc = unsafe {
                         gemmq(
                             black_box(a.as_ptr() as i64),
-                            black_box(bt.as_ptr() as i64),
+                            black_box(b.as_ptr() as i64),
                             black_box(out.as_mut_ptr() as i64),
                             black_box(nn as i64),
                             black_box(nn as i64),

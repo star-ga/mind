@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2693 | **Est. tokens:** ~6,744,555
-**Generated:** 2026-06-05 04:48 UTC
+**Files:** 2694 | **Est. tokens:** ~6,748,315
+**Generated:** 2026-06-05 17:13 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,12 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~23,213 |
+| `./` | 35 | ~26,987 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 10 | ~14,254 |
+| `benches/` | 10 | ~14,240 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -430,6 +430,7 @@
 
 ### `./`
 
+- `a.out` (~3774 tok, huge) — ELF>@x4@8
 - `ARCHITECTURE.md` (~182 tok, small) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~534 tok, large) —    Compiling mind v0.2.3 (/home/n/mind)
@@ -488,7 +489,7 @@
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~2149 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
-- `det_matmul_q16.rs` (~4102 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_q16.rs` (~4088 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1208 tok, large) — Simple broadcasting scenarios

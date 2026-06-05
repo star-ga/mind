@@ -1822,6 +1822,12 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // bit-identity gate, task #57).  Track B vector-dialect only — there is
     // no Track A q16 matmul extern; the per-row oracle is __mind_blas_dot_q16.
     ("__mind_blas_matmul_rmajor_q16_v", 5),
+    // RFC 0006 Track B: fused outer-product Q16.16 GEMM. A is M×K row-major,
+    // B is K×N row-major (un-transposed), C is M×N row-major caller-allocated;
+    // arity 6 (a, b, c, m, k, n), i64 ABI, returns 0. Register-tiled
+    // outer-product microkernel (no horizontal reduction) — byte-identical to
+    // the per-element scalar oracle Σ_k (A[i,k]*B[k,j])>>16 for all shapes.
+    ("__mind_blas_matmul_mm_q16_v", 6),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
     // RFC 0005 Phase 1.6 (task #306) — single-byte load/store. The
