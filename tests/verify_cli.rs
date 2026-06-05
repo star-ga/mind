@@ -153,16 +153,26 @@ fn verify_tampered_artifact_fails() {
         return;
     }
 
-    // Flip one bit in the final byte. With today's emitter the
-    // `evidence_chain.trace_hash` value ends the artifact, so this mutates the
-    // stored hash and the report parses but reports trace_hash_valid = false.
-    // The `MISMATCH` stderr assertion below — not the byte position — is the
-    // real guard: a Malformed parse error prints a different message, so this
-    // test fails loudly if a future emit-order change moves the flipped byte.
+    // Corrupt the stored `evidence_chain.trace_hash` VALUE so `verify`
+    // recomputes a different hash and reports MISMATCH. Entries are emitted in
+    // lexicographic key order, so the artifact actually ends with
+    // `evidence_chain.trace_hash_kind` — flipping the final byte corrupts that
+    // key (a Malformed error), never the hash. Locate the `trace_hash` key by
+    // content (robust to emit-order changes) and flip a bit a few bytes into its
+    // 32-byte value, past the value tag/length header.
     let mut bytes = std::fs::read(&tmp).expect("read emitted artifact");
     assert!(bytes.len() > 8, "artifact unexpectedly tiny");
-    let last = bytes.len() - 1;
-    bytes[last] ^= 0x01;
+    let key = b"evidence_chain.trace_hash";
+    let key_pos = (0..=bytes.len().saturating_sub(key.len()))
+        .find(|&i| {
+            &bytes[i..i + key.len()] == key
+                // exclude `...trace_hash_kind`, whose key contains this prefix
+                && bytes.get(i + key.len()) != Some(&b'_')
+        })
+        .expect("trace_hash key not found in artifact");
+    let target = key_pos + key.len() + 8;
+    assert!(target < bytes.len(), "trace_hash value shorter than expected");
+    bytes[target] ^= 0x01;
     std::fs::write(&tmp, &bytes).expect("write tampered artifact");
 
     let out = Command::new(&bin)

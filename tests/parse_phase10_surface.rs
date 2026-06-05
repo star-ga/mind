@@ -13,9 +13,23 @@
 //! development machines where the variable points at a directory of
 //! `.mind` files, the sweep asserts the documented high-watermark.
 
-use libmind::{CompileOptions, compile_source};
+use libmind::{CompileOptions, compile_source, parser};
 
+// This file is a PARSER-acceptance suite (see the module docstring): each test
+// asserts a Phase-10 surface construct *parses*. It deliberately stops at the
+// parser — using a full `compile_source` here conflated parser coverage with
+// compile-to-MIC lowering coverage, so constructs that parse fine but are not
+// lowered yet (TypeAlias, qualified types, …) produced false RED markers. IR
+// lowering is gated by `fmt_ir_preservation` instead.
 fn parses(src: &str) -> bool {
+    parser::parse(src).is_ok()
+}
+
+// A handful of tests assert COMPILE-level rejection (a semantic/lowering
+// guard), which is distinct from a parse rejection — those run the full
+// pipeline. Example: `-> (T, U)` parses fine but the compiler rejects it
+// (no aggregate-return ABI).
+fn compiles(src: &str) -> bool {
     compile_source(src, &CompileOptions::default()).is_ok()
 }
 
@@ -446,7 +460,7 @@ fn parses_multiline_arithmetic() {
 fn tuple_return_type_fails_loud() {
     let src = "module m { fn pair() -> (i32, u32) { 0 } }\n";
     assert!(
-        !parses(src),
+        !compiles(src),
         "`-> (T, U)` tuple return must be rejected fail-loud (no aggregate-return ABI)"
     );
 }
