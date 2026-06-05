@@ -164,6 +164,24 @@ const VEC_MATMUL_MM_Q16_MT_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_mt_v";
 #[cfg(feature = "std-surface")]
 const VEC_MATMUL_MM_I8_INTRINSIC: &str = "__mind_blas_matmul_mm_i8_v";
 
+/// "det.igemm" tier — multithreaded fused int8 GEMM surface name.
+///
+/// Same ABI (arity 6: `a, b, c, m, k, n`; i64; returns 0) and byte-for-byte
+/// output as `__mind_blas_matmul_mm_i8_v`. The output rows `[0, M)` are split
+/// into `T` **contiguous owner-computes bands** (`band = ceildiv(M, T)`,
+/// `T = clamp(sysconf(_SC_NPROCESSORS_ONLN), 1, M)`); each raw POSIX thread
+/// computes `C[row_start:row_end, 0:N]` ENTIRELY with the SAME BLIS-blocked
+/// int8 macro-kernel (`emit_mm_i8_blocked`) the single-thread kernel uses.
+/// Every output element is written by exactly one thread — NO cross-thread
+/// reduction, NO atomic, NO shared accumulator — and each worker's i64
+/// C-scratch + i32 packed-A / packed-B panels are private stack `alloca`s
+/// (emitted inside the worker `llvm.func`, one set per call frame), so there
+/// is no shared mutable state and the result is byte-for-byte identical to the
+/// single-thread kernel REGARDLESS of `T`. The runtime thread count therefore
+/// does not enter the output, so cross-substrate bit-identity holds.
+#[cfg(feature = "std-surface")]
+const VEC_MATMUL_MM_I8_MT_INTRINSIC: &str = "__mind_blas_matmul_mm_i8_mt_v";
+
 /// "int-dot" tier (RFC 0006 Track B) — the pure-MIND surface name whose
 /// `Instr::Call` lowers to a native MLIR `vector`-dialect **int16** dot
 /// product. Inputs are i16 row-major; the kernel computes the scalar oracle
@@ -954,6 +972,23 @@ impl LoweringContext {
                 // the identical exact int32 sum. Additive.
                 if name == VEC_MATMUL_MM_I8_INTRINSIC && args.len() == 6 {
                     self.emit_vec_matmul_mm_i8(
+                        *dst, args[0], args[1], args[2], args[3], args[4], args[5],
+                    );
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // "det.igemm" tier — MULTITHREADED fused int8 GEMM. Same ABI and
+                // byte-for-byte output as the single-thread int8 kernel above,
+                // parallelised over contiguous owner-computes M-row bands with
+                // raw POSIX threads. Each worker runs the SAME `emit_mm_i8_blocked`
+                // macro-kernel over its band; every output element is owned by
+                // exactly one thread (no cross-thread reduction / atomic / shared
+                // accumulator) and each worker's scratch/packing buffers are
+                // private stack allocas, so the result is byte-for-byte identical
+                // to the single-thread kernel regardless of `T`. Additive: the
+                // single-thread path above is untouched.
+                if name == VEC_MATMUL_MM_I8_MT_INTRINSIC && args.len() == 6 {
+                    self.emit_vec_matmul_mm_i8_mt(
                         *dst, args[0], args[1], args[2], args[3], args[4], args[5],
                     );
                     self.values.insert(*dst, ValueKind::ScalarI64);
@@ -5734,6 +5769,350 @@ impl LoweringContext {
         ));
         self.emit_line(&format!(
             "      %mt{d}_jrc = llvm.call @pthread_join(%mt{d}_tid, %mt{d}_pnull) : \
+             (i64, !llvm.ptr) -> i32"
+        ));
+        self.emit_line("    }");
+
+        // The intrinsic returns 0 (i64) — matches the single-thread sibling.
+        self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
+    }
+
+    /// "det.igemm" tier — emit the **multithreaded** fused int8 GEMM
+    /// (`__mind_blas_matmul_mm_i8_mt_v`).
+    ///
+    /// Structurally identical to `emit_vec_matmul_mm_q16_mt`: the output rows
+    /// `[0, M)` are partitioned into `T` contiguous owner-computes bands, one
+    /// per raw POSIX thread, and each worker runs the BLIS-blocked int8
+    /// macro-kernel (`emit_mm_i8_blocked`) over its `[row_start, row_end)` —
+    /// the SAME emitter the single-thread int8 kernel delegates to over
+    /// `[0, M)`. There is no cross-thread reduction, no atomic, no shared
+    /// accumulator: every output element is written by exactly one thread, and
+    /// the worker's i64 C-scratch + i32 packed-A / packed-B panels are private
+    /// stack `alloca`s emitted inside the worker `llvm.func` (one fresh set per
+    /// thread call frame), so the result is byte-for-byte identical to the
+    /// single-thread kernel for any `T`. `T` is read at runtime from
+    /// `sysconf(_SC_NPROCESSORS_ONLN)` (clamped to `[1, M]`); because the output
+    /// does not depend on `T`, this is safe for cross-substrate bit-identity.
+    ///
+    /// The thread-arg struct is `{a:i64, b:i64, c:i64, k:i64, n:i64,
+    /// row_start:i64, row_end:i64}` (the worker re-derives `!llvm.ptr`s and
+    /// `index` bounds from these i64 fields). `@main` stack-allocates `T` arg
+    /// structs and `T` `pthread_t` (i64) handles, spawns, then joins. The
+    /// `pthread_create` / `pthread_join` / `sysconf` externs are shared with the
+    /// Q16 MT kernel (declared once via `self.needs_pthread`).
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_vec_matmul_mm_i8_mt(
+        &mut self,
+        dst: ValueId,
+        a_addr: ValueId,
+        b_addr: ValueId,
+        c_addr: ValueId,
+        m: ValueId,
+        k: ValueId,
+        n: ValueId,
+    ) {
+        use std::fmt::Write;
+        let d = dst.0;
+        self.needs_pthread = true;
+
+        // ── worker function (top-level llvm.func) ────────────────────────────
+        // Arg struct layout (all i64): [0]=a [1]=b [2]=c [3]=k [4]=n
+        //                              [5]=row_start [6]=row_end
+        let wname = format!("mind_mt_worker_i8_{d}");
+        let mut w = String::new();
+        writeln!(
+            &mut w,
+            "  llvm.func @{wname}(%arg0: !llvm.ptr) -> !llvm.ptr {{"
+        )
+        .unwrap();
+        // Load the 7 i64 fields from the packed arg struct (contiguous i64s).
+        for (idx, fld) in [
+            (0usize, "a"),
+            (1, "b"),
+            (2, "c"),
+            (3, "k"),
+            (4, "n"),
+            (5, "rs"),
+            (6, "re"),
+        ] {
+            let off = (idx as i64) * 8;
+            writeln!(
+                &mut w,
+                "    %wi_{d}_o{idx} = llvm.mlir.constant({off} : i64) : i64"
+            )
+            .unwrap();
+            writeln!(
+                &mut w,
+                "    %wi_{d}_p{idx} = llvm.getelementptr %arg0[%wi_{d}_o{idx}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            )
+            .unwrap();
+            writeln!(
+                &mut w,
+                "    %wi_{d}_{fld} = llvm.load %wi_{d}_p{idx} : !llvm.ptr -> i64"
+            )
+            .unwrap();
+        }
+        // Re-derive pointers and band bounds. `emit_mm_i8_blocked` wants i64
+        // SSA names for K and N (k64/n64), `index` SSA names for K and N
+        // (ki/ni), and `index` SSA names for the row band (row_start/row_end).
+        writeln!(
+            &mut w,
+            "    %wi_{d}_ap = llvm.inttoptr %wi_{d}_a : i64 to !llvm.ptr"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wi_{d}_bp = llvm.inttoptr %wi_{d}_b : i64 to !llvm.ptr"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wi_{d}_cp = llvm.inttoptr %wi_{d}_c : i64 to !llvm.ptr"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wi_{d}_ki = arith.index_cast %wi_{d}_k : i64 to index"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wi_{d}_ni = arith.index_cast %wi_{d}_n : i64 to index"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wi_{d}_rsi = arith.index_cast %wi_{d}_rs : i64 to index"
+        )
+        .unwrap();
+        writeln!(
+            &mut w,
+            "    %wi_{d}_rei = arith.index_cast %wi_{d}_re : i64 to index"
+        )
+        .unwrap();
+        Self::emit_mm_i8_blocked(
+            &mut w,
+            &format!("mib_{d}"),
+            &format!("wi_{d}_ap"),
+            &format!("wi_{d}_bp"),
+            &format!("wi_{d}_cp"),
+            &format!("wi_{d}_k"),
+            &format!("wi_{d}_n"),
+            &format!("wi_{d}_ki"),
+            &format!("wi_{d}_ni"),
+            &format!("wi_{d}_rsi"),
+            &format!("wi_{d}_rei"),
+        );
+        writeln!(&mut w, "    %wi_{d}_null = llvm.mlir.zero : !llvm.ptr").unwrap();
+        writeln!(&mut w, "    llvm.return %wi_{d}_null : !llvm.ptr").unwrap();
+        writeln!(&mut w, "  }}").unwrap();
+        self.mt_workers.push_str(&w);
+
+        // ── entry (inside @main): spawn + join T threads ─────────────────────
+        // Thread count T = clamp(sysconf(_SC_NPROCESSORS_ONLN), 1, M). Owner-
+        // computes => output is T-invariant.
+        const SC_NPROCESSORS_ONLN: i64 = 84;
+        // Cap the number of stack-allocated thread slots so the `alloca` extent
+        // is a compile-time constant (statically reserved — no pointer bits in
+        // the output, ASLR-independent results). T is clamped to this at run.
+        const MAX_THREADS: i64 = 256;
+        let struct_bytes: i64 = 7 * 8; // 7 i64 fields per thread-arg struct.
+
+        // Zero constant used to materialise i64 SSA copies of the i64 ABI args
+        // (MLIR has no bare SSA-alias form; `addi x, 0` is a trivial value copy).
+        self.emit_line(&format!("    %mi{d}_zc = arith.constant 0 : i64"));
+        self.emit_line(&format!(
+            "    %mi{d}_scq = llvm.mlir.constant({SC_NPROCESSORS_ONLN} : i32) : i32"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_ncpu = llvm.call @sysconf(%mi{d}_scq) : (i32) -> i64"
+        ));
+        // m as a named i64 SSA value (trivial copy of the i64 ABI arg).
+        self.emit_line(&format!(
+            "    %mi{d}_m64 = arith.addi %{}, %mi{d}_zc : i64",
+            m.0
+        ));
+        // Clamp T into [1, min(M, MAX_THREADS)].
+        self.emit_line(&format!(
+            "    %mi{d}_one64 = llvm.mlir.constant(1 : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_maxt = llvm.mlir.constant({MAX_THREADS} : i64) : i64"
+        ));
+        // upper = min(M, MAX_THREADS)
+        self.emit_line(&format!(
+            "    %mi{d}_mlt = arith.cmpi slt, %mi{d}_m64, %mi{d}_maxt : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_upper = arith.select %mi{d}_mlt, %mi{d}_m64, %mi{d}_maxt : i64"
+        ));
+        // T = max(1, min(ncpu, upper))
+        self.emit_line(&format!(
+            "    %mi{d}_clt = arith.cmpi slt, %mi{d}_ncpu, %mi{d}_upper : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_tcap = arith.select %mi{d}_clt, %mi{d}_ncpu, %mi{d}_upper : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_tlt1 = arith.cmpi slt, %mi{d}_tcap, %mi{d}_one64 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_T = arith.select %mi{d}_tlt1, %mi{d}_one64, %mi{d}_tcap : i64"
+        ));
+        // band = ceildiv(M, T) = (M + T - 1) / T.
+        self.emit_line(&format!(
+            "    %mi{d}_tm1 = arith.subi %mi{d}_T, %mi{d}_one64 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_msum = arith.addi %mi{d}_m64, %mi{d}_tm1 : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_band = arith.divsi %mi{d}_msum, %mi{d}_T : i64"
+        ));
+        // Stack-alloc MAX_THREADS arg structs + handles.
+        let argbuf_bytes = MAX_THREADS * struct_bytes;
+        self.emit_line(&format!(
+            "    %mi{d}_abnum = llvm.mlir.constant({argbuf_bytes} : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_argbuf = llvm.alloca %mi{d}_abnum x i8 : (i64) -> !llvm.ptr"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_hnum = llvm.mlir.constant({MAX_THREADS} : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_handles = llvm.alloca %mi{d}_hnum x i64 : (i64) -> !llvm.ptr"
+        ));
+        // Worker function pointer.
+        self.emit_line(&format!(
+            "    %mi{d}_wfp = llvm.mlir.addressof @{wname} : !llvm.ptr"
+        ));
+        self.emit_line(&format!("    %mi{d}_pnull = llvm.mlir.zero : !llvm.ptr"));
+        // Common constants for the spawn/join loops.
+        self.emit_line(&format!(
+            "    %mi{d}_sb = llvm.mlir.constant({struct_bytes} : i64) : i64"
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_hsz = llvm.mlir.constant(8 : i64) : i64"
+        ));
+        self.emit_line(&format!("    %mi{d}_c0idx = arith.constant 0 : index"));
+        self.emit_line(&format!("    %mi{d}_c1idx = arith.constant 1 : index"));
+        self.emit_line(&format!(
+            "    %mi{d}_Ti = arith.index_cast %mi{d}_T : i64 to index"
+        ));
+        // Pre-pack the i64 a/b/c addresses once.
+        self.emit_line(&format!(
+            "    %mi{d}_a64 = arith.addi %{}, %mi{d}_zc : i64",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_b64 = arith.addi %{}, %mi{d}_zc : i64",
+            b_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_c64 = arith.addi %{}, %mi{d}_zc : i64",
+            c_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_k64 = arith.addi %{}, %mi{d}_zc : i64",
+            k.0
+        ));
+        self.emit_line(&format!(
+            "    %mi{d}_n64 = arith.addi %{}, %mi{d}_zc : i64",
+            n.0
+        ));
+
+        // Spawn loop: for t in 0..T.
+        self.emit_line(&format!(
+            "    scf.for %mi{d}_t = %mi{d}_c0idx to %mi{d}_Ti step %mi{d}_c1idx {{"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_ti = arith.index_cast %mi{d}_t : index to i64"
+        ));
+        // row_start = min(t*band, M) ; row_end = min(row_start+band, M).
+        self.emit_line(&format!(
+            "      %mi{d}_rs0 = arith.muli %mi{d}_ti, %mi{d}_band : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_rslt = arith.cmpi slt, %mi{d}_rs0, %mi{d}_m64 : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_rs = arith.select %mi{d}_rslt, %mi{d}_rs0, %mi{d}_m64 : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_re0 = arith.addi %mi{d}_rs, %mi{d}_band : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_relt = arith.cmpi slt, %mi{d}_re0, %mi{d}_m64 : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_re = arith.select %mi{d}_relt, %mi{d}_re0, %mi{d}_m64 : i64"
+        ));
+        // arg = argbuf + t*struct_bytes.
+        self.emit_line(&format!(
+            "      %mi{d}_aoff = arith.muli %mi{d}_ti, %mi{d}_sb : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_argp = llvm.getelementptr %mi{d}_argbuf[%mi{d}_aoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        // Store the 7 i64 fields.
+        for (idx, val) in [
+            (0usize, format!("%mi{d}_a64")),
+            (1, format!("%mi{d}_b64")),
+            (2, format!("%mi{d}_c64")),
+            (3, format!("%mi{d}_k64")),
+            (4, format!("%mi{d}_n64")),
+            (5, format!("%mi{d}_rs")),
+            (6, format!("%mi{d}_re")),
+        ] {
+            let off = (idx as i64) * 8;
+            self.emit_line(&format!(
+                "      %mi{d}_so{idx} = llvm.mlir.constant({off} : i64) : i64"
+            ));
+            self.emit_line(&format!(
+                "      %mi{d}_sp{idx} = llvm.getelementptr %mi{d}_argp[%mi{d}_so{idx}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            self.emit_line(&format!(
+                "      llvm.store {val}, %mi{d}_sp{idx} : i64, !llvm.ptr"
+            ));
+        }
+        // handle slot = handles + t*8.
+        self.emit_line(&format!(
+            "      %mi{d}_hoff = arith.muli %mi{d}_ti, %mi{d}_hsz : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_hp = llvm.getelementptr %mi{d}_handles[%mi{d}_hoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_crc = llvm.call @pthread_create(%mi{d}_hp, %mi{d}_pnull, %mi{d}_wfp, %mi{d}_argp) : \
+             (!llvm.ptr, !llvm.ptr, !llvm.ptr, !llvm.ptr) -> i32"
+        ));
+        self.emit_line("    }");
+
+        // Join loop: for t in 0..T.
+        self.emit_line(&format!(
+            "    scf.for %mi{d}_jt = %mi{d}_c0idx to %mi{d}_Ti step %mi{d}_c1idx {{"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_jti = arith.index_cast %mi{d}_jt : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_jhoff = arith.muli %mi{d}_jti, %mi{d}_hsz : i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_jhp = llvm.getelementptr %mi{d}_handles[%mi{d}_jhoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_tid = llvm.load %mi{d}_jhp : !llvm.ptr -> i64"
+        ));
+        self.emit_line(&format!(
+            "      %mi{d}_jrc = llvm.call @pthread_join(%mi{d}_tid, %mi{d}_pnull) : \
              (i64, !llvm.ptr) -> i32"
         ));
         self.emit_line("    }");

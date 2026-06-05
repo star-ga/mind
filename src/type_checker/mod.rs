@@ -1832,6 +1832,12 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // all shapes. The same MLIR lowers to vpmaddwd (AVX2) / SDOT (aarch64),
     // both yielding the identical exact int32 sum.
     ("__mind_blas_matmul_mm_i8_v", 6),
+    // Multithreaded fused int8 GEMM. Same ABI (arity 6: a, b, c, m, k, n; i64;
+    // returns 0) and byte-for-byte output as __mind_blas_matmul_mm_i8_v,
+    // parallelised over contiguous owner-computes M-row bands with raw POSIX
+    // threads. Output is independent of the thread count (no cross-thread
+    // reduction), so cross-substrate bit-identity holds.
+    ("__mind_blas_matmul_mm_i8_mt_v", 6),
     // RFC 0006 Track B: fused outer-product Q16.16 GEMM. A is M×K row-major,
     // B is K×N row-major (un-transposed), C is M×N row-major caller-allocated;
     // arity 6 (a, b, c, m, k, n), i64 ABI, returns 0. Register-tiled
