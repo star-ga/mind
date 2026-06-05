@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2692 | **Est. tokens:** ~6,739,458
-**Generated:** 2026-06-04 23:58 UTC
+**Files:** 2692 | **Est. tokens:** ~6,739,641
+**Generated:** 2026-06-05 00:29 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 172 | ~305,217 |
+| `tests/` | 172 | ~305,400 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3870,7 +3870,7 @@
 
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_idempotence.rs` (~2782 tok, huge) — Copyright 2025 STARGA Inc.
-- `fmt_ir_preservation.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_ir_preservation.rs` (~2030 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_stdlib_stability.rs` (~2692 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6613 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4009,7 +4009,7 @@
 - `mlir_opt.rs` (~424 tok, medium) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
-- `parse_match_and_ref.rs` (~2699 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse_phase10_surface.rs` (~4543 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
