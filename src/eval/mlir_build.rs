@@ -553,14 +553,18 @@ fn run_clang_codegen(
 
     // Optimize the emitted code. The MLIR→LLVM lowering only runs dialect
     // conversion (no optimization), so without this clang defaults to -O0 and
-    // the artifact runs ~10-20x below potential (e.g. the Q16.16 GEMM). -O2 is
+    // the artifact runs ~10-20x below potential (e.g. the Q16.16 GEMM). -O3 is
     // byte-identity-safe: integer arithmetic is exact under optimization and
     // float ops are not reordered without -ffast-math, so the cross-substrate
     // trace_hash is unchanged (enforced by the cross_substrate_identity gate on
-    // avx2 + real ARM). The genref runtime helpers in runtime-support are
-    // already compiled at -O2 and keep their use-after-free guard.
+    // avx2 + real ARM). -O3 over -O2 adds -funroll-loops, which on the
+    // integer-MAC kernels hides the vpmaddwd→vpmovsxdq dependency chain
+    // (measured +11–31% on the int16 GEMV tier, ~0% on the port-0-bound Q16
+    // tier) — pure intra-loop scheduling, identical binary size, zero output
+    // bytes changed. The genref runtime helpers in runtime-support stay -O2
+    // and keep their use-after-free guard.
     let mut args: Vec<String> = vec![
-        "-O2".into(),
+        "-O3".into(),
         "-x".into(),
         "ir".into(),
         temp.path().to_string_lossy().into_owned(),
