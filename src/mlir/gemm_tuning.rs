@@ -70,7 +70,18 @@ pub const Q16_KC: usize = 256;
 
 /// Column block — columns of C (and of the packed B panel) held resident per
 /// `jc` step. `KC * NC * 4` (packed B) is the largest reused tile.
-pub const Q16_NC: usize = 128;
+///
+/// At the 128³ target N=128, so `jc` already collapses to a single column block
+/// at NC≥128; the touched footprint (C-scratch `MC*N*8`, packed B `K*N*4`) is
+/// pinned to the live N=128 regardless of NC, since the emitter fills only the
+/// live columns. Doubling NC 128→256 therefore leaves the resident cache set
+/// unchanged (untouched reserved pages never load) while widening the packed-B
+/// / C-scratch block stride — the exact column-side analogue of the proven
+/// `Q16_KC` 128→256 win, which at K=128 was a pure stride/reservation effect
+/// (both produce one `pc` panel, so it was not a panel-count change). Reduction
+/// order and Q16.16 byte-identity are untouched: NC only blocks columns, never
+/// the k-reduction.
+pub const Q16_NC: usize = 256;
 
 /// Register-tile rows: independent `MR` accumulator chains in the microkernel.
 /// Pinned — the accumulator shape in the emitter depends on it.
