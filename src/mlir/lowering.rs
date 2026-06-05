@@ -1935,7 +1935,10 @@ impl LoweringContext {
                 } else {
                     "header"
                 };
-                self.emit_line(&format!("    cf.br ^while_{target}_{}{arg_pass}", frame.lbl));
+                self.emit_line(&format!(
+                    "    cf.br ^while_{target}_{}{arg_pass}",
+                    frame.lbl
+                ));
             }
             _ => {
                 return Err(MlirLowerError::UnsupportedOp {
