@@ -3976,7 +3976,16 @@ impl LoweringContext {
         // accumulator acc_t sums precisely the same per-element terms
         // `W[r+t,i]*x[i]` in the same i-order, lane grouping unchanged, reduced
         // by the same associative `vector.reduction <add>`.
-        const RB: usize = 8;
+        //
+        // RB=6 (not 8): each i16 row accumulator is `vector<8xi64>`, which
+        // legalizes to 2 YMM on AVX2 (no 512-bit regs without AVX-512). RB=8
+        // needs 8×2=16 YMM for accumulators alone — exhausting the file and
+        // forcing a load-modify-store of an accumulator inside the hot k-loop
+        // (objdump-confirmed spill). RB=6 → 6×2=12 YMM accumulators + x-load +
+        // vpmaddwd result + temps ≤ 16, no inner-loop spill. Byte-identity is
+        // unchanged: RB only sets rows-per-outer-pass; each row's reduction is
+        // bit-for-bit the same.
+        const RB: usize = 6;
 
         // ── constants (emitted once, before the outer loop) ──────────────────
         self.emit_line(&format!("    %vmmi_c0_{d} = arith.constant 0 : index"));
