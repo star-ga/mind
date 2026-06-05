@@ -1261,9 +1261,59 @@ fn lower_expr(
             id
         }
         ast::Node::Block { stmts, .. } => {
+            // A `let` binding inside a block must be visible to the statements
+            // that follow it in the SAME block — e.g. a block-valued `match` arm
+            // `{ let x = 1\n x }`. `lower_expr`'s `env` is immutable, so thread a
+            // block-scoped LOCAL clone and bind each `let` into it (mirroring the
+            // fn-body loop); without this a `let` reaching here would route into
+            // the fail-loud catch-all and panic. The clone is block-scoped, so
+            // bindings do not leak to the enclosing scope, and for a let-free
+            // block `local_env` stays equal to `env` — so every other statement
+            // lowers against an identical env and the emitted IR (and the
+            // keystone) is byte-identical to the old simple loop.
+            #[allow(unused_mut)]
+            let mut local_env = env.clone();
+            #[allow(unused_mut)]
+            let mut local_struct_env = struct_env.clone();
             let mut last_id = None;
             for stmt in stmts {
-                last_id = Some(lower_expr(stmt, ir, env, struct_env, receiver_types));
+                if let ast::Node::Let {
+                    name, ann, value, ..
+                } = stmt
+                {
+                    let id = match ann {
+                        Some(TypeAnn::Tensor { dtype, dims })
+                        | Some(TypeAnn::DiffTensor { dtype, dims }) => lower_tensor_binding(
+                            ir,
+                            value,
+                            dtype,
+                            dims,
+                            &local_env,
+                            &local_struct_env,
+                            receiver_types,
+                        ),
+                        _ => lower_expr(value, ir, &local_env, &local_struct_env, receiver_types),
+                    };
+                    local_env.insert(name.clone(), id);
+                    // P0f Step 1: track var→struct binding so a later FieldAccess
+                    // inside this block resolves the canonical field offset.
+                    #[cfg(feature = "std-surface")]
+                    if let ast::Node::StructLit {
+                        name: struct_name, ..
+                    } = value.as_ref()
+                    {
+                        local_struct_env.insert(name.clone(), struct_name.clone());
+                    }
+                    last_id = Some(id);
+                } else {
+                    last_id = Some(lower_expr(
+                        stmt,
+                        ir,
+                        &local_env,
+                        &local_struct_env,
+                        receiver_types,
+                    ));
+                }
             }
             last_id.unwrap_or_else(|| {
                 let id = ir.fresh();

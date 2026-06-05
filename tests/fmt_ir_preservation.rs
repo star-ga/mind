@@ -10,6 +10,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// IR-preservation over the stdlib modules requires lowering std-surface
+// constructs (struct/enum literals, bitwise ops), so the whole gate is scoped
+// to `std-surface` — the feature the stdlib (and the self-host keystone) build
+// under. Under `--no-default-features` these modules are out of lowering scope
+// by design, so the binary compiles to zero tests there.
+#![cfg(feature = "std-surface")]
+
 //! Formatter IR-preservation gate — Phase 2A acceptance test (Step 3 of PR #3).
 //!
 //! For every file in scope, asserts that formatting never changes the
