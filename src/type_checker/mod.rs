@@ -1822,6 +1822,16 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // bit-identity gate, task #57).  Track B vector-dialect only — there is
     // no Track A q16 matmul extern; the per-row oracle is __mind_blas_dot_q16.
     ("__mind_blas_matmul_rmajor_q16_v", 5),
+    // "det.igemm" tier: fused int8 GEMM. A is M×K row-major int8 (1 byte), B
+    // is K×N row-major int8, C is M×N row-major INT32 caller-allocated; arity 6
+    // (a, b, c, m, k, n), i64 ABI, returns 0. Same BLIS-blocked register-tiled
+    // kernel as the Q16 path with i8→i32 sign-extension during the pack and NO
+    // >> 16 shift (int8 is integer, not fixed-point). The C-tile accumulates
+    // i64; the i64→i32 truncation happens once at the store — byte-identical to
+    // the per-element scalar int32 oracle (i32) Σ_k (i32)A[i,k]*(i32)B[k,j] for
+    // all shapes. The same MLIR lowers to vpmaddwd (AVX2) / SDOT (aarch64),
+    // both yielding the identical exact int32 sum.
+    ("__mind_blas_matmul_mm_i8_v", 6),
     // RFC 0006 Track B: fused outer-product Q16.16 GEMM. A is M×K row-major,
     // B is K×N row-major (un-transposed), C is M×N row-major caller-allocated;
     // arity 6 (a, b, c, m, k, n), i64 ABI, returns 0. Register-tiled
