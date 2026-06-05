@@ -75,3 +75,42 @@ pub const Q16_MR: usize = 4;
 /// Register-tile columns: width of the `vector<NRxi64>` column accumulator.
 /// Pinned — the accumulator vector type in the emitter depends on it.
 pub const Q16_NR: usize = 8;
+
+// ── int8 "det.igemm" tier ────────────────────────────────────────────────────
+//
+// The fused int8 GEMM (`__mind_blas_matmul_mm_i8_v`) reuses the EXACT BLIS loop
+// nest as the Q16 kernel, with two differences that do not change the working-set
+// budget: (1) A/B source elements are 1-byte i8 (sign-extended once during the
+// pack into the i32 packed panels — the panels stay i32, identical extent to the
+// Q16 panels), and (2) the microkernel performs a pure integer multiply-add with
+// NO `>> 16` shift (int8 is integer, not fixed-point). The C-scratch accumulates
+// i64 and is truncated to i32 once at the store. Because the packed panels and
+// C-scratch keep the Q16 element sizes (i32 / i64), the L2 budget reasoned about
+// for Q16_MC/KC/NC holds unchanged, so the int8 tier reuses the same numbers.
+//
+// Byte-identity / overflow: each product is `(i32)a*(i32)b` with |a|,|b| ≤ 128,
+// so |product| ≤ 16384 (well under 2^15). The running per-element sum is carried
+// in i64 throughout (the C-scratch is i64), so the full-K reduction is exact for
+// any K up to the i64 range; the single i64→i32 truncation at the store yields
+// the exact int32 sum (it fits i32 for K ≤ ~2^31/2^14 ≈ 131072 with worst-case
+// saturated inputs, far beyond realistic K). i64 add is associative + commutative
+// ⇒ any tiling / lane order gives the identical int32 result, and the SAME MLIR
+// lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
+// exact int32 sum — cross-substrate bit-identity by construction.
+
+/// int8 tier row block — mirrors `Q16_MC`. The packed A panel and i64 C-scratch
+/// have the same extent as the Q16 tier (panels stay i32, scratch i64).
+pub const I8_MC: usize = 64;
+
+/// int8 tier K-panel depth — mirrors `Q16_KC`.
+pub const I8_KC: usize = 256;
+
+/// int8 tier column block — mirrors `Q16_NC`.
+pub const I8_NC: usize = 128;
+
+/// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
+pub const I8_MR: usize = 4;
+
+/// int8 tier register-tile columns — mirrors `Q16_NR`. Pinned (accumulator
+/// vector width).
+pub const I8_NR: usize = 8;

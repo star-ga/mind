@@ -1,0 +1,33 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The "det.igemm" tier workload: a square int8 GEMM C[M,N] = A[M,K] . B[K,N],
+# M = K = N = 64, row-major, PURE INTEGER (no fixed-point shift). The kernel is
+# the fused int8 intrinsic __mind_blas_matmul_mm_i8_v: A is M×K int8 (1 byte),
+# B is K×N int8, C is M×N INT32. Each output element is the exact int32 sum
+# C[i,j] = (i32) Σ_k (i32)A[i,k]*(i32)B[k,j]. The reduction is exact integer
+# arithmetic accumulated in i64 (each product ≤ 2^14; i64 add is associative +
+# commutative), so any tiling / lane order gives the identical int32 result and
+# the SAME MLIR lowers to vpmaddwd (AVX2) / SDOT / SMMLA (aarch64) — both yield
+# the identical exact int32 sum. avx2 == neon by construction (RFC 0015 §3.1).
+# The output is the M×N INT32 result matrix; its canonical encoding is each i32
+# little-endian, then sha256.
+
+version = "1"
+name = "gemm-i8-64x64x64"
+description = "int8 square GEMM C = A.B, A 64x64 int8, B 64x64 int8, C 64x64 int32 (RFC 0006 det.igemm matmul_mm_i8_v); exact int32 reduction per output element, NO fixed-point shift."
+weight = 2.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"          # A (m*k i8) generated before B (k*n i8); sample = (x>>16 as i32) as i8
+seed = 3735928559          # 0xDEADBEEF
+m = 64
+k = 64
+n = 64
+dtype = "i8"               # A is m*k row-major i8; B is k*n row-major i8; C is m*n row-major i32
+
+[kernel]
+symbol = "gemmi8"          # direct: one call to __mind_blas_matmul_mm_i8_v (a, b, c, m, k, n)
+returns = "i64"            # status (0 ok); result written to caller C buffer
+output_encoding = "i32_le_matrix"  # m*n i32, row-major, each little-endian, then sha256
