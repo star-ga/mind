@@ -95,6 +95,10 @@ harness = false
 name = "det_matmul_q16"
 harness = false
 
+[[bench]]
+name = "det_matmul_q16_mt"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

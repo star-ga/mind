@@ -1828,6 +1828,12 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // outer-product microkernel (no horizontal reduction) — byte-identical to
     // the per-element scalar oracle Σ_k (A[i,k]*B[k,j])>>16 for all shapes.
     ("__mind_blas_matmul_mm_q16_v", 6),
+    // Multithreaded fused outer-product Q16.16 GEMM. Same ABI (arity 6:
+    // a, b, c, m, k, n; i64; returns 0) and byte-for-byte output as
+    // __mind_blas_matmul_mm_q16_v, parallelised over contiguous owner-computes
+    // M-row bands with raw POSIX threads. Output is independent of the thread
+    // count (no cross-thread reduction), so cross-substrate bit-identity holds.
+    ("__mind_blas_matmul_mm_q16_mt_v", 6),
     ("__mind_free", 1),
     ("__mind_load_i64", 1),
     // RFC 0005 Phase 1.6 (task #306) — single-byte load/store. The
