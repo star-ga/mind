@@ -596,12 +596,8 @@ pub fn eval_module_value_with_env_mode(
                                 value,
                                 ..
                             } => {
-                                let val = eval_value_expr_mode(
-                                    value,
-                                    &venv,
-                                    &tensor_env,
-                                    mode.clone(),
-                                )?;
+                                let val =
+                                    eval_value_expr_mode(value, &venv, &tensor_env, mode.clone())?;
                                 if let Node::Lit(Literal::Ident(arr), _) = receiver.as_ref() {
                                     if let Some(Value::Tuple(mut items)) = venv.get(arr).cloned() {
                                         let idx = match eval_value_expr_mode(
@@ -1540,7 +1536,9 @@ pub(crate) fn eval_value_expr_mode(
         // `Literal` (Int/Float/Str equality). Enum-variant patterns need a
         // sum-type value model the interpreter does not have yet, so they can
         // never match a scalar value and fall through to a `_`/ident arm.
-        Node::Match { scrutinee, arms, .. } => {
+        Node::Match {
+            scrutinee, arms, ..
+        } => {
             let val = eval_value_expr_mode(scrutinee, env, tensor_env, mode.clone())?;
             for arm in arms {
                 // `bindings` carries the names introduced by this arm and the
@@ -1603,8 +1601,7 @@ pub(crate) fn eval_value_expr_mode(
             let mut result = Value::Int(0);
             let mut iters: u64 = 0;
             loop {
-                let cond_val =
-                    eval_value_expr_mode(cond, &loop_env, tensor_env, mode.clone())?;
+                let cond_val = eval_value_expr_mode(cond, &loop_env, tensor_env, mode.clone())?;
                 if matches!(cond_val, Value::Int(0)) {
                     break;
                 }
@@ -1621,12 +1618,8 @@ pub(crate) fn eval_value_expr_mode(
                     // condition check sees the update (same handling as `For`).
                     match stmt {
                         Node::Assign { name, value, .. } | Node::Let { name, value, .. } => {
-                            let val = eval_value_expr_mode(
-                                value,
-                                &loop_env,
-                                tensor_env,
-                                mode.clone(),
-                            )?;
+                            let val =
+                                eval_value_expr_mode(value, &loop_env, tensor_env, mode.clone())?;
                             loop_env.insert(name.clone(), val.clone());
                             result = val;
                         }
@@ -1668,12 +1661,8 @@ pub(crate) fn eval_value_expr_mode(
                             result = val;
                         }
                         _ => {
-                            result = eval_value_expr_mode(
-                                stmt,
-                                &loop_env,
-                                tensor_env,
-                                mode.clone(),
-                            )?;
+                            result =
+                                eval_value_expr_mode(stmt, &loop_env, tensor_env, mode.clone())?;
                         }
                     }
                 }
@@ -2668,7 +2657,10 @@ mod tests {
         let module = parser::parse(src).unwrap();
         let mut env = HashMap::new();
         let err = eval_module_value_with_env(&module, &mut env, Some(src));
-        assert!(err.is_err(), "out-of-bounds index should error, got {err:?}");
+        assert!(
+            err.is_err(),
+            "out-of-bounds index should error, got {err:?}"
+        );
     }
 
     #[test]

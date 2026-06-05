@@ -169,7 +169,8 @@ fn phase_g_01_mind_toml_exists_and_is_valid() {
         "Mind.toml [package].name must be 'mind'"
     );
     assert_eq!(
-        manifest.package.version, env!("CARGO_PKG_VERSION"),
+        manifest.package.version,
+        env!("CARGO_PKG_VERSION"),
         "Mind.toml [package].version must match Cargo.toml (single version source of truth)"
     );
 
