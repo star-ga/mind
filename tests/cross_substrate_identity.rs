@@ -86,6 +86,9 @@ fn gemmq_row(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64, i: i64) -> i64 {
 pub fn gemmq(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
     gemmq_row(a, bt, c, m, k, n, 0)
 }
+pub fn gemmi8(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
+    __mind_blas_matmul_mm_i8_v(a, b, c, m, k, n)
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
@@ -471,6 +474,99 @@ fn gemm_q16_reproducibility_gate() {
     assert_eq!(
         c, oracle,
         "{id}: gemm vector path diverged from the scalar oracle"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference.
+    let computed = canonical_hash_i32s(&c);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
+             bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- gemm-i8 workload (the "det.igemm" tier) -------------------------------
+// A square int8 GEMM C[M,N] = A[M,K] · B[K,N], PURE INTEGER (no fixed-point
+// shift). Driven directly by the fused int8 intrinsic
+// __mind_blas_matmul_mm_i8_v (A,B int8 1-byte; C int32 4-byte; B is the
+// UN-transposed K×N row-major operand). Each output element is the exact int32
+// sum (i32) Σ_k (i32)A[i,k]*(i32)B[k,j], accumulated in i64 and truncated once.
+// Integer add is associative + commutative, so the result is byte-identical to
+// the sequential scalar int32 oracle and the SAME MLIR lowers to vpmaddwd
+// (AVX2) / SDOT / SMMLA (aarch64) — both produce the identical int32 sum, so
+// avx2 == neon by construction (RFC 0015 §3.1). The output is the M×N int32
+// matrix; canonical encoding is its i32 LE bytes → sha256.
+
+/// Regenerate the gemm-i8 inputs from a seed via the SAME LCG, narrowed to
+/// int8: an M×K matrix A and a K×N matrix B (both row-major int8), A generated
+/// before B (order is part of the seed contract). The sample is the LCG's
+/// `next_u32 >> 16` truncated to i8 (full signed-int8 range, deterministic).
+fn make_gemm_i8(m: usize, k: usize, n: usize, seed: u64) -> (Vec<i8>, Vec<i8>) {
+    let mut g = Lcg::new(seed);
+    let a: Vec<i8> = (0..m * k).map(|_| (g.next_u32() >> 16) as i8).collect();
+    let b: Vec<i8> = (0..k * n).map(|_| (g.next_u32() >> 16) as i8).collect();
+    (a, b)
+}
+
+/// Independent scalar int32 oracle: C[i,j] = (i32) Σ_k (i32)A[i,k]*(i32)B[k,j],
+/// sequential accumulation in i64 then truncate. B is the un-transposed K×N
+/// row-major operand (B[k*n+j]), matching the kernel's ABI.
+fn ref_gemm_i8_scalar(a: &[i8], b: &[i8], m: usize, k: usize, n: usize) -> Vec<i32> {
+    let mut c = vec![0i32; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc: i64 = 0;
+            for kk in 0..k {
+                acc += (a[i * k + kk] as i64) * (b[kk * n + j] as i64);
+            }
+            c[i * n + j] = acc as i32;
+        }
+    }
+    c
+}
+
+#[test]
+fn gemm_i8_reproducibility_gate() {
+    let id = "gemm-i8-64x64x64";
+    let (m, k, n, seed) = (64usize, 64usize, 64usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let gemmi8: Symbol<GemmFn> = unsafe { lib.get(b"gemmi8").expect("gemmi8 symbol") };
+
+    let (a, b) = make_gemm_i8(m, k, n, seed);
+    let mut c = vec![0i32; m * n];
+    let rc = unsafe {
+        gemmi8(
+            a.as_ptr() as i64,
+            b.as_ptr() as i64,
+            c.as_mut_ptr() as i64,
+            m as i64,
+            k as i64,
+            n as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: kernel returned {rc} (expected 0)");
+
+    // 1. Within-run exactness vs the scalar int32 GEMM oracle.
+    let oracle = ref_gemm_i8_scalar(&a, &b, m, k, n);
+    assert_eq!(
+        c, oracle,
+        "{id}: int8 gemm vector path diverged from the scalar int32 oracle"
     );
 
     // 2. Canonical hash pinned to the committed per-substrate reference.

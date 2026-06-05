@@ -1,0 +1,13 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes. The int8 GEMM is exact integer arithmetic
+# (M·N per-element int32 reductions, each accumulated in i64 then truncated
+# once), so avx2 == neon by construction (RFC 0015 §3.1).
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04).
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10. The exact int32
+#          sum is substrate-independent, so the same MLIR (lowered to SDOT /
+#          SMMLA on aarch64) MUST reproduce the avx2 hash; the ARM runner proves it.
+
+avx2 = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"
+neon = "917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7"

@@ -135,6 +135,35 @@ const VEC_MATMUL_MM_Q16_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_v";
 #[cfg(feature = "std-surface")]
 const VEC_MATMUL_MM_Q16_MT_INTRINSIC: &str = "__mind_blas_matmul_mm_q16_mt_v";
 
+/// "det.igemm" tier — fused int8 GEMM surface name.
+///
+/// Signature: `(a_addr, b_addr, c_addr, m, k, n) -> i64` (returns 0).
+/// `a` is M×K row-major **int8** (1-byte elements, base packed i64), `b` is
+/// **K×N row-major** int8, `c` is M×N row-major **int32** (4-byte elements),
+/// caller-allocated. Computes the pure integer
+/// `C[i,j] = (i32) Σ_k ((i32)A[i,k] * (i32)B[k,j])` — int8 is integer, not
+/// fixed-point, so there is NO `>> 16` shift.
+///
+/// Lowering reuses the EXACT BLIS-blocked macro-kernel of
+/// `__mind_blas_matmul_mm_q16_v` (`emit_mm_i8_blocked` mirrors
+/// `emit_mm_q16_blocked` term-for-term) with two surgical differences: the
+/// A/B source loads are i8 + `arith.extsi` to i32 during the pack (the packed
+/// panels stay i32, identical extent to the Q16 panels), and the microkernel
+/// multiply-accumulates WITHOUT the per-term shift. The C-tile accumulates in
+/// i64; the i64→i32 truncation happens exactly once at the store.
+///
+/// Determinism / overflow: each product `(i32)a*(i32)b` has magnitude ≤ 2^14
+/// (|a|,|b| ≤ 128); accumulation is carried in i64 throughout (the C-scratch is
+/// i64), so the full-K reduction is exact for any realistic K and i64 add is
+/// associative + commutative ⇒ any tiling / lane order yields the identical
+/// int32 result. At `-march=x86-64-v3` the i32 widen-multiply-accumulate inner
+/// loop legalises to the AVX2 `vpmaddwd` (`_mm256_madd_epi16`) idiom — exact,
+/// NEVER the saturating `vpmaddubsw`; on aarch64 the same MLIR lowers to
+/// `SDOT`/`SMMLA`. Both produce the identical exact int32 sum, so cross-substrate
+/// bit-identity is automatic.
+#[cfg(feature = "std-surface")]
+const VEC_MATMUL_MM_I8_INTRINSIC: &str = "__mind_blas_matmul_mm_i8_v";
+
 /// "int-dot" tier (RFC 0006 Track B) — the pure-MIND surface name whose
 /// `Instr::Call` lowers to a native MLIR `vector`-dialect **int16** dot
 /// product. Inputs are i16 row-major; the kernel computes the scalar oracle
@@ -908,6 +937,23 @@ impl LoweringContext {
                 // single-thread path above is untouched.
                 if name == VEC_MATMUL_MM_Q16_MT_INTRINSIC && args.len() == 6 {
                     self.emit_vec_matmul_mm_q16_mt(
+                        *dst, args[0], args[1], args[2], args[3], args[4], args[5],
+                    );
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // "det.igemm" tier — fused int8 GEMM. A is M×K row-major int8
+                // (1 byte), B is K×N row-major int8, C is M×N row-major INT32
+                // caller-allocated. Same BLIS-blocked register-tiled kernel as
+                // the Q16 path with i8→i32 sign-extension during the pack and NO
+                // `>> 16` shift (int8 is integer, not fixed-point). The C-tile
+                // accumulates i64; the i64→i32 truncation happens once at the
+                // store — byte-identical to the per-element scalar int32 oracle
+                // `(i32) Σ_k (i32)A[i,k]*(i32)B[k,j]` for all shapes. The same
+                // MLIR lowers to vpmaddwd (AVX2) / SDOT (aarch64) — both yield
+                // the identical exact int32 sum. Additive.
+                if name == VEC_MATMUL_MM_I8_INTRINSIC && args.len() == 6 {
+                    self.emit_vec_matmul_mm_i8(
                         *dst, args[0], args[1], args[2], args[3], args[4], args[5],
                     );
                     self.values.insert(*dst, ValueKind::ScalarI64);
@@ -4094,6 +4140,695 @@ impl LoweringContext {
             "          %{p}_drb = arith.addi %{p}_drrow, %{p}_jc64 : i64"
         ));
         // vector main columns
+        line(&format!(
+            "          scf.for %{p}_wc = %{p}_c0 to %{p}_nmain step %{p}_cnr {{"
+        ));
+        line(&format!(
+            "            %{p}_wc64 = arith.index_cast %{p}_wc : index to i64"
+        ));
+        line(&format!(
+            "            %{p}_csvi = arith.addi %{p}_csrb, %{p}_wc64 : i64"
+        ));
+        line(&format!(
+            "            %{p}_csvp = llvm.getelementptr %{p}_cs[%{p}_csvi] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i64"
+        ));
+        line(&format!(
+            "            %{p}_csvv = llvm.load %{p}_csvp {{alignment = 8 : i64}} : \
+             !llvm.ptr -> vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "            %{p}_csvt = arith.trunci %{p}_csvv : vector<{NR}xi64> to vector<{NR}xi32>"
+        ));
+        line(&format!(
+            "            %{p}_dvi = arith.addi %{p}_drb, %{p}_wc64 : i64"
+        ));
+        line(&format!(
+            "            %{p}_dvbo = arith.muli %{p}_dvi, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "            %{p}_dvp = llvm.getelementptr %{cp}[%{p}_dvbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "            llvm.store %{p}_csvt, %{p}_dvp {{alignment = 4 : i64}} : \
+             vector<{NR}xi32>, !llvm.ptr"
+        ));
+        line("          }");
+        // scalar column tail [nmain, NCe)
+        line(&format!(
+            "          scf.for %{p}_wt = %{p}_nmain to %{p}_nce step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "            %{p}_wt64 = arith.index_cast %{p}_wt : index to i64"
+        ));
+        line(&format!(
+            "            %{p}_csti = arith.addi %{p}_csrb, %{p}_wt64 : i64"
+        ));
+        line(&format!(
+            "            %{p}_cstp = llvm.getelementptr %{p}_cs[%{p}_csti] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i64"
+        ));
+        line(&format!(
+            "            %{p}_cstv = llvm.load %{p}_cstp : !llvm.ptr -> i64"
+        ));
+        line(&format!(
+            "            %{p}_cstt = arith.trunci %{p}_cstv : i64 to i32"
+        ));
+        line(&format!(
+            "            %{p}_dti = arith.addi %{p}_drb, %{p}_wt64 : i64"
+        ));
+        line(&format!(
+            "            %{p}_dtbo = arith.muli %{p}_dti, %{p}_eb : i64"
+        ));
+        line(&format!(
+            "            %{p}_dtp = llvm.getelementptr %{cp}[%{p}_dtbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "            llvm.store %{p}_cstt, %{p}_dtp : i32, !llvm.ptr"
+        ));
+        line("          }");
+        line("        }"); // end wr
+        line("      }"); // end ic
+        line("    }"); // end jc
+    }
+
+    /// "det.igemm" tier — emit the fused int8 GEMM
+    /// (`__mind_blas_matmul_mm_i8_v`).
+    ///
+    /// Setup mirrors `emit_vec_matmul_mm_q16`: materialise the three base
+    /// pointers and the K/N i64 SSA names + K/M/N `index` bounds, then delegate
+    /// to the BLIS-blocked int8 macro-kernel over the full row range `[0, M)`.
+    /// The intrinsic returns 0 (i64).
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_vec_matmul_mm_i8(
+        &mut self,
+        dst: ValueId,
+        a_addr: ValueId,
+        b_addr: ValueId,
+        c_addr: ValueId,
+        m: ValueId,
+        k: ValueId,
+        n: ValueId,
+    ) {
+        let d = dst.0;
+        self.emit_line(&format!("    %imm_z0_{d} = arith.constant 0 : i64"));
+        self.emit_line(&format!(
+            "    %imm_ap_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_bp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            b_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_cp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            c_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_mi_{d} = arith.index_cast %{} : i64 to index",
+            m.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_ki_{d} = arith.index_cast %{} : i64 to index",
+            k.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_ni_{d} = arith.index_cast %{} : i64 to index",
+            n.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_k64_{d} = arith.addi %{}, %imm_z0_{d} : i64",
+            k.0
+        ));
+        self.emit_line(&format!(
+            "    %imm_n64_{d} = arith.addi %{}, %imm_z0_{d} : i64",
+            n.0
+        ));
+        self.emit_line(&format!("    %imm_rs_{d} = arith.constant 0 : index"));
+        let mut blk = String::new();
+        Self::emit_mm_i8_blocked(
+            &mut blk,
+            &format!("imb_{d}"),
+            &format!("imm_ap_{d}"),
+            &format!("imm_bp_{d}"),
+            &format!("imm_cp_{d}"),
+            &format!("imm_k64_{d}"),
+            &format!("imm_n64_{d}"),
+            &format!("imm_ki_{d}"),
+            &format!("imm_ni_{d}"),
+            &format!("imm_rs_{d}"),
+            &format!("imm_mi_{d}"),
+        );
+        self.body.push_str(&blk);
+        self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
+    }
+
+    /// "det.igemm" tier — the BLIS-blocked int8 GEMM macro-kernel.
+    ///
+    /// Structure mirrors `emit_mm_q16_blocked` term-for-term (the SAME
+    /// `jc → ic → pc → jr → ir → microkernel` loop nest, the SAME private i64
+    /// C-scratch + i32 packed-A / packed-B panels of identical extent, the SAME
+    /// MR×NR `vector<NRxi64>` register tile, the SAME zero-pad / select packing
+    /// for `M%MC / N%NC / K%KC / N%NR / M%MR` remainders, and the SAME vector +
+    /// scalar write-out). Two surgical differences, neither of which perturbs an
+    /// output byte:
+    ///
+    /// 1. **i8 source loads.** A/B elements are 1-byte int8. During the pack the
+    ///    kernel `llvm.load`s an `i8` and `arith.extsi`s it to the i32 the panel
+    ///    holds, so the packed panels are identical to the Q16 panels (i32) and
+    ///    the microkernel that consumes them is unchanged shape-wise. The A/B
+    ///    source GEP uses element-byte 1; the C output GEP uses element-byte 4.
+    /// 2. **No `>> 16` shift.** int8 is an integer, not a Q16.16 fixed-point
+    ///    value, so the per-term product is accumulated directly. Each product is
+    ///    `(i32)a * (i32)b` with |a|,|b| ≤ 128 ⇒ |product| ≤ 2^14; the C-scratch
+    ///    accumulates in i64, so the full-K reduction is exact (i64 add is
+    ///    associative + commutative — any tiling / lane order gives the identical
+    ///    sum), and the i64→i32 truncation happens once at the store. The exact
+    ///    int32 sum is substrate-independent, so the SAME MLIR is byte-identical
+    ///    whether LLVM lowers the widen-multiply-accumulate to AVX2 `vpmaddwd` or
+    ///    aarch64 `SDOT`/`SMMLA`.
+    ///
+    /// `prefix` namespaces every SSA value. `ap`/`bp`/`cp` are `!llvm.ptr` SSA
+    /// names; `k64`/`n64` are i64 SSA names for K and N; `ki`/`ni` are `index`
+    /// SSA names; `row_start`/`row_end` are `index` SSA names bounding the band.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_mm_i8_blocked(
+        buf: &mut String,
+        prefix: &str,
+        ap: &str,
+        bp: &str,
+        cp: &str,
+        k64: &str,
+        n64: &str,
+        ki: &str,
+        ni: &str,
+        row_start: &str,
+        row_end: &str,
+    ) {
+        use std::fmt::Write;
+        let p = prefix;
+        const MR: usize = I8_MR;
+        const NR: usize = I8_NR;
+        const MC: usize = I8_MC;
+        const KC: usize = I8_KC;
+        const NC: usize = I8_NC;
+        // A/B source elements are int8 (1 byte); C output and the packed panels
+        // are i32 (4 bytes); the C-scratch is i64 (8 bytes).
+        let eb_src: i64 = 1;
+        let eb: i64 = std::mem::size_of::<i32>() as i64;
+        let mut line = |s: &str| {
+            writeln!(buf, "{s}").expect("write to string cannot fail");
+        };
+
+        // ── constants ────────────────────────────────────────────────────────
+        line(&format!("    %{p}_c0 = arith.constant 0 : index"));
+        line(&format!("    %{p}_c1 = arith.constant 1 : index"));
+        line(&format!("    %{p}_cmr = arith.constant {MR} : index"));
+        line(&format!("    %{p}_cnr = arith.constant {NR} : index"));
+        line(&format!("    %{p}_cmc = arith.constant {MC} : index"));
+        line(&format!("    %{p}_ckc = arith.constant {KC} : index"));
+        line(&format!("    %{p}_cnc = arith.constant {NC} : index"));
+        line(&format!("    %{p}_eb = arith.constant {eb} : i64"));
+        line(&format!("    %{p}_ebs = arith.constant {eb_src} : i64"));
+        line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
+        line(&format!("    %{p}_z0i32 = arith.constant 0 : i32"));
+        line(&format!(
+            "    %{p}_zv = arith.constant dense<0> : vector<{NR}xi64>"
+        ));
+
+        // ── private scratch (constant-extent alloca) ─────────────────────────
+        // C-scratch: MC*NC i64.  Packed A: MC*KC i32.  Packed B: KC*NC i32.
+        let cs_elems = (MC * NC) as i64;
+        let pa_elems = (MC * KC) as i64;
+        let pb_elems = (KC * NC) as i64;
+        line(&format!(
+            "    %{p}_csn = llvm.mlir.constant({cs_elems} : i64) : i64"
+        ));
+        line(&format!(
+            "    %{p}_cs = llvm.alloca %{p}_csn x i64 : (i64) -> !llvm.ptr"
+        ));
+        line(&format!(
+            "    %{p}_pan = llvm.mlir.constant({pa_elems} : i64) : i64"
+        ));
+        line(&format!(
+            "    %{p}_pa = llvm.alloca %{p}_pan x i32 : (i64) -> !llvm.ptr"
+        ));
+        line(&format!(
+            "    %{p}_pbn = llvm.mlir.constant({pb_elems} : i64) : i64"
+        ));
+        line(&format!(
+            "    %{p}_pb = llvm.alloca %{p}_pbn x i32 : (i64) -> !llvm.ptr"
+        ));
+        line(&format!("    %{p}_ncc = arith.constant {NC} : i64"));
+        line(&format!("    %{p}_kcc = arith.constant {KC} : i64"));
+        line(&format!("    %{p}_mrc = arith.constant {MR} : i64"));
+        line(&format!("    %{p}_nrc = arith.constant {NR} : i64"));
+
+        // ════════════════════════════════════════════════════════════════════
+        //  jc — column block over [0, N)
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "    scf.for %{p}_jc = %{p}_c0 to %{ni} step %{p}_cnc {{"
+        ));
+        line(&format!(
+            "      %{p}_jcrem = arith.subi %{ni}, %{p}_jc : index"
+        ));
+        line(&format!(
+            "      %{p}_nce_lt = arith.cmpi slt, %{p}_cnc, %{p}_jcrem : index"
+        ));
+        line(&format!(
+            "      %{p}_nce = arith.select %{p}_nce_lt, %{p}_cnc, %{p}_jcrem : index"
+        ));
+        line(&format!(
+            "      %{p}_ncp_t = arith.addi %{p}_nce, %{p}_cnr : index"
+        ));
+        line(&format!(
+            "      %{p}_ncp_t1 = arith.subi %{p}_ncp_t, %{p}_c1 : index"
+        ));
+        line(&format!(
+            "      %{p}_ncp_d = arith.divui %{p}_ncp_t1, %{p}_cnr : index"
+        ));
+        line(&format!(
+            "      %{p}_ncp = arith.muli %{p}_ncp_d, %{p}_cnr : index"
+        ));
+        line(&format!(
+            "      %{p}_jc64 = arith.index_cast %{p}_jc : index to i64"
+        ));
+
+        // ════════════════════════════════════════════════════════════════════
+        //  ic — row block over [row_start, row_end)
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "      scf.for %{p}_ic = %{row_start} to %{row_end} step %{p}_cmc {{"
+        ));
+        line(&format!(
+            "        %{p}_icrem = arith.subi %{row_end}, %{p}_ic : index"
+        ));
+        line(&format!(
+            "        %{p}_mce_lt = arith.cmpi slt, %{p}_cmc, %{p}_icrem : index"
+        ));
+        line(&format!(
+            "        %{p}_mce = arith.select %{p}_mce_lt, %{p}_cmc, %{p}_icrem : index"
+        ));
+        line(&format!(
+            "        %{p}_mcp_t = arith.addi %{p}_mce, %{p}_cmr : index"
+        ));
+        line(&format!(
+            "        %{p}_mcp_t1 = arith.subi %{p}_mcp_t, %{p}_c1 : index"
+        ));
+        line(&format!(
+            "        %{p}_mcp_d = arith.divui %{p}_mcp_t1, %{p}_cmr : index"
+        ));
+        line(&format!(
+            "        %{p}_mcp = arith.muli %{p}_mcp_d, %{p}_cmr : index"
+        ));
+        line(&format!(
+            "        %{p}_ic64 = arith.index_cast %{p}_ic : index to i64"
+        ));
+
+        // ── zero the live MCp×NCp region of the C-scratch ────────────────────
+        line(&format!(
+            "        scf.for %{p}_zr = %{p}_c0 to %{p}_mcp step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "          %{p}_zr64 = arith.index_cast %{p}_zr : index to i64"
+        ));
+        line(&format!(
+            "          %{p}_zrb = arith.muli %{p}_zr64, %{p}_ncc : i64"
+        ));
+        line(&format!(
+            "          scf.for %{p}_zc = %{p}_c0 to %{p}_ncp step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "            %{p}_zc64 = arith.index_cast %{p}_zc : index to i64"
+        ));
+        line(&format!(
+            "            %{p}_zoff = arith.addi %{p}_zrb, %{p}_zc64 : i64"
+        ));
+        line(&format!(
+            "            %{p}_zptr = llvm.getelementptr %{p}_cs[%{p}_zoff] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i64"
+        ));
+        line(&format!(
+            "            llvm.store %{p}_z0, %{p}_zptr : i64, !llvm.ptr"
+        ));
+        line("          }");
+        line("        }");
+
+        // ════════════════════════════════════════════════════════════════════
+        //  pc — K panel over [0, K)
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "        scf.for %{p}_pc = %{p}_c0 to %{ki} step %{p}_ckc {{"
+        ));
+        line(&format!(
+            "          %{p}_pcrem = arith.subi %{ki}, %{p}_pc : index"
+        ));
+        line(&format!(
+            "          %{p}_kce_lt = arith.cmpi slt, %{p}_ckc, %{p}_pcrem : index"
+        ));
+        line(&format!(
+            "          %{p}_kce = arith.select %{p}_kce_lt, %{p}_ckc, %{p}_pcrem : index"
+        ));
+        line(&format!(
+            "          %{p}_pc64 = arith.index_cast %{p}_pc : index to i64"
+        ));
+
+        // ── pack B panel: Bp[jr_block][kk][nr] (zero-padded to NCp cols) ──────
+        // Source B[pc+kk, jc+jr] is int8 (eb_src=1); sign-extend to the i32 panel.
+        line(&format!(
+            "          scf.for %{p}_pbk = %{p}_c0 to %{p}_kce step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "            %{p}_pbk64 = arith.index_cast %{p}_pbk : index to i64"
+        ));
+        line(&format!(
+            "            %{p}_pbkg = arith.addi %{p}_pc64, %{p}_pbk64 : i64"
+        ));
+        line(&format!(
+            "            %{p}_pbsrow = arith.muli %{p}_pbkg, %{n64} : i64"
+        ));
+        line(&format!(
+            "            %{p}_pbsr0 = arith.addi %{p}_pbsrow, %{p}_jc64 : i64"
+        ));
+        line(&format!(
+            "            scf.for %{p}_pbj = %{p}_c0 to %{p}_ncp step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "              %{p}_pbj64 = arith.index_cast %{p}_pbj : index to i64"
+        ));
+        line(&format!(
+            "              %{p}_pbjb = arith.divui %{p}_pbj64, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbjm = arith.remui %{p}_pbj64, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbpan = arith.muli %{p}_kcc, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbblk = arith.muli %{p}_pbjb, %{p}_pbpan : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbkr = arith.muli %{p}_pbk64, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbd0 = arith.addi %{p}_pbblk, %{p}_pbkr : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbd = arith.addi %{p}_pbd0, %{p}_pbjm : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbdp = llvm.getelementptr %{p}_pb[%{p}_pbd] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i32"
+        ));
+        line(&format!(
+            "              %{p}_pblive = arith.cmpi slt, %{p}_pbj, %{p}_nce : index"
+        ));
+        line(&format!(
+            "              %{p}_pbval = scf.if %{p}_pblive -> (i32) {{"
+        ));
+        line(&format!(
+            "                %{p}_pbsi = arith.addi %{p}_pbsr0, %{p}_pbj64 : i64"
+        ));
+        line(&format!(
+            "                %{p}_pbbo = arith.muli %{p}_pbsi, %{p}_ebs : i64"
+        ));
+        line(&format!(
+            "                %{p}_pbsp = llvm.getelementptr %{bp}[%{p}_pbbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "                %{p}_pbi8 = llvm.load %{p}_pbsp : !llvm.ptr -> i8"
+        ));
+        line(&format!(
+            "                %{p}_pbld = arith.extsi %{p}_pbi8 : i8 to i32"
+        ));
+        line(&format!("                scf.yield %{p}_pbld : i32"));
+        line("              } else {");
+        line(&format!("                scf.yield %{p}_z0i32 : i32"));
+        line("              }");
+        line(&format!(
+            "              llvm.store %{p}_pbval, %{p}_pbdp : i32, !llvm.ptr"
+        ));
+        line("            }");
+        line("          }");
+
+        // ── pack A panel: Ap[ir_block][kk][mr] (zero-padded to MCp rows) ──────
+        // Source A[ic+pai, pc+pak] is int8 (eb_src=1); sign-extend to the i32 panel.
+        line(&format!(
+            "          scf.for %{p}_pak = %{p}_c0 to %{p}_kce step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "            %{p}_pak64 = arith.index_cast %{p}_pak : index to i64"
+        ));
+        line(&format!(
+            "            %{p}_pakg = arith.addi %{p}_pc64, %{p}_pak64 : i64"
+        ));
+        line(&format!(
+            "            scf.for %{p}_pai = %{p}_c0 to %{p}_mcp step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "              %{p}_pai64 = arith.index_cast %{p}_pai : index to i64"
+        ));
+        line(&format!(
+            "              %{p}_paib = arith.divui %{p}_pai64, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_paim = arith.remui %{p}_pai64, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_papan = arith.muli %{p}_kcc, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_pablk = arith.muli %{p}_paib, %{p}_papan : i64"
+        ));
+        line(&format!(
+            "              %{p}_pakr = arith.muli %{p}_pak64, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_pad0 = arith.addi %{p}_pablk, %{p}_pakr : i64"
+        ));
+        line(&format!(
+            "              %{p}_pad = arith.addi %{p}_pad0, %{p}_paim : i64"
+        ));
+        line(&format!(
+            "              %{p}_padp = llvm.getelementptr %{p}_pa[%{p}_pad] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i32"
+        ));
+        line(&format!(
+            "              %{p}_palive = arith.cmpi slt, %{p}_pai, %{p}_mce : index"
+        ));
+        line(&format!(
+            "              %{p}_paval = scf.if %{p}_palive -> (i32) {{"
+        ));
+        line(&format!(
+            "                %{p}_pari = arith.addi %{p}_ic64, %{p}_pai64 : i64"
+        ));
+        line(&format!(
+            "                %{p}_parik = arith.muli %{p}_pari, %{k64} : i64"
+        ));
+        line(&format!(
+            "                %{p}_pasi = arith.addi %{p}_parik, %{p}_pakg : i64"
+        ));
+        line(&format!(
+            "                %{p}_pabo = arith.muli %{p}_pasi, %{p}_ebs : i64"
+        ));
+        line(&format!(
+            "                %{p}_pasp = llvm.getelementptr %{ap}[%{p}_pabo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "                %{p}_pai8 = llvm.load %{p}_pasp : !llvm.ptr -> i8"
+        ));
+        line(&format!(
+            "                %{p}_pald = arith.extsi %{p}_pai8 : i8 to i32"
+        ));
+        line(&format!("                scf.yield %{p}_pald : i32"));
+        line("              } else {");
+        line(&format!("                scf.yield %{p}_z0i32 : i32"));
+        line("              }");
+        line(&format!(
+            "              llvm.store %{p}_paval, %{p}_padp : i32, !llvm.ptr"
+        ));
+        line("            }");
+        line("          }");
+
+        // ════════════════════════════════════════════════════════════════════
+        //  jr — NR-wide column tiles over the packed B panel [0, NCp)
+        // ════════════════════════════════════════════════════════════════════
+        line(&format!(
+            "          scf.for %{p}_jr = %{p}_c0 to %{p}_ncp step %{p}_cnr {{"
+        ));
+        line(&format!(
+            "            %{p}_jr64 = arith.index_cast %{p}_jr : index to i64"
+        ));
+        line(&format!(
+            "            %{p}_jrb = arith.divui %{p}_jr64, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "            %{p}_jrpan = arith.muli %{p}_kcc, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "            %{p}_jrbase = arith.muli %{p}_jrb, %{p}_jrpan : i64"
+        ));
+        // ══════════════════════════════════════════════════════════════════
+        //  ir — MR-row tiles over the packed A panel [0, MCp)
+        // ══════════════════════════════════════════════════════════════════
+        line(&format!(
+            "            scf.for %{p}_ir = %{p}_c0 to %{p}_mcp step %{p}_cmr {{"
+        ));
+        line(&format!(
+            "              %{p}_ir64 = arith.index_cast %{p}_ir : index to i64"
+        ));
+        line(&format!(
+            "              %{p}_irb = arith.divui %{p}_ir64, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_irpan = arith.muli %{p}_kcc, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "              %{p}_irbase = arith.muli %{p}_irb, %{p}_irpan : i64"
+        ));
+
+        // ── microkernel: MR×NR i64 partial over this KC panel (NO >> 16) ──────
+        let acc_init = (0..MR)
+            .map(|t| format!("%{p}_acc{t} = %{p}_zv"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let acc_ty = (0..MR)
+            .map(|_| format!("vector<{NR}xi64>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(&format!(
+            "              %{p}_va:{MR} = scf.for %{p}_kk = %{p}_c0 to %{p}_kce \
+             step %{p}_c1 iter_args({acc_init}) -> ({acc_ty}) {{"
+        ));
+        line(&format!(
+            "                %{p}_kk64 = arith.index_cast %{p}_kk : index to i64"
+        ));
+        line(&format!(
+            "                %{p}_bkr = arith.muli %{p}_kk64, %{p}_nrc : i64"
+        ));
+        line(&format!(
+            "                %{p}_bvi = arith.addi %{p}_jrbase, %{p}_bkr : i64"
+        ));
+        line(&format!(
+            "                %{p}_bvp = llvm.getelementptr %{p}_pb[%{p}_bvi] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i32"
+        ));
+        line(&format!(
+            "                %{p}_bv = llvm.load %{p}_bvp {{alignment = 4 : i64}} : \
+             !llvm.ptr -> vector<{NR}xi32>"
+        ));
+        line(&format!(
+            "                %{p}_bw = arith.extsi %{p}_bv : vector<{NR}xi32> to vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "                %{p}_akr = arith.muli %{p}_kk64, %{p}_mrc : i64"
+        ));
+        line(&format!(
+            "                %{p}_abase = arith.addi %{p}_irbase, %{p}_akr : i64"
+        ));
+        let mut yields = Vec::with_capacity(MR);
+        for t in 0..MR {
+            line(&format!(
+                "                %{p}_at{t} = arith.constant {t} : i64"
+            ));
+            line(&format!(
+                "                %{p}_ai{t} = arith.addi %{p}_abase, %{p}_at{t} : i64"
+            ));
+            line(&format!(
+                "                %{p}_ap{t} = llvm.getelementptr %{p}_pa[%{p}_ai{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i32"
+            ));
+            line(&format!(
+                "                %{p}_as{t} = llvm.load %{p}_ap{t} : !llvm.ptr -> i32"
+            ));
+            line(&format!(
+                "                %{p}_aw{t} = arith.extsi %{p}_as{t} : i32 to i64"
+            ));
+            line(&format!(
+                "                %{p}_ab{t} = vector.broadcast %{p}_aw{t} : i64 to vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "                %{p}_pp{t} = arith.muli %{p}_ab{t}, %{p}_bw : vector<{NR}xi64>"
+            ));
+            // int8 is integer, not Q16.16 — accumulate the raw product (no shift).
+            line(&format!(
+                "                %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_pp{t} : vector<{NR}xi64>"
+            ));
+            yields.push(format!("%{p}_na{t}"));
+        }
+        line(&format!(
+            "                scf.yield {} : {acc_ty}",
+            yields.join(", ")
+        ));
+        line("              }");
+        // ── add the MR×NR i64 partial into the C-scratch tile ────────────────
+        for t in 0..MR {
+            line(&format!(
+                "              %{p}_ct{t} = arith.constant {t} : i64"
+            ));
+            line(&format!(
+                "              %{p}_cr{t} = arith.addi %{p}_ir64, %{p}_ct{t} : i64"
+            ));
+            line(&format!(
+                "              %{p}_crb{t} = arith.muli %{p}_cr{t}, %{p}_ncc : i64"
+            ));
+            line(&format!(
+                "              %{p}_coff{t} = arith.addi %{p}_crb{t}, %{p}_jr64 : i64"
+            ));
+            line(&format!(
+                "              %{p}_csp{t} = llvm.getelementptr %{p}_cs[%{p}_coff{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i64"
+            ));
+            line(&format!(
+                "              %{p}_cold{t} = llvm.load %{p}_csp{t} {{alignment = 8 : i64}} : \
+                 !llvm.ptr -> vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_va#{t} : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "              llvm.store %{p}_cnew{t}, %{p}_csp{t} {{alignment = 8 : i64}} : \
+                 vector<{NR}xi64>, !llvm.ptr"
+            ));
+        }
+        line("            }"); // end ir
+        line("          }"); // end jr
+        line("        }"); // end pc
+
+        // ── after the K reduction: truncate the live MCe×NCe C-scratch to i32 ─
+        // and store to C[ic+r, jc+col] (C output element-byte = 4).
+        line(&format!(
+            "        %{p}_nmb = arith.divui %{p}_nce, %{p}_cnr : index"
+        ));
+        line(&format!(
+            "        %{p}_nmain = arith.muli %{p}_nmb, %{p}_cnr : index"
+        ));
+        line(&format!(
+            "        scf.for %{p}_wr = %{p}_c0 to %{p}_mce step %{p}_c1 {{"
+        ));
+        line(&format!(
+            "          %{p}_wr64 = arith.index_cast %{p}_wr : index to i64"
+        ));
+        line(&format!(
+            "          %{p}_csrb = arith.muli %{p}_wr64, %{p}_ncc : i64"
+        ));
+        line(&format!(
+            "          %{p}_dri = arith.addi %{p}_ic64, %{p}_wr64 : i64"
+        ));
+        line(&format!(
+            "          %{p}_drrow = arith.muli %{p}_dri, %{n64} : i64"
+        ));
+        line(&format!(
+            "          %{p}_drb = arith.addi %{p}_drrow, %{p}_jc64 : i64"
+        ));
         line(&format!(
             "          scf.for %{p}_wc = %{p}_c0 to %{p}_nmain step %{p}_cnr {{"
         ));
