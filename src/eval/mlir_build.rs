@@ -551,10 +551,20 @@ fn run_clang_codegen(
     let mut temp = NamedTempFile::new()?;
     temp.write_all(llvm_ir.as_bytes())?;
 
-    let mut args: Vec<String> = Vec::new();
-    args.push("-x".into());
-    args.push("ir".into());
-    args.push(temp.path().to_string_lossy().into_owned());
+    // Optimize the emitted code. The MLIR→LLVM lowering only runs dialect
+    // conversion (no optimization), so without this clang defaults to -O0 and
+    // the artifact runs ~10-20x below potential (e.g. the Q16.16 GEMM). -O2 is
+    // byte-identity-safe: integer arithmetic is exact under optimization and
+    // float ops are not reordered without -ffast-math, so the cross-substrate
+    // trace_hash is unchanged (enforced by the cross_substrate_identity gate on
+    // avx2 + real ARM). The genref runtime helpers in runtime-support are
+    // already compiled at -O2 and keep their use-after-free guard.
+    let mut args: Vec<String> = vec![
+        "-O2".into(),
+        "-x".into(),
+        "ir".into(),
+        temp.path().to_string_lossy().into_owned(),
+    ];
     if let Some(triple) = target_triple {
         let trimmed = triple.trim();
         if !trimmed.is_empty() {
