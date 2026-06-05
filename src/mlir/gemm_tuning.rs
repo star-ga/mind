@@ -36,12 +36,16 @@
 //! A/B panels into contiguous scratch is pure data movement, so it does not
 //! perturb a single output byte either.
 //!
-//! Working-set budget at the chosen point (`MC=64, KC=256, NC=128`):
-//!   * i64 C-scratch tile  `MC*NC*8 = 64 KiB`  → resides across the pc loop
-//!   * packed B panel       `KC*NC*4 = 128 KiB` → reused across the ic loop
-//!   * packed A panel       `MC*KC*4 = 64 KiB`  → reused across the jr loop
-//! The packed B panel (128 KiB) is the largest reused tile and the A panel +
-//! C-scratch (128 KiB together) fit alongside it inside the 256 KiB L2; the
+//! Working-set budget at the chosen point (`MC=128, KC=256, NC=128`), as seen
+//! by the 128³ target (so the effective packed-panel K depth is K=128, not the
+//! KC=256 cap):
+//!   * i64 C-scratch tile  `MC*NC*8   = 128 KiB` → resides across the pc loop
+//!   * packed B panel       `K*NC*4    = 64 KiB`  → reused across the ic loop
+//!   * packed A panel       `MC*K*4    = 64 KiB`  → reused across the jr loop
+//! At `MC=128` the `ic` row-band loop collapses to a single band for M=128, so
+//! the packed B panel is built and streamed once instead of being re-read for a
+//! second band as it is at `MC=64`. The C-scratch (128 KiB) plus A panel +
+//! B panel (128 KiB together) fit inside the 256 KiB L2; the
 //! `MR×NR` microkernel inputs stream from L1. Total per-call scratch is
 //! `64 + 128 + 64 = 256 KiB`, allocated once per kernel invocation on the
 //! stack (`llvm.alloca`, compile-time-constant extent — statically reserved,
@@ -58,7 +62,7 @@
 /// Row block — rows of C (and of the packed A panel) held resident per `ic`
 /// step. `MC * NC * 8` (the i64 C-scratch) and `MC * KC * 4` (packed A) must
 /// fit L2 alongside the packed B panel.
-pub const Q16_MC: usize = 64;
+pub const Q16_MC: usize = 128;
 
 /// K panel depth — the reduction is split into `KC`-deep panels so the resident
 /// B/A working set is independent of the full `K`. THE knob that was missing.
