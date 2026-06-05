@@ -571,6 +571,25 @@ fn run_clang_codegen(
             args.push(format!("--target={trimmed}"));
         }
     }
+    // Pin a FIXED, vendor-neutral microarchitecture level so the Q16.16
+    // widening integer multiply vectorizes (x86 AVX2 `vpmuldq`, 4×i64/ymm)
+    // instead of scalarizing to `imul` — clang's default generic x86-64 has no
+    // AVX2, which left the GEMM hot loop running below scalar throughput. A
+    // FIXED level (never `-march=native`) keeps builds bit-for-bit reproducible
+    // across hosts; integer results are exact regardless of ISA, so the
+    // cross-substrate byte-identity invariant is preserved (enforced by the
+    // cross_substrate_identity gate on avx2 + real ARM).
+    let march: Option<&str> = match target_triple {
+        Some(t) if t.contains("aarch64") || t.contains("arm64") => Some("armv8-a"),
+        Some(t) if t.contains("x86_64") => Some("x86-64-v3"),
+        Some(_) => None,
+        None if cfg!(target_arch = "x86_64") => Some("x86-64-v3"),
+        None if cfg!(target_arch = "aarch64") => Some("armv8-a"),
+        None => None,
+    };
+    if let Some(m) = march {
+        args.push(format!("-march={m}"));
+    }
     if shared {
         args.push("-shared".into());
         args.push("-fPIC".into());
