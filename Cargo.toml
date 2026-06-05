@@ -91,6 +91,10 @@ harness = false
 name = "mindcraft_fmt"
 harness = false
 
+[[bench]]
+name = "det_matmul_q16"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

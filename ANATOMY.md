@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2692 | **Est. tokens:** ~6,740,021
-**Generated:** 2026-06-05 01:00 UTC
+**Files:** 2693 | **Est. tokens:** ~6,744,136
+**Generated:** 2026-06-05 01:27 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,12 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~23,200 |
+| `./` | 34 | ~23,213 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 9 | ~10,152 |
+| `benches/` | 10 | ~14,254 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -441,7 +441,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1401 tok, large) — [package]
+- `Cargo.toml` (~1414 tok, large) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -488,6 +488,7 @@
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~2149 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
+- `det_matmul_q16.rs` (~4102 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1208 tok, large) — Simple broadcasting scenarios
