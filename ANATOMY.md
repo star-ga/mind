@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2692 | **Est. tokens:** ~6,739,641
-**Generated:** 2026-06-05 00:29 UTC
+**Files:** 2692 | **Est. tokens:** ~6,739,967
+**Generated:** 2026-06-05 00:44 UTC
 
 ## Token Budget Guide
 
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 172 | ~305,400 |
+| `tests/` | 172 | ~305,726 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4010,7 +4010,7 @@
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse_phase10_surface.rs` (~4543 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parse_phase10_surface.rs` (~4739 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `phase_g_keystone_bootstrap.rs` (~6307 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4119,7 +4119,7 @@
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
-- `verify_cli.rs` (~2073 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_cli.rs` (~2203 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
