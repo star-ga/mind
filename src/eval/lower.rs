@@ -735,7 +735,10 @@ fn lower_expr(
         // was already broken) changes emitted text, so existing artifacts and
         // the keystone byte-identity are unaffected.
         ast::Node::Logical {
-            op, left, right, span,
+            op,
+            left,
+            right,
+            span,
         } => {
             let span = *span;
             let lit = |n: i64| ast::Node::Lit(ast::Literal::Int(n), span);

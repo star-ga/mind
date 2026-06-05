@@ -78,7 +78,11 @@ pub fn r_mixed(x: i64) -> i64 { if x == 0 || x > 5 && x < 8 { 1 } else { 0 } }
         std::fs::write(&driver, src).expect("write driver");
 
         let status = Command::new(&mindc)
-            .args([driver.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+            .args([
+                driver.to_str().unwrap(),
+                "--emit-shared",
+                so.to_str().unwrap(),
+            ])
             .status()
             .expect("run mindc");
         assert!(status.success(), "mindc must compile && / || programs");

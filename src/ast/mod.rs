@@ -500,11 +500,15 @@ pub enum Node {
     /// Loop break: `break` — exits the innermost enclosing `while`.
     /// Lowers to `cf.br ^while_after_N(<loop-carried args>)`. std-surface only.
     #[cfg(feature = "std-surface")]
-    Break { span: Span },
+    Break {
+        span: Span,
+    },
     /// Loop continue: `continue` — restarts the innermost enclosing `while`.
     /// Lowers to `cf.br ^while_header_N(<loop-carried args>)`. std-surface only.
     #[cfg(feature = "std-surface")]
-    Continue { span: Span },
+    Continue {
+        span: Span,
+    },
     /// Print statement: `print("msg", expr)`
     Print {
         args: Vec<Node>,

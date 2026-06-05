@@ -373,12 +373,16 @@ pub enum Instr {
     /// `^while_after` block-arg — NOT the back-edge's post-body value, which is
     /// not computed on the break path (that would be an SSA dominance error).
     #[cfg(feature = "std-surface")]
-    Break { live: Vec<(String, ValueId)> },
+    Break {
+        live: Vec<(String, ValueId)>,
+    },
     /// `continue` — re-test the innermost enclosing `while`'s condition. Same
     /// `live` snapshot as `Break`, forwarded to the `^while_header` block-arg so
     /// the next iteration sees the current mid-iteration carried values.
     #[cfg(feature = "std-surface")]
-    Continue { live: Vec<(String, ValueId)> },
+    Continue {
+        live: Vec<(String, ValueId)>,
+    },
     /// Conditional branch (Phase 6.5 Stage 1a).
     ///
     /// Lowers `if cond { then } else { else }` into separate sub-instruction

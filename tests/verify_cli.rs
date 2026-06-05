@@ -171,7 +171,10 @@ fn verify_tampered_artifact_fails() {
         })
         .expect("trace_hash key not found in artifact");
     let target = key_pos + key.len() + 8;
-    assert!(target < bytes.len(), "trace_hash value shorter than expected");
+    assert!(
+        target < bytes.len(),
+        "trace_hash value shorter than expected"
+    );
     bytes[target] ^= 0x01;
     std::fs::write(&tmp, &bytes).expect("write tampered artifact");
 

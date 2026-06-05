@@ -95,10 +95,17 @@ pub fn nested(a: i64, b: i64) -> i64 {
         std::fs::write(&driver, src).expect("write driver");
 
         let status = Command::new(&mindc)
-            .args([driver.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+            .args([
+                driver.to_str().unwrap(),
+                "--emit-shared",
+                so.to_str().unwrap(),
+            ])
             .status()
             .expect("run mindc");
-        assert!(status.success(), "mindc must compile break/continue programs");
+        assert!(
+            status.success(),
+            "mindc must compile break/continue programs"
+        );
 
         unsafe {
             let lib = libloading::Library::new(&so).expect("dlopen libbc.so");
