@@ -19,6 +19,10 @@
 //! pulling in private runtime crates. The entry points are
 //! [`lower_ir_to_mlir`] and [`compile_ir_to_mlir_text`].
 
+/// Cache-blocking knobs for the fused Q16.16 GEMM macro-kernel (autotuner
+/// surface). Public so a sweep harness can read/override the chosen point.
+pub mod gemm_tuning;
+
 mod lowering;
 
 #[cfg(feature = "ffi-c-user")]

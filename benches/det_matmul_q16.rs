@@ -78,7 +78,7 @@ use sha2::{Digest, Sha256};
 
 /// Square shapes the throughput sweep exercises. The 64×64 entry is the
 /// byte-identity anchor — its hash is pinned to the committed reference.
-const SHAPES: &[usize] = &[16, 64, 128];
+const SHAPES: &[usize] = &[16, 64, 128, 256, 512];
 
 /// The committed byte-identity workload (RFC 0020 §5). The 64×64×64 row of the
 /// sweep regenerates exactly this input and must hash to this reference.
