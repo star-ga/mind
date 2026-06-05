@@ -74,14 +74,17 @@ pub const Q16_KC: usize = 256;
 /// At the 128³ target N=128, so `jc` already collapses to a single column block
 /// at NC≥128; the touched footprint (C-scratch `MC*N*8`, packed B `K*N*4`) is
 /// pinned to the live N=128 regardless of NC, since the emitter fills only the
-/// live columns. Doubling NC 128→256 therefore leaves the resident cache set
-/// unchanged (untouched reserved pages never load) while widening the packed-B
-/// / C-scratch block stride — the exact column-side analogue of the proven
-/// `Q16_KC` 128→256 win, which at K=128 was a pure stride/reservation effect
-/// (both produce one `pc` panel, so it was not a panel-count change). Reduction
-/// order and Q16.16 byte-identity are untouched: NC only blocks columns, never
-/// the k-reduction.
-pub const Q16_NC: usize = 256;
+/// live columns. Doubling NC 128→256 already won (+0.090 GMAC/s) by leaving the
+/// resident cache set unchanged (untouched reserved pages never load) while
+/// widening the packed-B / C-scratch block stride. This pushes that same proven
+/// gradient one further doubling 256→512 to locate its knee: `jc` still
+/// collapses to one column block (NC≥128) and the live N=128 footprint is still
+/// pinned, so it remains a pure stride/reservation change — the i64 C-scratch
+/// row stride grows to `NC*8 = 4096 B` and the packed-B block stride to
+/// `NC*4 = 2048 B`, shifting where each live row maps in the L2 sets while never
+/// touching the reserved-but-dead columns. Reduction order and Q16.16
+/// byte-identity are untouched: NC only blocks columns, never the k-reduction.
+pub const Q16_NC: usize = 512;
 
 /// Register-tile rows: independent `MR` accumulator chains in the microkernel.
 /// Pinned — the accumulator shape in the emitter depends on it.
