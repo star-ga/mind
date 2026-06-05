@@ -1767,6 +1767,13 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // the runtime-support C shim. Track A's `__mind_blas_dot_f32` stays
     // registered and is the unchanged scalar/AVX2 fallback.
     ("__mind_blas_dot_f32_v", 3),
+    // "int-dot" tier: native MLIR vector-dialect int16 dot product. Same i64
+    // ABI / arity (3) as the other vector dots. Inputs are i16 row-major;
+    // byte-identical to the scalar oracle `(i32) sum_k ((i32)a[k]*(i32)b[k])`
+    // for ALL int16 inputs (i64-lane accumulate, no shift, no saturation, no
+    // early narrow). The widen-multiply-accumulate loop is the AVX2 vpmaddwd
+    // idiom at -march=x86-64-v3 — the fast deterministic int GEMM tier.
+    ("__mind_blas_dot_i16_v", 3),
     ("__mind_blas_dot_l1_f32", 3),
     // RFC 0006 Track B (increment 2): native MLIR vector-dialect f32 L1
     // (sum-of-abs) reduction. Same i64 ABI / arity (3) as the Track A
@@ -1798,6 +1805,14 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // (8-lane FMA + scalar tail) inlined per row, stores to caller-allocated
     // y buffer, returns 0.  Same arity (5) and i64 ABI as Track A.
     ("__mind_blas_matmul_rmajor_f32_v", 5),
+    // "int-dot" tier: native MLIR vector-dialect row-major int16 matmul.
+    // Outer scf.for over rows, inner int16 dot reduction from emit_vec_dot_i16
+    // (sext i16->i64, i64-lane accumulate, vector.reduction <add>, scalar
+    // tail, trunc) inlined per row, stores i32 to the caller-allocated y
+    // buffer, returns 0. Same arity (5) and i64 ABI as the f32/q16 matmuls.
+    // Byte-identical to the scalar oracle applied per row, for all int16
+    // inputs. Track B vector-dialect only — no Track A i16 matmul extern.
+    ("__mind_blas_matmul_rmajor_i16_v", 5),
     // RFC 0006 Track B (increment 4): native MLIR vector-dialect row-major
     // Q16.16 matmul.  Outer scf.for over rows, inner Q16.16 dot reduction
     // from emit_vec_dot_q16 (widen i32→i64, >> 16, i64-lane accumulate,

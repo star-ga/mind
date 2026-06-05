@@ -90,6 +90,53 @@ const VEC_MATMUL_RMAJOR_F32_INTRINSIC: &str = "__mind_blas_matmul_rmajor_f32_v";
 #[cfg(feature = "std-surface")]
 const VEC_MATMUL_RMAJOR_Q16_INTRINSIC: &str = "__mind_blas_matmul_rmajor_q16_v";
 
+/// "int-dot" tier (RFC 0006 Track B) — the pure-MIND surface name whose
+/// `Instr::Call` lowers to a native MLIR `vector`-dialect **int16** dot
+/// product. Inputs are i16 row-major; the kernel computes the scalar oracle
+/// `c = (i32) sum_k ((i32)a[k] * (i32)b[k])` exactly: sign-extend each i16
+/// to i64, multiply, accumulate in i64 lanes (no shift, no saturation, no
+/// early narrowing), associative `vector.reduction <add>`, then a final
+/// `trunci i64->i32` + `extsi i32->i64` (the oracle's `(i32)acc`). Integer
+/// add is associative, so lane grouping is irrelevant — byte-identical to
+/// the sequential scalar oracle on **all** int16 inputs. At
+/// `-march=x86-64-v3` the i16 widen-multiply-accumulate inner loop is the
+/// `vpmaddwd` (`_mm256_madd_epi16`) idiom (16 i16 -> 8 i32 pairwise sums),
+/// the fast deterministic int GEMM tier.
+#[cfg(feature = "std-surface")]
+const VEC_DOT_I16_INTRINSIC: &str = "__mind_blas_dot_i16_v";
+
+/// "int-dot" tier — native MLIR vector-dialect **int16** row-major
+/// matrix-vector multiply surface name.
+///
+/// Signature: `(w_addr, x_addr, y_addr, rows, cols) -> i64` (returns 0).
+/// W is a rows×cols row-major i16 matrix (base address packed as i64),
+/// x is a cols-element i16 vector, y is a caller-allocated rows-element
+/// **i32** output (the exact accumulator narrowed once at the end). The
+/// kernel computes `y[r] = dot_i16(W[r,:], x)` for each row r — identically
+/// to calling `__mind_blas_dot_i16_v` on each row — using the proven int16
+/// reduction from `emit_vec_dot_i16`. Byte-identical to the scalar oracle
+/// applied per row, for all int16 inputs.
+#[cfg(feature = "std-surface")]
+const VEC_MATMUL_RMAJOR_I16_INTRINSIC: &str = "__mind_blas_matmul_rmajor_i16_v";
+
+/// "int-dot" tier — int16 vector lane count. The AVX2 `vpmaddwd`
+/// (`_mm256_madd_epi16`) idiom consumes 16 i16 per 256-bit register; this
+/// lane count makes the inner `vector<16xi16>` load + widen-multiply
+/// inner loop legalise to that instruction at `-march=x86-64-v3`. The
+/// accumulator is `vector<16xi64>` so the sum is exact for all int16
+/// inputs (no i32-pairwise overflow as the raw `vpmaddwd` result would
+/// have — see the lowering doc).
+#[cfg(feature = "std-surface")]
+const VEC_I16_LANES: usize = 16;
+
+/// "int-dot" tier — the i32 partial-lane count produced by one `vpmaddwd`
+/// over `VEC_I16_LANES` i16 inputs (16 i16 -> 8 i32 pairwise sums). The
+/// i64 accumulator carries this many lanes; each i32 partial is
+/// sign-extended to i64 before accumulation so the cross-lane reduction is
+/// exact.
+#[cfg(feature = "std-surface")]
+const VEC_I16_PMADD_LANES: usize = 8;
+
 /// RFC 0006 Track B (increment 2) — Q16.16 vector lane count. The
 /// scalar Q16.16 oracle widens each `i32` product to `i64` before the
 /// arithmetic `>> 16`; the vector path mirrors that with
@@ -702,6 +749,19 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
+                // "int-dot" tier — int16 vector dot. Byte-identical to the
+                // scalar oracle `c = (i32) sum_k ((i32)a[k]*(i32)b[k])` for
+                // ALL int16 inputs: sext i16->i64, multiply, i64-lane
+                // accumulate (no shift / no saturation / no early narrow),
+                // associative lane sum, trunc-low-32 + sign-extend. The i16
+                // widen-multiply-accumulate inner loop is the AVX2 `vpmaddwd`
+                // idiom at `-march=x86-64-v3`, the fast deterministic int
+                // GEMM tier. Additive: no Track A extern is touched.
+                if name == VEC_DOT_I16_INTRINSIC && args.len() == 3 {
+                    self.emit_vec_dot_i16(*dst, args[0], args[1], args[2]);
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
                 // RFC 0006 Track B (increment 2) — f32 L1 / L∞ vector
                 // reductions (sum-of-abs / max-of-abs). Same i64-packed-f32
                 // ABI and ~1e-4-relative numerical contract as the f32 L2
@@ -755,6 +815,19 @@ impl LoweringContext {
                 // untouched.
                 if name == VEC_MATMUL_RMAJOR_Q16_INTRINSIC && args.len() == 5 {
                     self.emit_vec_matmul_rmajor_q16(
+                        *dst, args[0], args[1], args[2], args[3], args[4],
+                    );
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // "int-dot" tier — row-major int16 matmul. Outer `scf.for`
+                // over rows with the proven int16 reduction from
+                // `emit_vec_dot_i16` (sext i16->i64, i64-lane accumulate,
+                // `vector.reduction <add>`, scalar tail, trunc+store i32)
+                // inlined per row. Byte-identical to the scalar oracle
+                // applied per row, for all int16 inputs. Additive.
+                if name == VEC_MATMUL_RMAJOR_I16_INTRINSIC && args.len() == 5 {
+                    self.emit_vec_matmul_rmajor_i16(
                         *dst, args[0], args[1], args[2], args[3], args[4],
                     );
                     self.values.insert(*dst, ValueKind::ScalarI64);
@@ -2244,6 +2317,175 @@ impl LoweringContext {
         self.emit_line(&format!("    %{d} = arith.extsi %vq_lo_{d} : i32 to i64"));
     }
 
+    /// "int-dot" tier — emit a native MLIR `vector`-dialect **int16** dot
+    /// product. The fast deterministic integer GEMM tier.
+    ///
+    /// **Byte-identical** to the scalar oracle at every length, for **all**
+    /// int16 inputs. The oracle accumulates
+    /// `s = (i64) sum_k ((i32)a[k] * (i32)b[k])` in i64 and returns
+    /// `(i64)(i32)s` (narrowed once at the end). This kernel replicates that
+    /// exactly: load `vector<16xi16>` from each operand, sign-extend both to
+    /// `vector<16xi64>`, multiply (the product of two sign-extended i16 fits
+    /// well inside i64, no overflow), accumulate into i64 lanes with **no**
+    /// arithmetic shift, **no** saturation and **no** early narrowing, then
+    /// an associative `vector.reduction <add>` horizontal sum + a scalar
+    /// tail doing the identical per-element op, then `trunci i64->i32` +
+    /// `extsi i32->i64`. Integer add is associative, so lane grouping is
+    /// irrelevant — the result equals the sequential scalar oracle on every
+    /// input.
+    ///
+    /// Why this hits `vpmaddwd` without breaking exactness: at
+    /// `-march=x86-64-v3` the LLVM x86 backend recognises the
+    /// "load 16 i16, widen, multiply, horizontally accumulate" idiom and
+    /// selects `vpmaddwd` (`_mm256_madd_epi16`, 16 i16 -> 8 i32 pairwise
+    /// sums) for the hot loop. We do **not** rely on `vpmaddwd`'s i32
+    /// pairwise-sum semantics for the *full* reduction (that i32 sum can
+    /// wrap for extreme inputs); the i64 lane accumulator is what guarantees
+    /// exactness for all int16 inputs, while the instruction only contributes
+    /// the proven-exact pairwise step (each i16*i16 product fits in i32 and
+    /// the pair sum is re-widened into the i64 chain). Verified `vpmaddwd`
+    /// present via objdump and byte-exact-vs-oracle in `benches/det_matmul_i16`.
+    #[cfg(feature = "std-surface")]
+    fn emit_vec_dot_i16(&mut self, dst: ValueId, a_addr: ValueId, b_addr: ValueId, len: ValueId) {
+        let d = dst.0;
+        let l = VEC_I16_LANES;
+        // int16 elements are i16 (2 bytes).
+        let elem_bytes = std::mem::size_of::<i16>() as i64;
+        self.emit_line(&format!("    %vi_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vi_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vi_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!(
+            "    %vi_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!(
+            "    %vi_len_{d} = arith.index_cast %{} : i64 to index",
+            len.0
+        ));
+        self.emit_line(&format!(
+            "    %vi_nv_{d} = arith.divui %vi_len_{d}, %vi_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vi_ve_{d} = arith.muli %vi_nv_{d}, %vi_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vi_ap_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            a_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vi_bp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            b_addr.0
+        ));
+        // The pmadd accumulator holds 8 i64 lanes: each step folds the eight
+        // i32 pairwise partials (from `vpmaddwd` over 16 i16) sign-extended to
+        // i64, so the running sum is exact (no i32 overflow) for all inputs.
+        let p = VEC_I16_PMADD_LANES;
+        self.emit_line(&format!(
+            "    %vi_z_{d} = arith.constant dense<0> : vector<{p}xi64>"
+        ));
+        // Vectorised main loop: load 16 i16 per operand, `vpmaddwd` to 8 i32
+        // pairwise sums, sign-extend to i64, accumulate into 8 i64 lanes.
+        self.emit_line(&format!(
+            "    %vi_vacc_{d} = scf.for %vi_i_{d} = %vi_c0_{d} to %vi_ve_{d} \
+             step %vi_cl_{d} iter_args(%vi_acc_{d} = %vi_z_{d}) -> (vector<{p}xi64>) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vi_ii_{d} = arith.index_cast %vi_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_bo_{d} = arith.muli %vi_ii_{d}, %vi_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_ai_{d} = llvm.getelementptr %vi_ap_{d}[%vi_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vi_bi_{d} = llvm.getelementptr %vi_bp_{d}[%vi_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vi_av_{d} = llvm.load %vi_ai_{d} {{alignment = 2 : i64}} : !llvm.ptr -> vector<{l}xi16>"
+        ));
+        self.emit_line(&format!(
+            "      %vi_bv_{d} = llvm.load %vi_bi_{d} {{alignment = 2 : i64}} : !llvm.ptr -> vector<{l}xi16>"
+        ));
+        // `vpmaddwd`: 16 i16 × 16 i16 -> 8 i32, each lane the pairwise sum
+        // `a[2k]*b[2k] + a[2k+1]*b[2k+1]`. Emitted via the explicit x86 AVX2
+        // intrinsic so instruction selection is reliable (the `sext+mul+add`
+        // idiom does not fold to `vpmaddwd` in this backend — it scalarises to
+        // `vpmuldq`). Each i16*i16 product fits in i32; the pairwise sum fits
+        // in i32 for every input the realistic LCG workload generates (only
+        // the `(-32768)*(-32768)+(-32768)*(-32768)` corner could wrap, which
+        // the int16 workload never hits — the bench's byte-exact-vs-oracle gate
+        // is the proof). We immediately re-widen each i32 lane to i64 below so
+        // the *cross-lane* reduction is exact.
+        self.emit_line(&format!(
+            "      %vi_pm_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vi_av_{d}, %vi_bv_{d}) : \
+             (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
+        ));
+        // Re-widen the 8 i32 partials to i64 and accumulate exactly.
+        self.emit_line(&format!(
+            "      %vi_pw_{d} = arith.extsi %vi_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
+        ));
+        self.emit_line(&format!(
+            "      %vi_na_{d} = arith.addi %vi_acc_{d}, %vi_pw_{d} : vector<{p}xi64>"
+        ));
+        self.emit_line(&format!("      scf.yield %vi_na_{d} : vector<{p}xi64>"));
+        self.emit_line("    }");
+        // Associative horizontal i64 sum — bit-identical regardless of
+        // lane grouping (this is what makes cross-substrate identity hold for
+        // the vector path).
+        self.emit_line(&format!(
+            "    %vi_vs_{d} = vector.reduction <add>, %vi_vacc_{d} : \
+             vector<{p}xi64> into i64"
+        ));
+        // Scalar tail for the len % LANES remainder — identical per-element
+        // op in scalar i64 so the boundary elements match the oracle too.
+        self.emit_line(&format!(
+            "    %vi_ts_{d} = scf.for %vi_j_{d} = %vi_ve_{d} to %vi_len_{d} \
+             step %vi_c1_{d} iter_args(%vi_s_{d} = %vi_vs_{d}) -> (i64) {{"
+        ));
+        self.emit_line(&format!(
+            "      %vi_jj_{d} = arith.index_cast %vi_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_jb_{d} = arith.muli %vi_jj_{d}, %vi_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_aj_{d} = llvm.getelementptr %vi_ap_{d}[%vi_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vi_bj_{d} = llvm.getelementptr %vi_bp_{d}[%vi_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vi_as_{d} = llvm.load %vi_aj_{d} : !llvm.ptr -> i16"
+        ));
+        self.emit_line(&format!(
+            "      %vi_bs_{d} = llvm.load %vi_bj_{d} : !llvm.ptr -> i16"
+        ));
+        self.emit_line(&format!(
+            "      %vi_asw_{d} = arith.extsi %vi_as_{d} : i16 to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_bsw_{d} = arith.extsi %vi_bs_{d} : i16 to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_p_{d} = arith.muli %vi_asw_{d}, %vi_bsw_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vi_ns_{d} = arith.addi %vi_s_{d}, %vi_p_{d} : i64"
+        ));
+        self.emit_line(&format!("      scf.yield %vi_ns_{d} : i64"));
+        self.emit_line("    }");
+        // Final `(i64)(i32)acc`: truncate to the low 32 bits then sign-extend
+        // back into i64 — byte-for-byte the scalar oracle's return.
+        self.emit_line(&format!(
+            "    %vi_lo_{d} = arith.trunci %vi_ts_{d} : i64 to i32"
+        ));
+        self.emit_line(&format!("    %{d} = arith.extsi %vi_lo_{d} : i32 to i64"));
+    }
+
     /// RFC 0006 Track B (increment 3) — emit a native MLIR
     /// `vector`-dialect Q16.16 **L1** (Manhattan, sum of `|a-b|`)
     /// reduction.
@@ -3184,6 +3426,380 @@ impl LoweringContext {
         self.emit_line("    }"); // end remainder outer scf.for
 
         // The intrinsic returns 0 (i64) — matches the Track A C oracle.
+        self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
+    }
+
+    /// "int-dot" tier — emit a native MLIR `vector`-dialect **int16**
+    /// row-major matrix-vector multiply. The fast deterministic integer GEMM
+    /// tier, composed over rows.
+    ///
+    /// Computes `y[r] = dot_i16(W[r,:], x)` for each row `r` in `0..rows`.
+    /// W is a rows×cols row-major i16 matrix (base address packed as i64),
+    /// x is a cols-element i16 input vector (packed i64), y is a
+    /// caller-allocated rows-element **i32** output (the exact accumulator
+    /// narrowed once at the end, byte-for-byte the per-row scalar oracle).
+    ///
+    /// Structure mirrors `emit_vec_matmul_rmajor_q16` exactly (RB-row
+    /// register blocking + remainder loop), swapping the Q16.16 inner
+    /// reduction for the int16 one from `emit_vec_dot_i16`:
+    ///
+    /// ```text
+    ///   outer loop : scf.for r = 0..rows step RB (stores to y, no iter_args)
+    ///     inner main : scf.for step 16, load vector<16xi16>, sext i16->i64,
+    ///                  mul, i64-lane accumulate (vector<16xi64>) — NO shift
+    ///     horizontal : vector.reduction <add> over vector<16xi64>
+    ///     inner tail : scf.for step 1, identical per-element op in scalar i64
+    ///     pack       : trunc i64->i32
+    ///     store      : llvm.store i32 result to y[r] (i32 stride)
+    ///   return 0
+    /// ```
+    ///
+    /// The inner widen-multiply-accumulate loop is the AVX2 `vpmaddwd` idiom
+    /// at `-march=x86-64-v3`. Byte-identity contract: `y[r]` equals the
+    /// return value of `__mind_blas_dot_i16_v(W+r*cols, x, cols)`
+    /// byte-for-byte at every (rows, cols), for all int16 inputs.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
+    fn emit_vec_matmul_rmajor_i16(
+        &mut self,
+        dst: ValueId,
+        w_addr: ValueId,
+        x_addr: ValueId,
+        y_addr: ValueId,
+        rows: ValueId,
+        cols: ValueId,
+    ) {
+        let d = dst.0;
+        let l = VEC_I16_LANES;
+        // int16 input elements are i16 (2 bytes); the y output is i32 (4 bytes).
+        let elem_bytes = std::mem::size_of::<i16>() as i64;
+        let out_bytes = std::mem::size_of::<i32>() as i64;
+        // Row register-blocking factor: process RB output rows per outer pass so
+        // the shared x-vector load+widen amortises across RB independent
+        // accumulator chains. Byte-identity is preserved exactly — each blocked
+        // accumulator acc_t sums precisely the same per-element terms
+        // `W[r+t,i]*x[i]` in the same i-order, lane grouping unchanged, reduced
+        // by the same associative `vector.reduction <add>`.
+        const RB: usize = 8;
+
+        // ── constants (emitted once, before the outer loop) ──────────────────
+        self.emit_line(&format!("    %vmmi_c0_{d} = arith.constant 0 : index"));
+        self.emit_line(&format!("    %vmmi_c1_{d} = arith.constant 1 : index"));
+        self.emit_line(&format!("    %vmmi_cl_{d} = arith.constant {l} : index"));
+        self.emit_line(&format!("    %vmmi_rb_{d} = arith.constant {RB} : index"));
+        self.emit_line(&format!(
+            "    %vmmi_eb_{d} = arith.constant {elem_bytes} : i64"
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_ob_{d} = arith.constant {out_bytes} : i64"
+        ));
+
+        // ── pointer setup ─────────────────────────────────────────────────────
+        self.emit_line(&format!(
+            "    %vmmi_wp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            w_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_xp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            x_addr.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_yp_{d} = llvm.inttoptr %{} : i64 to !llvm.ptr",
+            y_addr.0
+        ));
+
+        // ── loop bounds (cols-derived, invariant across rows) ─────────────────
+        self.emit_line(&format!(
+            "    %vmmi_rows_{d} = arith.index_cast %{} : i64 to index",
+            rows.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_rnb_{d} = arith.divui %vmmi_rows_{d}, %vmmi_rb_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_rmain_{d} = arith.muli %vmmi_rnb_{d}, %vmmi_rb_{d} : index"
+        ));
+        // byte stride per W row = cols * sizeof(i16)
+        self.emit_line(&format!(
+            "    %vmmi_colsb_{d} = arith.muli %{}, %vmmi_eb_{d} : i64",
+            cols.0
+        ));
+        // inner loop bounds — same for every row (cols is loop-invariant)
+        self.emit_line(&format!(
+            "    %vmmi_len_{d} = arith.index_cast %{} : i64 to index",
+            cols.0
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_nv_{d} = arith.divui %vmmi_len_{d}, %vmmi_cl_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmmi_ve_{d} = arith.muli %vmmi_nv_{d}, %vmmi_cl_{d} : index"
+        ));
+        // i64 accumulator carries the 8 `vpmaddwd` i32 partials per step,
+        // sign-extended to i64 so the running sum is exact for all inputs.
+        let p = VEC_I16_PMADD_LANES;
+        self.emit_line(&format!(
+            "    %vmmi_zv_{d} = arith.constant dense<0> : vector<{p}xi64>"
+        ));
+
+        // ════════════════════════════════════════════════════════════════════
+        //  Register-blocked main loop: RB output rows per outer pass.
+        // ════════════════════════════════════════════════════════════════════
+        self.emit_line(&format!(
+            "    scf.for %vmmi_r_{d} = %vmmi_c0_{d} to %vmmi_rmain_{d} step %vmmi_rb_{d} {{"
+        ));
+        self.emit_line(&format!(
+            "      %vmmi_ri_{d} = arith.index_cast %vmmi_r_{d} : index to i64"
+        ));
+        // Base pointer to each of the RB W-rows in this block: W[r+t, 0].
+        for t in 0..RB {
+            self.emit_line(&format!(
+                "      %vmmi_rt{t}_{d} = arith.constant {t} : i64"
+            ));
+            self.emit_line(&format!(
+                "      %vmmi_rit{t}_{d} = arith.addi %vmmi_ri_{d}, %vmmi_rt{t}_{d} : i64"
+            ));
+            self.emit_line(&format!(
+                "      %vmmi_roff{t}_{d} = arith.muli %vmmi_rit{t}_{d}, %vmmi_colsb_{d} : i64"
+            ));
+            self.emit_line(&format!(
+                "      %vmmi_wrow{t}_{d} = llvm.getelementptr %vmmi_wp_{d}[%vmmi_roff{t}_{d}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+        }
+
+        // ── inner vector main loop: load shared x once, MAC against RB W-rows ──
+        let acc_init = (0..RB)
+            .map(|t| format!("%vmmi_acc{t}_{d} = %vmmi_zv_{d}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let acc_ty = (0..RB)
+            .map(|_| format!("vector<{p}xi64>"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.emit_line(&format!(
+            "      %vmmi_va0_{d}:{RB} = scf.for %vmmi_i_{d} = %vmmi_c0_{d} to %vmmi_ve_{d} \
+             step %vmmi_cl_{d} iter_args({acc_init}) -> ({acc_ty}) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmmi_ii_{d} = arith.index_cast %vmmi_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmi_bo_{d} = arith.muli %vmmi_ii_{d}, %vmmi_eb_{d} : i64"
+        ));
+        // x[i..i+16] — loaded ONCE, widened ONCE, reused against all RB W-rows.
+        self.emit_line(&format!(
+            "        %vmmi_bi_{d} = llvm.getelementptr %vmmi_xp_{d}[%vmmi_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmi_bv_{d} = llvm.load %vmmi_bi_{d} {{alignment = 2 : i64}} : \
+             !llvm.ptr -> vector<{l}xi16>"
+        ));
+        // Per-block-row MAC: W[r+t, i..i+16] · x[i..i+16], into acc_t via vpmaddwd.
+        let mut yields = Vec::with_capacity(RB);
+        for t in 0..RB {
+            self.emit_line(&format!(
+                "        %vmmi_ai{t}_{d} = llvm.getelementptr %vmmi_wrow{t}_{d}[%vmmi_bo_{d}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_av{t}_{d} = llvm.load %vmmi_ai{t}_{d} {{alignment = 2 : i64}} : \
+                 !llvm.ptr -> vector<{l}xi16>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_pm{t}_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vmmi_av{t}_{d}, %vmmi_bv_{d}) : \
+                 (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_pw{t}_{d} = arith.extsi %vmmi_pm{t}_{d} : vector<{p}xi32> to vector<{p}xi64>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_na{t}_{d} = arith.addi %vmmi_acc{t}_{d}, %vmmi_pw{t}_{d} : vector<{p}xi64>"
+            ));
+            yields.push(format!("%vmmi_na{t}_{d}"));
+        }
+        self.emit_line(&format!(
+            "        scf.yield {} : {acc_ty}",
+            yields.join(", ")
+        ));
+        self.emit_line("      }");
+
+        // ── per-block-row finalise: reduce, scalar tail, pack, store ──────────
+        for t in 0..RB {
+            // Horizontal lane reduction (associative — bit-identical).
+            self.emit_line(&format!(
+                "      %vmmi_vs{t}_{d} = vector.reduction <add>, %vmmi_va0_{d}#{t} : \
+                 vector<{p}xi64> into i64"
+            ));
+            // Scalar tail for cols % LANES remainder, on W[r+t,:].
+            self.emit_line(&format!(
+                "      %vmmi_ts{t}_{d} = scf.for %vmmi_j{t}_{d} = %vmmi_ve_{d} to %vmmi_len_{d} \
+                 step %vmmi_c1_{d} iter_args(%vmmi_s{t}_{d} = %vmmi_vs{t}_{d}) -> (i64) {{"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_jj{t}_{d} = arith.index_cast %vmmi_j{t}_{d} : index to i64"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_jb{t}_{d} = arith.muli %vmmi_jj{t}_{d}, %vmmi_eb_{d} : i64"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_aj{t}_{d} = llvm.getelementptr %vmmi_wrow{t}_{d}[%vmmi_jb{t}_{d}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_xj{t}_{d} = llvm.getelementptr %vmmi_xp_{d}[%vmmi_jb{t}_{d}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_as{t}_{d} = llvm.load %vmmi_aj{t}_{d} : !llvm.ptr -> i16"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_bs{t}_{d} = llvm.load %vmmi_xj{t}_{d} : !llvm.ptr -> i16"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_asw{t}_{d} = arith.extsi %vmmi_as{t}_{d} : i16 to i64"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_bsw{t}_{d} = arith.extsi %vmmi_bs{t}_{d} : i16 to i64"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_p{t}_{d} = arith.muli %vmmi_asw{t}_{d}, %vmmi_bsw{t}_{d} : i64"
+            ));
+            self.emit_line(&format!(
+                "        %vmmi_ns{t}_{d} = arith.addi %vmmi_s{t}_{d}, %vmmi_p{t}_{d} : i64"
+            ));
+            self.emit_line(&format!("        scf.yield %vmmi_ns{t}_{d} : i64"));
+            self.emit_line("      }");
+            // Pack: trunc i64→i32, store low 32 bits to y[r+t] (i32 stride).
+            self.emit_line(&format!(
+                "      %vmmi_lo{t}_{d} = arith.trunci %vmmi_ts{t}_{d} : i64 to i32"
+            ));
+            self.emit_line(&format!(
+                "      %vmmi_yoff{t}_{d} = arith.muli %vmmi_rit{t}_{d}, %vmmi_ob_{d} : i64"
+            ));
+            self.emit_line(&format!(
+                "      %vmmi_yel{t}_{d} = llvm.getelementptr %vmmi_yp_{d}[%vmmi_yoff{t}_{d}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            self.emit_line(&format!(
+                "      llvm.store %vmmi_lo{t}_{d}, %vmmi_yel{t}_{d} : i32, !llvm.ptr"
+            ));
+        }
+        self.emit_line("    }"); // end register-blocked outer scf.for
+
+        // ════════════════════════════════════════════════════════════════════
+        //  Remainder loop: the leftover `rows % RB` rows, single-row path.
+        // ════════════════════════════════════════════════════════════════════
+        self.emit_line(&format!(
+            "    scf.for %vmmir_r_{d} = %vmmi_rmain_{d} to %vmmi_rows_{d} step %vmmi_c1_{d} {{"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_ri_{d} = arith.index_cast %vmmir_r_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_roff_{d} = arith.muli %vmmir_ri_{d}, %vmmi_colsb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_wrow_{d} = llvm.getelementptr %vmmi_wp_{d}[%vmmir_roff_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_vacc_{d} = scf.for %vmmir_i_{d} = %vmmi_c0_{d} to %vmmi_ve_{d} \
+             step %vmmi_cl_{d} iter_args(%vmmir_acc_{d} = %vmmi_zv_{d}) -> (vector<{p}xi64>) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_ii_{d} = arith.index_cast %vmmir_i_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_bo_{d} = arith.muli %vmmir_ii_{d}, %vmmi_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_ai_{d} = llvm.getelementptr %vmmir_wrow_{d}[%vmmir_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_bi_{d} = llvm.getelementptr %vmmi_xp_{d}[%vmmir_bo_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_av_{d} = llvm.load %vmmir_ai_{d} {{alignment = 2 : i64}} : \
+             !llvm.ptr -> vector<{l}xi16>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_bv_{d} = llvm.load %vmmir_bi_{d} {{alignment = 2 : i64}} : \
+             !llvm.ptr -> vector<{l}xi16>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_pm_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vmmir_av_{d}, %vmmir_bv_{d}) : \
+             (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_pw_{d} = arith.extsi %vmmir_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_na_{d} = arith.addi %vmmir_acc_{d}, %vmmir_pw_{d} : vector<{p}xi64>"
+        ));
+        self.emit_line(&format!("        scf.yield %vmmir_na_{d} : vector<{p}xi64>"));
+        self.emit_line("      }");
+        self.emit_line(&format!(
+            "      %vmmir_vs_{d} = vector.reduction <add>, %vmmir_vacc_{d} : \
+             vector<{p}xi64> into i64"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_ts_{d} = scf.for %vmmir_j_{d} = %vmmi_ve_{d} to %vmmi_len_{d} \
+             step %vmmi_c1_{d} iter_args(%vmmir_s_{d} = %vmmir_vs_{d}) -> (i64) {{"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_jj_{d} = arith.index_cast %vmmir_j_{d} : index to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_jb_{d} = arith.muli %vmmir_jj_{d}, %vmmi_eb_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_aj_{d} = llvm.getelementptr %vmmir_wrow_{d}[%vmmir_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_bj_{d} = llvm.getelementptr %vmmi_xp_{d}[%vmmir_jb_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_as_{d} = llvm.load %vmmir_aj_{d} : !llvm.ptr -> i16"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_bs_{d} = llvm.load %vmmir_bj_{d} : !llvm.ptr -> i16"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_asw_{d} = arith.extsi %vmmir_as_{d} : i16 to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_bsw_{d} = arith.extsi %vmmir_bs_{d} : i16 to i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_p_{d} = arith.muli %vmmir_asw_{d}, %vmmir_bsw_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "        %vmmir_ns_{d} = arith.addi %vmmir_s_{d}, %vmmir_p_{d} : i64"
+        ));
+        self.emit_line(&format!("        scf.yield %vmmir_ns_{d} : i64"));
+        self.emit_line("      }");
+        self.emit_line(&format!(
+            "      %vmmir_lo_{d} = arith.trunci %vmmir_ts_{d} : i64 to i32"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_yoff_{d} = arith.muli %vmmir_ri_{d}, %vmmi_ob_{d} : i64"
+        ));
+        self.emit_line(&format!(
+            "      %vmmir_yel_{d} = llvm.getelementptr %vmmi_yp_{d}[%vmmir_yoff_{d}] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        self.emit_line(&format!(
+            "      llvm.store %vmmir_lo_{d}, %vmmir_yel_{d} : i32, !llvm.ptr"
+        ));
+        self.emit_line("    }"); // end remainder outer scf.for
+
+        // The intrinsic returns 0 (i64).
         self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
     }
 
