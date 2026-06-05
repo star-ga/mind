@@ -254,6 +254,8 @@ fn mut_ref_expr_in_let_binding() {
     assert!(parses(src), "`&mut expr` in let binding must parse");
 }
 
+// Bitwise lowering is std-surface-gated, and `parses()` is a full compile.
+#[cfg(feature = "std-surface")]
 #[test]
 fn ref_expr_does_not_conflict_with_bitwise_and() {
     // `a & b` (bitwise-AND) must still parse when `&` appears as infix.
@@ -264,6 +266,8 @@ fn ref_expr_does_not_conflict_with_bitwise_and() {
     );
 }
 
+// Bitwise lowering is std-surface-gated, and `parses()` is a full compile.
+#[cfg(feature = "std-surface")]
 #[test]
 fn ref_expr_and_bitwise_and_coexist() {
     // Both `&expr` prefix and `a & b` infix in the same fn.
@@ -281,6 +285,8 @@ fn ref_expr_and_bitwise_and_coexist() {
     );
 }
 
+// StructLit lowering is std-surface-gated, and `parses()` is a full compile.
+#[cfg(feature = "std-surface")]
 #[test]
 fn ref_expr_struct_arg() {
     // `f(&point)` where the parameter type is `&Point`.
