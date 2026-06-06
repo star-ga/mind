@@ -1,0 +1,16 @@
+// MIND-Fuzz seed: small pure-integer scalar function.
+//
+// A trivial, self-contained seed in the spirit of Listing 1 of the paper
+// (a single function with an integer argument). It exercises the lowering /
+// SSA / mic@3 path WITHOUT a runtime reference oracle, so the live oracles
+// for this seed are: determinism (compile twice -> identical), mindc verify
+// (RFC 0017 SSA + trace_hash), mic@3 round-trip, and compile-success.
+//
+// The fuzzer accretes control flow / arithmetic onto this via the mutation
+// instructions; it is the SSA-construction stress seed.
+
+pub fn f(a: i64) -> i64 {
+    let _mf_dead: i64 = 2 + 3;
+    let x: i64 = 5;
+    return a + x;
+}
