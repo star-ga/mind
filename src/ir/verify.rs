@@ -101,10 +101,7 @@ pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
 /// `defined` set through nested regions. Operands are checked against
 /// definitions seen *earlier* in the walk; each instruction's result is then
 /// added (rejecting a duplicate).
-fn check_ssa_stream(
-    instrs: &[Instr],
-    defined: &mut BTreeSet<ValueId>,
-) -> Result<(), SsaViolation> {
+fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result<(), SsaViolation> {
     for instr in instrs {
         // Classify region-bearing nodes: their own `dst`/`result` is produced
         // *inside* a sub-stream (e.g. `Region.result` is the last body value,

@@ -26,9 +26,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use libmind::ir::compact::emit_mic3;
-use libmind::ir::{
-    BinOp, IRModule, Instr, SsaRule, ValueId, check_ssa_well_formed,
-};
+use libmind::ir::{BinOp, IRModule, Instr, SsaRule, ValueId, check_ssa_well_formed};
 
 // ---------------------------------------------------------------------------
 // Library-level: check_ssa_well_formed directly.
@@ -101,7 +99,11 @@ fn ssa_undefined_operand_fails() {
     m.next_id = 6;
 
     let err = check_ssa_well_formed(&m).expect_err("undefined %5 must fail");
-    assert_eq!(err.value, ValueId(5), "violation must name the undefined %5");
+    assert_eq!(
+        err.value,
+        ValueId(5),
+        "violation must name the undefined %5"
+    );
     assert_eq!(
         err.rule,
         SsaRule::DefineBeforeUse,
