@@ -1378,7 +1378,10 @@ fn json_escape(s: &str) -> String {
 /// Returns the process exit code: 0 = valid, 1 = verification failed
 /// (tampered / unattested / malformed), 2 = I/O error reading the artifact.
 fn run_verify(artifact: &str, json: bool) -> i32 {
-    use libmind::ir::compact::{Determinism, EvidenceError, TraceHashKind, mic3_evidence_report};
+    use libmind::ir::compact::{
+        Determinism, EvidenceError, TraceHashKind, mic3_evidence_report, parse_mic3,
+    };
+    use libmind::ir::check_ssa_well_formed;
 
     let bytes = match fs::read(artifact) {
         Ok(b) => b,
@@ -1387,6 +1390,42 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
             return 2;
         }
     };
+
+    // SSA well-formedness (RFC 0017, second static-verification slice): parse
+    // the mic@3 IR body and statically confirm single-assignment +
+    // define-before-use over the instruction tree. This is independent of the
+    // evidence-chain trace_hash check below; `verify` fails if EITHER property
+    // fails. A parse failure here is a malformed artifact, not an SSA fault.
+    let (ssa_valid, ssa_reason): (bool, Option<String>) = match parse_mic3(&bytes) {
+        Ok(module) => match check_ssa_well_formed(&module) {
+            Ok(()) => (true, None),
+            Err(v) => (false, Some(v.to_string())),
+        },
+        // Could not parse the IR body for the SSA check. The evidence path
+        // below produces the authoritative parse-error diagnostic; here we only
+        // record that SSA could not be established.
+        Err(_) => (false, Some("mic@3 body did not parse for SSA check".into())),
+    };
+
+    // SSA well-formedness is a property of the IR body alone — independent of,
+    // and gated BEFORE, the evidence chain (which an artifact may legitimately
+    // lack). A structural SSA fault fails `verify` regardless of attestation.
+    if !ssa_valid {
+        let reason = ssa_reason.as_deref().unwrap_or("malformed IR");
+        if json {
+            println!(
+                "{{\"artifact\":\"{}\",\"ssa_valid\":false,\"ssa_reason\":\"{}\"}}",
+                json_escape(artifact),
+                json_escape(reason)
+            );
+        } else {
+            println!("artifact:         {artifact}");
+            println!("ssa_valid:        NO");
+            println!("ssa_reason:       {reason}");
+        }
+        eprintln!("error[verify]: SSA well-formedness check FAILED — {reason}");
+        return 1;
+    }
 
     match mic3_evidence_report(&bytes) {
         Ok(report) => {
@@ -1412,8 +1451,12 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                     Some(p) => format!("\"{p}\""),
                     None => "null".to_string(),
                 };
+                let ssa_reason_field = match &ssa_reason {
+                    Some(r) => format!("\"{}\"", json_escape(r)),
+                    None => "null".to_string(),
+                };
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field}}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
@@ -1434,11 +1477,27 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                     "trace_hash_valid: {}",
                     if report.trace_hash_valid { "yes" } else { "NO" }
                 );
+                println!("ssa_valid:        {}", if ssa_valid { "yes" } else { "NO" });
+                if let Some(r) = &ssa_reason {
+                    println!("ssa_reason:       {r}");
+                }
+            }
+
+            // `verify` passes only if BOTH the SSA structure and the
+            // evidence-chain trace_hash hold. Report the SSA fault first (it is
+            // a structural defect in the IR body, independent of the chain).
+            if !ssa_valid {
+                eprintln!(
+                    "error[verify]: SSA well-formedness check FAILED — {}",
+                    ssa_reason.as_deref().unwrap_or("malformed IR")
+                );
+                return 1;
             }
 
             if report.trace_hash_valid {
                 if !json {
                     eprintln!("verified: evidence chain is intact (untampered)");
+                    eprintln!("verified: IR body is SSA well-formed");
                     if matches!(report.determinism, Determinism::Nondeterministic) {
                         eprintln!(
                             "note: artifact declares a nondeterministic build; trace_hash matches but reproducibility is not asserted"
