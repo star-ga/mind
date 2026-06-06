@@ -1,0 +1,20 @@
+// MIND-Fuzz seed: type-conversion + edge-value scalar entry (reference-checkable).
+//
+// Directly targets the `as`-cast codegen — the class that produced the real
+// i64->i32 narrowing miscompile MIND-Fuzz already found. f(a) narrows the
+// argument through i32 / i16 / u8 and recombines, so a mis-truncation or a
+// sign-extension-vs-zero-extension bug shows up as a scalar mismatch against the
+// Python mirror over the canonical signed-i32 arg window (positive/negative/0).
+//
+// MIND cast semantics: `as i32` keeps low 32 bits, sign-extends back to i64;
+// `as i16` keeps low 16 bits sign-extended; `as u8` keeps low 8 bits zero-extended.
+//
+// MINDFUZZ-ORACLE-PURE: ((((a & 0xFFFFFFFF) ^ 0x80000000) - 0x80000000)) + ((((a & 0xFFFF) ^ 0x8000) - 0x8000)) + (a & 0xFF)
+
+pub fn f(a: i64) -> i64 {
+    let w32: i32 = a as i32;
+    let w16: i16 = a as i16;
+    let b8: u8 = a as u8;
+    let r: i64 = (w32 as i64) + (w16 as i64) + (b8 as i64);
+    return r;
+}

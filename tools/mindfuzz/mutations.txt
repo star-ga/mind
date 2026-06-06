@@ -3,20 +3,32 @@
 # Each non-comment, non-blank line is ONE mutation instruction. The loop picks
 # one by COUNTER (iteration % N), not at random, so a run is replay-stable
 # (autorun.py-style determinism). The chosen instruction is fed to the LLM with
-# the current program via the Listing-2 prompt template.
+# the current program via the Listing-2 prompt template; with --no-llm the
+# deterministic template mutator in mutate.py applies a keyed transform.
 #
 # A leading tag controls which oracles assert on the result:
 #   [preserve]  the mutation MUST keep observable semantics  -> reference oracle
-#               applies in full (kernel output must still match the scalar ref).
+#               applies in full (kernel / scalar output must still match the ref).
 #   [semantics] the mutation MAY change what the program computes -> reference
 #               oracle is skipped; determinism / verify / mic@3 / compile still
 #               apply (these never depend on the computed value).
 #
 # Instructions are written to be MIND-VALID: MIND has no pointers, unions, or
 # C-style aggregates, so the paper's pointer/union/struct rows are replaced with
-# MIND-idiomatic integer / control-flow / let-binding transforms. Keep edits
-# small and local so the line-deletion minimizer stays effective.
+# MIND-idiomatic integer / control-flow / cast / let-binding transforms. Keep
+# edits small and local so the line-deletion minimizer stays effective.
+#
+# The mutations below are split into two tiers. The first tier is the original
+# semantics-light set (low-yield but cheap). The second tier is the AGGRESSIVE,
+# bug-seeking set that targets the dangerous codegen classes: integer edge
+# values, type-conversion (`as`) stress in both directions, overflow / shift /
+# division UB, control-flow depth, SSA-id pressure, and mixed-width arithmetic.
+# These are the rows most likely to surface narrowing / sign-extension /
+# truncation / SSA-construction miscompiles (the two real bugs already found
+# were exactly this shape: an i64->i32 narrowing miscompile and an SSA
+# false-positive).
 
+# ----- tier 1: semantics-light (original) --------------------------------- #
 [preserve] add a redundant let binding that is computed but does not change any returned value, then leave all returns unchanged
 [preserve] introduce a constant-folded temporary (e.g. let k: i64 = 2 + 3;) that is unused by the result, keeping every function signature and return identical
 [preserve] add a dead conditional `if false { ... }` containing a statement, without altering any value that is returned
@@ -27,3 +39,42 @@
 [semantics] add a bounded counting loop (a known small number of iterations) that accumulates into a local i64, returning the accumulator
 [semantics] make an existing condition more complicated by conjoining a second comparison with && without removing the original comparison
 [semantics] widen an i16 local to i32 (or i32 to i64) consistently, preserving the function signature where it is `pub`
+
+# ----- tier 2: AGGRESSIVE, bug-seeking ------------------------------------ #
+
+# integer EDGE VALUES: push literals to type boundaries / extremes / 0 / -1.
+[semantics] replace an integer literal with an i32 boundary value (2147483647 or -2147483648) and keep it feeding the returned expression
+[semantics] replace an integer literal with an i64 boundary value (9223372036854775807 or -9223372036854775808) feeding the result
+[semantics] replace an integer literal with one of the bytewise edge values 0, -1, 127, 128, 255, 256, 32767, 32768 and keep it live in the return
+[semantics] introduce a `let e: i64 = -1;` and fold it into the returned expression so the all-ones bit pattern flows through arithmetic
+
+# type-conversion stress: explicit `as` casts BOTH directions at edge values.
+# A narrowing `as` that mis-truncates or mis-sign-extends is a silent miscompile;
+# the round-trip preserve rows let the reference oracle assert the exact value.
+[preserve] insert an identity round-trip cast on a live value: rebind it through `(x as i32) as i64` (or `(x as i16) as i64` for in-range values) without changing the value it represents
+[semantics] narrow a live i64 value to i32 with `as i32`, then widen back with `as i64`, letting the (possibly truncated) value feed the result
+[semantics] narrow a live i64 value to i16 (or i8) with `as i16` / `as i8`, widen back to i64, and return it so truncation/sign-extension is observable
+[semantics] cast a live value to an unsigned type (u32 / u16 / u8) and back to i64, so unsigned zero-extension vs signed sign-extension is exercised on the same bits
+[semantics] add an i32-typed local computed from `a as i32`, do arithmetic in i32, then return it as i64 so the result depends on i32 wraparound
+
+# arithmetic that could overflow / trip UB.
+[semantics] multiply a live value by a large constant (e.g. * 2147483647) so the product can overflow i64, returning the wrapped result
+[semantics] add a large constant (e.g. + 9223372036854775807) to a live value so the sum can overflow, returning it
+[semantics] shift a live value left by a large or edge amount (<< 31, << 32, << 63) and return it
+[semantics] shift a live value right by an edge amount (>> 31, >> 63) and return it, exercising arithmetic vs logical shift
+[semantics] divide a live value by a small constant (/ 3 or / 7) and also take its remainder (% 3), combining both into the return
+
+# control-flow DEPTH: deep nesting, edge loop bounds, early returns.
+[semantics] wrap an existing return in three levels of nested `if a > 0 { if a > 1 { if a > 2 { ... } } }`, keeping a fallthrough return at the end
+[semantics] add a `while i < 0 { ... }` loop that never executes (zero iterations) before the existing body, plus a `while i < 1 { ... }` that runs exactly once
+[semantics] add a bounded loop with a large constant bound (e.g. while i < 1000) that accumulates into an i64, then returns the accumulator
+[semantics] add an early `return` inside a loop guarded by `if i == a` so the function can exit before the loop completes
+
+# variable shadowing + SSA-id pressure: many locals, long chains.
+[semantics] shadow an existing local: rebind `let x = ...;` to a new `let x = x + 1;` in the same scope so the later use sees the shadowed value
+[semantics] introduce a chain of eight dependent locals (let a0 = a; let a1 = a0 + 1; ... let a7 = a6 + 1;) and return the last one, creating SSA-id pressure
+[semantics] build one long single-expression chain combining +, -, *, &, |, ^ over a live value and several constants, returning it
+
+# mixed-width arithmetic requiring implicit-or-explicit conversion.
+[semantics] introduce an i32 local and an i64 local and combine them with an explicit `as i64` in the returned expression
+[semantics] mix an i16 local, an i32 local and the i64 argument in one returned expression using `as` casts to a common width
