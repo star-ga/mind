@@ -137,13 +137,24 @@ pub const I8_MC: usize = 256;
 /// and the i64 reduction is order-invariant.
 pub const I8_KC: usize = 1024;
 
-/// int8 tier column block. Held at the proven 15.560-champion value 384 (exp126) — reverted
-/// from the unmeasured exp127 NC=512 so exp128's full-K I8_KC=1024 is the SOLE moving axis.
-/// 384 gives 3 column blocks over N=1024 (256-wide N%384 epilogue) at packed-B `1024*384*4 =
-/// 1.5 MiB` and i64 C-scratch `256*384*8 = 768 KiB` (the write-once accumulator exp128 targets),
-/// all L3-resident in the MC=256 regime. Byte-identity unaffected: the column-block width never
-/// reorders a product nor perturbs the int32 sum.
-pub const I8_NC: usize = 384;
+/// int8 tier column block. exp129 EXPLORE pivot — collapses the jc column loop to a SINGLE
+/// full-N block (I8_NC 384→1024 = full N, N%1024=0, zero column epilogue), the SOLE moving axis
+/// vs the 15.791 full-K champion (MC=256/KC=1024/NC=384). The mechanism is specific to the new
+/// full-K regime exp128 just opened, and is NOT the dead exp113 (NC=1024 at the shallow KC=128
+/// corner, where the 8× C-scratch RMW dominated and masked any jc benefit, 14.189). In the
+/// full-K nest `jc → ic → pc(=1) → jr → ir`, packed-A (MC×K = `256*1024*4` = 1 MiB) is rebuilt
+/// for EVERY jc block, so with NC=384's 3 jc blocks packed-A is re-streamed 3× per ic strip —
+/// the dominant L3 traffic now that full-K eliminated the C-scratch RMW stream. Collapsing to a
+/// single jc block (NC=1024) cuts that packed-A re-streaming 3×→1× (built once per ic strip),
+/// directly attacking the champion's largest remaining L3 read traffic. The cost: packed-B
+/// balloons to `1024*1024*4` = 4 MiB and the i64 C-scratch to `256*1024*8` = 2 MiB — but with a
+/// single jc block each is built exactly ONCE total and reused across all 4 row strips (minimum
+/// possible B traffic), and the ~7 MiB packed-A+packed-B+C working set fits this box's 15 MB
+/// Haswell-E L3. The full-N endpoint is unprobed in the full-K/MC=256 regime — distinct from
+/// every dead wide-NC test (all at shallow KC where RMW, not packed-A re-streaming, was binding).
+/// Byte-identity unaffected: the column-block width never reorders a product nor perturbs the
+/// int32 sum.
+pub const I8_NC: usize = 1024;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
