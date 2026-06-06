@@ -98,62 +98,48 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block. EXPLORE pivot (exp78): DOUBLED to 128 (champion was 64;
-/// the exp77 MC=32/NC=512 "rescue" trial is rolled back). This attacks the ONE
-/// cost axis the whole NC sweep has been silently paying and never optimized: the
-/// **packed-B re-streaming count**. Every prior winner kept packed-A pinned at
-/// exactly `MC*KC*4 = 64*128*4 = 32 KiB = L1d` and bought throughput by WIDENING
-/// NC (376 champion) to amortize each L1d-resident A-strip over more output
-/// columns. But that whole family fixes M=1024 into `1024/64 = 16` row strips, and
-/// each strip re-streams the entire packed-B panel from L3 — 16 full B passes per
-/// GEMM. exp78 takes the opposite, unexplored corner: double the row tile so there
-/// are only `1024/128 = 8` row strips, HALVING the packed-B L3 traffic, and pay for
-/// it by letting packed-A grow to `128*128*4 = 64 KiB` (it spills out of L1d into
-/// L2) and by narrowing NC to 176 so the i64 C-scratch still fits L2. The bet: at
-/// the int8 kernel's high arithmetic intensity, halving the B-refetch traffic beats
-/// both the loss of L1d A-residency and the loss of column-amortization width.
-/// L2-resident set: C-scratch `128*176*8 = 176 KiB` + packed-A `64 KiB` = 240 KiB
-/// (16 KiB headroom under the 256 KiB L2); packed-B `128*176*4 = 88 KiB` streams
-/// from L3 as in the champion. This is NOT exp75 (which held packed-A at 32 KiB by
-/// pairing MC=128 with the BAD KC=64, breaking the sharp KC=128 peak) — here KC
-/// stays at the proven champion 128, so the A-panel is a square 128×128 and the
-/// only thing traded is L1d-residency-of-A for half the B traffic. iter-9 (MC=80)
-/// and iter-7 (MC=32) do not apply: this is a different MC point in a different
-/// (KC=128, narrow-NC) regime, chosen specifically to halve the strip count.
-/// 128 = 32 * MR=4, a clean register-tile multiple. Byte-identity is independent of
-/// the row tile: it only repartitions the outer row loop, never reordering a
-/// product.
+/// int8 tier row block. EXPLORE pivot (exp90): reverted to the champion's
+/// proven 8-strip MC=128 (`ceil(1024/128)=8`, divides 1024 evenly, no row
+/// epilogue) — this experiment does NOT touch the row-strip axis (exp88's MC=256
+/// and exp89's MC=176 both probe fewer strips; the active hypothesis here is
+/// orthogonal). The novel move lives on the OTHER two knobs: see `I8_KC` (→64)
+/// and `I8_NC` (→208). 128 = 32 * MR=4, clean register-tile multiple. Byte-identity
+/// is independent of the row tile: it only repartitions the outer row loop, never
+/// reordering a product.
 pub const I8_MC: usize = 128;
 
-/// int8 tier K-panel depth. Reverted to the champion 128 (the speculative
-/// KC=160 wide-NC trial is rolled back here): the KC axis has a SHARP measured
-/// peak at 128 — the NC=256 sweep gave 64→12.99, 128→14.13, 256→13.23,
-/// 512→13.17, a single-point spike that fell off ~6% in BOTH directions, and
-/// the inverse KC=64 (iter 14) and KC=512 (iter 3) points are both logged dead
-/// ends. Deepening to 160 trades that known optimum for an unmeasured RMW-traffic
-/// argument; with the column peak still un-pinpointed it is the weaker bet, so KC
-/// stays at the champion to isolate the NC bisection below. 128 keeps packed-B at
-/// `KC*NC*4 = 128*400*4 = 200 KiB` (under the 256 KiB L2). Byte-identity
-/// preserved: the i64 panel-partial reduction is associative/commutative, so any
-/// K-split sums to the identical exact int32 result.
-pub const I8_KC: usize = 128;
+/// int8 tier K-panel depth. EXPLORE pivot (exp90): set to 64 — but NOT as the
+/// dead standalone KC=64 (iter 14 / exp75), which lost because it merely halved
+/// packed-B at a FIXED NC and bought nothing for the freed capacity. Here KC=64 is
+/// the ENABLER half of a two-axis trade: at MC=128 it shrinks packed-A to
+/// `MC*KC*4 = 128*64*4 = 32 KiB` — exactly L1d-resident (the proven-good 32 KiB
+/// packed-A point, exp75 reached 14.109 on it alone) — which frees ~32 KiB of L2
+/// that `I8_NC` (→208) immediately spends on WIDER column amortization than the
+/// champion's L2 budget ever allowed at KC=128 (NC capped ≈176–192 there). Every
+/// prior KC sweep held NC fixed and so never exploited the capacity it freed; this
+/// is the first KC-down move whose POINT is to re-bank the savings into NC. Cost:
+/// 16 K-panels at K=1024 vs 8 (more C-scratch RMW sweeps); bet is L1d-resident
+/// packed-A + 18%-wider NC beats it. Byte-identity preserved: the i64 panel-partial
+/// reduction is associative/commutative, so any K-split sums to the identical exact
+/// int32 result.
+pub const I8_KC: usize = 64;
 
-/// int8 tier column block. EXPLORE pivot (exp78): NARROWED to 176 (champion 376;
-/// the exp77 NC=512 trial is rolled back). This is the dependent half of the
-/// few-row-strips move — see `I8_MC` (doubled to 128) for the full rationale.
-/// Narrowing NC is NOT a return to the dead NC=64/128 low end (those lost because
-/// each A-strip amortized over too few columns); here it is the PRICE paid to keep
-/// the i64 C-scratch inside L2 once the row tile is doubled. With MC=128, the
-/// C-scratch is `MC*NC*8`, so the widest NC that leaves ~16 KiB L2 headroom beside
-/// the 64 KiB packed-A panel is `(256-64-16)KiB / (128*8) ≈ 176`: C-scratch
-/// `128*176*8 = 176 KiB` + packed-A 64 KiB = 240 KiB resident, packed-B
-/// `128*176*4 = 88 KiB` streaming from L3. 176 is the LARGEST clean NR-grid column
-/// block that co-fits L2 with the doubled row tile, so it deliberately sacrifices
-/// the minimum amortization width needed to unlock the 16→8 strip-count halving.
-/// 176 = 22 * NR=8, a clean register-tile multiple. Byte-identity is unaffected:
-/// the i64 panel-partial reduction is associative / commutative, so the column
-/// block width never perturbs the exact int32 sum.
-pub const I8_NC: usize = 176;
+/// int8 tier column block. EXPLORE pivot (exp90): set to 208 — the PAYOFF half of
+/// the KC=64 trade (see `I8_KC`). Dropping packed-A to its L1d-resident 32 KiB
+/// frees L2 so the i64 C-scratch can grow past the ~176–192 wall that the champion
+/// (MC=128/KC=128, packed-A 64 KiB) hit. Budget at MC=128/KC=64: packed-A 32 KiB
+/// (L1d) + C-scratch `MC*NC*8 = 128*208*8 = 208 KiB` = 240 KiB resident — the
+/// EXACT 240 KiB / 16 KiB-headroom L2 point the exp78 champion proved good — with
+/// packed-B `KC*NC*4 = 64*208*4 = 52 KiB` streaming from L3. NC=208 is the WIDEST
+/// column block ever tried at MC=128 (champion 176, exp87 128, exp84 112): +18%
+/// more output columns amortizing each packed-A fetch. This is NOT the dead
+/// low-MC/wide-NC corner (exp80 MC=96/NC=256 lost): MC stays at the proven 8-strip
+/// 128; the width is unlocked by L1d-resident packed-A, not by spending row strips.
+/// 208 = 26 * NR=8, clean register-tile multiple; `ceil(1024/208)=5` column blocks
+/// (four 208 + a 192 remainder the epilogue handles). Byte-identity unaffected: the
+/// i64 panel-partial reduction is associative/commutative, so column-block width
+/// never perturbs the exact int32 sum.
+pub const I8_NC: usize = 208;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
