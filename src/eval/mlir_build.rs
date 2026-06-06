@@ -594,6 +594,28 @@ fn run_clang_codegen(
     if let Some(m) = march {
         args.push(format!("-march={m}"));
     }
+    // int8 GEMM VNNI int-dot rung (opt-in via MIND_INTDOT=vnni). When the int8
+    // kernel emits the explicit `@llvm.x86.avx512.vpdpbusd.256` intrinsic, the
+    // build must enable the AVX-512-VNNI + AVX-512-VL target features so clang
+    // lowers it to a real `vpdpbusd` (and selects the 256-bit / ymm encoding)
+    // on x86. The intrinsic is exact-integer, so adding the features does NOT
+    // change a single output byte versus the AVX2 default on any program that
+    // does not select the VNNI rung — the DEFAULT (unset MIND_INTDOT) never
+    // emits the intrinsic and never sees these flags, keeping this box, CI, and
+    // the pinned 917d353b / 92e2cb75 cross-substrate hashes unchanged. The VNNI
+    // rung is bit-identical to the AVX2 rung by the signed-input bias identity
+    // (see `gemm_tuning::IntDotMode`); it only needs VNNI HARDWARE to RUN.
+    let x86_target = match target_triple {
+        Some(t) => t.contains("x86_64"),
+        None => cfg!(target_arch = "x86_64"),
+    };
+    if x86_target
+        && crate::mlir::gemm_tuning::IntDotMode::from_env()
+            == crate::mlir::gemm_tuning::IntDotMode::Vnni
+    {
+        args.push("-mavx512vnni".into());
+        args.push("-mavx512vl".into());
+    }
     if shared {
         args.push("-shared".into());
         args.push("-fPIC".into());
