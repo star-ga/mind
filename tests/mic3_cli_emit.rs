@@ -147,6 +147,15 @@ fn emit_evidence_report_validates() {
         "substrate field must be non-empty"
     );
 
+    // The built-in verifier-core self-check (RFC 0016 Phase B-CLI) must run and
+    // pass on the happy path: the success message reports it explicitly so a
+    // regression that silently drops the self-check is caught here.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("self-check ok"),
+        "--emit-evidence success must report the self-check ran, got stderr: {stderr}"
+    );
+
     let _ = std::fs::remove_file(&tmp);
 }
 

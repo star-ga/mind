@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0016 |
 | Title | Compile-Time Evidence-Chain Emission |
-| Status | **Partial** — Phase A shipped (Rust-bootstrap emit, inert/unsigned) + Phase B verifier core (lib); Phases A.5/B-CLI/C/D/E pending |
+| Status | **Partial** — Phase A shipped (Rust-bootstrap emit) + Phase B verifier core (lib) + **Phase B-CLI shipped** (`mindc <file> --emit-evidence <path>` emits an embedded, **unsigned but well-formed** `evidence_chain` MAP on a mic@3 artifact, with a built-in verifier-core self-check; `mindc verify <artifact>` recomputes + reports); Phases A.5 (pure-MIND emit) / C (Ed25519 signing) / D (#289 determinism-default) / E (agent + governance links) pending. The chain is **no longer inert** — it is reachable from the CLI and round-trip-verifiable; only the release-time signature is deferred (RFC 0020 §5.3 std-crypto). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 |
 | Task | #288 |
@@ -273,9 +273,20 @@ MAP and rooted in one signer.
   `src/ir/compact/v2/evidence.rs`): recomputes §3.2, flips `trace_hash_valid`
   on any post-seal mutation, decodes substrate/determinism/toolchain/parent and
   reports `is_root()`; survives a MIC-B round-trip; 5 tests incl. tamper
-  detection. The CLI wrapper + cross-artifact chain *walk* (following `parent`)
-  + §6 signature check layer on top, and land with the RFC 0017 `mindc verify`
-  subcommand (#290).
+  detection. **CLI wrapper SHIPPED (Phase B-CLI, #309, RFC 0021 step 3+):**
+  `mindc <file> --emit-evidence <path>` writes a mic@3 artifact with the
+  embedded `evidence_chain.*` MAP (substrate = `--target` id, toolchain = mindc
+  version, determinism = `Deterministic` w/ `TODO(#289)`, `trace_hash` =
+  canonical mic@3 anchor), and runs a built-in verifier-core **self-check**
+  (peel → recompute `trace_hash` → confirm `trace_hash_valid`) before the
+  artifact is written — an emitter that produces an unverifiable artifact fails
+  fast rather than shipping it. `mindc verify <artifact>` recomputes §3.2, folds
+  the chain, and reports root + determinism + substrate + `trace_hash_valid`
+  (human + `--json`); a single flipped byte fails verification. Emission is
+  **unsigned but well-formed** — the `signature.*` block is the only deferred
+  field (Phase C, below). Still pending on top: the cross-artifact chain *walk*
+  (following `parent` across sibling artifacts) and the §6 signature check, which
+  land with the RFC 0017 `mindc verify` certificate surface (#290).
 - **Phase C — sign (release path).** Wire mic@2.1 §6 signing into the RFC 0015
   canonical CI runner; release artifacts ship signed evidence. The RFC 0020
   wedge-score receipt becomes a sibling `verify.*` block.
