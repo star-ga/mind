@@ -5494,6 +5494,44 @@ impl LoweringContext {
             n.0
         ));
         self.emit_line(&format!("    %vmm_rs_{d} = arith.constant 0 : index"));
+        // ── size-threshold dispatch (BYTE-IDENTICAL on both arms) ────────────
+        // Small shapes (whole problem already L1/L2-resident) skip the BLIS
+        // packing + C-scratch-init overhead and run the simpler fused
+        // outer-product kernel (`emit_mm_q16_row_band` over the full `[0, M)`);
+        // large shapes keep the cache-blocked BLIS macro-kernel so the K-deep B
+        // panel stays resident. Both arms emit the same per-term
+        // `arith.shrsi >> 16` and the same associative i64 reduction, so the
+        // output is bit-identical regardless of which arm runs — the branch only
+        // changes tiling, never the math (canary `92e2cb75` is dispatch-invariant).
+        self.emit_line(&format!(
+            "    %vmm_thr_{d} = arith.constant {Q16_BLIS_MIN_DIM} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmm_mxa_{d} = arith.maxui %vmm_mi_{d}, %vmm_ni_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmm_mxd_{d} = arith.maxui %vmm_mxa_{d}, %vmm_ki_{d} : index"
+        ));
+        self.emit_line(&format!(
+            "    %vmm_small_{d} = arith.cmpi ult, %vmm_mxd_{d}, %vmm_thr_{d} : index"
+        ));
+        self.emit_line(&format!("    scf.if %vmm_small_{d} {{"));
+        let mut simple = String::new();
+        Self::emit_mm_q16_row_band(
+            &mut simple,
+            &format!("vms_{d}"),
+            &format!("vmm_ap_{d}"),
+            &format!("vmm_bp_{d}"),
+            &format!("vmm_cp_{d}"),
+            &format!("vmm_k64_{d}"),
+            &format!("vmm_n64_{d}"),
+            &format!("vmm_ki_{d}"),
+            &format!("vmm_ni_{d}"),
+            &format!("vmm_rs_{d}"),
+            &format!("vmm_mi_{d}"),
+        );
+        self.body.push_str(&simple);
+        self.emit_line("    } else {");
         let mut blk = String::new();
         Self::emit_mm_q16_blocked(
             &mut blk,
@@ -5509,6 +5547,7 @@ impl LoweringContext {
             &format!("vmm_mi_{d}"),
         );
         self.body.push_str(&blk);
+        self.emit_line("    }");
         // The intrinsic returns 0 (i64) — matches the gemv-composed sibling.
         self.emit_line(&format!("    %{d} = arith.constant 0 : i64"));
     }

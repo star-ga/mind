@@ -68,6 +68,26 @@ pub const Q16_KC: usize = 256;
 /// `jc` step. `KC * NC * 4` (packed B) is the largest reused tile.
 pub const Q16_NC: usize = 128;
 
+/// Size-threshold for the BLIS-vs-simple GEMM dispatch (Q16 and int8 tiers).
+///
+/// The BLIS macro-kernel (`emit_mm_q16_blocked` / `emit_mm_i8_blocked`) pays a
+/// fixed packing + C-scratch-init cost per call that only amortises once the
+/// problem is large enough that the K-deep B panel would otherwise spill cache.
+/// For small shapes — where the whole problem already fits L1/L2 — that
+/// overhead dominates and the simpler fused outer-product kernel
+/// (`emit_mm_q16_row_band` over the full `[0, M)` row range, the pre-BLIS form)
+/// is faster. The emitted GEMM therefore branches at runtime on
+/// `max(M, N, K) < Q16_BLIS_MIN_DIM`: below the threshold it runs the simple
+/// kernel, at or above it runs the BLIS-blocked kernel.
+///
+/// CRITICAL: the two paths are BYTE-IDENTICAL by construction — same per-term
+/// `arith.shrsi >> 16` (int8: none), same associative i64 reduction, single
+/// i64→i32 truncation at the store. The dispatch only changes tiling, never the
+/// math, so the cross-substrate canary hashes (`92e2cb75` Q16, `917d353b` int8)
+/// are independent of which path a given shape takes. An autotuner may sweep
+/// this value freely without perturbing a single output byte.
+pub const Q16_BLIS_MIN_DIM: usize = 256;
+
 /// Register-tile rows: independent `MR` accumulator chains in the microkernel.
 /// Pinned — the accumulator shape in the emitter depends on it.
 pub const Q16_MR: usize = 4;
