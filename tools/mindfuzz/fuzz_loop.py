@@ -55,7 +55,7 @@ def apply_oracles(src: Path, work: Path) -> list[oracles.OracleVerdict]:
     verdicts.append(oracles.oracle_determinism(src, work))
     verdicts.append(oracles.oracle_mic3_roundtrip(src, work))
     verdicts.append(oracles.oracle_verify(src, work))
-    verdicts.append(oracles.oracle_reference(out_so))
+    verdicts.append(oracles.oracle_reference(out_so, src=src))
     verdicts.append(oracles.cross_substrate_hook(src, out_so))
     return verdicts
 
@@ -103,7 +103,23 @@ def minimize(src_text: str, src_path: Path, work: Path, failing: str, tag: str) 
             continue
         v = first_violation(verdicts, tag)
         # keep deletion only if the SAME failing oracle still fires
-        if v is not None and v.name == failing:
+        keep = v is not None and v.name == failing
+        # Reference-oracle guard: a degenerate body (no `return`, or the scalar
+        # mirror directive deleted) "fails" the reference oracle for the WRONG
+        # reason (the compiled f returns 0/garbage, not the bug under test).
+        # Refuse such deletions so the minimal repro stays a meaningful program
+        # that actually exhibits the divergence.
+        if keep and failing == "reference":
+            compiled_ok = any(
+                vv.name == "compile" and vv.ok for vv in verdicts
+            )
+            if (
+                not compiled_ok
+                or "return" not in trial_text
+                or "MINDFUZZ-ORACLE-PURE" not in trial_text
+            ):
+                keep = False
+        if keep:
             cur = trial
         else:
             i += 1

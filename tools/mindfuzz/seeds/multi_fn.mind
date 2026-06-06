@@ -1,0 +1,36 @@
+// MIND-Fuzz seed: multi-function program with a reference-checkable scalar entry.
+//
+// Exercises cross-function call lowering (callee SSA + caller SSA + the ABI
+// seam) which the single-function seeds never touch. The `pub fn f(a: i64)`
+// entry is the canonical driver symbol AND carries a pure-Python mirror so the
+// scalar reference oracle is LIVE: f(a) = sq(a) - dbl(a) + clamp(a), evaluated
+// over the canonical signed-i32 arg window with MIND wrapping-i64 semantics.
+//
+// MINDFUZZ-ORACLE-PURE: (a*a) - (a+a) + (a if (0 < a and a < 100) else (0 if a <= 0 else 100))
+
+fn sq(x: i64) -> i64 {
+    return x * x;
+}
+
+fn dbl(x: i64) -> i64 {
+    return x + x;
+}
+
+fn clamp(x: i64) -> i64 {
+    if x <= 0 {
+        return 0;
+    } else {
+        if x < 100 {
+            return x;
+        } else {
+            return 100;
+        }
+    }
+}
+
+pub fn f(a: i64) -> i64 {
+    let s: i64 = sq(a);
+    let d: i64 = dbl(a);
+    let c: i64 = clamp(a);
+    return s - d + c;
+}

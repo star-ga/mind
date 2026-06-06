@@ -231,10 +231,90 @@ _REF_KERNELS = {
 }
 
 
-def oracle_reference(out_so: Path, seed: int = 0xDEADBEEF) -> OracleVerdict:
+def _wrap_i64(v: int) -> int:
+    """Two's-complement wrap an arbitrary Python int into the signed i64 range,
+    matching MIND's wrapping integer semantics so the scalar mirror agrees with
+    the compiled kernel on overflow / truncation."""
+    v &= 0xFFFFFFFFFFFFFFFF
+    return v - 2**64 if v >= 2**63 else v
+
+
+def _read_pure_oracle(src: Path) -> str | None:
+    """A seed may declare a Python scalar mirror of its `f(i64)->i64` body with a
+    line `// MINDFUZZ-ORACLE-PURE: <python expr over a>`. The expr is evaluated
+    over the canonical signed-i32 arg window and compared to the compiled `f`,
+    making the reference oracle LIVE on scalar seeds (not only BLAS kernels).
+
+    This is only meaningful while the program still computes the seed's function
+    — i.e. under [preserve] mutations. For [semantics] mutations the loop's
+    first_violation() already skips the reference oracle, so a changed value is
+    not flagged. The directive survives mutation because the template/LLM keep
+    the comment; if it is ever dropped, the oracle simply skips (returns ok)."""
+    try:
+        text = src.read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        s = line.strip()
+        marker = "// MINDFUZZ-ORACLE-PURE:"
+        if s.startswith(marker):
+            return s[len(marker):].strip()
+    return None
+
+
+def _scalar_reference(out_so: Path, src: Path) -> OracleVerdict | None:
+    """If the seed declares a pure-Python mirror, drive the compiled `f(i64)->i64`
+    over the canonical arg vector and require equality. Returns None when there is
+    no directive or no `f` symbol (skip), so the caller can fall through to the
+    BLAS-kernel reference checks."""
+    expr = _read_pure_oracle(src)
+    if expr is None:
+        return None
+    try:
+        lib = ctypes.CDLL(str(out_so))
+    except OSError as e:
+        return OracleVerdict("reference", False, f"dlopen failed: {e}")
+    try:
+        f = lib["f"]
+    except (AttributeError, KeyError, ValueError):
+        return None
+    f.restype = ctypes.c_int64
+    f.argtypes = [ctypes.c_int64]
+    # the same deterministic signed-i32 window the canonical driver uses, so the
+    # mirror exercises positive, negative and zero argument paths.
+    args = _canon_args()
+    for a in args:
+        try:
+            # safe names live in GLOBALS so generator-expression scopes (which do
+            # not see eval-locals) can still resolve sum/range/min in the mirror.
+            _g = {"__builtins__": {}, "abs": abs, "min": min,
+                  "max": max, "sum": sum, "range": range}
+            want = _wrap_i64(int(eval(expr, _g, {"a": a})))
+        except Exception as e:  # a malformed directive is an oracle bug, surface it
+            return OracleVerdict("reference", False, f"bad MINDFUZZ-ORACLE-PURE '{expr}': {e}")
+        got = int(f(a))
+        if got != want:
+            return OracleVerdict(
+                "reference",
+                False,
+                f"scalar f({a}): compiled={got} != python_ref={want} "
+                f"(oracle='{expr}'; scalar lowering diverged from the integer mirror)",
+            )
+    return OracleVerdict("reference", True, f"scalar f matches python mirror over {len(args)} args")
+
+
+def oracle_reference(out_so: Path, seed: int = 0xDEADBEEF, src: Path | None = None) -> OracleVerdict:
     """For each known dot symbol present in the .so, kernel(a,b,n) must equal a
     scalar integer reference. Symbols not present are skipped (mutation may have
-    renamed/removed them); the oracle only asserts on symbols it can find."""
+    renamed/removed them); the oracle only asserts on symbols it can find.
+
+    If `src` carries a `// MINDFUZZ-ORACLE-PURE:` directive, the scalar `f` is
+    additionally checked against that Python mirror (the live scalar reference)."""
+    if src is not None:
+        sv = _scalar_reference(out_so, src)
+        if sv is not None:
+            return sv
+
     try:
         lib = ctypes.CDLL(str(out_so))
     except OSError as e:
