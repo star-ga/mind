@@ -98,23 +98,30 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block. exp120 EXPLORE pivot — abandons the "packed-A+packed-B must
-/// co-reside in L2" constraint that EVERY champion respected, doubling the row tile to the
-/// 4-strip extreme I8_MC=256 (1024/256=4 even row strips, zero M-remainder) WHILE holding
-/// the champion's wide NC=384 (see I8_NC) and proven KC=128 (see I8_KC). The dataset's
-/// single monotone-winning mechanism is strip reduction (16→8 via MC 64→128 halved
-/// packed-B's L3 re-streaming and built the 15.009 champion); this halves it once more
-/// (8→4). MC=256 was tried ONCE (exp88) but with NC crippled to 56 to stay L2-resident —
-/// it cratered to 11.232 on lost column amortization, a confound this iteration removes by
-/// keeping NC=384. At MC=256 packed-A is `256*128*4 = 128 KiB` and packed-B `128*384*4 =
-/// 192 KiB`, so their 320 KiB sum SPILLS the 256 KiB L2 (packed-A streams from this box's
-/// 15 MB Haswell-E L3, reused across the jr loop), and the i64 C-scratch is `256*384*8 =
-/// 768 KiB` (L3). The bet: a second halving of packed-B traffic (the proven monotone
-/// lever) at the champion's proven wide NC beats L2-resident packed-A — a regime (packed-A
-/// out of L2 at wide NC) no prior MC choice entered. Distinct from dead exp88 (NC=56
-/// confound) and the deep-K exp119. Byte-identity is independent of the row tile: it only
-/// repartitions the outer row loop, never reordering a product.
-pub const I8_MC: usize = 256;
+/// int8 tier row block. exp131 EXPLORE — formalizes the SOLE metric-improving move left at the
+/// 16.014 full-K/full-N champion (MC=256/KC=1024/NC=1024): doubling I8_MC 256→512 (1024/512=2
+/// even strips, zero M-remainder), reverting the never-measured MC=512 working-tree draft into a
+/// committed single-axis experiment vs the proven champion. The decisive argument: with K and N
+/// both at full-matrix endpoints the nest collapses to `jc(=1) → ic → pc(=1) → jr → ir`, so the
+/// C-scratch RMW stream (killed by full-K, exp128) and the packed-A jc re-streaming (killed by
+/// full-N, exp129) are BOTH already gone. The ONE dominant cost that survives is packed-B
+/// (full K×N = `1024*1024*4` = 4 MiB) re-streamed from L3 once per ic row strip: at MC=256 that
+/// is 4 strips × 4 MiB = 16 MiB of B reads per GEMM. This cost is reachable by NO other knob —
+/// shrinking KC reintroduces RMW, shrinking NC reintroduces packed-A re-streaming, both proven
+/// dead — so the only path past 16.014 is FEWER row strips, i.e. larger MC. MC=512 halves the
+/// strip count to 2 → 8 MiB of B reads, the exact monotone strip-reduction mechanism that won
+/// MC 128→256 (exp120, 15.146), now applied where packed-B is the whole matrix. Cost: packed-A
+/// grows to `512*1024*4 = 2 MiB` and the i64 C-scratch to `512*1024*8 = 4 MiB`, giving a
+/// per-ic-strip working set of packed-A(2) + packed-B(4) + C-scratch(4) = ~10 MiB — inside this
+/// box's 15 MB Haswell-E L3 (unlike the monolithic MC=1024 endpoint at ~16 MiB, which would
+/// spill). The test is precisely whether that ~10 MiB working set still streams at L3 bandwidth
+/// (→ new champion) or tips past the L3 cliff (→ MC=256 is the strip-count optimum and the
+/// 1024^3 search has converged). This regime — MC=512 at full-K/full-N — has NEVER been measured:
+/// categorically distinct from the DEAD exp124 MC=512 (14.634), which sat at shallow KC=128 /
+/// narrow NC=384 where packed-A merely spilled L2 against a tiny working set and the C-scratch
+/// was still RMW'd 8×, so strip-reduction was not yet the binding lever. Byte-identity is
+/// independent of the row tile: it only repartitions the outer row loop, never reordering a product.
+pub const I8_MC: usize = 512;
 
 /// int8 tier K-panel depth. exp128 EXPLORE pivot — drives the deep-K lever to its ABSOLUTE
 /// ENDPOINT: I8_KC 256→1024 = full K, so the pc K-panel loop collapses to a SINGLE iteration
