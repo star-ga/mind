@@ -60,6 +60,13 @@ const TYPE_ERR_CODE: &str = "E2001";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
 const SHAPE_INNER_DIM_CODE: &str = "E2103";
+/// Implicit integer narrowing (data-loss) without an explicit `as` cast.
+/// The spec forbids silent dtype changes across an assignment boundary
+/// (`grammar-syntax.ebnf:240` provides `AsCast = Expression "as" Type` for
+/// explicit width changes; `language.md:181` requires operands to share a
+/// dtype). A wider integer flowing into a narrower slot truncates at runtime
+/// (confirmed miscompile: `i64 4294967297` into an `i32` slot yields `1`).
+const NARROWING_CODE: &str = "E2004";
 
 /// True for the RFC 0012 shape-diagnostic codes. Used to keep the
 /// additive FnDef-body shape pass from contributing non-shape errors
@@ -69,6 +76,36 @@ fn is_shape_diag_code(code: &str) -> bool {
         code,
         "E2101" | "E2102" | "E2103" | "shape::matmul_mismatch" | "shape::broadcast_mismatch"
     ) || code.starts_with("shape::")
+}
+
+/// Bit-width of an integer scalar `ValueType`, or `None` for non-integer
+/// scalars / aggregates. `ScalarBool` is intentionally excluded — a
+/// `bool`-into-integer flow is a distinct type mismatch, not a narrowing.
+/// Note: `u32` collapses to `ScalarI32` in v1 (`valuetype_from_ann`), so it
+/// ranks at width 32 here, which is what we want for width-narrowing.
+fn int_scalar_bits(v: &ValueType) -> Option<u32> {
+    match v {
+        ValueType::ScalarI32 => Some(32),
+        ValueType::ScalarI64 => Some(64),
+        _ => None,
+    }
+}
+
+/// True when assigning a value of `from` into a slot declared `to` would be
+/// an *implicit integer narrowing* — i.e. both are integer scalars and the
+/// destination is strictly narrower than the source. Such an assignment
+/// silently truncates at runtime, so the spec requires an explicit `as` cast.
+///
+/// Widening (e.g. `i32` -> `i64`) is value-preserving and is *not* flagged:
+/// it loses no data, the keystone/self-host already rely on it, and the
+/// spec's "operands MUST share a dtype" rule (`language.md:181`) constrains
+/// arithmetic operand dtypes, not value-preserving assignment widening — for
+/// which `AsCast` remains available but is not mandated.
+fn is_implicit_narrowing(to: &ValueType, from: &ValueType) -> bool {
+    match (int_scalar_bits(to), int_scalar_bits(from)) {
+        (Some(to_bits), Some(from_bits)) => to_bits < from_bits,
+        _ => false,
+    }
 }
 
 fn dtype_name(dtype: &DType) -> &'static str {
@@ -2549,7 +2586,28 @@ pub fn check_module_types_in_file(
                                     (&vt_ann, &vt),
                                     (ValueType::Tensor(_), ValueType::ScalarI32)
                                 );
-                                if vt_ann != vt && !allow_scalar_fill {
+                                // Implicit integer narrowing (data-loss):
+                                // a wider integer flowing into a narrower
+                                // declared slot truncates at runtime. The
+                                // spec requires an explicit `as` cast
+                                // (AsCast, grammar-syntax.ebnf:240). Emit the
+                                // precise NARROWING_CODE so the FnDef-body
+                                // pass surfaces it inside function bodies too.
+                                if is_implicit_narrowing(&vt_ann, &vt) {
+                                    errs.push(diag_from_span(
+                                        src,
+                                        file,
+                                        format!(
+                                            "implicit narrowing {} -> {} loses data for `{}`; use an explicit `as {}` cast",
+                                            describe_value_type(&vt),
+                                            describe_value_type(&vt_ann),
+                                            name,
+                                            describe_value_type(&vt_ann),
+                                        ),
+                                        value.span(),
+                                        NARROWING_CODE,
+                                    ));
+                                } else if vt_ann != vt && !allow_scalar_fill {
                                     // RFC 0012 Phase A: when both sides are
                                     // tensors, emit precise `shape::*`
                                     // diagnostics instead of the generic
@@ -2607,7 +2665,23 @@ pub fn check_module_types_in_file(
                 let rhs = infer_expr(value, &tenv);
                 match (tenv.get(name).cloned(), rhs) {
                     (Some(vt_lhs), Ok((vt_rhs, _))) => {
-                        if vt_lhs != vt_rhs {
+                        if is_implicit_narrowing(&vt_lhs, &vt_rhs) {
+                            // Implicit integer narrowing on assignment: same
+                            // data-loss hazard as a narrowing let-binding.
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "implicit narrowing {} -> {} loses data assigning to `{}`; use an explicit `as {}` cast",
+                                    describe_value_type(&vt_rhs),
+                                    describe_value_type(&vt_lhs),
+                                    name,
+                                    describe_value_type(&vt_lhs),
+                                ),
+                                value.span(),
+                                NARROWING_CODE,
+                            ));
+                        } else if vt_lhs != vt_rhs {
                             errs.push(diag_from_span(
                                 src,
                                 file,
@@ -2792,7 +2866,18 @@ pub fn check_module_types_in_file(
                 // because of Phase A. (Regression fix 2026-05-22: this
                 // recursion previously extended ALL body errors, breaking
                 // ref-expr + match-block parsing tests in parse_match_and_ref.)
-                errs.extend(body_errs.into_iter().filter(|d| is_shape_diag_code(d.code)));
+                // Keep shape diagnostics (RFC 0012 Phase A) AND the precise
+                // implicit-narrowing diagnostic (E2004). Narrowing is a
+                // data-loss miscompile that must surface inside fn bodies, and
+                // unlike the generic mismatch path it does not false-positive
+                // on ref/match constructs (it fires only when both the
+                // declared and inferred types are integer scalars of known
+                // width).
+                errs.extend(
+                    body_errs
+                        .into_iter()
+                        .filter(|d| is_shape_diag_code(d.code) || d.code == NARROWING_CODE),
+                );
 
                 // RFC 0010 Phase J-A/B: safety passes over the fn node.
                 #[cfg(feature = "std-surface")]
