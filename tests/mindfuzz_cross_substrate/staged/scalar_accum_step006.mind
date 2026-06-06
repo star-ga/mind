@@ -1,0 +1,19 @@
+// MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+//
+// A second pure-integer seed (paper Listing 1 shape) whose body contains a
+// literal that DIRECTLY feeds the returned value, so the deterministic
+// integer-literal mutation actually changes what `f` computes. This makes the
+// staged cross-substrate batch span DISTINCT output hashes (not only
+// value-preserving accretions), exercising the integer-SSA lowering across a
+// range of returned values that must stay byte-identical on avx2 and neon.
+
+pub fn f(a: i64) -> i64 {
+    if false { let _mf_z: i64 = 1; }
+    let _mf_dead: i64 = 2 + 3;
+    let _mf_dead: i64 = 2 + 3;
+    let k: i64 = 5;
+    let m: i64 = a + k;
+    return m + m;
+}
+// _mf_touched
+// _mf_touched

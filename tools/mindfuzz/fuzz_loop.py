@@ -56,7 +56,7 @@ def apply_oracles(src: Path, work: Path) -> list[oracles.OracleVerdict]:
     verdicts.append(oracles.oracle_mic3_roundtrip(src, work))
     verdicts.append(oracles.oracle_verify(src, work))
     verdicts.append(oracles.oracle_reference(out_so))
-    verdicts.append(oracles.cross_substrate_hook(src))
+    verdicts.append(oracles.cross_substrate_hook(src, out_so))
     return verdicts
 
 
@@ -134,7 +134,51 @@ def save_violation(
     return prog_path
 
 
-def run(seed: Path, iters: int, use_llm: bool, mut_path: Path) -> int:
+def stage_candidate(
+    stage_dir: Path, seed_name: str, counter: int, code: str, work: Path
+) -> str | None:
+    """Stage a survivor as a candidate cross-substrate workload.
+
+    Writes `<seed>_step<NNN>.mind` (the survivor program) and appends a line to
+    `manifest.tsv`: `<id>\t<entry>\t<arg_seed>\t<arg_count>\t<avx2_hash>`. The
+    avx2_hash is the host's canonical-driver output hash — the reference the
+    neon CI runner asserts equality against via tests/mindfuzz_cross_substrate.rs.
+    Returns the staged id, or None if the survivor exposes no canonical entry
+    (still fuzz-covered locally, just not a cross-substrate fixture).
+    """
+    # Compile fresh into a UNIQUE staging .so per survivor. The path must be
+    # unique because ctypes.CDLL caches a library handle by path within a
+    # process; reusing one path would make the canonical driver read a stale
+    # survivor and stage the wrong hash.
+    cand_id = f"{seed_name}_step{counter:03d}"
+    out_so = work / f"stage_{cand_id}.so"
+    src = work / f"stage_{cand_id}.mind"
+    src.write_text(code)
+    ok, detail = oracles.compile_so(src, out_so)
+    if not ok:
+        return None
+    digest = oracles.canonical_output_hash(out_so, oracles.CANON_ENTRY)
+    if digest is None:
+        return None
+    stage_dir.mkdir(parents=True, exist_ok=True)
+    (stage_dir / f"{cand_id}.mind").write_text(code)
+    line = (
+        f"{cand_id}\t{oracles.CANON_ENTRY}\t{oracles.CANON_ARG_SEED}\t"
+        f"{oracles.CANON_ARG_COUNT}\t{digest}\n"
+    )
+    manifest = stage_dir / "manifest.tsv"
+    with manifest.open("a") as fh:
+        fh.write(line)
+    return cand_id
+
+
+def run(
+    seed: Path,
+    iters: int,
+    use_llm: bool,
+    mut_path: Path,
+    stage_dir: Path | None = None,
+) -> int:
     instructions = mutate.load_instructions(mut_path)
     seed_name = seed.stem
     code = seed.read_text()
@@ -142,12 +186,18 @@ def run(seed: Path, iters: int, use_llm: bool, mut_path: Path) -> int:
 
     print(f"[mindfuzz] seed={seed.name} iters={iters} llm={'on' if use_llm else 'off'}")
     print(f"[mindfuzz] {len(instructions)} mutation instructions, workdir={work}")
+    if stage_dir is not None:
+        print(f"[mindfuzz] staging survivors -> {stage_dir}")
 
     # step 0: the seed must itself pass (sanity that the baseline is good).
     sp = work / "step000.mind"
     sp.write_text(code)
     verdicts = apply_oracles(sp, work)
     print(f"  step 0 (seed): " + ", ".join(f"{v.name}={'ok' if v.ok else 'FAIL'}" for v in verdicts))
+    if stage_dir is not None and first_violation(verdicts, "preserve") is None:
+        cid = stage_candidate(stage_dir, seed_name, 0, code, work)
+        if cid:
+            print(f"  step 0 staged as candidate '{cid}'")
 
     for counter in range(1, iters + 1):
         res = mutate.mutate(code, counter - 1, instructions, use_llm=use_llm)
@@ -179,6 +229,12 @@ def run(seed: Path, iters: int, use_llm: bool, mut_path: Path) -> int:
 
         # accept the mutation and continue accreting complexity
         code = res.code
+
+        # survivor: stage it as a cross-substrate candidate (avx2 host hash).
+        if stage_dir is not None:
+            cid = stage_candidate(stage_dir, seed_name, counter, code, work)
+            if cid:
+                print(f"  step {counter} staged as candidate '{cid}'")
 
     print(f"[mindfuzz] budget reached ({iters} iters), no violation. clean.")
     return 0
@@ -250,6 +306,9 @@ def main() -> int:
     ap.add_argument("--mutations", type=Path, default=HERE / "mutations.txt")
     ap.add_argument("--inject-fault", action="store_true",
                     help="sanity: prove the oracles catch a deliberately-broken program")
+    ap.add_argument("--emit-candidates", type=Path, default=None,
+                    help="stage every survivor (program + avx2 output hash) into DIR as a "
+                         "candidate cross-substrate workload for the CI avx2==neon gate")
     args = ap.parse_args()
 
     if not oracles.MINDC.exists():
@@ -262,7 +321,7 @@ def main() -> int:
     if args.inject_fault:
         return inject_fault()
 
-    return run(args.seed, args.iters, args.use_llm, args.mutations)
+    return run(args.seed, args.iters, args.use_llm, args.mutations, args.emit_candidates)
 
 
 if __name__ == "__main__":

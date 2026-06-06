@@ -275,21 +275,85 @@ def oracle_reference(out_so: Path, seed: int = 0xDEADBEEF) -> OracleVerdict:
 
 
 # --------------------------------------------------------------------------- #
-# 0. cross-substrate byte-identity -- THE WEDGE. Stubbed seam.
+# 0. cross-substrate byte-identity -- THE WEDGE. Now REAL via the CI matrix.
 # --------------------------------------------------------------------------- #
-def cross_substrate_hook(src: Path) -> OracleVerdict:
-    """The real wedge oracle: emit on avx2 AND neon, require identical artifact
-    hashes (RFC 0015 §3.1). This host only has one substrate, so this is the
-    SEAM, not the check: CI / the cluster runs the same program on an
-    aarch64 runner and compares the mic@3 hash committed by this host.
+# The wedge oracle (avx2 artifact == neon artifact) cannot be decided on a
+# single host. Instead of stubbing it, MIND-Fuzz now STAGES every survivor as a
+# candidate cross-substrate workload: the surviving program plus the host's
+# canonical output hash. The committed staging dir is then checked by the Rust
+# test `tests/mindfuzz_cross_substrate.rs`, which the EXISTING
+# `cross_substrate_identity` CI job runs on BOTH the avx2 (ubuntu-24.04) and
+# neon (ubuntu-24.04-arm) runners. Each runner recomputes the survivor's output
+# hash and asserts it equals the committed reference — so the neon runner
+# asserts byte-identity against the avx2-blessed hash. That IS the wedge check
+# (RFC 0015 §3.1), now enforced on real ARM hardware every CI run.
 
-    Implementation hook for CI: have this host emit `--emit-mic3 host.mic3`,
-    ship host.mic3's sha256 as an artifact, and on the neon runner assert
-    sha256(neon.mic3) == sha256(host.mic3). A mismatch is a wedge-breaking bug.
-    """
+# The canonical driver: a survivor that exposes the scalar entry `f(i64)->i64`
+# is exercised over a fixed, deterministic argument vector (the same LCG as
+# tests/cross_substrate_identity.rs) and the returns are hashed as i64-LE bytes.
+# This pins an ISA-relevant value (the integer-SSA lowering result) that MUST be
+# identical on avx2 and neon. The argument set + entry symbol are part of the
+# staged manifest so the Rust gate replays them byte-for-byte.
+CANON_ENTRY = "f"
+CANON_ARG_SEED = 0xDEADBEEF
+CANON_ARG_COUNT = 64
+
+
+def _canon_args(seed: int = CANON_ARG_SEED, count: int = CANON_ARG_COUNT) -> list[int]:
+    """Deterministic i64 argument vector for the canonical driver. Uses the same
+    LCG as the cross-substrate gate, sampling a full signed-i32 window per arg so
+    the entry exercises positive, negative and zero paths."""
+    g = _Lcg(seed)
+    out: list[int] = []
+    for _ in range(count):
+        v = g.u32()
+        out.append(v - 2**32 if v >= 2**31 else v)
+    return out
+
+
+def canonical_output_hash(out_so: Path, entry: str = CANON_ENTRY) -> str | None:
+    """Call `entry(i64)->i64` over the canonical arg vector and sha256 the
+    concatenated i64-LE returns. Returns None if the symbol is absent (the
+    survivor is not canonical-drivable, e.g. a buffer kernel). The returns are
+    the exact bytes that must match across substrates."""
+    try:
+        lib = ctypes.CDLL(str(out_so))
+    except OSError:
+        return None
+    try:
+        f = lib[entry]
+    except (AttributeError, KeyError, ValueError):
+        return None
+    f.restype = ctypes.c_int64
+    f.argtypes = [ctypes.c_int64]
+    h = hashlib.sha256()
+    for a in _canon_args():
+        r = int(f(a)) & 0xFFFFFFFFFFFFFFFF
+        h.update(r.to_bytes(8, "little"))
+    return h.hexdigest()
+
+
+def cross_substrate_hook(src: Path, out_so: Path | None = None) -> OracleVerdict:
+    """Wedge oracle. On a single host this STAGES the candidate (it cannot decide
+    avx2==neon alone), so it never raises a false violation here; the equality is
+    asserted on the CI matrix by tests/mindfuzz_cross_substrate.rs. When `out_so`
+    is the survivor's compiled lib and it exposes the canonical entry, the
+    verdict carries the host output hash that gets committed as the reference."""
+    if out_so is None or not out_so.exists():
+        return OracleVerdict(
+            "cross_substrate",
+            True,
+            "STAGED: survivor recorded; avx2==neon asserted on the CI matrix.",
+        )
+    digest = canonical_output_hash(out_so)
+    if digest is None:
+        return OracleVerdict(
+            "cross_substrate",
+            True,
+            "STAGED: no canonical entry; covered by determinism/mic@3 only.",
+        )
     return OracleVerdict(
         "cross_substrate",
-        True,  # deferred verdict -- never a false violation on a single host
-        "DEFERRED: needs a second substrate (neon). Run via CI hook; "
-        "this host emitted its mic@3 hash for the cross-runner compare.",
+        True,
+        f"STAGED host_hash={digest} (asserted avx2==neon on the CI matrix)",
     )
