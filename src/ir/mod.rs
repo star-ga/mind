@@ -26,7 +26,7 @@ mod verify;
 pub use crate::opt::ir_canonical::canonicalize_module;
 pub use evidence::ir_trace_hash;
 pub use print::format_ir_module;
-pub use verify::{IrVerifyError, verify_module};
+pub use verify::{IrVerifyError, SsaRule, SsaViolation, check_ssa_well_formed, verify_module};
 
 /// Errors surfaced by [`load`].
 #[derive(Debug)]
