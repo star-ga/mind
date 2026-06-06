@@ -4,12 +4,26 @@
 |---|---|
 | RFC | 0015 |
 | Title | Cross-Substrate Bit-Identity Proof Obligation |
-| Status | **Draft** |
+| Status | **Accepted — enforced by CI** (the proof obligation is binding; the Q16.16 + exact-integer surface is gated cross-ISA on `avx2` ↔ `neon` per §3.1 — see *Conformance Evidence* below. f32 paths remain carved out, RFC 0012 §8.4. Higher-tier substrates, CUDA/Cerebras, and the per-target framework remain Draft in RFC 0014.) |
 | Authors | STARGA Inc. |
 | Created | 2026-05-25 |
 | Supersedes | — |
 | Superseded by | — |
 | Related | RFC 0006 §5.2 (mind-blas + Q16.16 cross-arch task #57), RFC 0012 §8.4 (cross-substrate f32 carve-out), RFC 0014 (per-substrate lowering tier system — pair RFC) |
+
+> **Status note (2026-06-05).** The proof obligation below is **shipped and
+> CI-enforced** for the Q16.16 and exact-integer (int8 `det.igemm`) surface
+> across the **x86-`avx2` ↔ ARM-`neon`** substrate pair — a *stronger* result
+> than the CPU↔CPU (x86-Linux ↔ x86-Windows) pair the original §1 narrative
+> below was written against, since `avx2` and `neon` are different ISAs with
+> different vector reductions yet produce a byte-identical hash. The §1 matrix
+> table ("x86 ↔ CUDA / Cerebras = No test") and the §5/§8/§9 forward-looking
+> language describe substrates and phases **still in progress**; they are
+> retained as the roadmap for higher-tier targets and do **not** gate this
+> RFC's acceptance. The shipped slice is enumerated in *Conformance Evidence*
+> (new §5A). The f32 carve-out (§7, RFC 0012 §8.4) is unchanged: only
+> exact-integer / Q16.16 reductions are byte-identical across ISAs — f32
+> tree-reductions are **not**, and nothing here claims otherwise.
 
 ## 1. Motivation
 
@@ -183,6 +197,96 @@ without a wafer in hand.
 This proxy SHOULD be documented in the per-target test as
 `#[ignore = "real-substrate verification deferred to canonical runner"]`
 with a tracking comment, NOT silently degraded.
+
+## 5A. Conformance Evidence
+
+The proof obligation in §3 and the reduction-order normative form in §4 are
+**enforced on every push** by an in-tree merge gate. This section pins the
+exact target, CI job, and committed hashes so an auditor can re-derive the
+claim from the repository alone.
+
+### 5A.1 Test target
+
+- **Harness:** `tests/cross_substrate_identity.rs` (the file §5.1 sketches as
+  `oracle.rs`; the shipped name is `cross_substrate_identity.rs`).
+- **Workload specs:** `tests/cross_substrate_identity/<id>/manifest.toml`
+  (deterministic seed, length, kernel symbol, output encoding — the
+  single-source-of-truth §3.2 references; the shipped file is `manifest.toml`,
+  the §5.1 `expected.toml` role is filled by `reference_hashes.toml`).
+- **Committed references:** `tests/cross_substrate_identity/<id>/reference_hashes.toml`,
+  one identical hash per substrate (`avx2 = …`, `neon = …`). Per §3.1 a Q16.16
+  / exact-integer workload MUST yield the **same** content hash on every
+  substrate, so the two lines carrying one value *are* the cross-substrate
+  bit-identity claim made inspectable.
+- **Run:** `cargo test --no-default-features --features
+  "mlir-build std-surface cross-module-imports" --test cross_substrate_identity`.
+
+The harness builds each kernel with `mindc --emit-shared`, regenerates the
+seeded input via the shared LCG, runs the native vector-dialect path,
+cross-checks it against an independent scalar oracle **within the run** (§4
+associativity), then pins the canonical output hash to the committed
+per-substrate reference (byte-identity **across builds, machines, and time**).
+
+### 5A.2 CI job (the cross-ISA gate)
+
+`.github/workflows/ci.yml` job **`cross_substrate_identity`** runs the harness
+on a dual-arch matrix:
+
+| Runner | `target_arch` | Substrate verified |
+|---|---|---|
+| `ubuntu-24.04` | `x86_64` | `avx2` |
+| `ubuntu-24.04-arm` | `aarch64` | `neon` |
+
+Each runner verifies **its own** substrate against the committed hash and marks
+the other `deferred` (never silently `pass` — §5.3 / §5.4). Because both lines
+in `reference_hashes.toml` carry the *same* hash, the avx2 runner and the neon
+runner independently re-deriving that one value **is** the `H_avx2 == H_neon`
+assertion of §3.1, proven on real ARM hardware rather than an unverified copy
+of the x86 hash.
+
+The job sets **`MIND_BENCH_REQUIRE=1`**, which turns a missing MLIR toolchain
+(`mlir-opt` / `mlir-translate` / `clang`) into a **hard failure** instead of a
+self-skip. This closes the §5.3 toolchain-free downgrade vulnerability for this
+gate: it cannot pass vacuously — it either runs the kernel and matches the hash
+or it fails the build.
+
+### 5A.3 Committed reference hashes (the load-bearing constants)
+
+The five enforced workloads and their pinned `avx2 == neon` hashes:
+
+| Workload id | Shape / dtype | Reference hash (`avx2` == `neon`) |
+|---|---|---|
+| `dot-l2-q16` | Q16.16 dot, len 65536 | `1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823` |
+| `dot-l1-q16` | Q16.16 L1, len 65536 | `ce7e2a80515e123f5d4fbb77d841f0d6c56fcbc690bba2e2ff81e45765843b34` |
+| `gemv-q16-256x256` | Q16.16 gemv | `dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a` |
+| `gemm-q16-64x64x64` | Q16.16 gemm | `92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f` |
+| `gemm-i8-64x64x64` | int8 `det.igemm`, i32 out | `917d353b18fd7f5ea4dab7dd02b786f5ccc4a2d954f695084ca0a88214d699c7` |
+
+A re-bless (`MIND_BENCH_BLESS=1`) is permitted **only** on an intentional
+lowering change (RFC 0020 §13) and must be documented in the release notes.
+
+### 5A.4 Scope of the shipped claim (no over-claim)
+
+What §5A enforces today, stated precisely:
+
+- **In scope (Accepted, gated):** Q16.16 fixed-point and exact-integer (int8)
+  reductions, on the **`avx2` ↔ `neon`** substrate pair (one substrate — CPU —
+  exercised across two ISAs). These are byte-identical by construction
+  (integer reduction is associative) and the gate proves the lowering preserves
+  it.
+- **Out of scope (still Draft / forward-looking):** f32 / floating-point paths
+  (carved out, §7 + RFC 0012 §8.4 — **not** byte-identical across ISAs);
+  CUDA, Cerebras, and all Tier 0 targets (§1 matrix, RFC 0014 §3); BitNet
+  ternary as a *gated* workload (the §6 sub-contract is specified but not yet
+  in the manifest); and the per-substrate lowering **framework** itself
+  (RFC 0014 §4 — `LoweringRegistry`, unified target enum, 3-way diagnostic —
+  not yet shipped). These remain open and gate the *broader* matrix, not this
+  RFC's accepted core.
+
+This maps directly onto RFC 0020 §10 (the internal-gate slice that produces the
+hashes the public `mind-bench` manifest will publish) and the manifests' own
+`RFC 0015 §3.1` citations.
+
 
 ## 6. BitNet Ternary Sub-Contract
 
