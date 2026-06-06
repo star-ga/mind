@@ -1,0 +1,31 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# This is an int16 row-major matrix x VECTOR (gemv): y = W . x, where W is a
+# 256x256 int16 matrix and x a 256-vector, via __mind_blas_matmul_rmajor_i16_v
+# (the "int-dot" tier). Each output element is an exact integer reduction —
+# sign-extend each i16 to i64, multiply-accumulate (NO Q16 shift), narrow once
+# to i32 — byte-for-byte the per-row scalar oracle. Integer add is associative,
+# so the vectorised reduction (the AVX2 `vpmaddwd` widen-multiply-accumulate
+# idiom at -march=x86-64-v3) is bit-identical across substrates (RFC 0015 §3.1).
+# The output is the 256-element i32 result vector; its canonical encoding is each
+# i32 little-endian, then sha256. This is the int16 sibling of the Q16.16
+# gemv-q16-256x256 workload.
+
+version = "1"
+name = "gemv-i16-256x256"
+description = "int16 row-major gemv y = W.x, W 256x256, x 256-vector (matmul_rmajor_i16_v); exact integer reduction per row, narrowed to i32."
+weight = 2.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"
+seed = 3735928559          # 0xDEADBEEF; W (rows*cols i16) generated before x (cols i16)
+rows = 256
+cols = 256
+dtype = "i16"              # W is rows*cols row-major i16; x is cols i16
+
+[kernel]
+symbol = "__mind_blas_matmul_rmajor_i16_v"
+returns = "i64"            # status (0 ok); result written to caller y buffer
+output_encoding = "i32_le_vector"  # rows i32, each little-endian, then sha256
