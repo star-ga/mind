@@ -116,33 +116,33 @@ pub const Q16_NR: usize = 8;
 /// repartitions the outer row loop, never reordering a product.
 pub const I8_MC: usize = 256;
 
-/// int8 tier K-panel depth. exp126 EXPLORE pivot — the FIRST deep-K test in the MC=256
-/// regime the 15.146 champion (exp120) opened. Deepens I8_KC 128→256 (1024/256=4 clean pc
-/// panels, zero K-remainder) as the SOLE axis moved against the champion (MC=256 / NC=384
-/// held; the unmeasured exp125 NC=256 is reverted to the champion's proven 384). Mechanism:
-/// the MC=256 champion introduced a NEW dominant cost — the i64 C-scratch is now
-/// `256*384*8 = 768 KiB`, far past L2, living in Haswell-E's 15 MB L3 and read-modify-written
-/// once per pc panel = 8× at KC=128. KC=256 HALVES that to 4 RMW sweeps over the 768 KiB L3
-/// C-scratch — a first-order cut of the champion's single largest traffic stream. This is the
-/// key distinction from every prior dead deep-K test (exp117/exp82/exp72/iter-3, KC≥256):
-/// those were ALL at MC≤128, where the C-scratch was small and L2-resident, so KC=256 only
-/// bloated packed-B for zero RMW benefit and lost. At MC=256 the C-scratch RMW is the cost
-/// that actually dominates, so halving its pass count is a genuinely new lever no measured
-/// point has pulled. The price: both packed panels (packed-A `256*256*4 = 256 KiB` +
-/// packed-B `256*384*4 = 384 KiB`) now stream from L3 — the bet is that 4 fewer 768-KiB
-/// C-scratch RMW passes beats the larger panel stream. Cleanly orthogonal to the pending
-/// exp125 (which narrowed NC for L2 co-residency — the opposite regime). Byte-identity is
-/// independent of KC: the i64 panel-partial reduction is order-invariant under any K-split.
-pub const I8_KC: usize = 256;
+/// int8 tier K-panel depth. exp128 EXPLORE pivot — drives the deep-K lever to its ABSOLUTE
+/// ENDPOINT: I8_KC 256→1024 = full K, so the pc K-panel loop collapses to a SINGLE iteration
+/// (1024/1024=1, zero K-remainder). This is a qualitatively different kernel behavior, not a
+/// magnitude retread of exp126's KC step: with one pc panel the i64 C-scratch is no longer
+/// read-modify-written at all — it is WRITTEN EXACTLY ONCE with the complete full-K sum, never
+/// read back to accumulate a later panel's partial. The whole read-modify-write traffic
+/// category over the 768 KiB L3 C-scratch is ELIMINATED, not merely halved. The progression
+/// exp126 validated as first-order at MC=256 (KC=128→8 RMW sweeps, KC=256→4) is taken to its
+/// floor (KC=512→2, KC=1024→1 = write-only), testing whether removing the champion's single
+/// largest L3 traffic stream entirely beats the price: both packed panels balloon into L3
+/// (packed-A `256*1024*4 = 1 MiB`, packed-B `1024*384*4 = 1.5 MiB`), but with only one pc
+/// panel each is built ONCE per its loop level and never re-streamed across a K-loop that no
+/// longer exists. The K-axis endpoint is unprobed in this regime — distinct from every dead
+/// KC≥256 test (exp117/exp82/exp72/iter-3, all MC≤128 / small L2-resident C-scratch where
+/// killing RMW bought nothing) and the mirror-image endpoint probes on the OTHER axes
+/// (exp113 NC=1024 full-N, exp124 MC=512). I8_NC is reverted from the unmeasured exp127
+/// NC=512 back to the proven champion's 384 so KC is the SOLE moving axis vs the 15.560
+/// champion. Byte-identity is independent of KC: a single full-K pass is the trivial K-split,
+/// and the i64 reduction is order-invariant.
+pub const I8_KC: usize = 1024;
 
-/// int8 tier column block. exp126 holds the champion's proven wide NC=384, reverting the
-/// unmeasured exp125 NC=256 co-residency probe so that the deep-K step (I8_KC 128→256, see
-/// I8_KC) is the SOLE axis measured against the 15.146 champion (exp120, MC=256/KC=128/
-/// NC=384). NC=384 is the load-bearing width of every recent champion; moving it alongside
-/// KC would re-introduce the attribute-the-cause confound exp103 was created to kill. At
-/// MC=256/KC=256 packed-B is `256*384*4 = 384 KiB` (L3) and the i64 C-scratch `256*384*8 =
-/// 768 KiB` (L3, now RMW'd only 4× — the point of this iteration). Byte-identity unaffected:
-/// the column-block width never reorders a product nor perturbs the int32 sum.
+/// int8 tier column block. Held at the proven 15.560-champion value 384 (exp126) — reverted
+/// from the unmeasured exp127 NC=512 so exp128's full-K I8_KC=1024 is the SOLE moving axis.
+/// 384 gives 3 column blocks over N=1024 (256-wide N%384 epilogue) at packed-B `1024*384*4 =
+/// 1.5 MiB` and i64 C-scratch `256*384*8 = 768 KiB` (the write-once accumulator exp128 targets),
+/// all L3-resident in the MC=256 regime. Byte-identity unaffected: the column-block width never
+/// reorders a product nor perturbs the int32 sum.
 pub const I8_NC: usize = 384;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
