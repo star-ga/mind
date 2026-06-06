@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2698 | **Est. tokens:** ~6,758,796
-**Generated:** 2026-06-06 03:34 UTC
+**Files:** 2698 | **Est. tokens:** ~6,761,770
+**Generated:** 2026-06-06 12:20 UTC
 
 ## Token Budget Guide
 
@@ -364,7 +364,7 @@
 | `src/` | 7 | ~16,834 |
 | `src/ast/` | 1 | ~6,547 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~19,941 |
+| `src/bin/` | 2 | ~20,888 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
@@ -377,7 +377,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,762 |
-| `src/ir/` | 4 | ~18,116 |
+| `src/ir/` | 4 | ~19,298 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~39,864 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 172 | ~306,885 |
+| `tests/` | 172 | ~307,730 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3576,7 +3576,7 @@
 ### `src/bin/`
 
 - `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~13898 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~14845 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3674,7 +3674,7 @@
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~8914 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~3749 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~4931 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -4128,7 +4128,7 @@
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
-- `verify_cli.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_cli.rs` (~3054 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
