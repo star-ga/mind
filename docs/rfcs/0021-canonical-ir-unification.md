@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0021 |
 | Title | Canonical IR Unification (mic@3 binary `IRModule` + embedded MAP; model-exchange demotion) |
-| Status | **Partial** — design locked + 5/5 cross-model validated (§3.2). **Steps 1–2 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b); step 3 (CLI emit) in progress; steps 4–6 pending (§4). "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
+| Status | **Partial** — design locked + 5/5 cross-model validated (§3.2). **Steps 1–4 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b + `mindc --emit-mic3`/`--emit-evidence` CLI emit mind@7fc10d2 + `mindc verify --evidence` consumer); steps 5–6 pending (§4). The CLI emits a round-trip-decodable canonical mic@3 binary artifact (plain via `--emit-mic3`; with an embedded `evidence_chain.*` MAP via `--emit-evidence`), `trace_hash` anchored on the canonical mic@3 bytes (`ir::ir_trace_hash`, the 2026-05-31 re-anchor), and `mindc verify` peels + recomputes + reports `trace_hash_valid`. "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 (rev. 2026-05-27) |
 | Supersedes-in-part | RFC 0016 §3.2/§5.4 (evidence anchor + carrier), RFC 0015 (enforcement seam) |
