@@ -98,16 +98,32 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block. Held at the champion 64. The row axis is a double dead
-/// end — MC=80 (iter 9) and MC=32 (iter 7) both regressed — and the speculative
-/// MC=96 trial is reverted here: at MC=96 the i64 C-scratch is `MC*NC*8 =
-/// 96*256*8 = 192 KiB`, which together with packed-B spills L2, the same
-/// C-scratch-pressure failure mode the larger-MC moves keep hitting. The
-/// residency budget is better spent on the COLUMN axis (see `I8_NC`), so MC
-/// stays at the measured best. 64 = 16 * MR=4, a clean register-tile multiple.
-/// Byte-identity is independent of the row tile: it only repartitions the outer
-/// row loop and never reorders an integer product.
-pub const I8_MC: usize = 64;
+/// int8 tier row block. EXPLORE pivot (exp78): DOUBLED to 128 (champion was 64;
+/// the exp77 MC=32/NC=512 "rescue" trial is rolled back). This attacks the ONE
+/// cost axis the whole NC sweep has been silently paying and never optimized: the
+/// **packed-B re-streaming count**. Every prior winner kept packed-A pinned at
+/// exactly `MC*KC*4 = 64*128*4 = 32 KiB = L1d` and bought throughput by WIDENING
+/// NC (376 champion) to amortize each L1d-resident A-strip over more output
+/// columns. But that whole family fixes M=1024 into `1024/64 = 16` row strips, and
+/// each strip re-streams the entire packed-B panel from L3 — 16 full B passes per
+/// GEMM. exp78 takes the opposite, unexplored corner: double the row tile so there
+/// are only `1024/128 = 8` row strips, HALVING the packed-B L3 traffic, and pay for
+/// it by letting packed-A grow to `128*128*4 = 64 KiB` (it spills out of L1d into
+/// L2) and by narrowing NC to 176 so the i64 C-scratch still fits L2. The bet: at
+/// the int8 kernel's high arithmetic intensity, halving the B-refetch traffic beats
+/// both the loss of L1d A-residency and the loss of column-amortization width.
+/// L2-resident set: C-scratch `128*176*8 = 176 KiB` + packed-A `64 KiB` = 240 KiB
+/// (16 KiB headroom under the 256 KiB L2); packed-B `128*176*4 = 88 KiB` streams
+/// from L3 as in the champion. This is NOT exp75 (which held packed-A at 32 KiB by
+/// pairing MC=128 with the BAD KC=64, breaking the sharp KC=128 peak) — here KC
+/// stays at the proven champion 128, so the A-panel is a square 128×128 and the
+/// only thing traded is L1d-residency-of-A for half the B traffic. iter-9 (MC=80)
+/// and iter-7 (MC=32) do not apply: this is a different MC point in a different
+/// (KC=128, narrow-NC) regime, chosen specifically to halve the strip count.
+/// 128 = 32 * MR=4, a clean register-tile multiple. Byte-identity is independent of
+/// the row tile: it only repartitions the outer row loop, never reordering a
+/// product.
+pub const I8_MC: usize = 128;
 
 /// int8 tier K-panel depth. Reverted to the champion 128 (the speculative
 /// KC=160 wide-NC trial is rolled back here): the KC axis has a SHARP measured
@@ -122,28 +138,22 @@ pub const I8_MC: usize = 64;
 /// K-split sums to the identical exact int32 result.
 pub const I8_KC: usize = 128;
 
-/// int8 tier column block. Stepped 384 → 392 — the SMALLEST clean increment
-/// int8 tier column block. Stepped 384 → 376 — the SMALLEST clean increment
-/// BELOW the champion (one register-tile column-group, NR=8) — probing the
-/// lower side of the 384 crest, which is entirely unexplored. The KC=128 column
-/// sweep measured NC=256→14.126, NC=384→14.162 (champion), NC=416→13.811 (lost),
-/// NC=448→lost, NC=512→13.352: the function rose monotonically 256→384 then fell
-/// 384→416, so 384 is a measured maximum — but every point in `(256, 384)` was
-/// skipped (the sweep jumped in 32+ strides) and the immediate −8-column
-/// neighbour has never been tested. This is the symmetric counterpart to the
-/// +8 step above: if 384 is a sharp single-point peak, NC=376 falls off and
-/// confirms the edge; if the 384 measurement actually sat on a short plateau
-/// whose left shoulder reaches 376, the slightly smaller column block trims
-/// cache pressure (each C-scratch RMW pass and packed-B fetch touches fewer
-/// lines) at negligible loss of A-strip amortization, and may match or edge the
-/// champion with more residency headroom. 376 = 47 * NR=8 is the finest
-/// admissible step down. At NC=376 the packed-B panel is `KC*NC*4 =
-/// 128*376*4 = 188 KiB` (under the 256 KiB L2) and the i64 C-scratch is
-/// `MC*NC*8 = 64*376*8 = 188 KiB`, ~4 KiB less of each reused tile than the 384
-/// champion. Byte-identity is unaffected: the i64 panel-partial reduction is
-/// associative/commutative, so the column block width never perturbs the exact
-/// int32 sum.
-pub const I8_NC: usize = 376;
+/// int8 tier column block. EXPLORE pivot (exp78): NARROWED to 176 (champion 376;
+/// the exp77 NC=512 trial is rolled back). This is the dependent half of the
+/// few-row-strips move — see `I8_MC` (doubled to 128) for the full rationale.
+/// Narrowing NC is NOT a return to the dead NC=64/128 low end (those lost because
+/// each A-strip amortized over too few columns); here it is the PRICE paid to keep
+/// the i64 C-scratch inside L2 once the row tile is doubled. With MC=128, the
+/// C-scratch is `MC*NC*8`, so the widest NC that leaves ~16 KiB L2 headroom beside
+/// the 64 KiB packed-A panel is `(256-64-16)KiB / (128*8) ≈ 176`: C-scratch
+/// `128*176*8 = 176 KiB` + packed-A 64 KiB = 240 KiB resident, packed-B
+/// `128*176*4 = 88 KiB` streaming from L3. 176 is the LARGEST clean NR-grid column
+/// block that co-fits L2 with the doubled row tile, so it deliberately sacrifices
+/// the minimum amortization width needed to unlock the 16→8 strip-count halving.
+/// 176 = 22 * NR=8, a clean register-tile multiple. Byte-identity is unaffected:
+/// the i64 panel-partial reduction is associative / commutative, so the column
+/// block width never perturbs the exact int32 sum.
+pub const I8_NC: usize = 176;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
