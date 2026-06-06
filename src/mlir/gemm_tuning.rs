@@ -110,46 +110,39 @@ pub const Q16_NR: usize = 8;
 /// reordering a product.
 pub const I8_MC: usize = 128;
 
-/// int8 tier K-panel depth. EXPLORE pivot (exp98): held at the proven 8-RMW KC=128 —
-/// the depth shared by the second-best result (exp78 14.598) and the entire rising NC
-/// sweep this experiment extends (exp84 14.002, exp87 14.422, exp78 14.598). KC=128 is
-/// load-bearing here for TWO reasons the NC=224 column bet depends on: (1) `1024/128 = 8`
-/// clean K-panels means only EIGHT read-modify-write sweeps over the i64 C-scratch — half
-/// the champion's KC=64 sixteen sweeps — which is exactly what makes a C-scratch that
-/// spills past L2 (the inevitable consequence of widening NC, see I8_NC) TOLERABLE rather
-/// than fatal; the per-sweep L3 traffic is paid 8× not 16×. (2) packed-A `128*128*4 =
-/// 64 KiB` is firmly L2-resident, so the freed L1d holds the streaming packed-B
-/// micro-panel. No K epilogue (1024 % 128 == 0). Byte-identity preserved: the i64
-/// panel-partial reduction is associative/commutative, so the K-split never perturbs the
-/// int32 result.
+/// int8 tier K-panel depth. exp103 REVERTS to the proven champion KC=128. The unmeasured
+/// exp101/exp102 deep-L3 extreme (KC=512/NC=512) changed TWO axes off the champion at once
+/// (KC 128→512 AND NC 224→512), so a win or loss there could not attribute cause; exp103
+/// discards that confound and holds KC at the empirically-undefeated 128 — the value of EVERY
+/// top result (14.728/14.691/14.598/14.422) and the apex of the sharp KC peak (32 lost @13.348,
+/// 64 lost @14.109-family, 256 lost @12.876, 512 lost in the dead MC=64 era). KC=128 gives the
+/// `1024/128 = 8` clean, even K-panels with no epilogue; at the champion 8-strip MC=128 corner
+/// packed-A is the proven L2-resident `128*128*4 = 64 KiB`. KC is NOT the variable this
+/// iteration — it is restored to the proven optimum precisely so the ONE moved axis (NC) is
+/// measured cleanly. Byte-identity preserved: the i64 panel-partial reduction is
+/// associative/commutative, so the K-split never perturbs the int32 result.
 pub const I8_KC: usize = 128;
 
-/// int8 tier column block. EXPLORE pivot (exp98): set NC=224 — extending the ONE clean,
-/// monotonically-RISING, and never-finished sweep in the entire 97-experiment dataset.
-/// At the proven 8-strip/8-RMW MC=128/KC=128 corner the measured NC scan climbs without
-/// turning over: 112→14.002 (exp84), 128→14.422 (exp87), 176→14.598 (exp78). NOBODY has
-/// ever measured a point ABOVE 176 at this corner — every later experiment abandoned the
-/// trend mid-climb to juggle cache RESIDENCY instead (exp90 KC=64 L1d-packed-A, exp92
-/// KC=32, exp82 KC=256, exp88 MC=256, exp97 B-in-L1d), and all of those residency pivots
-/// either lost or only tied. exp98 returns to the live lead and pushes column
-/// amortization — "the only axis besides KC that ever won" — into the open region past
-/// 176, where each packed-A row-strip is re-amortized over 27% more output columns per
-/// fetch than the exp78 NC=176 point.
-///
-/// Why NC=224 specifically (= 28·NR=8): it lands squarely in the projected post-176 peak
-/// zone while keeping the bet survivable. i64 C-scratch is `128*224*8 = 224 KiB` and
-/// packed-A is `64 KiB`, so C-scratch+A = 288 KiB modestly spills the 256 KiB L2 — but
-/// that spill is exactly why KC=128 (not the champion's KC=64) is the held co-axis: at 8
-/// K-panels the C-scratch is RMW-swept only 8× (half the champion's 16), so its L3
-/// re-stream traffic is the *tolerable* price for the wider column reuse. packed-B is
-/// `128*224*4 = 112 KiB`, streamed from L3 as in every wide-NC champion. This is a
-/// COLUMN-AMORTIZATION bet, mechanistically distinct from the recent residency-juggling
-/// failures: it asks whether the rising 112→128→176 trend was still climbing at 176 (→
-/// 224 beats the 14.691 champion and the NC axis reopens upward at KC=128) or had a knee
-/// just past 176 (→ the C-scratch L2-spill caps it and 176 is confirmed the KC=128 peak).
-/// Byte-identity unaffected: the i64 panel-partial reduction is associative/commutative,
-/// so column-block width never perturbs the int32 sum.
-pub const I8_NC: usize = 224;
+/// int8 tier column block. EXPLORE pivot (exp103): step NC 224→384 at the PROVEN champion corner
+/// (MC=128/KC=128) — the single, clean, attributable change off the exp98 champion (14.728). This
+/// is the FIRST deliberate probe of a qualitatively new RESIDENCY REGIME: every winner on the
+/// undefeated staircase (112→14.002, 128→14.422, 176→14.598, 224→14.728) kept the i64 C-scratch
+/// within L2 (224 KiB at NC=224 ≤ the 256 KiB L2). NC=384 is the first point where the C-scratch
+/// `128*384*8 = 384 KiB` deliberately SPILLS past L2 into L3 (1.5× L2), while packed-B
+/// `128*384*4 = 192 KiB` and packed-A `64 KiB` both stay L2-resident. The whole experiment is to
+/// isolate the open question the staircase poses but never answered: does column amortization keep
+/// NET-winning once the C-scratch — and ONLY the C-scratch — crosses the L2 boundary, at the
+/// proven 8-strip/8-RMW corner? This is structurally distinct from the unmeasured exp101/exp102
+/// (which forced BOTH C-scratch AND packed-B into L3 at NC=512 and additionally confounded KC),
+/// and from the dead exp22 NC=512 (old MC=64 era, packed-B re-streamed 16×). 384 is the clean
+/// register-grid midpoint of the open (224, 512) gap (48·NR=8), so one measurement brackets the
+/// knee: if it beats 14.728 the C-scratch L2 wall is not the ceiling and the staircase climbs into
+/// L3; if it craters the champion family is an L2-shouldered peak and the knee lies in (224, 384).
+/// N=1024 % NC=384 → a 256-wide column remainder epilogue (the emitter handles N%NC), the only
+/// non-clean divisor on this axis — a deliberate accepted cost to hit the geometric midpoint.
+/// Byte-identity unaffected: the i64 panel-partial reduction is associative/commutative, so
+/// widening the column block never reorders a product and never perturbs the int32 sum.
+pub const I8_NC: usize = 384;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
