@@ -105,8 +105,15 @@ pub const I8_MC: usize = 64;
 /// int8 tier K-panel depth — mirrors `Q16_KC`.
 pub const I8_KC: usize = 256;
 
-/// int8 tier column block — mirrors `Q16_NC`.
-pub const I8_NC: usize = 128;
+/// int8 tier column block. Widened from 128 → 256 to move toward the canonical
+/// BLIS L2/L3 split: at NC=128 the A/B/C tiles fill L2 exactly (64+128+64 KiB),
+/// over-constraining column reuse. At NC=256 the i64 C-scratch (64*256*8 = 128
+/// KiB) and packed A panel (64*256*4 = 64 KiB) still reside in L2 (256 KiB),
+/// while the packed B panel (256*256*4 = 256 KiB) streams from this box's 15 MiB
+/// L3 — amortizing the A panel across twice as many columns. Byte-identity is
+/// unaffected: the i64 panel-partial reduction is associative/commutative, so
+/// the wider column block yields the same exact int32 sum.
+pub const I8_NC: usize = 256;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
