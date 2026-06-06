@@ -4475,11 +4475,13 @@ impl LoweringContext {
     /// * Per (row, quad): load the A quad `[A[t,4q..4q+3]]` as i32, broadcast
     ///   across NR=8 columns, `xor 0x80` each byte (s8→u8, the `+128` bias), and
     ///   `@llvm.x86.avx512.vpdpbusd.256(main_acc, a_u8, b_s8)` → 8 i32 partials.
-    /// * Per quad (row-independent): `vpdpbusd.256(bsum_acc, ones_u8, b_s8)`
-    ///   accumulates the per-column `Σ bₛ`.
+    /// * The per-column `Σ bₛ` correction is computed ONCE per jr-block (HOISTED
+    ///   out of the hot loop, see `emit_mm_i8_blocked`), pre-shifted `<<7`
+    ///   (=`·128`) and passed in as `%{prefix}_jr_bsx : vector<NRxi64>`. It is
+    ///   row-independent and reused across every MR row and every ir-block.
     /// * After the quad loop, for each row: `acc_i64 = extsi(main_i32) −
-    ///   (extsi(bsum_i32) << 7)` (the `<<7` = `·128`). All exact i32/i64; the
-    ///   result equals the AVX2 rung's exact int32 sum bit-for-bit.
+    ///   %{prefix}_jr_bsx`. All exact i32/i64; the result equals the AVX2 rung's
+    ///   exact int32 sum bit-for-bit.
     ///
     /// i32 accumulation across one KC panel is overflow-safe: with KC≤256 (64
     /// quads), each lane ≤ 64·4·255·128 ≈ 8.4M (main) / 64·4·128·128 ≈ 4.2M
@@ -4490,29 +4492,25 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
-        // VNNI constants: all-ones u8 vector (for the column-sum vpdpbusd) and
-        // the 0x80 xor mask (s8→u8 bias), both as vector<NRxi32> reinterpreted
-        // as the byte vectors vpdpbusd consumes.
-        line(&format!(
-            "              %{p}_ones = arith.constant dense<16843009> : vector<{nr}xi32>"
-        ));
+        // VNNI constants: the 0x80 xor mask (s8→u8 bias), as vector<NRxi32>
+        // reinterpreted as the byte vector vpdpbusd consumes. (The all-ones Σb
+        // vector now lives only in the hoisted per-jr-block bias-sum loop.)
         line(&format!(
             "              %{p}_xor80 = arith.constant dense<-2139062144> : vector<{nr}xi32>"
         ));
         line(&format!(
             "              %{p}_zi32 = arith.constant dense<0> : vector<{nr}xi32>"
         ));
-        // iter_args: MR main i32 accumulators + 1 shared bsum i32 accumulator.
-        let mut acc_init: Vec<String> = (0..mr)
+        // iter_args: MR main i32 accumulators (the Σb dot is hoisted out).
+        let acc_init: Vec<String> = (0..mr)
             .map(|t| format!("%{p}_macc{t} = %{p}_zi32"))
             .collect();
-        acc_init.push(format!("%{p}_bacc = %{p}_zi32"));
-        let iter_ty: Vec<String> = (0..=mr).map(|_| format!("vector<{nr}xi32>")).collect();
+        let iter_ty: Vec<String> = (0..mr).map(|_| format!("vector<{nr}xi32>")).collect();
         let iter_ty = iter_ty.join(", ");
         line(&format!(
             "              %{p}_vi:{} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
              step %{p}_c1 iter_args({}) -> ({}) {{",
-            mr + 1,
+            mr,
             acc_init.join(", "),
             iter_ty
         ));
@@ -4543,12 +4541,6 @@ impl LoweringContext {
             "                %{p}_bv = vector.bitcast %{p}_bvb : vector<{}xi8> to vector<{nr}xi32>",
             4 * nr
         ));
-        // Per-quad column sum: vpdpbusd(bacc, ones_u8, b_s8) lane n += Σ_s B[4q+s,n].
-        line(&format!(
-            "                %{p}_nbacc = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.256\"\
-             (%{p}_bacc, %{p}_ones, %{p}_bv) : \
-             (vector<{nr}xi32>, vector<{nr}xi32>, vector<{nr}xi32>) -> vector<{nr}xi32>"
-        ));
         // A K-quad base for this block: Ap[irbase + kp*(MR*4)].
         line(&format!(
             "                %{p}_amr4 = arith.muli %{p}_mrc, %{p}_cgrpi : i64"
@@ -4559,13 +4551,13 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_abase = arith.addi %{p}_irbase, %{p}_akr : i64"
         ));
-        let mut yields = Vec::with_capacity(mr + 1);
+        let mut yields = Vec::with_capacity(mr);
         for t in 0..mr {
             // A quad for row t: four contiguous i8 = [A[t,4kp..4kp+3]]. Load as
             // one i32, broadcast across NR columns -> vector<NRxi32> =
             // [quad,quad,...]; xor 0x80 per byte (s8 -> u8, the +128 bias) so
             // vpdpbusd's u8 operand carries (A+128). The bias is removed exactly
-            // after the loop via -128*Σb.
+            // after the loop via the HOISTED -128*Σb term (%{p}_jr_bsx).
             line(&format!(
                 "                %{p}_at{t} = arith.constant {} : i64",
                 t * 4
@@ -4594,23 +4586,15 @@ impl LoweringContext {
             ));
             yields.push(format!("%{p}_nm{t}"));
         }
-        yields.push(format!("%{p}_nbacc"));
         line(&format!(
             "                scf.yield {} : {}",
             yields.join(", "),
             iter_ty
         ));
         line("              }");
-        // Post-loop bias removal: acc{t}_i64 = extsi(main{t}) - (extsi(bsum) << 7).
-        line(&format!(
-            "              %{p}_bsum64 = arith.extsi %{p}_vi#{mr} : vector<{nr}xi32> to vector<{nr}xi64>"
-        ));
-        line(&format!(
-            "              %{p}_c7v = arith.constant dense<7> : vector<{nr}xi64>"
-        ));
-        line(&format!(
-            "              %{p}_bsx = arith.shli %{p}_bsum64, %{p}_c7v : vector<{nr}xi64>"
-        ));
+        // Post-loop bias removal: acc{t}_i64 = extsi(main{t}) - %{p}_jr_bsx.
+        // %{p}_jr_bsx = (Σb << 7) is HOISTED — computed once per jr-block in
+        // emit_mm_i8_blocked and reused for every MR row and ir-block.
         // Re-expose the corrected per-row accumulators under the shared %{p}_va#{t}
         // names the scalar tail / C-flush consume, via a trivial 1-trip scf.for
         // (keeps %{p}_va:{MR} the single SSA the rest of the kernel reads).
@@ -4622,7 +4606,7 @@ impl LoweringContext {
                 "              %{p}_main64_{t} = arith.extsi %{p}_vi#{t} : vector<{nr}xi32> to vector<{nr}xi64>"
             ));
             line(&format!(
-                "              %{p}_vacorr{t} = arith.subi %{p}_main64_{t}, %{p}_bsx : vector<{nr}xi64>"
+                "              %{p}_vacorr{t} = arith.subi %{p}_main64_{t}, %{p}_jr_bsx : vector<{nr}xi64>"
             ));
         }
         line(&format!(
@@ -5104,6 +5088,80 @@ impl LoweringContext {
         line(&format!(
             "            %{p}_jrbase = arith.muli %{p}_jrb, %{p}_jrpan : i64"
         ));
+        // ── HOISTED Σb (VNNI signed-bias correction), once per jr-block ───────
+        // VPDPBUSD is u8×s8; we feed (A+128) so `Σ aₛ·bₛ = Σ (aₛ+128)·bₛ −
+        // 128·Σ bₛ`. The `−128·Σ bₛ` term depends ONLY on the B column (the
+        // same packed jr-block), NOT on the A-row — so it is identical for all
+        // MR rows AND all MC/MR ir-blocks that reuse this jr-block. Computing it
+        // ONCE here (one `vpdpbusd(ones_u8, b_s8)` per K-quad of this jr-block)
+        // instead of redundantly inside every ir-block's K-loop removes the
+        // per-(quad×ir-block) bias dot from the hot loop. Exact-integer: the i32
+        // column sum is the identical value regardless of where it is summed
+        // (integer add is associative), so the corrected accumulator —
+        // `Σ(aₛ+128)·bₛ − 128·Σbₛ` — is byte-for-byte the AVX2 rung's signed sum.
+        // Only the K-MAIN quads carry the +128 bias (the scalar tail uses the
+        // true signed packed bytes), so Σb here ranges over exactly those quads.
+        if matches!(mode, IntDotMode::Vnni) {
+            line(&format!(
+                "            %{p}_h_ones = arith.constant dense<16843009> : vector<{NR}xi32>"
+            ));
+            line(&format!(
+                "            %{p}_h_z = arith.constant dense<0> : vector<{NR}xi32>"
+            ));
+            line(&format!(
+                "            %{p}_h_kpairs = arith.divui %{p}_kce, %{p}_cgrp : index"
+            ));
+            line(&format!(
+                "            %{p}_jr_bsum1:1 = scf.for %{p}_hkp = %{p}_c0 to %{p}_h_kpairs \
+                 step %{p}_c1 iter_args(%{p}_h_bacc = %{p}_h_z) -> (vector<{NR}xi32>) {{"
+            ));
+            line(&format!(
+                "              %{p}_hkp64 = arith.index_cast %{p}_hkp : index to i64"
+            ));
+            line(&format!(
+                "              %{p}_h_bnr4 = arith.muli %{p}_nrc, %{p}_cgrpi : i64"
+            ));
+            line(&format!(
+                "              %{p}_h_bkr = arith.muli %{p}_hkp64, %{p}_h_bnr4 : i64"
+            ));
+            line(&format!(
+                "              %{p}_h_bvi = arith.addi %{p}_jrbase, %{p}_h_bkr : i64"
+            ));
+            line(&format!(
+                "              %{p}_h_bvp = llvm.getelementptr %{p}_pb[%{p}_h_bvi] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "              %{p}_h_bvb = llvm.load %{p}_h_bvp {{alignment = 1 : i64}} : \
+                 !llvm.ptr -> vector<{}xi8>",
+                4 * NR
+            ));
+            line(&format!(
+                "              %{p}_h_bv = vector.bitcast %{p}_h_bvb : vector<{}xi8> to vector<{NR}xi32>",
+                4 * NR
+            ));
+            line(&format!(
+                "              %{p}_h_nbacc = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.256\"\
+                 (%{p}_h_bacc, %{p}_h_ones, %{p}_h_bv) : \
+                 (vector<{NR}xi32>, vector<{NR}xi32>, vector<{NR}xi32>) -> vector<{NR}xi32>"
+            ));
+            line(&format!(
+                "              scf.yield %{p}_h_nbacc : vector<{NR}xi32>"
+            ));
+            line("            }");
+            // Pre-shift the −128·Σb correction once (<<7 = ·128) into i64 here;
+            // the microkernel epilogue subtracts the SAME %{p}_jr_bsx from every
+            // MR row instead of recomputing it.
+            line(&format!(
+                "            %{p}_jr_bsum64 = arith.extsi %{p}_jr_bsum1#0 : vector<{NR}xi32> to vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "            %{p}_jr_c7v = arith.constant dense<7> : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "            %{p}_jr_bsx = arith.shli %{p}_jr_bsum64, %{p}_jr_c7v : vector<{NR}xi64>"
+            ));
+        }
         // ══════════════════════════════════════════════════════════════════
         //  ir — MR-row tiles over the packed A panel [0, MCp)
         // ══════════════════════════════════════════════════════════════════
