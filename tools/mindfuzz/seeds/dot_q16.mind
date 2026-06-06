@@ -1,0 +1,23 @@
+// MIND-Fuzz seed: Q16.16 dot / L1 / gemv kernels.
+//
+// These are the known-good, checkable kernels lifted verbatim from
+// tests/cross_substrate_identity.rs (the SRC constant). They drive the
+// __mind_blas_* intrinsics whose vector path is byte-identical across
+// substrates and exactly matches a scalar integer reference, so the
+// reference-oracle and determinism oracles both apply.
+//
+// Mutations that keep these signatures intact stay reference-checkable;
+// mutations that change a body's semantics are still covered by the
+// determinism / verify / mic@3 / compile oracles.
+
+pub fn dotq(a: i64, b: i64, n: i64) -> i64 {
+    __mind_blas_dot_q16_v(a, b, n)
+}
+
+pub fn dotl1q(a: i64, b: i64, n: i64) -> i64 {
+    __mind_blas_dot_l1_q16_v(a, b, n)
+}
+
+pub fn mmq(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
+    __mind_blas_matmul_rmajor_q16_v(w, x, y, rows, cols)
+}

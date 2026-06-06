@@ -1,0 +1,29 @@
+# MIND-Fuzz mutation instructions (adapted from arXiv:2501.00655 Table 1).
+#
+# Each non-comment, non-blank line is ONE mutation instruction. The loop picks
+# one by COUNTER (iteration % N), not at random, so a run is replay-stable
+# (autorun.py-style determinism). The chosen instruction is fed to the LLM with
+# the current program via the Listing-2 prompt template.
+#
+# A leading tag controls which oracles assert on the result:
+#   [preserve]  the mutation MUST keep observable semantics  -> reference oracle
+#               applies in full (kernel output must still match the scalar ref).
+#   [semantics] the mutation MAY change what the program computes -> reference
+#               oracle is skipped; determinism / verify / mic@3 / compile still
+#               apply (these never depend on the computed value).
+#
+# Instructions are written to be MIND-VALID: MIND has no pointers, unions, or
+# C-style aggregates, so the paper's pointer/union/struct rows are replaced with
+# MIND-idiomatic integer / control-flow / let-binding transforms. Keep edits
+# small and local so the line-deletion minimizer stays effective.
+
+[preserve] add a redundant let binding that is computed but does not change any returned value, then leave all returns unchanged
+[preserve] introduce a constant-folded temporary (e.g. let k: i64 = 2 + 3;) that is unused by the result, keeping every function signature and return identical
+[preserve] add a dead conditional `if false { ... }` containing a statement, without altering any value that is returned
+[preserve] reorder two independent let bindings whose values do not depend on each other, keeping the computed result identical
+[preserve] rename a local variable consistently throughout one function, changing nothing observable
+[semantics] change an integer literal in one function to a different small integer constant
+[semantics] add a live conditional `if a > 0 { ... } else { ... }` that adjusts a local accumulator, keeping all type signatures unchanged
+[semantics] add a bounded counting loop (a known small number of iterations) that accumulates into a local i64, returning the accumulator
+[semantics] make an existing condition more complicated by conjoining a second comparison with && without removing the original comparison
+[semantics] widen an i16 local to i32 (or i32 to i64) consistently, preserving the function signature where it is `pub`

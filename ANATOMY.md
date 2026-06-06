@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2698 | **Est. tokens:** ~6,758,796
-**Generated:** 2026-06-06 03:34 UTC
+**Files:** 2710 | **Est. tokens:** ~6,774,097
+**Generated:** 2026-06-06 15:05 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,12 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~27,000 |
+| `./` | 35 | ~27,013 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 11 | ~17,498 |
+| `benches/` | 12 | ~21,396 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -42,7 +42,7 @@
 | `docs/design/` | 3 | ~8,185 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~117,982 |
+| `docs/rfcs/` | 28 | ~118,081 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,006 |
 | `examples/c/` | 2 | ~400 |
@@ -383,7 +383,7 @@
 | `src/ir/compact/v3/` | 4 | ~39,864 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
-| `src/mlir/` | 3 | ~4,239 |
+| `src/mlir/` | 3 | ~4,553 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,186 |
 | `src/package/` | 2 | ~1,668 |
@@ -396,7 +396,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 172 | ~306,885 |
+| `tests/` | 172 | ~307,828 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -406,6 +406,7 @@
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~755 |
 | `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~649 |
 | `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
+| `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
@@ -423,6 +424,9 @@
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~3,237 |
+| `tools/mindfuzz/` | 6 | ~9,118 |
+| `tools/mindfuzz/seeds/` | 2 | ~380 |
+| `tools/mindfuzz/violations/` | 1 | ~0 |
 | `tools/pytorch_bridge/` | 6 | ~4,678 |
 | `tools/pytorch_bridge/tests/` | 2 | ~1,244 |
 | `.wrangler/cache/` | 1 | ~21 |
@@ -443,7 +447,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1427 tok, large) — [package]
+- `Cargo.toml` (~1440 tok, large) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -490,6 +494,7 @@
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~2149 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
+- `det_matmul_i16.rs` (~3898 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16_mt.rs` (~3256 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16.rs` (~4090 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
@@ -642,7 +647,7 @@
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~4166 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0021-canonical-ir-unification.md` (~4265 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2083 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
@@ -3697,7 +3702,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `gemm_tuning.rs` (~2229 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `gemm_tuning.rs` (~2543 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
@@ -3848,6 +3853,10 @@
 
 - `manifest.toml` (~391 tok, medium) — version = "1"
 - `reference_hashes.toml` (~167 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+### `tests/cross_substrate_identity/gemv-i16-256x256/`
+
+- `manifest.toml` (~375 tok, medium) — version = "1"
+- `reference_hashes.toml` (~161 tok, small) — avx2 = "3238e8c7e1e9ee9937503700f63eda350fcd10e7db28d470c3dbc26592d0a936"
 ### `tests/cross_substrate_identity/gemv-q16-256x256/`
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
@@ -3857,7 +3866,7 @@
 - `README.md` (~875 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~5742 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~6685 tok, huge) — Copyright 2025 STARGA Inc.
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4134,6 +4143,21 @@
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
 - `bench_gate.py` (~1533 tok, huge) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
+### `tools/mindfuzz/`
+
+- `fuzz_loop.py` (~2700 tok, huge) — MIND-Fuzz loop -- LLM-mutation differential testing for the MIND compiler.
+- `.gitignore` (~7 tok, tiny) — tools/mindfuzz/__pycache__/
+- `mutate.py` (~1516 tok, huge) — MIND-Fuzz mutation engine.
+- `mutations.txt` (~598 tok, large) — # MIND-Fuzz mutation instructions (adapted from arXiv:2501.00655 Table 1).
+- `oracles.py` (~2937 tok, huge) — MIND-Fuzz differential oracles.
+- `README.md` (~1360 tok, large) — MIND-Fuzz
+### `tools/mindfuzz/seeds/`
+
+- `dot_q16.mind` (~221 tok, medium) — MIND-Fuzz seed: Q16.16 dot / L1 / gemv kernels.
+- `scalar_arith.mind` (~159 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+### `tools/mindfuzz/violations/`
+
+- `.gitkeep` (~0 tok, tiny)
 ### `tools/pytorch_bridge/`
 
 - `ai_proof.py` (~645 tok, large) — # Copyright 2025-2026 STARGA Inc.
