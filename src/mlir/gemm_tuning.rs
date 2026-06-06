@@ -98,50 +98,41 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block. EXPLORE pivot (exp98): held at the proven 8-strip MC=128 —
-/// the champion family of EVERY top result (14.691/14.598/14.422/14.109). MC is NOT
-/// the variable this iteration; exp98 fixes the champion's `1024/128 = 8` clean row
-/// strips (minimum packed-B re-streaming) AND the proven 8-RMW KC=128 depth, then
-/// drives the ONE axis the data shows still climbing and never finished: the column
-/// block NC (see I8_NC). The 8-strip count is load-bearing — exp88 quadrupling to
-/// MC=256 (4 strips) collapsed to 11.232, and exp80/exp96 low-MC points all lost, so
-/// MC=128 is empirically the floor of packed-B re-streaming. Byte-identity is
-/// independent of the row tile: it only repartitions the outer row loop, never
-/// reordering a product.
-pub const I8_MC: usize = 128;
+/// int8 tier row block. exp120 EXPLORE pivot — abandons the "packed-A+packed-B must
+/// co-reside in L2" constraint that EVERY champion respected, doubling the row tile to the
+/// 4-strip extreme I8_MC=256 (1024/256=4 even row strips, zero M-remainder) WHILE holding
+/// the champion's wide NC=384 (see I8_NC) and proven KC=128 (see I8_KC). The dataset's
+/// single monotone-winning mechanism is strip reduction (16→8 via MC 64→128 halved
+/// packed-B's L3 re-streaming and built the 15.009 champion); this halves it once more
+/// (8→4). MC=256 was tried ONCE (exp88) but with NC crippled to 56 to stay L2-resident —
+/// it cratered to 11.232 on lost column amortization, a confound this iteration removes by
+/// keeping NC=384. At MC=256 packed-A is `256*128*4 = 128 KiB` and packed-B `128*384*4 =
+/// 192 KiB`, so their 320 KiB sum SPILLS the 256 KiB L2 (packed-A streams from this box's
+/// 15 MB Haswell-E L3, reused across the jr loop), and the i64 C-scratch is `256*384*8 =
+/// 768 KiB` (L3). The bet: a second halving of packed-B traffic (the proven monotone
+/// lever) at the champion's proven wide NC beats L2-resident packed-A — a regime (packed-A
+/// out of L2 at wide NC) no prior MC choice entered. Distinct from dead exp88 (NC=56
+/// confound) and the deep-K exp119. Byte-identity is independent of the row tile: it only
+/// repartitions the outer row loop, never reordering a product.
+pub const I8_MC: usize = 256;
 
-/// int8 tier K-panel depth. exp103 REVERTS to the proven champion KC=128. The unmeasured
-/// exp101/exp102 deep-L3 extreme (KC=512/NC=512) changed TWO axes off the champion at once
-/// (KC 128→512 AND NC 224→512), so a win or loss there could not attribute cause; exp103
-/// discards that confound and holds KC at the empirically-undefeated 128 — the value of EVERY
-/// top result (14.728/14.691/14.598/14.422) and the apex of the sharp KC peak (32 lost @13.348,
-/// 64 lost @14.109-family, 256 lost @12.876, 512 lost in the dead MC=64 era). KC=128 gives the
-/// `1024/128 = 8` clean, even K-panels with no epilogue; at the champion 8-strip MC=128 corner
-/// packed-A is the proven L2-resident `128*128*4 = 64 KiB`. KC is NOT the variable this
-/// iteration — it is restored to the proven optimum precisely so the ONE moved axis (NC) is
-/// measured cleanly. Byte-identity preserved: the i64 panel-partial reduction is
-/// associative/commutative, so the K-split never perturbs the int32 result.
+/// int8 tier K-panel depth. exp120 reverts the unmeasured exp119 full-K extreme (KC=1024)
+/// back to the proven champion KC=128 (1024/128=8 clean pc panels, zero K-remainder) so
+/// the ONE moved axis this iteration — MC (see I8_MC) — is measured cleanly against the
+/// 15.009 champion's contraction depth. KC=128 is the load-bearing depth of every wide-NC
+/// champion; moving it alongside MC would re-introduce the exact attribute-the-cause
+/// confound exp103 was created to kill. Byte-identity is independent of KC: the i64
+/// panel-partial reduction is order-invariant under any K-split.
 pub const I8_KC: usize = 128;
 
-/// int8 tier column block. EXPLORE pivot (exp103): step NC 224→384 at the PROVEN champion corner
-/// (MC=128/KC=128) — the single, clean, attributable change off the exp98 champion (14.728). This
-/// is the FIRST deliberate probe of a qualitatively new RESIDENCY REGIME: every winner on the
-/// undefeated staircase (112→14.002, 128→14.422, 176→14.598, 224→14.728) kept the i64 C-scratch
-/// within L2 (224 KiB at NC=224 ≤ the 256 KiB L2). NC=384 is the first point where the C-scratch
-/// `128*384*8 = 384 KiB` deliberately SPILLS past L2 into L3 (1.5× L2), while packed-B
-/// `128*384*4 = 192 KiB` and packed-A `64 KiB` both stay L2-resident. The whole experiment is to
-/// isolate the open question the staircase poses but never answered: does column amortization keep
-/// NET-winning once the C-scratch — and ONLY the C-scratch — crosses the L2 boundary, at the
-/// proven 8-strip/8-RMW corner? This is structurally distinct from the unmeasured exp101/exp102
-/// (which forced BOTH C-scratch AND packed-B into L3 at NC=512 and additionally confounded KC),
-/// and from the dead exp22 NC=512 (old MC=64 era, packed-B re-streamed 16×). 384 is the clean
-/// register-grid midpoint of the open (224, 512) gap (48·NR=8), so one measurement brackets the
-/// knee: if it beats 14.728 the C-scratch L2 wall is not the ceiling and the staircase climbs into
-/// L3; if it craters the champion family is an L2-shouldered peak and the knee lies in (224, 384).
-/// N=1024 % NC=384 → a 256-wide column remainder epilogue (the emitter handles N%NC), the only
-/// non-clean divisor on this axis — a deliberate accepted cost to hit the geometric midpoint.
-/// Byte-identity unaffected: the i64 panel-partial reduction is associative/commutative, so
-/// widening the column block never reorders a product and never perturbs the int32 sum.
+/// int8 tier column block. exp120 holds the champion NC=384 (48·NR=8, the proven peak of
+/// the column-amortization sweep that built the 15.009 record) so the MC 128→256 strip
+/// halving (see I8_MC) is tested at the SAME wide column width — explicitly removing the
+/// confound that sank exp88, whose MC=256 was paired with a crippled NC=56. Column
+/// amortization is the dominant throughput lever in this dataset; pinning it at the
+/// champion value isolates the strip-reduction mechanism. C-scratch at this NC is
+/// `256*384*8 = 768 KiB` (L3) and packed-B `128*384*4 = 192 KiB`. Byte-identity
+/// unaffected: the column-block width never reorders a product nor perturbs the int32 sum.
 pub const I8_NC: usize = 384;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
