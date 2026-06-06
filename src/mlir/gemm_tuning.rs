@@ -102,8 +102,19 @@ pub const Q16_NR: usize = 8;
 /// have the same extent as the Q16 tier (panels stay i32, scratch i64).
 pub const I8_MC: usize = 64;
 
-/// int8 tier K-panel depth — mirrors `Q16_KC`.
-pub const I8_KC: usize = 256;
+/// int8 tier K-panel depth. Halved from 256 → 128 — the unexplored SHALLOW-K
+/// direction, opposite the discarded deep-K move (KC=512 overflowed the packed-B
+/// panel and regressed). At the champion NC=256, KC=256 makes the packed-B panel
+/// `KC*NC*4 = 256*256*4 = 256 KiB` — by itself the entire L2 — so it must
+/// co-reside with the 128 KiB i64 C-scratch only by streaming partly from L3.
+/// KC=128 shrinks packed-B to `128*256*4 = 128 KiB` and packed-A to
+/// `MC*KC*4 = 64*128*4 = 32 KiB`; B (128) + C-scratch (128) + A (32) = 288 KiB
+/// sits much closer to the 256 KiB L2 with B genuinely L2-resident instead of
+/// L3-streamed, trading 2× more pc K-panels (8 vs 4 at K=1024, more C-scratch RMW)
+/// for a hotter, fully-cached B panel. Byte-identity preserved: the i64
+/// panel-partial reduction is associative/commutative, so more (and shallower)
+/// K-panels sum to the identical exact int32 result.
+pub const I8_KC: usize = 128;
 
 /// int8 tier column block. Widened from 128 → 256 to move toward the canonical
 /// BLIS L2/L3 split: at NC=128 the A/B/C tiles fill L2 exactly (64+128+64 KiB),
