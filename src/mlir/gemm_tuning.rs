@@ -109,40 +109,41 @@ pub const Q16_NR: usize = 8;
 /// row loop and never reorders an integer product.
 pub const I8_MC: usize = 64;
 
-/// int8 tier K-panel depth. Halved from 256 → 128 — the unexplored SHALLOW-K
-/// direction, opposite the discarded deep-K move (KC=512 overflowed the packed-B
-/// panel and regressed). KC=128 was the largest single win: shrinking the K-panel
-/// halves the packed-B footprint so it stays genuinely L2-resident instead of
-/// L3-streamed, at the cost of 2× more pc K-panels (8 vs 4 at K=1024, more
-/// C-scratch RMW). It is THIS halving that re-opens the column axis explored by
-/// the current `I8_NC=384` experiment: at NC=384 packed-B is `KC*NC*4 =
-/// 128*384*4 = 192 KiB` and packed-A is `MC*KC*4 = 64*128*4 = 32 KiB` — had KC
-/// stayed at 256, packed-B alone would be 384 KiB and the wider column block
-/// would be impossible. Byte-identity preserved: the i64 panel-partial reduction
-/// is associative/commutative, so more (and shallower) K-panels sum to the
-/// identical exact int32 result.
+/// int8 tier K-panel depth. Reverted to the champion 128 (the speculative
+/// KC=160 wide-NC trial is rolled back here): the KC axis has a SHARP measured
+/// peak at 128 — the NC=256 sweep gave 64→12.99, 128→14.13, 256→13.23,
+/// 512→13.17, a single-point spike that fell off ~6% in BOTH directions, and
+/// the inverse KC=64 (iter 14) and KC=512 (iter 3) points are both logged dead
+/// ends. Deepening to 160 trades that known optimum for an unmeasured RMW-traffic
+/// argument; with the column peak still un-pinpointed it is the weaker bet, so KC
+/// stays at the champion to isolate the NC bisection below. 128 keeps packed-B at
+/// `KC*NC*4 = 128*400*4 = 200 KiB` (under the 256 KiB L2). Byte-identity
+/// preserved: the i64 panel-partial reduction is associative/commutative, so any
+/// K-split sums to the identical exact int32 result.
 pub const I8_KC: usize = 128;
 
-/// int8 tier column block. Widened 256 → 384 to RE-OPEN the column-amortization
-/// axis now that the KC=128 champion has structurally changed the regime. The
-/// column axis is, with KC, one of only two knobs that ever produced a measured
-/// win (128→256 gave the sole +6%, 12.47→13.23). Its only apparent failure —
-/// NC=320 (iter 11) — and the "L2 wall" verdict that reverted the NC=384 trial
-/// were BOTH set at the THEN-champion KC=256, where packed-B was `KC*NC*4 =
-/// 256*256*4 = 256 KiB` and consumed the entire 256 KiB L2, so no NC>256 could
-/// keep B resident. The KC=128 win HALVES packed-B: at NC=384 it is
-/// `128*384*4 = 192 KiB`, still UNDER the KC=256-era 256 KiB the old wall was
-/// drawn against — so the column headroom the dead-end note assumed gone is in
-/// fact restored, and this asks the amortization question for the first time in
-/// the shallow-K regime. Each fetched packed-A strip (`MC*KC*4 = 64*128*4 =
-/// 32 KiB`) now feeds dot-products against 50% more output columns before
-/// turnover, cutting A-refetch traffic across the `jc` sweep. The cost is
-/// C-scratch growth `MC*NC*8 = 64*384*8 = 192 KiB` (RMW across the 8 pc
-/// K-panels under mild eviction) — the same trade the NC=128→256 win already
-/// paid and won. 384 = 48 * NR=8, a clean register-tile multiple. Byte-identity
-/// is unaffected: the i64 panel-partial reduction is associative/commutative, so
-/// the wider column block yields the same exact int32 sum.
-pub const I8_NC: usize = 384;
+/// int8 tier column block. Stepped 384 → 392 — the SMALLEST clean increment
+/// int8 tier column block. Stepped 384 → 376 — the SMALLEST clean increment
+/// BELOW the champion (one register-tile column-group, NR=8) — probing the
+/// lower side of the 384 crest, which is entirely unexplored. The KC=128 column
+/// sweep measured NC=256→14.126, NC=384→14.162 (champion), NC=416→13.811 (lost),
+/// NC=448→lost, NC=512→13.352: the function rose monotonically 256→384 then fell
+/// 384→416, so 384 is a measured maximum — but every point in `(256, 384)` was
+/// skipped (the sweep jumped in 32+ strides) and the immediate −8-column
+/// neighbour has never been tested. This is the symmetric counterpart to the
+/// +8 step above: if 384 is a sharp single-point peak, NC=376 falls off and
+/// confirms the edge; if the 384 measurement actually sat on a short plateau
+/// whose left shoulder reaches 376, the slightly smaller column block trims
+/// cache pressure (each C-scratch RMW pass and packed-B fetch touches fewer
+/// lines) at negligible loss of A-strip amortization, and may match or edge the
+/// champion with more residency headroom. 376 = 47 * NR=8 is the finest
+/// admissible step down. At NC=376 the packed-B panel is `KC*NC*4 =
+/// 128*376*4 = 188 KiB` (under the 256 KiB L2) and the i64 C-scratch is
+/// `MC*NC*8 = 64*376*8 = 188 KiB`, ~4 KiB less of each reused tile than the 384
+/// champion. Byte-identity is unaffected: the i64 panel-partial reduction is
+/// associative/commutative, so the column block width never perturbs the exact
+/// int32 sum.
+pub const I8_NC: usize = 376;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
