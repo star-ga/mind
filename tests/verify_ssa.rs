@@ -111,6 +111,91 @@ fn ssa_undefined_operand_fails() {
     );
 }
 
+/// A function with a parameter AND body values that reuse ids from a *separate*
+/// per-function namespace must verify clean — the `scalar_arith.mind` shape that
+/// MIND-Fuzz flagged as a verifier false-positive.
+///
+/// Models `pub fn f(a: i64) -> i64 { let x = 5; return a + x; }`: param `a` is
+/// `%0`, the body materializes `Param %0`, `ConstI64 %1`, `BinOp %2 = %0 + %1`,
+/// then a top-level `%0`/`Output %0` follows the `FnDef` in the module's own
+/// (separate) namespace. The pre-fix verifier threaded a single shared
+/// `defined` set through the whole module and wrongly reported `%0` defined more
+/// than once.
+#[test]
+fn ssa_fn_param_and_body_values_pass() {
+    let mut m = IRModule::new();
+    m.instrs.push(Instr::FnDef {
+        name: "f".to_string(),
+        params: vec![("a".to_string(), ValueId(0))],
+        ret_id: Some(ValueId(2)),
+        body: vec![
+            Instr::Param {
+                dst: ValueId(0),
+                name: "a".to_string(),
+                index: 0,
+            },
+            Instr::ConstI64(ValueId(1), 5),
+            Instr::BinOp {
+                dst: ValueId(2),
+                op: BinOp::Add,
+                lhs: ValueId(0),
+                rhs: ValueId(1),
+            },
+            Instr::Return {
+                value: Some(ValueId(2)),
+            },
+        ],
+        reap_threshold: None,
+    });
+    // Top-level namespace reuses %0 — must NOT collide with the function's %0.
+    m.instrs.push(Instr::ConstI64(ValueId(0), 0));
+    m.instrs.push(Instr::Output(ValueId(0)));
+    m.next_id = 3;
+
+    assert!(
+        check_ssa_well_formed(&m).is_ok(),
+        "a function with a param and body values in a separate namespace, \
+         followed by a top-level value reusing an id, must verify clean: {:?}",
+        check_ssa_well_formed(&m)
+    );
+}
+
+/// A genuine duplicate result id *inside one function body* must still be
+/// rejected — the per-function fresh scope must not be so loose that it stops
+/// catching real single-assignment faults.
+#[test]
+fn ssa_duplicate_result_id_in_fn_body_fails() {
+    let mut m = IRModule::new();
+    m.instrs.push(Instr::FnDef {
+        name: "f".to_string(),
+        params: vec![("a".to_string(), ValueId(0))],
+        ret_id: Some(ValueId(1)),
+        body: vec![
+            Instr::Param {
+                dst: ValueId(0),
+                name: "a".to_string(),
+                index: 0,
+            },
+            Instr::ConstI64(ValueId(1), 5),
+            // Re-define %1 with a second instruction — single-assignment fault.
+            Instr::ConstI64(ValueId(1), 6),
+            Instr::Return {
+                value: Some(ValueId(1)),
+            },
+        ],
+        reap_threshold: None,
+    });
+    m.next_id = 2;
+
+    let err = check_ssa_well_formed(&m).expect_err("duplicate %1 in fn body must fail");
+    assert_eq!(err.value, ValueId(1), "violation must name %1");
+    assert_eq!(
+        err.rule,
+        SsaRule::SingleAssignment,
+        "violation must be a single-assignment fault"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // CLI-level: mindc verify reports ssa_valid over a mic@3 artifact.
 // ---------------------------------------------------------------------------
