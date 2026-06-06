@@ -90,6 +90,18 @@ impl std::fmt::Display for SsaViolation {
 /// the dominance-precise check is future work (tracked with the RFC 0017 SMT
 /// extension).
 ///
+/// ### Per-function SSA namespaces
+///
+/// In MIND's IR a function's parameter ids and its body value ids are numbered
+/// in a namespace **local to that function** (`src/eval/lower.rs` resets the
+/// value counter per `FnDef`). The same numeric id (e.g. `%0`) therefore recurs
+/// across functions and even between a function's param `%0` and a top-level
+/// `%0` that follows the `FnDef`. To avoid false single-assignment collisions,
+/// every `FnDef` body is checked in a **fresh, function-local `defined` scope**
+/// (params seeded into it); the module/top-level stream keeps its own scope.
+/// A genuine duplicate result id *within one stream* is still rejected because
+/// the collision is detected against that stream's own scope.
+///
 /// Returns `Ok(())` if both properties hold, or the first [`SsaViolation`] in
 /// program order otherwise.
 pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
@@ -133,9 +145,17 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
         // 2. Single-assignment for straight-line ops: the instruction's own
         //    result id (if any) must not already be defined. Region nodes defer
         //    this to step 4.
+        //
+        //    EXCEPTION: a `Param` body instruction re-states an id that the
+        //    enclosing `FnDef` already seeded into this function-local scope
+        //    from its `params` list (the parameter is materialized both in the
+        //    `FnDef.params` list and as a leading `Param` instruction in the
+        //    body, with the SAME id). That is one logical definition of the
+        //    parameter, not a duplicate, so its insert is idempotent here.
         if !is_region {
+            let is_param = matches!(instr, Instr::Param { .. });
             if let Some(dst) = instruction_dst(instr) {
-                if !defined.insert(dst) {
+                if !defined.insert(dst) && !is_param {
                     return Err(SsaViolation {
                         value: dst,
                         rule: SsaRule::SingleAssignment,
@@ -149,15 +169,28 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
         //    definitions (pre-order program-order visibility).
         match instr {
             Instr::FnDef { params, body, .. } => {
+                // A function body is its own SSA namespace: ids are numbered
+                // local to the function (the lowering value counter resets per
+                // `FnDef`), so a body `%0` and an enclosing/top-level `%0` are
+                // distinct values. Check the body in a FRESH scope seeded with
+                // the parameter ids; do NOT thread the enclosing `defined` in
+                // (that caused the false single-assignment collision reported by
+                // MIND-Fuzz on `scalar_arith.mind`). A genuine duplicate result
+                // id inside the body still collides within this fresh scope.
+                let mut body_scope: BTreeSet<ValueId> = BTreeSet::new();
                 for (_name, pid) in params {
-                    if !defined.insert(*pid) {
+                    // A param id may be repeated across the params list only if
+                    // the IR is malformed; reject that as a single-assignment
+                    // fault. (The body's own `Param` instruction re-stating a
+                    // seeded param id is handled idempotently in `check_ssa_stream`.)
+                    if !body_scope.insert(*pid) {
                         return Err(SsaViolation {
                             value: *pid,
                             rule: SsaRule::SingleAssignment,
                         });
                     }
                 }
-                check_ssa_stream(body, defined)?;
+                check_ssa_stream(body, &mut body_scope)?;
             }
             #[cfg(feature = "std-surface")]
             Instr::While {
