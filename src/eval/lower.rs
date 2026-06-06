@@ -464,6 +464,32 @@ fn lower_tensor_binding(
     lower_expr(value, ir, env, struct_env, receiver_types)
 }
 
+/// Signed-integer bit-width of a scalar `as`-cast *target* type, if the target
+/// is a known fixed-width integer that the scalar i64 ABI must materialise at
+/// its real width. Returns `None` for non-integer / pointer / alias / unsigned
+/// targets, which lower transparently (the i64 SSA value is left unchanged).
+///
+/// MIND integers are signed, so a narrowing cast to one of these widths must
+/// truncate + sign-extend (the caller emits the `(x << k) >> k` shift pair).
+/// Only the canonical signed widths are mapped; `u32`/`u64`/`i64` and aliases
+/// stay full-width (no narrowing op), preserving the prior pass-through for
+/// pointers and same-width casts.
+#[cfg(feature = "std-surface")]
+fn scalar_int_cast_width(ty: &TypeAnn) -> Option<u32> {
+    match ty {
+        TypeAnn::ScalarI32 => Some(32),
+        TypeAnn::ScalarI64 => Some(64),
+        TypeAnn::Named(name) => match name.as_str() {
+            "i8" => Some(8),
+            "i16" => Some(16),
+            "i32" => Some(32),
+            "i64" => Some(64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn lower_expr(
     node: &ast::Node,
     ir: &mut IRModule,
@@ -1777,15 +1803,60 @@ fn lower_expr(
         // v1. The inner expression lowers directly; the ref tag is only
         // meaningful to the type-checker.
         ast::Node::Ref { inner, .. } => lower_expr(inner, ir, env, struct_env, receiver_types),
-        // A cast `<expr> as <ty>` is value-preserving in the std-surface i64
-        // ABI: scalars and raw pointers are all carried as i64 SSA values, so
-        // the target type is purely a type-checker concern. Lower the operand
-        // transparently (mirrors `Ref` / `Paren`). Without this arm the cast
-        // fell through to the catch-all and was silently lowered to
-        // `const.i64 0`, which dropped the operand entirely — e.g.
-        // `memset(sa as *mut u8, 0, 16)` lost `sa`, then the FFI bridge in the
-        // MLIR backend `inttoptr`-ed a zero, producing a NULL-pointer memset
-        // and an `!llvm.ptr` vs `i64` mlir-opt type error.
+        // A cast `<expr> as <ty>`. Scalars and raw pointers are all carried as
+        // i64 SSA values, so for pointers / f-types / aliases the target type is
+        // purely a type-checker concern and the operand lowers transparently
+        // (mirrors `Ref` / `Paren`). Without an explicit arm the cast fell
+        // through to the catch-all and was silently lowered to `const.i64 0`,
+        // dropping the operand entirely — e.g. `memset(sa as *mut u8, 0, 16)`
+        // lost `sa`, then the FFI bridge `inttoptr`-ed a zero, producing a
+        // NULL-pointer memset and an `!llvm.ptr` vs `i64` mlir-opt type error.
+        //
+        // BUT a cast to a *narrow signed integer* (`i8`/`i16`/`i32`) must
+        // actually narrow: scalars live full-width in i64 SSA, so `70000 as i16`
+        // has to truncate to the low 16 bits and sign-extend — `(70000 & 0xFFFF)`
+        // sign-extended = 4464, not 70000 (the no-op result). The BLAS vector
+        // paths already do this with `arith.trunci`/`arith.extsi`; for the scalar
+        // i64 ABI the equivalent is the shift pair `(x << (64-W)) >> (64-W)` with
+        // an *arithmetic* (signed) right shift (`BinOp::Shr` -> `arith.shrsi`),
+        // which both clears the high bits and sign-extends in a single
+        // i64-carried value. The shift width is materialised as an i64 const so
+        // the lowering stays within the existing scalar instruction set (no new
+        // IR opcode, no mic@1/mic@3 layout change, no version bump). Gated to
+        // `std-surface` because `BinOp::Shl`/`Shr` only exist there.
+        #[cfg(feature = "std-surface")]
+        ast::Node::As { expr, ty, .. } => {
+            let val = lower_expr(expr, ir, env, struct_env, receiver_types);
+            match scalar_int_cast_width(ty) {
+                // Narrowing to a known signed integer narrower than 64 bits:
+                // truncate to the low `width` bits and sign-extend via the
+                // arithmetic shift pair. Same-width (i64) and unknown types
+                // (pointers, floats, aliases, u32/u64 widening, etc.) fall
+                // through to the transparent pass-through below.
+                Some(width) if width < 64 => {
+                    let shift = 64 - width as i64;
+                    let shift_id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(shift_id, shift));
+                    let shl_id = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: shl_id,
+                        op: BinOp::Shl,
+                        lhs: val,
+                        rhs: shift_id,
+                    });
+                    let shr_id = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: shr_id,
+                        op: BinOp::Shr,
+                        lhs: shl_id,
+                        rhs: shift_id,
+                    });
+                    shr_id
+                }
+                _ => val,
+            }
+        }
+        #[cfg(not(feature = "std-surface"))]
         ast::Node::As { expr, .. } => lower_expr(expr, ir, env, struct_env, receiver_types),
         // RFC 0005 Gap 1: `while cond { body }` lowering.
         //
