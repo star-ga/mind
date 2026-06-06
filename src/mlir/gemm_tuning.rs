@@ -98,33 +98,51 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block — mirrors `Q16_MC`. The packed A panel and i64 C-scratch
-/// have the same extent as the Q16 tier (panels stay i32, scratch i64).
+/// int8 tier row block. Held at the champion 64. The row axis is a double dead
+/// end — MC=80 (iter 9) and MC=32 (iter 7) both regressed — and the speculative
+/// MC=96 trial is reverted here: at MC=96 the i64 C-scratch is `MC*NC*8 =
+/// 96*256*8 = 192 KiB`, which together with packed-B spills L2, the same
+/// C-scratch-pressure failure mode the larger-MC moves keep hitting. The
+/// residency budget is better spent on the COLUMN axis (see `I8_NC`), so MC
+/// stays at the measured best. 64 = 16 * MR=4, a clean register-tile multiple.
+/// Byte-identity is independent of the row tile: it only repartitions the outer
+/// row loop and never reorders an integer product.
 pub const I8_MC: usize = 64;
 
 /// int8 tier K-panel depth. Halved from 256 → 128 — the unexplored SHALLOW-K
 /// direction, opposite the discarded deep-K move (KC=512 overflowed the packed-B
-/// panel and regressed). At the champion NC=256, KC=256 makes the packed-B panel
-/// `KC*NC*4 = 256*256*4 = 256 KiB` — by itself the entire L2 — so it must
-/// co-reside with the 128 KiB i64 C-scratch only by streaming partly from L3.
-/// KC=128 shrinks packed-B to `128*256*4 = 128 KiB` and packed-A to
-/// `MC*KC*4 = 64*128*4 = 32 KiB`; B (128) + C-scratch (128) + A (32) = 288 KiB
-/// sits much closer to the 256 KiB L2 with B genuinely L2-resident instead of
-/// L3-streamed, trading 2× more pc K-panels (8 vs 4 at K=1024, more C-scratch RMW)
-/// for a hotter, fully-cached B panel. Byte-identity preserved: the i64
-/// panel-partial reduction is associative/commutative, so more (and shallower)
-/// K-panels sum to the identical exact int32 result.
+/// panel and regressed). KC=128 was the largest single win: shrinking the K-panel
+/// halves the packed-B footprint so it stays genuinely L2-resident instead of
+/// L3-streamed, at the cost of 2× more pc K-panels (8 vs 4 at K=1024, more
+/// C-scratch RMW). It is THIS halving that re-opens the column axis explored by
+/// the current `I8_NC=384` experiment: at NC=384 packed-B is `KC*NC*4 =
+/// 128*384*4 = 192 KiB` and packed-A is `MC*KC*4 = 64*128*4 = 32 KiB` — had KC
+/// stayed at 256, packed-B alone would be 384 KiB and the wider column block
+/// would be impossible. Byte-identity preserved: the i64 panel-partial reduction
+/// is associative/commutative, so more (and shallower) K-panels sum to the
+/// identical exact int32 result.
 pub const I8_KC: usize = 128;
 
-/// int8 tier column block. Widened from 128 → 256 to move toward the canonical
-/// BLIS L2/L3 split: at NC=128 the A/B/C tiles fill L2 exactly (64+128+64 KiB),
-/// over-constraining column reuse. At NC=256 the i64 C-scratch (64*256*8 = 128
-/// KiB) and packed A panel (64*256*4 = 64 KiB) still reside in L2 (256 KiB),
-/// while the packed B panel (256*256*4 = 256 KiB) streams from this box's 15 MiB
-/// L3 — amortizing the A panel across twice as many columns. Byte-identity is
-/// unaffected: the i64 panel-partial reduction is associative/commutative, so
+/// int8 tier column block. Widened 256 → 384 to RE-OPEN the column-amortization
+/// axis now that the KC=128 champion has structurally changed the regime. The
+/// column axis is, with KC, one of only two knobs that ever produced a measured
+/// win (128→256 gave the sole +6%, 12.47→13.23). Its only apparent failure —
+/// NC=320 (iter 11) — and the "L2 wall" verdict that reverted the NC=384 trial
+/// were BOTH set at the THEN-champion KC=256, where packed-B was `KC*NC*4 =
+/// 256*256*4 = 256 KiB` and consumed the entire 256 KiB L2, so no NC>256 could
+/// keep B resident. The KC=128 win HALVES packed-B: at NC=384 it is
+/// `128*384*4 = 192 KiB`, still UNDER the KC=256-era 256 KiB the old wall was
+/// drawn against — so the column headroom the dead-end note assumed gone is in
+/// fact restored, and this asks the amortization question for the first time in
+/// the shallow-K regime. Each fetched packed-A strip (`MC*KC*4 = 64*128*4 =
+/// 32 KiB`) now feeds dot-products against 50% more output columns before
+/// turnover, cutting A-refetch traffic across the `jc` sweep. The cost is
+/// C-scratch growth `MC*NC*8 = 64*384*8 = 192 KiB` (RMW across the 8 pc
+/// K-panels under mild eviction) — the same trade the NC=128→256 win already
+/// paid and won. 384 = 48 * NR=8, a clean register-tile multiple. Byte-identity
+/// is unaffected: the i64 panel-partial reduction is associative/commutative, so
 /// the wider column block yields the same exact int32 sum.
-pub const I8_NC: usize = 256;
+pub const I8_NC: usize = 384;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
 pub const I8_MR: usize = 4;
