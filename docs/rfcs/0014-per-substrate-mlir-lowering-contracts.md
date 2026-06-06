@@ -4,12 +4,40 @@
 |---|---|
 | RFC | 0014 |
 | Title | Per-Substrate MLIR Lowering Pipeline Contracts |
-| Status | **Draft** |
+| Status | **Draft** — the §3 tier vocabulary is **in force** (cited by the Accepted RFC 0015 gate and RFC 0020 §10) and the CPU substrate is proven cross-ISA (`avx2` ↔ `neon`, RFC 0015 §5A); the §4 compiler **framework** (LoweringRegistry, unified target enum, 3-way `validate_target` diagnostic, `Dpu`→`Pim` rename) is **not yet shipped**, so the RFC stays Draft until §4 lands — see the *Conformance status* note below. |
 | Authors | STARGA Inc. |
 | Created | 2026-05-25 |
 | Supersedes | — |
 | Superseded by | — |
 | Related | RFC 0006 (mind-blas + Q16.16 cross-arch), RFC 0008 §4.7 (target enum at CLI), RFC 0010 (memory safety + C ABI), RFC 0012 (tensor-native syntax + determinism annotations), RFC 0015 (cross-substrate bit-identity proof obligation — pair RFC) |
+
+> **Conformance status (2026-06-05) — why this stays Draft.** The *tier system*
+> defined in §3 is real and load-bearing: RFC 0015 (Accepted) uses it to scope
+> its bit-identity proof obligation, and RFC 0020 §10's internal gate cites
+> these tiers. The **CPU** substrate is now proven to satisfy the
+> cross-substrate hash-identity property the tiers describe — across the
+> `avx2` and `neon` ISAs — by the shipped, CI-enforced gate documented in
+> **RFC 0015 §5A** (job `cross_substrate_identity`, dual-arch matrix,
+> `MIND_BENCH_REQUIRE=1`).
+>
+> What is **not** yet shipped, and therefore blocks promoting *this* RFC past
+> Draft, is the §4 **compiler-side framework**:
+>
+> - §4.1 `LoweringRegistry` — not present; `src/pipeline.rs` still rejects
+>   non-`Cpu` targets with a single `BackendUnavailable` (the anti-pattern §4.1
+>   replaces).
+> - §4.2 unified `BuildTarget`/`BackendTarget` — still two enums.
+> - §4.4 three-way `validate_target` (`NotYetSupported` / `BackendUnavailable`
+>   / `BackendInternalError`) — not implemented.
+> - §6 `Dpu` → `Pim` rename — not done (`BackendTarget::Dpu` is still present).
+> - §3.5 / §10 per-target sketches (RFC 0014-A…F) — deliberately undrafted
+>   until each substrate begins graduation work.
+>
+> Promotion path: this RFC becomes **Accepted** once §4 (the framework, not the
+> per-target specs) lands and the CPU-path bootstrap fixed-point is preserved
+> byte-for-byte (§9). Until then the tier *vocabulary* is authoritative and
+> citeable, but the framework is a design, not shipped code — recording that
+> honestly rather than marking a green checkmark.
 
 ## 1. Motivation
 
