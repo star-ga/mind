@@ -114,3 +114,46 @@ pub const I8_MR: usize = 4;
 /// int8 tier register-tile columns — mirrors `Q16_NR`. Pinned (accumulator
 /// vector width).
 pub const I8_NR: usize = 8;
+
+/// int8 GEMM int-dot rung selector. Selects the vector instruction the int8
+/// macro-kernel uses to contract the K dimension. **Every rung produces the
+/// byte-identical exact int32 sum** — they differ only in how many K-steps one
+/// instruction fuses, never in the value:
+///
+/// * `Avx2` (default, this box + CI) — `vpmaddwd` (`_mm256_madd_epi16`), 2 K-steps
+///   per instruction over NR=8 i32 partials. Lowers to `vpmaddwd` on AVX2 and to
+///   `SDOT`/`SMMLA` on aarch64. This is the committed, hash-pinned path.
+/// * `Vnni` — AVX-512-VNNI `vpdpbusd` (256-bit form, `@llvm.x86.avx512.vpdpbusd.256`),
+///   4 K-steps per instruction over the same NR=8 i32 partials. VPDPBUSD is
+///   `u8 × s8 → i32`; our inputs are SIGNED int8, so the kernel applies the exact
+///   integer bias identity `Σ aₛ·bₛ = Σ (aₛ+128)·bₛ − 128·Σ bₛ` (the `+128` is the
+///   `xor 0x80` byte reinterpretation, `−128·Σ bₛ` is one `vpsubd` of a per-column
+///   `Σ bₛ` computed with a `vpdpbusd` against an all-ones u8 vector and shifted
+///   `<< 7`). All terms are exact i32 ⇒ the result equals the `Avx2` rung's exact
+///   sum bit-for-bit. Requires VNNI hardware (Ice Lake / Sapphire Rapids+) to RUN;
+///   the explicit intrinsic still *emits* and disassembles to `vpdpbusd` anywhere.
+///
+/// Selected at emit time by the `MIND_INTDOT` environment variable (`vnni` ⇒
+/// `Vnni`, anything else / unset ⇒ `Avx2`). The default is `Avx2` so this box and
+/// CI — and the pinned `917d353b` int8 / `92e2cb75` Q16 cross-substrate hashes —
+/// are unchanged. `mlir_build.rs` reads the same selector to add the VNNI target
+/// features to the clang invocation when the VNNI rung is active.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IntDotMode {
+    /// `vpmaddwd` (AVX2) — the default, hash-pinned path.
+    Avx2,
+    /// `vpdpbusd` (AVX-512-VNNI) with the signed-input bias correction.
+    Vnni,
+}
+
+impl IntDotMode {
+    /// Resolve the int-dot rung from the `MIND_INTDOT` environment variable.
+    /// `vnni` (case-insensitive) selects the VPDPBUSD rung; everything else
+    /// (including unset) keeps the committed AVX2 `vpmaddwd` default.
+    pub fn from_env() -> Self {
+        match std::env::var("MIND_INTDOT") {
+            Ok(v) if v.trim().eq_ignore_ascii_case("vnni") => IntDotMode::Vnni,
+            _ => IntDotMode::Avx2,
+        }
+    }
+}
