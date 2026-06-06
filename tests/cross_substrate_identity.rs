@@ -73,6 +73,9 @@ pub fn dotl1q(a: i64, b: i64, n: i64) -> i64 {
 pub fn mmq(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
     __mind_blas_matmul_rmajor_q16_v(w, x, y, rows, cols)
 }
+pub fn mmi16(w: i64, x: i64, y: i64, rows: i64, cols: i64) -> i64 {
+    __mind_blas_matmul_rmajor_i16_v(w, x, y, rows, cols)
+}
 fn gemmq_row(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64, i: i64) -> i64 {
     if i >= m {
         return 0;
@@ -571,6 +574,96 @@ fn gemm_i8_reproducibility_gate() {
 
     // 2. Canonical hash pinned to the committed per-substrate reference.
     let computed = canonical_hash_i32s(&c);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
+             bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- gemv-i16 workload (int16 matrix x vector) -----------------------------
+// The "int-dot" tier sibling of gemv-q16: y = W . x over int16 inputs, where W
+// is a 256x256 int16 matrix and x a 256-vector, via __mind_blas_matmul_rmajor_i16_v.
+// Each output element is an exact integer reduction (sext i16->i64, multiply,
+// i64-lane accumulate, narrow once to i32 — NO Q16 shift), so the vectorised
+// reduction is bit-identical across substrates by construction (RFC 0015 §3.1).
+// The output is the rows-length i32 result vector; canonical encoding is its
+// i32 LE bytes → sha256 (same as the Q16.16 vector path).
+
+/// Regenerate the gemv-i16 inputs from a seed: a rows*cols int16 matrix W
+/// (row-major) and a cols-length int16 vector x, W generated before x. `next_i16`
+/// takes the full int16 range from the shared LCG window.
+fn make_gemv_i16(rows: usize, cols: usize, seed: u64) -> (Vec<i16>, Vec<i16>) {
+    let mut g = Lcg::new(seed);
+    let next_i16 = |g: &mut Lcg| (g.next_u32() >> 16) as i16;
+    let w: Vec<i16> = (0..rows * cols).map(|_| next_i16(&mut g)).collect();
+    let x: Vec<i16> = (0..cols).map(|_| next_i16(&mut g)).collect();
+    (w, x)
+}
+
+/// Scalar int16 dot oracle, byte-for-byte the per-row reduction the kernel
+/// performs: sext each i16 to i64, multiply-accumulate exactly, narrow once to
+/// i32 (raw integer dot — NO Q16 shift).
+fn ref_dot_i16_scalar(w: &[i16], x: &[i16]) -> i32 {
+    let mut acc: i64 = 0;
+    for i in 0..w.len() {
+        acc += (w[i] as i64) * (x[i] as i64);
+    }
+    acc as i32
+}
+
+/// Scalar int16 gemv oracle: y[r] = dot_i16(W row r, x).
+fn ref_gemv_i16_scalar(w: &[i16], x: &[i16], rows: usize, cols: usize) -> Vec<i32> {
+    (0..rows)
+        .map(|r| ref_dot_i16_scalar(&w[r * cols..(r + 1) * cols], x))
+        .collect()
+}
+
+#[test]
+fn gemv_i16_reproducibility_gate() {
+    let id = "gemv-i16-256x256";
+    let (rows, cols, seed) = (256usize, 256usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let mmi16: Symbol<MatmulFn> = unsafe { lib.get(b"mmi16").expect("mmi16 symbol") };
+
+    let (w, x) = make_gemv_i16(rows, cols, seed);
+    let mut y = vec![0i32; rows];
+    let rc = unsafe {
+        mmi16(
+            w.as_ptr() as i64,
+            x.as_ptr() as i64,
+            y.as_mut_ptr() as i64,
+            rows as i64,
+            cols as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: kernel returned {rc} (expected 0)");
+
+    // 1. Within-run exactness vs the scalar gemv oracle.
+    let oracle = ref_gemv_i16_scalar(&w, &x, rows, cols);
+    assert_eq!(
+        y, oracle,
+        "{id}: gemv-i16 vector path diverged from the scalar oracle"
+    );
+
+    // 2. Canonical hash pinned to the committed per-substrate reference.
+    let computed = canonical_hash_i32s(&y);
     let substrate = host_substrate();
     if std::env::var("MIND_BENCH_BLESS").is_ok() {
         println!("BLESS {id} {substrate} {computed}");
