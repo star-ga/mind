@@ -15,6 +15,193 @@
 use std::collections::BTreeSet;
 
 use crate::ir::{IRModule, Instr, ValueId, instruction_dst};
+use crate::opt::ir_canonical::instruction_operands;
+
+/// Which SSA rule a [`SsaViolation`] reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SsaRule {
+    /// A value id was produced by two different instructions.
+    SingleAssignment,
+    /// An operand was referenced before any instruction defined it (in
+    /// linearized program order; see [`check_ssa_well_formed`]).
+    DefineBeforeUse,
+}
+
+impl SsaRule {
+    /// Short, stable identifier used in CLI / JSON output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SsaRule::SingleAssignment => "single-assignment",
+            SsaRule::DefineBeforeUse => "define-before-use",
+        }
+    }
+}
+
+/// A single SSA well-formedness violation: the offending value id and the
+/// rule it breaks. Carries a human-readable reason via [`std::fmt::Display`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SsaViolation {
+    /// The value id (`%N`) that breaks the rule.
+    pub value: ValueId,
+    /// Which SSA rule was violated.
+    pub rule: SsaRule,
+}
+
+impl std::fmt::Display for SsaViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.rule {
+            SsaRule::SingleAssignment => write!(
+                f,
+                "single-assignment violated: value {} is defined more than once",
+                self.value
+            ),
+            SsaRule::DefineBeforeUse => write!(
+                f,
+                "define-before-use violated: value {} is used before it is defined",
+                self.value
+            ),
+        }
+    }
+}
+
+/// Statically check SSA well-formedness over an [`IRModule`] parsed from a
+/// mic@3 artifact, for the `mindc verify` surface (RFC 0017, second slice).
+///
+/// Two properties are enforced:
+///
+/// 1. **Single-assignment** — every value id (`%N`) is the result of at most
+///    one instruction. A second definition of the same id is a violation.
+/// 2. **Define-before-use** — every operand `%N` an instruction reads was
+///    defined by an *earlier* instruction (function parameters and a region's
+///    enclosing-scope values count as already-defined).
+///
+/// ### Scoping model — linear program order, NOT dominance
+///
+/// mic@3 carries the full nested `IRModule` tree (`FnDef.body`, `While`
+/// cond/body, `If` then/else, `Region.body`) but **not** the F2 block-argument
+/// metadata (`If.merges`, `While.exit_ids` are lowering-internal and decode to
+/// empty). A true dominance check needs that control-flow-graph structure, so
+/// this first slice walks the instruction tree in **pre-order (program order)**
+/// and treats an operand as defined if any earlier instruction in that walk —
+/// including instructions in an enclosing region — produced it. Region
+/// interiors inherit the enclosing `defined` set; their own definitions become
+/// visible to subsequent instructions in the same and inner regions. This is a
+/// sound *necessary* condition for SSA dominance and an accepted first slice;
+/// the dominance-precise check is future work (tracked with the RFC 0017 SMT
+/// extension).
+///
+/// Returns `Ok(())` if both properties hold, or the first [`SsaViolation`] in
+/// program order otherwise.
+pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
+    let mut defined: BTreeSet<ValueId> = BTreeSet::new();
+    check_ssa_stream(&module.instrs, &mut defined)
+}
+
+/// Walk one instruction stream in program order, threading the running
+/// `defined` set through nested regions. Operands are checked against
+/// definitions seen *earlier* in the walk; each instruction's result is then
+/// added (rejecting a duplicate).
+fn check_ssa_stream(
+    instrs: &[Instr],
+    defined: &mut BTreeSet<ValueId>,
+) -> Result<(), SsaViolation> {
+    for instr in instrs {
+        // Classify region-bearing nodes: their own `dst`/`result` is produced
+        // *inside* a sub-stream (e.g. `Region.result` is the last body value,
+        // `If.dst` is the post-merge value), so the node-level definition must
+        // be inserted only AFTER recursing — never before, which would create a
+        // false single-assignment collision with the interior definition.
+        let is_region = matches!(instr, Instr::FnDef { .. });
+        #[cfg(feature = "std-surface")]
+        let is_region = is_region
+            || matches!(
+                instr,
+                Instr::While { .. } | Instr::If { .. } | Instr::Region { .. }
+            );
+
+        // 1. Define-before-use: every operand must already be defined. The F2
+        //    block-argument forwarding ids are absent from a mic@3-parsed
+        //    module (decode to empty), so `instruction_operands` returns only
+        //    genuine, in-scope SSA reads here (e.g. `While.init_ids`, which are
+        //    enclosing-scope values defined before the loop).
+        for operand in instruction_operands(instr) {
+            if !defined.contains(&operand) {
+                return Err(SsaViolation {
+                    value: operand,
+                    rule: SsaRule::DefineBeforeUse,
+                });
+            }
+        }
+
+        // 2. Single-assignment for straight-line ops: the instruction's own
+        //    result id (if any) must not already be defined. Region nodes defer
+        //    this to step 4.
+        if !is_region {
+            if let Some(dst) = instruction_dst(instr) {
+                if !defined.insert(dst) {
+                    return Err(SsaViolation {
+                        value: dst,
+                        rule: SsaRule::SingleAssignment,
+                    });
+                }
+            }
+        }
+
+        // 3. Recurse into nested regions. Parameters are definitions visible to
+        //    the body; the body sees the enclosing scope plus its own earlier
+        //    definitions (pre-order program-order visibility).
+        match instr {
+            Instr::FnDef { params, body, .. } => {
+                for (_name, pid) in params {
+                    if !defined.insert(*pid) {
+                        return Err(SsaViolation {
+                            value: *pid,
+                            rule: SsaRule::SingleAssignment,
+                        });
+                    }
+                }
+                check_ssa_stream(body, defined)?;
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_instrs, body, ..
+            } => {
+                check_ssa_stream(cond_instrs, defined)?;
+                check_ssa_stream(body, defined)?;
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::If {
+                cond_instrs,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                check_ssa_stream(cond_instrs, defined)?;
+                check_ssa_stream(then_instrs, defined)?;
+                check_ssa_stream(else_instrs, defined)?;
+            }
+            #[cfg(feature = "std-surface")]
+            Instr::Region { body, .. } => {
+                check_ssa_stream(body, defined)?;
+            }
+            _ => {}
+        }
+
+        // 4. Expose a region node's result into the enclosing scope. The
+        //    interior recursion may already have defined it (`Region.result`,
+        //    `While.live_vars` post-body ids); `If.dst` is a distinct post-merge
+        //    id. `insert` is idempotent — a no-op for an interior id, a fresh
+        //    definition for a node-level merge id. This is NOT treated as a
+        //    single-assignment violation because the region is one logical
+        //    producer of that value.
+        if is_region {
+            if let Some(dst) = instruction_dst(instr) {
+                defined.insert(dst);
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Structured errors returned by the IR verifier.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
