@@ -1308,12 +1308,35 @@ fn emit_evidence_if_requested(cli: &CompileArgs, products: &libmind::pipeline::C
         determinism,
         toolchain,
     );
+    // Built-in self-check (RFC 0016 Phase B verifier-core round-trip): peel the
+    // freshly-emitted MAP, recompute the canonical mic@3 `trace_hash` over the
+    // parsed IR body, and confirm it matches the stored hash before we hand the
+    // artifact to the user. Generation without verification is security theatre
+    // (RFC 0021 §4); this catches an emit/serialization regression at its source
+    // rather than letting an unverifiable artifact escape. The check runs only on
+    // the opt-in `--emit-evidence` path, so the default build is untouched.
+    match libmind::ir::compact::mic3_evidence_report(&bytes) {
+        Ok(report) if report.trace_hash_valid => {}
+        Ok(_) => {
+            eprintln!(
+                "error[emit-evidence]: self-check failed — emitted evidence trace_hash \
+                 does not validate against the IR body (internal emitter bug, not your input)"
+            );
+            process::exit(1);
+        }
+        Err(err) => {
+            eprintln!(
+                "error[emit-evidence]: self-check could not parse the artifact just emitted: {err:?}"
+            );
+            process::exit(1);
+        }
+    }
     if let Err(err) = fs::write(path, &bytes) {
         eprintln!("error[emit-evidence]: failed to write {path}: {err}");
         process::exit(1);
     }
     eprintln!(
-        "Wrote mic@3 evidence artifact: {path} ({} bytes)",
+        "Wrote mic@3 evidence artifact: {path} ({} bytes, self-check ok)",
         bytes.len()
     );
 }
