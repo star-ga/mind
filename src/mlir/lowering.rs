@@ -4331,20 +4331,27 @@ impl LoweringContext {
     /// scalar write-out). Two surgical differences, neither of which perturbs an
     /// output byte:
     ///
-    /// 1. **i8 source loads.** A/B elements are 1-byte int8. During the pack the
-    ///    kernel `llvm.load`s an `i8` and `arith.extsi`s it to the i32 the panel
-    ///    holds, so the packed panels are identical to the Q16 panels (i32) and
-    ///    the microkernel that consumes them is unchanged shape-wise. The A/B
-    ///    source GEP uses element-byte 1; the C output GEP uses element-byte 4.
-    /// 2. **No `>> 16` shift.** int8 is an integer, not a Q16.16 fixed-point
-    ///    value, so the per-term product is accumulated directly. Each product is
-    ///    `(i32)a * (i32)b` with |a|,|b| ≤ 128 ⇒ |product| ≤ 2^14; the C-scratch
-    ///    accumulates in i64, so the full-K reduction is exact (i64 add is
-    ///    associative + commutative — any tiling / lane order gives the identical
-    ///    sum), and the i64→i32 truncation happens once at the store. The exact
-    ///    int32 sum is substrate-independent, so the SAME MLIR is byte-identical
-    ///    whether LLVM lowers the widen-multiply-accumulate to AVX2 `vpmaddwd` or
-    ///    aarch64 `SDOT`/`SMMLA`.
+    /// 1. **i8 source loads, i16 K-pair-interleaved panels.** A/B elements are
+    ///    1-byte int8. During the pack the kernel `llvm.load`s an `i8` and
+    ///    `arith.extsi`s it to `i16` ONCE (`vpmovsxbw`), writing into panels laid
+    ///    out K-pair-interleaved (`Bp[jr_block][k_pair][nr][s]`,
+    ///    `Ap[ir_block][k_pair][mr][s]`, `s∈{0,1}` the K-within-pair). The A/B
+    ///    source GEP uses element-byte 1; the packed panels are i16; the C output
+    ///    GEP uses element-byte 4.
+    /// 2. **vpmaddwd K-contraction, no `>> 16` shift.** The microkernel contracts
+    ///    two K-steps per `llvm.x86.avx2.pmadd.wd`: for each A-row it broadcasts
+    ///    the `(k,k+1)` A pair across the NR=8 output columns and multiplies the
+    ///    B-pair vector, yielding NR i32 partials
+    ///    `A[t,k]*B[k,n]+A[t,k+1]*B[k+1,n]` per column. Each i32 partial is
+    ///    sign-extended to i64 BEFORE the associative accumulation (no 8-lane
+    ///    reduction overflow). The total over all K is the identical sum of
+    ///    `A[t,k]*B[k,n]` terms as the per-element oracle (integer add is
+    ///    associative + commutative — any tiling / lane / pair grouping gives the
+    ///    identical sum), and the i64→i32 truncation happens once at the store.
+    ///    NEVER the saturating `vpmaddubsw`; no shift. An odd trailing K (odd
+    ///    KC-panel remainder) is handled by a scalar tail. The exact int32 sum is
+    ///    substrate-independent, so the SAME MLIR is byte-identical whether LLVM
+    ///    lowers to AVX2 `vpmaddwd` or aarch64 `SDOT`/`SMMLA`.
     ///
     /// `prefix` namespaces every SSA value. `ap`/`bp`/`cp` are `!llvm.ptr` SSA
     /// names; `k64`/`n64` are i64 SSA names for K and N; `ki`/`ni` are `index`
@@ -4371,10 +4378,29 @@ impl LoweringContext {
         const MC: usize = I8_MC;
         const KC: usize = I8_KC;
         const NC: usize = I8_NC;
-        // A/B source elements are int8 (1 byte); C output and the packed panels
-        // are i32 (4 bytes); the C-scratch is i64 (8 bytes).
+        // "int-dot" int8 tier (vpmaddwd path). A/B source elements are int8
+        // (1 byte). During the pack each is `arith.extsi`-widened to i16 ONCE
+        // (`vpmovsxbw`) and written into a K-pair-INTERLEAVED i16 panel so the
+        // microkernel can contract two K-steps per `vpmaddwd`. The C output is
+        // i32 (4 bytes); the C-scratch accumulates in i64 (8 bytes).
+        //
+        // Packed B layout: Bp[jr_block][k_pair][nr][s] (i16), s∈{0,1} is the
+        //   K-within-pair. A single `vector<16xi16>` load at [jr_block][k_pair]
+        //   yields [B[2p,0],B[2p+1,0],B[2p,1],B[2p+1,1],...,B[2p,7],B[2p+1,7]].
+        // Packed A layout: Ap[ir_block][k_pair][mr][s] (i16). A 2-element load
+        //   at [ir_block][k_pair][mr] yields [A[t,2p],A[t,2p+1]]; broadcast that
+        //   pair across the 8 NR columns (vector<16xi16> = [a0,a1,a0,a1,...]).
+        // vpmaddwd(A_pair_bcast, B_pairs) → lane n = A[t,2p]*B[2p,n] +
+        //   A[t,2p+1]*B[2p+1,n] = the 2-K partial for output column n. The total
+        //   over all K is the SAME sum of A[t,k]*B[k,n] terms as the per-element
+        //   oracle (integer add is associative+commutative), so byte-identity is
+        //   preserved exactly. NO saturation (never vpmaddubsw), NO shift.
         let eb_src: i64 = 1;
         let eb: i64 = std::mem::size_of::<i32>() as i64;
+        // i32 partial-lane count of one vpmaddwd over NR=8 output columns: each
+        // output column consumes a (k,k+1) i16 pair, so a 2*NR=16-wide i16
+        // multiply yields NR=8 i32 partials.
+        const PL: usize = NR;
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
@@ -4382,6 +4408,7 @@ impl LoweringContext {
         // ── constants ────────────────────────────────────────────────────────
         line(&format!("    %{p}_c0 = arith.constant 0 : index"));
         line(&format!("    %{p}_c1 = arith.constant 1 : index"));
+        line(&format!("    %{p}_c2 = arith.constant 2 : index"));
         line(&format!("    %{p}_cmr = arith.constant {MR} : index"));
         line(&format!("    %{p}_cnr = arith.constant {NR} : index"));
         line(&format!("    %{p}_cmc = arith.constant {MC} : index"));
@@ -4390,13 +4417,16 @@ impl LoweringContext {
         line(&format!("    %{p}_eb = arith.constant {eb} : i64"));
         line(&format!("    %{p}_ebs = arith.constant {eb_src} : i64"));
         line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
-        line(&format!("    %{p}_z0i32 = arith.constant 0 : i32"));
+        line(&format!("    %{p}_z0i16 = arith.constant 0 : i16"));
+        line(&format!("    %{p}_c2i = arith.constant 2 : i64"));
         line(&format!(
             "    %{p}_zv = arith.constant dense<0> : vector<{NR}xi64>"
         ));
 
         // ── private scratch (constant-extent alloca) ─────────────────────────
-        // C-scratch: MC*NC i64.  Packed A: MC*KC i32.  Packed B: KC*NC i32.
+        // C-scratch: MC*NC i64.  Packed A: MC*KC i16.  Packed B: KC*NC i16.
+        // (The interleaved K-pair layout reindexes the same MC*KC / KC*NC
+        // element count — pair-count * 2 * MR = KC * MR, etc.)
         let cs_elems = (MC * NC) as i64;
         let pa_elems = (MC * KC) as i64;
         let pb_elems = (KC * NC) as i64;
@@ -4410,13 +4440,13 @@ impl LoweringContext {
             "    %{p}_pan = llvm.mlir.constant({pa_elems} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_pa = llvm.alloca %{p}_pan x i32 : (i64) -> !llvm.ptr"
+            "    %{p}_pa = llvm.alloca %{p}_pan x i16 : (i64) -> !llvm.ptr"
         ));
         line(&format!(
             "    %{p}_pbn = llvm.mlir.constant({pb_elems} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_pb = llvm.alloca %{p}_pbn x i32 : (i64) -> !llvm.ptr"
+            "    %{p}_pb = llvm.alloca %{p}_pbn x i16 : (i64) -> !llvm.ptr"
         ));
         line(&format!("    %{p}_ncc = arith.constant {NC} : i64"));
         line(&format!("    %{p}_kcc = arith.constant {KC} : i64"));
@@ -4562,6 +4592,15 @@ impl LoweringContext {
         line(&format!(
             "              %{p}_pbjm = arith.remui %{p}_pbj64, %{p}_nrc : i64"
         ));
+        // K-pair-interleaved destination: Bp[jb][pair][nr][s],
+        //   pair = pbk/2, s = pbk%2, flat =
+        //   jb*(KC*NR) + pair*(NR*2) + nr*2 + s.
+        line(&format!(
+            "              %{p}_pbpair = arith.divui %{p}_pbk64, %{p}_c2i : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbs = arith.remui %{p}_pbk64, %{p}_c2i : i64"
+        ));
         line(&format!(
             "              %{p}_pbpan = arith.muli %{p}_kcc, %{p}_nrc : i64"
         ));
@@ -4569,23 +4608,32 @@ impl LoweringContext {
             "              %{p}_pbblk = arith.muli %{p}_pbjb, %{p}_pbpan : i64"
         ));
         line(&format!(
-            "              %{p}_pbkr = arith.muli %{p}_pbk64, %{p}_nrc : i64"
+            "              %{p}_pbnr2 = arith.muli %{p}_nrc, %{p}_c2i : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbkr = arith.muli %{p}_pbpair, %{p}_pbnr2 : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbjm2 = arith.muli %{p}_pbjm, %{p}_c2i : i64"
         ));
         line(&format!(
             "              %{p}_pbd0 = arith.addi %{p}_pbblk, %{p}_pbkr : i64"
         ));
         line(&format!(
-            "              %{p}_pbd = arith.addi %{p}_pbd0, %{p}_pbjm : i64"
+            "              %{p}_pbd1 = arith.addi %{p}_pbd0, %{p}_pbjm2 : i64"
+        ));
+        line(&format!(
+            "              %{p}_pbd = arith.addi %{p}_pbd1, %{p}_pbs : i64"
         ));
         line(&format!(
             "              %{p}_pbdp = llvm.getelementptr %{p}_pb[%{p}_pbd] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i32"
+             (!llvm.ptr, i64) -> !llvm.ptr, i16"
         ));
         line(&format!(
             "              %{p}_pblive = arith.cmpi slt, %{p}_pbj, %{p}_nce : index"
         ));
         line(&format!(
-            "              %{p}_pbval = scf.if %{p}_pblive -> (i32) {{"
+            "              %{p}_pbval = scf.if %{p}_pblive -> (i16) {{"
         ));
         line(&format!(
             "                %{p}_pbsi = arith.addi %{p}_pbsr0, %{p}_pbj64 : i64"
@@ -4601,14 +4649,14 @@ impl LoweringContext {
             "                %{p}_pbi8 = llvm.load %{p}_pbsp : !llvm.ptr -> i8"
         ));
         line(&format!(
-            "                %{p}_pbld = arith.extsi %{p}_pbi8 : i8 to i32"
+            "                %{p}_pbld = arith.extsi %{p}_pbi8 : i8 to i16"
         ));
-        line(&format!("                scf.yield %{p}_pbld : i32"));
+        line(&format!("                scf.yield %{p}_pbld : i16"));
         line("              } else {");
-        line(&format!("                scf.yield %{p}_z0i32 : i32"));
+        line(&format!("                scf.yield %{p}_z0i16 : i16"));
         line("              }");
         line(&format!(
-            "              llvm.store %{p}_pbval, %{p}_pbdp : i32, !llvm.ptr"
+            "              llvm.store %{p}_pbval, %{p}_pbdp : i16, !llvm.ptr"
         ));
         line("            }");
         line("          }");
@@ -4636,6 +4684,15 @@ impl LoweringContext {
         line(&format!(
             "              %{p}_paim = arith.remui %{p}_pai64, %{p}_mrc : i64"
         ));
+        // K-pair-interleaved destination: Ap[ib][pair][mr][s],
+        //   pair = pak/2, s = pak%2, flat =
+        //   ib*(KC*MR) + pair*(MR*2) + mr*2 + s.
+        line(&format!(
+            "              %{p}_papair = arith.divui %{p}_pak64, %{p}_c2i : i64"
+        ));
+        line(&format!(
+            "              %{p}_pas = arith.remui %{p}_pak64, %{p}_c2i : i64"
+        ));
         line(&format!(
             "              %{p}_papan = arith.muli %{p}_kcc, %{p}_mrc : i64"
         ));
@@ -4643,23 +4700,32 @@ impl LoweringContext {
             "              %{p}_pablk = arith.muli %{p}_paib, %{p}_papan : i64"
         ));
         line(&format!(
-            "              %{p}_pakr = arith.muli %{p}_pak64, %{p}_mrc : i64"
+            "              %{p}_pamr2 = arith.muli %{p}_mrc, %{p}_c2i : i64"
+        ));
+        line(&format!(
+            "              %{p}_pakr = arith.muli %{p}_papair, %{p}_pamr2 : i64"
+        ));
+        line(&format!(
+            "              %{p}_paim2 = arith.muli %{p}_paim, %{p}_c2i : i64"
         ));
         line(&format!(
             "              %{p}_pad0 = arith.addi %{p}_pablk, %{p}_pakr : i64"
         ));
         line(&format!(
-            "              %{p}_pad = arith.addi %{p}_pad0, %{p}_paim : i64"
+            "              %{p}_pad1 = arith.addi %{p}_pad0, %{p}_paim2 : i64"
+        ));
+        line(&format!(
+            "              %{p}_pad = arith.addi %{p}_pad1, %{p}_pas : i64"
         ));
         line(&format!(
             "              %{p}_padp = llvm.getelementptr %{p}_pa[%{p}_pad] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i32"
+             (!llvm.ptr, i64) -> !llvm.ptr, i16"
         ));
         line(&format!(
             "              %{p}_palive = arith.cmpi slt, %{p}_pai, %{p}_mce : index"
         ));
         line(&format!(
-            "              %{p}_paval = scf.if %{p}_palive -> (i32) {{"
+            "              %{p}_paval = scf.if %{p}_palive -> (i16) {{"
         ));
         line(&format!(
             "                %{p}_pari = arith.addi %{p}_ic64, %{p}_pai64 : i64"
@@ -4681,14 +4747,14 @@ impl LoweringContext {
             "                %{p}_pai8 = llvm.load %{p}_pasp : !llvm.ptr -> i8"
         ));
         line(&format!(
-            "                %{p}_pald = arith.extsi %{p}_pai8 : i8 to i32"
+            "                %{p}_pald = arith.extsi %{p}_pai8 : i8 to i16"
         ));
-        line(&format!("                scf.yield %{p}_pald : i32"));
+        line(&format!("                scf.yield %{p}_pald : i16"));
         line("              } else {");
-        line(&format!("                scf.yield %{p}_z0i32 : i32"));
+        line(&format!("                scf.yield %{p}_z0i16 : i16"));
         line("              }");
         line(&format!(
-            "              llvm.store %{p}_paval, %{p}_padp : i32, !llvm.ptr"
+            "              llvm.store %{p}_paval, %{p}_padp : i16, !llvm.ptr"
         ));
         line("            }");
         line("          }");
@@ -4730,7 +4796,22 @@ impl LoweringContext {
             "              %{p}_irbase = arith.muli %{p}_irb, %{p}_irpan : i64"
         ));
 
-        // ── microkernel: MR×NR i64 partial over this KC panel (NO >> 16) ──────
+        // ── microkernel: MR×NR i64 partial over this KC panel via vpmaddwd ────
+        // Each A-row accumulator is vector<NRxi64> (NR=8 output columns). The
+        // K-contraction runs over K-PAIRS: one `llvm.x86.avx2.pmadd.wd` per
+        // (row, pair) contracts two K-steps at once into NR=8 i32 partials,
+        // sign-extended to i64 before the associative accumulation. The total
+        // over all K is the identical sum of A[t,k]*B[k,n] terms as the scalar
+        // oracle — byte-identical. Odd-K leftover handled by a scalar tail.
+        //
+        // Pair count over the live KC panel; the trailing odd K (if kce is odd)
+        // is the scalar tail.
+        line(&format!(
+            "              %{p}_kpairs = arith.divui %{p}_kce, %{p}_c2 : index"
+        ));
+        line(&format!(
+            "              %{p}_kmain = arith.muli %{p}_kpairs, %{p}_c2 : index"
+        ));
         let acc_init = (0..MR)
             .map(|t| format!("%{p}_acc{t} = %{p}_zv"))
             .collect::<Vec<_>>()
@@ -4740,68 +4821,194 @@ impl LoweringContext {
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!(
-            "              %{p}_va:{MR} = scf.for %{p}_kk = %{p}_c0 to %{p}_kce \
+            "              %{p}_va:{MR} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
              step %{p}_c1 iter_args({acc_init}) -> ({acc_ty}) {{"
         ));
         line(&format!(
-            "                %{p}_kk64 = arith.index_cast %{p}_kk : index to i64"
+            "                %{p}_kp64 = arith.index_cast %{p}_kp : index to i64"
+        ));
+        // B pairs vector: Bp[jrbase + kp*(NR*2) .. +16] as vector<16xi16>.
+        line(&format!(
+            "                %{p}_bnr2 = arith.muli %{p}_nrc, %{p}_c2i : i64"
         ));
         line(&format!(
-            "                %{p}_bkr = arith.muli %{p}_kk64, %{p}_nrc : i64"
+            "                %{p}_bkr = arith.muli %{p}_kp64, %{p}_bnr2 : i64"
         ));
         line(&format!(
             "                %{p}_bvi = arith.addi %{p}_jrbase, %{p}_bkr : i64"
         ));
         line(&format!(
             "                %{p}_bvp = llvm.getelementptr %{p}_pb[%{p}_bvi] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i32"
+             (!llvm.ptr, i64) -> !llvm.ptr, i16"
         ));
         line(&format!(
-            "                %{p}_bv = llvm.load %{p}_bvp {{alignment = 4 : i64}} : \
-             !llvm.ptr -> vector<{NR}xi32>"
+            "                %{p}_bv = llvm.load %{p}_bvp {{alignment = 2 : i64}} : \
+             !llvm.ptr -> vector<{}xi16>",
+            2 * NR
+        ));
+        // A K-pairs base for this block: Ap[irbase + kp*(MR*2)].
+        line(&format!(
+            "                %{p}_amr2 = arith.muli %{p}_mrc, %{p}_c2i : i64"
         ));
         line(&format!(
-            "                %{p}_bw = arith.extsi %{p}_bv : vector<{NR}xi32> to vector<{NR}xi64>"
-        ));
-        line(&format!(
-            "                %{p}_akr = arith.muli %{p}_kk64, %{p}_mrc : i64"
+            "                %{p}_akr = arith.muli %{p}_kp64, %{p}_amr2 : i64"
         ));
         line(&format!(
             "                %{p}_abase = arith.addi %{p}_irbase, %{p}_akr : i64"
         ));
         let mut yields = Vec::with_capacity(MR);
         for t in 0..MR {
+            // A pair for row t: two contiguous i16 = [A[t,2kp], A[t,2kp+1]].
+            // Load as one i32, broadcast across NR output columns, bitcast back
+            // to vector<16xi16> = [a0,a1,a0,a1,...] so vpmaddwd pairs each
+            // output column's (k,k+1) with the corresponding B pair.
             line(&format!(
-                "                %{p}_at{t} = arith.constant {t} : i64"
+                "                %{p}_at{t} = arith.constant {} : i64",
+                t * 2
             ));
             line(&format!(
                 "                %{p}_ai{t} = arith.addi %{p}_abase, %{p}_at{t} : i64"
             ));
             line(&format!(
                 "                %{p}_ap{t} = llvm.getelementptr %{p}_pa[%{p}_ai{t}] : \
-                 (!llvm.ptr, i64) -> !llvm.ptr, i32"
+                 (!llvm.ptr, i64) -> !llvm.ptr, i16"
             ));
             line(&format!(
-                "                %{p}_as{t} = llvm.load %{p}_ap{t} : !llvm.ptr -> i32"
+                "                %{p}_as{t} = llvm.load %{p}_ap{t} {{alignment = 2 : i64}} : \
+                 !llvm.ptr -> i32"
             ));
             line(&format!(
-                "                %{p}_aw{t} = arith.extsi %{p}_as{t} : i32 to i64"
+                "                %{p}_abc{t} = vector.broadcast %{p}_as{t} : i32 to vector<{NR}xi32>"
             ));
             line(&format!(
-                "                %{p}_ab{t} = vector.broadcast %{p}_aw{t} : i64 to vector<{NR}xi64>"
+                "                %{p}_aw{t} = vector.bitcast %{p}_abc{t} : vector<{NR}xi32> to vector<{}xi16>",
+                2 * NR
             ));
             line(&format!(
-                "                %{p}_pp{t} = arith.muli %{p}_ab{t}, %{p}_bw : vector<{NR}xi64>"
+                "                %{p}_pm{t} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%{p}_aw{t}, %{p}_bv) : \
+                 (vector<{}xi16>, vector<{}xi16>) -> vector<{PL}xi32>",
+                2 * NR,
+                2 * NR
             ));
-            // int8 is integer, not Q16.16 — accumulate the raw product (no shift).
             line(&format!(
-                "                %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_pp{t} : vector<{NR}xi64>"
+                "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{PL}xi32> to vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "                %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_pw{t} : vector<{NR}xi64>"
             ));
             yields.push(format!("%{p}_na{t}"));
         }
         line(&format!(
             "                scf.yield {} : {acc_ty}",
             yields.join(", ")
+        ));
+        line("              }");
+
+        // ── scalar K-tail: the leftover odd K element (kmain..kce), if any ────
+        // For K index kk = kmain (single trailing element), A[t,kk] lives at
+        // Ap[irbase + kpairs*(MR*2) + t*2 + 0] (s=0); B[kk,n] at
+        // Bp[jrbase + kpairs*(NR*2) + n*2 + 0]. NR is small and this runs at
+        // most once per KC panel, so a scalar per-column update is fine and
+        // bit-identical (same A[t,kk]*B[kk,n] terms, associative add).
+        let tail_init = (0..MR)
+            .map(|t| format!("%{p}_tacc{t} = %{p}_va#{t}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(&format!(
+            "              %{p}_vt:{MR} = scf.for %{p}_kt = %{p}_kmain to %{p}_kce \
+             step %{p}_c1 iter_args({tail_init}) -> ({acc_ty}) {{"
+        ));
+        line(&format!(
+            "                %{p}_kt64 = arith.index_cast %{p}_kt : index to i64"
+        ));
+        line(&format!(
+            "                %{p}_tpair = arith.divui %{p}_kt64, %{p}_c2i : i64"
+        ));
+        // B base for this K element: Bp[jrbase + tpair*(NR*2)] (s=0, stride 2).
+        line(&format!(
+            "                %{p}_tbnr2 = arith.muli %{p}_nrc, %{p}_c2i : i64"
+        ));
+        line(&format!(
+            "                %{p}_tbkr = arith.muli %{p}_tpair, %{p}_tbnr2 : i64"
+        ));
+        line(&format!(
+            "                %{p}_tbbase = arith.addi %{p}_jrbase, %{p}_tbkr : i64"
+        ));
+        line(&format!(
+            "                %{p}_tamr2 = arith.muli %{p}_mrc, %{p}_c2i : i64"
+        ));
+        line(&format!(
+            "                %{p}_takr = arith.muli %{p}_tpair, %{p}_tamr2 : i64"
+        ));
+        line(&format!(
+            "                %{p}_tabase = arith.addi %{p}_irbase, %{p}_takr : i64"
+        ));
+        let mut tail_yields = Vec::with_capacity(MR);
+        for t in 0..MR {
+            line(&format!(
+                "                %{p}_tat{t} = arith.constant {} : i64",
+                t * 2
+            ));
+            line(&format!(
+                "                %{p}_tai{t} = arith.addi %{p}_tabase, %{p}_tat{t} : i64"
+            ));
+            line(&format!(
+                "                %{p}_tap{t} = llvm.getelementptr %{p}_pa[%{p}_tai{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i16"
+            ));
+            line(&format!(
+                "                %{p}_tas{t} = llvm.load %{p}_tap{t} {{alignment = 2 : i64}} : \
+                 !llvm.ptr -> i16"
+            ));
+            line(&format!(
+                "                %{p}_taw{t} = arith.extsi %{p}_tas{t} : i16 to i64"
+            ));
+            // Inner column loop over NR: scalar B[kk,n], product, scatter-add.
+            line(&format!(
+                "                %{p}_tn{t} = scf.for %{p}_tj{t} = %{p}_c0 to %{p}_cnr \
+                 step %{p}_c1 iter_args(%{p}_tav{t} = %{p}_tacc{t}) -> (vector<{NR}xi64>) {{"
+            ));
+            line(&format!(
+                "                  %{p}_tj{t}64 = arith.index_cast %{p}_tj{t} : index to i64"
+            ));
+            line(&format!(
+                "                  %{p}_tj{t}2 = arith.muli %{p}_tj{t}64, %{p}_c2i : i64"
+            ));
+            line(&format!(
+                "                  %{p}_tbi{t} = arith.addi %{p}_tbbase, %{p}_tj{t}2 : i64"
+            ));
+            line(&format!(
+                "                  %{p}_tbp{t} = llvm.getelementptr %{p}_pb[%{p}_tbi{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i16"
+            ));
+            line(&format!(
+                "                  %{p}_tbs{t} = llvm.load %{p}_tbp{t} {{alignment = 2 : i64}} : \
+                 !llvm.ptr -> i16"
+            ));
+            line(&format!(
+                "                  %{p}_tbw{t} = arith.extsi %{p}_tbs{t} : i16 to i64"
+            ));
+            line(&format!(
+                "                  %{p}_tpp{t} = arith.muli %{p}_taw{t}, %{p}_tbw{t} : i64"
+            ));
+            line(&format!(
+                "                  %{p}_told{t} = vector.extract %{p}_tav{t}[%{p}_tj{t}] : i64 from vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "                  %{p}_tnew{t} = arith.addi %{p}_told{t}, %{p}_tpp{t} : i64"
+            ));
+            line(&format!(
+                "                  %{p}_tins{t} = vector.insert %{p}_tnew{t}, %{p}_tav{t}[%{p}_tj{t}] : i64 into vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "                  scf.yield %{p}_tins{t} : vector<{NR}xi64>"
+            ));
+            line("                }");
+            tail_yields.push(format!("%{p}_tn{t}"));
+        }
+        line(&format!(
+            "                scf.yield {} : {acc_ty}",
+            tail_yields.join(", ")
         ));
         line("              }");
         // ── add the MR×NR i64 partial into the C-scratch tile ────────────────
@@ -4827,7 +5034,7 @@ impl LoweringContext {
                  !llvm.ptr -> vector<{NR}xi64>"
             ));
             line(&format!(
-                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_va#{t} : vector<{NR}xi64>"
+                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_vt#{t} : vector<{NR}xi64>"
             ));
             line(&format!(
                 "              llvm.store %{p}_cnew{t}, %{p}_csp{t} {{alignment = 8 : i64}} : \
