@@ -98,30 +98,31 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block. exp131 EXPLORE — formalizes the SOLE metric-improving move left at the
-/// 16.014 full-K/full-N champion (MC=256/KC=1024/NC=1024): doubling I8_MC 256→512 (1024/512=2
-/// even strips, zero M-remainder), reverting the never-measured MC=512 working-tree draft into a
-/// committed single-axis experiment vs the proven champion. The decisive argument: with K and N
-/// both at full-matrix endpoints the nest collapses to `jc(=1) → ic → pc(=1) → jr → ir`, so the
-/// C-scratch RMW stream (killed by full-K, exp128) and the packed-A jc re-streaming (killed by
-/// full-N, exp129) are BOTH already gone. The ONE dominant cost that survives is packed-B
-/// (full K×N = `1024*1024*4` = 4 MiB) re-streamed from L3 once per ic row strip: at MC=256 that
-/// is 4 strips × 4 MiB = 16 MiB of B reads per GEMM. This cost is reachable by NO other knob —
-/// shrinking KC reintroduces RMW, shrinking NC reintroduces packed-A re-streaming, both proven
-/// dead — so the only path past 16.014 is FEWER row strips, i.e. larger MC. MC=512 halves the
-/// strip count to 2 → 8 MiB of B reads, the exact monotone strip-reduction mechanism that won
-/// MC 128→256 (exp120, 15.146), now applied where packed-B is the whole matrix. Cost: packed-A
-/// grows to `512*1024*4 = 2 MiB` and the i64 C-scratch to `512*1024*8 = 4 MiB`, giving a
-/// per-ic-strip working set of packed-A(2) + packed-B(4) + C-scratch(4) = ~10 MiB — inside this
-/// box's 15 MB Haswell-E L3 (unlike the monolithic MC=1024 endpoint at ~16 MiB, which would
-/// spill). The test is precisely whether that ~10 MiB working set still streams at L3 bandwidth
-/// (→ new champion) or tips past the L3 cliff (→ MC=256 is the strip-count optimum and the
-/// 1024^3 search has converged). This regime — MC=512 at full-K/full-N — has NEVER been measured:
-/// categorically distinct from the DEAD exp124 MC=512 (14.634), which sat at shallow KC=128 /
-/// narrow NC=384 where packed-A merely spilled L2 against a tiny working set and the C-scratch
-/// was still RMW'd 8×, so strip-reduction was not yet the binding lever. Byte-identity is
-/// independent of the row tile: it only repartitions the outer row loop, never reordering a product.
-pub const I8_MC: usize = 512;
+/// int8 tier row block. exp143 EXPLORE — the MODEL-DISCRIMINATOR probe at the one unmeasured
+/// INTERIOR point of the 2-strip band, settling WHICH law governs the band rather than re-probing
+/// its cliff. The full-K insight reframes the constraint: at KC=1024 the i64 C-scratch is a
+/// WRITE-ONCE STREAM (exp128 — written once, never read back), so it is NOT a resident tile; the
+/// only cache-RESIDENT working set is the pair packed-A (`MC*1024*4`) + packed-B (`4 MiB`, full-N).
+/// That reframing splits the data into two rival predictors that AGREE on every measured point but
+/// DISAGREE on the interior. (1) STRIP-COUNT model: throughput is a step function of `ceil(1024/MC)`
+/// (4→3→2→1 strips = packed-B re-streams), so the whole 2-strip band `MC∈[512,1023]` is a FLAT
+/// plateau and 512 is merely the smallest of many tied optima. (2) RESIDENT-PAIR-PRESSURE model:
+/// within a fixed strip count throughput slopes monotonically with the resident pair size, so
+/// 512 (6 MiB pair) strictly beats 640 (~6.5) beats 768 (~7), a continuous decline — and the
+/// champion wins because it is the SMALLEST 2-strip MC, not because the band is flat. Every prior
+/// 2-strip datapoint sits at a band ENDPOINT (512 = lower edge; the in-flight 768/896 = upper/cliff
+/// edge); NONE bisects the interior, so the two models have never been told apart. MC=640
+/// (`ceil(1024/640)=2` strips of 640+384 — SAME packed-B traffic as the champion, zero strip-count
+/// penalty) is exactly that bisector: packed-A `640*1024*4 = 2.5 MiB` + packed-B `4 MiB` = 6.5 MiB
+/// resident, comfortably mid-L3 (the streaming C-scratch `640*1024*8 = 5 MiB` writes through, not
+/// resident). If 640 ≈ 17.303 the plateau is flat → strip-count law, the 1024^3 search is converged
+/// and 512 is one of a tied family; if 640 lands strictly below the champion the band slopes →
+/// resident-pair law, 512 is the unique edge optimum and NO 2-strip MC can beat it. This is a
+/// different QUESTION (which law, not where the cliff), orthogonal to exp141/142's upper-edge cliff
+/// localization, not a magnitude retread. Byte-identity is independent of the row tile: MC only
+/// repartitions the outer row loop, never reordering a single product, so the seed-42 sha256 gate
+/// is untouched.
+pub const I8_MC: usize = 640;
 
 /// int8 tier K-panel depth. exp128 EXPLORE pivot — drives the deep-K lever to its ABSOLUTE
 /// ENDPOINT: I8_KC 256→1024 = full K, so the pc K-panel loop collapses to a SINGLE iteration
