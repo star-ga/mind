@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0017 |
 | Title | `mindc verify` — Artifact Verification Surface |
-| Status | **Draft** |
+| Status | **Partially shipped** — `trace_hash` verification + SSA well-formedness SHIPPED; full SMT-proven verification is future work |
 | Authors | STARGA Inc. |
 | Created | 2026-05-29 |
 | Task | #290 |
@@ -296,6 +296,19 @@ a build step; conflating them obscures the audit trail. The correct model is:
    the shipped library core; no new hash or signing primitive is introduced.
 7. Phase B of RFC 0016 (`mindc verify --evidence`) is satisfied by this subcommand
    landing; the two specs are consistent.
+8. `mindc verify` reports `ssa_valid` (single-assignment + define-before-use over
+   the mic@3 IR body) **independent of attestation**: an unattested-but-SSA-valid
+   artifact reports `ssa_valid` with `attested: false` and exits 0; an SSA-faulted
+   artifact exits 1 naming the violated rule and value id; an attested artifact
+   reports BOTH `ssa_valid` and `trace_hash_valid`.
+
+### Shipping status (2026-06-06)
+
+`trace_hash` verification (criteria 1, 2, 5, 6, 7) and the **SSA well-formedness
+slice** (criterion 8) are SHIPPED — see `check_ssa_well_formed` in `src/ir/verify.rs`
+and `run_verify` in `src/bin/mindc.rs`, exercised by `tests/verify_ssa.rs`. Full
+SMT-proven verification (`--symbolic`, §4.3 / §9) remains future work; `--check-sig`
+and `--cross-substrate` (criteria 3, 4) remain scoped but unimplemented in this slice.
 
 ## 11. References
 

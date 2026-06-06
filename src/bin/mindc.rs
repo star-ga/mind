@@ -1373,15 +1373,23 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// `mindc verify <artifact>` — consumer-side evidence-chain verification.
+/// `mindc verify <artifact>` — consumer-side static + evidence verification.
 ///
-/// Returns the process exit code: 0 = valid, 1 = verification failed
-/// (tampered / unattested / malformed), 2 = I/O error reading the artifact.
+/// Two independent properties are reported (RFC 0017):
+///   * SSA well-formedness — a property of the IR body alone, needing no
+///     evidence chain. Always reported (`ssa_valid`); an SSA fault fails verify.
+///   * trace_hash attestation — checked only when the artifact carries an
+///     `evidence_chain` MAP. An unattested-but-SSA-valid artifact passes and is
+///     reported with `attested: false`.
+///
+/// Returns the process exit code: 0 = valid (SSA well-formed, and — when
+/// attested — trace_hash intact); 1 = verification failed (SSA fault, tampered
+/// trace_hash, or malformed evidence chain); 2 = I/O error reading the artifact.
 fn run_verify(artifact: &str, json: bool) -> i32 {
+    use libmind::ir::check_ssa_well_formed;
     use libmind::ir::compact::{
         Determinism, EvidenceError, TraceHashKind, mic3_evidence_report, parse_mic3,
     };
-    use libmind::ir::check_ssa_well_formed;
 
     let bytes = match fs::read(artifact) {
         Ok(b) => b,
@@ -1409,12 +1417,13 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
 
     // SSA well-formedness is a property of the IR body alone — independent of,
     // and gated BEFORE, the evidence chain (which an artifact may legitimately
-    // lack). A structural SSA fault fails `verify` regardless of attestation.
+    // lack). A structural SSA fault fails `verify` regardless of attestation,
+    // so report it standalone and exit 1 here, *before* the evidence path.
     if !ssa_valid {
         let reason = ssa_reason.as_deref().unwrap_or("malformed IR");
         if json {
             println!(
-                "{{\"artifact\":\"{}\",\"ssa_valid\":false,\"ssa_reason\":\"{}\"}}",
+                "{{\"artifact\":\"{}\",\"ssa_valid\":false,\"ssa_reason\":\"{}\",\"attested\":false}}",
                 json_escape(artifact),
                 json_escape(reason)
             );
@@ -1483,17 +1492,10 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                 }
             }
 
-            // `verify` passes only if BOTH the SSA structure and the
-            // evidence-chain trace_hash hold. Report the SSA fault first (it is
-            // a structural defect in the IR body, independent of the chain).
-            if !ssa_valid {
-                eprintln!(
-                    "error[verify]: SSA well-formedness check FAILED — {}",
-                    ssa_reason.as_deref().unwrap_or("malformed IR")
-                );
-                return 1;
-            }
-
+            // SSA is already established valid above (an SSA fault returns 1
+            // before this point). An attested artifact therefore reports BOTH
+            // ssa_valid and the evidence-chain trace_hash result; it passes only
+            // if the trace_hash also holds.
             if report.trace_hash_valid {
                 if !json {
                     eprintln!("verified: evidence chain is intact (untampered)");
@@ -1511,8 +1513,25 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
             }
         }
         Err(EvidenceError::Missing) => {
-            eprintln!("error[verify]: {artifact} carries no evidence_chain — unattested artifact");
-            1
+            // Unattested but SSA well-formed (an SSA fault returned 1 above).
+            // SSA is a property of the IR body alone and needs no evidence
+            // chain, so report ssa_valid standalone and pass. Attestation is
+            // reported separately as absent.
+            if json {
+                println!(
+                    "{{\"artifact\":\"{}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":null,\"attested\":false}}",
+                    json_escape(artifact)
+                );
+            } else {
+                println!("artifact:         {artifact}");
+                println!("ssa_valid:        {}", if ssa_valid { "yes" } else { "NO" });
+                println!("attested:         no");
+            }
+            eprintln!("verified: IR body is SSA well-formed");
+            eprintln!(
+                "note: {artifact} carries no evidence_chain — unattested artifact (trace_hash not checked)"
+            );
+            0
         }
         Err(EvidenceError::MissingKey(k)) => {
             eprintln!("error[verify]: evidence chain is missing required key '{k}'");
