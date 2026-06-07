@@ -75,20 +75,36 @@ impl std::fmt::Display for SsaViolation {
 ///    defined by an *earlier* instruction (function parameters and a region's
 ///    enclosing-scope values count as already-defined).
 ///
-/// ### Scoping model — linear program order, NOT dominance
+/// ### Scoping model — dominance-aware
 ///
-/// mic@3 carries the full nested `IRModule` tree (`FnDef.body`, `While`
-/// cond/body, `If` then/else, `Region.body`) but **not** the F2 block-argument
-/// metadata (`If.merges`, `While.exit_ids` are lowering-internal and decode to
-/// empty). A true dominance check needs that control-flow-graph structure, so
-/// this first slice walks the instruction tree in **pre-order (program order)**
-/// and treats an operand as defined if any earlier instruction in that walk —
-/// including instructions in an enclosing region — produced it. Region
-/// interiors inherit the enclosing `defined` set; their own definitions become
-/// visible to subsequent instructions in the same and inner regions. This is a
-/// sound *necessary* condition for SSA dominance and an accepted first slice;
-/// the dominance-precise check is future work (tracked with the RFC 0017 SMT
-/// extension).
+/// The check walks the instruction tree in pre-order, but it is **dominance
+/// aware** about nested control flow. The earlier linear-program-order slice
+/// over-rejected: it let a region interior's definitions leak into the
+/// enclosing/sibling scope and checked a region node's own operands (e.g. an
+/// `If` merge's `then_val`/`else_val`) *before* recursing into the branch that
+/// defines them — flagging programs WITH control flow that actually compile and
+/// run deterministically (MIND-Fuzz bug #5).
+///
+/// The model now mirrors the control-flow graph:
+///
+/// * A value defined inside a branch / loop body **does not dominate** code
+///   after the region (it is not defined on every path / iteration). Each
+///   nested region is therefore checked in a **clone** of the enclosing
+///   `defined` set so its interior definitions never leak back out.
+/// * Only the values the region *exposes as block arguments* of its join block
+///   dominate post-region uses: an `If` exposes its post-merge `dst` plus each
+///   merge id (`^if_after` block args); a `While` exposes its `live_vars`
+///   post-body ids plus its `exit_ids` (`^while_after` block args); a `Region`
+///   exposes its `result`. Those — and only those — are inserted into the
+///   enclosing scope after the region.
+/// * A region node's own forwarded operands are checked where they are
+///   *visible*: an `If` merge's `then_val` against the then-branch scope and its
+///   `else_val` against the else-branch scope (each a value that dominates that
+///   edge), never against the enclosing scope before recursion. `While.init_ids`
+///   are genuine enclosing-scope reads and are still checked up front.
+///
+/// A use that is genuinely not dominated by any definition on a reaching path is
+/// still reported; the check only stops *over*-rejecting well-dominated SSA.
 ///
 /// ### Per-function SSA namespaces
 ///
@@ -115,58 +131,11 @@ pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
 /// added (rejecting a duplicate).
 fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result<(), SsaViolation> {
     for instr in instrs {
-        // Classify region-bearing nodes: their own `dst`/`result` is produced
-        // *inside* a sub-stream (e.g. `Region.result` is the last body value,
-        // `If.dst` is the post-merge value), so the node-level definition must
-        // be inserted only AFTER recursing — never before, which would create a
-        // false single-assignment collision with the interior definition.
-        let is_region = matches!(instr, Instr::FnDef { .. });
-        #[cfg(feature = "std-surface")]
-        let is_region = is_region
-            || matches!(
-                instr,
-                Instr::While { .. } | Instr::If { .. } | Instr::Region { .. }
-            );
-
-        // 1. Define-before-use: every operand must already be defined. The F2
-        //    block-argument forwarding ids are absent from a mic@3-parsed
-        //    module (decode to empty), so `instruction_operands` returns only
-        //    genuine, in-scope SSA reads here (e.g. `While.init_ids`, which are
-        //    enclosing-scope values defined before the loop).
-        for operand in instruction_operands(instr) {
-            if !defined.contains(&operand) {
-                return Err(SsaViolation {
-                    value: operand,
-                    rule: SsaRule::DefineBeforeUse,
-                });
-            }
-        }
-
-        // 2. Single-assignment for straight-line ops: the instruction's own
-        //    result id (if any) must not already be defined. Region nodes defer
-        //    this to step 4.
-        //
-        //    EXCEPTION: a `Param` body instruction re-states an id that the
-        //    enclosing `FnDef` already seeded into this function-local scope
-        //    from its `params` list (the parameter is materialized both in the
-        //    `FnDef.params` list and as a leading `Param` instruction in the
-        //    body, with the SAME id). That is one logical definition of the
-        //    parameter, not a duplicate, so its insert is idempotent here.
-        if !is_region {
-            let is_param = matches!(instr, Instr::Param { .. });
-            if let Some(dst) = instruction_dst(instr) {
-                if !defined.insert(dst) && !is_param {
-                    return Err(SsaViolation {
-                        value: dst,
-                        rule: SsaRule::SingleAssignment,
-                    });
-                }
-            }
-        }
-
-        // 3. Recurse into nested regions. Parameters are definitions visible to
-        //    the body; the body sees the enclosing scope plus its own earlier
-        //    definitions (pre-order program-order visibility).
+        // Dispatch the nested control-flow / region variants first. Each is
+        // checked in a CLONE of the enclosing `defined` set (so its interior
+        // definitions cannot leak into this or a sibling scope — they do not
+        // dominate code outside the region), then only the ids the region
+        // exposes as join-block arguments are inserted into `defined`.
         match instr {
             Instr::FnDef { params, body, .. } => {
                 // A function body is its own SSA namespace: ids are numbered
@@ -182,7 +151,7 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                     // A param id may be repeated across the params list only if
                     // the IR is malformed; reject that as a single-assignment
                     // fault. (The body's own `Param` instruction re-stating a
-                    // seeded param id is handled idempotently in `check_ssa_stream`.)
+                    // seeded param id is handled idempotently below.)
                     if !body_scope.insert(*pid) {
                         return Err(SsaViolation {
                             value: *pid,
@@ -191,42 +160,140 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                     }
                 }
                 check_ssa_stream(body, &mut body_scope)?;
+                // A `FnDef` exposes no value into the enclosing module scope.
+                continue;
             }
             #[cfg(feature = "std-surface")]
             Instr::While {
-                cond_instrs, body, ..
+                cond_instrs,
+                body,
+                init_ids,
+                live_vars,
+                exit_ids,
+                ..
             } => {
-                check_ssa_stream(cond_instrs, defined)?;
-                check_ssa_stream(body, defined)?;
+                // `init_ids` are the pre-loop (enclosing-scope) values fed into
+                // the header — genuine reads that must already dominate the
+                // loop. Check them against the enclosing scope.
+                for id in init_ids {
+                    if !defined.contains(id) {
+                        return Err(SsaViolation {
+                            value: *id,
+                            rule: SsaRule::DefineBeforeUse,
+                        });
+                    }
+                }
+                // The condition and body live in the loop's own region: they see
+                // the enclosing dominators but their definitions must not escape
+                // except through the join-block args. Check each in a clone.
+                let mut loop_scope = defined.clone();
+                check_ssa_stream(cond_instrs, &mut loop_scope)?;
+                check_ssa_stream(body, &mut loop_scope)?;
+                // Post-loop code references the `^while_after` block args: the
+                // `live_vars` post-body ids and the F2 `exit_ids`. Those — and
+                // only those — dominate code after the loop. (They decode to
+                // empty from a mic@3 artifact; populated on a freshly-lowered
+                // module, which is exactly where the false positive bit.)
+                for (_name, post_id) in live_vars {
+                    defined.insert(*post_id);
+                }
+                for exit_id in exit_ids {
+                    defined.insert(*exit_id);
+                }
+                continue;
             }
             #[cfg(feature = "std-surface")]
             Instr::If {
                 cond_instrs,
                 then_instrs,
                 else_instrs,
+                dst,
+                merges,
                 ..
             } => {
-                check_ssa_stream(cond_instrs, defined)?;
-                check_ssa_stream(then_instrs, defined)?;
-                check_ssa_stream(else_instrs, defined)?;
+                // The condition is evaluated before the branch and sees the
+                // enclosing dominators; its result does not escape the region.
+                let mut cond_scope = defined.clone();
+                check_ssa_stream(cond_instrs, &mut cond_scope)?;
+                // Each branch is its own region: it sees the enclosing
+                // dominators (plus the just-checked condition) but its
+                // definitions do not leak out. A merge's `then_val` is the
+                // then-branch incarnation (visible in the then scope); its
+                // `else_val` the else-branch incarnation (visible in the else
+                // scope). Check each forwarded value where it is actually
+                // defined — never against the enclosing scope before recursing,
+                // which over-rejected a value defined inside the branch.
+                let mut then_scope = cond_scope.clone();
+                check_ssa_stream(then_instrs, &mut then_scope)?;
+                let mut else_scope = cond_scope;
+                check_ssa_stream(else_instrs, &mut else_scope)?;
+                for (_merge_id, then_val, else_val) in merges {
+                    if !then_scope.contains(then_val) {
+                        return Err(SsaViolation {
+                            value: *then_val,
+                            rule: SsaRule::DefineBeforeUse,
+                        });
+                    }
+                    if !else_scope.contains(else_val) {
+                        return Err(SsaViolation {
+                            value: *else_val,
+                            rule: SsaRule::DefineBeforeUse,
+                        });
+                    }
+                }
+                // The `If` exposes its post-merge `dst` plus each merge id
+                // (`^if_after` block args) into the enclosing scope; they
+                // dominate post-branch uses on every path.
+                defined.insert(*dst);
+                for (merge_id, _t, _e) in merges {
+                    defined.insert(*merge_id);
+                }
+                continue;
             }
             #[cfg(feature = "std-surface")]
-            Instr::Region { body, .. } => {
-                check_ssa_stream(body, defined)?;
+            Instr::Region { body, result, .. } => {
+                // A region body is a nested scope; only its `result` (the last
+                // body value) escapes. Check the body in a clone, then expose
+                // the result.
+                let mut region_scope = defined.clone();
+                check_ssa_stream(body, &mut region_scope)?;
+                defined.insert(*result);
+                continue;
             }
             _ => {}
         }
 
-        // 4. Expose a region node's result into the enclosing scope. The
-        //    interior recursion may already have defined it (`Region.result`,
-        //    `While.live_vars` post-body ids); `If.dst` is a distinct post-merge
-        //    id. `insert` is idempotent — a no-op for an interior id, a fresh
-        //    definition for a node-level merge id. This is NOT treated as a
-        //    single-assignment violation because the region is one logical
-        //    producer of that value.
-        if is_region {
-            if let Some(dst) = instruction_dst(instr) {
-                defined.insert(dst);
+        // Straight-line instruction (no nested region).
+        //
+        // 1. Define-before-use: every operand must already be defined. For a
+        //    mic@3-parsed module the F2 block-argument forwarding ids decode to
+        //    empty, so `instruction_operands` returns only genuine in-scope SSA
+        //    reads here. `Break`/`Continue` `live` snapshots are reads of values
+        //    that dominate the snapshot point — checked here too.
+        for operand in instruction_operands(instr) {
+            if !defined.contains(&operand) {
+                return Err(SsaViolation {
+                    value: operand,
+                    rule: SsaRule::DefineBeforeUse,
+                });
+            }
+        }
+
+        // 2. Single-assignment: the instruction's own result id (if any) must
+        //    not already be defined.
+        //
+        //    EXCEPTION: a `Param` body instruction re-states an id that the
+        //    enclosing `FnDef` already seeded into this function-local scope from
+        //    its `params` list (materialized both in `FnDef.params` and as a
+        //    leading `Param` instruction, with the SAME id). That is one logical
+        //    definition of the parameter, so its insert is idempotent here.
+        let is_param = matches!(instr, Instr::Param { .. });
+        if let Some(dst) = instruction_dst(instr) {
+            if !defined.insert(dst) && !is_param {
+                return Err(SsaViolation {
+                    value: dst,
+                    rule: SsaRule::SingleAssignment,
+                });
             }
         }
     }
