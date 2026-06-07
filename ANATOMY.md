@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2710 | **Est. tokens:** ~6,774,097
-**Generated:** 2026-06-06 15:05 UTC
+**Files:** 2746 | **Est. tokens:** ~6,808,481
+**Generated:** 2026-06-07 05:42 UTC
 
 ## Token Budget Guide
 
@@ -22,12 +22,12 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~27,013 |
+| `./` | 35 | ~27,177 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~553 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 12 | ~21,396 |
+| `benches/` | 12 | ~25,408 |
 | `benchmarks/` | 14 | ~24,361 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -36,13 +36,14 @@
 | `benchmarks/mojo/` | 8 | ~4,301 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
-| `docs/` | 25 | ~34,761 |
+| `config/` | 1 | ~1,163 |
+| `docs/` | 26 | ~37,395 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
 | `docs/design/` | 3 | ~8,185 |
 | `docs/mindcraft/` | 3 | ~6,980 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~118,081 |
+| `docs/rfcs/` | 28 | ~118,320 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,006 |
 | `examples/c/` | 2 | ~400 |
@@ -53,13 +54,13 @@
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
-| `.githooks/` | 1 | ~98 |
+| `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 7 | ~7,682 |
+| `.github/workflows/` | 8 | ~8,020 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
-| `scripts/` | 5 | ~5,953 |
+| `scripts/` | 6 | ~8,732 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/node_modules/` | 1 | ~13,764 |
@@ -364,7 +365,7 @@
 | `src/` | 7 | ~16,834 |
 | `src/ast/` | 1 | ~6,547 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~19,941 |
+| `src/bin/` | 2 | ~24,727 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
@@ -377,7 +378,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,762 |
-| `src/ir/` | 4 | ~18,116 |
+| `src/ir/` | 4 | ~20,660 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~39,864 |
@@ -388,7 +389,7 @@
 | `src/opt/` | 4 | ~9,186 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,260 |
-| `src/project/` | 3 | ~24,734 |
+| `src/project/` | 3 | ~25,198 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -396,7 +397,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 172 | ~307,828 |
+| `tests/` | 174 | ~310,846 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -420,13 +421,14 @@
 | `tests/mindcraft/lint/q16_overflow/` | 3 | ~191 |
 | `tests/mindcraft/lint/shadowing/` | 2 | ~87 |
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
+| `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
 | `tests/runtime/` | 2 | ~135 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~3,237 |
-| `tools/mindfuzz/` | 6 | ~9,118 |
-| `tools/mindfuzz/seeds/` | 2 | ~380 |
-| `tools/mindfuzz/violations/` | 1 | ~0 |
+| `tools/mindfuzz/` | 7 | ~15,992 |
+| `tools/mindfuzz/seeds/` | 6 | ~1,330 |
+| `tools/mindfuzz/violations/` | 11 | ~1,430 |
 | `tools/pytorch_bridge/` | 6 | ~4,678 |
 | `tools/pytorch_bridge/tests/` | 2 | ~1,244 |
 | `.wrangler/cache/` | 1 | ~21 |
@@ -463,12 +465,12 @@
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~4663 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~4805 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3465 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3487 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -492,11 +494,11 @@
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
-- `compiler.rs` (~2149 tok, huge) — Small program: Simple matrix multiplication
+- `compiler.rs` (~3782 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
-- `det_matmul_i16.rs` (~3898 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_q16_mt.rs` (~3256 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_q16.rs` (~4090 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_i16.rs` (~4613 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_q16_mt.rs` (~4049 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_q16.rs` (~4961 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1208 tok, large) — Simple broadcasting scenarios
@@ -572,6 +574,9 @@
 ### `.cargo/`
 
 - `config.toml` (~130 tok, small) — [registries]
+### `config/`
+
+- `capabilities.toml` (~1163 tok, large) — [ir]
 ### `docs/`
 
 - `architecture.md` (~755 tok, large) — Architecture
@@ -579,6 +584,9 @@
 ### `docs/backends/`
 
 - `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
+### `docs/`
+
+- `benchmarking.md` (~1903 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
 - `compiler_performance.md` (~4607 tok, huge) — MIND Compiler Performance Benchmarks
@@ -599,7 +607,7 @@
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
 
-- `errors.md` (~574 tok, large) — MIND Core Error Model
+- `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
 - `install.md` (~841 tok, large) — Installing mindc
@@ -643,7 +651,7 @@
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5412 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
 - `0015-cross-substrate-bit-identity.md` (~5177 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
 - `0016-evidence-chain-emission.md` (~6248 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
-- `0017-mindc-verify.md` (~3507 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
+- `0017-mindc-verify.md` (~3746 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
 - `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
@@ -653,8 +661,8 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~13057 tok, huge) — Roadmap
-- `security.md` (~753 tok, large) — Security Guide
+- `roadmap.md` (~13083 tok, huge) — Roadmap
+- `security.md` (~1331 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
 ### `docs/specs/`
@@ -749,7 +757,7 @@
 - `transformer_block.mind` (~3967 tok, huge) — Transformer Block — MIND Model Zoo
 ### `.githooks/`
 
-- `pre-commit` (~98 tok, small) — #!/usr/bin/env bash
+- `pre-commit` (~255 tok, medium) — #!/usr/bin/env bash
 ### `.github/`
 
 - `CODEOWNERS` (~8 tok, tiny) — *       @cputer
@@ -767,6 +775,7 @@
 - `bench-gate.yml` (~1289 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
 - `ci.yml` (~3804 tok, huge) — name: CI
+- `docs-claims.yml` (~338 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
@@ -784,6 +793,7 @@
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
 - `anatomy.sh` (~2010 tok, huge) — anatomy — Generate ANATOMY.md for any repo
+- `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
 - `install.sh` (~1054 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
 - `preflight.sh` (~775 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
@@ -3580,8 +3590,8 @@
 - `rules.rs` (~2392 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/bin/`
 
-- `mind-ai.rs` (~6043 tok, huge) — Copyright 2025 STARGA Inc.
-- `mindc.rs` (~13898 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
+- `mindc.rs` (~14922 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3677,9 +3687,9 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~8914 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~8925 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~3749 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~6282 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -3727,7 +3737,7 @@
 - `pipeline.rs` (~3862 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~17551 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~18015 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3517 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4012,6 +4022,25 @@
 - `mindc.rs` (~1928 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_test_phase_b.rs` (~3525 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_workspace_phase_c.rs` (~4166 tok, huge) — Copyright 2025 STARGA Inc.
+### `tests/mindfuzz_cross_substrate/staged/`
+
+- `manifest.tsv` (~357 tok, medium) — scalar_arith_step000	f	3735928559	64	5e39820a2a8325417e39057f19ba9bceec01bd2068c
+- `scalar_accum_step000.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_accum_step001.mind` (~162 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_accum_step002.mind` (~169 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_accum_step003.mind` (~179 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_accum_step004.mind` (~182 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_accum_step005.mind` (~186 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_accum_step006.mind` (~186 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
+- `scalar_arith_step000.mind` (~159 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step001.mind` (~167 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step002.mind` (~175 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step003.mind` (~184 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step004.mind` (~188 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step005.mind` (~192 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step006.mind` (~192 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+### `tests/`
+
 - `mlir_broadcast.rs` (~1479 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_build.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `mlir_exec.rs` (~833 tok, large) — Copyright 2025 STARGA Inc.
@@ -4025,6 +4054,7 @@
 - `mlir_jit.rs` (~285 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_lowering.rs` (~1490 tok, large)
 - `mlir_opt.rs` (~424 tok, medium) — Copyright 2025 STARGA Inc.
+- `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4138,6 +4168,7 @@
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 - `verify_cli.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_ssa.rs` (~2580 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
@@ -4145,19 +4176,34 @@
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `tools/mindfuzz/`
 
-- `fuzz_loop.py` (~2700 tok, huge) — MIND-Fuzz loop -- LLM-mutation differential testing for the MIND compiler.
+- `ci_batch.py` (~1186 tok, large) — MIND-Fuzz deterministic CI batch -> cross-substrate candidate staging.
+- `fuzz_loop.py` (~3529 tok, huge) — MIND-Fuzz loop -- LLM-mutation differential testing for the MIND compiler.
 - `.gitignore` (~7 tok, tiny) — tools/mindfuzz/__pycache__/
-- `mutate.py` (~1516 tok, huge) — MIND-Fuzz mutation engine.
-- `mutations.txt` (~598 tok, large) — # MIND-Fuzz mutation instructions (adapted from arXiv:2501.00655 Table 1).
-- `oracles.py` (~2937 tok, huge) — MIND-Fuzz differential oracles.
+- `mutate.py` (~3631 tok, huge) — MIND-Fuzz mutation engine.
+- `mutations.txt` (~1765 tok, huge) — # MIND-Fuzz mutation instructions (adapted from arXiv:2501.00655 Table 1).
+- `oracles.py` (~4514 tok, huge) — MIND-Fuzz differential oracles.
 - `README.md` (~1360 tok, large) — MIND-Fuzz
 ### `tools/mindfuzz/seeds/`
 
+- `cast_edge.mind` (~241 tok, medium) — MIND-Fuzz seed: type-conversion + edge-value scalar entry (reference-checkable).
+- `control_flow.mind` (~312 tok, medium) — MIND-Fuzz seed: control-flow-heavy program (loops, nested if, early return,
 - `dot_q16.mind` (~221 tok, medium) — MIND-Fuzz seed: Q16.16 dot / L1 / gemv kernels.
+- `multi_fn.mind` (~243 tok, medium) — MIND-Fuzz seed: multi-function program with a reference-checkable scalar entry.
+- `scalar_accum.mind` (~154 tok, small) — MIND-Fuzz seed: scalar accumulator with a return-feeding literal.
 - `scalar_arith.mind` (~159 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
 ### `tools/mindfuzz/violations/`
 
+- `cast_edge_NARROW_CAST.repro.mind` (~198 tok, small) — MIND-Fuzz canonical minimal repro: scalar narrowing `as` cast is a NO-OP.
+- `cast_edge_step001_reference.mind` (~249 tok, medium) — MIND-Fuzz seed: type-conversion + edge-value scalar entry (reference-checkable).
+- `cast_edge_step001_reference.min.mind` (~42 tok, tiny) — MINDFUZZ-ORACLE-PURE: ((((a & 0xFFFFFFFF) ^ 0x80000000) - 0x80000000)) + ((((a & 0xFFFF) ^ 0x8000) - 0x8000)) + (a & 0xF
+- `cast_edge_step001_reference.report.txt` (~115 tok, small) — MIND-Fuzz violation
+- `control_flow_step001_verify.mind` (~323 tok, medium) — MIND-Fuzz seed: control-flow-heavy program (loops, nested if, early return,
+- `control_flow_step001_verify.min.mind` (~56 tok, small)
+- `control_flow_step001_verify.report.txt` (~137 tok, small) — MIND-Fuzz violation
 - `.gitkeep` (~0 tok, tiny)
+- `scalar_arith_step001_verify.mind` (~168 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
+- `scalar_arith_step001_verify.min.mind` (~7 tok, tiny)
+- `scalar_arith_step001_verify.report.txt` (~135 tok, small) — MIND-Fuzz violation
 ### `tools/pytorch_bridge/`
 
 - `ai_proof.py` (~645 tok, large) — # Copyright 2025-2026 STARGA Inc.
