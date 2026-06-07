@@ -122,6 +122,9 @@ pub fn tk_ge() -> i64 {
 pub fn tk_ne() -> i64 {
     26
 }
+pub fn tk_bang() -> i64 {
+    27
+}
 
 // ===== Byte loads =====
 
@@ -366,6 +369,9 @@ pub fn match_punct(b: i64) -> i64 {
     if b == 62 {
         return tk_gt();
     }
+    if b == 33 {
+        return tk_bang();
+    }
     tk_ident()
 }
 
@@ -497,6 +503,12 @@ pub fn ast_paren() -> i64 {
 }
 pub fn ast_struct_def() -> i64 {
     13
+}
+pub fn ast_neg() -> i64 {
+    14
+}
+pub fn ast_not() -> i64 {
+    15
 }
 
 // ===== Binop operator tags =====
@@ -696,6 +708,30 @@ pub fn ast_new_paren(span_lo: i64, span_hi: i64, inner: i64) -> i64 {
     n
 }
 
+pub fn ast_new_neg(span_lo: i64, span_hi: i64, operand: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_neg());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, operand);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+pub fn ast_new_not(span_lo: i64, span_hi: i64, operand: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_not());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, operand);
+    __mind_store_i64(n + 32, 0);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
 // ===== AST accessors =====
 
 pub fn ast_kind(node: i64) -> i64 {
@@ -841,6 +877,20 @@ pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let k: i64 = tok_kind(toks, pos);
     let lo: i64 = tok_lo(toks, pos);
     let hi: i64 = tok_hi(toks, pos);
+
+    if k == tk_minus() {
+        let operand: ParseResult = parse_primary(toks, pos + 1, buf);
+        let opnode: i64 = pr_node(operand);
+        let neg: i64 = ast_new_neg(lo, ast_span_hi(opnode), opnode);
+        return pr_new(pr_pos(operand), neg);
+    }
+
+    if k == tk_bang() {
+        let operand: ParseResult = parse_primary(toks, pos + 1, buf);
+        let opnode: i64 = pr_node(operand);
+        let notn: i64 = ast_new_not(lo, ast_span_hi(opnode), opnode);
+        return pr_new(pr_pos(operand), notn);
+    }
 
     if k == tk_int() {
         let n: i64 = ast_new_leaf(ast_int_lit(), lo, hi);
@@ -2172,6 +2222,58 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
     }
     if k == ast_paren() {
         return emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+    }
+    if k == ast_neg() {
+        let so: EmitState = emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+        let operand_id: i64 = so.last_id;
+        let c0: i64 = so.next_id;
+        let sc1: EmitState = emit_lit_const_i64_head(so, c0);
+        let sc2: EmitState = es_push(sc1, 48);
+        let sc3: EmitState = es_push(sc2, ch_newline());
+        let id: i64 = c0 + 1;
+        let s3: EmitState = es_push(sc3, ch_space());
+        let s4: EmitState = es_push(s3, ch_space());
+        let s5: EmitState = es_push(s4, ch_percent());
+        let s6: EmitState = emit_i64(s5, id);
+        let s7: EmitState = es_push(s6, ch_space());
+        let s8: EmitState = es_push(s7, ch_eq_sign());
+        let s9: EmitState = es_push(s8, ch_space());
+        let s10: EmitState = emit_op_mnemonic(s9, op_sub());
+        let s11: EmitState = es_push(s10, ch_space());
+        let s12: EmitState = es_push(s11, ch_percent());
+        let s13: EmitState = emit_i64(s12, c0);
+        let s14: EmitState = es_push(s13, ch_comma());
+        let s15: EmitState = es_push(s14, ch_space());
+        let s16: EmitState = es_push(s15, ch_percent());
+        let s17: EmitState = emit_i64(s16, operand_id);
+        let s18: EmitState = es_push(s17, ch_newline());
+        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id, lets: s18.lets };
+    }
+    if k == ast_not() {
+        let so: EmitState = emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+        let operand_id: i64 = so.last_id;
+        let c0: i64 = so.next_id;
+        let sc1: EmitState = emit_lit_const_i64_head(so, c0);
+        let sc2: EmitState = es_push(sc1, 48);
+        let sc3: EmitState = es_push(sc2, ch_newline());
+        let id: i64 = c0 + 1;
+        let s3: EmitState = es_push(sc3, ch_space());
+        let s4: EmitState = es_push(s3, ch_space());
+        let s5: EmitState = es_push(s4, ch_percent());
+        let s6: EmitState = emit_i64(s5, id);
+        let s7: EmitState = es_push(s6, ch_space());
+        let s8: EmitState = es_push(s7, ch_eq_sign());
+        let s9: EmitState = es_push(s8, ch_space());
+        let s10: EmitState = emit_op_mnemonic(s9, op_eq());
+        let s11: EmitState = es_push(s10, ch_space());
+        let s12: EmitState = es_push(s11, ch_percent());
+        let s13: EmitState = emit_i64(s12, operand_id);
+        let s14: EmitState = es_push(s13, ch_comma());
+        let s15: EmitState = es_push(s14, ch_space());
+        let s16: EmitState = es_push(s15, ch_percent());
+        let s17: EmitState = emit_i64(s16, c0);
+        let s18: EmitState = es_push(s17, ch_newline());
+        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id, lets: s18.lets };
     }
     if k == ast_call() {
         let args_addr: i64 = ast_child1(node);
