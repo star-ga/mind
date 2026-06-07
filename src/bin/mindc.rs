@@ -591,14 +591,36 @@ fn main() {
         ..Default::default()
     };
 
+    // RFC 0005 Phase C — seed the cross-module resolver with the bundled std
+    // surface for the single-file compile path (task #23 follow-up), mirroring
+    // the `mindc check` path. A bare call to a std `pub fn` (e.g. `vec_push`)
+    // with NO explicit `use std.X` resolves on the project build path because
+    // std is linked into one compilation unit; the single-file `--emit-ir` /
+    // compile path must match instead of mis-firing E2003. The table is cleared
+    // immediately after compilation so nothing leaks across invocations, and the
+    // default / no-cross-module build keeps the byte-identical empty-table path.
+    #[cfg(feature = "cross-module-imports")]
+    {
+        use libmind::project::module_table::build_module_table;
+        use libmind::project::stdlib::parsed_stdlib_modules;
+        let std_mods = parsed_stdlib_modules();
+        let refs: Vec<(String, &libmind::ast::Module)> =
+            std_mods.iter().map(|(p, m)| (p.clone(), m)).collect();
+        let table = build_module_table(&refs);
+        libmind::type_checker::cm_set_project_table(Some(table));
+    }
     let products = match compile_source_with_name(&source, Some(&input), &opts) {
         Ok(products) => products,
         Err(err) => {
+            #[cfg(feature = "cross-module-imports")]
+            libmind::type_checker::cm_set_project_table(None);
             let diags = err.into_diagnostics(Some(&input));
             emitter.emit_all(&diags, Some(&source));
             process::exit(1);
         }
     };
+    #[cfg(feature = "cross-module-imports")]
+    libmind::type_checker::cm_set_project_table(None);
 
     if cli.compile.verify_only {
         return;
