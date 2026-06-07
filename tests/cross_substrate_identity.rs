@@ -476,6 +476,71 @@ fn same_process_run_to_run_determinism() {
             );
         }
     }
+
+    // Matrix-matrix path (gemm-q16): the headline wedge workload, where any
+    // accumulation-order or buffer-state non-determinism is most likely to
+    // surface. Fresh M*N output buffer per run; every run must hash identically.
+    {
+        let gemmq: Symbol<GemmFn> = unsafe { lib.get(b"gemmq").expect("gemmq symbol") };
+        let (m, k, n) = (64usize, 64usize, 64usize);
+        let (a, _b, bt) = make_gemm_q16(m, k, n, 0xDEADBEEF);
+        let run_once = || {
+            let mut c = vec![0i32; m * n];
+            let rc = unsafe {
+                gemmq(
+                    a.as_ptr() as i64,
+                    bt.as_ptr() as i64,
+                    c.as_mut_ptr() as i64,
+                    m as i64,
+                    k as i64,
+                    n as i64,
+                )
+            };
+            assert_eq!(rc, 0, "gemm-q16: kernel returned {rc} (expected 0)");
+            canonical_hash_i32s(&c)
+        };
+        let first = run_once();
+        for run in 1..DETERMINISM_RUNS {
+            assert_eq!(
+                run_once(),
+                first,
+                "gemm-q16: run {run} diverged from run 0 in the same process \
+                 (run-to-run non-determinism)"
+            );
+        }
+    }
+
+    // int8 matrix-matrix path (gemm-i8, the det.igemm tier): pure-integer GEMM
+    // into a fresh int32 output buffer per run; every run must hash identically.
+    {
+        let gemmi8: Symbol<GemmFn> = unsafe { lib.get(b"gemmi8").expect("gemmi8 symbol") };
+        let (m, k, n) = (64usize, 64usize, 64usize);
+        let (a, b) = make_gemm_i8(m, k, n, 0xDEADBEEF);
+        let run_once = || {
+            let mut c = vec![0i32; m * n];
+            let rc = unsafe {
+                gemmi8(
+                    a.as_ptr() as i64,
+                    b.as_ptr() as i64,
+                    c.as_mut_ptr() as i64,
+                    m as i64,
+                    k as i64,
+                    n as i64,
+                )
+            };
+            assert_eq!(rc, 0, "gemm-i8: kernel returned {rc} (expected 0)");
+            canonical_hash_i32s(&c)
+        };
+        let first = run_once();
+        for run in 1..DETERMINISM_RUNS {
+            assert_eq!(
+                run_once(),
+                first,
+                "gemm-i8: run {run} diverged from run 0 in the same process \
+                 (run-to-run non-determinism)"
+            );
+        }
+    }
 }
 
 // --- gemm-q16 workload (square matrix x matrix) ----------------------------
