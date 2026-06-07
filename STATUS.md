@@ -13,7 +13,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 |---------------|--------|---------|---------------|
 | Core language (lexer, parser, type system, shape inference) | ✅ Complete | v0.2.x | [`spec/v1.0/language.md`](https://github.com/star-ga/mind-spec/blob/main/spec/v1.0/language.md) |
 | Core IR + verifier | ✅ Complete | v0.2.x | [`docs/ir.md`](docs/ir.md) |
-| Autodiff engine (reverse-mode, all Core v1 ops) | ✅ Complete | v0.2.x | [`docs/autodiff.md`](docs/autodiff.md) |
+| Autodiff engine (reverse-mode, Core v1 tensor ops, single-output `main`; non-Core-v1 ops error rather than emit a silent zero gradient) | ✅ Complete | v0.2.x | [`docs/autodiff.md`](docs/autodiff.md) |
 | MLIR lowering (arith, tensor, linalg, func, scf, vector dialects) | ✅ Complete | v0.2.x | [`docs/ir-mlir.md`](docs/ir-mlir.md) |
 | CPU execution | ✅ Complete | v0.2.x | [`docs/gpu.md`](docs/gpu.md) |
 | GPU / multi-backend (CUDA, ROCm, Metal, WebGPU, WebNN) | ⏳ Not implemented — CPU-only today; `mindc` returns a structured "no backend for target gpu" error. Native deterministic GPU backend (NVIDIA SASS / AMD) roadmapped. | — | [`docs/gpu.md`](docs/gpu.md) |

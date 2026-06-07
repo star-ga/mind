@@ -67,6 +67,14 @@ Shape validation for Core v1 operators is also surfaced during type checking:
 See [`docs/versioning.md`](versioning.md) for how these classes fit the stability
 contract.
 
+> **MAP protocol responses use a separate code space.** The Mind AI Protocol
+> server (`mind-ai`) returns short transport-layer codes in its
+> `=<seq> err code=... msg="..."` responses (e.g. `E005` unknown command;
+> `E101`–`E104` resource-budget rejections). These are protocol responses, not
+> compiler diagnostics, and do not overlap the four-digit `E1xxx`–`E5xxx`
+> pipeline codes above. The MAP resource budgets are documented in
+> [`docs/security.md`](security.md#map-protocol-resource-budgets).
+
 Passing the Core v1 conformance suite indicates that the current build produces
 the expected diagnostics, IR, autodiff, and MLIR text for the relevant profile
 (CPU baseline or the optional GPU profile). Experimental features outside those
