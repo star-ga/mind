@@ -2,7 +2,21 @@
 # arch-mind sidecar-scan on commit. Log-only (no regression gate yet).
 # Self-contained: looks for arch-mind on PATH; silently no-ops if absent.
 ARCH_MIND="$(command -v arch-mind 2>/dev/null)"
-[ -z "$ARCH_MIND" ] || [ ! -x "$ARCH_MIND" ] && exit 0
-mkdir -p .arch-mind
-"$ARCH_MIND" sidecar-scan --repo . --out .arch-mind/last_summary.json >/dev/null 2>&1 || true
+if [ -n "$ARCH_MIND" ] && [ -x "$ARCH_MIND" ]; then
+  mkdir -p .arch-mind
+  "$ARCH_MIND" sidecar-scan --repo . --out .arch-mind/last_summary.json >/dev/null 2>&1 || true
+fi
+
+# Docs-claim gate: block the commit if a public surface drifts from the capability
+# manifest (config/capabilities.toml). Self-contained — skips silently if python3 or
+# the script is absent, but BLOCKS on real drift. Mirror of CI .github/workflows/docs-claims.yml.
+PY="$(command -v python3 2>/dev/null)"
+if [ -n "$PY" ] && [ -f scripts/check_claims.py ]; then
+  if ! "$PY" scripts/check_claims.py; then
+    echo "pre-commit: docs drifted from config/capabilities.toml — commit blocked." >&2
+    echo "  Update the surface or the manifest, then re-commit (run: python3 scripts/check_claims.py)." >&2
+    exit 1
+  fi
+fi
+
 exit 0
