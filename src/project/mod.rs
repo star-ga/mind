@@ -768,12 +768,47 @@ fn build_cdylib_from_entry(
         ..Default::default()
     };
 
-    let products = compile_source_with_name(
+    // RFC 0005 Phase C — seed the project module table for the cdylib emit
+    // path so `import std.vec` / `std.map` / `std.string` / `std.io` resolve
+    // during the type-check inside `compile_source_with_name`. The executable
+    // path does this in `compile_sources` (before its per-file loop); the
+    // cdylib path returns early in `build_project` and never reached that
+    // setup, so an entry that imports stdlib modules type-failed on every
+    // imported call (`vec_push`, `vec_get`, ...). Seeding the bundled stdlib
+    // plus the entry's own module makes those `pub fn` names available to the
+    // name-resolution check. The table is cleared again immediately after the
+    // compile so it never leaks into a sibling build (matching the
+    // set/None bracket in `compile_sources`). Without `cross-module-imports`
+    // there is nothing to seed and the call is a no-op, so the link stays
+    // byte-identical to the historical single-entry path.
+    #[cfg(feature = "cross-module-imports")]
+    {
+        let mut parsed: Vec<(String, crate::ast::Module)> =
+            crate::project::stdlib::parsed_stdlib_modules();
+        if let Ok(m) = crate::parser::parse(&source_code) {
+            let entry_key = entry_path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "main".to_string());
+            parsed.push((entry_key, m));
+        }
+        let refs: Vec<(String, &crate::ast::Module)> =
+            parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
+        let table = crate::project::module_table::build_module_table(&refs);
+        crate::type_checker::cm_set_project_table(Some(table));
+    }
+
+    let compile_result = compile_source_with_name(
         &source_code,
         Some(&entry_path.to_string_lossy()),
         &compile_opts,
-    )
-    .map_err(|e| anyhow!("cdylib compile failed for {}: {e}", entry_path.display()))?;
+    );
+
+    #[cfg(feature = "cross-module-imports")]
+    crate::type_checker::cm_set_project_table(None);
+
+    let products = compile_result
+        .map_err(|e| anyhow!("cdylib compile failed for {}: {e}", entry_path.display()))?;
 
     // Backend compile waterfall (feature `compile-timings`, `MIND_TIMINGS=1`).
     // The frontend phases already printed via `compile_source_with_name`; this
