@@ -109,6 +109,67 @@ pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
     check_ssa_stream(&module.instrs, &mut defined)
 }
 
+/// Insert into `scope` exactly the SSA ids an instruction exposes into its
+/// **enclosing** scope — the values that subsequent instructions in the same
+/// (and inner) regions may legitimately reference.
+///
+/// This is the SINGLE source of truth for control-flow region exposure, shared
+/// by both SSA verifiers ([`check_ssa_stream`] consumer-side and
+/// [`verify_module`] in-pipeline) so they can never diverge on which ids a
+/// control-flow op makes visible. When a new control-flow op is added, it is
+/// taught here once.
+///
+/// The exposed ids are the region-EXIT / MERGE values that are synthesized at
+/// region exit and are NOT defined by any instruction inside the region body:
+///
+/// * `If`  — the post-merge `dst` plus every F2 merge id (`^if_after` block
+///   args, the `merges[i].0`).
+/// * `While` — every `live_vars` post-body id plus every `exit_ids` id
+///   (`^while_after` block args). The loop-carried values seen after the loop.
+/// * `Region` — its `result` id (the last body value, exposed to the enclosing
+///   scope).
+/// * everything else — its plain `dst` if it produces one (the simple
+///   straight-line value case).
+///
+/// `insert` is idempotent: when an interior recursion already inserted an id
+/// (e.g. a `Region.result` produced inside the body), re-exposing it is a no-op
+/// and is NOT a single-assignment violation, because the region is one logical
+/// producer of that value.
+fn expose_region_definitions(instr: &Instr, scope: &mut BTreeSet<ValueId>) {
+    match instr {
+        #[cfg(feature = "std-surface")]
+        Instr::If { dst, merges, .. } => {
+            scope.insert(*dst);
+            for (merge_id, _then_val, _else_val) in merges {
+                scope.insert(*merge_id);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::While {
+            live_vars,
+            exit_ids,
+            ..
+        } => {
+            for (_name, post_id) in live_vars {
+                scope.insert(*post_id);
+            }
+            for exit_id in exit_ids {
+                scope.insert(*exit_id);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Instr::Region { result, .. } => {
+            scope.insert(*result);
+        }
+        // Simple-value case: expose the instruction's own result id, if any.
+        _ => {
+            if let Some(dst) = instruction_dst(instr) {
+                scope.insert(dst);
+            }
+        }
+    }
+}
+
 /// Walk one instruction stream in program order, threading the running
 /// `defined` set through nested regions. Operands are checked against
 /// definitions seen *earlier* in the walk; each instruction's result is then
@@ -217,17 +278,18 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
             _ => {}
         }
 
-        // 4. Expose a region node's result into the enclosing scope. The
-        //    interior recursion may already have defined it (`Region.result`,
-        //    `While.live_vars` post-body ids); `If.dst` is a distinct post-merge
-        //    id. `insert` is idempotent — a no-op for an interior id, a fresh
-        //    definition for a node-level merge id. This is NOT treated as a
-        //    single-assignment violation because the region is one logical
-        //    producer of that value.
+        // 4. Expose a region node's exit/merge ids into the enclosing scope via
+        //    the shared `expose_region_definitions` helper. This is the SAME
+        //    helper `verify_module` uses, so the two verifiers can never diverge
+        //    on control-flow exposure. It adds the synthesized region-exit ids
+        //    (`If.merges`, `While.exit_ids`/`live_vars` post-body, `Region.result`,
+        //    plus the node `dst`) that post-region code legitimately references
+        //    but which are NOT defined by any instruction inside the region body.
+        //    `insert` is idempotent — a no-op for an interior id, a fresh
+        //    definition for a node-level merge/exit id — so this is NOT a
+        //    single-assignment violation (the region is one logical producer).
         if is_region {
-            if let Some(dst) = instruction_dst(instr) {
-                defined.insert(dst);
-            }
+            expose_region_definitions(instr, defined);
         }
     }
     Ok(())
@@ -409,38 +471,15 @@ fn validate_operands(
             // Verify body instructions have internally consistent definitions.
             let mut body_defined: BTreeSet<ValueId> = BTreeSet::new();
             for (body_idx, body_instr) in body.iter().enumerate() {
-                if let Some(dst) = crate::ir::instruction_dst(body_instr) {
-                    body_defined.insert(dst);
-                }
-                // RFC 0005 Gap 1: While loops output their live_vars post-body
-                // values into the enclosing scope.  The MLIR emitter threads
-                // them as block arguments; the IR verifier must treat those
-                // post-body ValueIds as defined in the fn body after the While.
-                #[cfg(feature = "std-surface")]
-                if let Instr::While {
-                    live_vars,
-                    exit_ids,
-                    ..
-                } = body_instr
-                {
-                    for (_name, post_id) in live_vars {
-                        body_defined.insert(*post_id);
-                    }
-                    // F2: post-loop code references the EXIT ids (^while_after
-                    // block args), so they too are defined in fn scope after
-                    // the While.
-                    for exit_id in exit_ids {
-                        body_defined.insert(*exit_id);
-                    }
-                }
-                // F2: an If exposes its merge ids (^if_after block args) plus
-                // its `dst` into the enclosing scope after the branch.
-                #[cfg(feature = "std-surface")]
-                if let Instr::If { merges, .. } = body_instr {
-                    for (merge_id, _t, _e) in merges {
-                        body_defined.insert(*merge_id);
-                    }
-                }
+                // Expose every id this instruction makes visible to the enclosing
+                // (fn-body) scope via the SHARED `expose_region_definitions`
+                // helper — the same one the consumer-side `check_ssa_stream` uses,
+                // so the two verifiers can never diverge. For a straight-line op
+                // this inserts its plain `dst`; for a `While` it adds the
+                // `live_vars` post-body + `exit_ids` (^while_after block args);
+                // for an `If` it adds the `merges` ids (^if_after block args) plus
+                // `dst`; for a `Region` its `result`. RFC 0005 Gap 1 + F2.
+                expose_region_definitions(body_instr, &mut body_defined);
                 // Check operand references within body scope.
                 //
                 // Bug 2 fix: previously only `BinOp` operands were validated,
