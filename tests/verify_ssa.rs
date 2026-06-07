@@ -411,7 +411,11 @@ fn ssa_if_merge_then_val_from_else_branch_rejected() {
     );
     let err = check_ssa_well_formed(&m)
         .expect_err("then_val from else-branch must be rejected by check_ssa_well_formed");
-    assert_eq!(err.value, ValueId(2), "violation must name the else-only %2");
+    assert_eq!(
+        err.value,
+        ValueId(2),
+        "violation must name the else-only %2"
+    );
     assert_eq!(
         err.rule,
         SsaRule::DefineBeforeUse,
@@ -440,7 +444,11 @@ fn ssa_if_merge_else_val_from_then_branch_rejected() {
     );
     let err = check_ssa_well_formed(&m)
         .expect_err("else_val from then-branch must be rejected by check_ssa_well_formed");
-    assert_eq!(err.value, ValueId(1), "violation must name the then-only %1");
+    assert_eq!(
+        err.value,
+        ValueId(1),
+        "violation must name the then-only %1"
+    );
     assert_eq!(err.rule, SsaRule::DefineBeforeUse);
     assert!(
         libmind::ir::verify_module(&m).is_err(),
