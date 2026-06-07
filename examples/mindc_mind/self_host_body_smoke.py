@@ -13,10 +13,15 @@ Run:  python3 examples/mindc_mind/self_host_body_smoke.py
 """
 
 import ctypes
+import os
 import pathlib
 import sys
 
-SO = pathlib.Path(__file__).parent / "libmindc_mind.so"
+# Default to the locally-built .so next to this script; CI points MINDC_SO at
+# the artifact it builds (e.g. /tmp/libmindc_mind_self_host.so) so the real-body
+# emitter is gated in CI, not just locally.
+_DEFAULT_SO = pathlib.Path(__file__).parent / "libmindc_mind.so"
+SO = pathlib.Path(os.environ.get("MINDC_SO", str(_DEFAULT_SO)))
 
 CASES = [
     (b"pub fn add(a: i64, b: i64) -> i64 { a + b }\n",
@@ -86,6 +91,12 @@ def emit_body(lib, src: bytes) -> bytes:
 
 def main() -> int:
     if not SO.exists():
+        # When MINDC_SO is explicitly set (CI), a missing .so is a hard failure
+        # — otherwise the gate would silently pass green. Local runs without the
+        # var skip (the .so is an opt-in local build artifact).
+        if os.environ.get("MINDC_SO"):
+            print(f"ERROR: {SO} not found (MINDC_SO is set — refusing to skip)")
+            return 1
         print(f"SKIP: {SO} not built")
         return 0
     lib = ctypes.CDLL(str(SO))
