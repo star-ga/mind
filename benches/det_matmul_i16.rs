@@ -65,6 +65,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use libloading::{Library, Symbol};
@@ -74,6 +75,23 @@ use sha2::{Digest, Sha256};
 /// 256×256 entry is the byte-identity anchor — its hash is pinned to the
 /// committed reference.
 const SHAPES: &[usize] = &[64, 256, 512];
+
+/// Documented, conservative single-core int16 multiply-accumulate ceiling for
+/// the host ISA (GMAC/s) — the roofline `%-of-ISA-peak` denominator
+/// (`docs/benchmarking.md` §3). An **estimate against a documented constant**,
+/// not a certified hardware peak. int16 `vpmaddwd` on AVX2 does 16 i16-MACs/op:
+/// at the reference clock (~3.5 GHz, ~2 such ops/cyc) ≈ 112 GMAC/s. neon SDOT/
+/// widen-MAC is taken conservatively at ~48 GMAC/s. Single-core; comparability
+/// aid only.
+fn isa_peak_gmacs() -> f64 {
+    if cfg!(target_arch = "x86_64") {
+        112.0
+    } else if cfg!(target_arch = "aarch64") {
+        48.0
+    } else {
+        f64::NAN
+    }
+}
 
 /// The committed byte-identity workload (RFC 0020 §5). The 256×256 row of the
 /// sweep regenerates exactly this input and must hash to this reference.
@@ -317,6 +335,54 @@ fn assert_byte_identity(lib: &Library) {
     );
 }
 
+/// Comparable execution-throughput axis (`docs/benchmarking.md` §3) for the
+/// int16 GEMV: GMAC/s + `%-of-ISA-peak`. `MACs = rows·cols = n²`;
+/// `GMAC/s = MACs / median_seconds / 1e9`; roofline `% = GMAC/s / isa_peak`.
+/// Quick independent median (after warm-up) printed next to criterion's native
+/// elem/s. Self-contained: derived from workload size, no BLAS reference.
+fn report_gmacs_i16(lib: &Library, n: usize, seed: u64) {
+    const WARMUP: usize = 8;
+    const REPS: usize = 64;
+    let (w, x) = make_gemv_i16(n, n, seed);
+    let mut out = vec![0i32; n];
+    let mmi16: Symbol<MatmulFn> = unsafe { lib.get(b"mmi16").expect("mmi16 symbol") };
+    let call = |w: &[i16], x: &[i16], out: &mut [i32]| {
+        let rc = unsafe {
+            mmi16(
+                w.as_ptr() as i64,
+                x.as_ptr() as i64,
+                out.as_mut_ptr() as i64,
+                n as i64,
+                n as i64,
+            )
+        };
+        assert_eq!(rc, 0, "mmi16 returned {rc}");
+    };
+    for _ in 0..WARMUP {
+        call(&w, &x, &mut out);
+    }
+    let mut samples: Vec<f64> = Vec::with_capacity(REPS);
+    for _ in 0..REPS {
+        let t0 = Instant::now();
+        call(black_box(&w), black_box(&x), black_box(&mut out));
+        samples.push(t0.elapsed().as_secs_f64());
+    }
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = samples[REPS / 2];
+    let macs = (n as f64) * (n as f64);
+    let gmacs = macs / median / 1e9;
+    let peak = isa_peak_gmacs();
+    let pct = if peak.is_finite() {
+        format!("{:.1}% of ISA peak (~{peak:.0} GMAC/s est.)", gmacs / peak * 100.0)
+    } else {
+        "ISA peak unknown".to_string()
+    };
+    eprintln!(
+        "det_matmul_i16: ROOFLINE {n}x{n} {gmacs:7.2} GMAC/s  [{pct}]  (median {:.3} µs/call)",
+        median * 1e6
+    );
+}
+
 fn bench_det_matmul_i16(c: &mut Criterion) {
     let Some(so) = build_gemv_so() else {
         // Toolchain shadowed or mindc unbuilt — register no benchmarks, exit clean.
@@ -334,6 +400,15 @@ fn bench_det_matmul_i16(c: &mut Criterion) {
         // One MAC per inner-product term: rows·cols multiply-accumulates.
         let macs = (n as u64) * (n as u64);
         group.throughput(Throughput::Elements(macs));
+
+        // Comparable roofline axis (GMAC/s + %-of-ISA-peak), printed alongside
+        // criterion's native elem/s, with the same per-shape seed.
+        let report_seed = if n == ANCHOR_N {
+            ANCHOR_SEED
+        } else {
+            0xDEAD_BEEF_0000_0000 ^ (n as u64)
+        };
+        report_gmacs_i16(&lib, n, report_seed);
 
         // Seed off the shape so each size has its own reproducible input; the
         // 256×256 entry uses the anchor seed so its bytes match the committed

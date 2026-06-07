@@ -51,6 +51,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use libloading::{Library, Symbol};
@@ -59,6 +60,22 @@ use sha2::{Digest, Sha256};
 /// Square shapes the throughput sweep exercises. 64×64 is the byte-identity
 /// anchor; the larger shapes show multi-core scaling past the spawn/join cost.
 const SHAPES: &[usize] = &[64, 128, 256, 512];
+
+/// Conservative single-core integer-MAC ceiling for the host ISA (GMAC/s) — the
+/// per-core denominator of the roofline axis (`docs/benchmarking.md` §3). An
+/// **estimate against a documented constant**, not a certified hardware peak.
+/// Matches `det_matmul_q16`'s single-thread constant; the MT roofline divides by
+/// `cores × this` (all-core peak), since the kernel runs owner-computes across
+/// every core.
+fn isa_peak_gmacs_per_core() -> f64 {
+    if cfg!(target_arch = "x86_64") {
+        56.0
+    } else if cfg!(target_arch = "aarch64") {
+        24.0
+    } else {
+        f64::NAN
+    }
+}
 
 /// The committed byte-identity workload — the multithreaded kernel must hit the
 /// SAME reference hash the single-thread gate pins (RFC 0020 §5).
@@ -289,6 +306,63 @@ fn assert_byte_identity(lib: &Library) {
     );
 }
 
+/// Comparable execution-throughput axis (`docs/benchmarking.md` §3) for the
+/// multithreaded kernel: GMAC/s + `%-of-all-core-ISA-peak`. `MACs = n³`;
+/// `GMAC/s = MACs / median_seconds / 1e9`; the roofline denominator is
+/// `cores × single-core peak`, because the owner-computes partition runs across
+/// every core. Quick independent median (after warm-up) printed next to
+/// criterion's native elem/s. Self-contained: no BLAS, derived from workload size.
+fn report_gmacs_q16_mt(lib: &Library, n: usize, seed: u64) {
+    const WARMUP: usize = 4;
+    const REPS: usize = 32;
+    let (a, b) = make_gemm_q16(n, n, n, seed);
+    let mut out = vec![0i32; n * n];
+    let gemmq: Symbol<GemmFn> = unsafe { lib.get(b"gemmq").expect("gemmq symbol") };
+    let call = |a: &[i32], b: &[i32], out: &mut [i32]| {
+        let rc = unsafe {
+            gemmq(
+                a.as_ptr() as i64,
+                b.as_ptr() as i64,
+                out.as_mut_ptr() as i64,
+                n as i64,
+                n as i64,
+                n as i64,
+            )
+        };
+        assert_eq!(rc, 0, "gemmq returned {rc}");
+    };
+    for _ in 0..WARMUP {
+        call(&a, &b, &mut out);
+    }
+    let mut samples: Vec<f64> = Vec::with_capacity(REPS);
+    for _ in 0..REPS {
+        let t0 = Instant::now();
+        call(black_box(&a), black_box(&b), black_box(&mut out));
+        samples.push(t0.elapsed().as_secs_f64());
+    }
+    samples.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    let median = samples[REPS / 2];
+    let macs = (n as f64) * (n as f64) * (n as f64);
+    let gmacs = macs / median / 1e9;
+    let cores = std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(1) as f64;
+    let per_core = isa_peak_gmacs_per_core();
+    let pct = if per_core.is_finite() {
+        let peak = per_core * cores;
+        format!(
+            "{:.1}% of all-core ISA peak (~{peak:.0} GMAC/s est., {cores:.0}c)",
+            gmacs / peak * 100.0
+        )
+    } else {
+        "ISA peak unknown".to_string()
+    };
+    eprintln!(
+        "det_matmul_q16_mt: ROOFLINE {n}x{n}x{n} {gmacs:7.2} GMAC/s  [{pct}]  (median {:.2} µs/call)",
+        median * 1e6
+    );
+}
+
 fn bench_det_matmul_q16_mt(c: &mut Criterion) {
     let Some(so) = build_gemm_so() else {
         eprintln!("det_matmul_q16_mt: kernel unavailable; no measurements taken.");
@@ -303,6 +377,15 @@ fn bench_det_matmul_q16_mt(c: &mut Criterion) {
     for &n in SHAPES {
         let macs = (n as u64) * (n as u64) * (n as u64);
         group.throughput(Throughput::Elements(macs));
+
+        // Comparable roofline axis (GMAC/s + %-of-all-core-ISA-peak), printed
+        // alongside criterion's native elem/s, with the same per-shape seed.
+        let report_seed = if n == ANCHOR_N {
+            ANCHOR_SEED
+        } else {
+            0xDEAD_BEEF_0000_0000 ^ (n as u64)
+        };
+        report_gmacs_q16_mt(&lib, n, report_seed);
 
         let seed = if n == ANCHOR_N {
             ANCHOR_SEED
