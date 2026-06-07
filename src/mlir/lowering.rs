@@ -4490,6 +4490,18 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
+        // VPDPBUSD width is selected by the i32-lane count NR: NR=8 → the 256-bit
+        // YMM form (`vpdpbusd.256`, 32xi8 → 8xi32); NR=16 → the 512-bit ZMM form
+        // (`vpdpbusd.512`, 64xi8 → 16xi32). Both compute lane n += Σ_{s<4}
+        // a[4n+s]·b[4n+s] per i32 lane — the SAME 4-element u8×s8 dot — so widening
+        // only packs more independent output columns per instruction and leaves the
+        // exact int32 sum (hence byte-identity) unchanged. The default ZMM rung is
+        // NR=16 (I8_VNNI_NR); the 256 arm keeps the kernel correct at NR=8.
+        let vpdpbusd = if nr >= 16 {
+            "llvm.x86.avx512.vpdpbusd.512"
+        } else {
+            "llvm.x86.avx512.vpdpbusd.256"
+        };
         // VNNI constants: all-ones u8 vector (for the column-sum vpdpbusd) and
         // the 0x80 xor mask (s8→u8 bias), both as vector<NRxi32> reinterpreted
         // as the byte vectors vpdpbusd consumes.
@@ -4502,36 +4514,45 @@ impl LoweringContext {
         line(&format!(
             "              %{p}_zi32 = arith.constant dense<0> : vector<{nr}xi32>"
         ));
-        // iter_args: MR main i32 accumulators + 1 shared bsum i32 accumulator.
-        let mut acc_init: Vec<String> = (0..mr)
-            .map(|t| format!("%{p}_macc{t} = %{p}_zi32"))
-            .collect();
-        acc_init.push(format!("%{p}_bacc = %{p}_zi32"));
-        let iter_ty: Vec<String> = (0..=mr).map(|_| format!("vector<{nr}xi32>")).collect();
-        let iter_ty = iter_ty.join(", ");
-        line(&format!(
-            "              %{p}_vi:{} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
-             step %{p}_c1 iter_args({}) -> ({}) {{",
-            mr + 1,
-            acc_init.join(", "),
-            iter_ty
-        ));
-        line(&format!(
-            "                %{p}_kp64 = arith.index_cast %{p}_kp : index to i64"
-        ));
-        // B quads vector: Bp[jrbase + kp*(NR*4) .. +32] as vector<32xi8>, then
-        // bitcast to vector<NRxi32> (the form the vpdpbusd intrinsic declares).
+        // Rung 3 — kill the per-iteration index multiplies (`kp*stride`, which
+        // lower to `vpmuldq`/`imul`) by strength-reduction: the B/A panel strides
+        // `bnr4 = NR*grp` and `amr4 = MR*grp` are loop-invariant, so we hoist them
+        // and carry the running byte offsets `boff`/`aoff` as iter_args, stepping
+        // them by `+stride` each iteration instead of recomputing `kp*stride`.
+        // The computed offset sequence (jrbase, jrbase+bnr4, jrbase+2·bnr4, …) is
+        // pointwise IDENTICAL to the old `jrbase + kp*bnr4`, so every load address
+        // — and therefore every byte — is unchanged. Pure addressing change.
         line(&format!(
             "                %{p}_bnr4 = arith.muli %{p}_nrc, %{p}_cgrpi : i64"
         ));
         line(&format!(
-            "                %{p}_bkr = arith.muli %{p}_kp64, %{p}_bnr4 : i64"
+            "                %{p}_amr4 = arith.muli %{p}_mrc, %{p}_cgrpi : i64"
         ));
+        // iter_args: MR main i32 accumulators + 1 shared bsum i32 accumulator
+        // + the two running B/A panel offsets (induction-variable reduction).
+        let mut acc_init: Vec<String> = (0..mr)
+            .map(|t| format!("%{p}_macc{t} = %{p}_zi32"))
+            .collect();
+        acc_init.push(format!("%{p}_bacc = %{p}_zi32"));
+        acc_init.push(format!("%{p}_boff = %{p}_jrbase"));
+        acc_init.push(format!("%{p}_aoff = %{p}_irbase"));
+        let mut iter_ty: Vec<String> = (0..=mr).map(|_| format!("vector<{nr}xi32>")).collect();
+        iter_ty.push("i64".to_string());
+        iter_ty.push("i64".to_string());
+        let iter_ty = iter_ty.join(", ");
+        // Result count: mr accumulators + bsum + boff + aoff.
+        let vi_n = mr + 3;
         line(&format!(
-            "                %{p}_bvi = arith.addi %{p}_jrbase, %{p}_bkr : i64"
+            "              %{p}_vi:{vi_n} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
+             step %{p}_c1 iter_args({}) -> ({}) {{",
+            acc_init.join(", "),
+            iter_ty
         ));
+        // B quads vector: Bp[boff .. +4*NR] as vector<4*NR x i8>, then bitcast to
+        // vector<NRxi32> (the form the vpdpbusd intrinsic declares). `boff` is the
+        // running offset (= jrbase + kp*(NR*4)); no per-iteration multiply.
         line(&format!(
-            "                %{p}_bvp = llvm.getelementptr %{p}_pb[%{p}_bvi] : \
+            "                %{p}_bvp = llvm.getelementptr %{p}_pb[%{p}_boff] : \
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         line(&format!(
@@ -4545,20 +4566,12 @@ impl LoweringContext {
         ));
         // Per-quad column sum: vpdpbusd(bacc, ones_u8, b_s8) lane n += Σ_s B[4q+s,n].
         line(&format!(
-            "                %{p}_nbacc = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.256\"\
+            "                %{p}_nbacc = llvm.call_intrinsic \"{vpdpbusd}\"\
              (%{p}_bacc, %{p}_ones, %{p}_bv) : \
              (vector<{nr}xi32>, vector<{nr}xi32>, vector<{nr}xi32>) -> vector<{nr}xi32>"
         ));
-        // A K-quad base for this block: Ap[irbase + kp*(MR*4)].
-        line(&format!(
-            "                %{p}_amr4 = arith.muli %{p}_mrc, %{p}_cgrpi : i64"
-        ));
-        line(&format!(
-            "                %{p}_akr = arith.muli %{p}_kp64, %{p}_amr4 : i64"
-        ));
-        line(&format!(
-            "                %{p}_abase = arith.addi %{p}_irbase, %{p}_akr : i64"
-        ));
+        // A K-quad base for this block: Ap[aoff] where `aoff` is the running
+        // offset (= irbase + kp*(MR*4)); no per-iteration multiply.
         let mut yields = Vec::with_capacity(mr + 1);
         for t in 0..mr {
             // A quad for row t: four contiguous i8 = [A[t,4kp..4kp+3]]. Load as
@@ -4571,7 +4584,7 @@ impl LoweringContext {
                 t * 4
             ));
             line(&format!(
-                "                %{p}_ai{t} = arith.addi %{p}_abase, %{p}_at{t} : i64"
+                "                %{p}_ai{t} = arith.addi %{p}_aoff, %{p}_at{t} : i64"
             ));
             line(&format!(
                 "                %{p}_ap{t} = llvm.getelementptr %{p}_pa[%{p}_ai{t}] : \
@@ -4588,7 +4601,7 @@ impl LoweringContext {
                 "                %{p}_au{t} = arith.xori %{p}_abc{t}, %{p}_xor80 : vector<{nr}xi32>"
             ));
             line(&format!(
-                "                %{p}_nm{t} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.256\"\
+                "                %{p}_nm{t} = llvm.call_intrinsic \"{vpdpbusd}\"\
                  (%{p}_macc{t}, %{p}_au{t}, %{p}_bv) : \
                  (vector<{nr}xi32>, vector<{nr}xi32>, vector<{nr}xi32>) -> vector<{nr}xi32>"
             ));
@@ -4659,8 +4672,18 @@ impl LoweringContext {
     ) {
         use std::fmt::Write;
         let p = prefix;
-        const MR: usize = I8_MR;
-        const NR: usize = I8_NR;
+        // Register-tile dims. The AVX2 rung is the hash-pinned canary (917d353b)
+        // and MUST emit MR=4 / NR=8 (the `vpmaddwd` 256-bit shape). The VNNI
+        // rung widens to the ZMM `vpdpbusd.512` shape: NR=16 i32 lanes (one ZMM
+        // accumulator per A-row) and MR=8 independent accumulator chains (≥8 to
+        // hide the 4–5 cycle vpdpbusd latency). Both are pure tiling choices over
+        // an associative i64 reduction, so each rung still produces the identical
+        // exact int32 sum — only the AVX2 NR/MR are byte-frozen.
+        let (mr, nr): (usize, usize) = match mode {
+            IntDotMode::Avx2 => (I8_MR, I8_NR),
+            // ZMM: 16 i32 lanes/accumulator, 8 row-accumulator chains.
+            IntDotMode::Vnni => (I8_VNNI_MR, I8_VNNI_NR),
+        };
         const MC: usize = I8_MC;
         const KC: usize = I8_KC;
         const NC: usize = I8_NC;
@@ -4697,10 +4720,10 @@ impl LoweringContext {
         //   preserved exactly. NO saturation (never vpmaddubsw), NO shift.
         let eb_src: i64 = 1;
         let eb: i64 = std::mem::size_of::<i32>() as i64;
-        // i32 partial-lane count of one vpmaddwd over NR=8 output columns: each
-        // output column consumes a (k,k+1) i16 pair, so a 2*NR=16-wide i16
-        // multiply yields NR=8 i32 partials.
-        const PL: usize = NR;
+        // i32 partial-lane count of one vpmaddwd over NR output columns: each
+        // output column consumes a (k,k+1) i16 pair, so a 2*NR-wide i16
+        // multiply yields NR i32 partials.
+        let pl: usize = nr;
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
@@ -4709,8 +4732,8 @@ impl LoweringContext {
         line(&format!("    %{p}_c0 = arith.constant 0 : index"));
         line(&format!("    %{p}_c1 = arith.constant 1 : index"));
         line(&format!("    %{p}_c2 = arith.constant 2 : index"));
-        line(&format!("    %{p}_cmr = arith.constant {MR} : index"));
-        line(&format!("    %{p}_cnr = arith.constant {NR} : index"));
+        line(&format!("    %{p}_cmr = arith.constant {mr} : index"));
+        line(&format!("    %{p}_cnr = arith.constant {nr} : index"));
         line(&format!("    %{p}_cmc = arith.constant {MC} : index"));
         line(&format!("    %{p}_ckc = arith.constant {KC} : index"));
         line(&format!("    %{p}_cnc = arith.constant {NC} : index"));
@@ -4725,7 +4748,7 @@ impl LoweringContext {
         line(&format!("    %{p}_cgrp = arith.constant {grp} : index"));
         line(&format!("    %{p}_cgrpi = arith.constant {grp} : i64"));
         line(&format!(
-            "    %{p}_zv = arith.constant dense<0> : vector<{NR}xi64>"
+            "    %{p}_zv = arith.constant dense<0> : vector<{nr}xi64>"
         ));
 
         // ── private scratch (constant-extent alloca) ─────────────────────────
@@ -4755,8 +4778,8 @@ impl LoweringContext {
         ));
         line(&format!("    %{p}_ncc = arith.constant {NC} : i64"));
         line(&format!("    %{p}_kcc = arith.constant {KC} : i64"));
-        line(&format!("    %{p}_mrc = arith.constant {MR} : i64"));
-        line(&format!("    %{p}_nrc = arith.constant {NR} : i64"));
+        line(&format!("    %{p}_mrc = arith.constant {mr} : i64"));
+        line(&format!("    %{p}_nrc = arith.constant {nr} : i64"));
 
         // ════════════════════════════════════════════════════════════════════
         //  jc — column block over [0, N)
@@ -5131,8 +5154,8 @@ impl LoweringContext {
         // The total over all K is the identical sum of A[t,k]*B[k,n] terms as
         // the scalar oracle — byte-identical. The trailing <grp leftover K is a
         // scalar tail (shared by both rungs).
-        let acc_ty = (0..MR)
-            .map(|_| format!("vector<{NR}xi64>"))
+        let acc_ty = (0..mr)
+            .map(|_| format!("vector<{nr}xi64>"))
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!(
@@ -5144,10 +5167,10 @@ impl LoweringContext {
         let _ = line; // release the closure's &mut buf so the microkernel can write it
         match mode {
             IntDotMode::Avx2 => {
-                Self::emit_i8_microkernel_avx2(buf, p, NR, MR, PL, &acc_ty);
+                Self::emit_i8_microkernel_avx2(buf, p, nr, mr, pl, &acc_ty);
             }
             IntDotMode::Vnni => {
-                Self::emit_i8_microkernel_vnni(buf, p, NR, MR, &acc_ty);
+                Self::emit_i8_microkernel_vnni(buf, p, nr, mr, &acc_ty);
             }
         }
         let mut line = |s: &str| {
@@ -5165,12 +5188,12 @@ impl LoweringContext {
         // so the tail product is the plain signed A[t,kk]*B[kk,n] in both rungs.
         // NR is small and this runs at most `grp-1` times per KC panel, so a
         // scalar per-column update is fine and bit-identical (associative add).
-        let tail_init = (0..MR)
+        let tail_init = (0..mr)
             .map(|t| format!("%{p}_tacc{t} = %{p}_va#{t}"))
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!(
-            "              %{p}_vt:{MR} = scf.for %{p}_kt = %{p}_kmain to %{p}_kce \
+            "              %{p}_vt:{mr} = scf.for %{p}_kt = %{p}_kmain to %{p}_kce \
              step %{p}_c1 iter_args({tail_init}) -> ({acc_ty}) {{"
         ));
         line(&format!(
@@ -5207,8 +5230,8 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_tabase = arith.addi %{p}_irbase, %{p}_takrs : i64"
         ));
-        let mut tail_yields = Vec::with_capacity(MR);
-        for t in 0..MR {
+        let mut tail_yields = Vec::with_capacity(mr);
+        for t in 0..mr {
             line(&format!(
                 "                %{p}_tat{t} = arith.constant {} : i64",
                 t * grp
@@ -5230,7 +5253,7 @@ impl LoweringContext {
             // Inner column loop over NR: scalar B[kk,n], product, scatter-add.
             line(&format!(
                 "                %{p}_tn{t} = scf.for %{p}_tj{t} = %{p}_c0 to %{p}_cnr \
-                 step %{p}_c1 iter_args(%{p}_tav{t} = %{p}_tacc{t}) -> (vector<{NR}xi64>) {{"
+                 step %{p}_c1 iter_args(%{p}_tav{t} = %{p}_tacc{t}) -> (vector<{nr}xi64>) {{"
             ));
             line(&format!(
                 "                  %{p}_tj{t}64 = arith.index_cast %{p}_tj{t} : index to i64"
@@ -5256,16 +5279,16 @@ impl LoweringContext {
                 "                  %{p}_tpp{t} = arith.muli %{p}_taw{t}, %{p}_tbw{t} : i64"
             ));
             line(&format!(
-                "                  %{p}_told{t} = vector.extract %{p}_tav{t}[%{p}_tj{t}] : i64 from vector<{NR}xi64>"
+                "                  %{p}_told{t} = vector.extract %{p}_tav{t}[%{p}_tj{t}] : i64 from vector<{nr}xi64>"
             ));
             line(&format!(
                 "                  %{p}_tnew{t} = arith.addi %{p}_told{t}, %{p}_tpp{t} : i64"
             ));
             line(&format!(
-                "                  %{p}_tins{t} = vector.insert %{p}_tnew{t}, %{p}_tav{t}[%{p}_tj{t}] : i64 into vector<{NR}xi64>"
+                "                  %{p}_tins{t} = vector.insert %{p}_tnew{t}, %{p}_tav{t}[%{p}_tj{t}] : i64 into vector<{nr}xi64>"
             ));
             line(&format!(
-                "                  scf.yield %{p}_tins{t} : vector<{NR}xi64>"
+                "                  scf.yield %{p}_tins{t} : vector<{nr}xi64>"
             ));
             line("                }");
             tail_yields.push(format!("%{p}_tn{t}"));
@@ -5276,7 +5299,7 @@ impl LoweringContext {
         ));
         line("              }");
         // ── add the MR×NR i64 partial into the C-scratch tile ────────────────
-        for t in 0..MR {
+        for t in 0..mr {
             line(&format!(
                 "              %{p}_ct{t} = arith.constant {t} : i64"
             ));
@@ -5295,14 +5318,14 @@ impl LoweringContext {
             ));
             line(&format!(
                 "              %{p}_cold{t} = llvm.load %{p}_csp{t} {{alignment = 8 : i64}} : \
-                 !llvm.ptr -> vector<{NR}xi64>"
+                 !llvm.ptr -> vector<{nr}xi64>"
             ));
             line(&format!(
-                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_vt#{t} : vector<{NR}xi64>"
+                "              %{p}_cnew{t} = arith.addi %{p}_cold{t}, %{p}_vt#{t} : vector<{nr}xi64>"
             ));
             line(&format!(
                 "              llvm.store %{p}_cnew{t}, %{p}_csp{t} {{alignment = 8 : i64}} : \
-                 vector<{NR}xi64>, !llvm.ptr"
+                 vector<{nr}xi64>, !llvm.ptr"
             ));
         }
         line("            }"); // end ir
@@ -5350,10 +5373,10 @@ impl LoweringContext {
         ));
         line(&format!(
             "            %{p}_csvv = llvm.load %{p}_csvp {{alignment = 8 : i64}} : \
-             !llvm.ptr -> vector<{NR}xi64>"
+             !llvm.ptr -> vector<{nr}xi64>"
         ));
         line(&format!(
-            "            %{p}_csvt = arith.trunci %{p}_csvv : vector<{NR}xi64> to vector<{NR}xi32>"
+            "            %{p}_csvt = arith.trunci %{p}_csvv : vector<{nr}xi64> to vector<{nr}xi32>"
         ));
         line(&format!(
             "            %{p}_dvi = arith.addi %{p}_drb, %{p}_wc64 : i64"
@@ -5367,7 +5390,7 @@ impl LoweringContext {
         ));
         line(&format!(
             "            llvm.store %{p}_csvt, %{p}_dvp {{alignment = 4 : i64}} : \
-             vector<{NR}xi32>, !llvm.ptr"
+             vector<{nr}xi32>, !llvm.ptr"
         ));
         line("          }");
         // scalar column tail [nmain, NCe)
@@ -5419,13 +5442,13 @@ impl LoweringContext {
     ///
     /// ```text
     ///   region A (vector tile): j0 = 0..n_main step NR, i0 = 0..m_main step MR
-    ///     acc[0..MR] = dense<0> : vector<NRxi64>
+    ///     acc[0..mr] = dense<0> : vector<NRxi64>
     ///     k-loop (scf.for iter_args = acc):
     ///       bw = extsi( load vector<NRxi32> at B+(k*N+j0)*4 )
-    ///       for t in 0..MR:
+    ///       for t in 0..mr:
     ///         aw = extsi( load i32 at A+((i0+t)*K+k)*4 )
     ///         p  = (broadcast aw) * bw ; ps = p >> 16 ; acc[t] += ps
-    ///     for t in 0..MR: store trunci(acc[t]) -> C+((i0+t)*N+j0)*4
+    ///     for t in 0..mr: store trunci(acc[t]) -> C+((i0+t)*N+j0)*4
     ///   region B (M row tail): j0 = 0..n_main step NR, i = m_main..M step 1
     ///     single-row vector<NRxi64> accumulator over the NR-wide column block
     ///   region C (N col tail): j = n_main..N step 1, i = 0..M step 1

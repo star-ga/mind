@@ -129,11 +129,30 @@ pub const I8_KC: usize = 256;
 pub const I8_NC: usize = 128;
 
 /// int8 tier register-tile rows — mirrors `Q16_MR`. Pinned (accumulator shape).
+/// This is the AVX2 `vpmaddwd` rung's row tile and is **hash-frozen** (the
+/// `917d353b` int8 cross-substrate canary): do not change without a rebless.
 pub const I8_MR: usize = 4;
 
 /// int8 tier register-tile columns — mirrors `Q16_NR`. Pinned (accumulator
-/// vector width).
+/// vector width). AVX2 `vpmaddwd` produces 8 i32 partials per 256-bit op; this
+/// is **hash-frozen** (`917d353b`).
 pub const I8_NR: usize = 8;
+
+/// VNNI rung register-tile columns — the ZMM `vpdpbusd.512` width. One
+/// `vpdpbusd.512` produces 16 i32 partials (16xi32 = 512-bit), so each A-row
+/// accumulator is a single ZMM `vector<16xi32>`. This DOUBLES the column-tile
+/// width vs the 256-bit form (the ~2× throughput lever). It does not touch the
+/// AVX2 canary — only the opt-in `MIND_INTDOT=vnni` path reads it — and it is a
+/// pure tiling choice over an associative i64 reduction, so the exact int32 sum
+/// (and therefore byte-identity with the AVX2 rung) is unchanged.
+pub const I8_VNNI_NR: usize = 16;
+
+/// VNNI rung register-tile rows — number of independent `vpdpbusd` accumulator
+/// chains. 8 main chains (+ 1 shared column-sum chain = 9 in flight) hide the
+/// 4–5-cycle `vpdpbusd` latency; pure reordering of independent integer adds, so
+/// the exact int32 sum is unchanged. `I8_MC` (64) and `I8_NC` (128) stay
+/// multiples of these dims, so the C-scratch / packed-panel extents are unchanged.
+pub const I8_VNNI_MR: usize = 8;
 
 /// int8 GEMM int-dot rung selector. Selects the vector instruction the int8
 /// macro-kernel uses to contract the K dimension. **Every rung produces the
