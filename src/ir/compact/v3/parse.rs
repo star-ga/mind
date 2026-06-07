@@ -375,6 +375,10 @@ fn read_type_ann<R: Read>(
 // ─── Instruction decoder ──────────────────────────────────────────────────────
 
 #[cfg_attr(not(feature = "std-surface"), allow(unused_variables))]
+// `version` is threaded through for version-aware sub-decoding (e.g. the
+// std-surface While/If region metadata); without that feature it is only
+// passed to the recursive calls, which clippy flags.
+#[cfg_attr(not(feature = "std-surface"), allow(clippy::only_used_in_recursion))]
 fn decode_instr<R: Read>(
     r: &mut R,
     strings: &[String],
@@ -943,7 +947,7 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
     // decoded with those fields empty; 0x02+ reads them from the wire. The
     // emitter always writes MIC3_VERSION.
     let version = read_u8(&mut r)?;
-    if version < MIC3_MIN_READ_VERSION || version > MIC3_VERSION {
+    if !(MIC3_MIN_READ_VERSION..=MIC3_VERSION).contains(&version) {
         return Err(err!(
             "unsupported MIC3 version: this build reads 0x{:02X}..=0x{:02X}, got 0x{:02X}",
             MIC3_MIN_READ_VERSION,
