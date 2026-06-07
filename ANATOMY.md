@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,808,457
-**Generated:** 2026-06-07 08:07 UTC
+**Files:** 2748 | **Est. tokens:** ~6,818,096
+**Generated:** 2026-06-07 13:32 UTC
 
 ## Token Budget Guide
 
@@ -27,7 +27,7 @@
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
-| `benches/` | 12 | ~25,408 |
+| `benches/` | 12 | ~25,424 |
 | `benchmarks/` | 14 | ~24,428 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -50,7 +50,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 7 | ~25,635 |
+| `examples/mindc_mind/` | 7 | ~26,092 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -368,7 +368,7 @@
 | `src/bin/` | 2 | ~24,727 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
-| `src/check/` | 3 | ~9,753 |
+| `src/check/` | 3 | ~10,038 |
 | `src/deps/` | 1 | ~8,087 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
@@ -378,10 +378,10 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,762 |
-| `src/ir/` | 4 | ~20,660 |
+| `src/ir/` | 4 | ~23,559 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~39,864 |
+| `src/ir/compact/v3/` | 4 | ~43,165 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 3 | ~4,553 |
@@ -397,7 +397,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 174 | ~310,843 |
+| `tests/` | 176 | ~313,524 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -496,9 +496,9 @@
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~3782 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
-- `det_matmul_i16.rs` (~4613 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_i16.rs` (~4621 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16_mt.rs` (~4049 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_q16.rs` (~4961 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_q16.rs` (~4969 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1208 tok, large) — Simple broadcasting scenarios
@@ -717,8 +717,8 @@
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~16763 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
-- `self_host_body_smoke.py` (~542 tok, large)
+- `main.mind` (~17086 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+- `self_host_body_smoke.py` (~676 tok, large)
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
@@ -3605,7 +3605,7 @@
 ### `src/check/`
 
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7034 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7319 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3680,16 +3680,16 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/`
 
-- `emit.rs` (~10266 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~10517 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~10099 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~8643 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~12742 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~9050 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~8925 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~6282 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~9181 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -3880,6 +3880,7 @@
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
+- `emit_ir_for_loop.rs` (~229 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2666 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4165,10 +4166,11 @@
 
 - `type_error_spans.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
+- `undefined_ref_check.rs` (~500 tok, large) — Regression tests for #23: the type-checker must detect undefined variable and
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 - `verify_cli.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify_ssa.rs` (~2580 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_ssa.rs` (~4532 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.

@@ -27,6 +27,14 @@ CASES = [
      b"  output %0\n"),
     (b"pub fn three(a: i64, b: i64, c: i64) -> i64 { a + b + c }\n",
      b"  %3 = add %0, %1\n  %4 = add %3, %2\n  output %4\n"),
+    # Call body: the result is still a const.i64-0 placeholder (mic@1 surfaces
+    # no real call op), but the ARGUMENTS now lower with param resolution.
+    # g(a): arg `a` resolves to %0 (no op) -> call placeholder %1 -> output %1.
+    (b"pub fn f(a: i64) -> i64 { g(a) }\n",
+     b"  %1 = const.i64 0\n  output %1\n"),
+    # g(a + 1): arg binop lowers (%0 param, %1 const 1, %2 add) -> placeholder %3.
+    (b"pub fn f(a: i64) -> i64 { g(a + 1) }\n",
+     b"  %1 = const.i64 1\n  %2 = add %0, %1\n  %3 = const.i64 0\n  output %3\n"),
 ]
 
 
