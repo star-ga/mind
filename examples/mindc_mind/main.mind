@@ -2079,11 +2079,35 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
     if k == ast_paren() {
         return emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
     }
+    if k == ast_call() {
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        let s_args: EmitState = emit_call_args_env(s, buf, args_addr, args_len, 0, params_addr, n_params);
+        let id: i64 = s_args.next_id;
+        let s1: EmitState = emit_lit_const_i64_head(s_args, id);
+        let s2: EmitState = es_push(s1, 48);
+        let s3: EmitState = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    }
     let id: i64 = s.next_id;
     let s1: EmitState = emit_lit_const_i64_head(s, id);
     let s2: EmitState = es_push(s1, 48);
     let s3: EmitState = es_push(s2, ch_newline());
     EmitState { buf: s3.buf, next_id: id + 1, last_id: id }
+}
+
+// Env-aware call-argument lowering: like emit_call_args but threads the
+// parameter environment so an argument that names a parameter resolves to
+// its %SSA id (and nested binops/consts lower to real ops). The call result
+// itself stays a const.i64-0 placeholder (the canary/oracle does not surface
+// a real call op in mic@1 text — only the arguments gain real lowering).
+pub fn emit_call_args_env(s: EmitState, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64) -> EmitState {
+    if i >= args_len {
+        return s;
+    }
+    let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
+    let s1: EmitState = emit_expr_env(s, buf, arg_node, params_addr, n_params);
+    emit_call_args_env(s1, buf, args_addr, args_len, i + 1, params_addr, n_params)
 }
 
 pub fn emit_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
