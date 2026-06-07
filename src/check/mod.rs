@@ -31,7 +31,6 @@ use crate::lint::rules::register_defaults;
 use crate::lint::{check_source as lint_source, rule::RuleRegistry};
 use crate::parser::parse_with_trivia;
 use crate::project::{MindcraftConfig, RuleSeverity, find_project_root, load_manifest};
-#[cfg(not(feature = "cross-module-imports"))]
 use crate::type_checker::check_module_types_in_file;
 
 use gitignore::GitignoreFilter;
@@ -791,24 +790,6 @@ fn check_types(path: &Path, source: &str, out: &mut Vec<CheckDiagnostic>) {
     };
 
     let file_name = path.to_str();
-    // RFC 0005 Phase C — seed the cross-module resolver with the bundled std
-    // surface so single-file `mindc check` resolves `use std.vec` /
-    // `use std.string` / … imports the same way the project build path does
-    // (task #23). Without this seeding the resolver sees an empty table and a
-    // call to an imported `vec_new` would mis-fire as an undefined call (E2003).
-    // Default / no-cross-module build keeps the byte-identical empty-table path.
-    #[cfg(feature = "cross-module-imports")]
-    let type_diags = {
-        use crate::project::module_table::build_module_table;
-        use crate::project::stdlib::parsed_stdlib_modules;
-        use crate::type_checker::check_module_types_with_modules;
-        let std_mods = parsed_stdlib_modules();
-        let refs: Vec<(String, &crate::ast::Module)> =
-            std_mods.iter().map(|(p, m)| (p.clone(), m)).collect();
-        let table = build_module_table(&refs);
-        check_module_types_with_modules(&module, source, file_name, &HashMap::new(), &table)
-    };
-    #[cfg(not(feature = "cross-module-imports"))]
     let type_diags = check_module_types_in_file(&module, source, file_name, &HashMap::new());
 
     for d in type_diags {
