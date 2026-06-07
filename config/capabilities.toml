@@ -1,0 +1,109 @@
+# MIND capability manifest — SINGLE SOURCE OF TRUTH for cross-surface claims.
+#
+# Why this exists: external review (2026-06) found public claims that contradicted
+# each other across README / STATUS / docs / site (IR versions, autodiff status,
+# runtime boundary, tool counts). The root cause was hand-maintained prose in many
+# places. This file is the canonical record; `scripts/check_claims.py` is a CI gate
+# that fails the build if any documented surface drifts from these values.
+#
+# Update HERE first, then update the surfaces; the gate keeps them honest.
+
+[ir]
+# Canonical IR serialization (RFC 0014/0016/0021). The full IRModule.
+canonical_text   = "mic@1"
+canonical_binary = "mic@3"
+# Evidence-chain trace hash anchors on canonical mic@3 BYTES (RFC 0016 GAP-1 re-anchor,
+# 2026-05-31) — NOT on mic@1 text, NOT on the v2/v2.1 forms.
+trace_hash_anchor = "mic@3"
+# Legacy dataflow lineage — DEMOTED to mind-model@2 (RFC 0021 step 5). Back-compat only;
+# never described as the current/canonical compiled-artifact IR.
+legacy_dataflow_text   = "mic@2.1"
+legacy_dataflow_binary = "MIC-B v2"
+map_protocol = "1.0"
+
+[autodiff]
+# Reverse-mode AD ships in the open `mind` compiler for the Core v1 tensor ops.
+mode   = "reverse-mode"
+scope  = "Core v1 tensor ops"
+entry  = "single-output main"
+status = "shipped"
+# Non-Core-v1 ops (functions / control flow / std-surface / modulo / bitwise / shift)
+# return a structured error, NOT a silent zero gradient.
+non_core_v1_policy = "structured error"
+# Honesty guard: AD is NOT to be described as "experimental" (it ships + tests green),
+# and NOT as "all ops complete" (it is scoped to Core v1, single-output main).
+
+[runtime]
+# The OPEN repo ships a reference CPU interpreter — correct but unoptimized, behind the
+# `cpu-exec` feature. It is NOT "native"/production, and NOT unimplemented `todo!()`.
+open_cpu = "reference interpreter"
+# Production-grade CPU/GPU/accelerator backends live in the commercial mind-runtime.
+production_backends = "commercial mind-runtime"
+
+[profiles]
+lightweight   = "open"
+guarded       = "commercial"
+high_assurance = "commercial"
+
+# ---------------------------------------------------------------------------
+# Phrases that must NEVER reappear on a public surface (regression guards).
+# Each was a real contradiction fixed 2026-06-06; the gate fails if any returns.
+[forbidden_phrases]
+ir          = ["anchored on mic@1 trace hash", "mic@2 (Current)", "MIC-B v2 (Binary)"]
+autodiff    = ["autodiff support is experimental", "autodiff is experimental"]
+runtime     = ["Native CPU Execution"]
+
+# ---------------------------------------------------------------------------
+# Auto-derived counts (OPTIONAL gate, conservative + advisory).
+#
+# Each entry declares a number that appears in a public surface AND how to
+# re-derive the real value from the working tree. `scripts/check_claims.py`
+# attempts the derivation; if the source path is unreachable it SKIPS that
+# entry silently (never crashes a checkout without the tree). A `floor`
+# declared number must stay <= the real count (the surface uses "N+"); an
+# `exact` number must match within `tolerance`. Drift is FLAGGED.
+#
+# Modes:
+#   floor  — declared <= derived            (surface phrased as "N+")
+#   exact  — |declared - derived| <= tolerance
+# Kinds:
+#   glob_count    — files matching `pattern` under `path`
+#   regex_count   — occurrences of `regex` across files matching `pattern`
+#   py_test_count — `def test_*` functions under `path` (pytest discovery)
+#
+# Keep this section conservative: only declare counts a maintainer is willing
+# to have block a commit. Floor + tolerance keep the false-positive rate low.
+[counts.rust_test_files]
+declared  = 156
+mode      = "floor"
+kind      = "glob_count"
+globs     = ["tests/**/*.rs"]
+surface   = "README.md"
+note      = '"... across 156 test files" — floor; real tree has more.'
+
+[counts.rust_test_fns]
+declared  = 1264
+mode      = "floor"
+kind      = "regex_count"
+globs     = ["tests/**/*.rs", "src/**/*.rs"]
+regex     = '#\[(?:tokio::)?test\]'
+surface   = "README.md"
+note      = '"1,264+ tests" — floor over #[test] / #[tokio::test] across src/ + tests/.'
+
+[counts.pytorch_bridge_tests]
+declared  = 11
+mode      = "exact"
+tolerance = 0
+kind      = "py_test_count"
+path      = "tools/pytorch_bridge/tests"
+surface   = "README.md"
+note      = '"11 unit tests under tools/pytorch_bridge/tests/" — exact.'
+
+[counts.stdlib_modules]
+declared  = 13
+mode      = "floor"
+kind      = "glob_count"
+path      = "std"
+pattern   = "*.mind"
+surface   = "STATUS.md"
+note      = '"13 stdlib modules" — floor; std/ also holds runtime-internal modules.'
