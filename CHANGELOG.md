@@ -2060,8 +2060,8 @@ change.
 
 ### Changed
 - `find_runtime_lib` now searches only `MIND_LIB_DIR` and `~/.mind/lib`.
-  The previous `~/.nikolachess/lib` fallback was an internal
-  install-path leak and is removed.
+  A previous downstream-specific install-path fallback was an internal
+  leak and is removed.
 - Test target `parse_rfn_mind.rs` renamed to `parse_phase10_surface.rs`;
   the corpus-sweep test is now driven by the `MIND_TRACKING_CORPUS_DIR`
   environment variable rather than a hard-coded path. On CI and fresh

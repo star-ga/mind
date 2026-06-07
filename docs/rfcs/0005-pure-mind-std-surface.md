@@ -216,9 +216,9 @@ public contract for every pure-MIND program. Options:
   inside MIND IR; couples to MLIR's struct dialect choices; tougher to
   port to the IR→LLVM-text backend in Phase 15.
 
-The recommended order is **decide via the multi-LLM consensus +
+The recommended order is **decide via internal review +
 autoresearch loop** before any implementation work, per the standing
-"non-obvious architectural decisions need consensus" rule. Until then,
+"non-obvious architectural decisions need review" rule. Until then,
 Phase 2 is *blocked on a design decision, not on code*.
 
 ## Reference-level explanation
@@ -355,7 +355,7 @@ direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
 | 1     | `__mind_alloc/free/realloc/read/write` intrinsics declared | mindc v0.2.11 | **shipped** |
 | 1.5   | `__mind_load_i64/store_i64` declared (P0c) | mindc v0.2.11 | **shipped** |
 | P0d   | `Instr::FnDef` → MLIR `func.func` | mindc v0.3.0 | **shipped** |
-| P0e   | Struct heap-record ABI (Option C, 9-LLM consensus) | mindc v0.3.0 | **shipped** |
+| P0e   | Struct heap-record ABI (Option C, per internal review) | mindc v0.3.0 | **shipped** |
 | P0f   | FieldAccess read path (Step 1 + Step 2 side-table) | mindc v0.3.0 | **shipped** |
 | 2     | `std/{vec,string,map,io}.mind` lower end-to-end | mindc v0.4.0 | **shipped** |
 | 2-resolver | `use std.foo` cross-module resolver (Phase A) | mindc v0.4.0 | **shipped** |

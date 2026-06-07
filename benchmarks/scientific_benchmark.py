@@ -13,6 +13,10 @@ import statistics
 import subprocess
 import re
 import sys
+import os
+
+# Repo root = parent of this script's directory (benchmarks/).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SAMPLE_SIZE = 10
 WARMUP_RUNS = 3
@@ -101,7 +105,7 @@ def run_criterion():
     result = subprocess.run(
         ["cargo", "bench", "--bench", "simple_benchmarks"],
         capture_output=True, text=True,
-        cwd="/home/n/mind", timeout=300
+        cwd=REPO_ROOT, timeout=300
     )
     output = result.stdout + result.stderr
     results = {}

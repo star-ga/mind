@@ -5,7 +5,7 @@
 //! RFC 0005 P0e Step 1 — `Node::StructDef` + `Node::StructLit` lowering
 //! to the heap-record ABI.
 //!
-//! After the unanimous 5/5 multi-LLM consensus on Option C, structs are
+//! After internal review converged on Option C, structs are
 //! lowered as i64 heap addresses: `__mind_alloc(8*N)` returns the base
 //! address, and each field becomes an i64 slot at offset `8*field_index`
 //! written via `__mind_store_i64`. The struct value itself is the i64

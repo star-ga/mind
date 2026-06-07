@@ -4,7 +4,7 @@
 |---|---|
 | RFC | 0021 |
 | Title | Canonical IR Unification (mic@3 binary `IRModule` + embedded MAP; model-exchange demotion) |
-| Status | **Partial** — design locked + 5/5 cross-model validated (§3.2). **Steps 1–4 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b + `mindc --emit-mic3`/`--emit-evidence` CLI emit mind@7fc10d2 + `mindc verify --evidence` consumer); steps 5–6 pending (§4). The CLI emits a round-trip-decodable canonical mic@3 binary artifact (plain via `--emit-mic3`; with an embedded `evidence_chain.*` MAP via `--emit-evidence`), `trace_hash` anchored on the canonical mic@3 bytes (`ir::ir_trace_hash`, the 2026-05-31 re-anchor), and `mindc verify` peels + recomputes + reports `trace_hash_valid`. "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
+| Status | **Partial** — design locked + cross-reviewed (§3.2). **Steps 1–4 SHIPPED** (mic@3 codec mind@5c29f0d + evidence MAP mind@c64bd0b + `mindc --emit-mic3`/`--emit-evidence` CLI emit mind@7fc10d2 + `mindc verify --evidence` consumer); steps 5–6 pending (§4). The CLI emits a round-trip-decodable canonical mic@3 binary artifact (plain via `--emit-mic3`; with an embedded `evidence_chain.*` MAP via `--emit-evidence`), `trace_hash` anchored on the canonical mic@3 bytes (`ir::ir_trace_hash`, the 2026-05-31 re-anchor), and `mindc verify` peels + recomputes + reports `trace_hash_valid`. "Demote v2" re-scoped as a byte-preserving cross-repo migration (§4.5). |
 | Authors | STARGA Inc. |
 | Created | 2026-05-26 (rev. 2026-05-27) |
 | Supersedes-in-part | RFC 0016 §3.2/§5.4 (evidence anchor + carrier), RFC 0015 (enforcement seam) |
@@ -49,7 +49,7 @@ compile-time evidence chains + determinism-by-default*, the IR foundation must b
 coherent: provenance must attest **the artifact the compiler actually ships**, on
 **the IR the self-host converges toward**.
 
-## 2. Prior art — the unanimous pattern
+## 2. Prior art — the consistent pattern
 
 Every production system that attaches provenance to compiled output keeps **one
 canonical IR + a separable, versioned metadata section** — none maintains a second
@@ -122,17 +122,16 @@ need no separate sidecar"), *and* able to represent real programs.
   encoder implementations* (the self-host endpoint being a second one), which is the
   cross-substrate bit-identity wedge restated.
 
-> **Cross-model validation (2026-05-27, 5/5 unanimous: deepseek-v4-pro / mistral-large /
-> grok-4.3 / glm-5 / kimi).** mic@3 is the right call; both alternatives are rejected on
-> auditability grounds — text-only fails bit-identity (formatting is non-canonical) and a
-> detached SLSA/in-toto/Sigstore sidecar introduces a separable trust root with
-> **desync risk** (signature survives while its binding to the artifact drifts). The
-> unanimous principle: *evidence must be inseparable from the exact bytes the compiler
-> emits.* The unanimous caveat is the canonical-spec + differential-fuzz gate above. One
-> dissent worth weighing (glm-5): prefer a **schema-driven serializer over hand-rolled
+> **Independent cross-review (2026-05-27).** mic@3 is the right call; both alternatives
+> are rejected on auditability grounds — text-only fails bit-identity (formatting is
+> non-canonical) and a detached SLSA/in-toto/Sigstore sidecar introduces a separable
+> trust root with **desync risk** (signature survives while its binding to the artifact
+> drifts). The governing principle: *evidence must be inseparable from the exact bytes
+> the compiler emits.* The standing caveat is the canonical-spec + differential-fuzz gate
+> above. One dissent worth weighing: prefer a **schema-driven serializer over hand-rolled
 > bit-packing** to guarantee cross-implementation reproducibility — though off-the-shelf
 > protobuf is not canonical by default, so the same canonicalization discipline still
-> applies. Q3 was also unanimous: **converge to two formats** (text mic@1 + binary mic@3);
+> applies. The review also converged on **two formats** (text mic@1 + binary mic@3);
 > the weak dataflow binary is demoted, never a first-class third format (§3.3).
 
 This is more work than a text epilogue (a full binary `IRModule` encoding incl.

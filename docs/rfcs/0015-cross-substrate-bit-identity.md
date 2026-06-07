@@ -39,7 +39,7 @@ bit-identity claims at the dialect level. JAX/XLA explicitly disclaim
 cross-device determinism. EigenAI (arXiv 2602.00182) and TBIK
 (arXiv 2511.17826) claim bit-identity but only single-substrate.
 
-**But:** no test in `/home/n/mind/tests/` cross-checks Q16.16 byte-identity
+**But:** no test in `tests/` cross-checks Q16.16 byte-identity
 across two targets. The CPU↔CPU half of task #57 closed at `mind@19e4028`
 (Linux gcc ↔ Windows clang), but the multi-substrate matrix has zero
 coverage:

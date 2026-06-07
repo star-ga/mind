@@ -24,9 +24,8 @@ A downstream auditor holding a compiled `.mic` binary has no in-band, tamper-evi
 record of *how it was produced, on what substrate, from what parent, and whether
 that production was deterministic*.
 
-Backed by the strongest signal from the 2026-05-24 multi-LLM consult: **4/4
-unanimous convergence on evidence-chain emission as a language-native output** —
-the single most-agreed-upon move across grok / deepseek / mistral / glm-5. The
+Backed by the strongest signal from independent cross-review: **evidence-chain
+emission as a language-native output** is the single most-agreed-upon move. The
 finding: a determinism claim that lives only in a test harness sits in the same
 epistemic bucket as an unreproducible benchmark number; it cannot enter a
 *downstream* agent's or auditor's evidence chain. Emission turns the internal
@@ -355,5 +354,5 @@ property + the same-hash-across-substrates gate); RFC 0017 (`mindc verify` +
 `verify.*` certificates); RFC 0019 / #294 (`agent.*` links); RFC 0020 / #303
 (mind-bench wedge-score as a chain link); `mind/src/ir/compact/v2/` (MAP reference
 impl); `mind-mem/src/mind_mem/model_signing.py` (the one signer); 512-mind DIFC
-`proof_chain` (governance consumer); multi-LLM consult 2026-05-24 (4/4 evidence-chain
+`proof_chain` (governance consumer); internal cross-review (evidence-chain
 convergence).

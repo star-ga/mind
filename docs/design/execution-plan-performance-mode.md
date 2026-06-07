@@ -6,8 +6,8 @@
 | Authors | STARGA Inc. |
 | Created | 2026-06-03 |
 | Depends | RFC 0021 (canonical IR unification, mic@3), RFC 0016 (evidence chains), RFC 0015/0020 (cross-substrate identity), RFC 0014 (per-substrate lowering) |
-| Touches | **public** `mind` crate (PerformanceMode, provider trait shapes); **FORTRESS-private** `mind-runtime` (ExecutionPlan builder, concrete providers, CUDA-Graph replay) |
-| Convergence | Two independent GPT-5.5 analyses + STARGA grounding agree on the layering below; this doc fixes the load-bearing decisions so impl cannot drift |
+| Touches | **public** `mind` crate (PerformanceMode, provider trait shapes); **private** `mind-runtime` (ExecutionPlan builder, concrete providers, CUDA-Graph replay) |
+| Convergence | Independent cross-review and STARGA grounding agree on the layering below; this doc fixes the load-bearing decisions so impl cannot drift |
 
 ---
 
@@ -473,11 +473,11 @@ byte-output are never regressed.
 | **8** | Adopt the shared `ExecutionProvider` vocabulary in `mind-nerve` / `mind-mem` (they consume mic@3 today; align capability descriptors). | cross-repo | Coordinated, after #7 |
 
 Steps **1–6 live entirely in the public `mind` crate** and can land without touching
-FORTRESS. Step **1 is the first concrete commit** and is a trivially-additive field.
+the private runtime. Step **1 is the first concrete commit** and is a trivially-additive field.
 
 ---
 
-## 5. Public `mind` vs FORTRESS-private `mind-runtime` — explicit split
+## 5. Public `mind` vs private `mind-runtime` — explicit split
 
 | Concern | Public `mind` | Private `mind-runtime` |
 |---|---|---|
