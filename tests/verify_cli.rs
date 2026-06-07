@@ -22,7 +22,7 @@
 //!
 //! * valid, untampered artifact      → exit 0
 //! * tampered body byte              → exit 1 (trace_hash mismatch)
-//! * plain mic@3 with no evidence    → exit 1 (unattested)
+//! * plain mic@3 with no evidence    → exit 0, reported `attested: no` (RFC 0017)
 //! * unreadable artifact path        → exit 2 (I/O error)
 
 use std::path::PathBuf;
@@ -199,11 +199,20 @@ fn verify_tampered_artifact_fails() {
 }
 
 // ---------------------------------------------------------------------------
-// 4.  Plain mic@3 (no evidence chain) → exit 1 (unattested).
+// 4.  Plain mic@3 (no evidence chain) → exit 0, reported `attested: no`.
+//
+// Per RFC 0017 (mindc.rs `run_verify` doc + commit 78031bd), `mindc verify`
+// reports two independent properties: SSA well-formedness (a property of the
+// IR body alone, needing no evidence chain) and trace_hash attestation
+// (checked only when an `evidence_chain` MAP is present). An unattested but
+// SSA-well-formed artifact therefore PASSES (exit 0) and is reported with
+// `attested: no` plus an explanatory "unattested" note — it is not a
+// verification failure, only an absence of attestation. This is identical in
+// every feature configuration (verify is not feature-gated).
 // ---------------------------------------------------------------------------
 
 #[test]
-fn verify_unattested_artifact_fails() {
+fn verify_unattested_artifact_reports_unattested() {
     let bin = mindc_binary();
     if !bin.exists() {
         eprintln!("Skipping: mindc binary not found");
@@ -224,13 +233,19 @@ fn verify_unattested_artifact_fails() {
 
     assert_eq!(
         out.status.code(),
-        Some(1),
-        "unattested artifact must exit 1"
+        Some(0),
+        "unattested but SSA-well-formed artifact must exit 0 (RFC 0017); stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("attested:         no"),
+        "report must mark the artifact as not attested, got stdout:\n{stdout}"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("unattested"),
-        "error must explain the artifact is unattested, got:\n{stderr}"
+        "note must explain the artifact is unattested, got stderr:\n{stderr}"
     );
 
     let _ = std::fs::remove_file(&tmp);
