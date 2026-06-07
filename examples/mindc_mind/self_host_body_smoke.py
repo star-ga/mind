@@ -78,6 +78,12 @@ CASES = [
     # Parens + nesting + precedence: (a + b) * a -> add then mul over the result.
     (b"pub fn f(a: i64, b: i64) -> i64 { (a + b) * a }\n",
      b"  %2 = add %0, %1\n  %3 = mul %2, %0\n  output %3\n"),
+    # Unary negation: -a -> 0 - a (const0 then sub).
+    (b"pub fn f(a: i64) -> i64 { -a }\n",
+     b"  %1 = const.i64 0\n  %2 = sub %1, %0\n  output %2\n"),
+    # Unary logical-not: !a -> a == 0 (const0 then eq).
+    (b"pub fn f(a: i64) -> i64 { !a }\n",
+     b"  %1 = const.i64 0\n  %2 = eq %0, %1\n  output %2\n"),
 ]
 
 
