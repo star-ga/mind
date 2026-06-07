@@ -1,0 +1,45 @@
+name: Docs Claims
+
+# Capability-manifest gate. config/capabilities.toml is the single source of truth
+# for cross-surface claims (IR versions, autodiff status, runtime boundary, declared
+# counts); scripts/check_claims.py fails the build if any public surface drifts from
+# it — including re-deriving the declared [counts] from the real tree.
+#
+# Runs on its OWN triggers (NOT the main ci.yml matrix) because ci.yml has
+# paths-ignore: ['**.md', 'docs/**'] — a docs-only drift would otherwise slip through.
+# This job's whole point is to gate exactly those doc changes.
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.md'
+      - 'config/capabilities.toml'
+      - 'scripts/check_claims.py'
+      - '.github/workflows/docs-claims.yml'
+  pull_request:
+    paths:
+      - '**.md'
+      - 'config/capabilities.toml'
+      - 'scripts/check_claims.py'
+      - '.github/workflows/docs-claims.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docs-claims:
+    name: Docs claims gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'  # tomllib is stdlib from 3.11+
+
+      - name: Check claims against capability manifest
+        run: python3 scripts/check_claims.py
