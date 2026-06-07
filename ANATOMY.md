@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,808,481
-**Generated:** 2026-06-07 05:42 UTC
+**Files:** 2746 | **Est. tokens:** ~6,808,457
+**Generated:** 2026-06-07 06:10 UTC
 
 ## Token Budget Guide
 
@@ -22,13 +22,13 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~27,177 |
+| `./` | 35 | ~27,193 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 2 | ~553 |
+| `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
 | `benches/` | 12 | ~25,408 |
-| `benchmarks/` | 14 | ~24,361 |
+| `benchmarks/` | 14 | ~24,428 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
@@ -37,19 +37,19 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 26 | ~37,395 |
+| `docs/` | 26 | ~37,394 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 2 | ~7,027 |
-| `docs/design/` | 3 | ~8,185 |
-| `docs/mindcraft/` | 3 | ~6,980 |
+| `docs/design/` | 3 | ~8,181 |
+| `docs/mindcraft/` | 3 | ~6,974 |
 | `docs/research/` | 1 | ~117 |
-| `docs/rfcs/` | 28 | ~118,320 |
+| `docs/rfcs/` | 28 | ~118,242 |
 | `docs/specs/` | 2 | ~976 |
 | `examples/` | 15 | ~32,006 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
-| `examples/lexer/` | 6 | ~8,908 |
+| `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 7 | ~25,635 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -357,7 +357,7 @@
 | `sdk/ts/mic-map/node_modules/wrap-ansi-cjs/node_modules/emoji-regex/es2015/` | 2 | ~5,553 |
 | `sdk/ts/mic-map/node_modules/wrap-ansi-cjs/node_modules/string-width/` | 5 | ~1,292 |
 | `sdk/ts/mic-map/node_modules/wrap-ansi-cjs/node_modules/strip-ansi/` | 5 | ~1,010 |
-| `sdk/ts/mic-map/scripts/` | 1 | ~470 |
+| `sdk/ts/mic-map/scripts/` | 1 | ~499 |
 | `sdk/ts/mic-map/src/` | 9 | ~12,181 |
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
@@ -373,7 +373,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 11 | ~48,450 |
+| `src/eval/` | 11 | ~48,434 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -397,7 +397,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 174 | ~310,846 |
+| `tests/` | 174 | ~310,843 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -429,7 +429,7 @@
 | `tools/mindfuzz/` | 7 | ~15,992 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 11 | ~1,430 |
-| `tools/pytorch_bridge/` | 6 | ~4,678 |
+| `tools/pytorch_bridge/` | 6 | ~4,673 |
 | `tools/pytorch_bridge/tests/` | 2 | ~1,244 |
 | `.wrangler/cache/` | 1 | ~21 |
 
@@ -440,7 +440,7 @@
 - `a.out` (~3774 tok, huge) — ELF>@x4@8
 - `ARCHITECTURE.md` (~182 tok, small) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
-- `.bench-baseline-2026-04-27.txt` (~534 tok, large) —    Compiling mind v0.2.3 (/home/n/mind)
+- `.bench-baseline-2026-04-27.txt` (~531 tok, large) —    Compiling mind v0.2.3 (.)
 - `.bench-baseline-2026-04-28-pratt.txt` (~185 tok, small) — === Pratt parser baseline (mindc 0.2.5, 2026-04-28) ===
 - `.bench-baseline-2026-05-17-phase10-6.txt` (~408 tok, medium) — === Phase 10.6 surface-syntax baseline (mindc 0.2.10, 2026-05-17) ===
 - `.bench-baseline-2026-05-17-phase10-7.txt` (~565 tok, large) — === Phase 10.7 surface baseline (mindc 0.2.11, 2026-05-17) ===
@@ -458,7 +458,7 @@
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
 - `GITHUB_SETUP_INSTRUCTIONS.md` (~240 tok, medium) — GitHub Setup (Quick)
-- `.gitignore` (~470 tok, medium) — # Rust
+- `.gitignore` (~489 tok, medium) — # Rust
 - `incompatible` (~0 tok, tiny)
 - `LICENSE` (~2573 tok, huge) —                                  Apache License
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
@@ -481,7 +481,7 @@
 ### `.arch-mind/`
 
 - `rules.mind` (~463 tok, medium) — mind (language compiler / runtime root) architectural-governance rules
-- `scan.json` (~90 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
+- `scan.json` (~87 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `audits/`
 
 - `arch-mind-2026-05-18-post-phase-6-1.json` (~169 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
@@ -516,7 +516,7 @@
 - `requirements.txt` (~7 tok, tiny) — torch>=1.0.0
 ### `benchmarks/`
 
-- `BENCHMARK_RESULTS.md` (~4281 tok, huge) — MIND Benchmark Results
+- `BENCHMARK_RESULTS.md` (~4282 tok, huge) — MIND Benchmark Results
 - `COPILOT_REVIEW_FIXES.md` (~1722 tok, huge) — Copilot Review Fixes - PR #172
 ### `benchmarks/determinism/`
 
@@ -542,7 +542,7 @@
 ### `benchmarks/`
 
 - `mic_benchmark.py` (~1473 tok, large)
-- `MIC_MAP_BENCHMARK_README.md` (~340 tok, medium) — MIC/MAP Patent Reference Benchmark
+- `MIC_MAP_BENCHMARK_README.md` (~337 tok, medium) — MIC/MAP Patent Reference Benchmark
 - `mic_map_benchmark_results.json` (~851 tok, large) — Keys: metadata, measurements, paper_figures_verified, claim_checks, all_claims_verified
 - `mic_map_benchmark_v2.py` (~3151 tok, huge)
 ### `benchmarks/mojo/`
@@ -569,8 +569,8 @@
 - `run_all_benchmarks.sh` (~824 tok, large) — Master script to run all MIND patent benchmarks
 - `RUN_GUIDE.md` (~1465 tok, large) — MIND Patent Benchmarks - Environment Guide
 - `SAME_MACHINE_BENCHMARKS.md` (~2320 tok, huge) — Same-Machine Benchmarks - Addressing Copilot Concerns
-- `scientific_benchmark.py` (~1603 tok, huge)
-- `scientific_benchmark_raw.py` (~2452 tok, huge)
+- `scientific_benchmark.py` (~1639 tok, huge)
+- `scientific_benchmark_raw.py` (~2485 tok, huge)
 ### `.cargo/`
 
 - `config.toml` (~130 tok, small) — [registries]
@@ -602,7 +602,7 @@
 - `cli.md` (~582 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
-- `execution-plan-performance-mode.md` (~8049 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
+- `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
 - `README.md` (~26 tok, tiny) — Design Docs
 - `v0.3.md` (~110 tok, small) — MIND Design v0.3 (Draft)
 ### `docs/`
@@ -617,7 +617,7 @@
 ### `docs/mindcraft/`
 
 - `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
-- `phase2-implementation-plan.md` (~2213 tok, huge) — Mindcraft Phase 2 — Implementation Plan
+- `phase2-implementation-plan.md` (~2207 tok, huge) — Mindcraft Phase 2 — Implementation Plan
 - `rfc0010-phase-ghi-migration-plan.md` (~2528 tok, huge) — RFC 0010 Phase G/H/I — Migration Plan (corrected against real architecture)
 ### `docs/`
 
@@ -636,10 +636,10 @@
 - `0002-pub-fn-c-exports.md` (~2084 tok, huge) — RFC 0002: `pub fn` → C ABI Symbol Export
 - `0003-cdylib-aot-emit.md` (~3195 tok, huge) — RFC 0003: cdylib AOT emit + symbol versioning
 - `0004-evidence-token-types.md` (~1907 tok, huge) — RFC 0004: Compile-Time Evidence Token Types
-- `0005-phase-6-2-mindc-gaps.md` (~3370 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
+- `0005-phase-6-2-mindc-gaps.md` (~3356 tok, huge) — RFC 0005 Phase 6.2 — mindc Feature Gaps (Design Note)
 - `0005-phase-d2b-design-note.md` (~1518 tok, huge) — RFC 0005 Phase D₂b — Cross-arg Named-struct identity matching
-- `0005-pure-mind-std-surface.md` (~5512 tok, huge) — RFC 0005: Pure-MIND Standard Surface
-- `0006-mind-blas.md` (~5744 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
+- `0005-pure-mind-std-surface.md` (~5511 tok, huge) — RFC 0005: Pure-MIND Standard Surface
+- `0006-mind-blas.md` (~5743 tok, huge) — RFC 0006: mind-blas — native BLAS surface for MIND
 - `0007-mindcraft.md` (~3497 tok, huge) — RFC 0007: Mindcraft — the pure-MIND format / lint / check toolchain
 - `0008-mindc-build.md` (~10964 tok, huge) — RFC 0008: mindc build + mindc test — retiring cargo from the build path
 - `0009-federation-package-layer.md` (~6976 tok, huge) — RFC 0009: Federation-First MIND Package Layer
@@ -647,21 +647,21 @@
 - `0010-memory-safety-and-c-abi.md` (~7359 tok, huge) — RFC 0010: Memory Safety Model + C ABI in Pure MIND
 - `0011-async-and-structured-concurrency.md` (~4891 tok, huge) — RFC 0011: Async + Structured Concurrency Model
 - `0012-tensor-native-syntax.md` (~11307 tok, huge) — RFC 0012: Tensor-Native Surface Syntax — the Differentiation Layer
-- `0013-cli-agent-harness-stack.md` (~6787 tok, huge) — RFC 0013: CLI Agent Harness Stack
+- `0013-cli-agent-harness-stack.md` (~6774 tok, huge) — RFC 0013: CLI Agent Harness Stack
 - `0014-per-substrate-mlir-lowering-contracts.md` (~5412 tok, huge) — RFC 0014: Per-Substrate MLIR Lowering Pipeline Contracts
-- `0015-cross-substrate-bit-identity.md` (~5177 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
-- `0016-evidence-chain-emission.md` (~6248 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
-- `0017-mindc-verify.md` (~3746 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
+- `0015-cross-substrate-bit-identity.md` (~5174 tok, huge) — RFC 0015: Cross-Substrate Bit-Identity Proof Obligation
+- `0016-evidence-chain-emission.md` (~6226 tok, huge) — RFC 0016: Compile-Time Evidence-Chain Emission
+- `0017-mindc-verify.md` (~3745 tok, huge) — RFC 0017: `mindc verify` — Artifact Verification Surface
 - `0018-bare-metal-substrate.md` (~3799 tok, huge) — RFC 0018: Bare-Metal Substrate Lowering Tier
 - `0019-deterministic-agent-substrate.md` (~4131 tok, huge) — RFC 0019: Deterministic Agent Substrate
-- `0020-mind-bench-reproducibility-harness.md` (~4076 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
-- `0021-canonical-ir-unification.md` (~4265 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
+- `0020-mind-bench-reproducibility-harness.md` (~4078 tok, huge) — RFC 0020: mind-bench Public Reproducibility Harness
+- `0021-canonical-ir-unification.md` (~4240 tok, huge) — RFC 0021: Canonical IR Unification — one IR, provenance as a versioned epilogue
 - `0022-deterministic-io-substrate.md` (~2083 tok, huge) — RFC 0022: Deterministic I/O Substrate — fastest async I/O with bit-identical replay
 - `odc-language-primitives.md` (~422 tok, medium) — RFC: Observer-Dependent Cognition — Language Primitives
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~13083 tok, huge) — Roadmap
+- `roadmap.md` (~13082 tok, huge) — Roadmap
 - `security.md` (~1331 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -709,7 +709,7 @@
 - `EXPECTED.md` (~1093 tok, large) — Phase 6.1 — Expected Token Stream
 - `fixture.mind` (~67 tok, small) — Phase 6.1 lexer smoke fixture.
 - `main.mind` (~2461 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
-- `README.md` (~989 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
+- `README.md` (~969 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
@@ -3551,7 +3551,7 @@
 - `README.md` (~152 tok, small) — @mind/mic-map
 ### `sdk/ts/mic-map/scripts/`
 
-- `regen_fixtures.sh` (~470 tok, medium) — Copyright 2026 STARGA Inc.
+- `regen_fixtures.sh` (~499 tok, medium) — Copyright 2026 STARGA Inc.
 ### `sdk/ts/mic-map/src/`
 
 - `errors.ts` (~351 tok, medium) — Copyright 2026 STARGA Inc.
@@ -3646,7 +3646,7 @@
 - `tensor.rs` (~8360 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `struct_resolver.rs` (~5177 tok, huge) — Copyright 2025 STARGA Inc.
+- `struct_resolver.rs` (~5161 tok, huge) — Copyright 2025 STARGA Inc.
 - `value.rs` (~2003 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/exec/`
 
@@ -4136,7 +4136,7 @@
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2284 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_push_str.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_struct_lowering.rs` (~2717 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_struct_lowering.rs` (~2714 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_toml.rs` (~4153 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_tui.rs` (~2256 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4206,7 +4206,7 @@
 - `scalar_arith_step001_verify.report.txt` (~135 tok, small) — MIND-Fuzz violation
 ### `tools/pytorch_bridge/`
 
-- `ai_proof.py` (~645 tok, large) — # Copyright 2025-2026 STARGA Inc.
+- `ai_proof.py` (~640 tok, large) — # Copyright 2025-2026 STARGA Inc.
 - `.gitignore` (~4 tok, tiny) — __pycache__/
 - `__init__.py` (~384 tok, medium) — # Copyright 2025-2026 STARGA Inc.
 - `ir.py` (~920 tok, large) — # Copyright 2025-2026 STARGA Inc.

@@ -87,3 +87,6 @@ examples/**/*.html
 /examples/policy.mind
 /examples/compliance/auditable_model.mind
 /examples/zoo/
+
+# build artifacts must not be committed (unprotected .so)
+examples/**/*.so
