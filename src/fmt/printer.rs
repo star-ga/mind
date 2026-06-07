@@ -237,38 +237,47 @@ pub fn print_module(
 /// Build a line-structure-preserving stripped copy (comments removed but line
 /// count preserved) using a simple fast pass.  Only used for span→line mapping.
 fn strip_for_lines(src: &str) -> String {
-    // This replicates the fast-path behaviour of `strip_comments_fast` in the
-    // trivia module — same line count, comment text blanked.
-    src.lines()
-        .map(|line| {
-            let bytes = line.as_bytes();
-            let mut in_string = false;
-            let mut i = 0;
-            let mut comment_col: Option<usize> = None;
-            while i < bytes.len() {
-                if in_string {
-                    if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                        i += 2;
-                        continue;
-                    }
-                    if bytes[i] == b'"' {
-                        in_string = false;
-                    }
-                } else if bytes[i] == b'"' {
-                    in_string = true;
-                } else if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'/' {
-                    comment_col = Some(i);
-                    break;
+    // Mirrors `strip_comments_fast` in the trivia module: blank each comment
+    // region with ASCII spaces **in place** rather than removing the bytes, so
+    // the result is byte-length identical to `src`. This keeps the span→line
+    // index built here aligned with the AST spans produced by
+    // `parse_with_trivia` (which is also length-preserving) — a comment's bytes
+    // occupy the same positions in both, so `line_of(span_start)` is exact.
+    let bytes = src.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut line_start = 0usize;
+    while line_start < bytes.len() {
+        let newline_pos = bytes[line_start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|rel| line_start + rel)
+            .unwrap_or(bytes.len());
+        let line = &bytes[line_start..newline_pos];
+        let mut in_string = false;
+        let mut i = 0;
+        while i < line.len() {
+            if in_string {
+                if line[i] == b'\\' && i + 1 < line.len() {
+                    i += 2;
+                    continue;
                 }
-                i += 1;
+                if line[i] == b'"' {
+                    in_string = false;
+                }
+            } else if line[i] == b'"' {
+                in_string = true;
+            } else if line[i] == b'/' && i + 1 < line.len() && line[i + 1] == b'/' {
+                // Blank `[line_start + i, newline_pos)` with ASCII spaces.
+                for b in &mut out[line_start + i..newline_pos] {
+                    *b = b' ';
+                }
+                break;
             }
-            match comment_col {
-                Some(c) => &line[..c],
-                None => line,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+            i += 1;
+        }
+        line_start = newline_pos + 1;
+    }
+    String::from_utf8(out).expect("blanking comment bytes with ASCII spaces preserves UTF-8")
 }
 
 // ---------------------------------------------------------------------------
