@@ -47,11 +47,11 @@ CASES = [
     (b"pub fn g() -> i64 { let x: i64 = 5; let y: i64 = x + x; y }\n",
      b"  %0 = const.i64 5\n  %1 = add %0, %0\n  output %1\n"),
     # Arithmetic + comparison operators: all are wired through the tokenizer
-    # (single-char +,-,*,/,<,>), parse_pratt (tk_to_op + infix_prec), and
-    # emit_op_mnemonic (add/sub/mul/div/lt/gt). Previously only `add` was
-    # covered here; lock the rest so a regression in any operator mnemonic is
-    # caught. (`==`/`<=`/`>=`/`!=` are NOT yet supported — they need multi-char
-    # lexer tokens; `==` currently mis-lexes as two `=`.)
+    # (single-char +,-,*,/,<,> and two-char ==,<=,>=,!= via scan-loop
+    # peek-ahead), parse_pratt (tk_to_op + infix_prec), and emit_op_mnemonic
+    # (add/sub/mul/div/lt/gt/eq/le/ge/ne). Lock every operator mnemonic so a
+    # regression is caught. The two-char operators (==,<=,>=,!=) mirror the `->`
+    # arrow handling; `==` previously mis-lexed as two single `=` tokens.
     (b"pub fn f(a: i64, b: i64) -> i64 { a - b }\n",
      b"  %2 = sub %0, %1\n  output %2\n"),
     (b"pub fn f(a: i64, b: i64) -> i64 { a * b }\n",
@@ -62,6 +62,14 @@ CASES = [
      b"  %2 = lt %0, %1\n  output %2\n"),
     (b"pub fn f(a: i64, b: i64) -> i64 { a > b }\n",
      b"  %2 = gt %0, %1\n  output %2\n"),
+    (b"pub fn f(a: i64, b: i64) -> i64 { a == b }\n",
+     b"  %2 = eq %0, %1\n  output %2\n"),
+    (b"pub fn f(a: i64, b: i64) -> i64 { a <= b }\n",
+     b"  %2 = le %0, %1\n  output %2\n"),
+    (b"pub fn f(a: i64, b: i64) -> i64 { a >= b }\n",
+     b"  %2 = ge %0, %1\n  output %2\n"),
+    (b"pub fn f(a: i64, b: i64) -> i64 { a != b }\n",
+     b"  %2 = ne %0, %1\n  output %2\n"),
     # Parens + nesting + precedence: (a + b) * a -> add then mul over the result.
     (b"pub fn f(a: i64, b: i64) -> i64 { (a + b) * a }\n",
      b"  %2 = add %0, %1\n  %3 = mul %2, %0\n  output %3\n"),

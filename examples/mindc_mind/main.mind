@@ -110,6 +110,18 @@ pub fn tk_kw_pub() -> i64 {
 pub fn tk_dot() -> i64 {
     22
 }
+pub fn tk_eqeq() -> i64 {
+    23
+}
+pub fn tk_le() -> i64 {
+    24
+}
+pub fn tk_ge() -> i64 {
+    25
+}
+pub fn tk_ne() -> i64 {
+    26
+}
 
 // ===== Byte loads =====
 
@@ -394,6 +406,38 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
             }
         }
     }
+    if b == 61 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 61 {
+                let next_toks: Vec = push_token(toks, tk_eqeq(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    if b == 60 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 61 {
+                let next_toks: Vec = push_token(toks, tk_le(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    if b == 62 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 61 {
+                let next_toks: Vec = push_token(toks, tk_ge(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    if b == 33 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 61 {
+                let next_toks: Vec = push_token(toks, tk_ne(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
     let kind: i64 = match_punct(b);
     let next_toks: Vec = push_token(toks, kind, i, i + 1);
     scan(buf, i + 1, buf_len, next_toks)
@@ -477,6 +521,15 @@ pub fn op_gt() -> i64 {
 }
 pub fn op_eq() -> i64 {
     7
+}
+pub fn op_le() -> i64 {
+    8
+}
+pub fn op_ge() -> i64 {
+    9
+}
+pub fn op_ne() -> i64 {
+    10
 }
 
 // ===== Token-stream accessors =====
@@ -718,6 +771,18 @@ pub fn infix_prec(kind: i64) -> i64 {
     if kind == tk_gt() {
         return 2;
     }
+    if kind == tk_eqeq() {
+        return 2;
+    }
+    if kind == tk_le() {
+        return 2;
+    }
+    if kind == tk_ge() {
+        return 2;
+    }
+    if kind == tk_ne() {
+        return 2;
+    }
     if kind == tk_plus() {
         return 3;
     }
@@ -754,6 +819,18 @@ pub fn tk_to_op(kind: i64) -> i64 {
     }
     if kind == tk_eq() {
         return op_eq();
+    }
+    if kind == tk_eqeq() {
+        return op_eq();
+    }
+    if kind == tk_le() {
+        return op_le();
+    }
+    if kind == tk_ge() {
+        return op_ge();
+    }
+    if kind == tk_ne() {
+        return op_ne();
     }
     0
 }
@@ -1850,6 +1927,18 @@ pub fn emit_op_mnemonic(s: EmitState, op: i64) -> EmitState {
     if op == op_eq() {
         let s1: EmitState = es_push(s, 101);
         return es_push(s1, 113);
+    }
+    if op == op_le() {
+        let s1: EmitState = es_push(s, 108);
+        return es_push(s1, 101);
+    }
+    if op == op_ge() {
+        let s1: EmitState = es_push(s, 103);
+        return es_push(s1, 101);
+    }
+    if op == op_ne() {
+        let s1: EmitState = es_push(s, 110);
+        return es_push(s1, 101);
     }
     let s1: EmitState = es_push(s, 63);
     es_push(s1, 63)
