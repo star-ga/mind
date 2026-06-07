@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2748 | **Est. tokens:** ~6,818,096
-**Generated:** 2026-06-07 13:32 UTC
+**Files:** 2747 | **Est. tokens:** ~6,817,625
+**Generated:** 2026-06-07 15:36 UTC
 
 ## Token Budget Guide
 
@@ -368,7 +368,7 @@
 | `src/bin/` | 2 | ~24,727 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
-| `src/check/` | 3 | ~10,038 |
+| `src/check/` | 3 | ~9,753 |
 | `src/deps/` | 1 | ~8,087 |
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
@@ -397,7 +397,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 176 | ~313,524 |
+| `tests/` | 175 | ~313,338 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3605,7 +3605,7 @@
 ### `src/check/`
 
 - `gitignore.rs` (~2345 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~7319 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7034 tok, huge) — Copyright 2025 STARGA Inc.
 - `reporter.rs` (~374 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/`
 
@@ -3880,7 +3880,7 @@
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
-- `emit_ir_for_loop.rs` (~229 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
+- `emit_ir_for_loop.rs` (~308 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2666 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4166,10 +4166,9 @@
 
 - `type_error_spans.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
-- `undefined_ref_check.rs` (~500 tok, large) — Regression tests for #23: the type-checker must detect undefined variable and
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
-- `verify_cli.rs` (~2209 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_cli.rs` (~2444 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify_ssa.rs` (~4532 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
