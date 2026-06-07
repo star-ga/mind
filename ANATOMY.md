@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2747 | **Est. tokens:** ~6,821,115
-**Generated:** 2026-06-07 21:34 UTC
+**Files:** 2747 | **Est. tokens:** ~6,821,714
+**Generated:** 2026-06-07 22:12 UTC
 
 ## Token Budget Guide
 
@@ -50,7 +50,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 7 | ~26,746 |
+| `examples/mindc_mind/` | 7 | ~27,345 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -717,8 +717,8 @@
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~17275 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
-- `self_host_body_smoke.py` (~1141 tok, large)
+- `main.mind` (~17775 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+- `self_host_body_smoke.py` (~1240 tok, large)
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
