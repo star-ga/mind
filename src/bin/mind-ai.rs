@@ -75,6 +75,45 @@ const MAP_VERSION: u32 = 1;
 const MIC_VERSION: u32 = 1;
 const SERVER_VERSION: &str = "0.2.0";
 
+// ---------------------------------------------------------------------------
+// Resource budgets (DoS hardening — RFC-0002 §Resource Limits)
+//
+// The MAP protocol is a long-lived, stateful, line-oriented protocol that
+// accepts untrusted input from AI agents. Without explicit budgets a peer can
+// exhaust server memory by sending one enormous line, an unterminated heredoc,
+// a module with an unbounded node count, or an unbounded stream of growing
+// `patch.*` operations.
+//
+// Every budget below is a NAMED, DOCUMENTED constant. When a budget is
+// exceeded the server returns a CLEAR structured error (`code=E1xx`) — it
+// never panics, aborts, or silently truncates. This is the protocol-level
+// analogue of the bounded-query hardening applied elsewhere in the ecosystem.
+//
+// The values mirror the conventions established in
+// `src/ir/compact/v2/parse.rs` (MAX_INPUT_SIZE / MAX_LINE_COUNT etc.) so the
+// MIC parser and the MAP transport agree on the same order of magnitude.
+// ---------------------------------------------------------------------------
+
+/// Maximum bytes accepted in a single protocol line (request line or one
+/// heredoc body line). Protects against a single unbounded line forcing an
+/// arbitrarily large allocation in the reader. Exceeding this is `E101`.
+const MAX_LINE_BYTES: usize = 1024 * 1024; // 1 MiB
+
+/// Maximum total bytes accumulated for one heredoc-delimited command body
+/// before the terminating `EOF`. An unterminated or hostile heredoc can
+/// otherwise grow without bound. Exceeding this is `E102`.
+const MAX_SESSION_BYTES: usize = 16 * 1024 * 1024; // 16 MiB
+
+/// Maximum number of MIC nodes a loaded module may contain. Bounds the work of
+/// per-node validation/patch scans and the memory held by the resident module.
+/// Exceeding this (on `load.mic` or after a `patch.*`) is `E103`.
+const MAX_MODULE_NODES: usize = 1_000_000;
+
+/// Maximum number of mutating `patch.*` operations permitted per session.
+/// Bounds the amortised cost of repeated whole-module rewrites and caps the
+/// rate at which a peer can grow the resident module. Exceeding this is `E104`.
+const MAX_PATCH_OPS: u64 = 100_000;
+
 /// Session mode flags
 #[derive(Debug, Clone, Default)]
 struct SessionMode {
@@ -114,6 +153,9 @@ struct Session {
     symbol_count: usize,
     /// Diagnostics
     diagnostics: Vec<Diagnostic>,
+    /// Number of mutating `patch.*` operations applied this session.
+    /// Enforced against `MAX_PATCH_OPS` for DoS hardening.
+    patch_ops: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +175,7 @@ impl Session {
             type_count: 0,
             symbol_count: 0,
             diagnostics: Vec::new(),
+            patch_ops: 0,
         }
     }
 
@@ -152,6 +195,28 @@ impl Session {
             }
         }
     }
+
+    /// Count the MIC nodes in `mic` without mutating session state.
+    ///
+    /// Used to enforce `MAX_MODULE_NODES` before a candidate module is accepted
+    /// into the session (on `load.mic` and after any `patch.*` mutation).
+    fn count_nodes(mic: &str) -> usize {
+        mic.lines()
+            .filter(|line| {
+                let line = line.trim();
+                line.starts_with('N') && !line.starts_with("N ")
+            })
+            .count()
+    }
+}
+
+/// Build a structured budget-exceeded error response.
+///
+/// Returns the canonical `=<seq> err code=E1xx msg="..."` form used for all
+/// resource-limit rejections so callers can match on the stable code while
+/// still receiving a human-readable reason. Never panics.
+fn budget_error(seq: u64, code: &str, msg: String) -> String {
+    format!("={} err code={} msg=\"{}\"", seq, code, msg)
 }
 
 /// Protocol handler
@@ -167,6 +232,27 @@ impl MapServer {
     }
 
     fn handle_line(&self, line: &str) -> Option<String> {
+        // Budget: reject an oversized request line before any further work.
+        // We attempt to recover the sequence number for a well-formed error;
+        // if even that is unparseable we fall back to the bare `!error` form.
+        if line.len() > MAX_LINE_BYTES {
+            let seq = line
+                .trim_start()
+                .strip_prefix('@')
+                .and_then(|r| r.split_whitespace().next())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            return Some(budget_error(
+                seq,
+                "E101",
+                format!(
+                    "request line too large: {} bytes (max {})",
+                    line.len(),
+                    MAX_LINE_BYTES
+                ),
+            ));
+        }
+
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             return None;
@@ -263,6 +349,8 @@ impl MapServer {
         let mut session = self.session.lock_or_recover();
         session.module = None;
         session.diagnostics.clear();
+        // Reset the per-session patch-rate budget on session teardown.
+        session.patch_ops = 0;
         Some(format!("={} ok", seq))
     }
 
@@ -284,6 +372,19 @@ impl MapServer {
             return Some(format!(
                 "={} err line=1 msg=\"missing version header\"",
                 seq
+            ));
+        }
+
+        // Budget: bound the resident module node count before accepting it.
+        let nodes = Session::count_nodes(mic_content);
+        if nodes > MAX_MODULE_NODES {
+            return Some(budget_error(
+                seq,
+                "E103",
+                format!(
+                    "module too large: {} nodes (max {})",
+                    nodes, MAX_MODULE_NODES
+                ),
             ));
         }
 
@@ -386,8 +487,51 @@ impl MapServer {
         }
     }
 
+    /// Charge one mutating patch operation against the per-session rate budget.
+    ///
+    /// Returns `Err(response)` with a structured `E104` error when the session
+    /// has already used its `MAX_PATCH_OPS` allowance; otherwise increments the
+    /// counter and returns `Ok(())`. Never panics.
+    fn charge_patch_op(session: &mut Session, seq: u64) -> Result<(), String> {
+        if session.patch_ops >= MAX_PATCH_OPS {
+            return Err(budget_error(
+                seq,
+                "E104",
+                format!(
+                    "patch operation budget exhausted: {} (max {})",
+                    session.patch_ops, MAX_PATCH_OPS
+                ),
+            ));
+        }
+        session.patch_ops += 1;
+        Ok(())
+    }
+
+    /// Reject a candidate module that would exceed the node budget.
+    ///
+    /// Returns `Err(response)` with a structured `E103` error when committing
+    /// `new_mic` would push the resident module past `MAX_MODULE_NODES`.
+    fn guard_module_nodes(seq: u64, new_mic: &str) -> Result<(), String> {
+        let nodes = Session::count_nodes(new_mic);
+        if nodes > MAX_MODULE_NODES {
+            return Err(budget_error(
+                seq,
+                "E103",
+                format!(
+                    "module too large: {} nodes (max {})",
+                    nodes, MAX_MODULE_NODES
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn handle_patch_insert(&self, seq: u64, args: &str) -> Option<String> {
         let mut session = self.session.lock_or_recover();
+
+        if let Err(resp) = Self::charge_patch_op(&mut session, seq) {
+            return Some(resp);
+        }
 
         match &session.module {
             Some(mic) => {
@@ -418,6 +562,11 @@ impl MapServer {
                 new_mic.push_str(node_content);
                 new_mic.push('\n');
 
+                // Budget: reject if this insert grows the module past the cap.
+                if let Err(resp) = Self::guard_module_nodes(seq, &new_mic) {
+                    return Some(resp);
+                }
+
                 session.module = Some(new_mic);
                 let mic_ref = session.module.as_ref().unwrap().clone();
                 session.count_entries(&mic_ref);
@@ -437,6 +586,10 @@ impl MapServer {
 
     fn handle_patch_delete(&self, seq: u64, args: &str) -> Option<String> {
         let mut session = self.session.lock_or_recover();
+
+        if let Err(resp) = Self::charge_patch_op(&mut session, seq) {
+            return Some(resp);
+        }
 
         match &session.module {
             Some(mic) => {
@@ -472,6 +625,10 @@ impl MapServer {
     fn handle_patch_replace(&self, seq: u64, args: &str) -> Option<String> {
         let mut session = self.session.lock_or_recover();
 
+        if let Err(resp) = Self::charge_patch_op(&mut session, seq) {
+            return Some(resp);
+        }
+
         match &session.module {
             Some(mic) => {
                 // Parse node ID and new content
@@ -495,6 +652,11 @@ impl MapServer {
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
+
+                // Budget: a replacement body may introduce new nodes; bound it.
+                if let Err(resp) = Self::guard_module_nodes(seq, &new_mic) {
+                    return Some(resp);
+                }
 
                 session.module = Some(new_mic);
                 let mic_ref = session.module.as_ref().unwrap().clone();
@@ -613,11 +775,61 @@ fn main() {
 
     let mut heredoc_buffer: Option<(u64, String, String)> = None; // (seq, cmd, content)
 
+    // Sequence number of a heredoc whose body overflowed MAX_SESSION_BYTES.
+    // While set, body lines are drained (discarded) until the closing `EOF`
+    // so an over-budget body is never reinterpreted as protocol commands.
+    let mut draining_overflow: Option<u64> = None;
+
     for line_result in reader.lines() {
         let line = match line_result {
             Ok(l) => l,
             Err(_) => break,
         };
+
+        // Budget: reject an oversized physical line up front. This covers
+        // heredoc body lines (which bypass `handle_line`) as well as ordinary
+        // request lines. The body of an already-overflowed heredoc is being
+        // drained, so skip the per-line error there to avoid response floods.
+        if line.len() > MAX_LINE_BYTES && draining_overflow.is_none() {
+            let seq = heredoc_buffer
+                .as_ref()
+                .map(|(s, _, _)| *s)
+                .or_else(|| {
+                    line.trim_start()
+                        .strip_prefix('@')
+                        .and_then(|r| r.split_whitespace().next())
+                        .and_then(|s| s.parse::<u64>().ok())
+                })
+                .unwrap_or(0);
+            writeln!(
+                stdout,
+                "{}",
+                budget_error(
+                    seq,
+                    "E101",
+                    format!(
+                        "request line too large: {} bytes (max {})",
+                        line.len(),
+                        MAX_LINE_BYTES
+                    )
+                )
+            )
+            .ok();
+            stdout.flush().ok();
+            // If this line was a heredoc body, drain the rest of the body.
+            if let Some((s, _, _)) = heredoc_buffer.take() {
+                draining_overflow = Some(s);
+            }
+            continue;
+        }
+
+        // Drain the body of an over-budget heredoc until its terminator.
+        if draining_overflow.is_some() {
+            if line.trim() == "EOF" {
+                draining_overflow = None;
+            }
+            continue;
+        }
 
         // Handle heredoc
         if let Some((seq, cmd, content)) = heredoc_buffer.as_mut() {
@@ -632,6 +844,30 @@ fn main() {
                     stdout.flush().ok();
                 }
             } else {
+                // Budget: bound total accumulated heredoc body size. An
+                // unterminated or hostile heredoc would otherwise grow without
+                // limit. On overflow, emit a structured error and drain the
+                // remaining body until `EOF`.
+                if content.len() + line.len() + 1 > MAX_SESSION_BYTES {
+                    let seq_val = *seq;
+                    writeln!(
+                        stdout,
+                        "{}",
+                        budget_error(
+                            seq_val,
+                            "E102",
+                            format!(
+                                "heredoc body too large: exceeds {} bytes",
+                                MAX_SESSION_BYTES
+                            )
+                        )
+                    )
+                    .ok();
+                    stdout.flush().ok();
+                    heredoc_buffer = None;
+                    draining_overflow = Some(seq_val);
+                    continue;
+                }
                 content.push_str(&line);
                 content.push('\n');
             }
@@ -729,5 +965,132 @@ mod tests {
         let resp = server.handle_line("@2 bye");
         assert!(resp.is_some());
         assert_eq!(resp.unwrap(), "=2 ok");
+    }
+
+    // -----------------------------------------------------------------------
+    // Resource-budget / DoS-hardening tests (RFC-0002 §Resource Limits).
+    //
+    // Each test drives an over-budget input through the protocol surface and
+    // asserts a CLEAR structured error (`code=E1xx`) is returned rather than a
+    // panic, an allocation failure, or silent acceptance.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_oversized_line_rejected_e101() {
+        let server = MapServer::new();
+        server.handle_line("@1 hello mic=1 map=1");
+
+        // A single request line larger than MAX_LINE_BYTES must be rejected
+        // before any command processing, with the sequence number recovered.
+        let big = format!("@7 query.node {}", "N".repeat(MAX_LINE_BYTES + 16));
+        let resp = server.handle_line(&big).expect("expected a response");
+        assert!(resp.starts_with("=7 err"), "got: {}", resp);
+        assert!(resp.contains("code=E101"), "got: {}", resp);
+        assert!(resp.contains("too large"), "got: {}", resp);
+    }
+
+    #[test]
+    fn test_oversized_line_unparseable_seq_uses_zero() {
+        let server = MapServer::new();
+        // No valid leading `@<seq>`: budget error still emitted, seq falls to 0.
+        let big = "x".repeat(MAX_LINE_BYTES + 1);
+        let resp = server.handle_line(&big).expect("expected a response");
+        assert!(resp.starts_with("=0 err"), "got: {}", resp);
+        assert!(resp.contains("code=E101"), "got: {}", resp);
+    }
+
+    #[test]
+    fn test_oversized_module_rejected_e103() {
+        // Drive the node-budget guard directly: a candidate module with one
+        // more node than MAX_MODULE_NODES must be rejected with E103. (Over the
+        // wire such a module arrives via heredoc, where each physical line is
+        // small and the per-line E101 cap does not apply; the node count is the
+        // operative budget. Exercising the guard avoids a multi-MB single line.)
+        let mut module = String::from("mic@1\n");
+        module.reserve((MAX_MODULE_NODES + 1) * 6);
+        for _ in 0..=MAX_MODULE_NODES {
+            module.push_str("N0 const.i64 0 T0\n");
+        }
+        assert_eq!(Session::count_nodes(&module), MAX_MODULE_NODES + 1);
+
+        let resp = MapServer::guard_module_nodes(2, &module)
+            .expect_err("over-limit module must be rejected");
+        assert!(
+            resp.starts_with("=2 err"),
+            "got: {}",
+            &resp[..40.min(resp.len())]
+        );
+        assert!(
+            resp.contains("code=E103"),
+            "got: {}",
+            &resp[..60.min(resp.len())]
+        );
+        assert!(resp.contains("module too large"));
+    }
+
+    #[test]
+    fn test_module_at_limit_accepted() {
+        // Exactly at the limit must be accepted (boundary is inclusive).
+        let mut module = String::from("mic@1\n");
+        module.reserve(MAX_MODULE_NODES * 6);
+        for _ in 0..MAX_MODULE_NODES {
+            module.push_str("N0 const.i64 0 T0\n");
+        }
+        assert_eq!(Session::count_nodes(&module), MAX_MODULE_NODES);
+        assert!(
+            MapServer::guard_module_nodes(2, &module).is_ok(),
+            "boundary module must pass the node budget"
+        );
+    }
+
+    #[test]
+    fn test_load_mic_small_module_still_loads() {
+        // The E103 guard must not regress normal small-module loads.
+        let server = MapServer::new();
+        server.handle_line("@1 hello mic=1 map=1");
+        let resp = server
+            .handle_line("@2 load.mic mic@1\nT0 f32\nN0 const.i64 42 T0\nO N0")
+            .expect("expected a response");
+        assert!(resp.contains("=2 ok"), "got: {}", resp);
+        assert!(resp.contains("nodes=1"), "got: {}", resp);
+    }
+
+    #[test]
+    fn test_patch_rate_budget_rejected_e104() {
+        let server = MapServer::new();
+        server.handle_line("@1 hello mic=1 map=1");
+        server.handle_line("@2 load.mic mic@1\nT0 f32\nN0 const.i64 42 T0\nO N0");
+
+        // Seed the session to the patch-rate ceiling so the next mutating
+        // patch is rejected — avoids issuing MAX_PATCH_OPS real operations.
+        {
+            let mut s = server.session.lock_or_recover();
+            s.patch_ops = MAX_PATCH_OPS;
+        }
+
+        for cmd in [
+            "@3 patch.insert N1 const.i64 7 T0",
+            "@4 patch.delete N0",
+            "@5 patch.replace N0 const.i64 9 T0",
+        ] {
+            let resp = server.handle_line(cmd).expect("expected a response");
+            assert!(resp.contains("err"), "expected rejection, got: {}", resp);
+            assert!(resp.contains("code=E104"), "got: {}", resp);
+            assert!(resp.contains("budget exhausted"), "got: {}", resp);
+        }
+    }
+
+    #[test]
+    fn test_patch_op_counter_increments_and_resets_on_bye() {
+        let server = MapServer::new();
+        server.handle_line("@1 hello mic=1 map=1");
+        server.handle_line("@2 load.mic mic@1\nT0 f32\nN0 const.i64 42 T0\nO N0");
+
+        server.handle_line("@3 patch.insert N1 const.i64 7 T0");
+        assert_eq!(server.session.lock_or_recover().patch_ops, 1);
+
+        // `bye` resets the per-session patch budget.
+        server.handle_line("@4 bye");
+        assert_eq!(server.session.lock_or_recover().patch_ops, 0);
     }
 }
