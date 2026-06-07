@@ -18,7 +18,7 @@
 //!
 //! ```text
 //! [0..4)  magic  "MIC3"
-//! [4]     version 0x01
+//! [4]     version 0x02
 //! varint  string-table count N
 //! N × (varint byte-len, utf-8 bytes)  — string table entries (first-seen order)
 //! varint  next_id
@@ -34,6 +34,25 @@
 //! varint  repr_c_structs count
 //! N × (varint name-idx, varint field-count, M × type-ann bytes)
 //! ```
+//!
+//! # Control-flow region-exit metadata (version `0x02`+)
+//!
+//! `While` and `If` carry side-metadata that exposes fresh SSA ids into the
+//! enclosing scope (the `^while_after` / `^if_after` block arguments).  These
+//! ids are referenced by instructions *after* the region but are not defined by
+//! any instruction *inside* its body, so a consumer must read them to verify
+//! define-before-use.  They are appended to each instruction encoding:
+//!
+//! ```text
+//! While: ... live_vars, init_ids, exit_ids
+//!        exit_ids = varint count, N × varint ValueId
+//! If:    ... branch_bindings, merges
+//!        merges   = varint count, N × (varint merge_id, varint then_val,
+//!                                      varint else_val)
+//! ```
+//!
+//! A `0x01` artifact omits both; the parser reads them as empty for that
+//! version (back-compatible read).
 //!
 //! # Optional MAP epilogue (RFC 0021 §4.2)
 //!
@@ -107,8 +126,34 @@ pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, Tra
 /// Magic header bytes for MIC@3 binary format.
 pub const MIC3_MAGIC: [u8; 4] = *b"MIC3";
 
-/// MIC@3 format version byte.
-pub const MIC3_VERSION: u8 = 0x01;
+/// MIC@3 format version byte (the version this build *emits*).
+///
+/// # Version history
+///
+/// * `0x01` — original layout. `While.exit_ids` and `If.merges` (the
+///   control-flow region-exit / merge metadata) were *not* serialised, so a
+///   parsed artifact lost them (`exit_ids: Vec::new()` / `merges: Vec::new()`).
+///   Consumer-side `mindc verify` therefore reported false define-before-use
+///   errors on control-flow programs whose post-region instructions referenced
+///   those exit ids (#24).
+/// * `0x02` — appends `While.exit_ids` (a ValueId list) after `init_ids`, and
+///   `If.merges` (a `(merge_id, then_val, else_val)` triple list) after
+///   `branch_bindings`, so control-flow artifacts are independently
+///   SSA-verifiable. This changes the mic@3 bytes for any program containing a
+///   `While` with non-empty `exit_ids` or an `If` with non-empty `merges`, and
+///   therefore changes `trace_hash` for those programs — the intended effect of
+///   making the canonical content *complete* (RFC 0021 step-5).
+///
+/// The parser ([`parse_mic3`]) accepts BOTH `0x01` and `0x02`: a `0x01`
+/// artifact is read with empty `exit_ids` / `merges` (the historical
+/// behaviour); a `0x02` artifact reads the real values. The emitter always
+/// writes [`MIC3_VERSION`] (currently `0x02`).
+pub const MIC3_VERSION: u8 = 0x02;
+
+/// Lowest MIC@3 format version this build can *read*. The parser is
+/// backward-compatible down to this version; the emitter always writes
+/// [`MIC3_VERSION`].
+pub const MIC3_MIN_READ_VERSION: u8 = 0x01;
 
 #[cfg(test)]
 mod tests {
@@ -947,6 +992,7 @@ mod tests {
             let body_v = m.fresh();
             let live_v = m.fresh();
             let init_v = m.fresh();
+            let exit_v = m.fresh();
 
             m.instrs.push(Instr::While {
                 cond_id: cond,
@@ -954,7 +1000,7 @@ mod tests {
                 body: vec![Instr::ConstI64(body_v, 42)],
                 live_vars: vec![("i".into(), live_v)],
                 init_ids: vec![init_v],
-                exit_ids: Vec::new(),
+                exit_ids: vec![exit_v],
             });
             m.instrs.push(Instr::Output(cond));
 
@@ -965,6 +1011,7 @@ mod tests {
                 body,
                 live_vars,
                 init_ids,
+                exit_ids,
                 ..
             } = &parsed.instrs[0]
             {
@@ -973,6 +1020,9 @@ mod tests {
                 assert_eq!(live_vars.len(), 1);
                 assert_eq!(live_vars[0].0, "i");
                 assert_eq!(init_ids.len(), 1);
+                // version 0x02: exit_ids survive the round trip.
+                assert_eq!(exit_ids.len(), 1, "exit_ids must round-trip");
+                assert_eq!(exit_ids[0], exit_v);
             } else {
                 panic!("expected While");
             }
@@ -985,6 +1035,7 @@ mod tests {
             let then_r = m.fresh();
             let else_r = m.fresh();
             let dst = m.fresh();
+            let merge_id = m.fresh();
 
             m.instrs.push(Instr::If {
                 cond_id: cond,
@@ -995,7 +1046,7 @@ mod tests {
                 else_result: else_r,
                 dst,
                 branch_bindings: vec![("x".into(), dst)],
-                merges: Vec::new(),
+                merges: vec![(merge_id, then_r, else_r)],
             });
             m.instrs.push(Instr::Output(dst));
 
@@ -1005,6 +1056,7 @@ mod tests {
                 then_instrs,
                 else_instrs,
                 branch_bindings,
+                merges,
                 ..
             } = &parsed.instrs[0]
             {
@@ -1012,6 +1064,9 @@ mod tests {
                 assert_eq!(else_instrs.len(), 1);
                 assert_eq!(branch_bindings.len(), 1);
                 assert_eq!(branch_bindings[0].0, "x");
+                // version 0x02: merges survive the round trip.
+                assert_eq!(merges.len(), 1, "merges must round-trip");
+                assert_eq!(merges[0], (merge_id, then_r, else_r));
             } else {
                 panic!("expected If");
             }
@@ -1254,6 +1309,174 @@ mod tests {
             let parsed = parse_mic3(&b1).unwrap();
             let b2 = emit_mic3(&parsed);
             assert_eq!(b1, b2);
+        }
+
+        /// Build a control-flow module shaped like bug #24: a `While` whose
+        /// `exit_id` is referenced by a post-loop instruction, and an `If` whose
+        /// `merge_id` is referenced after the branch. Before version 0x02 these
+        /// fresh ids were stripped on parse and looked undefined to the
+        /// consumer verifier.
+        fn cf_module_with_exposed_ids() -> IRModule {
+            let mut m = IRModule::new();
+            let cond = m.fresh();
+            let init = m.fresh();
+            let body_post = m.fresh();
+            let exit_id = m.fresh(); // ^while_after block arg, referenced below
+            let if_cond = m.fresh();
+            let then_r = m.fresh();
+            let else_r = m.fresh();
+            let if_dst = m.fresh();
+            let merge_id = m.fresh(); // ^if_after block arg, referenced below
+
+            m.instrs.push(Instr::ConstI64(init, 0));
+            m.instrs.push(Instr::While {
+                cond_id: cond,
+                cond_instrs: vec![Instr::ConstI64(cond, 1)],
+                body: vec![Instr::ConstI64(body_post, 7)],
+                live_vars: vec![("i".into(), body_post)],
+                init_ids: vec![init],
+                exit_ids: vec![exit_id],
+            });
+            // Post-loop use of the While exit id — undefined unless serialised.
+            m.instrs.push(Instr::Output(exit_id));
+
+            m.instrs.push(Instr::If {
+                cond_id: if_cond,
+                cond_instrs: vec![Instr::ConstI64(if_cond, 1)],
+                then_instrs: vec![Instr::ConstI64(then_r, 10)],
+                then_result: then_r,
+                else_instrs: vec![Instr::ConstI64(else_r, 20)],
+                else_result: else_r,
+                dst: if_dst,
+                branch_bindings: vec![("x".into(), if_dst)],
+                merges: vec![(merge_id, then_r, else_r)],
+            });
+            // Post-if use of the merge id — undefined unless serialised.
+            m.instrs.push(Instr::Output(merge_id));
+            m
+        }
+
+        /// Gate 1: fixed point on a control-flow program with non-empty
+        /// exit_ids / merges. `emit(parse(emit(m))) == emit(m)` — the
+        /// round-trip determinism `trace_hash` depends on.
+        #[test]
+        fn fixed_point_control_flow_metadata() {
+            let m = cf_module_with_exposed_ids();
+            let b1 = emit_mic3(&m);
+            let parsed = parse_mic3(&b1).unwrap();
+            let b2 = emit_mic3(&parsed);
+            assert_eq!(
+                b1, b2,
+                "control-flow fixed point: emit(parse(emit(m))) != emit(m)"
+            );
+
+            // The exposed ids must actually survive (not just byte-stable).
+            let exit_ok = parsed.instrs.iter().any(|i| {
+                matches!(i, Instr::While { exit_ids, .. } if !exit_ids.is_empty())
+            });
+            let merge_ok = parsed
+                .instrs
+                .iter()
+                .any(|i| matches!(i, Instr::If { merges, .. } if !merges.is_empty()));
+            assert!(exit_ok, "While.exit_ids stripped on round trip");
+            assert!(merge_ok, "If.merges stripped on round trip");
+        }
+
+        /// Gate 3 (differential, RFC 0021 §3.2): the consumer verdict on the
+        /// round-tripped artifact equals the in-pipeline verdict — for a VALID
+        /// control-flow IR (both must accept).
+        #[test]
+        fn differential_gate_valid_cf() {
+            use crate::ir::check_ssa_well_formed;
+            let m = cf_module_with_exposed_ids();
+            let in_pipeline = check_ssa_well_formed(&m);
+            let roundtripped = parse_mic3(&emit_mic3(&m)).unwrap();
+            let consumer = check_ssa_well_formed(&roundtripped);
+            assert!(in_pipeline.is_ok(), "valid CF IR must verify in-pipeline");
+            assert_eq!(
+                in_pipeline.is_ok(),
+                consumer.is_ok(),
+                "differential gate: consumer verdict on artifact != in-pipeline verdict"
+            );
+        }
+
+        /// Gate 4 (negative / adversarial): a genuinely-malformed IR — a real
+        /// use-before-def that is NOT a legitimate exit id — must STILL be
+        /// rejected after the round trip. Serialising exit_ids/merges must not
+        /// launder arbitrary undefined ids through the codec.
+        #[test]
+        fn differential_gate_invalid_cf_still_rejected() {
+            use crate::ir::check_ssa_well_formed;
+            let mut m = IRModule::new();
+            let defined = m.fresh();
+            let phantom = m.fresh(); // never produced anywhere
+            m.instrs.push(Instr::ConstI64(defined, 1));
+            // Use an id that no instruction (and no exit_id/merge) ever defines.
+            m.instrs.push(Instr::Output(phantom));
+
+            let in_pipeline = check_ssa_well_formed(&m);
+            assert!(
+                in_pipeline.is_err(),
+                "use-before-def must be rejected in-pipeline"
+            );
+            let roundtripped = parse_mic3(&emit_mic3(&m)).unwrap();
+            let consumer = check_ssa_well_formed(&roundtripped);
+            assert!(
+                consumer.is_err(),
+                "use-before-def must STILL be rejected on the round-tripped artifact"
+            );
+            assert_eq!(in_pipeline.is_err(), consumer.is_err());
+        }
+
+        /// Back-compat read: a hand-built version-0x01 artifact (which omits the
+        /// exit_ids / merges fields) must still parse, with those fields empty.
+        /// We synthesise a minimal 0x01 stream by emitting a While/If module
+        /// that has EMPTY exit_ids/merges (byte-identical body shape between
+        /// 0x01 and 0x02 in that case) and rewriting the version byte to 0x01.
+        #[test]
+        fn back_compat_reads_version_0x01() {
+            let mut m = IRModule::new();
+            let cond = m.fresh();
+            m.instrs.push(Instr::While {
+                cond_id: cond,
+                cond_instrs: vec![Instr::ConstI64(cond, 1)],
+                body: vec![],
+                live_vars: vec![],
+                init_ids: vec![],
+                exit_ids: Vec::new(),
+            });
+
+            let mut bytes = emit_mic3(&m);
+            // bytes[4] is the version byte; force it back to 0x01.
+            assert_eq!(bytes[4], MIC3_VERSION);
+            // For a 0x01 stream the trailing exit_ids count (a single 0x00 from
+            // the empty vec) must be removed so the 0x01 reader does not consume
+            // a non-existent field. Re-emit under 0x01 semantics by truncating
+            // the final exit_ids length byte (empty vec == one 0x00 byte at the
+            // tail of the While encoding, which is the last body byte here).
+            assert_eq!(*bytes.last().unwrap(), 0u8, "empty exit_ids count");
+            bytes.pop(); // drop the exit_ids count that 0x01 never wrote
+            bytes[4] = 0x01;
+
+            let parsed = parse_mic3(&bytes).expect("0x01 artifact must parse");
+            assert!(matches!(
+                &parsed.instrs[0],
+                Instr::While { exit_ids, .. } if exit_ids.is_empty()
+            ));
+        }
+
+        /// An unknown future version is rejected fail-closed (Constitution §V).
+        #[test]
+        fn rejects_unknown_future_version() {
+            let m = IRModule::new();
+            let mut bytes = emit_mic3(&m);
+            bytes[4] = 0xFF;
+            let err = parse_mic3(&bytes).expect_err("future version must be rejected");
+            assert!(
+                err.message.contains("unsupported MIC3 version"),
+                "got: {}",
+                err.message
+            );
         }
     }
 }

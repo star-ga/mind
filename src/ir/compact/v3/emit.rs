@@ -415,6 +415,21 @@ fn encode_vid_vec<W: Write>(w: &mut W, ids: &[ValueId]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Encode a list of `(ValueId, ValueId, ValueId)` triples (used for `If.merges`:
+/// `(merge_id, then_val, else_val)`). Length-prefixed, each id as a uleb vid.
+fn encode_vid_triples<W: Write>(
+    w: &mut W,
+    triples: &[(ValueId, ValueId, ValueId)],
+) -> std::io::Result<()> {
+    uleb128_write(w, triples.len() as u64)?;
+    for (a, b, c) in triples {
+        write_vid(w, *a)?;
+        write_vid(w, *b)?;
+        write_vid(w, *c)?;
+    }
+    Ok(())
+}
+
 fn encode_string_idx<W: Write>(w: &mut W, s: &str, st: &StringTable) -> std::io::Result<()> {
     uleb128_write(w, st.get(s) as u64)?;
     Ok(())
@@ -1026,9 +1041,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             body,
             live_vars,
             init_ids,
-            // F2 exit_ids is lowering-internal: not serialised to the mic
-            // wire format (fn bodies are not persisted to mic; hash-neutral).
-            ..
+            // F2 `exit_ids` ARE serialised (mic@3 version 0x02): these fresh ids
+            // are exposed into the enclosing scope (`^while_after` block args)
+            // and referenced by post-loop instructions, so the artifact must
+            // carry them to be independently SSA-verifiable (#24, RFC 0021
+            // step-5). Appended after `init_ids`.
+            exit_ids,
         } => {
             w.write_all(&[OP_WHILE]).unwrap();
             write_vid(w, *cond_id).unwrap();
@@ -1042,6 +1060,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             }
             encode_named_vids(w, live_vars, st).unwrap();
             encode_vid_vec(w, init_ids).unwrap();
+            encode_vid_vec(w, exit_ids).unwrap();
         }
         #[cfg(feature = "std-surface")]
         Instr::If {
@@ -1053,9 +1072,12 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             else_result,
             dst,
             branch_bindings,
-            // F2 merges is lowering-internal: not serialised to the mic wire
-            // format (fn bodies are not persisted to mic; hash-neutral).
-            ..
+            // F2 `merges` ARE serialised (mic@3 version 0x02): each `merge_id`
+            // is a fresh `^if_after` block-arg exposed into the enclosing scope
+            // and referenced by post-if instructions, so the artifact must carry
+            // them to be independently SSA-verifiable (#24, RFC 0021 step-5).
+            // Appended after `branch_bindings`.
+            merges,
         } => {
             w.write_all(&[OP_IF]).unwrap();
             write_vid(w, *cond_id).unwrap();
@@ -1075,6 +1097,7 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
             write_vid(w, *else_result).unwrap();
             write_vid(w, *dst).unwrap();
             encode_named_vids(w, branch_bindings, st).unwrap();
+            encode_vid_triples(w, merges).unwrap();
         }
         #[cfg(feature = "std-surface")]
         Instr::VecLoad {

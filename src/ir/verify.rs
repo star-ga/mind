@@ -135,6 +135,60 @@ pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
 /// (e.g. a `Region.result` produced inside the body), re-exposing it is a no-op
 /// and is NOT a single-assignment violation, because the region is one logical
 /// producer of that value.
+/// Does a branch sub-stream fall through to `^if_after` (i.e. does it reach the
+/// merge), or does it terminate early with a `return`?
+///
+/// This MUST mirror the lowering rule in `src/eval/lower.rs` (§ "A branch that
+/// ends in `return` does not fall through to `^if_after`"): a branch whose last
+/// instruction is `Return` has its `cf.br` omitted and does NOT pass a merge
+/// value. Its slot in the `(merge_id, then_val, else_val)` tuple is a PLACEHOLDER
+/// — the *other* branch's value, or a `usize::MAX` sentinel when neither branch
+/// assigns the name — and therefore must NOT be validated against this branch's
+/// scope (it is not a real edge into the merge). Only a falling-through branch
+/// contributes a genuine merge operand that must be defined in its own scope.
+#[cfg(feature = "std-surface")]
+fn branch_falls_through(instrs: &[Instr]) -> bool {
+    !matches!(instrs.last(), Some(Instr::Return { .. }))
+}
+
+/// Validate the F2 merge operands of an `If` against PER-BRANCH scopes — the
+/// soundness-critical check (issue #24).
+///
+/// `then_val` is the merged variable's value at the EXIT of the then-branch, so
+/// it must be defined in `then_scope` (enclosing ∪ then-branch defs) ONLY; symm-
+/// etrically `else_val` must be defined in `else_scope` (enclosing ∪ else-branch
+/// defs) ONLY. Checking both against the union (enclosing ∪ then ∪ else) is
+/// UNSOUND: a tampered artifact whose `then_val` points at an else-branch-only
+/// value would be wrongly accepted, defeating the consumer verifier's purpose.
+///
+/// Only a FALLING-THROUGH branch contributes a real merge operand (see
+/// [`branch_falls_through`]); a returning branch's slot is a placeholder and is
+/// skipped. This single helper is shared by both verifiers so they can never
+/// diverge. On the first violation it returns `Err(offending_operand)`.
+#[cfg(feature = "std-surface")]
+fn validate_if_merges(
+    then_scope: &BTreeSet<ValueId>,
+    else_scope: &BTreeSet<ValueId>,
+    then_instrs: &[Instr],
+    else_instrs: &[Instr],
+    merges: &[(ValueId, ValueId, ValueId)],
+) -> Result<(), ValueId> {
+    let then_ft = branch_falls_through(then_instrs);
+    let else_ft = branch_falls_through(else_instrs);
+    for (_merge_id, then_val, else_val) in merges {
+        // then_val is only a real edge value when the then-branch falls through;
+        // it must dominate the merge via the then-branch scope alone.
+        if then_ft && !then_scope.contains(then_val) {
+            return Err(*then_val);
+        }
+        // else_val symmetrically against the else-branch scope alone.
+        if else_ft && !else_scope.contains(else_val) {
+            return Err(*else_val);
+        }
+    }
+    Ok(())
+}
+
 fn expose_region_definitions(instr: &Instr, scope: &mut BTreeSet<ValueId>) {
     match instr {
         #[cfg(feature = "std-surface")]
@@ -189,17 +243,38 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                 Instr::While { .. } | Instr::If { .. } | Instr::Region { .. }
             );
 
-        // 1. Define-before-use: every operand must already be defined. The F2
-        //    block-argument forwarding ids are absent from a mic@3-parsed
-        //    module (decode to empty), so `instruction_operands` returns only
-        //    genuine, in-scope SSA reads here (e.g. `While.init_ids`, which are
-        //    enclosing-scope values defined before the loop).
-        for operand in instruction_operands(instr) {
-            if !defined.contains(&operand) {
-                return Err(SsaViolation {
-                    value: operand,
-                    rule: SsaRule::DefineBeforeUse,
-                });
+        // 1. Define-before-use: every operand must already be defined in the
+        //    enclosing scope *at this point in program order*.
+        //
+        //    SCOPE ORDERING CAVEAT — an `If`'s F2 merge `then_val`/`else_val`
+        //    (returned by `instruction_operands(If)`) are NOT enclosing-scope
+        //    reads: each is the value of a variable at the EXIT of its branch,
+        //    so it may be defined *inside* the corresponding branch sub-stream
+        //    (e.g. `then_result` flowing into the merge). Those operands are
+        //    therefore validated AFTER the branch is walked, in step 3, against
+        //    the post-branch scope where the branch's definitions are visible —
+        //    never here, which would falsely flag a branch-internal value as
+        //    use-before-def. Every other instruction (including `While`, whose
+        //    only operands are `init_ids` — genuine enclosing-scope pre-loop
+        //    values) is checked here in the enclosing scope.
+        let defer_operand_check = {
+            #[cfg(feature = "std-surface")]
+            {
+                matches!(instr, Instr::If { .. })
+            }
+            #[cfg(not(feature = "std-surface"))]
+            {
+                false
+            }
+        };
+        if !defer_operand_check {
+            for operand in instruction_operands(instr) {
+                if !defined.contains(&operand) {
+                    return Err(SsaViolation {
+                        value: operand,
+                        rule: SsaRule::DefineBeforeUse,
+                    });
+                }
             }
         }
 
@@ -265,11 +340,51 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                 cond_instrs,
                 then_instrs,
                 else_instrs,
+                merges,
                 ..
             } => {
+                // The condition is evaluated in the enclosing scope before the
+                // branch split, so its defs are visible to both branches.
                 check_ssa_stream(cond_instrs, defined)?;
-                check_ssa_stream(then_instrs, defined)?;
-                check_ssa_stream(else_instrs, defined)?;
+
+                // SOUNDNESS (issue #24): each branch is walked in its OWN scoped
+                // copy of `defined` so that the then-branch's interior defs are
+                // NOT visible when validating the else-branch's merge operand,
+                // and vice versa. `then_val` is the merged var's value at the
+                // exit of the then-branch and so must dominate via the then-scope
+                // ALONE; `else_val` via the else-scope alone. Validating both
+                // against a single merged (enclosing ∪ then ∪ else) scope would
+                // wrongly accept a tampered artifact whose `then_val` points at an
+                // else-branch-only value — exactly the cross-branch forgery this
+                // consumer verifier exists to catch.
+                let mut then_scope = defined.clone();
+                check_ssa_stream(then_instrs, &mut then_scope)?;
+                let mut else_scope = defined.clone();
+                check_ssa_stream(else_instrs, &mut else_scope)?;
+
+                if let Err(operand) = validate_if_merges(
+                    &then_scope,
+                    &else_scope,
+                    then_instrs,
+                    else_instrs,
+                    merges,
+                ) {
+                    return Err(SsaViolation {
+                        value: operand,
+                        rule: SsaRule::DefineBeforeUse,
+                    });
+                }
+
+                // Merge both branches' interior defs back into the enclosing
+                // scope so straight-line code AFTER the `If` (which the lowering
+                // only lets reference the dominating merge ids — exposed in
+                // step 4 — but whose ids we keep visible to avoid false
+                // use-before-def on any value the codec preserved) is checked
+                // against the post-`If` program state. This is the same union the
+                // previous threaded walk produced; only the MERGE-operand check
+                // above is now per-branch.
+                defined.extend(then_scope.into_iter());
+                defined.extend(else_scope.into_iter());
             }
             #[cfg(feature = "std-surface")]
             Instr::Region { body, .. } => {
@@ -355,6 +470,66 @@ pub fn verify_module(module: &IRModule) -> Result<(), IrVerifyError> {
         });
     }
 
+    Ok(())
+}
+
+/// Walk a branch sub-stream for the in-pipeline verifier, threading the exposed
+/// region/straight-line definitions into a SCOPED copy seeded from the enclosing
+/// scope, and recursively validating any nested `If` merge operands encountered
+/// (so a cross-branch forgery nested inside a branch is still caught). Returns
+/// the branch's post-walk scope (enclosing ∪ this branch's exposed defs), which
+/// the caller uses to validate the branch's own merge operand.
+///
+/// This mirrors the exposure model of the consumer-side `check_ssa_stream`
+/// (using the SHARED `expose_region_definitions`) so `verify_module` and
+/// `check_ssa_well_formed` agree on which ids a branch makes visible — and now
+/// also agree, per-branch, on `If` merge soundness (issue #24).
+#[cfg(feature = "std-surface")]
+fn collect_branch_scope(
+    instrs: &[Instr],
+    enclosing: &BTreeSet<ValueId>,
+) -> Result<BTreeSet<ValueId>, IrVerifyError> {
+    let mut scope = enclosing.clone();
+    for instr in instrs {
+        // Recurse FIRST for an `If` so its branches' interior defs are exposed
+        // (and its nested merges validated) before we expose the node-level ids.
+        if let Instr::If {
+            then_instrs,
+            else_instrs,
+            merges,
+            ..
+        } = instr
+        {
+            validate_if_node(then_instrs, else_instrs, merges, &scope)?;
+        }
+        expose_region_definitions(instr, &mut scope);
+    }
+    Ok(scope)
+}
+
+/// Validate one `If` node's F2 merge operands against PER-BRANCH scopes for the
+/// in-pipeline verifier, recursing into nested `If`s. The soundness core of the
+/// #24 fix on the `verify_module` side: it builds each branch's own scope via
+/// [`collect_branch_scope`] and defers the actual operand test to the SHARED
+/// [`validate_if_merges`], so both verifiers reject identical cross-branch
+/// forgeries.
+#[cfg(feature = "std-surface")]
+fn validate_if_node(
+    then_instrs: &[Instr],
+    else_instrs: &[Instr],
+    merges: &[(ValueId, ValueId, ValueId)],
+    enclosing: &BTreeSet<ValueId>,
+) -> Result<(), IrVerifyError> {
+    let then_scope = collect_branch_scope(then_instrs, enclosing)?;
+    let else_scope = collect_branch_scope(else_instrs, enclosing)?;
+    if let Err(operand) =
+        validate_if_merges(&then_scope, &else_scope, then_instrs, else_instrs, merges)
+    {
+        return Err(IrVerifyError::UseBeforeDefinition {
+            value: operand,
+            instr_index: 0,
+        });
+    }
     Ok(())
 }
 
@@ -471,6 +646,22 @@ fn validate_operands(
             // Verify body instructions have internally consistent definitions.
             let mut body_defined: BTreeSet<ValueId> = BTreeSet::new();
             for (body_idx, body_instr) in body.iter().enumerate() {
+                // SOUNDNESS (issue #24): a nested `If` inside this fn body carries
+                // F2 `merges` whose `then_val`/`else_val` must be validated against
+                // PER-BRANCH scopes built from the enclosing (fn-body) scope as it
+                // stands NOW — before the `If`'s own merge ids are exposed below.
+                // `validate_if_node` recurses into both branches (and any deeper
+                // nested `If`s) and defers to the shared `validate_if_merges`.
+                #[cfg(feature = "std-surface")]
+                if let Instr::If {
+                    then_instrs,
+                    else_instrs,
+                    merges,
+                    ..
+                } = body_instr
+                {
+                    validate_if_node(then_instrs, else_instrs, merges, &body_defined)?;
+                }
                 // Expose every id this instruction makes visible to the enclosing
                 // (fn-body) scope via the SHARED `expose_region_definitions`
                 // helper — the same one the consumer-side `check_ssa_stream` uses,
@@ -561,10 +752,21 @@ fn validate_operands(
         }
         // Phase 6.5 Stage 1a: If — condition, then, and else each reside in
         // their own sub-instruction streams (separate SSA namespaces from the
-        // outer scope).  The outer verifier treats the node as an opaque
-        // control-flow unit. Gated.
+        // outer scope). The node is otherwise an opaque control-flow unit, BUT
+        // its F2 `merges` carry `then_val`/`else_val` operands that MUST be
+        // validated against PER-BRANCH scopes (issue #24 soundness): `then_val`
+        // against (enclosing ∪ then-defs), `else_val` against (enclosing ∪
+        // else-defs). Validating both against the union would wrongly accept a
+        // cross-branch forgery. `defined` here is the enclosing scope. Gated.
         #[cfg(feature = "std-surface")]
-        Instr::If { .. } => {}
+        Instr::If {
+            then_instrs,
+            else_instrs,
+            merges,
+            ..
+        } => {
+            validate_if_node(then_instrs, else_instrs, merges, defined)?;
+        }
         // RFC 0006 Track B: SIMD vector primitives. Each operand is an
         // ordinary SSA value that must be defined before use; the lane
         // count is a compile-time literal, nothing to check there. Gated.
