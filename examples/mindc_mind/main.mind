@@ -1647,10 +1647,11 @@ struct EmitState {
     buf: String,
     next_id: i64,
     last_id: i64,
+    lets: Map,
 }
 
 pub fn es_new() -> EmitState {
-    EmitState { buf: string_new(), next_id: 0, last_id: 0 - 1 }
+    EmitState { buf: string_new(), next_id: 0, last_id: 0 - 1, lets: env_new() }
 }
 
 pub fn es_buf(s: EmitState) -> String {
@@ -1664,7 +1665,7 @@ pub fn es_last_id(s: EmitState) -> i64 {
 }
 
 pub fn es_push(s: EmitState, b: i64) -> EmitState {
-    EmitState { buf: string_push_byte(s.buf, b), next_id: s.next_id, last_id: s.last_id }
+    EmitState { buf: string_push_byte(s.buf, b), next_id: s.next_id, last_id: s.last_id, lets: s.lets }
 }
 
 // ===== ASCII byte constants =====
@@ -1875,7 +1876,7 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
         let s1: EmitState = emit_lit_const_i64_head(s, id);
         let s2: EmitState = emit_i64(s1, val);
         let s3: EmitState = es_push(s2, ch_newline());
-        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
 
     if k == ast_ident() {
@@ -1883,7 +1884,7 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
         let s1: EmitState = emit_lit_const_i64_head(s, id);
         let s2: EmitState = es_push(s1, 48);
         let s3: EmitState = es_push(s2, ch_newline());
-        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
 
     if k == ast_binop() {
@@ -1908,7 +1909,7 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
         let s16: EmitState = es_push(s15, ch_percent());
         let s17: EmitState = emit_i64(s16, rhs_id);
         let s18: EmitState = es_push(s17, ch_newline());
-        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id, lets: s18.lets };
     }
 
     if k == ast_paren() {
@@ -1923,14 +1924,14 @@ pub fn emit_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
         let s1: EmitState = emit_lit_const_i64_head(s_args, id);
         let s2: EmitState = es_push(s1, 48);
         let s3: EmitState = es_push(s2, ch_newline());
-        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
 
     let id: i64 = s.next_id;
     let s1: EmitState = emit_lit_const_i64_head(s, id);
     let s2: EmitState = es_push(s1, 48);
     let s3: EmitState = es_push(s2, ch_newline());
-    EmitState { buf: s3.buf, next_id: id + 1, last_id: id }
+    EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets }
 }
 
 pub fn emit_call_args(s: EmitState, buf: i64, args_addr: i64, args_len: i64, i: i64) -> EmitState {
@@ -1980,7 +1981,7 @@ pub fn emit_fn_def(s: EmitState, buf: i64, node: i64) -> EmitState {
     let s4: EmitState = emit_lit_const_i64_head(s3, id);
     let s5: EmitState = es_push(s4, 48);
     let s6: EmitState = es_push(s5, ch_newline());
-    let s7: EmitState = EmitState { buf: s6.buf, next_id: id + 1, last_id: id };
+    let s7: EmitState = EmitState { buf: s6.buf, next_id: id + 1, last_id: id, lets: s6.lets };
     emit_lit_output(s7, id)
 }
 
@@ -2039,18 +2040,22 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
         let s1: EmitState = emit_lit_const_i64_head(s, id);
         let s2: EmitState = emit_i64(s1, val);
         let s3: EmitState = es_push(s2, ch_newline());
-        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
     if k == ast_ident() {
         let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
         if idx >= 0 {
-            return EmitState { buf: s.buf, next_id: s.next_id, last_id: idx };
+            return EmitState { buf: s.buf, next_id: s.next_id, last_id: idx, lets: s.lets };
+        }
+        let lid: i64 = env_lookup(s.lets, buf, ast_span_lo(node), ast_span_hi(node));
+        if lid != ty_unknown() {
+            return EmitState { buf: s.buf, next_id: s.next_id, last_id: lid - 1, lets: s.lets };
         }
         let id: i64 = s.next_id;
         let s1: EmitState = emit_lit_const_i64_head(s, id);
         let s2: EmitState = es_push(s1, 48);
         let s3: EmitState = es_push(s2, ch_newline());
-        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
     if k == ast_binop() {
         let s1: EmitState = emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
@@ -2074,7 +2079,7 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
         let s16: EmitState = es_push(s15, ch_percent());
         let s17: EmitState = emit_i64(s16, rhs_id);
         let s18: EmitState = es_push(s17, ch_newline());
-        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s18.buf, next_id: id + 1, last_id: id, lets: s18.lets };
     }
     if k == ast_paren() {
         return emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
@@ -2087,13 +2092,13 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
         let s1: EmitState = emit_lit_const_i64_head(s_args, id);
         let s2: EmitState = es_push(s1, 48);
         let s3: EmitState = es_push(s2, ch_newline());
-        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
     let id: i64 = s.next_id;
     let s1: EmitState = emit_lit_const_i64_head(s, id);
     let s2: EmitState = es_push(s1, 48);
     let s3: EmitState = es_push(s2, ch_newline());
-    EmitState { buf: s3.buf, next_id: id + 1, last_id: id }
+    EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets }
 }
 
 // Env-aware call-argument lowering: like emit_call_args but threads the
@@ -2113,7 +2118,10 @@ pub fn emit_call_args_env(s: EmitState, buf: i64, args_addr: i64, args_len: i64,
 pub fn emit_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
     let k: i64 = ast_kind(node);
     if k == ast_let() {
-        return emit_expr_env(s, buf, ast_child2(node), params_addr, n_params);
+        let s1: EmitState = emit_expr_env(s, buf, ast_child2(node), params_addr, n_params);
+        let name_leaf: i64 = ast_child0(node);
+        let new_lets: Map = env_bind(s1.lets, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id + 1);
+        return EmitState { buf: s1.buf, next_id: s1.next_id, last_id: s1.last_id, lets: new_lets };
     }
     if k == ast_return() {
         let s1: EmitState = emit_expr_env(s, buf, ast_child0(node), params_addr, n_params);
@@ -2137,7 +2145,7 @@ pub fn emit_fn_def_with_body(s: EmitState, buf: i64, node: i64) -> EmitState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
     let body: i64 = ast_child2(node);
-    let s0: EmitState = EmitState { buf: s.buf, next_id: n_params, last_id: 0 };
+    let s0: EmitState = EmitState { buf: s.buf, next_id: n_params, last_id: 0, lets: s.lets };
     let s1: EmitState = emit_block_stmts_env(s0, buf, ast_child0(body), ast_aux(body), 0, params_addr, n_params);
     emit_lit_output(s1, s1.last_id)
 }
@@ -2172,7 +2180,7 @@ pub fn emit_item_stub(s: EmitState) -> EmitState {
     let s1: EmitState = emit_lit_const_i64_head(s, id);
     let s2: EmitState = es_push(s1, 48);
     let s3: EmitState = es_push(s2, ch_newline());
-    let s4: EmitState = EmitState { buf: s3.buf, next_id: id + 1, last_id: id };
+    let s4: EmitState = EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     emit_lit_output(s4, id)
 }
 

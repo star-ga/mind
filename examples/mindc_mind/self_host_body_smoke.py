@@ -35,6 +35,17 @@ CASES = [
     # g(a + 1): arg binop lowers (%0 param, %1 const 1, %2 add) -> placeholder %3.
     (b"pub fn f(a: i64) -> i64 { g(a + 1) }\n",
      b"  %1 = const.i64 1\n  %2 = add %0, %1\n  %3 = const.i64 0\n  output %3\n"),
+    # let-binding SSA resolution: `let s: i64 = a + 1; s`. a=%0 (param),
+    # 1=%1 (const), add=%2; `s` binds to %2; the trailing `s` resolves to
+    # %2 (no op); output %2.  (The bootstrap parser requires the `: i64`
+    # type annotation on let — parse_let reads ty at pos+3, init at pos+5.)
+    (b"pub fn f(a: i64) -> i64 { let s: i64 = a + 1; s }\n",
+     b"  %1 = const.i64 1\n  %2 = add %0, %1\n  output %2\n"),
+    # nested let: `let x: i64 = 5; let y: i64 = x + x; y`. 5=%0 (const);
+    # x binds %0; x + x -> %1 = add %0, %0; y binds %1; trailing y resolves
+    # %1 (no op); output %1.
+    (b"pub fn g() -> i64 { let x: i64 = 5; let y: i64 = x + x; y }\n",
+     b"  %0 = const.i64 5\n  %1 = add %0, %0\n  output %1\n"),
 ]
 
 
