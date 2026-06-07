@@ -76,6 +76,40 @@ mindc --sandbox=strict \
       untrusted_model.mind
 ```
 
+## MAP Protocol Resource Budgets
+
+The Mind AI Protocol (MAP) server (`mind-ai`) is a long-lived, stateful,
+line-oriented protocol that accepts untrusted input from AI agents
+(`load.mic`, `patch.*`, `dump`, `check`, `query.*`). Because a single session
+persists across many requests and holds a resident module in memory, the
+server enforces explicit, named resource budgets so a hostile or buggy peer
+cannot exhaust memory or CPU. Each budget is enforced with a **clear,
+structured error** — the server never panics, aborts, or silently truncates.
+
+| Budget | Constant | Default | Guards against | Error code |
+|--------|----------|---------|----------------|------------|
+| Single line size | `MAX_LINE_BYTES` | 1 MiB | One enormous request or heredoc-body line forcing an unbounded allocation | `E101` |
+| Heredoc body size | `MAX_SESSION_BYTES` | 16 MiB | An unterminated or hostile heredoc accumulating without bound before `EOF` | `E102` |
+| Module node count | `MAX_MODULE_NODES` | 1,000,000 | A module whose node count makes per-node validation/patch scans or resident memory unbounded (checked on `load.mic` and after any `patch.*`) | `E103` |
+| Patch operation rate | `MAX_PATCH_OPS` | 100,000 / session | An unbounded stream of mutating `patch.*` operations triggering repeated whole-module rewrites | `E104` |
+
+### Enforcement behaviour
+
+- **Bounded parsing.** Oversized physical lines are rejected before any command
+  is dispatched. The body of an over-budget heredoc is *drained* (discarded)
+  until its closing `EOF` so it is never reinterpreted as protocol commands.
+- **Pre-commit node check.** `load.mic`, `patch.insert`, and `patch.replace`
+  compute the candidate module's node count and reject it *before* it becomes
+  the resident module, so a rejected operation leaves session state unchanged.
+- **Per-session patch budget.** The patch-operation counter is charged on every
+  mutating `patch.*` call and reset to zero on `bye` (session teardown).
+- **Structured errors.** Every rejection is returned as
+  `=<seq> err code=E1xx msg="..."`, so a client can match on the stable code
+  while still receiving a human-readable reason.
+
+These budgets are compile-time constants in `src/bin/mind-ai.rs`; adjust them
+there if a deployment legitimately needs larger modules or higher patch rates.
+
 ## Secure Defaults
 
 MIND's defaults prioritize safety:

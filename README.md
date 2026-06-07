@@ -24,7 +24,7 @@ The compiler produces deterministic binaries that execute inside the [Cognitive 
 
 ## Open-core vs proprietary runtime
 
-This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. Production-grade runtime backends for CPU, GPU, and accelerators live in the private [`mind-runtime`](https://github.com/star-ga/mind-runtime) repository. Functions in `src/exec/*` marked with `todo!()` or `unimplemented!()` are runtime hooks that the proprietary backend fulfills.
+This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. The open `src/exec/cpu.rs` ships a **reference CPU interpreter** — naive, unoptimized implementations that produce correct results for learning, prototyping, and small workloads (gated behind the `cpu-exec` feature). Production-grade runtime backends for CPU (SIMD, tiled matmul), GPU, and accelerators live in the private [`mind-runtime`](https://github.com/star-ga/mind-runtime) repository. A few operations the open interpreter does not cover (for example Conv2D in `src/exec/conv.rs`) return `ExecError::Unsupported`; these are architectural boundary markers that the proprietary backend fulfills.
 
 ## System Requirements
 
@@ -144,8 +144,11 @@ cargo build --features autodiff   # Autodiff support
 cargo build --features full       # All features
 ```
 
-MLIR emission requires the `mlir-lowering` feature. Autodiff support is
-experimental and currently focused on single-output entry points.
+MLIR emission requires the `mlir-lowering` feature. Reverse-mode autodiff
+covers the Core v1 tensor ops (see [`docs/autodiff.md`](docs/autodiff.md)) and
+differentiates a single-output `main` entry point; non-Core-v1 ops (functions,
+control flow, std-surface, modulo, bitwise/shift) are non-differentiable and
+return a structured error rather than a silent zero gradient.
 
 ## Pure-MIND standard library (RFC 0005)
 
@@ -321,7 +324,7 @@ cargo test --features "mlir-lowering autodiff"
 | IR/MLIR | `ir_*.rs`, `mlir_*.rs` | IR generation and MLIR lowering |
 | Autodiff | `autodiff*.rs`, `*_grad.rs` | Reverse-mode differentiation |
 | CLI | `cli_*.rs`, `mindc.rs` | Command-line interface |
-| Execution | `exec_*.rs`, `relu_*.rs`, `conv2d_*.rs` | Runtime execution stubs |
+| Execution | `exec_*.rs`, `relu_*.rs`, `conv2d_*.rs` | Reference CPU interpreter execution |
 
 ### Continuous Integration
 
