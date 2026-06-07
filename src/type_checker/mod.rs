@@ -57,6 +57,20 @@ type TensorParamSig = (usize, String, Vec<String>, String);
 type FnTensorSigs = HashMap<String, Vec<TensorParamSig>>;
 
 const TYPE_ERR_CODE: &str = "E2001";
+/// Unknown identifier — a value reference (e.g. `return r;`) to a name that is
+/// not a parameter, not a `let`-binding in scope, not a module-level `fn`, and
+/// not a resolver-injected cross-module / std import (MIND-Fuzz bug #4, task
+/// #23). Distinct from the generic `E2001` so the additive FnDef-body pass can
+/// whitelist it through the body-error filter (an undefined reference is a hard
+/// reject, never a Phase-A false positive).
+const UNKNOWN_IDENT_CODE: &str = "E2002";
+/// Unknown / unsupported call — a callee that is not a defined module-level
+/// `fn`, not a resolver-injected import, and not a registered `__mind_*`
+/// std-surface intrinsic. Because the project-table seeding (RFC 0005 Phase C)
+/// resolves std imports and module symbols during type-check, a call that
+/// reaches the fall-through arm is genuinely undefined, not a legitimate
+/// intrinsic — so it is a hard reject (MIND-Fuzz bug #4, task #23).
+const UNKNOWN_CALL_CODE: &str = "E2003";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
 const SHAPE_INNER_DIM_CODE: &str = "E2103";
@@ -655,6 +669,46 @@ fn closest_identifier(name: &str, env: &TypeEnv) -> Option<String> {
         }
     }
     best.map(|(_, k)| k.clone())
+}
+
+/// Register every `let`/`assign`-bound name introduced by a list of block
+/// statements into `env`, recursing into nested block-bearing statements
+/// (`if`/`while`/`for`/`block`).  This is the resolution-visibility counterpart
+/// to the body-walker: `infer_expr` only type-checks the *tail* expression of a
+/// block, so a name declared anywhere in a branch/loop body (including a nested
+/// one) must be seeded here or its tail-position reference mis-fires as an
+/// `unknown identifier` (E2002, task #23).  The recorded type is a best-effort
+/// placeholder (`ScalarI64`) — sufficient for definedness, since the FnDef-body
+/// pass only surfaces E2002/E2003, never a value-type mismatch from this seam.
+fn register_block_bindings(stmts: &[Node], env: &mut TypeEnv) {
+    for stmt in stmts {
+        match stmt {
+            Node::Let { name, .. } => {
+                env.entry(name.clone()).or_insert(ValueType::ScalarI64);
+            }
+            Node::Assign { name, .. } => {
+                env.entry(name.clone()).or_insert(ValueType::ScalarI64);
+            }
+            Node::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                register_block_bindings(then_branch, env);
+                if let Some(eb) = else_branch {
+                    register_block_bindings(eb, env);
+                }
+            }
+            #[cfg(feature = "std-surface")]
+            Node::While { body, .. } => register_block_bindings(body, env),
+            Node::For { var, body, .. } => {
+                env.entry(var.clone()).or_insert(ValueType::ScalarI64);
+                register_block_bindings(body, env);
+            }
+            Node::Block { stmts, .. } => register_block_bindings(stmts, env),
+            _ => {}
+        }
+    }
 }
 
 fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeErrSpan> {
@@ -1480,15 +1534,32 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         Node::Block { stmts, span } => {
             if let Some(last) = stmts.last() {
+                let env = &mut env.clone();
+                register_block_bindings(stmts, env);
                 infer_expr(last, env)
             } else {
                 Ok((ValueType::ScalarI32, *span))
             }
         }
         Node::If {
-            then_branch, span, ..
+            cond,
+            then_branch,
+            span,
+            ..
         } => {
+            // task #23: the condition expression must be checked for undefined
+            // references (e.g. `if UNDEF == 1` — an undefined identifier in the
+            // condition was previously skipped while the branches were checked).
+            // The cond is evaluated in the ENCLOSING scope, before any
+            // branch-local bindings.
+            infer_expr(cond, env)?;
             if let Some(last) = then_branch.last() {
+                // Seed the names bound inside the branch (including nested
+                // blocks) so a tail-position reference like
+                // `__mind_store_i64(dst + 8, …)` to a `let dst` declared
+                // earlier in the same branch resolves (task #23).
+                let env = &mut env.clone();
+                register_block_bindings(then_branch, env);
                 infer_expr(last, env)
             } else {
                 Ok((ValueType::ScalarI32, *span))
@@ -1509,17 +1580,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             let env = &mut env.clone();
             // Register loop variable
             env.insert(var.clone(), ValueType::ScalarI32);
-            // Register let-bindings inside body
-            for stmt in body {
-                if let Node::Let { name, .. } = stmt {
-                    env.insert(name.clone(), ValueType::ScalarI32);
-                }
-                if let Node::Assign { name, .. } = stmt {
-                    if !env.contains_key(name) {
-                        env.insert(name.clone(), ValueType::ScalarI32);
-                    }
-                }
-            }
+            // Register let/assign bindings inside the body, recursing into
+            // nested blocks so a tail-position reference resolves (task #23).
+            register_block_bindings(body, env);
             if let Some(last) = body.last() {
                 infer_expr(last, env)
             } else {
@@ -1713,9 +1776,21 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         // RFC 0005 Gap 1: while loop type. The body may change mutable
         // variables; the while expression itself is unit-typed (ScalarI32
-        // placeholder) until Gap 1 lands full control-flow typing.
+        // placeholder) until Gap 1 lands full control-flow typing. Descend
+        // into the body's tail with its bindings seeded so an undefined
+        // reference inside the loop is still caught while a legitimate
+        // `let`-bound name (incl. one declared in a nested block) resolves
+        // (task #23).
         #[cfg(feature = "std-surface")]
-        Node::While { span, .. } => Ok((ValueType::ScalarI32, *span)),
+        Node::While { body, span, .. } => {
+            if let Some(last) = body.last() {
+                let env = &mut env.clone();
+                register_block_bindings(body, env);
+                infer_expr(last, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
         // RFC 0010 Phase A: `extern "C"` blocks are declarations; they do not
         // produce a typed value. Return ScalarI32 placeholder for compatibility.
         Node::ExternBlock { span, .. } => Ok((ValueType::ScalarI32, *span)),
@@ -2540,6 +2615,22 @@ pub fn check_module_types_in_file(
         }
     }
 
+    // Pre-register in-file `extern "C" { fn … }` declarations (RFC 0010 Phase A)
+    // so that calls to FFI symbols declared in the same module — `open`,
+    // `mmap`, `syscall`, `isatty`, `string_push_byte`, … — type-check without a
+    // spurious `unsupported call` (task #23). An extern decl is a definition of
+    // the callee name for resolution purposes; the loose i64-ABI placeholder is
+    // consistent with the FnDef pre-registration above. `or_insert` keeps any
+    // already-resolved (cross-module / annotated) signature taking precedence.
+    for item in &module.items {
+        if let Node::ExternBlock { fns, .. } = item {
+            for ef in fns {
+                tenv.entry(ef.name.clone())
+                    .or_insert(ValueType::ScalarI64);
+            }
+        }
+    }
+
     for item in &module.items {
         match item {
             Node::Let {
@@ -2646,13 +2737,29 @@ pub fn check_module_types_in_file(
                         }
                         tenv.insert(name.clone(), vt_ann);
                     }
-                    None => errs.push(diag_from_span(
-                        src,
-                        file,
-                        format!("unsupported annotation for `{}`", name),
-                        *span,
-                        TYPE_ERR_CODE,
-                    )),
+                    None => {
+                        // The annotation is a Named/aggregate type the v1 value-
+                        // type lattice doesn't model (`String`, `Args`, a user
+                        // struct, `&T`, `[T; N]`, `Vec<T>`, …). It still BINDS
+                        // the name, so the binding must be registered in `tenv`
+                        // or every later reference to it — including ones nested
+                        // inside a loop/branch — mis-fires as `unknown
+                        // identifier` (E2002, task #23). Record a best-effort
+                        // type: the inferred RHS type when available, otherwise
+                        // the loose i64-ABI placeholder used for unresolved
+                        // symbols elsewhere in this walker.
+                        let vt = infer_expr(value, &tenv)
+                            .map(|(t, _)| t)
+                            .unwrap_or(ValueType::ScalarI64);
+                        tenv.insert(name.clone(), vt);
+                        errs.push(diag_from_span(
+                            src,
+                            file,
+                            format!("unsupported annotation for `{}`", name),
+                            *span,
+                            TYPE_ERR_CODE,
+                        ));
+                    }
                 },
                 None => match infer_expr(value, &tenv) {
                     Ok((vt, _)) => {
@@ -2873,11 +2980,12 @@ pub fn check_module_types_in_file(
                 // on ref/match constructs (it fires only when both the
                 // declared and inferred types are integer scalars of known
                 // width).
-                errs.extend(
-                    body_errs
-                        .into_iter()
-                        .filter(|d| is_shape_diag_code(d.code) || d.code == NARROWING_CODE),
-                );
+                errs.extend(body_errs.into_iter().filter(|d| {
+                    is_shape_diag_code(d.code)
+                        || d.code == NARROWING_CODE
+                        || d.code == UNKNOWN_IDENT_CODE
+                        || d.code == UNKNOWN_CALL_CODE
+                }));
 
                 // RFC 0010 Phase J-A/B: safety passes over the fn node.
                 #[cfg(feature = "std-surface")]
@@ -3909,6 +4017,16 @@ fn classify_error_code(msg: &str) -> &'static str {
     // through to the generic branch below).
     if msg.contains("`@`") && msg.contains("inner dimension") {
         SHAPE_MATMUL_MISMATCH
+    } else if msg.starts_with("unknown identifier") {
+        // Undefined value reference (MIND-Fuzz bug #4, task #23). The message
+        // is produced only by the `Lit(Ident)` arm in `infer_expr` for a name
+        // absent from the (resolver-extended) env.
+        UNKNOWN_IDENT_CODE
+    } else if msg.starts_with("unsupported call to") {
+        // Undefined / unsupported call (MIND-Fuzz bug #4, task #23). Reached
+        // only after the callee failed the defined-fn, cross-module-import, and
+        // `__mind_*` std-surface-intrinsic lookups.
+        UNKNOWN_CALL_CODE
     } else if msg.contains("elementwise") && msg.contains("broadcast") {
         SHAPE_BROADCAST_MISMATCH
     } else if msg.contains("inner") && msg.contains("dimension") {
