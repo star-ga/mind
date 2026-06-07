@@ -2675,6 +2675,76 @@ fn lower_expr(
             }
             id
         }
+        // `for VAR in START..END { BODY }` — desugar to the equivalent `while`
+        // loop and reuse the existing, battle-tested `While` lowering above.
+        // This is the mic@1 / value-position (`--emit-ir`) path; the desugared
+        // shape is identical to the build path's loop semantics so the emitted
+        // IR reflects exactly what is built (#4).
+        //
+        // The parser only accepts an exclusive range (`START..END`, see
+        // `parse_for`) and the interpreter iterates `START..END` (exclusive),
+        // so the desugared condition is `VAR < END` (never `<=`). The desugar:
+        //
+        //     let VAR = START;
+        //     while VAR < END { BODY; VAR = VAR + 1; }
+        //
+        // The synthesized `VAR = VAR + 1` Assign makes `VAR` loop-carried, so
+        // the `While` arm captures its pre-loop init (= START's ValueId) and
+        // threads it through the header/back-edge exactly like a hand-written
+        // counter. We do NOT emit a const-0 placeholder (the panic below guards
+        // against that silent miscompile).
+        #[cfg(feature = "std-surface")]
+        ast::Node::For {
+            var,
+            start,
+            end,
+            body,
+            span,
+        } => {
+            // `let VAR = START;` — lower START into the parent IR and bind VAR
+            // so the synthesized `while` condition and body resolve it. The
+            // While arm seeds its body/cond envs from this env, so VAR's
+            // pre-loop init id is captured as the loop-carried init.
+            let start_id = lower_expr(start, ir, env, struct_env, receiver_types);
+            let mut loop_env = env.clone();
+            loop_env.insert(var.clone(), start_id);
+
+            // Build `VAR = VAR + 1` and append it to the loop body so the var
+            // is detected as loop-carried (mirrors a hand-written `i = i + 1`).
+            let ident_var = ast::Node::Lit(Literal::Ident(var.clone()), *span);
+            let one = ast::Node::Lit(Literal::Int(1), *span);
+            let incr = ast::Node::Assign {
+                name: var.clone(),
+                value: Box::new(ast::Node::Binary {
+                    op: ast::BinOp::Add,
+                    left: Box::new(ident_var.clone()),
+                    right: Box::new(one),
+                    span: *span,
+                }),
+                span: *span,
+            };
+            let mut while_body = body.clone();
+            while_body.push(incr);
+
+            // Condition `VAR < END`.
+            let cond = ast::Node::Binary {
+                op: ast::BinOp::Lt,
+                left: Box::new(ident_var),
+                right: end.clone(),
+                span: *span,
+            };
+
+            let while_node = ast::Node::While {
+                cond: Box::new(cond),
+                body: while_body,
+                span: *span,
+            };
+
+            // Lower the synthesized `while` with VAR in scope. Reuses the
+            // `While` arm verbatim (cond/body sub-modules, loop-carried vars,
+            // F2 region-scoped exit ids).
+            lower_expr(&while_node, ir, &loop_env, struct_env, receiver_types)
+        }
         // Genuinely-unhandled value-position node. After the explicit Import /
         // Print arms above, std/ + examples/ no longer reach here (verified by
         // the #54 sweep). FAIL CLOSED (#306 philosophy): a const-0 placeholder
