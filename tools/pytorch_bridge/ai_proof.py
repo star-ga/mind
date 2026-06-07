@@ -20,7 +20,7 @@ Workflow
 4. The LLM returns a candidate ``.mind`` patch; caller re-runs mindc.
 
 The prompt format is stable and versioned so STARGA-internal automation
-(e.g. ``mind-fleet`` agents) can parse the output.
+agents can parse the output.
 """
 
 from __future__ import annotations

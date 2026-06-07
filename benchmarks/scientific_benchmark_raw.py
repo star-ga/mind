@@ -27,6 +27,9 @@ import platform
 import subprocess
 from pathlib import Path
 
+# Repo root = parent of this script's directory (benchmarks/).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 SAMPLE_SIZE = 10
 WARMUP_RUNS = 3
 
@@ -115,7 +118,7 @@ def parse_criterion_output():
     result = subprocess.run(
         ["cargo", "bench", "--bench", "simple_benchmarks"],
         capture_output=True, text=True,
-        cwd="/home/n/mind",
+        cwd=REPO_ROOT,
         timeout=300
     )
 

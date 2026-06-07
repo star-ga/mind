@@ -45,7 +45,7 @@ except ImportError:
 
 
 # =================================================================== #
-#  Reference IR — matches /home/n/mind/benchmarks/mic_benchmark.py       #
+#  Reference IR — matches benchmarks/mic_benchmark.py                    #
 # =================================================================== #
 
 SAMPLE_IR_DICT: dict[str, Any] = {

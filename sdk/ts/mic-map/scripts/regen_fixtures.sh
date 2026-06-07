@@ -13,7 +13,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_ROOT="$(dirname "$SCRIPT_DIR")"
 FIXTURES="$PKG_ROOT/test/fixtures"
-MIND_ROOT="/home/n/mind"
+# Repo root: sdk/ts/mic-map -> ../../.. ; override with MIND_ROOT env if needed.
+MIND_ROOT="${MIND_ROOT:-$(cd "$PKG_ROOT/../../.." && pwd)}"
 
 echo "[regen_fixtures] Building Rust implementation..."
 cd "$MIND_ROOT"

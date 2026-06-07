@@ -1,5 +1,5 @@
 {
-  "_fixture": "/home/n/mind/.arch-mind/last_summary.json",
+  "_fixture": ".arch-mind/last_summary.json",
   "acyclicity_q16": 655360000,
   "depth_q16": 524288000,
   "equality_q16": 309327835,
