@@ -389,7 +389,10 @@ fn report_gmacs_q16(lib: &Library, n: usize, seed: u64) {
     let gmacs = macs / median / 1e9;
     let peak = isa_peak_gmacs();
     let pct = if peak.is_finite() {
-        format!("{:.1}% of ISA peak (~{peak:.0} GMAC/s est.)", gmacs / peak * 100.0)
+        format!(
+            "{:.1}% of ISA peak (~{peak:.0} GMAC/s est.)",
+            gmacs / peak * 100.0
+        )
     } else {
         "ISA peak unknown".to_string()
     };

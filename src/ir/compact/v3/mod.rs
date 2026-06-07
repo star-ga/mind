@@ -1371,9 +1371,10 @@ mod tests {
             );
 
             // The exposed ids must actually survive (not just byte-stable).
-            let exit_ok = parsed.instrs.iter().any(|i| {
-                matches!(i, Instr::While { exit_ids, .. } if !exit_ids.is_empty())
-            });
+            let exit_ok = parsed
+                .instrs
+                .iter()
+                .any(|i| matches!(i, Instr::While { exit_ids, .. } if !exit_ids.is_empty()));
             let merge_ok = parsed
                 .instrs
                 .iter()

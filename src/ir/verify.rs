@@ -362,13 +362,9 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                 let mut else_scope = defined.clone();
                 check_ssa_stream(else_instrs, &mut else_scope)?;
 
-                if let Err(operand) = validate_if_merges(
-                    &then_scope,
-                    &else_scope,
-                    then_instrs,
-                    else_instrs,
-                    merges,
-                ) {
+                if let Err(operand) =
+                    validate_if_merges(&then_scope, &else_scope, then_instrs, else_instrs, merges)
+                {
                     return Err(SsaViolation {
                         value: operand,
                         rule: SsaRule::DefineBeforeUse,
