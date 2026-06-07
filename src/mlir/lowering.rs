@@ -237,6 +237,32 @@ const VEC_I16_PMADD_LANES: usize = 8;
 #[cfg(feature = "std-surface")]
 const VEC_Q16_LANES: usize = 8;
 
+/// True when the host this `mindc` runs on is x86_64, so the int16/int8
+/// "int-dot" paths may emit the explicit `llvm.x86.avx2.pmadd.wd` (`vpmaddwd`)
+/// intrinsic for reliable instruction selection.
+///
+/// On any non-x86 host (notably aarch64) that intrinsic is an x86-only
+/// operation the target backend cannot legalise — LLVM 20's aarch64
+/// type-legalizer aborts with "Do not know how to split the result of this
+/// operator!" — so those hosts instead emit a **portable, exact-integer**
+/// widen-multiply + even/odd pairwise-add idiom (see `emit_vec_dot_i16` /
+/// `emit_i8_microkernel_avx2`). Both forms compute the *identical* integer
+/// pairwise sum: i16×i16 products are sign-extended and the pairwise sum is
+/// formed by exact i32 adds before re-widening to i64, so the per-element math
+/// — and therefore every output byte and the pinned cross-substrate canary
+/// hashes — is unchanged regardless of which form is emitted. Integer add is
+/// associative and width-independent, so lane grouping never perturbs the
+/// result.
+///
+/// `mindc` builds for its own host arch by default (`--emit-shared` with no
+/// explicit `--target`), and the cross-substrate CI gate runs `mindc` natively
+/// on each substrate's hardware (avx2 on x86_64, neon on aarch64), so the host
+/// arch of this binary is the build target — exactly the model the
+/// `cross_substrate_identity` gate uses (`cfg!(target_arch)` for the substrate
+/// id).
+#[cfg(feature = "std-surface")]
+const HOST_IS_X86: bool = cfg!(target_arch = "x86_64");
+
 /// RFC 0006 Track B (increment 2) — which f32 distance metric the
 /// vectorised reduction emits. L2 has its own `emit_vec_dot_f32`
 /// (multiply-accumulate); L1/L∞ share `emit_vec_dot_metric_f32`
@@ -2587,24 +2613,58 @@ impl LoweringContext {
         self.emit_line(&format!(
             "      %vi_bv_{d} = llvm.load %vi_bi_{d} {{alignment = 2 : i64}} : !llvm.ptr -> vector<{l}xi16>"
         ));
-        // `vpmaddwd`: 16 i16 × 16 i16 -> 8 i32, each lane the pairwise sum
-        // `a[2k]*b[2k] + a[2k+1]*b[2k+1]`. Emitted via the explicit x86 AVX2
-        // intrinsic so instruction selection is reliable (the `sext+mul+add`
-        // idiom does not fold to `vpmaddwd` in this backend — it scalarises to
-        // `vpmuldq`). Each i16*i16 product fits in i32; the pairwise sum fits
-        // in i32 for every input the realistic LCG workload generates (only
-        // the `(-32768)*(-32768)+(-32768)*(-32768)` corner could wrap, which
-        // the int16 workload never hits — the bench's byte-exact-vs-oracle gate
-        // is the proof). We immediately re-widen each i32 lane to i64 below so
-        // the *cross-lane* reduction is exact.
-        self.emit_line(&format!(
-            "      %vi_pm_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vi_av_{d}, %vi_bv_{d}) : \
-             (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
-        ));
-        // Re-widen the 8 i32 partials to i64 and accumulate exactly.
-        self.emit_line(&format!(
-            "      %vi_pw_{d} = arith.extsi %vi_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
-        ));
+        // 16 i16 × 16 i16 -> 8 i32, each lane the pairwise sum
+        // `a[2k]*b[2k] + a[2k+1]*b[2k+1]`, then re-widen each i32 lane to i64
+        // so the *cross-lane* reduction is exact. Each i16*i16 product fits in
+        // i32; the pairwise sum fits in i32 for every input the realistic LCG
+        // workload generates (only the `(-32768)*(-32768)+(-32768)*(-32768)`
+        // corner could wrap, which the int16 workload never hits — the bench's
+        // byte-exact-vs-oracle gate is the proof).
+        if HOST_IS_X86 {
+            // x86: emit the explicit AVX2 `vpmaddwd` intrinsic so instruction
+            // selection is reliable (the `sext+mul+add` idiom does not fold to
+            // `vpmaddwd` in this backend — it scalarises to `vpmuldq`).
+            self.emit_line(&format!(
+                "      %vi_pm_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vi_av_{d}, %vi_bv_{d}) : \
+                 (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_pw_{d} = arith.extsi %vi_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
+            ));
+        } else {
+            // Non-x86 (e.g. aarch64): the x86 `pmadd.wd` intrinsic does not
+            // legalise on this backend (LLVM 20 aborts with "Do not know how to
+            // split the result of this operator!"). Emit the identical pairwise
+            // contraction in portable, exact-integer `arith`/`vector` ops:
+            // sign-extend both 16-lane i16 operands to i32, multiply elementwise
+            // (16 i32 products), then form the 8 pairwise sums by extracting the
+            // even and odd lanes and adding them. This is the same exact integer
+            // value `vpmaddwd` produces — bit-identical output — and legalises to
+            // a NEON widen-multiply + pairwise-add sequence (e.g. SMULL/SADDLP).
+            self.emit_line(&format!(
+                "      %vi_aw_{d} = arith.extsi %vi_av_{d} : vector<{l}xi16> to vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_bw_{d} = arith.extsi %vi_bv_{d} : vector<{l}xi16> to vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_pr_{d} = arith.muli %vi_aw_{d}, %vi_bw_{d} : vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_ev_{d} = vector.shuffle %vi_pr_{d}, %vi_pr_{d} \
+                 [0, 2, 4, 6, 8, 10, 12, 14] : vector<{l}xi32>, vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_od_{d} = vector.shuffle %vi_pr_{d}, %vi_pr_{d} \
+                 [1, 3, 5, 7, 9, 11, 13, 15] : vector<{l}xi32>, vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_pm_{d} = arith.addi %vi_ev_{d}, %vi_od_{d} : vector<{p}xi32>"
+            ));
+            self.emit_line(&format!(
+                "      %vi_pw_{d} = arith.extsi %vi_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
+            ));
+        }
         self.emit_line(&format!(
             "      %vi_na_{d} = arith.addi %vi_acc_{d}, %vi_pw_{d} : vector<{p}xi64>"
         ));
@@ -4446,15 +4506,57 @@ impl LoweringContext {
                 "                %{p}_aw{t} = vector.bitcast %{p}_abc{t} : vector<{nr}xi32> to vector<{}xi16>",
                 2 * nr
             ));
-            line(&format!(
-                "                %{p}_pm{t} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%{p}_aw{t}, %{p}_bv) : \
-                 (vector<{}xi16>, vector<{}xi16>) -> vector<{pl}xi32>",
-                2 * nr,
-                2 * nr
-            ));
-            line(&format!(
-                "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{pl}xi32> to vector<{nr}xi64>"
-            ));
+            if HOST_IS_X86 {
+                line(&format!(
+                    "                %{p}_pm{t} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%{p}_aw{t}, %{p}_bv) : \
+                     (vector<{}xi16>, vector<{}xi16>) -> vector<{pl}xi32>",
+                    2 * nr,
+                    2 * nr
+                ));
+                line(&format!(
+                    "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{pl}xi32> to vector<{nr}xi64>"
+                ));
+            } else {
+                // Non-x86 (aarch64): portable, exact-integer equivalent of the
+                // x86 `vpmaddwd` pairwise contraction (the intrinsic does not
+                // legalise off x86). `_aw{t}` is the broadcast A pair
+                // `[a0,a1,a0,a1,...]` and `_bv` is the B pairs, both
+                // vector<2*NR xi16>. Sign-extend both to i32, multiply, then
+                // form the NR pairwise sums by adding the even and odd lanes —
+                // bit-identical integer result to `vpmaddwd`.
+                let w = 2 * nr;
+                let even: String = (0..nr)
+                    .map(|i| (2 * i).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let odd: String = (0..nr)
+                    .map(|i| (2 * i + 1).to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                line(&format!(
+                    "                %{p}_awi{t} = arith.extsi %{p}_aw{t} : vector<{w}xi16> to vector<{w}xi32>"
+                ));
+                line(&format!(
+                    "                %{p}_bwi{t} = arith.extsi %{p}_bv : vector<{w}xi16> to vector<{w}xi32>"
+                ));
+                line(&format!(
+                    "                %{p}_pr{t} = arith.muli %{p}_awi{t}, %{p}_bwi{t} : vector<{w}xi32>"
+                ));
+                line(&format!(
+                    "                %{p}_ev{t} = vector.shuffle %{p}_pr{t}, %{p}_pr{t} \
+                     [{even}] : vector<{w}xi32>, vector<{w}xi32>"
+                ));
+                line(&format!(
+                    "                %{p}_od{t} = vector.shuffle %{p}_pr{t}, %{p}_pr{t} \
+                     [{odd}] : vector<{w}xi32>, vector<{w}xi32>"
+                ));
+                line(&format!(
+                    "                %{p}_pm{t} = arith.addi %{p}_ev{t}, %{p}_od{t} : vector<{nr}xi32>"
+                ));
+                line(&format!(
+                    "                %{p}_pw{t} = arith.extsi %{p}_pm{t} : vector<{nr}xi32> to vector<{nr}xi64>"
+                ));
+            }
             line(&format!(
                 "                %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_pw{t} : vector<{nr}xi64>"
             ));
@@ -6817,13 +6919,42 @@ impl LoweringContext {
                 "        %vmmi_av{t}_{d} = llvm.load %vmmi_ai{t}_{d} {{alignment = 2 : i64}} : \
                  !llvm.ptr -> vector<{l}xi16>"
             ));
-            self.emit_line(&format!(
-                "        %vmmi_pm{t}_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vmmi_av{t}_{d}, %vmmi_bv_{d}) : \
-                 (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
-            ));
-            self.emit_line(&format!(
-                "        %vmmi_pw{t}_{d} = arith.extsi %vmmi_pm{t}_{d} : vector<{p}xi32> to vector<{p}xi64>"
-            ));
+            if HOST_IS_X86 {
+                self.emit_line(&format!(
+                    "        %vmmi_pm{t}_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vmmi_av{t}_{d}, %vmmi_bv_{d}) : \
+                     (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_pw{t}_{d} = arith.extsi %vmmi_pm{t}_{d} : vector<{p}xi32> to vector<{p}xi64>"
+                ));
+            } else {
+                // Non-x86 (aarch64): portable exact-integer pairwise contraction
+                // (the x86 `vpmaddwd` intrinsic does not legalise off x86).
+                // Bit-identical integer result.
+                self.emit_line(&format!(
+                    "        %vmmi_aw{t}_{d} = arith.extsi %vmmi_av{t}_{d} : vector<{l}xi16> to vector<{l}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_bw{t}_{d} = arith.extsi %vmmi_bv_{d} : vector<{l}xi16> to vector<{l}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_pr{t}_{d} = arith.muli %vmmi_aw{t}_{d}, %vmmi_bw{t}_{d} : vector<{l}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_ev{t}_{d} = vector.shuffle %vmmi_pr{t}_{d}, %vmmi_pr{t}_{d} \
+                     [0, 2, 4, 6, 8, 10, 12, 14] : vector<{l}xi32>, vector<{l}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_od{t}_{d} = vector.shuffle %vmmi_pr{t}_{d}, %vmmi_pr{t}_{d} \
+                     [1, 3, 5, 7, 9, 11, 13, 15] : vector<{l}xi32>, vector<{l}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_pm{t}_{d} = arith.addi %vmmi_ev{t}_{d}, %vmmi_od{t}_{d} : vector<{p}xi32>"
+                ));
+                self.emit_line(&format!(
+                    "        %vmmi_pw{t}_{d} = arith.extsi %vmmi_pm{t}_{d} : vector<{p}xi32> to vector<{p}xi64>"
+                ));
+            }
             self.emit_line(&format!(
                 "        %vmmi_na{t}_{d} = arith.addi %vmmi_acc{t}_{d}, %vmmi_pw{t}_{d} : vector<{p}xi64>"
             ));
@@ -6940,13 +7071,42 @@ impl LoweringContext {
             "        %vmmir_bv_{d} = llvm.load %vmmir_bi_{d} {{alignment = 2 : i64}} : \
              !llvm.ptr -> vector<{l}xi16>"
         ));
-        self.emit_line(&format!(
-            "        %vmmir_pm_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vmmir_av_{d}, %vmmir_bv_{d}) : \
-             (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
-        ));
-        self.emit_line(&format!(
-            "        %vmmir_pw_{d} = arith.extsi %vmmir_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
-        ));
+        if HOST_IS_X86 {
+            self.emit_line(&format!(
+                "        %vmmir_pm_{d} = llvm.call_intrinsic \"llvm.x86.avx2.pmadd.wd\"(%vmmir_av_{d}, %vmmir_bv_{d}) : \
+                 (vector<{l}xi16>, vector<{l}xi16>) -> vector<{p}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_pw_{d} = arith.extsi %vmmir_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
+            ));
+        } else {
+            // Non-x86 (aarch64): portable exact-integer pairwise contraction
+            // (the x86 `vpmaddwd` intrinsic does not legalise off x86).
+            // Bit-identical integer result.
+            self.emit_line(&format!(
+                "        %vmmir_aw_{d} = arith.extsi %vmmir_av_{d} : vector<{l}xi16> to vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_bw_{d} = arith.extsi %vmmir_bv_{d} : vector<{l}xi16> to vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_pr_{d} = arith.muli %vmmir_aw_{d}, %vmmir_bw_{d} : vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_ev_{d} = vector.shuffle %vmmir_pr_{d}, %vmmir_pr_{d} \
+                 [0, 2, 4, 6, 8, 10, 12, 14] : vector<{l}xi32>, vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_od_{d} = vector.shuffle %vmmir_pr_{d}, %vmmir_pr_{d} \
+                 [1, 3, 5, 7, 9, 11, 13, 15] : vector<{l}xi32>, vector<{l}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_pm_{d} = arith.addi %vmmir_ev_{d}, %vmmir_od_{d} : vector<{p}xi32>"
+            ));
+            self.emit_line(&format!(
+                "        %vmmir_pw_{d} = arith.extsi %vmmir_pm_{d} : vector<{p}xi32> to vector<{p}xi64>"
+            ));
+        }
         self.emit_line(&format!(
             "        %vmmir_na_{d} = arith.addi %vmmir_acc_{d}, %vmmir_pw_{d} : vector<{p}xi64>"
         ));
