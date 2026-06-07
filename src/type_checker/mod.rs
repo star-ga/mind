@@ -2220,6 +2220,24 @@ fn infer_call(
                 }
                 return Ok((ValueType::ScalarI64, span));
             }
+            // RFC 0005 Phase C — implicit std prelude for call resolution
+            // (task #23 follow-up). A bare call to a std `pub fn` (e.g.
+            // `vec_push`, `vec_new`, `string_push_byte`) with NO explicit
+            // `use std.X` reaches here because the resolver only injects
+            // symbols into `env` for files that *do* import. The project
+            // build path links the whole std surface into one compilation
+            // unit, so those names resolve there; single-file `mindc check`
+            // must match. When the active project/std table has a typed
+            // `pub fn` for `callee`, validate the call against its signature
+            // (arity + per-arg types) and return its declared return type,
+            // exactly like the explicit-import path above. Names that are
+            // NOT a std/project `pub fn` fall through to the std-surface
+            // intrinsic check and, failing that, E2003 — so genuine
+            // undefined calls are still caught (the #23 win is preserved).
+            #[cfg(feature = "cross-module-imports")]
+            if let Some(sig) = cm_lookup_fn(callee) {
+                return check_imported_fn_call(&sig, args, span, env);
+            }
             #[cfg(feature = "std-surface")]
             {
                 check_std_surface_intrinsic(callee, args, span, env)
@@ -2625,8 +2643,7 @@ pub fn check_module_types_in_file(
     for item in &module.items {
         if let Node::ExternBlock { fns, .. } = item {
             for ef in fns {
-                tenv.entry(ef.name.clone())
-                    .or_insert(ValueType::ScalarI64);
+                tenv.entry(ef.name.clone()).or_insert(ValueType::ScalarI64);
             }
         }
     }
