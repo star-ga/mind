@@ -299,3 +299,220 @@ fn cli_verify_fails_on_ssa_corrupted_artifact() {
 
     let _ = std::fs::remove_file(&tmp);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #24 SOUNDNESS — If-merge `then_val`/`else_val` must be validated against
+// PER-BRANCH scopes, not the merged (enclosing ∪ then ∪ else) scope. A cross-
+// branch forgery (then_val pointing at an else-only value, or vice versa) must
+// be REJECTED by BOTH the consumer verifier (check_ssa_well_formed) and the
+// in-pipeline verifier (verify_module). These are the permanent regression
+// tests; before the per-branch fix the malformed cases were wrongly accepted.
+// ---------------------------------------------------------------------------
+
+/// Build a `FnDef` containing a single `If` whose then/else branches each define
+/// one value, plus a `merges` tuple wiring `(merge_id, then_val, else_val)`.
+/// Both branches fall through (no `Return` terminator). Ids are laid out so the
+/// branch-internal values are distinct across the two arms:
+///   then-branch defines %then_def, else-branch defines %else_def.
+#[cfg(feature = "std-surface")]
+fn if_merge_module(
+    then_val: ValueId,
+    else_val: ValueId,
+    then_def: ValueId,
+    else_def: ValueId,
+    merge_id: ValueId,
+    dst: ValueId,
+    next_id: usize,
+) -> IRModule {
+    let mut m = IRModule::new();
+    m.instrs.push(Instr::FnDef {
+        name: "f".to_string(),
+        params: vec![("c".to_string(), ValueId(0))],
+        ret_id: Some(merge_id),
+        body: vec![
+            Instr::Param {
+                dst: ValueId(0),
+                name: "c".to_string(),
+                index: 0,
+            },
+            Instr::If {
+                cond_id: ValueId(0),
+                cond_instrs: vec![],
+                // then-branch: defines %then_def (e.g. 10), falls through.
+                then_instrs: vec![Instr::ConstI64(then_def, 10)],
+                then_result: then_def,
+                // else-branch: defines %else_def (e.g. 20), falls through.
+                else_instrs: vec![Instr::ConstI64(else_def, 20)],
+                else_result: else_def,
+                dst,
+                branch_bindings: vec![("x".to_string(), merge_id)],
+                merges: vec![(merge_id, then_val, else_val)],
+            },
+            Instr::Return {
+                value: Some(merge_id),
+            },
+        ],
+        reap_threshold: None,
+    });
+    // Top-level value + Output, in the module's own SSA namespace (distinct from
+    // the fn-body namespace), so verify_module's MissingOutput check is satisfied
+    // and the Output operand is genuinely defined at module scope.
+    m.instrs.push(Instr::ConstI64(ValueId(0), 0));
+    m.instrs.push(Instr::Output(ValueId(0)));
+    m.next_id = next_id;
+    m
+}
+
+/// GATE 3 — a well-formed `If` where `then_val` is the then-branch's own value
+/// and `else_val` is the else-branch's own value must verify clean under BOTH
+/// verifiers (no false positive).
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_if_merge_per_branch_legit_passes() {
+    // then_def=%1, else_def=%2, then_val=%1 (then-defined), else_val=%2 (else).
+    let m = if_merge_module(
+        ValueId(1),
+        ValueId(2),
+        ValueId(1),
+        ValueId(2),
+        ValueId(3),
+        ValueId(4),
+        5,
+    );
+    assert!(
+        check_ssa_well_formed(&m).is_ok(),
+        "legit per-branch merge must pass check_ssa_well_formed: {:?}",
+        check_ssa_well_formed(&m)
+    );
+    assert!(
+        libmind::ir::verify_module(&m).is_ok(),
+        "legit per-branch merge must pass verify_module: {:?}",
+        libmind::ir::verify_module(&m)
+    );
+}
+
+/// GATE 2 (★ SOUNDNESS) — `then_val` points at an ELSE-branch-only value
+/// (%else_def). This is a genuine cross-branch dominance violation: the
+/// then-edge of the merge cannot reference a value defined only in the else
+/// branch. BOTH verifiers must REJECT it with define-before-use. Before the
+/// per-branch fix this was wrongly accepted.
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_if_merge_then_val_from_else_branch_rejected() {
+    // then_def=%1, else_def=%2; then_val=%2 (ELSE-only) ← FORGERY.
+    let m = if_merge_module(
+        ValueId(2), // then_val = else-branch-only value
+        ValueId(2), // else_val = legit else value
+        ValueId(1),
+        ValueId(2),
+        ValueId(3),
+        ValueId(4),
+        5,
+    );
+    let err = check_ssa_well_formed(&m)
+        .expect_err("then_val from else-branch must be rejected by check_ssa_well_formed");
+    assert_eq!(err.value, ValueId(2), "violation must name the else-only %2");
+    assert_eq!(
+        err.rule,
+        SsaRule::DefineBeforeUse,
+        "cross-branch merge forgery is a define-before-use fault"
+    );
+    assert!(
+        libmind::ir::verify_module(&m).is_err(),
+        "verify_module must also reject then_val from else-branch"
+    );
+}
+
+/// GATE 2 symmetric — `else_val` points at a THEN-branch-only value
+/// (%then_def). BOTH verifiers must REJECT.
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_if_merge_else_val_from_then_branch_rejected() {
+    // then_def=%1, else_def=%2; else_val=%1 (THEN-only) ← FORGERY.
+    let m = if_merge_module(
+        ValueId(1), // then_val = legit then value
+        ValueId(1), // else_val = then-branch-only value
+        ValueId(1),
+        ValueId(2),
+        ValueId(3),
+        ValueId(4),
+        5,
+    );
+    let err = check_ssa_well_formed(&m)
+        .expect_err("else_val from then-branch must be rejected by check_ssa_well_formed");
+    assert_eq!(err.value, ValueId(1), "violation must name the then-only %1");
+    assert_eq!(err.rule, SsaRule::DefineBeforeUse);
+    assert!(
+        libmind::ir::verify_module(&m).is_err(),
+        "verify_module must also reject else_val from then-branch"
+    );
+}
+
+/// GATE 4 (DIFFERENTIAL) — `check_ssa_well_formed(parse(emit(ir)))` agrees with
+/// `verify_module(ir)` for the legit case AND both forgery cases. The codec
+/// round-trip preserves `merges` (mic@3 version 0x02), so the consumer verifier
+/// sees the same cross-branch forgery the in-pipeline verifier rejects.
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_if_merge_differential_emit_parse_agrees() {
+    use libmind::ir::compact::v3::parse_mic3;
+
+    let cases = [
+        // (module, expect_ok)
+        (
+            if_merge_module(
+                ValueId(1),
+                ValueId(2),
+                ValueId(1),
+                ValueId(2),
+                ValueId(3),
+                ValueId(4),
+                5,
+            ),
+            true,
+        ),
+        (
+            if_merge_module(
+                ValueId(2),
+                ValueId(2),
+                ValueId(1),
+                ValueId(2),
+                ValueId(3),
+                ValueId(4),
+                5,
+            ),
+            false,
+        ),
+        (
+            if_merge_module(
+                ValueId(1),
+                ValueId(1),
+                ValueId(1),
+                ValueId(2),
+                ValueId(3),
+                ValueId(4),
+                5,
+            ),
+            false,
+        ),
+    ];
+
+    for (m, expect_ok) in cases {
+        let vm_ok = libmind::ir::verify_module(&m).is_ok();
+        let bytes = emit_mic3(&m);
+        let parsed = parse_mic3(&bytes).expect("parse round-trip");
+        let consumer_ok = check_ssa_well_formed(&parsed).is_ok();
+        assert_eq!(
+            vm_ok, expect_ok,
+            "verify_module verdict mismatch for expect_ok={expect_ok}"
+        );
+        assert_eq!(
+            consumer_ok, expect_ok,
+            "check_ssa_well_formed(parse(emit)) verdict mismatch for expect_ok={expect_ok}"
+        );
+        assert_eq!(
+            vm_ok, consumer_ok,
+            "DIFFERENTIAL: verify_module and check_ssa_well_formed must agree"
+        );
+    }
+}

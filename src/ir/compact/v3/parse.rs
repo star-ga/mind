@@ -29,7 +29,7 @@ use super::emit::{
     OP_VEC_MUL_ADD_Q16, OP_VEC_REDUCE_ADD, OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE,
     byte_to_binop, byte_to_dtype, byte_to_padding, byte_to_sparse_layout,
 };
-use super::{MIC3_MAGIC, MIC3_VERSION};
+use super::{MIC3_MAGIC, MIC3_MIN_READ_VERSION, MIC3_VERSION};
 use crate::ir::compact::v2::{uleb128_read, zigzag_decode};
 
 // ─── Error type ──────────────────────────────────────────────────────────────
@@ -178,6 +178,26 @@ fn read_vid_vec<R: Read>(r: &mut R, limit: usize) -> Result<Vec<ValueId>, Mic3Er
     let mut v = Vec::with_capacity(bounded_cap(n, limit));
     for _ in 0..n {
         v.push(read_vid(r)?);
+    }
+    Ok(v)
+}
+
+/// Read a length-prefixed list of `(ValueId, ValueId, ValueId)` triples
+/// (used for `If.merges`). DoS-hardened: the declared count is clamped against
+/// the input length via [`bounded_cap`] before any allocation, and each triple
+/// is read element-by-element so an oversized count cannot drive unbounded work.
+#[cfg(feature = "std-surface")]
+fn read_vid_triples<R: Read>(
+    r: &mut R,
+    limit: usize,
+) -> Result<Vec<(ValueId, ValueId, ValueId)>, Mic3Error> {
+    let n = read_uleb(r)? as usize;
+    let mut v = Vec::with_capacity(bounded_cap(n, limit));
+    for _ in 0..n {
+        let a = read_vid(r)?;
+        let b = read_vid(r)?;
+        let c = read_vid(r)?;
+        v.push((a, b, c));
     }
     Ok(v)
 }
@@ -354,11 +374,13 @@ fn read_type_ann<R: Read>(
 
 // ─── Instruction decoder ──────────────────────────────────────────────────────
 
+#[cfg_attr(not(feature = "std-surface"), allow(unused_variables))]
 fn decode_instr<R: Read>(
     r: &mut R,
     strings: &[String],
     depth: usize,
     limit: usize,
+    version: u8,
 ) -> Result<Instr, Mic3Error> {
     if depth >= MAX_MIC3_DEPTH {
         return Err(err!(
@@ -600,7 +622,7 @@ fn decode_instr<R: Read>(
             let body_len = read_uleb(r)? as usize;
             let mut body = Vec::with_capacity(body_len);
             for _ in 0..body_len {
-                body.push(decode_instr(r, strings, depth, limit)?);
+                body.push(decode_instr(r, strings, depth, limit, version)?);
             }
             Ok(Instr::FnDef {
                 name,
@@ -650,24 +672,30 @@ fn decode_instr<R: Read>(
             let cond_len = read_uleb(r)? as usize;
             let mut cond_instrs = Vec::with_capacity(cond_len);
             for _ in 0..cond_len {
-                cond_instrs.push(decode_instr(r, strings, depth, limit)?);
+                cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let body_len = read_uleb(r)? as usize;
             let mut body = Vec::with_capacity(body_len);
             for _ in 0..body_len {
-                body.push(decode_instr(r, strings, depth, limit)?);
+                body.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let live_vars = read_named_vids(r, strings, limit)?;
             let init_ids = read_vid_vec(r, limit)?;
+            // version 0x02+ serialises the F2 region-exit ids after init_ids;
+            // a 0x01 artifact omits them (read as empty, the historical
+            // behaviour).
+            let exit_ids = if version >= 0x02 {
+                read_vid_vec(r, limit)?
+            } else {
+                Vec::new()
+            };
             Ok(Instr::While {
                 cond_id,
                 cond_instrs,
                 body,
                 live_vars,
                 init_ids,
-                // F2: lowering-internal, not in the wire format. Reconstructed
-                // during AST->IR lowering; default empty on parse.
-                exit_ids: Vec::new(),
+                exit_ids,
             })
         }
         #[cfg(feature = "std-surface")]
@@ -676,22 +704,29 @@ fn decode_instr<R: Read>(
             let cond_len = read_uleb(r)? as usize;
             let mut cond_instrs = Vec::with_capacity(cond_len);
             for _ in 0..cond_len {
-                cond_instrs.push(decode_instr(r, strings, depth, limit)?);
+                cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let then_len = read_uleb(r)? as usize;
             let mut then_instrs = Vec::with_capacity(then_len);
             for _ in 0..then_len {
-                then_instrs.push(decode_instr(r, strings, depth, limit)?);
+                then_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let then_result = read_vid(r)?;
             let else_len = read_uleb(r)? as usize;
             let mut else_instrs = Vec::with_capacity(else_len);
             for _ in 0..else_len {
-                else_instrs.push(decode_instr(r, strings, depth, limit)?);
+                else_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let else_result = read_vid(r)?;
             let dst = read_vid(r)?;
             let branch_bindings = read_named_vids(r, strings, limit)?;
+            // version 0x02+ serialises the F2 merge phi list after
+            // branch_bindings; a 0x01 artifact omits it (read as empty).
+            let merges = if version >= 0x02 {
+                read_vid_triples(r, limit)?
+            } else {
+                Vec::new()
+            };
             Ok(Instr::If {
                 cond_id,
                 cond_instrs,
@@ -701,9 +736,7 @@ fn decode_instr<R: Read>(
                 else_result,
                 dst,
                 branch_bindings,
-                // F2: lowering-internal, not in the wire format. Reconstructed
-                // during AST->IR lowering; default empty on parse.
-                merges: Vec::new(),
+                merges,
             })
         }
         #[cfg(feature = "std-surface")]
@@ -794,7 +827,7 @@ fn decode_instr<R: Read>(
             let body_len = read_uleb(r)? as usize;
             let mut body = Vec::with_capacity(body_len);
             for _ in 0..body_len {
-                body.push(decode_instr(r, strings, depth, limit)?);
+                body.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let result = read_vid(r)?;
             let enter_id = read_vid(r)?;
@@ -904,11 +937,16 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         ));
     }
 
-    // Version
+    // Version — the parser is backward-compatible: it reads every version in
+    // [MIC3_MIN_READ_VERSION, MIC3_VERSION]. A 0x01 artifact predates the
+    // control-flow region-exit metadata (While.exit_ids / If.merges) and is
+    // decoded with those fields empty; 0x02+ reads them from the wire. The
+    // emitter always writes MIC3_VERSION.
     let version = read_u8(&mut r)?;
-    if version != MIC3_VERSION {
+    if version < MIC3_MIN_READ_VERSION || version > MIC3_VERSION {
         return Err(err!(
-            "unsupported MIC3 version: expected 0x{:02X}, got 0x{:02X}",
+            "unsupported MIC3 version: this build reads 0x{:02X}..=0x{:02X}, got 0x{:02X}",
+            MIC3_MIN_READ_VERSION,
             MIC3_VERSION,
             version
         ));
@@ -947,7 +985,7 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
     let n_instrs = read_uleb(&mut r)? as usize;
     let mut instrs = Vec::with_capacity(bounded_cap(n_instrs, limit));
     for _ in 0..n_instrs {
-        instrs.push(decode_instr(&mut r, &strings, 0, limit)?);
+        instrs.push(decode_instr(&mut r, &strings, 0, limit, version)?);
     }
 
     #[allow(unused_mut)]
