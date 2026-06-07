@@ -379,8 +379,8 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
                 // against the post-`If` program state. This is the same union the
                 // previous threaded walk produced; only the MERGE-operand check
                 // above is now per-branch.
-                defined.extend(then_scope.into_iter());
-                defined.extend(else_scope.into_iter());
+                defined.extend(then_scope);
+                defined.extend(else_scope);
             }
             #[cfg(feature = "std-surface")]
             Instr::Region { body, .. } => {

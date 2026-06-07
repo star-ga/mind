@@ -417,6 +417,8 @@ fn encode_vid_vec<W: Write>(w: &mut W, ids: &[ValueId]) -> std::io::Result<()> {
 
 /// Encode a list of `(ValueId, ValueId, ValueId)` triples (used for `If.merges`:
 /// `(merge_id, then_val, else_val)`). Length-prefixed, each id as a uleb vid.
+/// Only reached from the `Instr::If` emit arm, which is `std-surface`-gated.
+#[cfg(feature = "std-surface")]
 fn encode_vid_triples<W: Write>(
     w: &mut W,
     triples: &[(ValueId, ValueId, ValueId)],
