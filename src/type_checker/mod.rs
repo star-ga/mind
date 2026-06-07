@@ -57,6 +57,19 @@ type TensorParamSig = (usize, String, Vec<String>, String);
 type FnTensorSigs = HashMap<String, Vec<TensorParamSig>>;
 
 const TYPE_ERR_CODE: &str = "E2001";
+/// A bare identifier that is not a local, parameter, let-binding, const-array,
+/// enum variant, or imported symbol. Unambiguous name-resolution failure
+/// (e.g. `return r` where `r` was never defined). Distinct from the generic
+/// type-mismatch (E2001) so it survives the additive FnDef-body filter — a
+/// missing binding is a real error inside fn bodies, never a false positive
+/// from the mini-module's defaulted param types.
+const UNKNOWN_IDENT_CODE: &str = "E2002";
+/// A call to a name that is neither a defined function, an imported `pub fn`,
+/// a tensor/std intrinsic, nor a legitimately-declared `__mind_*` extern
+/// (i64-ABI runtime intrinsic, RFC 0005/0010). Genuine typo/unknown-symbol
+/// failure (e.g. `mf_no_such_intrinsic(a)`). Like E2002, distinct from E2001
+/// so it survives the FnDef-body filter.
+const UNRESOLVED_CALL_CODE: &str = "E2003";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
 const SHAPE_INNER_DIM_CODE: &str = "E2103";
@@ -2538,6 +2551,16 @@ pub fn check_module_types_in_file(
         if let Node::FnDef { name, .. } = item {
             tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
         }
+        // RFC 0010 Phase A: declared `extern "C"` functions are a legitimate
+        // call surface (resolved at link time). Pre-register their names so a
+        // call to a declared extern is accepted, while the new E2003
+        // unresolved-call check still rejects genuine typos / undeclared names.
+        if let Node::ExternBlock { fns, .. } = item {
+            for efn in fns {
+                tenv.entry(efn.name.clone())
+                    .or_insert(ValueType::ScalarI64);
+            }
+        }
     }
 
     for item in &module.items {
@@ -2873,11 +2896,21 @@ pub fn check_module_types_in_file(
                 // on ref/match constructs (it fires only when both the
                 // declared and inferred types are integer scalars of known
                 // width).
-                errs.extend(
-                    body_errs
-                        .into_iter()
-                        .filter(|d| is_shape_diag_code(d.code) || d.code == NARROWING_CODE),
-                );
+                // Name-resolution failures (E2002 unknown identifier, E2003
+                // unresolved call) are genuine errors that must surface inside
+                // fn bodies — they cannot be false positives from the mini-
+                // module's defaulted param types, because params are inserted
+                // into `fn_env` by name regardless of their (possibly defaulted)
+                // value type, and intra-module fn/intrinsic/extern names are
+                // pre-registered. Only the generic type-mismatch (E2001) is
+                // suppressed here (that is the class that false-positives on
+                // `&expr` / match-block / struct-arg constructs).
+                errs.extend(body_errs.into_iter().filter(|d| {
+                    is_shape_diag_code(d.code)
+                        || d.code == NARROWING_CODE
+                        || d.code == UNKNOWN_IDENT_CODE
+                        || d.code == UNRESOLVED_CALL_CODE
+                }));
 
                 // RFC 0010 Phase J-A/B: safety passes over the fn node.
                 #[cfg(feature = "std-surface")]
@@ -3907,7 +3940,11 @@ fn classify_error_code(msg: &str) -> &'static str {
     // carries, NOT a bare "matmul" substring — the legacy `tensor.matmul(a,b)`
     // intrinsic must keep its original E2103 inner-dimension code (it falls
     // through to the generic branch below).
-    if msg.contains("`@`") && msg.contains("inner dimension") {
+    if msg.starts_with("unknown identifier ") {
+        UNKNOWN_IDENT_CODE
+    } else if msg.starts_with("unsupported call to ") {
+        UNRESOLVED_CALL_CODE
+    } else if msg.contains("`@`") && msg.contains("inner dimension") {
         SHAPE_MATMUL_MISMATCH
     } else if msg.contains("elementwise") && msg.contains("broadcast") {
         SHAPE_BROADCAST_MISMATCH
