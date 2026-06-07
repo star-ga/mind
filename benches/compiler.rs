@@ -1,3 +1,7 @@
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::OnceLock;
+
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use libmind::{CompileOptions, compile_source};
 
@@ -44,6 +48,13 @@ const LARGE_NETWORK: &str = r#"
     matmul3 + b3
 "#;
 
+/// **Tier T1 — frontend-only** (`docs/benchmarking.md` §1). The clock spans
+/// `parse + typecheck + IR` (`compile_source`), in-process. It does **NOT**
+/// include MLIR emission, `mlir-opt`, LLVM, the `clang` link, or process
+/// startup. This is the source of the published 1.8–15.5 µs numbers; they are
+/// frontend-only and must never be compared against another toolchain's full
+/// `build` time without the scope note. The tier-matched end-to-end figure is
+/// `e2e_compile_shared` (T2) below.
 fn bench_compilation_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("compiler_pipeline");
 
@@ -59,6 +70,156 @@ fn bench_compilation_pipeline(c: &mut Criterion) {
                 b.iter(|| {
                     compile_source(black_box(src), &CompileOptions::default())
                         .expect("compilation failed")
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+// ---------------------------------------------------------------------------
+// Tier T2 — end-to-end process wall-clock compile (frontend + MLIR + LLVM).
+// ---------------------------------------------------------------------------
+
+/// Minimal cdylib entries the `--emit-shared` path can lower end to end. These
+/// are full `pub fn` programs (not the frontend expression snippets above),
+/// because the T2 clock has to drive the whole pipeline through to a linked
+/// `.so`. Three sizes so the per-shape codegen+LLVM cost is visible.
+const E2E_SMALL: &str = r#"
+pub fn add(a: i64, b: i64) -> i64 { a + b }
+"#;
+const E2E_MEDIUM: &str = r#"
+pub fn poly(x: i64) -> i64 {
+    let a = x * x;
+    let b = a * x;
+    let c = b + a;
+    c + x * 7 - 3
+}
+"#;
+const E2E_LARGE: &str = r#"
+pub fn f0(x: i64) -> i64 { x * x + 1 }
+pub fn f1(x: i64) -> i64 { let a = f0(x); a * a - x }
+pub fn f2(x: i64) -> i64 { let a = f1(x); let b = f0(a); a + b }
+pub fn f3(x: i64) -> i64 { let a = f2(x); let b = f1(a); a * 3 + b - x }
+pub fn driver(x: i64) -> i64 {
+    let a = f3(x);
+    let b = f2(a);
+    let c = f1(b);
+    a + b + c
+}
+"#;
+
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Locate the built `mindc` binary (debug preferred, release fallback).
+fn mindc_path() -> Option<PathBuf> {
+    let dbg = manifest_dir().join("target").join("debug").join("mindc");
+    if dbg.exists() {
+        return Some(dbg);
+    }
+    let rel = manifest_dir().join("target").join("release").join("mindc");
+    if rel.exists() { Some(rel) } else { None }
+}
+
+/// Whether the T2 end-to-end path can actually run: the MLIR toolchain is on
+/// PATH and `mindc` is built. Same self-skip contract as the GEMM benches —
+/// the bench compiles unconditionally; the skip is a runtime check.
+fn e2e_available() -> Option<&'static PathBuf> {
+    static MINDC: OnceLock<Option<PathBuf>> = OnceLock::new();
+    MINDC
+        .get_or_init(|| {
+            for tool in ["mlir-opt", "mlir-translate", "clang"] {
+                if which::which(tool).is_err() {
+                    eprintln!(
+                        "compiler::e2e_compile_shared: {tool} not on PATH; \
+                         skipping the T2 end-to-end sweep (toolchain shadowed)"
+                    );
+                    return None;
+                }
+            }
+            match mindc_path() {
+                Some(p) => Some(p),
+                None => {
+                    eprintln!(
+                        "compiler::e2e_compile_shared: mindc not built; run \
+                         `cargo build --features \"mlir-build std-surface cross-module-imports\" \
+                         --bin mindc`; skipping the T2 sweep"
+                    );
+                    None
+                }
+            }
+        })
+        .as_ref()
+}
+
+/// Compile one source to a fresh `.so` via `mindc --emit-shared`, end to end.
+/// Returns the exit status' success flag so the timed loop can assert it.
+fn emit_shared_once(mindc: &PathBuf, src_path: &PathBuf, so_path: &PathBuf) -> bool {
+    Command::new(mindc)
+        .args([
+            src_path.to_str().unwrap(),
+            "--emit-shared",
+            so_path.to_str().unwrap(),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// **Tier T2 — process wall-clock, end-to-end** (`docs/benchmarking.md` §1).
+/// The clock spans the full `mindc src --emit-shared out.so` pipeline as a
+/// spawned process: frontend + MLIR text + `mlir-opt` + LLVM + `clang` link,
+/// **including process startup**. This is the tier-matched figure to quote
+/// against another toolchain's `build` time — NOT the T1 1.8–15.5 µs frontend
+/// number. Distinct from `compiler_pipeline` (T1) and from the in-process
+/// `end_to_end::source_to_mlir` group (which stops at MLIR text, no LLVM/link).
+///
+/// Self-skips cleanly when the MLIR toolchain is shadowed or `mindc` is unbuilt.
+fn bench_e2e_compile_shared(c: &mut Criterion) {
+    let Some(mindc) = e2e_available() else {
+        eprintln!("compiler::e2e_compile_shared: T2 end-to-end sweep unavailable; skipped.");
+        return;
+    };
+
+    let dir = std::env::temp_dir();
+    let mut group = c.benchmark_group("e2e_compile_shared");
+    // The whole-pipeline compile is millisecond-scale and spawns a process per
+    // sample; a long measurement window here would dominate `cargo bench`. Keep
+    // the sample budget modest — this is a wall-clock latency figure, not a
+    // tight-CI microbench.
+    group.sample_size(20);
+
+    for (name, source) in [
+        ("small", E2E_SMALL),
+        ("medium", E2E_MEDIUM),
+        ("large", E2E_LARGE),
+    ] {
+        let src_path = dir.join(format!("mind_bench_e2e_{name}.mind"));
+        let so_path = dir.join(format!("mind_bench_e2e_{name}.so"));
+        if std::fs::write(&src_path, source).is_err() {
+            eprintln!("compiler::e2e_compile_shared: could not stage {name} source; skipping it");
+            continue;
+        }
+        // Verify it compiles once before timing — a bench that times a failing
+        // compile would report a meaningless number.
+        if !emit_shared_once(mindc, &src_path, &so_path) {
+            eprintln!(
+                "compiler::e2e_compile_shared: {name} did not emit a shared object; \
+                 skipping this shape (not a timing result)"
+            );
+            continue;
+        }
+
+        group.bench_with_input(
+            BenchmarkId::new("source_to_so", name),
+            &(src_path, so_path),
+            |b, (src, so)| {
+                b.iter(|| {
+                    let ok = emit_shared_once(black_box(mindc), black_box(src), black_box(so));
+                    assert!(ok, "mindc --emit-shared failed inside the timed loop");
                 });
             },
         );
@@ -244,6 +405,7 @@ criterion_group!(
     bench_wedge_evidence,
     bench_mlir_lowering,
     bench_end_to_end_compilation,
+    bench_e2e_compile_shared,
     bench_autodiff_generation,
     bench_c_export_lowering
 );
@@ -255,6 +417,7 @@ criterion_group!(
     bench_wedge_evidence,
     bench_mlir_lowering,
     bench_end_to_end_compilation,
+    bench_e2e_compile_shared,
     bench_c_export_lowering
 );
 
@@ -263,6 +426,7 @@ criterion_group!(
     benches,
     bench_compilation_pipeline,
     bench_wedge_evidence,
+    bench_e2e_compile_shared,
     bench_autodiff_generation,
     bench_c_export_lowering
 );
@@ -272,6 +436,7 @@ criterion_group!(
     benches,
     bench_compilation_pipeline,
     bench_wedge_evidence,
+    bench_e2e_compile_shared,
     bench_c_export_lowering
 );
 

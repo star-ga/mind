@@ -71,6 +71,7 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::Instant;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use libloading::{Library, Symbol};
@@ -79,6 +80,27 @@ use sha2::{Digest, Sha256};
 /// Square shapes the throughput sweep exercises. The 64×64 entry is the
 /// byte-identity anchor — its hash is pinned to the committed reference.
 const SHAPES: &[usize] = &[16, 64, 128, 256, 512];
+
+/// Documented, conservative single-core integer multiply-accumulate ceiling for
+/// the host ISA — the denominator of the roofline `%-of-ISA-peak` axis (see
+/// `docs/benchmarking.md` §3). This is an **estimate against a documented
+/// constant**, not a vendor-certified hardware peak: it is the reference clock
+/// times the widen-multiply-accumulate MACs the fused outer-product microkernel
+/// can retire per cycle on this ISA. Reported as a comparability aid only.
+///
+/// avx2: i7-5930K @ 3.5 GHz, AVX2 8×i32 widen-MAC ≈ 2 fused ops/cyc on the
+/// Q16.16 outer-product path → ~3.5e9·8·2 ≈ 56 GMAC/s. neon: a conservative
+/// 4×i32 MAC at 3.0 GHz ≈ 24 GMAC/s. Single-core; the MT bench divides instead
+/// by `cores × this`.
+fn isa_peak_gmacs() -> f64 {
+    if cfg!(target_arch = "x86_64") {
+        56.0
+    } else if cfg!(target_arch = "aarch64") {
+        24.0
+    } else {
+        f64::NAN
+    }
+}
 
 /// The committed byte-identity workload (RFC 0020 §5). The 64×64×64 row of the
 /// sweep regenerates exactly this input and must hash to this reference.
@@ -324,6 +346,59 @@ fn assert_byte_identity(lib: &Library) {
     );
 }
 
+/// Comparable execution-throughput axis (`docs/benchmarking.md` §3): GMAC/s and
+/// `%-of-ISA-peak` for one square `n×n×n` shape, computed from first principles.
+///
+/// `MACs = n³`; `GMAC/s = MACs / median_seconds / 1e9`; roofline `% = GMAC/s /
+/// isa_peak`. The timing here is an independent quick measurement (median of
+/// `REPS` calls after a warm-up) printed to stderr next to criterion's native
+/// `elem/s` — it does NOT replace criterion's statistics, it makes the result
+/// comparable in the unit a roofline analysis uses. Self-contained: derived from
+/// the workload size, no BLAS, no external reference.
+fn report_gmacs_q16(lib: &Library, n: usize, seed: u64) {
+    const WARMUP: usize = 8;
+    const REPS: usize = 64;
+    let (a, b) = make_gemm_q16(n, n, n, seed);
+    let mut out = vec![0i32; n * n];
+    let gemmq: Symbol<GemmFn> = unsafe { lib.get(b"gemmq").expect("gemmq symbol") };
+    let call = |a: &[i32], b: &[i32], out: &mut [i32]| {
+        let rc = unsafe {
+            gemmq(
+                a.as_ptr() as i64,
+                b.as_ptr() as i64,
+                out.as_mut_ptr() as i64,
+                n as i64,
+                n as i64,
+                n as i64,
+            )
+        };
+        assert_eq!(rc, 0, "gemmq returned {rc}");
+    };
+    for _ in 0..WARMUP {
+        call(&a, &b, &mut out);
+    }
+    let mut samples: Vec<f64> = Vec::with_capacity(REPS);
+    for _ in 0..REPS {
+        let t0 = Instant::now();
+        call(black_box(&a), black_box(&b), black_box(&mut out));
+        samples.push(t0.elapsed().as_secs_f64());
+    }
+    samples.sort_by(|x, y| x.partial_cmp(y).unwrap());
+    let median = samples[REPS / 2];
+    let macs = (n as f64) * (n as f64) * (n as f64);
+    let gmacs = macs / median / 1e9;
+    let peak = isa_peak_gmacs();
+    let pct = if peak.is_finite() {
+        format!("{:.1}% of ISA peak (~{peak:.0} GMAC/s est.)", gmacs / peak * 100.0)
+    } else {
+        "ISA peak unknown".to_string()
+    };
+    eprintln!(
+        "det_matmul_q16: ROOFLINE {n}x{n}x{n} {gmacs:7.2} GMAC/s  [{pct}]  (median {:.2} µs/call)",
+        median * 1e6
+    );
+}
+
 fn bench_det_matmul_q16(c: &mut Criterion) {
     let Some(so) = build_gemm_so() else {
         // Toolchain shadowed or mindc unbuilt — register no benchmarks, exit clean.
@@ -341,6 +416,16 @@ fn bench_det_matmul_q16(c: &mut Criterion) {
         // One MAC per inner-product term: M·N·K multiply-accumulates.
         let macs = (n as u64) * (n as u64) * (n as u64);
         group.throughput(Throughput::Elements(macs));
+
+        // Comparable roofline axis (GMAC/s + %-of-ISA-peak), printed alongside
+        // criterion's native elem/s. Uses the same per-shape seed as the timed
+        // group below so the measured input is identical.
+        let report_seed = if n == ANCHOR_N {
+            ANCHOR_SEED
+        } else {
+            0xDEAD_BEEF_0000_0000 ^ (n as u64)
+        };
+        report_gmacs_q16(&lib, n, report_seed);
 
         // Seed off the shape so each size has its own reproducible input; the
         // 64×64 entry uses the anchor seed so its bytes match the committed
