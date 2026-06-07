@@ -15,7 +15,7 @@ python3 mic_map_benchmark.py
 ## Methodology
 
 The benchmark uses the **original methodology** documented in
-`/home/n/mind/benchmarks/mic_benchmark.py`:
+`benchmarks/mic_benchmark.py`:
 
 - **Reference IR**: 6-node MLP layer (4 symbols, 4 types, 6 nodes, 1 output)
 - **JSON baseline**: `json.dumps(ir, indent=2)` (pretty-printed, verbose keys)

@@ -6,7 +6,7 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 - ✅ **v1.0 Stabilization** – Core syntax and IR semantics locked, conformance tests passing.
 - ✅ **GPU Backends** – CUDA (16K LOC), Metal (2.9K), ROCm (3.8K), WebGPU (5.1K) all complete.
-- ✅ **Autodiff Engine** – Reverse-mode AD for all Core v1 ops.
+- ✅ **Autodiff Engine** – Reverse-mode AD for the Core v1 tensor ops, single-output `main` entry point; non-Core-v1 ops error rather than emit a silent zero gradient.
 - ✅ **FFI Stabilization** – ABI frozen, C header generation.
 - ✅ **Distributed Runtime** – NCCL/Gloo collectives, RingAllReduce, pipeline parallelism (3.3K LOC).
 - ✅ **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, Prometheus metrics (4.7K LOC).
@@ -90,7 +90,7 @@ Extend the MIND compiler to support governance logic alongside tensor computatio
 The `policy.mind` execution boundary kernel (see `examples/policy.mind`) demonstrates the use case: fail-closed access control with enum-based typing, struct-based requests, and bitwise-packed confirmation codes. MIND becomes a *verifiable behavior language* — expressing certified decisions alongside tensor computation.
 
 ### Design Decision
-**Tiers 1–2 ship. Tier 3 deferred to Rust FFI.** MIND owns governance logic (typed decisions, policy rules). Rust owns byte-level implementation (string matching, memory) via FFI. This preserves MIND's identity as a certified tensor + governance language without scope-creeping into general systems programming. (5-model LLM consensus: unanimous Option A.)
+**Tiers 1–2 ship. Tier 3 deferred to Rust FFI.** MIND owns governance logic (typed decisions, policy rules). Rust owns byte-level implementation (string matching, memory) via FFI. This preserves MIND's identity as a certified tensor + governance language without scope-creeping into general systems programming. (Internal review: unanimous on Option A.)
 
 ### Deliverables
 

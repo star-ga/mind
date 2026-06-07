@@ -139,7 +139,7 @@ Add to `tests/`:
 - `examples/lexer/main.mind` (Phase 6.1 seed, commit `29bd08b`) — every loop is tail recursion.
 - `mind-nerve/mind/luts/exp_q16.mind` (A1.1, commit `bd33d50`) — 4,145 lines, 4,096 of them stores.
 - `docs/rfcs/0005-pure-mind-std-surface.md` §"Adoption plan" Phase 6.2 row.
-- `mind-internal/plans/encoder-port-audit-2026-05-18.md` §7 ("mindc feature requests") — declared "none required" for A1, which is still true at the *language semantics* level; the gaps documented here are *ergonomic*, not semantic. A1 ships fine without them, but pays the O(N) source-line tax.
+- A prior internal encoder-port audit declared "none required" for A1 at the *language semantics* level, which is still true; the gaps documented here are *ergonomic*, not semantic. A1 ships fine without them, but pays the O(N) source-line tax.
 
 ## Phase 6.3 addendum (type-checker in MIND)
 

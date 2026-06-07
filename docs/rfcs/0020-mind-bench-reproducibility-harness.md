@@ -25,16 +25,16 @@ verification path. RFC 0015 defines the proof obligation, RFC 0014 the tiers,
 lives **inside the mind repo test surface**, behind clone + Rust toolchain +
 `cargo test`. That is the proof surface for STARGA engineers, not for the public.
 
-Backed by two multi-LLM consults (2026-05-24):
-- **First round, 4/4 evidence-chain convergence** — without a publicly
+Backed by two rounds of independent cross-review:
+- **First round, evidence-chain convergence** — without a publicly
   reproducible artifact, the bit-identity claim sits in the same epistemic
   bucket as unreproducible benchmark numbers; it cannot enter a downstream
   auditor's evidence chain.
-- **Second round, 3/3 on the missing deliverable** — grok ("public wedge-proving
-  harness running identical kernels under mindc and Rust -O2/-O3, byte-diff
-  report"), deepseek ("one-command `mind-verify ./blas.matmul`, else whitepaper
-  assertion"), mistral ("`mind-bench` runs identical workloads on PyTorch/JAX/MIND,
-  publishes bitwise diffs, 'wedge score' 0–100").
+- **Second round, convergence on the missing deliverable** — a public
+  wedge-proving harness running identical kernels under mindc and Rust -O2/-O3
+  with a byte-diff report; a one-command `mind-verify ./blas.matmul`, else the
+  claim stays a whitepaper assertion; `mind-bench` runs identical workloads on
+  PyTorch/JAX/MIND, publishes bitwise diffs, and a "wedge score" 0–100.
 
 `mind-bench` converts the internal property into a public one.
 
@@ -273,5 +273,5 @@ allowed); RFC 0014 (per-substrate lowering tier IDs); RFC 0015 (cross-substrate 
 proof obligation — same manifest, two consumers); RFC 0016 (#288 `evidence.wedge_score`
 MAP key); RFC 0019 (#294 agent-state-replay future workload); `tests/blas_vec_q16_smoke.rs`
 (in-tree precedent); `tests/cross_substrate_identity/` (internal gate producing the
-reference hashes); `mind-mem model_signing` (Ed25519 reused for §5.3); LLM consult round 1
-(4/4 evidence-chain) + round 2 (3/3 missing-deliverable), both 2026-05-24.
+reference hashes); `mind-mem model_signing` (Ed25519 reused for §5.3); internal cross-review round 1
+(evidence-chain) + round 2 (missing-deliverable), both 2026-05-24.

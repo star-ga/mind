@@ -228,8 +228,8 @@ On cross-substrate mode, `substrate_a`/`substrate_b` replace `substrate` and
 ## 6. Rationale and alternatives
 
 **Alternative: detached receipt file.** The receipt could be a separate `.receipt`
-sidecar rather than embedded in the artifact. Rejected: RFC 0021 §2 and the
-unanimous 5/5 cross-model finding (2026-05-27) establish that evidence must be
+sidecar rather than embedded in the artifact. Rejected: RFC 0021 §2 and an
+independent cross-review finding (2026-05-27) establish that evidence must be
 inseparable from the artifact bytes. A detached file introduces desync risk.
 
 **Alternative: external verification tool.** Shipping `mind-bench verify` (RFC 0020)

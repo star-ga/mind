@@ -320,8 +320,8 @@ inside the runtime kills it — Rust f32 reorders under `-O2`, CUDA tensor cores
 are nondeterministic by API contract, NumPy auto-promotes to f64 at the FFI
 boundary. This section locks the discipline that keeps the wedge intact.
 
-Backed by two unanimous multi-LLM consults (2026-05-24): 4/4 against
-Python/NumPy/PyTorch FFI bridges and 3/3 against opt-in throughput-mode escape
+Backed by two rounds of independent cross-review: a strong consensus against
+Python/NumPy/PyTorch FFI bridges and against opt-in throughput-mode escape
 hatches. Combined finding: any path through nondeterministic numerics — even an
 opt-in flag — fractures the trust property because any undefined behavior can
 then be blamed on the optional path.
@@ -433,12 +433,11 @@ The byte-identity test is the proof.
   to ecosystem-friendliness arguments — every cosine-tolerance once was
   ecosystem-friendliness too.
 
-### 8.8 Implicit nondeterminism gotchas (third-round LLM convergence)
+### 8.8 Implicit nondeterminism gotchas (third-round convergence)
 
-The third multi-LLM consult (3/4 convergence across deepseek-v4-pro, mistral-
-large, glm-5) named three implicit-nondeterminism sources the §8.1–§8.4 ban
-list doesn't cover by itself. These are gotchas the discipline must explicitly
-address.
+A third round of independent cross-review named three implicit-nondeterminism
+sources the §8.1–§8.4 ban list doesn't cover by itself. These are gotchas the
+discipline must explicitly address.
 
 **Address-dependent compute.** `malloc` returns nondeterministic addresses
 (ASLR + allocator order). Any computation whose output depends on a pointer
@@ -467,7 +466,7 @@ abstraction, `__cxa_atexit` initialization-order hazards. The reject set is
 maintained as a normative appendix to this RFC, updated when new
 nondeterministic libc symbols are encountered.
 
-**Vendor definition drift** (glm-5 named the failure mode, 4/4 round-three
+**Vendor definition drift** (named in the third review round, with broad
 agreement on the risk shape): a vendor's "deterministic mode" is not a static
 contract. A driver / microcode / library patch can silently change behavior.
 A wedge split — node A on old driver, node B on new driver — produces

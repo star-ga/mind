@@ -1,4 +1,4 @@
-   Compiling mind v0.2.3 (/home/n/mind)
+   Compiling mind v0.2.3 (.)
 warning: method `parse_use` is never used
    --> src/parser/mod.rs:522:8
     |

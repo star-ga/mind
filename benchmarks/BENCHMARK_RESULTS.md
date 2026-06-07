@@ -444,7 +444,7 @@ EOF
 
 ---
 
-## Cost Impact (GPT-5.2 Pricing)
+## Cost Impact (LLM Token Pricing)
 
 At $0.00175/1K tokens (input):
 

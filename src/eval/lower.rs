@@ -244,9 +244,8 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // a single AST pre-pass so the FieldAccess arm in `lower_expr` can
     // resolve chained access (`a.b.c`), function-return receivers
     // (`foo().x`), and struct-typed parameters even when struct_env
-    // doesn't have a direct Ident binding for the receiver. Multi-LLM
-    // consensus on 2026-05-18 (grok-4.3 / glm-5.1 / mistral-large,
-    // 3/3 unanimous) picked this "type-checker annotation" approach
+    // doesn't have a direct Ident binding for the receiver. Internal
+    // review (2026-05-18) picked this "type-checker annotation" approach
     // over a post-lowering IR rewrite. The builder lives in
     // src/eval/struct_resolver.rs; in non-feature builds the table is
     // empty and never queried.

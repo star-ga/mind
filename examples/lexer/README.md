@@ -95,4 +95,3 @@ useful.
 
 - [`docs/rfcs/0005-pure-mind-std-surface.md`](../../docs/rfcs/0005-pure-mind-std-surface.md) — RFC 0005 landing table
 - [`docs/rfcs/0005-phase-d2b-design-note.md`](../../docs/rfcs/0005-phase-d2b-design-note.md) — sibling next-phase design note
-- `mind-internal/plans/2026-05-18-thesis-apex-90day-plan.md` — §B1 strategy

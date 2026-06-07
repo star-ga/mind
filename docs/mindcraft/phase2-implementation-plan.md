@@ -35,9 +35,9 @@ normalisation, whitespace normalisation, and comment re-attachment.
 
 **The existing parser drops comments before parsing.**
 
-`/home/n/mind/src/parser/mod.rs:3159-3186` runs `strip_comments` before
+`src/parser/mod.rs:3159-3186` runs `strip_comments` before
 parsing; `:95-115` discards `//`-to-EOL during `skip_ws_and_newlines`.
-The AST `Node` enum (`/home/n/mind/src/ast/mod.rs:200`) has no
+The AST `Node` enum (`src/ast/mod.rs:200`) has no
 comment/trivia variant; `Module.items` is `Vec<Node>` with no
 leading-trivia field.
 

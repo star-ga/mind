@@ -17,9 +17,8 @@
 //! correct `__mind_load_i64` even for receivers that aren't a plain
 //! `Ident` (`a.b.c`, `foo().x`, struct-typed parameters).
 //!
-//! Multi-LLM consensus on 2026-05-18 (grok-4.3 / glm-5.1 / mistral-large
-//! 3/3 unanimous) picked **β — type-checker struct annotation** over
-//! the post-lowering IR-pass alternative. We implement that as a
+//! Internal review (2026-05-18) picked **β — type-checker struct
+//! annotation** over the post-lowering IR-pass alternative. We implement that as a
 //! lightweight pre-pass that runs once per module before lowering and
 //! builds a `HashMap<Span, String>` keyed on each `FieldAccess`
 //! receiver-position span. The full type-checker is not invoked; we
@@ -57,7 +56,7 @@ pub type FieldAccessTypes = HashMap<Span, String>;
 
 /// Walk a module and build the side-table.
 ///
-/// Resolution rules (Step 2 scope, per multi-LLM consensus 2026-05-18):
+/// Resolution rules (Step 2 scope, per internal review 2026-05-18):
 ///
 /// - (1) **Chained access** `a.b.c`: `a`'s struct gives `b`'s type; that
 ///   type gives `c`'s offset. Implemented as recursive descent — every

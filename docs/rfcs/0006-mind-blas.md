@@ -431,7 +431,7 @@ kernels — `dot_f32_v` / `dot_q16_v` / `dot_l1_q16_v` / `dot_l1_f32_v` /
 
 ## 10. References
 
-- Bench spec: `mind-internal/plans/2026-05-18-mind-blas-bench-spec.md`
+- Bench spec: internal mind-blas bench specification (2026-05-18).
 - A1.5 measurement: `mind-nerve@b9b6401` PARTIAL result
 - RFC 0005: pure-MIND std surface (Phase 6.5 fixed-point precursor)
 - RFC 0002: `pub fn` C exports (the C-ABI ground truth this RFC builds on)
