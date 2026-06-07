@@ -405,6 +405,79 @@ fn gemv_q16_reproducibility_gate() {
     }
 }
 
+// --- same-process run-to-run determinism -----------------------------------
+// The cross-substrate gates above run each kernel ONCE and pin its output to a
+// frozen per-substrate reference. That proves across-build / across-machine /
+// across-time byte-identity, but NOT within-process run-to-run determinism: a
+// kernel that leaked uninitialised padding into its output, depended on prior
+// buffer state, or wrote results in an allocation-order-dependent way could
+// still match the frozen reference on the single run that produced it, yet
+// differ from run to run. This gate runs the same workload REPEATEDLY in one
+// process and asserts every run is byte-identical to the first — turning any
+// such non-determinism into a deterministic single-run failure instead of an
+// intermittent CI flake. Self-skips without the MLIR toolchain, like the gates
+// above.
+const DETERMINISM_RUNS: usize = 16;
+
+#[test]
+fn same_process_run_to_run_determinism() {
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+
+    // Scalar reduction path (dot-q16): a fixed seeded input, run N times, must
+    // hash identically every time.
+    {
+        let dot: Symbol<DotFn> = unsafe { lib.get(b"dotq").expect("dotq symbol") };
+        let (a, b) = make_pair_q16(65536, 0xDEADBEEF);
+        let run_once =
+            || canonical_hash(unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, a.len() as i64) });
+        let first = run_once();
+        for run in 1..DETERMINISM_RUNS {
+            assert_eq!(
+                run_once(),
+                first,
+                "dot-q16: run {run} diverged from run 0 in the same process \
+                 (run-to-run non-determinism)"
+            );
+        }
+    }
+
+    // Buffer-output path (gemv-q16): each run writes into a FRESH zeroed buffer;
+    // every run's buffer must hash identically. The fresh buffer per run is the
+    // point — it catches a kernel that reads prior buffer state or leaves output
+    // bytes unwritten.
+    {
+        let mmq: Symbol<MatmulFn> = unsafe { lib.get(b"mmq").expect("mmq symbol") };
+        let (rows, cols) = (256usize, 256usize);
+        let (w, x) = make_gemv_q16(rows, cols, 0xDEADBEEF);
+        let run_once = || {
+            let mut y = vec![0i32; rows];
+            let rc = unsafe {
+                mmq(
+                    w.as_ptr() as i64,
+                    x.as_ptr() as i64,
+                    y.as_mut_ptr() as i64,
+                    rows as i64,
+                    cols as i64,
+                )
+            };
+            assert_eq!(rc, 0, "gemv-q16: kernel returned {rc} (expected 0)");
+            canonical_hash_i32s(&y)
+        };
+        let first = run_once();
+        for run in 1..DETERMINISM_RUNS {
+            assert_eq!(
+                run_once(),
+                first,
+                "gemv-q16: run {run} diverged from run 0 in the same process \
+                 (run-to-run non-determinism)"
+            );
+        }
+    }
+}
+
 // --- gemm-q16 workload (square matrix x matrix) ----------------------------
 // The first matmul-SHAPED workload that is matrix x matrix, not matrix x
 // vector. C[M,N] = A[M,K] · B[K,N] in Q16.16. The kernel composes the
