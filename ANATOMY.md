@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2747 | **Est. tokens:** ~6,817,625
-**Generated:** 2026-06-07 15:36 UTC
+**Files:** 2747 | **Est. tokens:** ~6,819,090
+**Generated:** 2026-06-07 18:20 UTC
 
 ## Token Budget Guide
 
@@ -377,18 +377,18 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~17,762 |
-| `src/ir/` | 4 | ~23,559 |
+| `src/fmt/` | 3 | ~17,909 |
+| `src/ir/` | 4 | ~23,553 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~43,165 |
+| `src/ir/compact/v3/` | 4 | ~43,264 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 3 | ~4,553 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,186 |
 | `src/package/` | 2 | ~1,668 |
-| `src/parser/` | 1 | ~3,260 |
+| `src/parser/` | 1 | ~3,811 |
 | `src/project/` | 3 | ~25,198 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
@@ -397,7 +397,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 175 | ~313,338 |
+| `tests/` | 175 | ~314,012 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3662,7 +3662,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~13295 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~13442 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3680,16 +3680,16 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/`
 
-- `emit.rs` (~10517 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~10545 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~12742 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~9050 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~9121 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~8925 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~9181 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
@@ -3731,7 +3731,7 @@
 - `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
-- `trivia.rs` (~3260 tok, huge) — Copyright 2025 STARGA Inc.
+- `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `pipeline.rs` (~3862 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4164,7 +4164,7 @@
 - `dtype_mismatch.mind` (~74 tok, small) — Type checker test: Dtype mismatch detection
 ### `tests/`
 
-- `type_error_spans.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
+- `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).

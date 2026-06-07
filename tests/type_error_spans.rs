@@ -40,3 +40,71 @@ fn unknown_ident_points_to_name() {
         "caret not near identifier: {rendered}"
     );
 }
+
+/// 1-based `(line, column)` of a byte offset — mirrors the diagnostic renderer
+/// for pure-ASCII source (which these fixtures are).
+fn byte_to_line_col(src: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1usize;
+    let mut col = 1usize;
+    for (i, ch) in src.char_indices() {
+        if i == offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// Assert the E2004 implicit-narrowing diagnostic points at the value `big` in
+/// `let small: i32 = big` — the real offending token — not a comment or the
+/// `let` keyword.
+fn assert_narrowing_points_at_value(src: &str) {
+    let module = parser::parse_with_diagnostics(src).expect("parse failed");
+    let diags = type_checker::check_module_types(&module, src, &HashMap::new());
+    let narrowing = diags
+        .iter()
+        .find(|d| d.code == "E2004")
+        .expect("expected E2004 narrowing diagnostic");
+    let span = narrowing
+        .span
+        .as_ref()
+        .expect("diagnostic must carry a span");
+
+    // The offending value is the `big` immediately after `= ` in the assignment.
+    let assign_idx = src.find("= big").expect("source must contain `= big`");
+    let big_idx = assign_idx + "= ".len();
+    let (exp_line, exp_col) = byte_to_line_col(src, big_idx);
+    assert_eq!(
+        (span.line, span.column),
+        (exp_line, exp_col),
+        "narrowing diagnostic must point at `big` (the value); got line {}, col {}",
+        span.line,
+        span.column
+    );
+}
+
+/// Regression (#23 prerequisite): a comment appearing before the offending
+/// statement must NOT shift the diagnostic column. Comment stripping blanks
+/// comments with spaces (preserving byte offsets) rather than deleting them, so
+/// token spans still index the original source. Before the fix, each preceding
+/// comment shifted the reported column earlier by its byte length — eventually
+/// landing the caret on a comment line far from the real token.
+#[test]
+fn comment_before_token_preserves_span_module_level() {
+    // Without the comment the diagnostic correctly points at `big`; the comment
+    // on the line above must not move it.
+    let src = "let big: i64 = 4294967297;\n// a comment\nlet small: i32 = big;\nsmall\n";
+    assert_narrowing_points_at_value(src);
+}
+
+#[test]
+fn comment_before_token_preserves_span_fn_body() {
+    // Same property inside a function body (the path the #23 audit flagged).
+    let src = "fn f() -> i32 {\n    // comment line 2\n    let big: i64 = 4294967297;\n    let small: i32 = big;\n    small\n}\n";
+    assert_narrowing_points_at_value(src);
+}

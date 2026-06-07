@@ -183,6 +183,18 @@ pub(super) fn strip_comments_with_trivia(
                 byte_offset: comment_start_orig,
                 text: comment_text,
             });
+
+            // Emit ASCII spaces for the comment region so the stripped buffer
+            // keeps the original byte layout (`offset_map` stays the identity
+            // map). This matches `strip_comments_fast` and the formatter's
+            // `strip_for_lines` — all three are length-preserving, so a parser
+            // span indexes the original source regardless of which path ran, and
+            // the formatter's span→line mapping (built from `strip_for_lines`)
+            // stays aligned with the AST spans this path produces.
+            for (rel, _) in comment_bytes.iter().enumerate() {
+                stripped_bytes.push(b' ');
+                offset_map.push(comment_start_orig + rel);
+            }
         }
 
         // Emit the newline (if present) into stripped and map it.
@@ -201,19 +213,40 @@ pub(super) fn strip_comments_with_trivia(
 }
 
 /// Fast path for `strip_comments` with no trivia collection.
-/// Matches the behaviour of the original `strip_comments` exactly.
+///
+/// Blanks each line-comment region with ASCII spaces **in place** instead of
+/// removing the bytes, so every non-comment byte keeps its exact original byte
+/// offset. Token spans built by the parser then index the original source
+/// directly — which is what diagnostic rendering assumes, since the parser sees
+/// the comment-stripped buffer but type-check diagnostics are reported against
+/// the original `src`. Removing comment bytes (the old `.lines().join()`
+/// behaviour) shifted every subsequent column earlier by the cumulative length
+/// of preceding comments, so a diagnostic could land on a comment line far from
+/// the real token (regression cover: `tests/type_error_spans.rs`
+/// `comment_before_token_preserves_span_*`). This byte-walk also preserves `\r`
+/// and the trailing newline, which `.lines()` silently dropped.
 fn strip_comments_fast(input: &str) -> String {
-    input
-        .lines()
-        .map(|line| {
-            let bytes = line.as_bytes();
-            match find_comment_start(bytes) {
-                Some(i) => &line[..i],
-                None => line,
+    let bytes = input.as_bytes();
+    let mut out = bytes.to_vec();
+    let mut line_start = 0usize;
+    while line_start < bytes.len() {
+        let newline_pos = bytes[line_start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|rel| line_start + rel)
+            .unwrap_or(bytes.len());
+        if let Some(i) = find_comment_start(&bytes[line_start..newline_pos]) {
+            // Blank `[line_start + i, newline_pos)` — the whole comment region,
+            // which starts at an ASCII `/` and runs to end-of-line — with ASCII
+            // spaces. Overwriting complete comment regions with ASCII keeps the
+            // buffer valid UTF-8 and byte-length identical to the original.
+            for b in &mut out[line_start + i..newline_pos] {
+                *b = b' ';
             }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+        }
+        line_start = newline_pos + 1;
+    }
+    String::from_utf8(out).expect("blanking comment bytes with ASCII spaces preserves UTF-8")
 }
 
 /// Find the byte index within `line` of the first `//` that is not inside a
