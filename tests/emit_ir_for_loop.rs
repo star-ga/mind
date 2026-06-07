@@ -7,6 +7,11 @@
 use libmind::eval::lower;
 use libmind::parser;
 
+// For→While desugar reuses the `While` lowering arm, which is gated behind
+// `std-surface`; without that feature there is no For/While lowering and
+// `lower_to_ir` fail-closes (panics) by design. Gate the test to the config
+// where the feature under test is actually compiled in.
+#[cfg(feature = "std-surface")]
 #[test]
 fn for_loop_lowers_to_ir_without_panic() {
     let src = "fn main() -> i64 { let mut s: i64 = 0; for i in 0..10 { s = s + i; } return s; }";
