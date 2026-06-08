@@ -125,6 +125,12 @@ pub fn tk_ne() -> i64 {
 pub fn tk_bang() -> i64 {
     27
 }
+pub fn tk_kw_if() -> i64 {
+    28
+}
+pub fn tk_kw_else() -> i64 {
+    29
+}
 
 // ===== Byte loads =====
 
@@ -199,6 +205,24 @@ pub fn classify_ident(buf: i64, lo: i64, hi: i64) -> i64 {
         if load_byte(buf, lo) == 102 {
             if load_byte(buf, lo + 1) == 110 {
                 return tk_kw_fn();
+            }
+        }
+        // `if` (105,102): keyword token for control-flow parsing.
+        if load_byte(buf, lo) == 105 {
+            if load_byte(buf, lo + 1) == 102 {
+                return tk_kw_if();
+            }
+        }
+    }
+    if n == 4 {
+        // `else` (101,108,115,101): keyword token for control-flow parsing.
+        if load_byte(buf, lo + 0) == 101 {
+            if load_byte(buf, lo + 1) == 108 {
+                if load_byte(buf, lo + 2) == 115 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        return tk_kw_else();
+                    }
+                }
             }
         }
     }
@@ -509,6 +533,9 @@ pub fn ast_neg() -> i64 {
 }
 pub fn ast_not() -> i64 {
     15
+}
+pub fn ast_if() -> i64 {
+    16
 }
 
 // ===== Binop operator tags =====
