@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2745 | **Est. tokens:** ~6,837,393
-**Generated:** 2026-06-08 09:56 UTC
+**Files:** 2745 | **Est. tokens:** ~6,839,815
+**Generated:** 2026-06-08 10:08 UTC
 
 ## Token Budget Guide
 
@@ -50,7 +50,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 7 | ~32,141 |
+| `examples/mindc_mind/` | 7 | ~34,413 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -58,7 +58,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,082 |
+| `.github/workflows/` | 8 | ~8,232 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
 | `scripts/` | 6 | ~8,732 |
@@ -719,7 +719,7 @@
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~21539 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+- `main.mind` (~23811 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
 - `self_host_body_smoke.py` (~2272 tok, huge)
 ### `examples/`
 
@@ -785,7 +785,7 @@
 
 - `bench-gate.yml` (~1289 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~3866 tok, huge) — name: CI
+- `ci.yml` (~4016 tok, huge) — name: CI
 - `docs-claims.yml` (~338 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~476 tok, medium) — name: Mindcraft Check
