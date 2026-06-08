@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2756 | **Est. tokens:** ~6,841,244
-**Generated:** 2026-06-08 09:35 UTC
+**Files:** 2745 | **Est. tokens:** ~6,836,027
+**Generated:** 2026-06-08 09:39 UTC
 
 ## Token Budget Guide
 
@@ -398,7 +398,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 176 | ~319,170 |
+| `tests/` | 175 | ~315,383 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -429,7 +429,7 @@
 | `tools/` | 3 | ~3,237 |
 | `tools/mindfuzz/` | 7 | ~15,992 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
-| `tools/mindfuzz/violations/` | 11 | ~1,430 |
+| `tools/mindfuzz/violations/` | 1 | ~0 |
 | `tools/pytorch_bridge/` | 6 | ~4,673 |
 | `tools/pytorch_bridge/tests/` | 2 | ~1,244 |
 | `.wrangler/cache/` | 1 | ~21 |
@@ -3892,7 +3892,6 @@
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `emit_ir_for_loop.rs` (~308 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
-- `error_growth_vs_depth.rs` (~3787 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2666 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4206,17 +4205,7 @@
 - `scalar_arith.mind` (~159 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
 ### `tools/mindfuzz/violations/`
 
-- `cast_edge_NARROW_CAST.repro.mind` (~198 tok, small) — MIND-Fuzz canonical minimal repro: scalar narrowing `as` cast is a NO-OP.
-- `cast_edge_step001_reference.mind` (~249 tok, medium) — MIND-Fuzz seed: type-conversion + edge-value scalar entry (reference-checkable).
-- `cast_edge_step001_reference.min.mind` (~42 tok, tiny) — MINDFUZZ-ORACLE-PURE: ((((a & 0xFFFFFFFF) ^ 0x80000000) - 0x80000000)) + ((((a & 0xFFFF) ^ 0x8000) - 0x8000)) + (a & 0xF
-- `cast_edge_step001_reference.report.txt` (~115 tok, small) — MIND-Fuzz violation
-- `control_flow_step001_verify.mind` (~323 tok, medium) — MIND-Fuzz seed: control-flow-heavy program (loops, nested if, early return,
-- `control_flow_step001_verify.min.mind` (~56 tok, small)
-- `control_flow_step001_verify.report.txt` (~137 tok, small) — MIND-Fuzz violation
 - `.gitkeep` (~0 tok, tiny)
-- `scalar_arith_step001_verify.mind` (~168 tok, small) — MIND-Fuzz seed: small pure-integer scalar function.
-- `scalar_arith_step001_verify.min.mind` (~7 tok, tiny)
-- `scalar_arith_step001_verify.report.txt` (~135 tok, small) — MIND-Fuzz violation
 ### `tools/pytorch_bridge/`
 
 - `ai_proof.py` (~640 tok, large) — # Copyright 2025-2026 STARGA Inc.
