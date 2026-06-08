@@ -162,11 +162,18 @@ pub const I8_VNNI_MR: usize = 8;
 /// MR=8 × colRegs=2 = 16 accumulator ZMMs (≥12 latency-hiding floor) + 2 B
 /// tiles + 1 broadcast + bias ≈ 21 ZMM ≤ 30 → no register spills (NR=48/24-acc
 /// spilled the file). The memory-source broadcast — not the tile width — is the
-/// load-bearing port-5 win, so 2 columns still beats OpenBLAS.
+/// load-bearing port-5 win. (int8 VNNI is ~0.83× single-core OpenBLAS f32 today,
+/// NOT yet beating it; the win is determinism + byte-identity — see bench RESULTS.)
 pub const I8_VNNI_NR: usize = 32;
 
-/// int8 VNNI column block — must be a multiple of `I8_VNNI_NR=32`. 384 = 12·32.
-pub const I8_VNNI_NC: usize = 384;
+/// int8 VNNI column block — must be a multiple of `I8_VNNI_NR=32`. 768 = 24·32.
+/// Tuned to 768 (was 384): a rigorous pinned-core c3 sweep at KC=512 measured a
+/// **monotonic NC win** — 192→44.9, 384→53.3, 576→55.3, **768→56.2 GMAC/s** — the wider
+/// column block improves packed-B reuse across the MR row band; 768 sits just under the
+/// per-core L2 (KC·NC·4 = 1.5 MiB B-panel + MC·KC·4 = 128 KiB A-panel). VNNI-only (the
+/// AVX2 path keeps I8_NC=128), byte-identity-safe (NC only changes the column-tile extent,
+/// never the exact int32 sum) — the c3 VNNI gate PASSED all 14 shapes at NC=768.
+pub const I8_VNNI_NC: usize = 768;
 
 /// int8 GEMM int-dot rung selector. Selects the vector instruction the int8
 /// macro-kernel uses to contract the K dimension. **Every rung produces the
