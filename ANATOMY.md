@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2747 | **Est. tokens:** ~6,823,047
-**Generated:** 2026-06-07 23:23 UTC
+**Files:** 2755 | **Est. tokens:** ~6,833,326
+**Generated:** 2026-06-08 05:01 UTC
 
 ## Token Budget Guide
 
@@ -54,6 +54,7 @@
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
+| `experiments/global-vs-local/` | 7 | ~6,492 |
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
@@ -397,7 +398,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,494 |
-| `tests/` | 175 | ~315,383 |
+| `tests/` | 176 | ~319,170 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -755,6 +756,15 @@
 - `mlp_mnist.mind` (~2368 tok, huge) — MLP MNIST Classifier — MIND Model Zoo
 - `README.md` (~1191 tok, large) — MIND Model Zoo
 - `transformer_block.mind` (~3967 tok, huge) — Transformer Block — MIND Model Zoo
+### `experiments/global-vs-local/`
+
+- `chern.py` (~1250 tok, large)
+- `exp2.py` (~1337 tok, large)
+- `exp3_universal.py` (~997 tok, large)
+- `plot_chern.py` (~469 tok, medium)
+- `plot.py` (~904 tok, large)
+- `README.md` (~839 tok, large) — Global vs Local — "Closed-form whole-field invariant" experiments
+- `topo.py` (~696 tok, large)
 ### `.githooks/`
 
 - `pre-commit` (~255 tok, medium) — #!/usr/bin/env bash
@@ -3881,6 +3891,7 @@
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `emit_ir_for_loop.rs` (~308 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
+- `error_growth_vs_depth.rs` (~3787 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2666 tok, huge) — Copyright 2025 STARGA Inc.
