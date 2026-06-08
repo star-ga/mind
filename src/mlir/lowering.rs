@@ -4604,19 +4604,35 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
+        // `vpdpbusd.512` is declared on `<16 x i32>`, so the per-column `Σ bₛ`
+        // is accumulated in COL_REGS = nr/16 separate ZMM groups (3 for NR=48),
+        // each over its own 64-byte slice of the K-quad's B panel, then the three
+        // i32 sums are widened to i64, shifted `<<7` (·128), and concatenated into
+        // one `vector<nr xi64>` `%{p}_bsx` — the same wide value the microkernel
+        // subtracts. Pure loop-invariant code motion; bit-identical.
+        let col_regs = nr / 16;
         line(&format!(
-            "            %{p}_h_ones = arith.constant dense<16843009> : vector<{nr}xi32>"
+            "            %{p}_h_ones = arith.constant dense<16843009> : vector<16xi32>"
         ));
         line(&format!(
-            "            %{p}_h_zi32 = arith.constant dense<0> : vector<{nr}xi32>"
+            "            %{p}_h_zi32 = arith.constant dense<0> : vector<16xi32>"
         ));
         // K-quad count for this panel (kce/grp); grp is 4 for VNNI.
         line(&format!(
             "            %{p}_h_kpairs = arith.divui %{p}_kce, %{p}_cgrp : index"
         ));
+        // One scf.for yielding COL_REGS independent i32 bsum accumulators.
+        let h_acc_init = (0..col_regs)
+            .map(|j| format!("%{p}_h_acc{j} = %{p}_h_zi32"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let h_acc_ty = (0..col_regs)
+            .map(|_| "vector<16xi32>".to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
         line(&format!(
-            "            %{p}_h_bacc:1 = scf.for %{p}_h_kp = %{p}_c0 to %{p}_h_kpairs \
-             step %{p}_c1 iter_args(%{p}_h_acc = %{p}_h_zi32) -> (vector<{nr}xi32>) {{"
+            "            %{p}_h_bacc:{col_regs} = scf.for %{p}_h_kp = %{p}_c0 to %{p}_h_kpairs \
+             step %{p}_c1 iter_args({h_acc_init}) -> ({h_acc_ty}) {{"
         ));
         line(&format!(
             "              %{p}_h_kp64 = arith.index_cast %{p}_h_kp : index to i64"
@@ -4630,39 +4646,89 @@ impl LoweringContext {
         line(&format!(
             "              %{p}_h_bvi = arith.addi %{p}_jrbase, %{p}_h_bkr : i64"
         ));
+        for j in 0..col_regs {
+            line(&format!(
+                "              %{p}_h_bo{j} = arith.constant {} : i64",
+                j * 64
+            ));
+        }
+        let mut h_yields = Vec::with_capacity(col_regs);
+        for j in 0..col_regs {
+            // Col-group j: 64-byte ZMM slice at byte offset j*64 within this
+            // quad's B panel (lanes [16j, 16j+16)).
+            line(&format!(
+                "              %{p}_h_bvi{j} = arith.addi %{p}_h_bvi, %{p}_h_bo{j} : i64"
+            ));
+            line(&format!(
+                "              %{p}_h_bvp{j} = llvm.getelementptr %{p}_pb[%{p}_h_bvi{j}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "              %{p}_h_bvb{j} = llvm.load %{p}_h_bvp{j} {{alignment = 1 : i64}} : \
+                 !llvm.ptr -> vector<64xi8>"
+            ));
+            line(&format!(
+                "              %{p}_h_bv{j} = vector.bitcast %{p}_h_bvb{j} : vector<64xi8> to vector<16xi32>"
+            ));
+            line(&format!(
+                "              %{p}_h_nb{j} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                 (%{p}_h_acc{j}, %{p}_h_ones, %{p}_h_bv{j}) : \
+                 (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
+            ));
+            h_yields.push(format!("%{p}_h_nb{j}"));
+        }
         line(&format!(
-            "              %{p}_h_bvp = llvm.getelementptr %{p}_pb[%{p}_h_bvi] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i8"
-        ));
-        line(&format!(
-            "              %{p}_h_bvb = llvm.load %{p}_h_bvp {{alignment = 1 : i64}} : \
-             !llvm.ptr -> vector<{}xi8>",
-            4 * nr
-        ));
-        line(&format!(
-            "              %{p}_h_bv = vector.bitcast %{p}_h_bvb : vector<{}xi8> to vector<{nr}xi32>",
-            4 * nr
-        ));
-        line(&format!(
-            "              %{p}_h_nb = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
-             (%{p}_h_acc, %{p}_h_ones, %{p}_h_bv) : \
-             (vector<{nr}xi32>, vector<{nr}xi32>, vector<{nr}xi32>) -> vector<{nr}xi32>"
-        ));
-        line(&format!(
-            "              scf.yield %{p}_h_nb : vector<{nr}xi32>"
+            "              scf.yield {} : {h_acc_ty}",
+            h_yields.join(", ")
         ));
         line("            }");
-        // %{p}_bsx = extsi(Σ bₛ) << 7  (the −128·Σ bₛ correction, shared by every
-        // MR-row block in this jr tile). Consumed by the microkernel.
+        // Widen each col-group's Σ bₛ to i64, shift <<7 (·128); concatenate the
+        // COL_REGS groups into the single wide %{p}_bsx : vector<nr xi64>.
         line(&format!(
-            "            %{p}_h_bsum64 = arith.extsi %{p}_h_bacc#0 : vector<{nr}xi32> to vector<{nr}xi64>"
+            "            %{p}_h_c7v = arith.constant dense<7> : vector<16xi64>"
         ));
-        line(&format!(
-            "            %{p}_h_c7v = arith.constant dense<7> : vector<{nr}xi64>"
-        ));
-        line(&format!(
-            "            %{p}_bsx = arith.shli %{p}_h_bsum64, %{p}_h_c7v : vector<{nr}xi64>"
-        ));
+        for j in 0..col_regs {
+            line(&format!(
+                "            %{p}_h_bsum64_{j} = arith.extsi %{p}_h_bacc#{j} : vector<16xi32> to vector<16xi64>"
+            ));
+            line(&format!(
+                "            %{p}_h_bsx{j} = arith.shli %{p}_h_bsum64_{j}, %{p}_h_c7v : vector<16xi64>"
+            ));
+        }
+        // Concatenate the COL_REGS 16-lane bias vectors into one nr-lane vector
+        // via a chain of vector.shuffle (lanes [0..16) from group 0, etc.).
+        if col_regs == 1 {
+            let idx: String = (0..nr)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            line(&format!(
+                "            %{p}_bsx = vector.shuffle %{p}_h_bsx0, %{p}_h_bsx0 [{idx}] : \
+                 vector<16xi64>, vector<16xi64>"
+            ));
+        } else {
+            // Build up wide vectors group by group.
+            let mut prev = format!("%{p}_h_bsx0");
+            let mut prev_w = 16usize;
+            for j in 1..col_regs {
+                let new_w = prev_w + 16;
+                let idx: String = (0..new_w)
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let out = if j == col_regs - 1 {
+                    format!("%{p}_bsx")
+                } else {
+                    format!("%{p}_h_bcat{j}")
+                };
+                line(&format!(
+                    "            {out} = vector.shuffle {prev}, %{p}_h_bsx{j} [{idx}] : \
+                     vector<{prev_w}xi64>, vector<16xi64>"
+                ));
+                prev = out;
+                prev_w = new_w;
+            }
+        }
     }
 
     #[cfg(feature = "std-surface")]
@@ -4671,36 +4737,41 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
-        // VNNI constant: the 0x80 xor mask (s8→u8 bias), as vector<NRxi32>
-        // reinterpreted as the byte vector vpdpbusd's u8 operand consumes. (The
-        // all-ones column-sum vector lives in the hoisted `Σ bₛ` emitter now.)
+        // VNNI wide-tile microkernel: COL_REGS = nr/16 ZMM B-columns (3 for
+        // NR=48) reused MR-deep. The 0x80 s8→u8 bias is PRE-APPLIED to the packed
+        // A panel at pack time (each packed-A byte is xor'd with 0x80 in VNNI
+        // mode), so the per-row inner-loop `xori` is GONE — the broadcasted A
+        // dword already carries (A+128). The A-broadcast is MEMORY-SOURCE
+        // (`vector.load` of a `vector<1xi32>` then `vector.broadcast`), which the
+        // x86 backend lowers to `vpbroadcastd zmm, m32` on the load ports (p2/p3),
+        // OFF port 5 — freeing port 5 for vpdpbusd.
+        let col_regs = nr / 16;
+        // iter_args: MR×COL_REGS main i32 accumulators (8×3 = 24 ZMM grid). The
+        // shared `Σ bₛ` correction is computed ONCE per jr tile by
+        // `emit_i8_vnni_bsum_hoist` (loop-invariant across ir) and consumed below
+        // as the pre-shifted `%{p}_bsx`.
         line(&format!(
-            "              %{p}_xor80 = arith.constant dense<-2139062144> : vector<{nr}xi32>"
+            "              %{p}_zi16 = arith.constant dense<0> : vector<16xi32>"
         ));
-        line(&format!(
-            "              %{p}_zi32 = arith.constant dense<0> : vector<{nr}xi32>"
-        ));
-        // iter_args: MR main i32 accumulators. The shared `Σ bₛ` correction is
-        // computed ONCE per jr tile by `emit_i8_vnni_bsum_hoist` (loop-invariant
-        // across ir) and consumed below as the pre-shifted `%{p}_bsx`; it is no
-        // longer accumulated inside this per-MR-row-block loop.
         let acc_init: Vec<String> = (0..mr)
-            .map(|t| format!("%{p}_macc{t} = %{p}_zi32"))
+            .flat_map(|t| (0..col_regs).map(move |j| format!("%{p}_macc{t}_{j} = %{p}_zi16")))
             .collect();
-        let iter_ty: Vec<String> = (0..mr).map(|_| format!("vector<{nr}xi32>")).collect();
+        let n_acc = mr * col_regs;
+        let iter_ty: Vec<String> = (0..n_acc).map(|_| "vector<16xi32>".to_string()).collect();
         let iter_ty = iter_ty.join(", ");
         line(&format!(
             "              %{p}_vi:{} = scf.for %{p}_kp = %{p}_c0 to %{p}_kpairs \
              step %{p}_c1 iter_args({}) -> ({}) {{",
-            mr,
+            n_acc,
             acc_init.join(", "),
             iter_ty
         ));
         line(&format!(
             "                %{p}_kp64 = arith.index_cast %{p}_kp : index to i64"
         ));
-        // B quads vector: Bp[jrbase + kp*(NR*4) .. +32] as vector<32xi8>, then
-        // bitcast to vector<NRxi32> (the form the vpdpbusd intrinsic declares).
+        // ── Hoist the COL_REGS B-tile ZMM loads BEFORE the MR row loop (B reused
+        //    across all MR rows). Base: Bp[jrbase + kp*(NR*4)]; col-group j is at
+        //    byte offset j*64.
         line(&format!(
             "                %{p}_bnr4 = arith.muli %{p}_nrc, %{p}_cgrpi : i64"
         ));
@@ -4710,21 +4781,26 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_bvi = arith.addi %{p}_jrbase, %{p}_bkr : i64"
         ));
-        line(&format!(
-            "                %{p}_bvp = llvm.getelementptr %{p}_pb[%{p}_bvi] : \
-             (!llvm.ptr, i64) -> !llvm.ptr, i8"
-        ));
-        line(&format!(
-            "                %{p}_bvb = llvm.load %{p}_bvp {{alignment = 1 : i64}} : \
-             !llvm.ptr -> vector<{}xi8>",
-            4 * nr
-        ));
-        line(&format!(
-            "                %{p}_bv = vector.bitcast %{p}_bvb : vector<{}xi8> to vector<{nr}xi32>",
-            4 * nr
-        ));
-        // (column-sum `Σ bₛ` is now computed once per jr tile by the hoisted
-        // `emit_i8_vnni_bsum_hoist`; nothing per-quad to accumulate here.)
+        for j in 0..col_regs {
+            line(&format!(
+                "                %{p}_bo{j} = arith.constant {} : i64",
+                j * 64
+            ));
+            line(&format!(
+                "                %{p}_bvi{j} = arith.addi %{p}_bvi, %{p}_bo{j} : i64"
+            ));
+            line(&format!(
+                "                %{p}_bvp{j} = llvm.getelementptr %{p}_pb[%{p}_bvi{j}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "                %{p}_bvb{j} = llvm.load %{p}_bvp{j} {{alignment = 1 : i64}} : \
+                 !llvm.ptr -> vector<64xi8>"
+            ));
+            line(&format!(
+                "                %{p}_bv{j} = vector.bitcast %{p}_bvb{j} : vector<64xi8> to vector<16xi32>"
+            ));
+        }
         // A K-quad base for this block: Ap[irbase + kp*(MR*4)].
         line(&format!(
             "                %{p}_amr4 = arith.muli %{p}_mrc, %{p}_cgrpi : i64"
@@ -4735,13 +4811,14 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_abase = arith.addi %{p}_irbase, %{p}_akr : i64"
         ));
-        let mut yields = Vec::with_capacity(mr);
+        let mut yields = Vec::with_capacity(n_acc);
         for t in 0..mr {
-            // A quad for row t: four contiguous i8 = [A[t,4kp..4kp+3]]. Load as
-            // one i32, broadcast across NR columns -> vector<NRxi32> =
-            // [quad,quad,...]; xor 0x80 per byte (s8 -> u8, the +128 bias) so
-            // vpdpbusd's u8 operand carries (A+128). The bias is removed exactly
-            // after the loop via -128*Σb.
+            // A quad for row t: four contiguous i8 = [(A[t,4kp..4kp+3]) ⊕ 0x80]
+            // (the +128 bias pre-applied at pack). MEMORY-SOURCE broadcast: load
+            // the dword as a vector<1xi32> straight from packed A, then
+            // vector.broadcast → vector<16xi32> = [quad,quad,...]. The x86 backend
+            // folds broadcast(load) to vpbroadcastd zmm,m32 (load ports, off p5).
+            // No xori here — the bias is already in the packed bytes.
             line(&format!(
                 "                %{p}_at{t} = arith.constant {} : i64",
                 t * 4
@@ -4754,21 +4831,20 @@ impl LoweringContext {
                  (!llvm.ptr, i64) -> !llvm.ptr, i8"
             ));
             line(&format!(
-                "                %{p}_as{t} = llvm.load %{p}_ap{t} {{alignment = 1 : i64}} : \
-                 !llvm.ptr -> i32"
+                "                %{p}_av{t} = llvm.load %{p}_ap{t} {{alignment = 1 : i64}} : \
+                 !llvm.ptr -> vector<1xi32>"
             ));
             line(&format!(
-                "                %{p}_abc{t} = vector.broadcast %{p}_as{t} : i32 to vector<{nr}xi32>"
+                "                %{p}_abc{t} = vector.broadcast %{p}_av{t} : vector<1xi32> to vector<16xi32>"
             ));
-            line(&format!(
-                "                %{p}_au{t} = arith.xori %{p}_abc{t}, %{p}_xor80 : vector<{nr}xi32>"
-            ));
-            line(&format!(
-                "                %{p}_nm{t} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
-                 (%{p}_macc{t}, %{p}_au{t}, %{p}_bv) : \
-                 (vector<{nr}xi32>, vector<{nr}xi32>, vector<{nr}xi32>) -> vector<{nr}xi32>"
-            ));
-            yields.push(format!("%{p}_nm{t}"));
+            for j in 0..col_regs {
+                line(&format!(
+                    "                %{p}_nm{t}_{j} = llvm.call_intrinsic \"llvm.x86.avx512.vpdpbusd.512\"\
+                     (%{p}_macc{t}_{j}, %{p}_abc{t}, %{p}_bv{j}) : \
+                     (vector<16xi32>, vector<16xi32>, vector<16xi32>) -> vector<16xi32>"
+                ));
+                yields.push(format!("%{p}_nm{t}_{j}"));
+            }
         }
         line(&format!(
             "                scf.yield {} : {}",
@@ -4776,18 +4852,48 @@ impl LoweringContext {
             iter_ty
         ));
         line("              }");
-        // Post-loop bias removal: acc{t}_i64 = extsi(main{t}) - %{p}_bsx, where
-        // %{p}_bsx = (Σ bₛ) << 7 = 128·Σ bₛ was computed ONCE per jr tile by the
-        // hoisted column-sum (loop-invariant across this ir block).
-        // Re-expose the corrected per-row accumulators under the shared %{p}_va#{t}
-        // names the scalar tail / C-flush consume, via a trivial 1-trip scf.for
-        // (keeps %{p}_va:{MR} the single SSA the rest of the kernel reads).
+        // Post-loop: per row, concat the COL_REGS i32 col-groups into one
+        // vector<nr xi32>, extend to i64, subtract %{p}_bsx (= 128·Σ bₛ, the
+        // signed-input bias correction, computed once per jr tile). Yields the
+        // corrected per-row vector<nr xi64> the scalar tail / C-flush consume.
         let va_init = (0..mr)
             .map(|t| format!("%{p}_vaa{t} = %{p}_vacorr{t}",))
             .collect::<Vec<_>>();
         for t in 0..mr {
+            // Concatenate this row's COL_REGS 16-lane i32 groups → vector<nr xi32>.
+            let main_i32 = if col_regs == 1 {
+                let idx: String = (0..nr)
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                line(&format!(
+                    "              %{p}_mcat{t} = vector.shuffle %{p}_vi#{} , %{p}_vi#{} [{idx}] : \
+                     vector<16xi32>, vector<16xi32>",
+                    t * col_regs,
+                    t * col_regs
+                ));
+                format!("%{p}_mcat{t}")
+            } else {
+                let mut prev = format!("%{p}_vi#{}", t * col_regs);
+                let mut prev_w = 16usize;
+                for j in 1..col_regs {
+                    let new_w = prev_w + 16;
+                    let idx: String = (0..new_w)
+                        .map(|i| i.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    line(&format!(
+                        "              %{p}_mcat{t}_{j} = vector.shuffle {prev}, %{p}_vi#{} [{idx}] : \
+                         vector<{prev_w}xi32>, vector<16xi32>",
+                        t * col_regs + j
+                    ));
+                    prev = format!("%{p}_mcat{t}_{j}");
+                    prev_w = new_w;
+                }
+                prev
+            };
             line(&format!(
-                "              %{p}_main64_{t} = arith.extsi %{p}_vi#{t} : vector<{nr}xi32> to vector<{nr}xi64>"
+                "              %{p}_main64_{t} = arith.extsi {main_i32} : vector<{nr}xi32> to vector<{nr}xi64>"
             ));
             line(&format!(
                 "              %{p}_vacorr{t} = arith.subi %{p}_main64_{t}, %{p}_bsx : vector<{nr}xi64>"
@@ -4827,23 +4933,39 @@ impl LoweringContext {
     ) {
         use std::fmt::Write;
         let p = prefix;
-        const MR: usize = I8_MR;
+        // Register-tile rows (MR) and column block (NC) are MODE-DEPENDENT: the
+        // AVX2 `vpmaddwd` YMM path keeps the pinned I8_MR=4 / I8_NC=128; the VNNI
+        // `vpdpbusd.512` path uses the wider register tile I8_VNNI_MR=8 with
+        // I8_VNNI_NC=384 (a multiple of the VNNI NR=48). Per-call the mode is
+        // fixed at emit time, so a `let` (not a `const`) carries the choice into
+        // the alloca sizes, the C-scratch index math, and the row loops. Widening
+        // MR only adds independent accumulator chains; widening NC only changes
+        // the column-block extent — neither perturbs the exact int32 sum.
+        let mr: usize = match mode {
+            IntDotMode::Avx2 => I8_MR,
+            IntDotMode::Vnni => I8_VNNI_MR,
+        };
         const MC: usize = I8_MC;
         const KC: usize = I8_KC;
-        const NC: usize = I8_NC;
+        let nc: usize = match mode {
+            IntDotMode::Avx2 => I8_NC,
+            IntDotMode::Vnni => I8_VNNI_NC,
+        };
         // Register-tile column width (NR). MODE-DEPENDENT: the AVX2 `vpmaddwd`
         // path stays at the pinned I8_NR=8 (YMM, vector<8xi64> accumulators); the
-        // VNNI `vpdpbusd.512` path uses NR=16 (ZMM, vector<16xi64> accumulators,
-        // 64-byte B-panel quad packing, 16-lane bias correction). NR only changes
-        // the column-tile width / lane grouping, never the math — integer add is
-        // associative+commutative, so widening to 16 lanes is byte-identical to
-        // the 8-lane grouping. The packed-B / C-scratch index arithmetic, the
-        // tail, and the C-flush all key off this one `nr`, so every tile stays
-        // self-consistent within a mode. NC must be a multiple of NR (NC=128 is a
-        // multiple of both 8 and 16).
+        // VNNI `vpdpbusd.512` path uses NR=48 = 3 ZMM B-columns (`colRegs=3`).
+        // The microkernel holds the 24 accumulators as an 8×3 grid of
+        // `vector<16xi32>` (one ZMM per (row, col-group)) and reassembles each
+        // row's three groups into one `vector<48xi64>` for the C-scratch — so the
+        // packed-B / C-scratch index arithmetic, the scalar tail, and the C-flush
+        // all still key off this single logical `nr=48` (the wide loads/stores
+        // legalize to 3 ZMM each). NR only changes the column-tile width / lane
+        // grouping, never the math — integer add is associative+commutative, so
+        // widening to 48 lanes (3 col-groups) is byte-identical to a 16- or
+        // 8-lane grouping. NC must be a multiple of NR (the VNNI NC=384 = 8·48).
         let nr: usize = match mode {
             IntDotMode::Avx2 => I8_NR,
-            IntDotMode::Vnni => 16,
+            IntDotMode::Vnni => I8_VNNI_NR,
         };
         // K-steps fused by one int-dot instruction: 2 for vpmaddwd (i16 pairs),
         // 4 for vpdpbusd (i8 quads). The packed panels are K-interleaved with
@@ -4890,11 +5012,11 @@ impl LoweringContext {
         line(&format!("    %{p}_c0 = arith.constant 0 : index"));
         line(&format!("    %{p}_c1 = arith.constant 1 : index"));
         line(&format!("    %{p}_c2 = arith.constant 2 : index"));
-        line(&format!("    %{p}_cmr = arith.constant {MR} : index"));
+        line(&format!("    %{p}_cmr = arith.constant {mr} : index"));
         line(&format!("    %{p}_cnr = arith.constant {nr} : index"));
         line(&format!("    %{p}_cmc = arith.constant {MC} : index"));
         line(&format!("    %{p}_ckc = arith.constant {KC} : index"));
-        line(&format!("    %{p}_cnc = arith.constant {NC} : index"));
+        line(&format!("    %{p}_cnc = arith.constant {nc} : index"));
         line(&format!("    %{p}_eb = arith.constant {eb} : i64"));
         line(&format!("    %{p}_ebs = arith.constant {eb_src} : i64"));
         line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
@@ -4913,9 +5035,9 @@ impl LoweringContext {
         // C-scratch: MC*NC i64.  Packed A: MC*KC i16.  Packed B: KC*NC i16.
         // (The interleaved K-pair layout reindexes the same MC*KC / KC*NC
         // element count — pair-count * 2 * MR = KC * MR, etc.)
-        let cs_elems = (MC * NC) as i64;
+        let cs_elems = (MC * nc) as i64;
         let pa_elems = (MC * KC) as i64;
-        let pb_elems = (KC * NC) as i64;
+        let pb_elems = (KC * nc) as i64;
         line(&format!(
             "    %{p}_csn = llvm.mlir.constant({cs_elems} : i64) : i64"
         ));
@@ -4934,9 +5056,9 @@ impl LoweringContext {
         line(&format!(
             "    %{p}_pb = llvm.alloca %{p}_pbn x {pty} : (i64) -> !llvm.ptr"
         ));
-        line(&format!("    %{p}_ncc = arith.constant {NC} : i64"));
+        line(&format!("    %{p}_ncc = arith.constant {nc} : i64"));
         line(&format!("    %{p}_kcc = arith.constant {KC} : i64"));
-        line(&format!("    %{p}_mrc = arith.constant {MR} : i64"));
+        line(&format!("    %{p}_mrc = arith.constant {mr} : i64"));
         line(&format!("    %{p}_nrc = arith.constant {nr} : i64"));
 
         // ════════════════════════════════════════════════════════════════════
@@ -5244,9 +5366,12 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_pai8 = llvm.load %{p}_pasp : !llvm.ptr -> i8"
         ));
-        // AVX2 panel is i16 (sign-extend once). VNNI panel stores the raw byte;
-        // the +128 unsigned-bias of the A operand is applied in the microkernel
-        // (xor 0x80), NOT here — the packed A panel holds the true signed A[i,k].
+        // AVX2 panel is i16 (sign-extend once). VNNI panel PRE-APPLIES the s8→u8
+        // +128 bias here at pack time (xor each packed-A byte with 0x80), so the
+        // microkernel's broadcasted A dword already carries (A+128) and the
+        // per-row inner-loop `xori` is removed. The −128·Σ bₛ correction (the
+        // hoisted Σ bₛ) cancels this exactly ⇒ byte-identical. (Zero-padded rows
+        // beyond MCe are never written to C, so their bias state is irrelevant.)
         match mode {
             IntDotMode::Avx2 => {
                 line(&format!(
@@ -5255,7 +5380,13 @@ impl LoweringContext {
                 line(&format!("                scf.yield %{p}_pald : {pty}"));
             }
             IntDotMode::Vnni => {
-                line(&format!("                scf.yield %{p}_pai8 : {pty}"));
+                line(&format!(
+                    "                %{p}_pax80 = arith.constant -128 : i8"
+                ));
+                line(&format!(
+                    "                %{p}_pabias = arith.xori %{p}_pai8, %{p}_pax80 : i8"
+                ));
+                line(&format!("                scf.yield %{p}_pabias : {pty}"));
             }
         }
         line("              } else {");
@@ -5326,7 +5457,7 @@ impl LoweringContext {
         // The total over all K is the identical sum of A[t,k]*B[k,n] terms as
         // the scalar oracle — byte-identical. The trailing <grp leftover K is a
         // scalar tail (shared by both rungs).
-        let acc_ty = (0..MR)
+        let acc_ty = (0..mr)
             .map(|_| format!("vector<{nr}xi64>"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -5339,10 +5470,10 @@ impl LoweringContext {
         let _ = line; // release the closure's &mut buf so the microkernel can write it
         match mode {
             IntDotMode::Avx2 => {
-                Self::emit_i8_microkernel_avx2(buf, p, nr, MR, pl, &acc_ty);
+                Self::emit_i8_microkernel_avx2(buf, p, nr, mr, pl, &acc_ty);
             }
             IntDotMode::Vnni => {
-                Self::emit_i8_microkernel_vnni(buf, p, nr, MR, &acc_ty);
+                Self::emit_i8_microkernel_vnni(buf, p, nr, mr, &acc_ty);
             }
         }
         let mut line = |s: &str| {
@@ -5360,12 +5491,12 @@ impl LoweringContext {
         // so the tail product is the plain signed A[t,kk]*B[kk,n] in both rungs.
         // NR is small and this runs at most `grp-1` times per KC panel, so a
         // scalar per-column update is fine and bit-identical (associative add).
-        let tail_init = (0..MR)
+        let tail_init = (0..mr)
             .map(|t| format!("%{p}_tacc{t} = %{p}_va#{t}"))
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!(
-            "              %{p}_vt:{MR} = scf.for %{p}_kt = %{p}_kmain to %{p}_kce \
+            "              %{p}_vt:{mr} = scf.for %{p}_kt = %{p}_kmain to %{p}_kce \
              step %{p}_c1 iter_args({tail_init}) -> ({acc_ty}) {{"
         ));
         line(&format!(
@@ -5402,8 +5533,8 @@ impl LoweringContext {
         line(&format!(
             "                %{p}_tabase = arith.addi %{p}_irbase, %{p}_takrs : i64"
         ));
-        let mut tail_yields = Vec::with_capacity(MR);
-        for t in 0..MR {
+        let mut tail_yields = Vec::with_capacity(mr);
+        for t in 0..mr {
             line(&format!(
                 "                %{p}_tat{t} = arith.constant {} : i64",
                 t * grp
@@ -5419,8 +5550,24 @@ impl LoweringContext {
                 "                %{p}_tas{t} = llvm.load %{p}_tap{t} : \
                  !llvm.ptr -> {pty}"
             ));
+            // VNNI packs A pre-biased (⊕0x80); the scalar tail needs the TRUE
+            // signed A[t,kk], so xor the bias back out before extsi. (AVX2 packs
+            // the true signed value already — no un-bias.)
+            if mode == IntDotMode::Vnni {
+                line(&format!(
+                    "                %{p}_tax80{t} = arith.constant -128 : i8"
+                ));
+                line(&format!(
+                    "                %{p}_tasu{t} = arith.xori %{p}_tas{t}, %{p}_tax80{t} : i8"
+                ));
+            }
+            let tas_src = if mode == IntDotMode::Vnni {
+                format!("%{p}_tasu{t}")
+            } else {
+                format!("%{p}_tas{t}")
+            };
             line(&format!(
-                "                %{p}_taw{t} = arith.extsi %{p}_tas{t} : {pty} to i64"
+                "                %{p}_taw{t} = arith.extsi {tas_src} : {pty} to i64"
             ));
             // Inner column loop over NR: scalar B[kk,n], product, scatter-add.
             line(&format!(
@@ -5471,7 +5618,7 @@ impl LoweringContext {
         ));
         line("              }");
         // ── add the MR×NR i64 partial into the C-scratch tile ────────────────
-        for t in 0..MR {
+        for t in 0..mr {
             line(&format!(
                 "              %{p}_ct{t} = arith.constant {t} : i64"
             ));
