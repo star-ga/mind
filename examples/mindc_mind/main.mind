@@ -759,6 +759,21 @@ pub fn ast_new_not(span_lo: i64, span_hi: i64, operand: i64) -> i64 {
     n
 }
 
+// `if cond { then } else { else }`: child0=cond expr, child1=then-block,
+// child2=else-block (0 when no else clause).  Matches the Rust front-end's
+// ast::Node::If (cond / then_branch / else_branch).
+pub fn ast_new_if(span_lo: i64, span_hi: i64, cond: i64, then_blk: i64, else_blk: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_if());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, cond);
+    __mind_store_i64(n + 32, then_blk);
+    __mind_store_i64(n + 40, else_blk);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
 // ===== AST accessors =====
 
 pub fn ast_kind(node: i64) -> i64 {
@@ -904,6 +919,10 @@ pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let k: i64 = tok_kind(toks, pos);
     let lo: i64 = tok_lo(toks, pos);
     let hi: i64 = tok_hi(toks, pos);
+
+    if k == tk_kw_if() {
+        return parse_if(toks, pos, buf);
+    }
 
     if k == tk_minus() {
         let operand: ParseResult = parse_primary(toks, pos + 1, buf);
@@ -1115,6 +1134,35 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
     let one: ParseResult = parse_stmt(toks, pos, buf);
     let new_acc: Vec = vec_push(acc, pr_node(one));
     parse_block_stmts(toks, pr_pos(one), buf, new_acc)
+}
+
+// ===== If-expressions =====
+//
+// `if COND { THEN } else { ELSE }` — COND is a full expression (parse_expr
+// stops at the `{` because `{` has no infix precedence), THEN/ELSE reuse the
+// function-body block parser.  The else clause is optional; when absent,
+// child2 is left 0.  Mirrors the Rust front-end's ast::Node::If.
+pub fn parse_if(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    let cond: ParseResult = parse_expr(toks, pos + 1, buf);
+    let after_cond: i64 = pr_pos(cond);
+
+    let then_res: ParseResult = parse_block(toks, after_cond, buf);
+    let after_then: i64 = pr_pos(then_res);
+    let then_blk: i64 = pr_node(then_res);
+    let then_hi: i64 = ast_span_hi(then_blk);
+
+    if tok_kind(toks, after_then) == tk_kw_else() {
+        let else_res: ParseResult = parse_block(toks, after_then + 1, buf);
+        let after_else: i64 = pr_pos(else_res);
+        let else_blk: i64 = pr_node(else_res);
+        let else_hi: i64 = ast_span_hi(else_blk);
+        let if_node: i64 = ast_new_if(kw_lo, else_hi, pr_node(cond), then_blk, else_blk);
+        return pr_new(after_else, if_node);
+    }
+
+    let if_node: i64 = ast_new_if(kw_lo, then_hi, pr_node(cond), then_blk, 0);
+    pr_new(after_then, if_node)
 }
 
 // ===== Function definitions =====
@@ -1951,6 +1999,34 @@ pub fn emit_lit_output(s: EmitState, id: i64) -> EmitState {
     es_push(s11, ch_newline())
 }
 
+// If-line literal fragments — the mic@1 text spelling of the flat If op
+// `%dst = if cond=%c then=%t else=%e` (matches src/ir/print.rs).
+pub fn emit_if_kw(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, 105);
+    es_push(s1, 102)
+}
+pub fn emit_cond_eq(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, 99);
+    let s2: EmitState = es_push(s1, 111);
+    let s3: EmitState = es_push(s2, 110);
+    let s4: EmitState = es_push(s3, 100);
+    es_push(s4, ch_eq_sign())
+}
+pub fn emit_then_eq(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, 116);
+    let s2: EmitState = es_push(s1, 104);
+    let s3: EmitState = es_push(s2, 101);
+    let s4: EmitState = es_push(s3, 110);
+    es_push(s4, ch_eq_sign())
+}
+pub fn emit_else_eq(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, 101);
+    let s2: EmitState = es_push(s1, 108);
+    let s3: EmitState = es_push(s2, 115);
+    let s4: EmitState = es_push(s3, 101);
+    es_push(s4, ch_eq_sign())
+}
+
 pub fn emit_lit_module_close(s: EmitState) -> EmitState {
     let s1: EmitState = es_push(s, ch_rbrace());
     let s2: EmitState = es_push(s1, ch_space());
@@ -2198,6 +2274,21 @@ pub fn resolve_param_loop(buf: i64, lo: i64, hi: i64, addr: i64, n: i64, i: i64)
 
 // Expression lowering with a parameter environment. Identical to emit_expr
 // except the ident branch resolves a param to its %SSA id (no instruction).
+// Lower an if's else-branch into a scratch EmitState seeded at `else_seed`
+// (the seed const id, consumed by Rust's else_ir.fresh()).  When there is no
+// else clause (`else_blk == 0`) the seed const IS the else result, so we just
+// return a scratch state whose last_id is the seed.  Otherwise we lower the
+// else-block statements and return their trailing-value state.  The scratch
+// buffer is discarded by the caller (the sub-stream ops are not printed in
+// mic@1 text — see src/ir/print.rs Instr::If).
+pub fn emit_if_else_branch(else_blk: i64, buf: i64, else_seed: i64, params_addr: i64, n_params: i64, lets: Map) -> EmitState {
+    let sc: EmitState = EmitState { buf: string_new(), next_id: else_seed + 1, last_id: else_seed, lets: lets };
+    if else_blk == 0 {
+        return sc;
+    }
+    emit_block_stmts_env(sc, buf, ast_child0(else_blk), ast_aux(else_blk), 0, params_addr, n_params)
+}
+
 pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
@@ -2301,6 +2392,65 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
         let s17: EmitState = emit_i64(s16, c0);
         let s18: EmitState = es_push(s17, ch_newline());
         return EmitState { buf: s18.buf, next_id: id + 1, last_id: id, lets: s18.lets };
+    }
+    if k == ast_if() {
+        // mic@1 If lowering — matches the Rust front-end (src/eval/lower.rs
+        // ast::Node::If) and its print.rs text form: the condition, then-branch
+        // and else-branch each lower into a hidden sub-stream, so the only
+        // VISIBLE instruction in mic@1 text is the flat
+        //   %dst = if cond=%c then=%t else=%e
+        // line.  The sub-streams still consume SSA ids (each branch begins with
+        // a `const.i64 0` seed via ir.fresh()), so we thread next_id through
+        // scratch EmitStates to keep the dst id byte-identical to Rust, but we
+        // discard their buffers (the sub-stream ops are not printed).
+        let cond_node: i64 = ast_child0(node);
+        let then_blk: i64 = ast_child1(node);
+        let else_blk: i64 = ast_child2(node);
+
+        // 1. Condition: lower into a scratch buffer seeded at the current id.
+        let sc_cond: EmitState = EmitState { buf: string_new(), next_id: s.next_id, last_id: 0 - 1, lets: s.lets };
+        let r_cond: EmitState = emit_expr_env(sc_cond, buf, cond_node, params_addr, n_params);
+        let cond_id: i64 = r_cond.last_id;
+
+        // 2. Then-branch: ir.fresh() seed const (consumed, not printed), then
+        //    lower the block; then_result is the trailing value.
+        let then_seed: i64 = r_cond.next_id;
+        let sc_then: EmitState = EmitState { buf: string_new(), next_id: then_seed + 1, last_id: then_seed, lets: s.lets };
+        let r_then: EmitState = emit_block_stmts_env(sc_then, buf, ast_child0(then_blk), ast_aux(then_blk), 0, params_addr, n_params);
+        let then_id: i64 = r_then.last_id;
+
+        // 3. Else-branch: ir.fresh() seed const, then lower the block (or, when
+        //    there is no else clause, the seed const IS the else result).
+        let else_seed: i64 = r_then.next_id;
+        let r_else: EmitState = emit_if_else_branch(else_blk, buf, else_seed, params_addr, n_params, s.lets);
+        let else_id: i64 = r_else.last_id;
+
+        // 4. dst = ir.fresh().
+        let dst: i64 = r_else.next_id;
+
+        // 5. Emit the single visible flat If line into the real buffer.
+        let e1: EmitState = es_push(s, ch_space());
+        let e2: EmitState = es_push(e1, ch_space());
+        let e3: EmitState = es_push(e2, ch_percent());
+        let e4: EmitState = emit_i64(e3, dst);
+        let e5: EmitState = es_push(e4, ch_space());
+        let e6: EmitState = es_push(e5, ch_eq_sign());
+        let e7: EmitState = es_push(e6, ch_space());
+        let e8: EmitState = emit_if_kw(e7);
+        let e9: EmitState = es_push(e8, ch_space());
+        let e10: EmitState = emit_cond_eq(e9);
+        let e11: EmitState = es_push(e10, ch_percent());
+        let e12: EmitState = emit_i64(e11, cond_id);
+        let e13: EmitState = es_push(e12, ch_space());
+        let e14: EmitState = emit_then_eq(e13);
+        let e15: EmitState = es_push(e14, ch_percent());
+        let e16: EmitState = emit_i64(e15, then_id);
+        let e17: EmitState = es_push(e16, ch_space());
+        let e18: EmitState = emit_else_eq(e17);
+        let e19: EmitState = es_push(e18, ch_percent());
+        let e20: EmitState = emit_i64(e19, else_id);
+        let e21: EmitState = es_push(e20, ch_newline());
+        return EmitState { buf: e21.buf, next_id: dst + 1, last_id: dst, lets: e21.lets };
     }
     if k == ast_call() {
         let args_addr: i64 = ast_child1(node);

@@ -84,6 +84,33 @@ CASES = [
     # Unary logical-not: !a -> a == 0 (const0 then eq).
     (b"pub fn f(a: i64) -> i64 { !a }\n",
      b"  %1 = const.i64 0\n  %2 = eq %0, %1\n  output %2\n"),
+    # If-expression control-flow lowering. Mirrors the Rust front-end
+    # (src/eval/lower.rs ast::Node::If) and its mic@1 text form
+    # (src/ir/print.rs Instr::If): the condition, then-branch and else-branch
+    # each lower into a HIDDEN sub-stream, so the only VISIBLE op is the flat
+    #   %dst = if cond=%c then=%t else=%e
+    # line.  Each branch begins with a `const.i64 0` seed (ir.fresh()) that
+    # still consumes an SSA id, so dst/then/else match Rust's allocation even
+    # though the seeds and branch bodies are not printed.
+    #
+    # if a { b } else { a }: a=%0,b=%1. cond a=%0; then-seed=%2, b=%1;
+    # else-seed=%3, a=%0; dst=%4.
+    (b"pub fn f(a: i64, b: i64) -> i64 { if a { b } else { a } }\n",
+     b"  %4 = if cond=%0 then=%1 else=%0\n  output %4\n"),
+    # if a { b } else { c }: a=%0,b=%1,c=%2. cond a=%0; then-seed=%3, b=%1;
+    # else-seed=%4, c=%2; dst=%5.
+    (b"pub fn f(a: i64, b: i64, c: i64) -> i64 { if a { b } else { c } }\n",
+     b"  %5 = if cond=%0 then=%1 else=%2\n  output %5\n"),
+    # No else clause: the else-branch's unit-0 seed IS the else result.
+    # a=%0,b=%1. cond a=%0; then-seed=%2, b=%1; else-seed=%3 (result); dst=%4.
+    (b"pub fn f(a: i64, b: i64) -> i64 { if a { b } }\n",
+     b"  %4 = if cond=%0 then=%1 else=%3\n  output %4\n"),
+    # Literal branch bodies: each int-lit lowers to a hidden const in its
+    # branch sub-stream, consuming its own id ON TOP of the branch seed.
+    # a=%0. cond a=%0; then-seed=%1, 5=%2 -> then=%2; else-seed=%3, 7=%4 ->
+    # else=%4; dst=%5.
+    (b"pub fn f(a: i64) -> i64 { if a { 5 } else { 7 } }\n",
+     b"  %5 = if cond=%0 then=%2 else=%4\n  output %5\n"),
 ]
 
 
