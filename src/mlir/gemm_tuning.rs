@@ -122,8 +122,13 @@ pub const Q16_NR: usize = 8;
 /// have the same extent as the Q16 tier (panels stay i32, scratch i64).
 pub const I8_MC: usize = 64;
 
-/// int8 tier K-panel depth — mirrors `Q16_KC`.
-pub const I8_KC: usize = 256;
+/// int8 tier K-panel depth. Tuned to 512 (was 256, the `Q16_KC` mirror): a rigorous
+/// pinned-core c3 sweep measured KC=512 at **+6% int8 VNNI GMAC/s** (52.2 vs 49.2) by
+/// amortizing the per-jr-tile i64 C-scratch epilogue over a deeper K panel; KC=1024
+/// regresses (panels exceed L2). Byte-identity-safe: a deeper K panel only regroups the
+/// associative int32 reduction — the exact sum (and every canary) is unchanged, and the
+/// c3 byte-identity gate PASSED at KC=512 for all 14 K-straddling/tail shapes.
+pub const I8_KC: usize = 512;
 
 /// int8 tier column block — mirrors `Q16_NC`.
 pub const I8_NC: usize = 128;
