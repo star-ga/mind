@@ -537,6 +537,9 @@ pub fn ast_not() -> i64 {
 pub fn ast_if() -> i64 {
     16
 }
+pub fn ast_field() -> i64 {
+    17
+}
 
 // ===== Binop operator tags =====
 
@@ -755,6 +758,25 @@ pub fn ast_new_not(span_lo: i64, span_hi: i64, operand: i64) -> i64 {
     __mind_store_i64(n + 24, operand);
     __mind_store_i64(n + 32, 0);
     __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// `receiver.field`: child0=receiver expr, child1/child2 (offsets 32/40) carry
+// the field-name span (lo/hi) into the source buffer.  Mirrors the Rust
+// front-end's ast::Node::FieldAccess { receiver, field, span }.  The emitter
+// (emit_expr_env ast_field arm) lowers it to a single `const.i64 0` — the
+// byte-identical match to lower.rs's FieldAccess `None` arm, taken whenever the
+// receiver's struct type is unresolvable (the bootstrap parser tracks no
+// struct field-name order, so every field access lands on that arm).
+pub fn ast_new_field(span_lo: i64, span_hi: i64, receiver: i64, field_lo: i64, field_hi: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_field());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, receiver);
+    __mind_store_i64(n + 32, field_lo);
+    __mind_store_i64(n + 40, field_hi);
     __mind_store_i64(n + 48, 0);
     n
 }
@@ -1017,8 +1039,37 @@ pub fn parse_args_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
 // ===== Pratt expression parser =====
 
 pub fn parse_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
-    let prim: ParseResult = parse_primary(toks, pos, buf);
+    let prim: ParseResult = parse_postfix(toks, pos, buf);
     parse_pratt(toks, pr_pos(prim), buf, pr_node(prim), 1)
+}
+
+// Postfix wrapper around parse_primary: after a primary is parsed, greedily
+// consume trailing `.field` accesses so `a.b.c` chains left-associatively into
+// nested ast_field nodes.  Field access binds tighter than any infix operator
+// (it is applied before parse_pratt), matching the Rust front-end where
+// FieldAccess is built in primary position.  Each `.field` requires the dot to
+// be followed by an identifier; a bare trailing dot is left for the primary
+// fallback (it simply stops the loop).
+pub fn parse_postfix(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let prim: ParseResult = parse_primary(toks, pos, buf);
+    parse_postfix_rest(toks, pr_pos(prim), buf, pr_node(prim))
+}
+
+pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResult {
+    if at_eof(toks, pos) == 1 {
+        return pr_new(pos, recv);
+    }
+    if tok_kind(toks, pos) != tk_dot() {
+        return pr_new(pos, recv);
+    }
+    if tok_kind(toks, pos + 1) != tk_ident() {
+        return pr_new(pos, recv);
+    }
+    let field_lo: i64 = tok_lo(toks, pos + 1);
+    let field_hi: i64 = tok_hi(toks, pos + 1);
+    let recv_lo: i64 = ast_span_lo(recv);
+    let fa: i64 = ast_new_field(recv_lo, field_hi, recv, field_lo, field_hi);
+    parse_postfix_rest(toks, pos + 2, buf, fa)
 }
 
 pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
@@ -1035,7 +1086,7 @@ pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> Pa
     }
 
     let op_tag: i64 = tk_to_op(k);
-    let rhs_prim: ParseResult = parse_primary(toks, pos + 1, buf);
+    let rhs_prim: ParseResult = parse_postfix(toks, pos + 1, buf);
     let rhs_full: ParseResult = parse_pratt(toks, pr_pos(rhs_prim), buf, pr_node(rhs_prim), prec + 1);
 
     let lhs_lo: i64 = ast_span_lo(lhs);
@@ -2451,6 +2502,19 @@ pub fn emit_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_para
         let e20: EmitState = emit_i64(e19, else_id);
         let e21: EmitState = es_push(e20, ch_newline());
         return EmitState { buf: e21.buf, next_id: dst + 1, last_id: dst, lets: e21.lets };
+    }
+    if k == ast_field() {
+        // mic@1 FieldAccess lowering — matches the Rust front-end
+        // (src/eval/lower.rs ast::Node::FieldAccess) `None` arm: when the
+        // receiver's struct type is unresolvable, the whole access lowers to a
+        // single `const.i64 0` (the receiver is NOT re-lowered on that arm).
+        // The bootstrap parser tracks no struct field-name order, so every
+        // field access lands on the `None` arm and lowers to exactly one const.
+        let id: i64 = s.next_id;
+        let s1: EmitState = emit_lit_const_i64_head(s, id);
+        let s2: EmitState = es_push(s1, 48);
+        let s3: EmitState = es_push(s2, ch_newline());
+        return EmitState { buf: s3.buf, next_id: id + 1, last_id: id, lets: s3.lets };
     }
     if k == ast_call() {
         let args_addr: i64 = ast_child1(node);

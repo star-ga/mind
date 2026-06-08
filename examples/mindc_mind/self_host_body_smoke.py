@@ -111,6 +111,30 @@ CASES = [
     # else=%4; dst=%5.
     (b"pub fn f(a: i64) -> i64 { if a { 5 } else { 7 } }\n",
      b"  %5 = if cond=%0 then=%2 else=%4\n  output %5\n"),
+    # Field access (receiver.field). Mirrors the Rust front-end
+    # (src/eval/lower.rs ast::Node::FieldAccess) `None` arm: the bootstrap
+    # parser tracks no struct field-name order, so every field access is
+    # unresolvable and lowers to exactly ONE `const.i64 0` (the receiver is NOT
+    # re-lowered on the None arm). Previously `s.buf` MIS-PARSED as two separate
+    # primaries (`s` then a dropped `.buf`) yielding two const.i64-0 ops; it now
+    # parses as a single ast_field node.
+    #
+    # s.buf: param s=%0, field access -> fresh %1 = const 0; output %1.
+    (b"pub fn f(s: i64) -> i64 { s.buf }\n",
+     b"  %1 = const.i64 0\n  output %1\n"),
+    # Chained field a.b.c: the OUTER field access lands on the None arm and
+    # short-circuits to a single const (the receiver chain is not re-lowered).
+    (b"pub fn f(s: i64) -> i64 { s.a.b }\n",
+     b"  %1 = const.i64 0\n  output %1\n"),
+    # Field as a binop operand: field=%2 (const 0, after params s=%0,x=%1),
+    # then add %2, %1 -> %3; output %3. Confirms field binds tighter than `+`
+    # (postfix `.field` is applied before parse_pratt).
+    (b"pub fn f(s: i64, x: i64) -> i64 { s.buf + x }\n",
+     b"  %2 = const.i64 0\n  %3 = add %2, %1\n  output %3\n"),
+    # Field as a let initializer: `let n: i64 = s.next_id; n`. field -> %1 =
+    # const 0; n binds %1; trailing n resolves %1 (no op); output %1.
+    (b"pub fn f(s: i64) -> i64 { let n: i64 = s.next_id; n }\n",
+     b"  %1 = const.i64 0\n  output %1\n"),
 ]
 
 
