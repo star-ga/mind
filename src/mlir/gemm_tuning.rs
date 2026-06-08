@@ -135,6 +135,34 @@ pub const I8_MR: usize = 4;
 /// vector width).
 pub const I8_NR: usize = 8;
 
+// ── int8 VNNI register-tile (mode-dependent, AVX-512 `vpdpbusd.512`) ─────────
+//
+// The VNNI rung uses a WIDER register tile than the AVX2 YMM path: 3 ZMM
+// B-columns (NR=48) × 8 A-rows (MR=8) = 24 `vector<16xi32>` accumulators
+// (8×3 grid). This amortizes each memory-source A-broadcast over 3 vpdpbusd
+// (a 1:3 broadcast:vpdpbusd ratio, off port 5) and keeps ≥ Nvfma·Lvfma = 12
+// independent accumulator chains for latency hiding (24 = 2× margin). The
+// register budget is 24 acc + 3 B + 1 bcast = 28 ZMM ≤ 30. Widening the column
+// tile only regroups lanes / adds independent accumulator chains — integer add
+// is associative + commutative, so the exact int32 sum (canary `917d353b`) is
+// unchanged. NC MUST be a multiple of NR=48, so the VNNI tier uses its own
+// NC=384 (= 8·48) rather than the AVX2 NC=128. KC stays 256 (overflow-safe:
+// i32 in-loop accumulator, see the IntDotMode doc). These are VNNI-only; the
+// AVX2 path keeps I8_NR=8 / I8_MR=4 / I8_NC=128 byte-for-byte unchanged.
+
+/// int8 VNNI register-tile rows (A-rows / broadcast amortization depth).
+pub const I8_VNNI_MR: usize = 8;
+
+/// int8 VNNI register-tile columns (2 ZMM B-columns). `colRegs = NR/16 = 2`.
+/// MR=8 × colRegs=2 = 16 accumulator ZMMs (≥12 latency-hiding floor) + 2 B
+/// tiles + 1 broadcast + bias ≈ 21 ZMM ≤ 30 → no register spills (NR=48/24-acc
+/// spilled the file). The memory-source broadcast — not the tile width — is the
+/// load-bearing port-5 win, so 2 columns still beats OpenBLAS.
+pub const I8_VNNI_NR: usize = 32;
+
+/// int8 VNNI column block — must be a multiple of `I8_VNNI_NR=32`. 384 = 12·32.
+pub const I8_VNNI_NC: usize = 384;
+
 /// int8 GEMM int-dot rung selector. Selects the vector instruction the int8
 /// macro-kernel uses to contract the K dimension. **Every rung produces the
 /// byte-identical exact int32 sum** — they differ only in how many K-steps one
