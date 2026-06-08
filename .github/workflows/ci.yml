@@ -47,6 +47,12 @@ jobs:
             name: Windows x86_64
 
     runs-on: ${{ matrix.os }}
+    # Healthy matrix jobs finish in 4-9 min (Windows is slowest at ~8m); GitHub's
+    # default cap is 6 HOURS. A scarce macos-14 ARM64 runner that stalls in
+    # `cargo test` therefore burns hours before being killed and reported as an
+    # opaque "failure". Bound it so a stall fails fast and legibly as `timed_out`
+    # in 30 min (~4x headroom) — without masking any genuine test failure.
+    timeout-minutes: 30
 
     env:
       # neutralize proxies
@@ -213,6 +219,7 @@ jobs:
           - runner: ubuntu-24.04-arm
             substrate: neon
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30  # build mindc + run the ELF byte-identity gate; bound stalls
 
     env:
       http_proxy: ""
@@ -271,6 +278,7 @@ jobs:
   format:
     name: Format Check
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -286,6 +294,7 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -301,6 +310,7 @@ jobs:
   mindcraft_self_host:
     name: Mindcraft self-host (RFC 0008 Phase G — KEYSTONE)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     # MIND_BENCH_REQUIRE=1 makes the keystone fail-closed: a missing MLIR
     # toolchain or a launcher-stub artifact becomes a hard failure instead of a
@@ -400,6 +410,7 @@ jobs:
   mindcraft_check:
     name: Mindcraft check (RFC 0007 Phase 6)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # Lint warnings should not block the compile+test CI matrix during the
     # initial rollout.  Once the std/ and examples/ tree is fully clean this
     # flag can be removed.
