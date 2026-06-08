@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2745 | **Est. tokens:** ~6,839,815
-**Generated:** 2026-06-08 10:08 UTC
+**Files:** 2745 | **Est. tokens:** ~6,837,311
+**Generated:** 2026-06-08 19:55 UTC
 
 ## Token Budget Guide
 
@@ -50,7 +50,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 7 | ~34,413 |
+| `examples/mindc_mind/` | 7 | ~32,141 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -385,7 +385,7 @@
 | `src/ir/compact/v3/` | 4 | ~43,264 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
-| `src/mlir/` | 3 | ~5,208 |
+| `src/mlir/` | 3 | ~4,976 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,186 |
 | `src/package/` | 2 | ~1,668 |
@@ -719,7 +719,7 @@
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
-- `main.mind` (~23811 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
+- `main.mind` (~21539 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
 - `self_host_body_smoke.py` (~2272 tok, huge)
 ### `examples/`
 
@@ -3723,7 +3723,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `gemm_tuning.rs` (~3198 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `gemm_tuning.rs` (~2966 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 

@@ -4605,7 +4605,7 @@ impl LoweringContext {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
         // `vpdpbusd.512` is declared on `<16 x i32>`, so the per-column `Σ bₛ`
-        // is accumulated in COL_REGS = nr/16 separate ZMM groups (3 for NR=48),
+        // is accumulated in COL_REGS = nr/16 separate ZMM groups (2 for NR=32),
         // each over its own 64-byte slice of the K-quad's B panel, then the three
         // i32 sums are widened to i64, shifted `<<7` (·128), and concatenated into
         // one `vector<nr xi64>` `%{p}_bsx` — the same wide value the microkernel
@@ -4737,8 +4737,8 @@ impl LoweringContext {
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
         };
-        // VNNI wide-tile microkernel: COL_REGS = nr/16 ZMM B-columns (3 for
-        // NR=48) reused MR-deep. The 0x80 s8→u8 bias is PRE-APPLIED to the packed
+        // VNNI wide-tile microkernel: COL_REGS = nr/16 ZMM B-columns (2 for
+        // NR=32) reused MR-deep. The 0x80 s8→u8 bias is PRE-APPLIED to the packed
         // A panel at pack time (each packed-A byte is xor'd with 0x80 in VNNI
         // mode), so the per-row inner-loop `xori` is GONE — the broadcasted A
         // dword already carries (A+128). The A-broadcast is MEMORY-SOURCE
@@ -4746,7 +4746,7 @@ impl LoweringContext {
         // x86 backend lowers to `vpbroadcastd zmm, m32` on the load ports (p2/p3),
         // OFF port 5 — freeing port 5 for vpdpbusd.
         let col_regs = nr / 16;
-        // iter_args: MR×COL_REGS main i32 accumulators (8×3 = 24 ZMM grid). The
+        // iter_args: MR×COL_REGS main i32 accumulators (8×2 = 16 ZMM grid). The
         // shared `Σ bₛ` correction is computed ONCE per jr tile by
         // `emit_i8_vnni_bsum_hoist` (loop-invariant across ir) and consumed below
         // as the pre-shifted `%{p}_bsx`.
@@ -4936,7 +4936,7 @@ impl LoweringContext {
         // Register-tile rows (MR) and column block (NC) are MODE-DEPENDENT: the
         // AVX2 `vpmaddwd` YMM path keeps the pinned I8_MR=4 / I8_NC=128; the VNNI
         // `vpdpbusd.512` path uses the wider register tile I8_VNNI_MR=8 with
-        // I8_VNNI_NC=384 (a multiple of the VNNI NR=48). Per-call the mode is
+        // I8_VNNI_NC=384 (a multiple of the VNNI NR=32). Per-call the mode is
         // fixed at emit time, so a `let` (not a `const`) carries the choice into
         // the alloca sizes, the C-scratch index math, and the row loops. Widening
         // MR only adds independent accumulator chains; widening NC only changes
@@ -4953,16 +4953,16 @@ impl LoweringContext {
         };
         // Register-tile column width (NR). MODE-DEPENDENT: the AVX2 `vpmaddwd`
         // path stays at the pinned I8_NR=8 (YMM, vector<8xi64> accumulators); the
-        // VNNI `vpdpbusd.512` path uses NR=48 = 3 ZMM B-columns (`colRegs=3`).
-        // The microkernel holds the 24 accumulators as an 8×3 grid of
+        // VNNI `vpdpbusd.512` path uses NR=32 = 2 ZMM B-columns (`colRegs=2`).
+        // The microkernel holds the 16 accumulators as an 8×2 grid of
         // `vector<16xi32>` (one ZMM per (row, col-group)) and reassembles each
-        // row's three groups into one `vector<48xi64>` for the C-scratch — so the
+        // row's two groups into one `vector<32xi64>` for the C-scratch — so the
         // packed-B / C-scratch index arithmetic, the scalar tail, and the C-flush
-        // all still key off this single logical `nr=48` (the wide loads/stores
-        // legalize to 3 ZMM each). NR only changes the column-tile width / lane
+        // all still key off this single logical `nr=32` (the wide loads/stores
+        // legalize to 2 ZMM each). NR only changes the column-tile width / lane
         // grouping, never the math — integer add is associative+commutative, so
-        // widening to 48 lanes (3 col-groups) is byte-identical to a 16- or
-        // 8-lane grouping. NC must be a multiple of NR (the VNNI NC=384 = 8·48).
+        // widening to 32 lanes (2 col-groups) is byte-identical to a 16- or
+        // 8-lane grouping. NC must be a multiple of NR (the VNNI NC=384 = 12·32).
         let nr: usize = match mode {
             IntDotMode::Avx2 => I8_NR,
             IntDotMode::Vnni => I8_VNNI_NR,
