@@ -118,17 +118,16 @@ pub const Q16_NR: usize = 8;
 // lowers to `vpmaddwd` (x86 AVX2) or `SDOT`/`SMMLA` (aarch64) producing the same
 // exact int32 sum — cross-substrate bit-identity by construction.
 
-/// int8 tier row block. Tuned to 256 (was 64): a rigorous pinned-core c3 sweep at
-/// KC=512/NC=768 found MC is the DOMINANT blocking knob — the old MC=64 re-streamed the
-/// packed-B panel 16× (badly memory-bound). MC 64→256 lifts int8 VNNI from 56 to
-/// **109 GMAC/s = 1.65× single-core OpenBLAS f32** (byte-exact: the c3 gate PASSED all
-/// 14 shapes; the int8 canary 917d353b is unchanged — MC only regroups the associative
-/// reduction). NOTE (architecture): the i64 C-scratch + packed panels are stack `alloca`s
-/// (MC*NC*8 + KC*NC*4 + MC*KC*4 ≈ 3.5 MiB here). MC=512 measures faster still (123 GMAC/s,
-/// 1.85×) but its ~5.5 MiB stack is too aggressive for a library default — HEAP-allocating
-/// the scratch is the follow-up that makes any blocking robust AND unlocks MC≥512. Capped
-/// at 256 until then.
-pub const I8_MC: usize = 256;
+/// int8 tier row block. Tuned to 1024: a rigorous pinned-core c3 sweep at KC=512/NC=768
+/// found MC is the DOMINANT blocking knob — the old MC=64 re-streamed the packed-B panel
+/// 16× (badly memory-bound). MC sweep (int8 VNNI GMAC/s): 64→56, 256→109, 512→123,
+/// **1024→135 ≈ 2.0× single-core OpenBLAS f32** (c3-confirmed 134.8 = 2.02× WITH the
+/// heap-scratch; byte-exact at every step: the c3 VNNI gate
+/// PASSED all 14 K-straddling shapes; the int8 canary 917d353b is unchanged — MC only
+/// regroups the associative reduction). MC=1024 is safe only because the C-scratch + packed
+/// panels are now HEAP-allocated (@malloc, see emit_mm_i8_blocked) — ~6 MiB at MC=1024/NC=768
+/// would overflow constrained caller stacks as an `alloca`. Robust for any blocking + caller.
+pub const I8_MC: usize = 1024;
 
 /// int8 tier K-panel depth. Tuned to 512 (was 256, the `Q16_KC` mirror): a rigorous
 /// pinned-core c3 sweep measured KC=512 at **+6% int8 VNNI GMAC/s** (52.2 vs 49.2) by
