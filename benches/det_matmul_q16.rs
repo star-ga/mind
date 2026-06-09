@@ -88,7 +88,7 @@ const SHAPES: &[usize] = &[16, 64, 128, 256, 512];
 /// times the widen-multiply-accumulate MACs the fused outer-product microkernel
 /// can retire per cycle on this ISA. Reported as a comparability aid only.
 ///
-/// avx2: i7-5930K @ 3.5 GHz, AVX2 8×i32 widen-MAC ≈ 2 fused ops/cyc on the
+/// avx2: commodity x86 CPU @ 3.5 GHz, AVX2 8×i32 widen-MAC ≈ 2 fused ops/cyc on the
 /// Q16.16 outer-product path → ~3.5e9·8·2 ≈ 56 GMAC/s. neon: a conservative
 /// 4×i32 MAC at 3.0 GHz ≈ 24 GMAC/s. Single-core; the MT bench divides instead
 /// by `cores × this`.

@@ -164,7 +164,7 @@ Phase 3). PR 8 = public credibility update after 2A lands.
 ## Bench gate
 
 `mindc fmt` on the full mind repo (~117 `.mind` files) must complete in
-<2.0s on the dev box (i7-5930K). Per-file cost: parser + walker +
+<2.0s on the dev box (commodity x86 CPU). Per-file cost: parser + walker +
 string emit, all O(n) — ~5ms typical → ~600ms expected for full repo,
 ~1.5s worst case. Comfortably under budget.
 

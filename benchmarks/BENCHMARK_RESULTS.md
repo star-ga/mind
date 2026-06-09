@@ -1,7 +1,7 @@
 # MIND Benchmark Results
 
 **Last Updated:** February 17, 2026
-**Reference Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 12.8
+**Reference Platform:** Ubuntu 24.04, a commodity x86 CPU, 64GB DDR4, Ampere-class GPU, CUDA 12.8
 
 ---
 
@@ -44,9 +44,9 @@ All official benchmarks use a single reference platform for reproducibility:
 | Component | Specification |
 |-----------|---------------|
 | OS | Ubuntu 24.04 LTS |
-| CPU | Intel Core i7-5930K @ 3.50GHz |
+| CPU | a commodity x86 CPU |
 | Memory | 64GB DDR4 |
-| GPU | NVIDIA RTX 3080 10GB |
+| GPU | NVIDIA Ampere-class GPU |
 | CUDA | 13.0 |
 | Rust | 1.82+ stable |
 
@@ -96,7 +96,7 @@ python benchmark_pytorch_compile.py
 
 **MIND frontend compiles 35,000-176,000× faster than PyTorch 2.10 GPU torch.compile full pipeline.**
 
-*Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8, PyTorch 2.10.0+cu128*
+*Environment: Ubuntu 24.04, Ampere-class GPU, CUDA 12.8, PyTorch 2.10.0+cu128*
 
 ### MIND v0.2.1 vs Mojo 0.26.1 (February 2026 - Verified)
 
@@ -130,7 +130,7 @@ python benchmark_pytorch_compile.py
 
 **MIND frontend compiles 21,200-95,100× faster than JAX 0.9 cold-start XLA compilation.**
 
-*Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8, JAX 0.9.0.1*
+*Environment: Ubuntu 24.04, Ampere-class GPU, CUDA 12.8, JAX 0.9.0.1*
 
 ### Historical: Subprocess Comparison (January 19, 2026)
 
@@ -145,7 +145,7 @@ python benchmark_pytorch_compile.py
 
 ### Reference Criterion Benchmarks - Linux (February 17, 2026)
 
-**Platform:** Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, NVIDIA RTX 3080 10GB
+**Platform:** Ubuntu 24.04, a commodity x86 CPU, 64GB DDR4, NVIDIA Ampere-class GPU
 
 **simple_benchmarks** (equivalent-complexity programs):
 ```
@@ -189,9 +189,10 @@ All 4 tests passed with 100% bit-identical SHA256 hashes across 10 runs each:
 | JSON | 278 | 1.0x | baseline | 5.31 us |
 | TOML | 151 | 1.8x | 46% | 137.06 us |
 | TOON | 67 | 4.1x | 76% | 2.67 us |
-| **MIC** | **52** | **5.3x** | **81%** | **2.26 us** |
+| mic@1 | 52 | 5.3x | 81% | 2.26 us |
+| **mic@2** | **27** | **10.3x** | **90%** | **—** |
 
-**MIC is the most token-efficient AND fastest format for IR serialization.**
+**mic@2 is the most token-efficient text format; mic@3 (binary IRModule) is 90 bytes — 12.4x fewer bytes than JSON's 1,117. MIC is also the fastest to parse.**
 
 ---
 

@@ -485,7 +485,7 @@ deterministically. `--check` exits non-zero if any file would change
 rewrites in place. The formatter is built on a trivia-preserving
 walker; output is idempotent (applying twice produces the same bytes).
 Bench: `vec.mind` ~46 us; `mindc_mind/main.mind` (1686 LOC) ~1.8 ms
-on i7-5930K. Reference: `docs/mindcraft/fmt.md`.
+on commodity x86 CPU. Reference: `docs/mindcraft/fmt.md`.
 
 **Phase 3** (`ccbaba9`) — Lint rule infrastructure. `RuleRegistry`
 maps rule IDs to `LintRule` trait objects. Glob-pattern overrides in
@@ -588,7 +588,7 @@ and the signal-to-noise ratio for failures is improved.
 Visual C++ (`cl.exe`) and clang-on-Windows. The same C source compiles
 on:
 
-- gcc Linux x86_64 (Haswell-E i7-5930K)
+- gcc Linux x86_64 (x86_64)
 - clang-on-Windows x86_64 (Meteor Lake Core Ultra 9 185H)
 
 with `tests/blas_smoke.rs`'s 12 tests passing on both. The two Q16.16

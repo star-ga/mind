@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,838,443
-**Generated:** 2026-06-09 02:07 UTC
+**Files:** 2746 | **Est. tokens:** ~6,838,508
+**Generated:** 2026-06-09 02:40 UTC
 
 ## Token Budget Guide
 
@@ -22,27 +22,27 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~27,205 |
+| `./` | 35 | ~27,238 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 1 | ~693 |
-| `benches/` | 13 | ~30,516 |
-| `benchmarks/` | 14 | ~24,428 |
+| `benches/` | 13 | ~30,521 |
+| `benchmarks/` | 14 | ~24,456 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
 | `benchmarks/jax_comparison/` | 5 | ~4,642 |
-| `benchmarks/mojo/` | 8 | ~4,301 |
+| `benchmarks/mojo/` | 8 | ~4,300 |
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 26 | ~37,394 |
+| `docs/` | 26 | ~37,392 |
 | `docs/backends/` | 1 | ~1,482 |
-| `docs/benchmarks/` | 2 | ~7,027 |
+| `docs/benchmarks/` | 2 | ~7,025 |
 | `docs/design/` | 3 | ~8,181 |
-| `docs/mindcraft/` | 3 | ~6,974 |
+| `docs/mindcraft/` | 3 | ~6,976 |
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,242 |
 | `docs/specs/` | 2 | ~976 |
@@ -59,7 +59,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,232 |
+| `.github/workflows/` | 8 | ~8,234 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
 | `scripts/` | 6 | ~8,732 |
@@ -467,7 +467,7 @@
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~4805 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~4838 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -499,9 +499,9 @@
 - `compiler.rs` (~3782 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
 - `det_matmul_i16.rs` (~4621 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_i8.rs` (~5092 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_i8.rs` (~5094 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `det_matmul_q16_mt.rs` (~4049 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `det_matmul_q16.rs` (~4969 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `det_matmul_q16.rs` (~4972 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mindcraft_fmt.rs` (~908 tok, large) — File readers
 - `operations.rs` (~1076 tok, large) — Element-wise operations
 - `shapes.rs` (~1208 tok, large) — Simple broadcasting scenarios
@@ -519,7 +519,7 @@
 - `requirements.txt` (~7 tok, tiny) — torch>=1.0.0
 ### `benchmarks/`
 
-- `BENCHMARK_RESULTS.md` (~4282 tok, huge) — MIND Benchmark Results
+- `BENCHMARK_RESULTS.md` (~4311 tok, huge) — MIND Benchmark Results
 - `COPILOT_REVIEW_FIXES.md` (~1722 tok, huge) — Copilot Review Fixes - PR #172
 ### `benchmarks/determinism/`
 
@@ -550,7 +550,7 @@
 - `mic_map_benchmark_v2.py` (~3151 tok, huge)
 ### `benchmarks/mojo/`
 
-- `benchmark_mojo_compilation.py` (~1534 tok, huge)
+- `benchmark_mojo_compilation.py` (~1533 tok, huge)
 - `large_matmul.mojo` (~205 tok, medium) — """
 - `medium_matmul.mojo` (~205 tok, medium) — """
 - `mojo_results.json` (~216 tok, medium) — Keys: scalar_math, small_matmul, medium_matmul, large_matmul
@@ -567,7 +567,7 @@
 - `requirements.txt` (~4 tok, tiny) — torch>=2.0.0
 ### `benchmarks/`
 
-- `README.md` (~1189 tok, large) — MIND Performance Benchmarks
+- `README.md` (~1188 tok, large) — MIND Performance Benchmarks
 - `resnet.md` (~73 tok, small) — ResNet Benchmarks (Preliminary)
 - `run_all_benchmarks.sh` (~824 tok, large) — Master script to run all MIND patent benchmarks
 - `RUN_GUIDE.md` (~1465 tok, large) — MIND Patent Benchmarks - Environment Guide
@@ -595,10 +595,10 @@
 - `benchmarking.md` (~1903 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
-- `compiler_performance.md` (~4607 tok, huge) — MIND Compiler Performance Benchmarks
+- `compiler_performance.md` (~4605 tok, huge) — MIND Compiler Performance Benchmarks
 ### `docs/`
 
-- `benchmarks.md` (~807 tok, large) — Benchmarks
+- `benchmarks.md` (~805 tok, large) — Benchmarks
 ### `docs/benchmarks/`
 
 - `mojo_comparison.md` (~2420 tok, huge) — MIND vs Mojo: Compilation Performance Comparison
@@ -623,7 +623,7 @@
 ### `docs/mindcraft/`
 
 - `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
-- `phase2-implementation-plan.md` (~2207 tok, huge) — Mindcraft Phase 2 — Implementation Plan
+- `phase2-implementation-plan.md` (~2209 tok, huge) — Mindcraft Phase 2 — Implementation Plan
 - `rfc0010-phase-ghi-migration-plan.md` (~2528 tok, huge) — RFC 0010 Phase G/H/I — Migration Plan (corrected against real architecture)
 ### `docs/`
 
@@ -787,7 +787,7 @@
 - `release-drafter.yml` (~85 tok, small) — name-template: 'v$NEXT_PATCH_VERSION'
 ### `.github/workflows/`
 
-- `bench-gate.yml` (~1289 tok, large) — name: Bench gate
+- `bench-gate.yml` (~1291 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
 - `ci.yml` (~4016 tok, huge) — name: CI
 - `docs-claims.yml` (~338 tok, medium) — name: Docs Claims
