@@ -1,6 +1,10 @@
 # MIND int8 VNNI GEMM — single-core vs OpenBLAS f32 (2026-06-08)
 
-**Headline: MIND int8 VNNI beats single-core OpenBLAS f32 at ~2.0×, byte-exact, validated through 4096³.**
+**Headline: MIND int8 VNNI beats single-core OpenBLAS f32 at ~2.0× @1024³, byte-exact.**
+
+> Do NOT conflate with the GPU result: the "4096³" / cuBLAS numbers are a SEPARATE win — the
+> GPU int8 tensor-core kernel (Determinant / MindBLAS) beating cuBLAS int8 1.28× @4096³ (see
+> `mind-ecosystem-audit/gpu/`). This file is CPU int8 VNNI @1024³ vs OpenBLAS f32.
 
 ## Method
 - Single physical core, `taskset`-pinned, median-of-many reps.
@@ -19,12 +23,14 @@ memory-bound, not compute-bound. Correct row-block size makes the gain fall out.
 | 256   | 109                | 1.65×           | ~3.5 MB  |
 | 512   | 123.3              | 1.85×           | ~5 MB    |
 | 768   | 121                | 1.81×           | ~7 MB    |
-| 1024  | 130.76             | 2.01×           | ~9.5 MB  |
+| 1024  | 134.8 (heap)       | 2.02×           | ~9.5 MB  |
 
-OpenBLAS f32 single-core reference: ~66.7 GMAC/s.
+All measured @ **1024³** (the perf shape), single core, median of 64, pinned. OpenBLAS f32
+single-core reference: ~66.6 GMAC/s. The MC=1024 row is the **c3-confirmed value WITH the
+heap-scratch** (134.8 = 2.02×); the earlier 130.76 was the stack-scratch measurement.
 
-Total internal gain: **49.2 → 130.76 GMAC/s = 2.66×**, byte-exact throughout.
-Validated clean (no crash) up through 4096³.
+Total internal gain: **49.2 → 134.8 GMAC/s = 2.74×** @1024³, byte-exact throughout — the
+byte-identity gate PASSED on all 14 K-straddling/tail shapes at every config.
 
 ## Tuning chain (all byte-exact, committed in ~/mind)
 - `f380fe9` — I8_KC 256→512 (+6%)
