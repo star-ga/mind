@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2745 | **Est. tokens:** ~6,837,759
-**Generated:** 2026-06-09 00:27 UTC
+**Files:** 2746 | **Est. tokens:** ~6,838,313
+**Generated:** 2026-06-09 00:35 UTC
 
 ## Token Budget Guide
 
@@ -27,6 +27,7 @@
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
+| `bench/` | 1 | ~563 |
 | `benches/` | 13 | ~30,516 |
 | `benchmarks/` | 14 | ~24,428 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -385,7 +386,7 @@
 | `src/ir/compact/v3/` | 4 | ~43,264 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
-| `src/mlir/` | 3 | ~5,424 |
+| `src/mlir/` | 3 | ~5,415 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,186 |
 | `src/package/` | 2 | ~1,668 |
@@ -573,6 +574,9 @@
 - `SAME_MACHINE_BENCHMARKS.md` (~2320 tok, huge) — Same-Machine Benchmarks - Addressing Copilot Concerns
 - `scientific_benchmark.py` (~1639 tok, huge)
 - `scientific_benchmark_raw.py` (~2485 tok, huge)
+### `bench/`
+
+- `RESULTS-int8-2026-06-08.md` (~563 tok, large) — MIND int8 VNNI GEMM — single-core vs OpenBLAS f32 (2026-06-08)
 ### `.cargo/`
 
 - `config.toml` (~130 tok, small) — [registries]
@@ -3723,7 +3727,7 @@
 ### `src/mlir/`
 
 - `c_export.rs` (~1685 tok, huge) — Copyright 2025 STARGA Inc.
-- `gemm_tuning.rs` (~3414 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `gemm_tuning.rs` (~3405 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `mod.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/ops/`
 
