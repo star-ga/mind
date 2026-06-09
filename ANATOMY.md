@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,838,313
-**Generated:** 2026-06-09 00:36 UTC
+**Files:** 2746 | **Est. tokens:** ~6,838,443
+**Generated:** 2026-06-09 00:40 UTC
 
 ## Token Budget Guide
 
@@ -27,7 +27,7 @@
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
-| `bench/` | 1 | ~563 |
+| `bench/` | 1 | ~693 |
 | `benches/` | 13 | ~30,516 |
 | `benchmarks/` | 14 | ~24,428 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -576,7 +576,7 @@
 - `scientific_benchmark_raw.py` (~2485 tok, huge)
 ### `bench/`
 
-- `RESULTS-int8-2026-06-08.md` (~563 tok, large) — MIND int8 VNNI GEMM — single-core vs OpenBLAS f32 (2026-06-08)
+- `RESULTS-int8-2026-06-08.md` (~693 tok, large) — MIND int8 VNNI GEMM — single-core vs OpenBLAS f32 (2026-06-08)
 ### `.cargo/`
 
 - `config.toml` (~130 tok, small) — [registries]
