@@ -3,7 +3,7 @@
 **Headline: MIND int8 VNNI beats single-core OpenBLAS f32 at ~2.0× @1024³, byte-exact.**
 
 > Do NOT conflate with the GPU result: the "4096³" / cuBLAS numbers are a SEPARATE win — the
-> GPU int8 tensor-core kernel (Determinant / MindBLAS) beating cuBLAS int8 1.28× @4096³ (see
+> GPU int8 tensor-core kernel (Determinant / MindBLAS) beating cuBLAS int8 1.36× @4096³ (see
 > `mind-ecosystem-audit/gpu/`). This file is CPU int8 VNNI @1024³ vs OpenBLAS f32.
 
 ## Method
