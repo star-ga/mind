@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,838,508
-**Generated:** 2026-06-09 02:40 UTC
+**Files:** 2746 | **Est. tokens:** ~6,838,509
+**Generated:** 2026-06-09 02:47 UTC
 
 ## Token Budget Guide
 
@@ -29,7 +29,7 @@
 | `audits/` | 6 | ~607 |
 | `bench/` | 1 | ~693 |
 | `benches/` | 13 | ~30,521 |
-| `benchmarks/` | 14 | ~24,456 |
+| `benchmarks/` | 14 | ~24,457 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
@@ -568,7 +568,7 @@
 ### `benchmarks/`
 
 - `README.md` (~1188 tok, large) — MIND Performance Benchmarks
-- `resnet.md` (~73 tok, small) — ResNet Benchmarks (Preliminary)
+- `resnet.md` (~74 tok, small) — ResNet Benchmarks (Preliminary)
 - `run_all_benchmarks.sh` (~824 tok, large) — Master script to run all MIND patent benchmarks
 - `RUN_GUIDE.md` (~1465 tok, large) — MIND Patent Benchmarks - Environment Guide
 - `SAME_MACHINE_BENCHMARKS.md` (~2320 tok, huge) — Same-Machine Benchmarks - Addressing Copilot Concerns
