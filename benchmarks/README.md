@@ -5,7 +5,7 @@ This directory contains benchmark results and performance analysis for the MIND 
 ## Latest Results
 
 **Last Updated**: February 17, 2026
-**Reference Platform**: Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, 64GB DDR4, RTX 3080 10GB, CUDA 12.8
+**Reference Platform**: Ubuntu 24.04, a commodity x86 CPU, 64GB DDR4, Ampere-class GPU, CUDA 12.8
 
 ### Compiler Performance (v0.2.1)
 

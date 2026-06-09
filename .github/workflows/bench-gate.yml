@@ -109,7 +109,7 @@ jobs:
         # Threshold bumped 5% -> 7% on 2026-05-18 after the v0.4.3
         # (RFC 0005 Phase D1) push: small_matmul measured +5.29% on
         # the GitHub-hosted runner against a baseline set on a local
-        # i7-5930K box. Phase D1 is feature-gated (cross-module-imports)
+        # commodity x86 CPU box. Phase D1 is feature-gated (cross-module-imports)
         # and adds nothing to the default-build hot path the bench
         # exercises, so the 0.29% over-shoot is pure runner variance
         # rather than real regression — confirmed by a local re-run

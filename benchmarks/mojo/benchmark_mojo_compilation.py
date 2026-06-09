@@ -124,7 +124,7 @@ def compare_with_mind(mojo_results: Dict[str, Dict[str, float]]):
     Compare Mojo results with MIND benchmarks.
 
     MIND reference results from Criterion benchmarks:
-    Platform: Ubuntu 24.04, Intel Core i7-5930K @ 3.50GHz, RTX 3080, CUDA 13.0
+    Platform: Ubuntu 24.04, a commodity x86 CPU, Ampere-class GPU, CUDA 13.0
 
     These are in-process compile times (no subprocess overhead):
     - scalar_math: 25 µs
