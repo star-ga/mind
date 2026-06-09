@@ -364,7 +364,7 @@ documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](./.bench-baseline-202
 | medium_mlp | **6.15 µs** | 163K cps |
 | large_network | **15.49 µs** | 65K cps |
 
-*Measured via Rust Criterion (100 samples, 95% CI). Environment: Ubuntu 24.04, RTX 3080, CUDA 12.8. See [benchmarks/FINAL_PATENT_RESULTS.md](benchmarks/FINAL_PATENT_RESULTS.md) for full methodology.*
+*Measured via Rust Criterion (100 samples, 95% CI). Environment: Ubuntu 24.04, Ampere-class GPU, CUDA 12.8. See [benchmarks/FINAL_PATENT_RESULTS.md](benchmarks/FINAL_PATENT_RESULTS.md) for full methodology.*
 
 ### MIC/MAP Format Efficiency
 
@@ -373,7 +373,10 @@ documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](./.bench-baseline-202
 | JSON | 278 | baseline | 5.31 us | $8,340 |
 | TOML | 151 | 1.8x | 137.06 us | $4,530 |
 | TOON | 67 | 4.1x | 2.67 us | $2,010 |
-| **MIC** | **52** | **5.3x** | **2.26 us** | **$1,560** |
+| mic@1 | 52 | 5.3x | 2.26 us | $1,560 |
+| **mic@2** | **27** | **10.3x** | **—** | **$810** |
+
+> **mic@3** (binary IRModule): 90 bytes &mdash; 12.4x smaller than JSON's 1,117 bytes.
 
 | Protocol | Tokens | vs JSON-RPC |
 |----------|--------|-------------|

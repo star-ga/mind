@@ -92,7 +92,7 @@ const SHAPES: &[usize] = &[16, 64, 128, 256, 512];
 /// times the int8 multiply-accumulate MACs the fused outer-product microkernel
 /// can retire per cycle on this ISA. Reported as a comparability aid only.
 ///
-/// avx2: i7-5930K @ 3.5 GHz. The default int8 path widens to i16 and uses
+/// avx2: commodity x86 CPU @ 3.5 GHz. The default int8 path widens to i16 and uses
 /// `vpmaddwd` (16×i16 → 8×i32 fused MAC) ≈ 2 fused ops/cyc → ~3.5e9·16·2 ≈ 112
 /// GMAC/s. neon: a conservative 16×i8 `SDOT` MAC at 3.0 GHz ≈ 48 GMAC/s.
 /// Single-core. (Under `MIND_INTDOT=vnni`, `vpdpbusd` does 64×i8 → 16×i32 per

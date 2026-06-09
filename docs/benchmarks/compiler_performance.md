@@ -232,8 +232,8 @@ tensor.matmul(a, b)
 ### Hardware
 - **OS**: Ubuntu 24.04 (Linux 6.17)
 - **Architecture**: x86_64
-- **CPU**: Intel Core i7-5930K @ 3.50GHz
-- **GPU**: NVIDIA RTX 3080 10GB, CUDA 12.8
+- **CPU**: a commodity x86 CPU
+- **GPU**: NVIDIA Ampere-class GPU, CUDA 12.8
 - **RAM**: 64 GB DDR4
 
 ### Benchmark Configuration
