@@ -420,6 +420,14 @@ struct LoweringContext {
     /// `llvm.func` externs exactly once.
     #[cfg(feature = "std-surface")]
     needs_pthread: bool,
+    /// Set when the int8 BLIS macro-kernel (`emit_mm_i8_blocked`) was lowered,
+    /// so the module assembler emits the `@malloc` / `@free` `llvm.func`
+    /// externs exactly once. The kernel's C-scratch / packed-A / packed-B
+    /// panels are heap-allocated (malloc/free) rather than stack `llvm.alloca`
+    /// so a large MC row block is safe regardless of caller stack depth. Heap
+    /// vs stack is the same computation in a different location — byte-identical.
+    #[cfg(feature = "std-surface")]
+    needs_malloc: bool,
 }
 
 /// One enclosing `while` loop, for break/continue codegen.
@@ -469,6 +477,8 @@ impl LoweringContext {
             mt_workers: String::new(),
             #[cfg(feature = "std-surface")]
             needs_pthread: false,
+            #[cfg(feature = "std-surface")]
+            needs_malloc: false,
         }
     }
 
@@ -1240,6 +1250,7 @@ impl LoweringContext {
                 // module assembler emits them at top level exactly once.
                 self.mt_workers.push_str(&sub.mt_workers);
                 self.needs_pthread |= sub.needs_pthread;
+                self.needs_malloc |= sub.needs_malloc;
             }
             // P0d: function parameters bind a ValueId to the i64 ABI; the
             // value is named in the enclosing `func.func` signature so we
@@ -4363,6 +4374,9 @@ impl LoweringContext {
             n.0
         ));
         self.emit_line(&format!("    %imm_rs_{d} = arith.constant 0 : index"));
+        // The blocked kernel heap-allocates its scratch panels via @malloc/@free;
+        // flag the module assembler to emit those externs once.
+        self.needs_malloc = true;
         let mut blk = String::new();
         Self::emit_mm_i8_blocked(
             &mut blk,
@@ -5031,30 +5045,46 @@ impl LoweringContext {
             "    %{p}_zv = arith.constant dense<0> : vector<{nr}xi64>"
         ));
 
-        // ── private scratch (constant-extent alloca) ─────────────────────────
-        // C-scratch: MC*NC i64.  Packed A: MC*KC i16.  Packed B: KC*NC i16.
+        // ── private scratch (heap malloc/free) ───────────────────────────────
+        // C-scratch: MC*NC i64.  Packed A: MC*KC {pty}.  Packed B: KC*NC {pty}.
         // (The interleaved K-pair layout reindexes the same MC*KC / KC*NC
         // element count — pair-count * 2 * MR = KC * MR, etc.)
+        //
+        // These panels are HEAP-allocated via `@malloc` (and `@free`d before
+        // return) rather than stack `llvm.alloca` so a large MC row block is
+        // safe regardless of the caller's stack depth. Heap vs stack is the same
+        // storage for the same computation in a different location — every GEP /
+        // load / store below is byte-for-byte unchanged, so the lowering stays
+        // byte-identical (the int8 AVX2 canary `917d353b` exercises this scratch).
+        // malloc takes a BYTE count: cs is i64 (8 B/elem), pa/pb are {pty}
+        // ({pty_bytes} B/elem).
+        let pty_bytes: i64 = match mode {
+            IntDotMode::Avx2 => 2, // i16
+            IntDotMode::Vnni => 1, // i8
+        };
         let cs_elems = (MC * nc) as i64;
         let pa_elems = (MC * KC) as i64;
         let pb_elems = (KC * nc) as i64;
+        let cs_bytes = cs_elems * 8;
+        let pa_bytes = pa_elems * pty_bytes;
+        let pb_bytes = pb_elems * pty_bytes;
         line(&format!(
-            "    %{p}_csn = llvm.mlir.constant({cs_elems} : i64) : i64"
+            "    %{p}_csn = llvm.mlir.constant({cs_bytes} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_cs = llvm.alloca %{p}_csn x i64 : (i64) -> !llvm.ptr"
+            "    %{p}_cs = llvm.call @malloc(%{p}_csn) : (i64) -> !llvm.ptr"
         ));
         line(&format!(
-            "    %{p}_pan = llvm.mlir.constant({pa_elems} : i64) : i64"
+            "    %{p}_pan = llvm.mlir.constant({pa_bytes} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_pa = llvm.alloca %{p}_pan x {pty} : (i64) -> !llvm.ptr"
+            "    %{p}_pa = llvm.call @malloc(%{p}_pan) : (i64) -> !llvm.ptr"
         ));
         line(&format!(
-            "    %{p}_pbn = llvm.mlir.constant({pb_elems} : i64) : i64"
+            "    %{p}_pbn = llvm.mlir.constant({pb_bytes} : i64) : i64"
         ));
         line(&format!(
-            "    %{p}_pb = llvm.alloca %{p}_pbn x {pty} : (i64) -> !llvm.ptr"
+            "    %{p}_pb = llvm.call @malloc(%{p}_pbn) : (i64) -> !llvm.ptr"
         ));
         line(&format!("    %{p}_ncc = arith.constant {nc} : i64"));
         line(&format!("    %{p}_kcc = arith.constant {KC} : i64"));
@@ -5749,6 +5779,13 @@ impl LoweringContext {
         line("        }"); // end wr
         line("      }"); // end ic
         line("    }"); // end jc
+        // Free the heap scratch panels — one `@free` per `@malloc`, on the single
+        // fall-through path out of the kernel (all three scf loops have closed and
+        // there are no early returns / branches out of the kernel body, so this is
+        // the only exit). NO LEAK.
+        line(&format!("    llvm.call @free(%{p}_cs) : (!llvm.ptr) -> ()"));
+        line(&format!("    llvm.call @free(%{p}_pa) : (!llvm.ptr) -> ()"));
+        line(&format!("    llvm.call @free(%{p}_pb) : (!llvm.ptr) -> ()"));
     }
 
     /// RFC 0006 Track B — emit the fused outer-product Q16.16 GEMM.
@@ -6667,6 +6704,10 @@ impl LoweringContext {
         use std::fmt::Write;
         let d = dst.0;
         self.needs_pthread = true;
+        // The worker runs the blocked kernel, which heap-allocates its scratch
+        // panels via @malloc/@free; flag the module assembler to emit those
+        // externs once.
+        self.needs_malloc = true;
 
         // ── worker function (top-level llvm.func) ────────────────────────────
         // Arg struct layout (all i64): [0]=a [1]=b [2]=c [3]=k [4]=n
@@ -7504,6 +7545,15 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
         );
         out.push_str("  llvm.func @pthread_join(i64, !llvm.ptr) -> i32\n");
         out.push_str("  llvm.func @sysconf(i32) -> i64\n");
+    }
+    // Heap-allocation externs for the int8 BLIS macro-kernel's scratch panels
+    // (C-scratch / packed-A / packed-B). Emitted once, before any function body
+    // that calls @malloc / @free, so the `llvm.call`s resolve. Declared only
+    // when the blocked kernel was actually lowered.
+    #[cfg(feature = "std-surface")]
+    if ctx.needs_malloc {
+        out.push_str("  llvm.func @malloc(i64) -> !llvm.ptr\n");
+        out.push_str("  llvm.func @free(!llvm.ptr)\n");
     }
     #[cfg(feature = "std-surface")]
     out.push_str(&ctx.mt_workers);
