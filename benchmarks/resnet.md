@@ -2,7 +2,7 @@
 
 ## Methodology
 - Synthetic workload; compare fused paths vs PyTorch baseline.
-- Hardware: RTX 4090, batch size 32.
+- Hardware: Ada-class GPU, batch size 32.
 
 ## Results (placeholder)
 - Early indicators suggest up to 2× on fused paths.
