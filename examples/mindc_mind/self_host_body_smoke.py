@@ -111,6 +111,48 @@ CASES = [
     # else=%4; dst=%5.
     (b"pub fn f(a: i64) -> i64 { if a { 5 } else { 7 } }\n",
      b"  %5 = if cond=%0 then=%2 else=%4\n  output %5\n"),
+    # ---- Compositional if-expression cases (SSA-threading of the hidden
+    # condition/then/else sub-streams through SURROUNDING contexts). These
+    # exercise the same Rust lowering algorithm (src/eval/lower.rs Node::If:
+    # cond -> then_seed=cond.next -> else_seed=then.next -> dst=else.next),
+    # but where the if is no longer the whole body. Each golden's SSA ids are
+    # hand-derived from that algorithm, not copied from the emitter, so a
+    # regression in the seed/threading order is caught.
+    #
+    # Comparison condition: `if a == b { a } else { b }` (a=%0,b=%1).
+    # cond `a == b` lowers a real op: a=%0,b=%1, %2 = eq -> cond=%2, next=%3;
+    # then-seed=%3 (hidden), body a=%0 -> then=%0; else-seed=%4 (hidden),
+    # body b=%1 -> else=%1; dst=%5.
+    (b"pub fn f(a: i64, b: i64) -> i64 { if a == b { a } else { b } }\n",
+     b"  %5 = if cond=%2 then=%0 else=%1\n  output %5\n"),
+    # Less-than condition mirrors the `==` case (cond op consumes %2).
+    (b"pub fn f(a: i64, b: i64) -> i64 { if a < b { a } else { b } }\n",
+     b"  %5 = if cond=%2 then=%0 else=%1\n  output %5\n"),
+    # if as a binop operand: `(if a { b } else { a }) + b` (a=%0,b=%1).
+    # cond a=%0; then-seed=%2, b=%1 -> then=%1; else-seed=%3, a=%0 -> else=%0;
+    # dst=%4 (the if's visible value). Then the outer add: lhs=%4, rhs b=%1,
+    # %5 = add %4, %1; output %5. Confirms the if's dst id feeds the enclosing
+    # expression and the hidden branch seeds (%2,%3) are consumed but unprinted.
+    (b"pub fn f(a: i64, b: i64) -> i64 { (if a { b } else { a }) + b }\n",
+     b"  %4 = if cond=%0 then=%1 else=%0\n  %5 = add %4, %1\n  output %5\n"),
+    # if as a let initializer: `let r: i64 = if a { b } else { a }; r`.
+    # The if lowers to dst=%4; r binds %4; trailing r resolves %4 (no op);
+    # output %4.
+    (b"pub fn f(a: i64, b: i64) -> i64 { let r: i64 = if a { b } else { a }; r }\n",
+     b"  %4 = if cond=%0 then=%1 else=%0\n  output %4\n"),
+    # Branch body with a real op: `if a { b + a } else { b }` (a=%0,b=%1).
+    # cond a=%0; then-seed=%2 (hidden), then body `b + a` -> %3 = add %1,%0
+    # -> then=%3; else-seed=%4 (hidden), body b=%1 -> else=%1; dst=%5.
+    (b"pub fn f(a: i64, b: i64) -> i64 { if a { b + a } else { b } }\n",
+     b"  %5 = if cond=%0 then=%3 else=%1\n  output %5\n"),
+    # Nested if (inner if is the outer then-branch's trailing value):
+    # `if a { if b { a } else { b } } else { a }` (a=%0,b=%1).
+    # outer cond a=%0 -> next=%2; outer then-seed=%2 (hidden), then body =
+    # inner if: inner cond b=%1 -> next=%3; inner then-seed=%3, a=%0 ->
+    # then=%0; inner else-seed=%4, b=%1 -> else=%1; inner dst=%5 -> outer
+    # then=%5; outer else-seed=%6 (hidden), a=%0 -> else=%0; outer dst=%7.
+    (b"pub fn f(a: i64, b: i64) -> i64 { if a { if b { a } else { b } } else { a } }\n",
+     b"  %7 = if cond=%0 then=%5 else=%0\n  output %7\n"),
     # Field access (receiver.field). Mirrors the Rust front-end
     # (src/eval/lower.rs ast::Node::FieldAccess) `None` arm: the bootstrap
     # parser tracks no struct field-name order, so every field access is
