@@ -847,6 +847,139 @@ def main() -> int:
         pnames = ",".join(p.decode() for p in params)
         print(f"  if_fn   {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 4j+: IF with MULTI-STATEMENT (let-in-branch) blocks ------------
+    #   pub fn <name>(p..) -> i64 { if cond { <stmt-block> } else { <stmt-block> } }
+    #   where a branch may be a STATEMENT SEQUENCE `{ let n: ty = init; ..; trail }`.
+    #   A branch-local `let` is a WRITE, which the Rust oracle turns into a NON-EMPTY
+    #   merge phi set (branch_bindings + merges). Emitted by the pure-MIND
+    #   selftest_mic3_if_block_fn (main.mind), cross-checked BYTE-EXACT against the
+    #   real `mindc --emit-mic3` oracle (hard-coded golden below, AND regenerated
+    #   live when target/release/mindc is available). Isolated from the canary
+    #   (AST body emitter still rejects ast_if), so the fixed point is unchanged.
+    import subprocess
+
+    _MINDC = _HERE.parent.parent / "target" / "release" / "mindc"
+
+    def _live_oracle(src_text):
+        """Regenerate the real mic@3 oracle via `mindc --emit-mic3`, or None."""
+        if not _MINDC.exists():
+            return None
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            srcp = pathlib.Path(td) / "case.mind"
+            outp = pathlib.Path(td) / "case.mic3"
+            srcp.write_text(src_text)
+            r = subprocess.run(
+                [str(_MINDC), "--emit-mic3", str(outp), str(srcp)],
+                capture_output=True,
+            )
+            if r.returncode != 0 or not outp.exists():
+                return None
+            return outp.read_bytes()
+
+    lib.selftest_mic3_if_block_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_if_block_fn.argtypes = [ctypes.c_int64] * 22
+
+    # Each case: (name, params, then_lets, else_lets, src, golden_hex).
+    #   then_lets/else_lets are the branch-local let-names in encounter order; the
+    #   contiguous string table is [name, *params, *then_lets, *else-only-lets].
+    #   golden_hex = the captured real `mindc --emit-mic3` output (the oracle).
+    block_cases = [
+        # g(a,b){ if a { let t=b+a; t } else { b } } — then-let only, else=param. 73B.
+        (b"g", [b"a", b"b"], [b"t"], [],
+         "fn g(a: i64, b: i64) -> i64 { if a { let t: i64 = b + a; t } else { b } }",
+         "4d49433302040167016101620174010003150002010002010107000318000100"
+         "180102011c000002010200040300010003020104000105000107010306010603"
+         "050100001300000000"),
+        # f(a,b){ if a { let t=a*b; t+1 } else { let u=b; u } } — both branches let. 91B.
+        (b"f", [b"a", b"b"], [b"t"], [b"u"],
+         "fn f(a: i64, b: i64) -> i64 { if a { let t: i64 = a * b; t + 1 } "
+         "else { let u: i64 = b; u } }",
+         "4d49433302050166016101620174017501000315000201000201010b00031800"
+         "0100180102011c000005010200040302000101040204050003040109000502010"
+         "600010700010b020308040a020803070a09010100001300000000".replace(
+             " ", "")),
+        # h(a,b){ if a { let t=a*b; t+1 } else { b } } — then 2-stmt let, else=param. 81B.
+        (b"h", [b"a", b"b"], [b"t"], [],
+         "fn h(a: i64, b: i64) -> i64 { if a { let t: i64 = a * b; t + 1 } "
+         "else { b } }",
+         "4d49433302040168016101620174010003150002010002010109000318000100"
+         "180102011c0000040102000403020001010402040500030405020106000107000"
+         "109010308010803070100001300000000".replace(" ", "")),
+        # k(a,b){ if a { let x=a+1; let y=x*2; y } else { b } } — two names in then. 94B.
+        (b"k", [b"a", b"b"], [b"x", b"y"], [],
+         "fn k(a: i64, b: i64) -> i64 { if a { let x: i64 = a + 1; "
+         "let y: i64 = x * 2; y } else { b } }",
+         "4d4943330205016b016101620178017901000315000201000201010c00031800"
+         "0100180102011c000005010200010302040400000301050404060204050603010"
+         "700010800010a00010c020309040b020904080b060a0100001300000000".replace(
+             " ", "")),
+    ]
+    for name, params, then_lets, else_lets, src, golden_hex in block_cases:
+        # else_lets restricted to names not already in then (first-seen dedup).
+        else_only = [u for u in else_lets if u not in then_lets]
+        strs = [name] + params + then_lets + else_only
+        sbuf = b"".join(strs)
+        soff = [0]
+        for s in strs:
+            soff.append(soff[-1] + len(s))
+        strcount = len(strs)
+        srcb = src.encode()
+
+        sbuf_c = ctypes.create_string_buffer(sbuf, max(1, len(sbuf)))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        src_c = ctypes.create_string_buffer(srcb, len(srcb))
+
+        # Per-branch scratch: nodes 4 i64/node, lenv 3 i64/entry, vidbuf 1 i64/slot.
+        t_nodes_c = (ctypes.c_int64 * (64 * 4))()
+        t_cur_c = (ctypes.c_int64 * 1)()
+        t_vid_c = (ctypes.c_int64 * 64)()
+        t_lenv_c = (ctypes.c_int64 * (16 * 3))()
+        t_lc_c = (ctypes.c_int64 * 1)()
+        e_nodes_c = (ctypes.c_int64 * (64 * 4))()
+        e_cur_c = (ctypes.c_int64 * 1)()
+        e_vid_c = (ctypes.c_int64 * 64)()
+        e_lenv_c = (ctypes.c_int64 * (16 * 3))()
+        e_lc_c = (ctypes.c_int64 * 1)()
+        c_nodes_c = (ctypes.c_int64 * (64 * 4))()
+        c_cur_c = (ctypes.c_int64 * 1)()
+        c_vid_c = (ctypes.c_int64 * 64)()
+        # Merge scratch: mspans 2 i64/name, extra 5 i64/name.
+        mspans_c = (ctypes.c_int64 * (16 * 2))()
+        mcount_c = (ctypes.c_int64 * 1)()
+        extra_c = (ctypes.c_int64 * (16 * 5))()
+        ok_c = (ctypes.c_int64 * 1)()
+
+        def _p(b):
+            return ctypes.cast(b, ctypes.c_void_p).value
+
+        es = lib.selftest_mic3_if_block_fn(
+            _p(src_c), len(srcb),
+            _p(sbuf_c), _p(soff_c), strcount,
+            _p(t_nodes_c), _p(t_cur_c), _p(t_vid_c), _p(t_lenv_c), _p(t_lc_c),
+            _p(e_nodes_c), _p(e_cur_c), _p(e_vid_c), _p(e_lenv_c), _p(e_lc_c),
+            _p(c_nodes_c), _p(c_cur_c), _p(c_vid_c),
+            _p(mspans_c), _p(mcount_c), _p(extra_c), _p(ok_c))
+        got = read_string_handle(read_i64_at(es, 0))
+
+        # The oracle: prefer a live regeneration; fall back to the captured golden.
+        # When both are available they MUST agree (guards golden staleness).
+        golden = bytes.fromhex(golden_hex)
+        live = _live_oracle(src)
+        if live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: captured golden for {name.decode()} is stale vs live "
+                f"oracle\n  golden {golden.hex()}\n  live   {live.hex()}")
+        want = live if live is not None else golden
+
+        failures += got != want
+        total += 1
+        ok = "OK (real-oracle byte-exact)" if got == want \
+            else f"FAIL want {want.hex()}"
+        pnames = ",".join(p.decode() for p in params)
+        print(f"  if_blk  {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
