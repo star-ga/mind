@@ -2142,6 +2142,43 @@ pub fn selftest_mic3_fn_def_header(name_idx: i64, has_ret: i64, ret_vid: i64, bo
     emit_mic3_fn_def_header(es_new(), name_idx, has_ret, ret_vid, body_len)
 }
 
+// Instr::Param { dst, name, index }: OP_PARAM(0x18) || vid(dst) || string_idx(name)
+//   || uleb(index). The parameter-binding instruction in a function body. For
+// `fn id(a)` the body holds PARAM(%0, "a"=idx1, index 0) = 18 00 01 00.
+pub fn emit_mic3_param(s: EmitState, dst: i64, name_idx: i64, index: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 24);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    let s3: EmitState = emit_uleb128(s2, name_idx);
+    emit_uleb128(s3, index)
+}
+
+// encode_named_vids (the FN_DEF parameter list): uleb(count) || (string_idx, vid)
+// per pair. `pairs` is a heap array of 2*count i64s: pairs[2i] = string_idx,
+// pairs[2i+1] = vid. emit_mic3_fn_def's param list uses this.
+pub fn emit_mic3_named_vids(s: EmitState, pairs: i64, count: i64) -> EmitState {
+    let s1: EmitState = emit_uleb128(s, count);
+    emit_mic3_named_vids_loop(s1, pairs, count, 0)
+}
+
+pub fn emit_mic3_named_vids_loop(s: EmitState, pairs: i64, count: i64, i: i64) -> EmitState {
+    if i >= count {
+        return s;
+    }
+    let sidx: i64 = __mind_load_i64(pairs + i * 16);
+    let vid: i64 = __mind_load_i64(pairs + i * 16 + 8);
+    let s1: EmitState = emit_uleb128(s, sidx);
+    let s2: EmitState = emit_uleb128(s1, vid);
+    emit_mic3_named_vids_loop(s2, pairs, count, i + 1)
+}
+
+pub fn selftest_mic3_param(dst: i64, name_idx: i64, index: i64) -> EmitState {
+    emit_mic3_param(es_new(), dst, name_idx, index)
+}
+
+pub fn selftest_mic3_named_vids(pairs: i64, count: i64) -> EmitState {
+    emit_mic3_named_vids(es_new(), pairs, count)
+}
+
 pub fn selftest_mic3_output(id: i64) -> EmitState {
     emit_mic3_output(es_new(), id)
 }
