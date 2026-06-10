@@ -545,6 +545,76 @@ def main() -> int:
         pnames = ",".join(p.decode() for p in params)
         print(f"  tree_fn {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 4g: AST-DRIVEN mic@3 emission (selftest_mic3_ast_fn) -----------
+    #   Phase 4f drove emit_mic3_tree_fn_module from a SYNTHETIC hand-built node
+    #   descriptor. Phase 4g lex+parses REAL source, walks the LIVE bootstrap AST,
+    #   flattens it into the SAME 4-i64 post-order descriptor, and emits via the
+    #   UNTOUCHED 4f emitter. So the AST path must be byte-IDENTICAL to the 4f
+    #   synthetic-tree path AND to the Rust --emit-mic3 oracle for param-only
+    #   bodies. We therefore reuse ref_tree_fn as the golden (ref_ast_fn == it):
+    #   each case carries its real source + the expected post-order node list, and
+    #   we assert the .so's AST-flattened emit == ref_tree_fn(name, params, nodes).
+    #   Const-leaf bodies (ast_int_lit) are the Phase 4h WALL — not tested here.
+    ref_ast_fn = ref_tree_fn  # AST path matches the synthetic-tree path byte-for-byte
+    lib.selftest_mic3_ast_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_ast_fn.argtypes = [ctypes.c_int64] * 7
+    # Each case: (name, params, src, nodes). `src` is real MIND lexed/parsed by the
+    # .so; `nodes` is the expected post-order descriptor (only feeds the golden).
+    ast_cases = [
+        # mixed(a,b,c,d){a*b+c*d}: +(*(a,b),*(c,d)) — 77B
+        (b"mixed", [b"a", b"b", b"c", b"d"],
+         b"fn mixed(a: i64, b: i64, c: i64, d: i64) -> i64 { a * b + c * d }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 2, 0, 1),
+          (0, 2, 0, 0), (0, 3, 0, 0), (1, 2, 3, 4),
+          (1, 0, 2, 5)]),
+        # f(a,b,c){(a+b)*c}: *(+(a,b),c) — 60B
+        (b"f", [b"a", b"b", b"c"],
+         b"fn f(a: i64, b: i64, c: i64) -> i64 { (a + b) * c }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 1),
+          (0, 2, 0, 0), (1, 2, 2, 3)]),
+        # g(a,b,c,d){a+b*c-d}: -(+(a,*(b,c)),d) — 73B (op1=sub, op0=add, op2=mul)
+        (b"g", [b"a", b"b", b"c", b"d"],
+         b"fn g(a: i64, b: i64, c: i64, d: i64) -> i64 { a + b * c - d }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (0, 2, 0, 0), (1, 2, 1, 2),
+          (1, 0, 0, 3), (0, 3, 0, 0), (1, 1, 4, 5)]),
+        # add(a,b,c){a+b+c}: +(+(a,b),c) left-assoc — 49B-class (3-param chain)
+        (b"add", [b"a", b"b", b"c"],
+         b"fn add(a: i64, b: i64, c: i64) -> i64 { a + b + c }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 1),
+          (0, 2, 0, 0), (1, 0, 2, 3)]),
+    ]
+    for name, params, src, nodes in ast_cases:
+        n = len(params)
+        # Contiguous string-table name buffer: name then p0..p(n-1).
+        strs = [name] + params
+        sbuf = b"".join(strs)
+        soff = [0]
+        for s in strs:
+            soff.append(soff[-1] + len(s))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        # Real source the .so lexes/parses.
+        src_c = ctypes.create_string_buffer(src, len(src))
+        # Heap scratch: nodes (n_nodes*4 i64), cursor (1 i64), vidbuf (n_nodes i64).
+        n_nodes = len(nodes)
+        nodes_c = (ctypes.c_int64 * (n_nodes * 4))()
+        cursor_c = (ctypes.c_int64 * 1)()
+        vidbuf_c = (ctypes.c_int64 * n_nodes)()
+        es = lib.selftest_mic3_ast_fn(
+            ctypes.cast(src_c, ctypes.c_void_p).value, len(src),
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value,
+            ctypes.cast(nodes_c, ctypes.c_void_p).value,
+            ctypes.cast(cursor_c, ctypes.c_void_p).value,
+            ctypes.cast(vidbuf_c, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_ast_fn(name, params, nodes)
+        failures += got != want
+        total += 1
+        ok = "OK" if got == want else f"FAIL want {want.hex()}"
+        pnames = ",".join(p.decode() for p in params)
+        print(f"  ast_fn  {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
