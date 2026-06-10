@@ -249,6 +249,51 @@ def main() -> int:
     print(f"  module(noinstr, syms={msyms}) = {got.hex()}  "
           f"{'OK (complete valid mic@3 module)' if got == want else 'FAIL want ' + want.hex()}")
 
+    # --- FN_DEF header (OP_FN_DEF 0x15): name_idx || params(0) || opt_vid(ret) ||
+    #     opt_f64(None) || body_len.  fn f()->i64 {..}: 15 00 00 01 00 00 01 ---
+    lib.selftest_mic3_fn_def_header.restype = ctypes.c_void_p
+    lib.selftest_mic3_fn_def_header.argtypes = [ctypes.c_int64] * 4
+    es = lib.selftest_mic3_fn_def_header(0, 1, 0, 1)
+    got = read_string_handle(read_i64_at(es, 0))
+    want = (bytes([0x15]) + ref_uleb128(0) + ref_uleb128(0)
+            + bytes([1]) + ref_uleb128(0) + bytes([0]) + ref_uleb128(1))
+    failures += got != want
+    total += 1
+    print(f"  fn_def_header(name0,ret%0,body=1) = {got.hex()}  "
+          f"{'OK (== oracle FN_DEF header)' if got == want else 'FAIL want ' + want.hex()}")
+
+    # --- COMPLETE WITH-BODY module: pub fn <name>() -> i64 {{ <val> }} — the
+    #     first end-to-end with-body mic@3 emit in pure-MIND. (f(){42}) == the
+    #     captured 29-byte Rust oracle byte-for-byte; verified across values. ---
+    def ref_const_fn(name, val):
+        return (b"MIC3\x02"
+                + ref_uleb128(1) + ref_uleb128(len(name)) + name        # strtab
+                + ref_uleb128(1)                                        # next_id
+                + ref_uleb128(0)                                        # exports
+                + ref_uleb128(3)                                        # 3 instrs
+                + bytes([0x15]) + ref_uleb128(0) + ref_uleb128(0)       # FN_DEF
+                + bytes([1]) + ref_uleb128(0) + bytes([0]) + ref_uleb128(1)
+                + bytes([1]) + ref_uleb128(0) + ref_uleb128(ref_zigzag(val))   # body const
+                + bytes([1]) + ref_uleb128(0) + ref_uleb128(ref_zigzag(0))     # module const 0
+                + bytes([0x13]) + ref_uleb128(0)                        # output
+                + b"\x00\x00\x00")                                      # registries
+
+    lib.selftest_mic3_const_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_const_fn.argtypes = [ctypes.c_int64] * 4
+    for name, val in [(b"f", 42), (b"f", 100), (b"g", 7), (b"f", -5)]:
+        nbuf = ctypes.create_string_buffer(name, len(name))
+        noffs = (ctypes.c_int64 * 2)(0, len(name))
+        es = lib.selftest_mic3_const_fn(
+            ctypes.cast(nbuf, ctypes.c_void_p).value,
+            ctypes.cast(noffs, ctypes.c_void_p).value, 0, val)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_const_fn(name, val)
+        failures += got != want
+        total += 1
+        note = " (== fn f(){42} oracle, 29B)" if (name, val) == (b"f", 42) else ""
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        print(f"  const_fn {name.decode()}()={{{val}}} [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "

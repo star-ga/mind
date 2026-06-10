@@ -2106,15 +2106,40 @@ pub fn emit_mic3_output(s: EmitState, id: i64) -> EmitState {
     emit_uleb128(s1, id)
 }
 
+// encode_opt_vid: None -> [0]; Some(v) -> [1] || uleb(v). `has` = 0/1. Shared by
+// Return and FnDef's ret_id.
+pub fn emit_mic3_opt_vid(s: EmitState, has: i64, vid: i64) -> EmitState {
+    if has == 0 {
+        return es_push(s, 0);
+    }
+    let s1: EmitState = es_push(s, 1);
+    emit_uleb128(s1, vid)
+}
+
 // Instr::Return { value: Option<vid> }: OP_RETURN(0x17) || encode_opt_vid(value).
-// encode_opt_vid: None -> [0]; Some(v) -> [1] || vid(v). `has_value` = 0/1.
 pub fn emit_mic3_return(s: EmitState, has_value: i64, id: i64) -> EmitState {
     let s1: EmitState = es_push(s, 23);
-    if has_value == 0 {
-        return es_push(s1, 0);
-    }
-    let s2: EmitState = es_push(s1, 1);
-    emit_uleb128(s2, id)
+    emit_mic3_opt_vid(s1, has_value, id)
+}
+
+// Instr::FnDef header (OP_FN_DEF 0x15) for a no-parameter function:
+//   0x15 || uleb(name_idx) || uleb(0 params) || opt_vid(ret) || opt_f64(None) ||
+//   uleb(body_len). The `body_len` body instructions follow (caller-emitted).
+// Mirrors the emit_instr Instr::FnDef arm (encode_string_idx, encode_named_vids,
+// encode_opt_vid, encode_opt_f64(reap_threshold=None), uleb(body.len)). For
+// `fn f() -> i64 {...}` (name_idx=0, ret=%0, body_len=1) this reproduces the
+// oracle FN_DEF header bytes 15 00 00 01 00 00 01 exactly.
+pub fn emit_mic3_fn_def_header(s: EmitState, name_idx: i64, has_ret: i64, ret_vid: i64, body_len: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, name_idx);
+    let s3: EmitState = emit_uleb128(s2, 0);
+    let s4: EmitState = emit_mic3_opt_vid(s3, has_ret, ret_vid);
+    let s5: EmitState = es_push(s4, 0);
+    emit_uleb128(s5, body_len)
+}
+
+pub fn selftest_mic3_fn_def_header(name_idx: i64, has_ret: i64, ret_vid: i64, body_len: i64) -> EmitState {
+    emit_mic3_fn_def_header(es_new(), name_idx, has_ret, ret_vid, body_len)
 }
 
 pub fn selftest_mic3_output(id: i64) -> EmitState {
@@ -2205,6 +2230,37 @@ pub fn selftest_mic3_empty_registries() -> EmitState {
 
 pub fn selftest_mic3_module_noinstr(buf: i64, offs: i64, str_count: i64, next_id: i64, idx: i64, exp_count: i64) -> EmitState {
     emit_mic3_module_noinstr(es_new(), buf, offs, str_count, next_id, idx, exp_count)
+}
+
+// ===== mic@3 COMPLETE with-body module — the const-return function family (Phase 4a) =====
+//
+// Assembles the full mic@3 of `pub fn <name>() -> i64 { <const_val> }`, byte-exact
+// vs the Rust oracle. This is the FIRST complete WITH-BODY emit in pure-MIND. The
+// section order + the exact 3-instruction module shape are what emit_mic3 + the
+// lowering produce for a const-return function:
+//   header || strtab(1:name) || next_id(1) || exports(0) || uleb(3 instrs) ||
+//     FN_DEF{name, ret=%0, body=[ConstI64(%0, const_val)]} ||
+//     ConstI64(%0, 0) || Output(%0) ||
+//   3 empty registries.
+// Verified across const values (42 -> 0x54, 100 -> 0xc8 0x01), so it is a genuine
+// (narrow) lowering, not a hardcoded byte blob. Generalizing to arbitrary bodies
+// (the AST walk that emits these calls) is the remaining Phase 4 work; this proves
+// the emit layer composes into a complete, oracle-identical module.
+pub fn emit_mic3_const_fn_module(s: EmitState, buf: i64, offs: i64, name_idx: i64, const_val: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 1);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 3);
+    let s6: EmitState = emit_mic3_fn_def_header(s5, name_idx, 1, 0, 1);
+    let s7: EmitState = emit_mic3_const_i64(s6, 0, const_val);
+    let s8: EmitState = emit_mic3_const_i64(s7, 0, 0);
+    let s9: EmitState = emit_mic3_output(s8, 0);
+    emit_mic3_empty_registries(s9)
+}
+
+pub fn selftest_mic3_const_fn(buf: i64, offs: i64, name_idx: i64, const_val: i64) -> EmitState {
+    emit_mic3_const_fn_module(es_new(), buf, offs, name_idx, const_val)
 }
 
 // ===== Fixed-literal writers =====
