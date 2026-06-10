@@ -6514,3 +6514,138 @@ pub fn selftest_method_recv_lo(src_addr: i64, src_len: i64) -> i64 {
     }
     ast_span_lo(ast_child0(m))
 }
+
+// ===========================================================================
+// SECTION 9 — METHOD-CALL RECEIVER-TYPE RESOLUTION -> UFCS CALLEE (part 2)
+//
+// ADDITIVE / canary-isolated. PARSER + RESOLUTION + STRING-BUILDING only — NO
+// mic@3 byte-output, NO EmitState, NO touch of the canary. It cannot perturb the
+// fixed point and cannot hit the EmitState segfault. It computes the UFCS callee
+// NAME for a `recv.method(args)` call so part 3 (the byte-output) can intern it.
+//
+// The Rust oracle (src/eval/lower.rs MethodCall arm) desugars `recv.method(args)`
+// to a plain Instr::Call named `{lowercase(ReceiverType)}_{method}`, receiver
+// threaded as the FIRST call arg. Example: `p: Point`, `p.dist(7)` -> callee
+// "point_dist". This part resolves recv -> its declared struct type T (reusing
+// SECTION 7's param-type table ptt_*), then builds the callee string
+// `{lowercase(T)}_{method}` into a caller-provided byte buffer.
+//
+// Resolution: ptt_build_table parses the (first) fn's params into the
+// param-name -> declared-type-name table; mcr_find_param_by_name scans it for
+// the param whose NAME bytes equal the receiver ident, yielding the param row
+// (and thus its declared TYPE span). The lowercase transform maps ASCII A-Z
+// (65..90) to a-z (+32); all other bytes pass through unchanged (mirrors the
+// Rust to_lowercase on the leading type segment used by the UFCS desugar).
+// ===========================================================================
+
+// Lowercase one ASCII byte: A-Z (65..90) -> +32, all else unchanged.
+pub fn mcr_lower_byte(b: i64) -> i64 {
+    if b >= 65 {
+        if b <= 90 {
+            return b + 32;
+        }
+    }
+    b
+}
+
+// Find the param index whose NAME span equals the receiver ident src[recv_lo..
+// recv_hi); returns the index or -1. Tail-recursive over the ptt rows.
+pub fn mcr_find_param_by_name(ptt: i64, src: i64, recv_lo: i64, recv_hi: i64, k: i64) -> i64 {
+    if k >= ptt_table_count(ptt) {
+        return 0 - 1;
+    }
+    if span_bytes_equal(src, recv_lo, recv_hi, ptt_table_name_lo(ptt, k), ptt_table_name_hi(ptt, k)) == 1 {
+        return k;
+    }
+    mcr_find_param_by_name(ptt, src, recv_lo, recv_hi, k + 1)
+}
+
+// Write the lowercased bytes of src[lo..hi) into outbuf at cursor `j`; return the
+// new cursor. Single-byte writes (__mind_store_i8), byte-contiguous.
+pub fn mcr_write_lowered(outbuf: i64, j: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return j;
+    }
+    __mind_store_i8(outbuf + j, mcr_lower_byte(load_byte(src, lo)));
+    mcr_write_lowered(outbuf, j + 1, src, lo + 1, hi)
+}
+
+// Write the raw (unmodified) bytes of src[lo..hi) into outbuf at cursor `j`;
+// return the new cursor.
+pub fn mcr_write_raw(outbuf: i64, j: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return j;
+    }
+    __mind_store_i8(outbuf + j, load_byte(src, lo));
+    mcr_write_raw(outbuf, j + 1, src, lo + 1, hi)
+}
+
+// Resolve the receiver of the first method call in `src` to its declared struct
+// type span. Returns a packed 1-i64 cell address holding [type_lo, type_hi] is
+// awkward without tuples, so we expose the spans via dedicated selftests below
+// and centralize the resolution here returning the matched ptt param index
+// (-1 = no method call / receiver not a known param).
+pub fn mcr_resolve_recv_param(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    let recv_lo: i64 = ast_span_lo(ast_child0(m));
+    let recv_hi: i64 = ast_span_hi(ast_child0(m));
+    let ptt: i64 = ptt_build_table(src_addr, src_len);
+    mcr_find_param_by_name(ptt, src_addr, recv_lo, recv_hi, 0)
+}
+
+// Selftest export: the ptt param index the receiver resolves to, or -1.
+pub fn selftest_method_recv_param_idx(src_addr: i64, src_len: i64) -> i64 {
+    mcr_resolve_recv_param(src_addr, src_len)
+}
+
+// Selftest export: span_lo of the receiver's resolved declared TYPE name, or -1.
+pub fn selftest_method_recv_type_lo(src_addr: i64, src_len: i64) -> i64 {
+    let k: i64 = mcr_resolve_recv_param(src_addr, src_len);
+    if k < 0 {
+        return 0 - 1;
+    }
+    let ptt: i64 = ptt_build_table(src_addr, src_len);
+    ptt_table_type_lo(ptt, k)
+}
+
+// Selftest export: span_hi of the receiver's resolved declared TYPE name, or -1.
+pub fn selftest_method_recv_type_hi(src_addr: i64, src_len: i64) -> i64 {
+    let k: i64 = mcr_resolve_recv_param(src_addr, src_len);
+    if k < 0 {
+        return 0 - 1;
+    }
+    let ptt: i64 = ptt_build_table(src_addr, src_len);
+    ptt_table_type_hi(ptt, k)
+}
+
+// Build the UFCS callee name `{lowercase(ReceiverType)}_{method}` for the first
+// method call in `src`, writing the bytes into the caller-provided `outbuf`.
+// Returns the callee length in bytes, or -1 if there is no parseable method call
+// whose receiver resolves to a known param type (fail-closed; writes nothing on
+// failure). The buffer is byte-contiguous (one __mind_store_i8 per byte).
+pub fn selftest_method_callee_name_into(src_addr: i64, src_len: i64, outbuf: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    let recv_lo: i64 = ast_span_lo(ast_child0(m));
+    let recv_hi: i64 = ast_span_hi(ast_child0(m));
+    let method_lo: i64 = ast_child1(m);
+    let method_hi: i64 = ast_child2(m);
+    let ptt: i64 = ptt_build_table(src_addr, src_len);
+    let k: i64 = mcr_find_param_by_name(ptt, src_addr, recv_lo, recv_hi, 0);
+    if k < 0 {
+        return 0 - 1;
+    }
+    let ty_lo: i64 = ptt_table_type_lo(ptt, k);
+    let ty_hi: i64 = ptt_table_type_hi(ptt, k);
+    // {lowercase(T)} then `_` (95) then {method}.
+    let j1: i64 = mcr_write_lowered(outbuf, 0, src_addr, ty_lo, ty_hi);
+    __mind_store_i8(outbuf + j1, 95);
+    let j2: i64 = j1 + 1;
+    let j3: i64 = mcr_write_raw(outbuf, j2, src_addr, method_lo, method_hi);
+    j3
+}
