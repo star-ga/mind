@@ -540,6 +540,9 @@ pub fn ast_if() -> i64 {
 pub fn ast_field() -> i64 {
     17
 }
+pub fn ast_method() -> i64 {
+    18
+}
 
 // ===== Binop operator tags =====
 
@@ -6356,4 +6359,158 @@ pub fn selftest_param_name_hi(src_addr: i64, src_len: i64, i: i64) -> i64 {
         return 0 - 1;
     }
     ptt_table_name_hi(t, i)
+}
+
+// ===========================================================================
+// SECTION 8 — METHOD-CALL PARSER (UFCS groundwork, part 1)
+//
+// ADDITIVE / canary-isolated. A pure PARSER step — NO mic@3 byte-output, NO
+// EmitState — so it cannot perturb the canary fixed point and cannot hit the
+// EmitState segfault. It proves the pure-MIND front-end can PARSE a method call
+// `recv.method(args...)` into a distinct node, retaining the method-NAME span,
+// the receiver, and the argument count.
+//
+// The Rust oracle (src/eval/lower.rs MethodCall arm) lowers `recv.method(args)`
+// via UFCS desugar to a plain Instr::Call named `{lowercase(ReceiverType)}_{method}`
+// with the receiver threaded as the FIRST call arg: call_args = [recv, args...].
+// Confirmed live: `p.dist(7)` on `p: Point` interns + calls `point_dist` in the
+// mic@3 string table (130-byte artifact). Capturing the method-name span + arg
+// count here is the prerequisite for that desugar; the receiver-type resolution
+// (already built in SECTION 7's param-type table) supplies the `{lowercase(T)}_`
+// prefix in a later, byte-output part.
+//
+// `ast_method` node layout (reuses the 7xi64 ast record):
+//   [kind=ast_method, span_lo, span_hi, receiver(child0),
+//    method_lo(child1), method_hi(child2), arg_count(aux)]
+//
+// This helper is self-contained: it token-scans for the first `ident . ident (`
+// method-call shape (mirroring sft_find_struct_body's scan), parses the receiver
+// as an ident leaf, and counts args via the existing parse_args_rest. It does
+// NOT touch parse_postfix_rest (the shared parser), so the canary parse of
+// main.mind's own source — which contains zero `recv.method(...)` calls — is
+// byte-identical.
+// ===========================================================================
+
+// Build an ast_method node from an already-resolved receiver + method span +
+// arg count.
+pub fn mc_new_method(span_lo: i64, span_hi: i64, receiver: i64, method_lo: i64, method_hi: i64, arg_count: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_method());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, receiver);
+    __mind_store_i64(n + 32, method_lo);
+    __mind_store_i64(n + 40, method_hi);
+    __mind_store_i64(n + 48, arg_count);
+    n
+}
+
+// Scan the token stream for the first `ident . ident (` method-call shape.
+// Returns the token index of the RECEIVER ident, or -1 if none. (`recv` at pos,
+// `.` at pos+1, `method` ident at pos+2, `(` at pos+3.)
+pub fn mc_find_method_call(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if tok_kind(toks, pos + 1) == tk_dot() {
+            if tok_kind(toks, pos + 2) == tk_ident() {
+                if tok_kind(toks, pos + 3) == tk_lparen() {
+                    return pos;
+                }
+            }
+        }
+    }
+    mc_find_method_call(toks, pos + 1)
+}
+
+// Parse the first method call in `src` into an ast_method node, or 0 if none.
+pub fn mc_parse_first(src_addr: i64, src_len: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let rpos: i64 = mc_find_method_call(tokens, 0);
+    if rpos < 0 {
+        return 0;
+    }
+    let recv_lo: i64 = tok_lo(tokens, rpos);
+    let recv_hi: i64 = tok_hi(tokens, rpos);
+    let receiver: i64 = ast_new_leaf(ast_ident(), recv_lo, recv_hi);
+    let method_lo: i64 = tok_lo(tokens, rpos + 2);
+    let method_hi: i64 = tok_hi(tokens, rpos + 2);
+    // pos+3 = `(`. Zero-arg fast path: `(` immediately followed by `)`.
+    let after_open: i64 = rpos + 4;
+    if tok_kind(tokens, after_open) == tk_rparen() {
+        let close_hi: i64 = tok_hi(tokens, after_open);
+        return mc_new_method(recv_lo, close_hi, receiver, method_lo, method_hi, 0);
+    }
+    let args_res: ParseResult = parse_args_rest(tokens, after_open, src_addr, vec_new());
+    let after_args: i64 = pr_pos(args_res);
+    let args_node: i64 = pr_node(args_res);
+    let arg_count: i64 = ast_aux(args_node);
+    let close_hi: i64 = tok_hi(tokens, after_args);
+    mc_new_method(recv_lo, close_hi, receiver, method_lo, method_hi, arg_count)
+}
+
+// Selftest export: 1 if `src` contains a parseable method call, else 0.
+pub fn selftest_method_present(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0;
+    }
+    1
+}
+
+// Selftest export: the span_lo of the method NAME (or -1 if no method call).
+pub fn selftest_method_name_lo(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    ast_child1(m)
+}
+
+// Selftest export: the span_hi of the method NAME (or -1 if no method call).
+pub fn selftest_method_name_hi(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    ast_child2(m)
+}
+
+// Selftest export: the length (bytes) of the method NAME span, or -1.
+pub fn selftest_method_name_len(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    ast_child2(m) - ast_child1(m)
+}
+
+// Selftest export: the number of arguments parsed in the method call, or -1.
+pub fn selftest_method_arg_count(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    ast_aux(m)
+}
+
+// Selftest export: the AST kind of the receiver node (proves the receiver
+// parsed as an ident leaf), or -1.
+pub fn selftest_method_recv_kind(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    ast_kind(ast_child0(m))
+}
+
+// Selftest export: the span_lo of the RECEIVER (or -1). Lets a harness confirm
+// the receiver binding is intact for the later UFCS type-prefix resolution.
+pub fn selftest_method_recv_lo(src_addr: i64, src_len: i64) -> i64 {
+    let m: i64 = mc_parse_first(src_addr, src_len);
+    if m == 0 {
+        return 0 - 1;
+    }
+    ast_span_lo(ast_child0(m))
 }
