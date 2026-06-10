@@ -168,7 +168,9 @@ it, not the moat itself (speed is a budget, not the wedge — see
 `.bench-baseline-2026-06-01-correctness.txt`). Every Phase 10.6 feature
 is gated **module-level only** — no statement-level cfg, no runtime
 dispatch. Each item below ships a dedicated sub-benchmark that does not
-move the headline numbers. CI gate: ±2% per size / ±1% mean.
+move the headline numbers. CI gate: one-sided **+10% regression** per size
+(a speedup of any size always passes; a larger regression is a documented
+worth-it decision, not an auto-block).
 
 ### Deliverables — mindc 0.2.6 (library-emit foundation)
 
@@ -745,9 +747,9 @@ product to minimise is:
 C optimises only the first factor's runtime; dynamic languages
 optimise only token count. MIND optimises the whole product. Any
 feature that improves one factor by regressing the frontend envelope
-(`.bench-baseline` ±2% gate on the three headline benches) is
-rejected at design time — the same anti-regression discipline already
-in force.
+(`.bench-baseline` one-sided **+10% regression** gate on the three headline
+benches) triggers a worth-it review at design time — the same anti-regression
+discipline already in force (a speedup never trips it).
 
 ### Deliverables — self-hosting bootstrap
 
@@ -816,8 +818,8 @@ MIND programs and the AI-era efficiency claim.
   itself) compiles and runs through the self-hosted backend with
   cross-arch bit-identical output.
 - The AI-era efficiency benchmark is published and tracked per
-  release; no frontend headline-bench regression beyond the ±2% gate
-  across all Phase 15 work.
+  release; no frontend headline-bench regression beyond the one-sided
+  +10% gate (speedups always welcome) across all Phase 15 work.
 
 ---
 
@@ -927,8 +929,8 @@ Phase 15 self-host work landing first and the TLS scope decision.
 - No FFI outside libc syscalls *unless* the Tier 2 TLS decision
   explicitly approves a named C crypto library, in which case that
   library is the only exception, named and version-pinned in the RFC
-- Frontend µs benchmarks: <±2% drift across all Phase 16 work
-  (same gate as Phase 15)
+- Frontend µs benchmarks: no regression beyond +10% (one-sided) across all
+  Phase 16 work (same gate as Phase 15)
 
 ### Out of Scope
 

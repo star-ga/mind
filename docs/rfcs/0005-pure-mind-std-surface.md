@@ -319,7 +319,7 @@ parse→typecheck→IR of small kernels that import nothing. A new
 sub-benchmark `std_surface` measures `Vec`/`Map` op throughput in
 isolation; it is its own bench target (like `cross_module`), never in
 the headline `compiler` group. The five intrinsics are lowered as
-direct calls (no dispatch). `.bench-baseline` ±2% gate unchanged.
+direct calls (no dispatch). `.bench-baseline` one-sided +10% regression gate unchanged.
 
 ## Drawbacks
 
