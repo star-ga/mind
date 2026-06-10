@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,839,232
-**Generated:** 2026-06-09 23:40 UTC
+**Files:** 2751 | **Est. tokens:** ~6,844,711
+**Generated:** 2026-06-10 00:19 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `config/` | 1 | ~1,163 |
 | `docs/` | 26 | ~37,392 |
 | `docs/backends/` | 1 | ~1,482 |
-| `docs/benchmarks/` | 2 | ~7,025 |
+| `docs/benchmarks/` | 3 | ~9,199 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~6,976 |
 | `docs/research/` | 1 | ~117 |
@@ -63,6 +63,8 @@
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
 | `scripts/` | 6 | ~8,732 |
+| `scripts/mind-vs-rust/` | 3 | ~933 |
+| `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/node_modules/` | 1 | ~13,764 |
@@ -602,6 +604,7 @@
 ### `docs/benchmarks/`
 
 - `mojo_comparison.md` (~2420 tok, huge) — MIND vs Mojo: Compilation Performance Comparison
+- `RESULTS-mind-vs-rust-2026-06-09.md` (~2174 tok, huge) — MIND vs Rust — integer-GEMM, apples-to-apples (2026-06-09)
 ### `docs/`
 
 - `byte-store-migration.md` (~3238 tok, huge) — Byte-Store Migration — closing `#306`
@@ -811,6 +814,16 @@
 - `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
 - `install.sh` (~1054 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
+### `scripts/mind-vs-rust/`
+
+- `Cargo.toml` (~271 tok, medium) — [package]
+- `.gitignore` (~3 tok, tiny) — */target-*/
+- `run.sh` (~659 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
+### `scripts/mind-vs-rust/src/`
+
+- `main.rs` (~2372 tok, huge) — Copyright 2026 STARGA Inc.
+### `scripts/`
+
 - `preflight.sh` (~775 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 ### `sdk/ts/mic-map/dist/`
 

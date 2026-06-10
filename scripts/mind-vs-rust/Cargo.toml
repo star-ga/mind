@@ -1,0 +1,32 @@
+# Copyright 2026 STARGA Inc.
+# Licensed under the Apache License, Version 2.0.
+# Part of the MIND project (Machine Intelligence Native Design).
+#
+# Standalone apples-to-apples MIND-vs-Rust GEMM harness. Kept OUT of the main
+# `mind` crate (touches nothing in src/) so the rustc optimisation level can be
+# driven independently of the mind crate's `[profile.release] opt-level = 3`.
+# Build it twice — once with `opt-level = 2`, once with `opt-level = 3` — and the
+# same binary times both the dlopen'd MIND `.so` kernel and the equivalent
+# in-crate Rust kernel under identical conditions (same LCG, seed, shapes, and
+# the same warmup + median-of-N timing the det_matmul benches use).
+
+[package]
+name = "mind-vs-rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "mind-vs-rust"
+path = "src/main.rs"
+
+[dependencies]
+libloading = "0.8"
+sha2 = "0.10"
+
+# opt-level is supplied on the command line via `cargo rustc` / RUSTFLAGS so the
+# SAME source builds at -O2 and -O3 without editing this file.
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
