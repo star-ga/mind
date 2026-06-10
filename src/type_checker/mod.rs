@@ -12,6 +12,8 @@
 
 // Part of the MIND project (Machine Intelligence Native Design).
 
+mod resolve;
+
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
@@ -2878,6 +2880,35 @@ pub fn check_module_types_in_file(
                         .into_iter()
                         .filter(|d| is_shape_diag_code(d.code) || d.code == NARROWING_CODE),
                 );
+
+                // Issue #23 — scoped name resolution for the fn body. Replaces
+                // the dropped unknown-identifier / undefined-call diagnostics
+                // (the mini-module filter above keeps only shape + narrowing
+                // codes) with a purpose-built pass that unions all symbol
+                // sources and tracks nested scope, so it reports E2002/E2003
+                // only for genuinely-unresolvable references. The injected set
+                // is the module env's keys (module fns/consts/lets + any
+                // cross-module symbols merged by the import resolver); passing
+                // them can only make MORE names resolve, never false-positive.
+                let injected: BTreeSet<String> = tenv.keys().cloned().collect();
+                let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+                for u in resolve::resolve_fn_body(body, &param_names, module, &injected) {
+                    let (msg, code) = if u.is_call {
+                        (
+                            format!("unsupported call to `{}`", u.name),
+                            resolve::UNKNOWN_CALL_CODE,
+                        )
+                    } else {
+                        let msg = match &u.suggestion {
+                            Some(s) => {
+                                format!("unknown identifier `{}` — did you mean `{}`?", u.name, s)
+                            }
+                            None => format!("unknown identifier `{}`", u.name),
+                        };
+                        (msg, resolve::UNKNOWN_IDENT_CODE)
+                    };
+                    errs.push(diag_from_span(src, file, msg, u.span, code));
+                }
 
                 // RFC 0010 Phase J-A/B: safety passes over the fn node.
                 #[cfg(feature = "std-surface")]
