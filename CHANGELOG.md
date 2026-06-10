@@ -264,7 +264,8 @@ between v0.6.8 and this tag is collected here. Key themes:
 
 - **Mindcraft fully shipped** (RFC 0007 all 6 phases + MINDCRAFT-001 keystone) -- already in v0.6.8
 - **RFC 0008 `mindc build` / `mindc test` -- all 7/7 phases shipped** including Phase G KEYSTONE:
-  cargo is retired from the pure-MIND compile loop
+  the `mindc build` bootstrap reaches a self-consistency keystone (cargo still drives the
+  documented build; full real-codegen self-host remains in progress)
 - **RFC 0010 extern "C" + SysV + Win64 ABI** -- Phases A/B/C shipped; Phases E/F scaffolded
   (std.mlir + std.llvm bindings)
 - **13 stdlib modules**: vec, string, map, io, blas, toml, json, regex, net, fs, process,
@@ -924,7 +925,7 @@ that calls each intrinsic, dlopens it via `python3 ctypes`, and verifies:
 - AVX2 within 1e-6 relative tolerance on 1M-element f32 vectors (reduction reorder);
 - Q16.16 path byte-identical scalar-vs-AVX2 on every length tested.
 
-## [0.6.1] - 2026-05-18 — Bootstrap fixed-point reached: libmindc_mind.so compiles its own source byte-identically to mindc-Rust. The Rust implementation is now decorative.
+## [0.6.1] - 2026-05-18 — Front-end bootstrap fixed-point reached: libmindc_mind.so reproduces its own MLIR-text output byte-identically to mindc-Rust. Full real-codegen self-host is in progress; the Rust implementation remains the active build path.
 
 ### Phase 6.5 Fixed-Point — pure-MIND mindc achieves bootstrap fixed-point
 
@@ -955,7 +956,7 @@ stub removed = +6, closing the exact gap.
 
 ## [0.6.0] - 2026-05-18
 
-### Phase 6.5 Stage 5 APEX — pure-MIND mindc compiles MIND byte-identical to mindc-Rust
+### Phase 6.5 Stage 5 — pure-MIND mindc front-end reproduces MLIR text byte-identical to mindc-Rust
 
 `examples/mindc_mind/main.mind` is a single combined pure-MIND source file
 containing all four self-host sub-components (lexer, parser, type-checker,
@@ -969,11 +970,12 @@ combined cdylib, calls `mindc_compile(buf_addr, buf_len)` on
 record, and confirms the emitted MLIR text is byte-identical to the 148-byte
 output of `mindc --emit-ir` on the same fixture.
 
-**Stage 5 verdict: APEX PASS.**
+**Stage 5 verdict: front-end fixed-point PASS.**
 
-**The self-host thesis is proven: the four pure-MIND mindc sub-components,
-integrated into a single cdylib, compile MIND programs to byte-identical output
-as the Rust reference compiler.**
+**Front-end bootstrap fixed-point reached: the four pure-MIND mindc
+sub-components, integrated into a single cdylib, emit MLIR text byte-identical
+to the Rust reference compiler. This proves the front-end self-hosts; full
+real-codegen self-host is the active frontier (still in progress).**
 
 Pipeline sequence verified by the smoke harness:
 1. `lex(buf, len)` → Vec handle (71 tokens / 213 i64 elements)
@@ -1065,8 +1067,8 @@ are off the hot frontend pipeline — no latency impact on
 - Stage 3 (type-checker): AST → type report ✓
 - Stage 4 (emit_ir): AST → MLIR text ✓
 
-**Stage 5 (apex) is the only remaining open step:** a combined cdylib
-wiring all four stages end-to-end into a single `main()` entry.
+**Stage 5 (front-end fixed-point) is the remaining open step here:** a combined cdylib
+wiring all four stages end-to-end into a single `main()` entry. Full real-codegen self-host follows.
 
 ## [0.5.3] - 2026-05-18
 
