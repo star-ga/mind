@@ -2100,6 +2100,31 @@ pub fn selftest_mic3_binop(dst: i64, op_byte: i64, lhs: i64, rhs: i64) -> EmitSt
     emit_mic3_binop(es_new(), dst, op_byte, lhs, rhs)
 }
 
+// Instr::Output(id): OP_OUTPUT(0x13) || vid(id). The function-result terminator.
+pub fn emit_mic3_output(s: EmitState, id: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 19);
+    emit_uleb128(s1, id)
+}
+
+// Instr::Return { value: Option<vid> }: OP_RETURN(0x17) || encode_opt_vid(value).
+// encode_opt_vid: None -> [0]; Some(v) -> [1] || vid(v). `has_value` = 0/1.
+pub fn emit_mic3_return(s: EmitState, has_value: i64, id: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 23);
+    if has_value == 0 {
+        return es_push(s1, 0);
+    }
+    let s2: EmitState = es_push(s1, 1);
+    emit_uleb128(s2, id)
+}
+
+pub fn selftest_mic3_output(id: i64) -> EmitState {
+    emit_mic3_output(es_new(), id)
+}
+
+pub fn selftest_mic3_return(has_value: i64, id: i64) -> EmitState {
+    emit_mic3_return(es_new(), has_value, id)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
