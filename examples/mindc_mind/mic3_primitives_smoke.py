@@ -168,6 +168,34 @@ def main() -> int:
         tag = "OK" if got == want else f"FAIL (want {want.hex()})"
         print(f"  return(has={has},id={idv}) = {got.hex():<8} {tag}")
 
+    # --- full string-table SECTION: uleb128(count) || N length-prefixed entries.
+    #     Uses the fixture.mind string set so the output equals the captured mic@3
+    #     oracle's string table (Phase 0, b230530) byte-for-byte. ---
+    lib.selftest_mic3_strtab.restype = ctypes.c_void_p
+    lib.selftest_mic3_strtab.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
+    strings = [b"add", b"x", b"y", b"compute", b"z"]
+    sbuf = b"".join(strings)
+    offsets = [0]
+    for sng in strings:
+        offsets.append(offsets[-1] + len(sng))
+    sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+    offs_c = (ctypes.c_int64 * len(offsets))(*offsets)
+    es = lib.selftest_mic3_strtab(
+        ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+        ctypes.cast(offs_c, ctypes.c_void_p).value,
+        len(strings),
+    )
+    got = read_string_handle(read_i64_at(es, 0))
+    want = ref_uleb128(len(strings)) + b"".join(ref_uleb128(len(x)) + x for x in strings)
+    # The bytes the fixture.mind mic@3 oracle carries after its MIC3+version header.
+    oracle_strtab = bytes.fromhex("0503616464017801790763") + b"ompute" + bytes.fromhex("017a")
+    matches_oracle = got == oracle_strtab
+    failures += got != want
+    total += 1
+    tag = "OK" + (" (== fixture oracle string table)" if matches_oracle else "") \
+        if got == want else f"FAIL (want {want.hex()})"
+    print(f"  strtab[{len(strings)}] = {got.hex()}  {tag}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
