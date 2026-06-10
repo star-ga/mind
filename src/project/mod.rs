@@ -24,8 +24,9 @@ pub mod module_table;
 /// RFC 0005 Phase C — std/*.mind sources baked into the binary at
 /// compile time. The project loader prepends these to the module
 /// table so `use std.vec` resolves in any project, no vendoring
-/// required. Same gate as the rest of the cross-module work.
-#[cfg(feature = "cross-module-imports")]
+/// required. Available under std-surface too (the single-file resolve pass
+/// needs the bundled std export set to recognise `vec_new`/`string_new`/...).
+#[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
 pub mod stdlib;
 
 /// RFC 0008 §3 — `[test]` table in `Mind.toml`.

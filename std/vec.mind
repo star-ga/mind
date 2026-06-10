@@ -87,3 +87,14 @@ pub fn vec_push(v: Vec, value: i64) -> Vec {
     __mind_store_i64(new_addr + v.len * 8, value);
     Vec { addr: new_addr, len: new_len, cap: new_cap }
 }
+
+// vec_free — release the heap backing store via __mind_free.
+//
+// A Vec value is itself a 3×i64 struct (passed/returned by value); the
+// only heap allocation is the backing store at `v.addr` (allocated by
+// vec_push via __mind_realloc).  Freeing that address reclaims it; a
+// zero-cap (never-pushed) Vec has addr 0, and __mind_free(0) is a no-op
+// by the realloc/free contract.  Returns 0 (the intrinsic's contract).
+pub fn vec_free(v: Vec) -> i64 {
+    __mind_free(v.addr)
+}
