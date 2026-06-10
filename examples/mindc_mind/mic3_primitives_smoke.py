@@ -322,6 +322,42 @@ def main() -> int:
         print(f"  named_vids({pairs}) = {got.hex():<12} "
               f"{'OK' if got == want else 'FAIL want ' + want.hex()}")
 
+    # --- COMPLETE WITH-BODY arithmetic fn: pub fn <name>(<pa>,<pb>) -> i64 { pa OP pb }
+    #     add(a,b){a+b} (op_byte=0) == the captured 49-byte oracle byte-for-byte. ---
+    def ref_arith_fn(name, pa, pb, op_byte):
+        strs = [name, pa, pb]
+        out = b"MIC3\x02"
+        out += ref_uleb128(3) + b"".join(ref_uleb128(len(x)) + x for x in strs)
+        out += ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(3)        # next_id, exports, 3 instrs
+        out += bytes([0x15]) + ref_uleb128(0)                          # FN_DEF, name_idx=0
+        out += ref_uleb128(2) + ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(2) + ref_uleb128(1)
+        out += bytes([1]) + ref_uleb128(2) + bytes([0]) + ref_uleb128(3)  # ret Some %2, reap None, body_len 3
+        out += bytes([0x18]) + ref_uleb128(0) + ref_uleb128(1) + ref_uleb128(0)  # PARAM %0
+        out += bytes([0x18]) + ref_uleb128(1) + ref_uleb128(2) + ref_uleb128(1)  # PARAM %1
+        out += bytes([4]) + ref_uleb128(2) + bytes([op_byte]) + ref_uleb128(0) + ref_uleb128(1)  # BINOP
+        out += bytes([1]) + ref_uleb128(0) + ref_uleb128(0)            # ConstI64(%0,0)
+        out += bytes([0x13]) + ref_uleb128(0)                          # Output(%0)
+        out += b"\x00\x00\x00"
+        return out
+
+    lib.selftest_mic3_arith_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_arith_fn.argtypes = [ctypes.c_int64] * 3
+    for name, pa, pb, op in [(b"add", b"a", b"b", 0), (b"mul", b"x", b"y", 2)]:
+        sbuf = name + pa + pb
+        soff = [0, len(name), len(name) + len(pa), len(name) + len(pa) + len(pb)]
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        es = lib.selftest_mic3_arith_fn(
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value, op)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_arith_fn(name, pa, pb, op)
+        failures += got != want
+        total += 1
+        note = " (== add(a,b){a+b} oracle, 49B)" if (name, op) == (b"add", 0) else ""
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        print(f"  arith_fn {name.decode()}({pa.decode()},{pb.decode()}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
