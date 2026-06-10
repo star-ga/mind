@@ -24,7 +24,7 @@ mindc [OPTIONS] [FILE] [COMMAND]
 |------|-------------|
 | `--version` | Print compiler version and component stability versions |
 | `--stability` | Print short description of the public stability model |
-| `--emit-ir` | Emit canonical IR for the module |
+| `--emit-ir` | Emit a **lossy dataflow summary** of the IR (the text view drops control flow, calls, returns, and function bodies) — **not** the canonical artifact; use `--emit-mic3` for the canonical, exhaustive `mic@3` binary |
 | `--emit-grad-ir` | Emit gradient IR (requires `--autodiff`) |
 | `--emit-mlir` | Emit MLIR text (requires `mlir-lowering` feature) |
 | `--emit-obj <PATH>` | Emit object file to specified path (requires `aot` feature) |
