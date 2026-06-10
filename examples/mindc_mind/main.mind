@@ -5567,3 +5567,194 @@ pub fn selftest_struct_field_name_len(src_addr: i64, src_len: i64, i: i64) -> i6
     }
     sft_table_name_hi(t, i) - sft_table_name_lo(t, i)
 }
+
+// ===========================================================================
+// SECTION 7 — PER-FUNCTION PARAM-TYPE TABLE (field-access groundwork, part 2)
+//
+// ADDITIVE / canary-isolated. Mirrors SECTION 6's heap-table idiom exactly. The
+// canonical parse_fn_def / parse_params_rest (above) are UNCHANGED: this code
+// only re-scans a fn signature's `name: Type` param list and RETAINS the ordered
+// (param-name span, type-name span) pairs in a heap table, exposed via the
+// selftests below. It does NOT touch the mic@1/mic@3 emit path, EmitState, or the
+// fixed-point bytes; nothing here is reached through mindc_compile.
+//
+// The (param-name -> declared type-name) binding is the receiver-type info a
+// later `recv.field` access needs: resolve recv -> its declared struct type
+// (part 2, this table) -> the field index in that struct (part 1's field table).
+//
+// Heap param-type-table layout (a single __mind_alloc block):
+//   word[0]              : param count (n)
+//   word[1 + 4*k + 0]    : span_lo of param k's NAME
+//   word[1 + 4*k + 1]    : span_hi of param k's NAME
+//   word[1 + 4*k + 2]    : span_lo of param k's declared TYPE name
+//   word[1 + 4*k + 3]    : span_hi of param k's declared TYPE name
+// Capacity is fixed at 32 params (table = 8 * (1 + 4*32) = 1032 bytes), which
+// comfortably covers any fn signature in main.mind's own grammar.
+// ===========================================================================
+
+pub fn ptt_table_cap() -> i64 {
+    32
+}
+
+pub fn ptt_table_alloc() -> i64 {
+    // 1 count word + cap*4 span words, 8 bytes each.
+    let t: i64 = __mind_alloc((1 + ptt_table_cap() * 4) * 8);
+    __mind_store_i64(t + 0, 0);
+    t
+}
+
+pub fn ptt_table_count(t: i64) -> i64 {
+    __mind_load_i64(t + 0)
+}
+
+pub fn ptt_table_name_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + k * 4 + 0) * 8)
+}
+
+pub fn ptt_table_name_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + k * 4 + 1) * 8)
+}
+
+pub fn ptt_table_type_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + k * 4 + 2) * 8)
+}
+
+pub fn ptt_table_type_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + k * 4 + 3) * 8)
+}
+
+// Append one (param-name span, type-name span) row to the table, bumping the
+// count. Silently drops params beyond ptt_table_cap() (no fn in the grammar
+// reaches it).
+pub fn ptt_table_push(t: i64, name_lo: i64, name_hi: i64, type_lo: i64, type_hi: i64) -> i64 {
+    let n: i64 = ptt_table_count(t);
+    if n >= ptt_table_cap() {
+        return t;
+    }
+    __mind_store_i64(t + (1 + n * 4 + 0) * 8, name_lo);
+    __mind_store_i64(t + (1 + n * 4 + 1) * 8, name_hi);
+    __mind_store_i64(t + (1 + n * 4 + 2) * 8, type_lo);
+    __mind_store_i64(t + (1 + n * 4 + 3) * 8, type_hi);
+    __mind_store_i64(t + 0, n + 1);
+    t
+}
+
+// Scan the token stream for the first fn signature's param-list start. Returns
+// the token index just past `(`, or -1 if no fn. Mirrors parse_item's dispatch:
+// a tk_kw_pub is skipped, a tk_kw_fn marks the signature; then pos+1 = name,
+// pos+2 = `(`, params start at pos+3 (exactly parse_fn_def's layout).
+pub fn ptt_find_param_list(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_kw_fn() {
+        // pos = fn kw, pos+1 = Name, pos+2 = `(`, params start at pos+3.
+        return pos + 3;
+    }
+    ptt_find_param_list(toks, pos + 1)
+}
+
+// Parse the `name: Type [,]` params of a fn signature into the table `t`.
+// `pos` points just past `(`. Each param is `ident : Type`; the list ends at
+// `)`. Retains both the param-NAME span and the declared TYPE-name span. Mirrors
+// parse_params_rest's token layout exactly: name(pos), `:`(pos+1), Type(pos+2),
+// then pos+3 is `,` (advance +4) or `)` (end). Tail-recursive.
+pub fn ptt_parse_params(toks: Vec, pos: i64, t: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return t;
+    }
+    if tok_kind(toks, pos) == tk_rparen() {
+        return t;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        // Expect: ident(name) colon ident(Type). Retain name + type spans.
+        if tok_kind(toks, pos + 1) == tk_colon() {
+            let _t: i64 = ptt_table_push(t, tok_lo(toks, pos), tok_hi(toks, pos), tok_lo(toks, pos + 2), tok_hi(toks, pos + 2));
+            if tok_kind(toks, pos + 3) == tk_comma() {
+                return ptt_parse_params(toks, pos + 4, t);
+            }
+            return ptt_parse_params(toks, pos + 3, t);
+        }
+    }
+    // Defensive: unexpected token — advance one to avoid a non-terminating scan.
+    ptt_parse_params(toks, pos + 1, t)
+}
+
+// Build (and return) a fresh param-type table for the first fn in `src`.
+pub fn ptt_build_table(src_addr: i64, src_len: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let t: i64 = ptt_table_alloc();
+    let plist: i64 = ptt_find_param_list(tokens, 0);
+    if plist < 0 {
+        return t;
+    }
+    ptt_parse_params(tokens, plist, t)
+}
+
+// Selftest export: number of params parsed for the (first) fn in `src`.
+pub fn selftest_param_type_count(src_addr: i64, src_len: i64) -> i64 {
+    let t: i64 = ptt_build_table(src_addr, src_len);
+    ptt_table_count(t)
+}
+
+// Selftest export: the span_lo of param `i`'s declared TYPE name (or -1).
+pub fn selftest_param_type_name_lo(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = ptt_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= ptt_table_count(t) {
+        return 0 - 1;
+    }
+    ptt_table_type_lo(t, i)
+}
+
+// Selftest export: the span_hi of param `i`'s declared TYPE name (or -1).
+pub fn selftest_param_type_name_hi(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = ptt_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= ptt_table_count(t) {
+        return 0 - 1;
+    }
+    ptt_table_type_hi(t, i)
+}
+
+// Selftest export: the length (bytes) of param `i`'s declared TYPE name span
+// (hi - lo), or -1 if out of range.
+pub fn selftest_param_type_name_len(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = ptt_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= ptt_table_count(t) {
+        return 0 - 1;
+    }
+    ptt_table_type_hi(t, i) - ptt_table_type_lo(t, i)
+}
+
+// Selftest export: the span_lo of param `i`'s NAME (or -1). Lets a harness
+// confirm the receiver binding (param-name -> declared type) is intact.
+pub fn selftest_param_name_lo(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = ptt_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= ptt_table_count(t) {
+        return 0 - 1;
+    }
+    ptt_table_name_lo(t, i)
+}
+
+// Selftest export: the span_hi of param `i`'s NAME (or -1).
+pub fn selftest_param_name_hi(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = ptt_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= ptt_table_count(t) {
+        return 0 - 1;
+    }
+    ptt_table_name_hi(t, i)
+}
