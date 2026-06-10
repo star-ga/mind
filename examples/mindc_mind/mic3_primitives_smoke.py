@@ -1429,6 +1429,70 @@ def main() -> int:
             if got == want else f"FAIL want {want.hex()}"
         print(f"  field_ast[{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- AST-DRIVEN MULTI-STRUCT field read (part 1b: struct-name keying) -------
+    #   selftest_mic3_module_field_multi handles N structs + 1 fn. The receiver's
+    #   declared type name (part 2, ptt) keys srt_find_by_name -> the CORRECT struct
+    #   (NOT just the first), so a field of the 2nd+ struct resolves to the right
+    #   index. The string table interns every struct's [type name][fields] in
+    #   declaration order; the registry lists ALL N structs; module scaffold is N+1
+    #   CONST/OUTPUT pairs. Each case byte-exact vs a hard-coded golden AND a LIVE
+    #   `--emit-mic3` regeneration (golden-staleness guard). Additive — the canary
+    #   mic@1 path is untouched (fixed point stable).
+    lib.selftest_mic3_module_field_multi.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_field_multi.argtypes = [ctypes.c_int64] * 5
+    for ms_src, ms_golden_hex, ms_note in (
+        (
+            # recv typed by the 2ND struct B; field s = idx 1 (offset path).
+            "struct A { p: i64, q: i64 }  struct B { r: i64, s: i64 }  "
+            "pub fn get_s(b: B) -> i64 { b.s }",
+            "4d4943330209056765745f7301620f5f5f6d696e645f6c6f61645f6936340141"
+            "0170017101420172017303000701000013000101001301150001010001030004"
+            "180001000101100402000001160302010201020013020203020405060207080000",
+            "recv=2nd struct B, field s idx1, 97B",
+        ),
+        (
+            # recv typed by the 1ST struct A in a 2-struct source; field p = idx 0.
+            "struct A { p: i64, q: i64 }  struct B { r: i64, s: i64 }  "
+            "pub fn get_p(a: A) -> i64 { a.p }",
+            "4d4943330209056765745f7001610f5f5f6d696e645f6c6f61645f6936340141"
+            "017001710142017201730300070100001300010100130115000101000101000218"
+            "000100160102010001020013020203020405060207080000",
+            "recv=1st struct A, field p idx0, 89B",
+        ),
+        (
+            # single struct via the multi path: strict subset of the single-struct
+            # emitter (must reproduce the 71B idx0 oracle exactly).
+            "struct S { a: i64 }  pub fn get_a(s: S) -> i64 { s.a }",
+            "4d4943330205056765745f6101730f5f5f6d696e645f6c6f61645f6936340153"
+            "016102000501000013001500010100010100021800010016010201000101001301"
+            "010301040000",
+            "single-struct subset, idx0, 71B",
+        ),
+    ):
+        ms_srcb = ms_src.encode()
+        ms_srcc = ctypes.create_string_buffer(ms_srcb, len(ms_srcb))
+        ms_strbuf = ctypes.create_string_buffer(512)
+        ms_offs = (ctypes.c_int64 * 64)()
+        ms_ccell = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_module_field_multi(
+            ctypes.cast(ms_srcc, ctypes.c_void_p).value, len(ms_srcb),
+            ctypes.cast(ms_strbuf, ctypes.c_void_p).value,
+            ctypes.cast(ms_offs, ctypes.c_void_p).value,
+            ctypes.cast(ms_ccell, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(ms_golden_hex)
+        live = _live_oracle(ms_src)
+        if live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: multi-struct field golden stale vs live ({ms_note})\n"
+                f"  golden {golden.hex()}\n  live   {live.hex()}")
+        want = live if live is not None else golden
+        failures += got != want
+        total += 1
+        ok = f"OK (multi-struct field, byte-exact vs --emit-mic3, {ms_note})" \
+            if got == want else f"FAIL want {want.hex()}"
+        print(f"  field_ms [{len(got)}B] = {got.hex()}  {ok}")
+
     field_src = (
         "struct S { a: i64, b: i64 }\n"
         "pub fn get_a(s: S) -> i64 { s.a }\n"
