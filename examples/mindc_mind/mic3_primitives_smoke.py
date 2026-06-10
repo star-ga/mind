@@ -1266,6 +1266,68 @@ def main() -> int:
             if got == want else f"FAIL want {want.hex()}"
         print(f"  mod_nfn [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Strategy A inc. 6: ARBITRARY expr-tree / if BODIES in the N-fn path ------
+    #   Each function body may now be an arbitrary param/const/binop expression tree
+    #   OR a single `if cond { then } else { else }` value (single-expression
+    #   branches), not just the four narrow shapes. The N-fn module invariants are
+    #   preserved (next_id = N, instr_count = 3*N, union first-seen string table,
+    #   per fn k: FN_DEF{body} || ConstI64(%k,0) || Output(%k)); only each fn's
+    #   FN_DEF body now routes to the proven 4f tree emitter / 4j OP_IF emitter.
+    #   Every case is cross-checked vs a hard-coded golden AND a LIVE `--emit-mic3`
+    #   regeneration (golden-staleness guard). Additive: the canary mic@1 path is
+    #   untouched, so the fixed point stays byte-identical.
+    nfn_body_cases = [
+        # 2 fns: arbitrary tree `a*b + c` (3 params) + tree with a REPEATED param
+        # `(x+1)*(x-1)` (x emitted as ONE PARAM, body_len de-duplicated).
+        ("pub fn f(a: i64, b: i64, c: i64) -> i64 { a * b + c }  "
+         "pub fn g(x: i64) -> i64 { (x + 1) * (x - 1) }",
+         "4d4943330206016601610162016301670178020006150003010002010302"
+         "010400051800010018010201180203020403020001040400030201000013"
+         "001504010500010500061800050001010204020000010103020404010003"
+         "04050202040101001301000000"),
+        # 2 fns: if-expression body (single-expr branches, empty merges/bindings)
+        # + a plain arith fn (the if's dst threads after both synth consts).
+        ("pub fn sel(a: i64, b: i64) -> i64 { if a { b } else { a } }  "
+         "pub fn add(a: i64, b: i64) -> i64 { a + b }",
+         "4d49433302040373656c0161016203616464020006150002010002010104"
+         "000318000100180102011c00000101020001010103000004000001000013"
+         "001503020100020101020003180001001801020104020000010101001301"
+         "000000"),
+        # 3-fn MIX — one arbitrary tree, one if, one zero-arg const: the qualitative
+        # leap (a heterogeneous module assembled fn-by-fn from three body kinds).
+        ("pub fn tree(a: i64, b: i64) -> i64 { a * b + a }  "
+         "pub fn br(a: i64, b: i64) -> i64 { if a { b } else { a } }  "
+         "pub fn k() -> i64 { 7 }",
+         "4d4943330205047472656501610162026272016b03000915000201000201010300"
+         "041800010018010201040202000104030002000100001300150302010002010104"
+         "000318000100180102011c0000010102000101010300000400000101001301150400"
+         "0100000101000e0102001302000000"),
+    ]
+    for src, golden_hex in nfn_body_cases:
+        srcb = src.encode()
+        srcc = ctypes.create_string_buffer(srcb, len(srcb))
+        strbuf = ctypes.create_string_buffer(512)
+        offs = (ctypes.c_int64 * 64)()
+        ccell = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_module_nfn(
+            ctypes.cast(srcc, ctypes.c_void_p).value, len(srcb),
+            ctypes.cast(strbuf, ctypes.c_void_p).value,
+            ctypes.cast(offs, ctypes.c_void_p).value,
+            ctypes.cast(ccell, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(golden_hex)
+        live = _live_oracle(src)
+        if live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: nfn-body golden stale vs live\n  golden {golden.hex()}"
+                f"\n  live   {live.hex()}")
+        want = live if live is not None else golden
+        failures += got != want
+        total += 1
+        ok = "OK (tree/if body, byte-exact vs --emit-mic3)" \
+            if got == want else f"FAIL want {want.hex()}"
+        print(f"  mod_body [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "

@@ -3012,6 +3012,133 @@ pub fn fn_name_idx(src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64) 
     intern_find(strbuf, offs, ncount, src, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0)
 }
 
+// ===========================================================================
+// Strategy A increment 6 — ARBITRARY expression-tree / if bodies in the N-fn
+// module path. WIRING (not new lowering): each fn's FN_DEF body dispatches to
+// the already-proven 4f tree emitter (emit_mic3_tree_body) or the 4j OP_IF body
+// emitter (emit_mic3_if_instr). The only module-specific concern is the FN_DEF
+// param list / body PARAM instrs, which must use the MODULE-WIDE union string
+// indices (not the fresh-table `i+1` the standalone single-fn drivers hardcode).
+// ADDITIVE: the canary mindc_compile / emit_fn_def mic@1 path is untouched, and
+// the existing a/b/c shape branches in emit_mic3_module_fndef stay byte-identical
+// (Bound by MIND-CONSTITUTION §I — fixed point byte-identical).
+// ===========================================================================
+
+// Resolve every param of `fn_node` to its MODULE string index, writing out[i] for
+// i in 0..n_params. Returns 1 on success, 0 if any param name is not interned
+// (fail-closed). Generalizes arith_param_str_idxs to an arbitrary param count.
+pub fn module_param_str_idxs(src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64, out: i64, i: i64) -> i64 {
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    if i >= n_params {
+        return 1;
+    }
+    let params_addr: i64 = ast_child1(fn_node);
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    let name_leaf: i64 = ast_child0(pnode);
+    let idx: i64 = intern_find(strbuf, offs, ncount, src, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0);
+    if idx < 0 {
+        return 0;
+    }
+    __mind_store_i64(out + i * 8, idx);
+    module_param_str_idxs(src, fn_node, strbuf, offs, ncount, out, i + 1)
+}
+
+// FN_DEF param-pair list using MODULE string indices: uleb(n) || (pstr[i], %i)*n.
+// Mirrors emit_mic3_chain_param_pairs but reads the resolved module string idx
+// from `pstr` instead of assuming the fresh-table `i+1`.
+pub fn emit_mic3_param_pairs_mod(s: EmitState, pstr: i64, n: i64) -> EmitState {
+    let s1: EmitState = emit_uleb128(s, n);
+    emit_mic3_param_pairs_mod_loop(s1, pstr, n, 0)
+}
+pub fn emit_mic3_param_pairs_mod_loop(s: EmitState, pstr: i64, n: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let s1: EmitState = emit_uleb128(s, __mind_load_i64(pstr + i * 8));
+    let s2: EmitState = emit_uleb128(s1, i);
+    emit_mic3_param_pairs_mod_loop(s2, pstr, n, i + 1)
+}
+
+// Body PARAM instrs using MODULE string indices: PARAM(%i, pstr[i], index=i).
+// Mirrors emit_mic3_chain_params but reads the resolved module string idx.
+pub fn emit_mic3_params_mod(s: EmitState, pstr: i64, n: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let s1: EmitState = emit_mic3_param(s, i, __mind_load_i64(pstr + i * 8), i);
+    emit_mic3_params_mod(s1, pstr, n, i + 1)
+}
+
+// Emit ONE fn's FN_DEF whose body is an arbitrary param/const/binop expression
+// tree, using module string indices. Returns the post-FN_DEF state; writes 1 to
+// ok_cell on success, 0 (fail-closed, returns seed `s`) on a non-tree body. This
+// is the FN_DEF-only counterpart of emit_mic3_tree_fn_module (no header/scaffold/
+// registries — the caller frames the module).
+pub fn emit_mic3_module_fndef_tree(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, expr: i64, nodes: i64, cursor: i64, vidbuf: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    __mind_store_i64(cursor, 0);
+    let root_slot: i64 = flatten_ast(expr, src, params_addr, n_params, nodes, cursor);
+    if root_slot < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    let root_vid: i64 = tree_resolve_vids(nodes, n_nodes, n_params, vidbuf, 0, n_params);
+    // body_len = n_params PARAM instrs + the non-param nodes (CONST leaves + BINOPs).
+    // n_nodes over-counts when a param appears more than once (each occurrence is a
+    // descriptor node but emits NO instr — emit_mic3_params_mod writes ONE PARAM per
+    // distinct param, tree_body skips every param leaf), so derive body_len from the
+    // non-param count, mirroring the Rust oracle's de-duplicated PARAM emission.
+    let nonparam: i64 = count_nonparam_nodes(expr, src, params_addr, n_params);
+    if nonparam < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let body_len: i64 = n_params + nonparam;
+    // FN_DEF: name || param-pairs(module idx) || ret Some %root || reap None ||
+    // body_len || body PARAMs(module idx) || tree body.
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, root_vid);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, body_len);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, 0);
+    __mind_store_i64(ok_cell, 1);
+    s8
+}
+
+// Emit ONE fn's FN_DEF whose body is a single `if cond { then } else { else }`
+// value (single-expression branches, empty branch-bindings + merges), using
+// module string indices. Returns the post-FN_DEF state; writes 1 to ok_cell on
+// success, 0 (fail-closed, returns seed `s`) on any wall. FN_DEF-only counterpart
+// of emit_mic3_if_fn_module — body is n PARAM instrs then one OP_IF (body_len =
+// n + 1), ret_vid = the if's dst.
+pub fn emit_mic3_module_fndef_if(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, cond_expr: i64, then_expr: i64, else_expr: i64, nodes: i64, cursor: i64, vidbuf: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    // Emit the OP_IF into a SCRATCH state first to learn dst (the ret_vid).
+    let dst_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(dst_cell, 0 - 1);
+    let probe: EmitState = emit_mic3_if_instr(es_new(), cond_expr, then_expr, else_expr, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell);
+    let dst: i64 = __mind_load_i64(dst_cell);
+    if dst < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, dst);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, n_params + 1);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    // Re-emit the OP_IF directly into the framed stream (deterministic — same input).
+    let s8: EmitState = emit_mic3_if_instr(s7, cond_expr, then_expr, else_expr, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell);
+    __mind_store_i64(ok_cell, 1);
+    s8
+}
+
 // Emit the FN_DEF (body) for one function, dispatching on its proven shape. Does
 // NOT emit the module-level scaffold (the caller appends emit_mic3_scaffold(k)).
 // Writes a 1 into ok_cell on a matched shape, 0 (fail-closed) otherwise; on a
@@ -3056,6 +3183,48 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
             let cva: i64 = __mind_load_i64(ascratch + 0);
             let cvb: i64 = __mind_load_i64(ascratch + 8);
             return emit_mic3_fndef_call(s, nidx, cidx, cva, cvb);
+        }
+    }
+    // Beyond the three narrow shapes: an arbitrary expression-tree body OR a single
+    // if-expression body, both wired to the already-proven per-fn emitters. Both
+    // need the module-wide param string indices and per-fn tree scratch.
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    let pstr: i64 = __mind_alloc(n_params * 8 + 8);
+    let pres: i64 = module_param_str_idxs(src, fn_node, strbuf, offs, ncount, pstr, 0);
+    if pres == 1 {
+        let body: i64 = ast_child2(fn_node);
+        let stmts_addr: i64 = ast_child0(body);
+        let stmts_len: i64 = ast_aux(body);
+        if stmts_len == 1 {
+            let expr: i64 = __mind_load_i64(stmts_addr + 0);
+            let nodes: i64 = __mind_alloc(256 * 32);
+            let cursor: i64 = __mind_alloc(8);
+            let vidbuf: i64 = __mind_alloc(256 * 8);
+            // (e) single if-expression value: if cond { then } else { else }, each
+            // branch a single param/const/binop expression (empty merges/bindings).
+            if ast_kind(expr) == ast_if() {
+                let else_blk: i64 = ast_child2(expr);
+                if else_blk != 0 {
+                    let cond_expr: i64 = ast_child0(expr);
+                    let then_expr: i64 = branch_single_expr(ast_child1(expr));
+                    let else_expr: i64 = branch_single_expr(else_blk);
+                    if then_expr >= 0 {
+                        if else_expr >= 0 {
+                            let sif: EmitState = emit_mic3_module_fndef_if(s, src, fn_node, nidx, pstr, n_params, cond_expr, then_expr, else_expr, nodes, cursor, vidbuf, ok_cell);
+                            if __mind_load_i64(ok_cell) == 1 {
+                                return sif;
+                            }
+                        }
+                    }
+                }
+            }
+            // (d) arbitrary param/const/binop expression tree.
+            if ast_kind(expr) != ast_if() {
+                let stree: EmitState = emit_mic3_module_fndef_tree(s, src, fn_node, nidx, pstr, n_params, expr, nodes, cursor, vidbuf, ok_cell);
+                if __mind_load_i64(ok_cell) == 1 {
+                    return stree;
+                }
+            }
         }
     }
     __mind_store_i64(ok_cell, 0);
