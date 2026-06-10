@@ -54,6 +54,58 @@ use std::sync::OnceLock;
 
 use crate::ast::{Literal, Module, Node, Pattern, TypeAnn};
 
+/// Closed set of bare math / tensor / autodiff builtin call names — the
+/// builtins the corpus invokes WITHOUT an `import` line or a `tensor.` prefix
+/// (e.g. `sqrt(x)`, `matmul(a, b)`, `backward(loss)`). These are first-class
+/// language builtins lowered directly by the codegen path, so a call to one is
+/// never a genuinely-undefined reference.
+///
+/// EMPIRICALLY SWEPT — NOT a guessed list. Derived by running
+/// `mindc check std/ examples/ --no-fmt` over the full corpus (`std/`,
+/// `examples/`, `examples/zoo/`, `examples/compliance/`) under BOTH feature
+/// configs (`std-surface` and `std-surface cross-module-imports`) with E2003
+/// detection live, then folding in every flagged name that is a legitimate
+/// builtin (and FIXING the genuine bug — `vec_free` → `__mind_vec_free`).
+///
+/// MUST stay sorted ascending — looked up with `binary_search`. A `debug_assert`
+/// in `resolve_fn_body` enforces the ordering so a careless insert fails tests.
+const BARE_BUILTINS: &[&str] = &[
+    "abs",
+    "argmax",
+    "backward",
+    "conv2d",
+    "cos",
+    "exp",
+    "fft",
+    "fft2d",
+    "floor",
+    "full",
+    "gather",
+    "ifft",
+    "linspace",
+    "log",
+    "log10",
+    "log2",
+    "log_softmax",
+    "matmul",
+    "max",
+    "maxpool2d",
+    "mean",
+    "ones",
+    "pow",
+    "rand_normal",
+    "rand_uniform",
+    "random",
+    "random_normal",
+    "relu",
+    "reshape",
+    "round",
+    "sigmoid",
+    "sin",
+    "sqrt",
+    "sum",
+];
+
 /// Undefined-variable diagnostic code (issue #23). A bare identifier that
 /// resolves to nothing in any scope frame or module-level symbol source.
 pub const UNKNOWN_IDENT_CODE: &str = "E2002";
@@ -126,7 +178,7 @@ fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
         // unchanged.
         #[allow(unused_mut)]
         let mut map = BTreeMap::new();
-        #[cfg(feature = "cross-module-imports")]
+        #[cfg(any(feature = "cross-module-imports", feature = "std-surface"))]
         for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
             let mut names = BTreeSet::new();
             collect_decl_names(&module, &mut names);
@@ -307,20 +359,48 @@ impl<'a> Resolver<'a> {
         self.scopes.contains(name) || self.syms.names.contains(name)
     }
 
-    fn call_resolvable(&self, _name: &str) -> bool {
-        // #23 call-resolution is DEFERRED to the dedicated scoped
-        // name-resolution pass (mind-ecosystem-audit/ISSUE-23). The prior
-        // heuristic (scope/syms membership + `__mind_` prefix + unresolved
-        // imports) does NOT model tensor/autodiff builtins (`backward`, `sum`,
-        // `matmul`, `reshape`, `relu`, `sigmoid`, ...), module-local functions,
-        // or the cross-module import table, so it false-flagged valid calls as
-        // E2003 (e.g. every call in examples/autodiff_demo.mind, and a
-        // module-local `reduce`). Until the full pass unions all four name
-        // sources with nested scope frames, every call is treated as
-        // resolvable: unknown `__mind_*` intrinsics are still caught by
-        // intrinsic dispatch, and undefined-IDENT detection (E2002, below) is
-        // unchanged — so genuinely-unknown bare identifiers are still reported.
-        true
+    fn call_resolvable(&self, name: &str) -> bool {
+        // #23 sound call resolution: a callee resolves iff ANY symbol source
+        // claims it. Unions (in cheapest-first order):
+        //   1. a lexical binding (a `let f = ...` closure / fn-ptr param) or a
+        //      module-level name (fn/const/struct/extern/cross-module-injected
+        //      + the std-surface export set) — the same set `ident_resolvable`
+        //      uses;
+        //   2. the `__mind_*` intrinsic namespace (raw runtime-support ABI) —
+        //      also subsumes the two non-`__mind_` STD_SURFACE_INTRINSICS
+        //      entries (`int-dot`, `det.igemm`) via (4), and those are internal
+        //      lowering tiers never written as a bare callee anyway;
+        //   3. `tensor.*` qualified builtins (`tensor.zeros`, `tensor.matmul`);
+        //   4. the std-surface intrinsic table proper (`std_surface_intrinsic_arity`);
+        //   5. the cross-module imported-fn table (`cm_lookup_fn`);
+        //   6. `gen_deref` — the RFC 0010 generational-ref deref builtin;
+        //   7. BARE_BUILTINS — the closed set of bare math / tensor / autodiff
+        //      builtin names the corpus calls without an import or a `tensor.`
+        //      qualifier. EMPIRICALLY SWEPT (see the BARE_BUILTINS doc-comment):
+        //      `mindc check std/ examples/` was run under both feature configs
+        //      and every legitimate builtin it flagged was folded in here.
+        // Anything matching none of these is a genuinely-undefined call → E2003.
+        if self.ident_resolvable(name) {
+            return true;
+        }
+        if name.starts_with("__mind_") || name.starts_with("tensor.") {
+            return true;
+        }
+        if name == "gen_deref" {
+            return true;
+        }
+        if BARE_BUILTINS.binary_search(&name).is_ok() {
+            return true;
+        }
+        #[cfg(feature = "std-surface")]
+        if super::std_surface_intrinsic_arity(name).is_some() {
+            return true;
+        }
+        #[cfg(feature = "cross-module-imports")]
+        if super::cm_lookup_fn(name).is_some() {
+            return true;
+        }
+        false
     }
 
     /// Register every binding introduced by a pattern (`match` arms). Bare
@@ -573,6 +653,10 @@ pub fn resolve_fn_body(
     module: &Module,
     injected: &BTreeSet<String>,
 ) -> Vec<Unresolved> {
+    debug_assert!(
+        BARE_BUILTINS.windows(2).all(|w| w[0] < w[1]),
+        "BARE_BUILTINS must be sorted ascending and unique for binary_search"
+    );
     let syms = collect_module_syms(module, injected);
     let mut scopes = Scopes::new();
     for p in param_names {
