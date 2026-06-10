@@ -2383,6 +2383,233 @@ pub fn selftest_mic3_module_const_arith(buf: i64, offs: i64, v0: i64, op_byte: i
     emit_mic3_const_arith_module(es_new(), buf, offs, v0, op_byte)
 }
 
+// ===========================================================================
+// Phase 5c — AST-DRIVEN full-module COLLECTION PASS (the hand-feeding removal)
+// ===========================================================================
+//
+// Phases 5a/5b proved the two multi-function module assemblers
+// (emit_mic3_const_fn2_module / emit_mic3_const_arith_module) reproduce the
+// 50-byte and 68-byte Rust --emit-mic3 oracles byte-for-byte — but with the
+// string table / offsets / const-values / op-byte HAND-FED by the test harness.
+// Phase 5c removes the hand-feeding: a pure-MIND COLLECTION PASS that, given
+// only the parsed multi-function AST, automatically (a) builds the deduped
+// FIRST-SEEN-traversal contiguous string table + offsets array, and (b)
+// extracts the const-body values / arith op-byte from the live AST node
+// descriptors, then drives the proven assemblers. The result: a whole small
+// `.mind` source lowers to a complete mic@3 module with ZERO hand-fed offsets,
+// byte-identical to the Rust oracle (Bound by MIND-CONSTITUTION §I).
+//
+// The string collection mirrors Rust collect_strings / collect_instr_strings
+// (src/ir/compact/v3/emit.rs ~492-586) EXACTLY: for each top-level FnDef in
+// sequence, intern fn name -> each param name -> recurse body strings (for the
+// const / param-arith body shapes here the body carries no strings — int
+// literals and binops intern nothing; param idents are resolved positionally,
+// not by name interning). StringTable::intern is idempotent (first-seen dedup),
+// mirrored by intern_span's span-equality scan over already-interned entries.
+//
+// ADDITIVE / canary-isolated: exported only via selftest_mic3_module_from_ast;
+// the canary mindc_compile / emit_fn_def mic@1 path is untouched, so the
+// fixed point stays byte-identical. The actual cutover (routing mindc_compile
+// through this pass) is a SEPARATE, deliberately-reviewed step.
+//
+// SCOPE: the two proven module shapes — (1) two zero-arg const-return fns, and
+// (2) a zero-arg const-return fn0 + a 2-param single-binop arith fn1. Any other
+// shape returns the seed state unchanged (fail-closed, no partial bytes).
+
+// Append the source span src[lo..hi) to the contiguous string buffer `strbuf`,
+// deduping against the strings already interned (first-seen, idempotent — mirrors
+// Rust StringTable::intern). `offs` is the offset array (offs[k] = start of
+// string k; offs[count] = current write cursor / end of last string). `ccell`
+// is a 1-i64 cell holding the live interned-string count. Returns the string
+// index (existing on a dedup hit, or the freshly allocated index). Single bytes
+// are written with __mind_store_i8 so the buffer is byte-contiguous, exactly as
+// emit_mic3_strtab/emit_mic3_lp_bytes expect.
+pub fn intern_span(strbuf: i64, offs: i64, ccell: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = intern_find(strbuf, offs, n, src, lo, hi, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    let end: i64 = intern_copy(strbuf, start, src, lo, hi);
+    __mind_store_i64(offs + (n + 1) * 8, end);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Scan the n already-interned strings for one whose bytes equal src[lo..hi);
+// return its index or -1. Mirrors StringTable dedup (span_bytes_equal compares
+// raw bytes — no hashing, so no collision risk).
+pub fn intern_find(strbuf: i64, offs: i64, n: i64, src: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if span_bytes_equal2(src, lo, hi, strbuf, elo, ehi) == 1 {
+        return i;
+    }
+    intern_find(strbuf, offs, n, src, lo, hi, i + 1)
+}
+
+// Copy src[lo..hi) into strbuf starting at `dst`; return the new write cursor.
+pub fn intern_copy(strbuf: i64, dst: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return dst;
+    }
+    __mind_store_i8(strbuf + dst, load_byte(src, lo));
+    intern_copy(strbuf, dst + 1, src, lo + 1, hi)
+}
+
+// Intern one fn_def's strings in Rust collect_strings order: fn name first,
+// then each param name. Body strings (int literals, binops, param-ident leaves)
+// intern nothing for the const / param-arith shapes, mirroring the oracle.
+pub fn collect_fn_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, fn_node: i64) -> i64 {
+    let name_leaf: i64 = ast_child0(fn_node);
+    let n0: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(name_leaf), ast_span_hi(name_leaf));
+    let params_addr: i64 = ast_child1(fn_node);
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    collect_param_strings(strbuf, offs, ccell, src, params_addr, n_params, 0)
+}
+
+pub fn collect_param_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, params_addr: i64, n_params: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    let name_leaf: i64 = ast_child0(pnode);
+    let idx: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(name_leaf), ast_span_hi(name_leaf));
+    collect_param_strings(strbuf, offs, ccell, src, params_addr, n_params, i + 1)
+}
+
+// Walk the top-level item list and collect every fn_def's strings in sequence —
+// the module-wide first-seen traversal order Rust collect_strings produces.
+pub fn build_module_strtab(strbuf: i64, offs: i64, ccell: i64, src: i64, items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let r: i64 = collect_fn_strings(strbuf, offs, ccell, src, item);
+        return build_module_strtab(strbuf, offs, ccell, src, items_addr, items_len, i + 1);
+    }
+    build_module_strtab(strbuf, offs, ccell, src, items_addr, items_len, i + 1)
+}
+
+// Extract the i64 value a zero-arg const-return fn returns: its body's trailing
+// statement must be an int literal. Returns the literal, or -1 if the body is
+// not a single int-literal return (fail-closed shape guard).
+pub fn const_fn_value(src: i64, fn_node: i64) -> i64 {
+    if ast_aux(fn_node) / 2 != 0 {
+        return 0 - 1;
+    }
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if stmts_len < 1 {
+        return 0 - 1;
+    }
+    let expr: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+    if ast_kind(expr) != ast_int_lit() {
+        return 0 - 1;
+    }
+    parse_int_span(src, ast_span_lo(expr), ast_span_hi(expr), 0)
+}
+
+// Extract the mic@3 op-byte of a 2-param single-binop arith fn (body = one
+// `pa OP pb` binop whose leaves are the two params, in order). Returns the
+// op-byte, or -1 if the shape does not match (fail-closed).
+pub fn arith_fn_opbyte(src: i64, fn_node: i64) -> i64 {
+    if ast_aux(fn_node) / 2 != 2 {
+        return 0 - 1;
+    }
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if stmts_len != 1 {
+        return 0 - 1;
+    }
+    let expr: i64 = __mind_load_i64(stmts_addr);
+    if ast_kind(expr) != ast_binop() {
+        return 0 - 1;
+    }
+    let l: i64 = ast_child0(expr);
+    let r: i64 = ast_child1(expr);
+    if ast_kind(l) != ast_ident() {
+        return 0 - 1;
+    }
+    if ast_kind(r) != ast_ident() {
+        return 0 - 1;
+    }
+    binop_to_byte(ast_aux(expr))
+}
+
+// AST-DRIVEN full-module driver: lex+parse `src`, build the deduped first-seen
+// string table into caller-supplied scratch (strbuf/offs/ccell), detect which of
+// the two proven module shapes the source is, extract its const values / op-byte
+// from the live AST, and emit the complete mic@3 module byte-exact vs the Rust
+// --emit-mic3 oracle — with ZERO hand-fed offsets. Fails closed (returns es_new()
+// unchanged, empty buf) on any other shape, so the harness can detect non-emission.
+//
+//   strbuf : contiguous byte buffer for the string table (>= total name bytes + 8)
+//   offs   : offset array ((n_strings + 1) i64s; offs[0] must be pre-zeroed)
+//   ccell  : 1-i64 interned-count cell (pre-zeroed)
+pub fn selftest_mic3_module_from_ast(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    // Build the string table from the live AST (the hand-feeding removal).
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    // Require exactly two top-level fn_defs.
+    let f0: i64 = nth_fn_def(items_addr, items_len, 0);
+    let f1: i64 = nth_fn_def(items_addr, items_len, 1);
+    let f2: i64 = nth_fn_def(items_addr, items_len, 2);
+    if f0 == 0 {
+        return es_new();
+    }
+    if f1 == 0 {
+        return es_new();
+    }
+    if f2 != 0 {
+        return es_new();
+    }
+    // Shape (1): two zero-arg const-return fns.
+    let v0: i64 = const_fn_value(src_addr, f0);
+    if v0 >= 0 {
+        let v1: i64 = const_fn_value(src_addr, f1);
+        if v1 >= 0 {
+            return emit_mic3_const_fn2_module(es_new(), strbuf, offs, v0, v1);
+        }
+        // Shape (2): const-return fn0 + 2-param arith fn1.
+        let ob: i64 = arith_fn_opbyte(src_addr, f1);
+        if ob >= 0 {
+            return emit_mic3_const_arith_module(es_new(), strbuf, offs, v0, ob);
+        }
+    }
+    es_new()
+}
+
+// Return the j-th top-level fn_def node (0-based), or 0 if fewer than j+1 exist.
+pub fn nth_fn_def(items_addr: i64, items_len: i64, j: i64) -> i64 {
+    nth_fn_def_loop(items_addr, items_len, j, 0, 0)
+}
+pub fn nth_fn_def_loop(items_addr: i64, items_len: i64, j: i64, seen: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        if seen == j {
+            return item;
+        }
+        return nth_fn_def_loop(items_addr, items_len, j, seen + 1, i + 1);
+    }
+    nth_fn_def_loop(items_addr, items_len, j, seen, i + 1)
+}
+
 // ===== mic@3 COMPLETE with-body module — the 2-param arithmetic function family (Phase 4c) =====
 //
 // Assembles the full mic@3 of `pub fn <name>(<pa>, <pb>) -> i64 { <pa> OP <pb> }`,
