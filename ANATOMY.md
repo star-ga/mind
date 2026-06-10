@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2757 | **Est. tokens:** ~6,857,872
-**Generated:** 2026-06-10 23:09 UTC
+**Files:** 2758 | **Est. tokens:** ~6,858,903
+**Generated:** 2026-06-10 23:25 UTC
 
 ## Token Budget Guide
 
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 12 | ~38,557 |
+| `examples/mindc_mind/` | 13 | ~39,588 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -731,6 +731,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `struct_fields_smoke.py` (~1076 tok, large)
+- `while_struct_smoke.py` (~1031 tok, large)
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration

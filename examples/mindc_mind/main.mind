@@ -6889,3 +6889,96 @@ pub fn selftest_method_callee_name_into(src_addr: i64, src_len: i64, outbuf: i64
     let j3: i64 = mcr_write_raw(outbuf, j2, src_addr, method_lo, method_hi);
     j3
 }
+
+// ===========================================================================
+// SECTION 10 — WHILE-LOOP STRUCTURE SELFTEST (loops part 1)
+//
+// ADDITIVE / canary-isolated. PARSER + STRUCTURE-READING only — NO mic@3
+// byte-output, NO EmitState, NO touch of the canary mindc_compile path. It
+// cannot perturb the fixed point and cannot hit the EmitState segfault.
+//
+// The bootstrap dispatch (parse_stmt / parse_primary) does NOT recognise the
+// `while` keyword — main.mind's own source uses no while loops — so a `while`
+// spelling lexes as a bare tk_ident. This selftest therefore locates the loop
+// by scanning the token stream for an ident-token spelling "while", then reads
+// its structure by REUSING the existing parse_expr (condition) and parse_block
+// (body) helpers. It never adds `while` to the shared statement dispatch, so the
+// canary parse path — and the byte-identical fixed point — is unchanged.
+//
+// Token shape: `while COND { BODY }` — the `while` ident at `wp`, COND is a full
+// expression (parse_expr stops at `{`, which has no infix precedence), then the
+// `{` opens the body block which parse_block consumes. Mirrors the Rust
+// front-end's parse_while (src/parser/mod.rs): consume "while", parse_expr cond,
+// expect '{', parse body stmts, expect '}'.
+// ===========================================================================
+
+// Returns 1 if the bytes buf[lo..hi) spell "while" (5 bytes:
+// w=119,h=104,i=105,l=108,e=101), else 0.
+pub fn is_ident_while(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 5 {
+        if load_byte(buf, lo) == 119 {
+            if load_byte(buf, lo + 1) == 104 {
+                if load_byte(buf, lo + 2) == 105 {
+                    if load_byte(buf, lo + 3) == 108 {
+                        if load_byte(buf, lo + 4) == 101 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Scan the token stream for the first ident-token spelling "while". Returns the
+// token index of that `while` token, or -1 if none. Tail-recursive.
+pub fn wl_find_while(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_ident_while(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            return pos;
+        }
+    }
+    wl_find_while(toks, buf, pos + 1)
+}
+
+// Selftest export: 1 if `src` contains a `while` loop, else 0.
+pub fn selftest_while_present(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let wp: i64 = wl_find_while(toks, src_addr, 0);
+    if wp < 0 {
+        return 0;
+    }
+    1
+}
+
+// Selftest export: the AST kind of the while CONDITION expression, or -1 if no
+// while loop. Reuses parse_expr starting just after the `while` token; for a
+// comparison condition (e.g. `i < n`) this is ast_binop().
+pub fn selftest_while_cond_kind(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let wp: i64 = wl_find_while(toks, src_addr, 0);
+    if wp < 0 {
+        return 0 - 1;
+    }
+    let cond: ParseResult = parse_expr(toks, wp + 1, src_addr);
+    ast_kind(pr_node(cond))
+}
+
+// Selftest export: the number of statements in the while BODY block, or -1 if no
+// while loop. parse_expr consumes the condition (stopping at `{`), then
+// parse_block consumes the body and ast_aux yields its statement count.
+pub fn selftest_while_body_stmt_count(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let wp: i64 = wl_find_while(toks, src_addr, 0);
+    if wp < 0 {
+        return 0 - 1;
+    }
+    let cond: ParseResult = parse_expr(toks, wp + 1, src_addr);
+    let after_cond: i64 = pr_pos(cond);
+    let body: ParseResult = parse_block(toks, after_cond, src_addr);
+    ast_aux(pr_node(body))
+}
