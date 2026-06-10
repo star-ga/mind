@@ -1328,6 +1328,59 @@ def main() -> int:
             if got == want else f"FAIL want {want.hex()}"
         print(f"  mod_body [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Strategy A inc. 7: FIELD-ACCESS (struct_defs registry + field-idx load) -
+    #   `struct S { a, b }  fn get_a(s){s.a}  fn get_b(s){s.b}` — the first pure-MIND
+    #   emit of (1) a NON-EMPTY std-surface struct_defs registry and (2) the
+    #   field-access lowering. A field READ resolves via struct_defs[type] to a
+    #   field INDEX, then lowers to `__mind_load_i64(base [+ idx*8])`:
+    #     idx 0 -> PARAM %0 ; CALL %1=load([%0])             (direct, no offset)
+    #     idx 1 -> PARAM %0 ; CONST %1=8 ; BINOP %2=add(%0,%1) ; CALL %3=load([%2])
+    #   The struct decl AND each fn each emit a module-level ConstI64/Output scaffold
+    #   (flat next_id = 3). strtab[7] first-seen: get_a, s, __mind_load_i64, get_b,
+    #   then the registry strings S, a, b. Cross-checked vs a hard-coded golden AND a
+    #   LIVE `--emit-mic3` regeneration (golden-staleness guard). Additive: the canary
+    #   mic@1 path (emit_expr_env ast_field -> const.i64 0) is untouched, so the fixed
+    #   point stays byte-identical.
+    field_src = (
+        "struct S { a: i64, b: i64 }\n"
+        "pub fn get_a(s: S) -> i64 { s.a }\n"
+        "pub fn get_b(s: S) -> i64 { s.b }\n"
+    )
+    field_golden_hex = (
+        "4d4943330207056765745f6101730f5f5f6d696e645f6c6f61645f693634056765"
+        "745f62015301610162030008010000130015000101000101000218000100160102"
+        "010001010013011503010100010300041800010001011004020000011603020102"
+        "010200130201040205060000"
+    )
+    field_strs = [b"get_a", b"s", b"__mind_load_i64", b"get_b", b"S", b"a", b"b"]
+    field_sbuf = b"".join(field_strs)
+    field_soff = [0]
+    for s in field_strs:
+        field_soff.append(field_soff[-1] + len(s))
+    field_sbuf_c = ctypes.create_string_buffer(field_sbuf, len(field_sbuf))
+    field_soff_c = (ctypes.c_int64 * len(field_soff))(*field_soff)
+    lib.selftest_mic3_module_field.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_field.argtypes = [ctypes.c_int64] * 4
+    # load_idx = string index of "__mind_load_i64" (=2); foff = field-b byte offset
+    # (idx 1 * 8 = 8) — threaded so the emit is a genuine lowering, not a blob.
+    es = lib.selftest_mic3_module_field(
+        ctypes.cast(field_sbuf_c, ctypes.c_void_p).value,
+        ctypes.cast(field_soff_c, ctypes.c_void_p).value,
+        2, 8)
+    got = read_string_handle(read_i64_at(es, 0))
+    golden = bytes.fromhex(field_golden_hex)
+    live = _live_oracle(field_src)
+    if live is not None and live != golden:
+        raise SystemExit(
+            f"FAIL: field golden stale vs live\n  golden {golden.hex()}"
+            f"\n  live   {live.hex()}")
+    want = live if live is not None else golden
+    failures += got != want
+    total += 1
+    ok = "OK (struct_defs + field load, byte-exact vs --emit-mic3, 111B)" \
+        if got == want else f"FAIL want {want.hex()}"
+    print(f"  field    [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
