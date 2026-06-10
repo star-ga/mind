@@ -2499,7 +2499,6 @@ pub fn selftest_mic3_chain_fn(buf: i64, offs: i64, n: i64, op_byte: i64) -> Emit
 pub fn emit_mic3_tree_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
     // Pass 1: resolve every slot's vid into vidbuf (post-order, binops from %n).
     let root: i64 = tree_resolve_vids(nodes, n_nodes, n, vidbuf, 0, n);
-    let nbinops: i64 = tree_count_binops(nodes, n_nodes, 0);
     let s1: EmitState = emit_mic3_header(s);
     let s2: EmitState = emit_mic3_strtab(s1, buf, offs, n + 1);
     let s3: EmitState = emit_uleb128(s2, 1);
@@ -2512,21 +2511,31 @@ pub fn emit_mic3_tree_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, nodes
     let s8: EmitState = emit_mic3_chain_param_pairs(s7, n);
     let s9: EmitState = emit_mic3_opt_vid(s8, 1, root);
     let s10: EmitState = es_push(s9, 0);
-    let s11: EmitState = emit_uleb128(s10, n + nbinops);
-    // Body: n PARAM instrs (reuse the chain param-body writer), then the binops in
-    // post-order, each with its resolved child vids.
+    // body_len = one instr per node: n PARAMs + every non-param node (binops and
+    // const leaves). Since params are slots 0..(some) and ALL n_nodes nodes emit
+    // exactly one body instr, body_len == n_nodes. For a param-only tree this is
+    // identical to the former `n + nbinops` (every leaf is a param) — byte-exact.
+    let s11: EmitState = emit_uleb128(s10, n_nodes);
+    // Body: n PARAM instrs (reuse the chain param-body writer), then every
+    // non-param node in post-order — binops with resolved child vids, const leaves
+    // as their own ConstI64 at the interleaved slot.
     let s12: EmitState = emit_mic3_chain_params(s11, n, 0);
-    let s13: EmitState = emit_mic3_tree_binops(s12, nodes, n_nodes, vidbuf, 0);
+    let s13: EmitState = emit_mic3_tree_body(s12, nodes, n_nodes, vidbuf, 0);
     // Module-level ConstI64(%0,0), Output(%0), 3 empty registries.
     let s14: EmitState = emit_mic3_const_i64(s13, 0, 0);
     let s15: EmitState = emit_mic3_output(s14, 0);
     emit_mic3_empty_registries(s15)
 }
 
-// Pass 1: walk slots 0..n_nodes in order; LEAF slot vid = param index; BINOP slot
-// vid = the running counter `nxt` (starts at n). Records each slot's vid in vidbuf.
-// Returns the LAST slot's vid (the tree root). `i` is the current slot, `nxt` the
-// next free binop vid.
+// Pass 1: walk slots 0..n_nodes in order and record each slot's vid in vidbuf.
+//   kind 0 (PARAM leaf): vid = param index (params own vids 0..n-1).
+//   kind 1 (BINOP) and kind 2 (CONST leaf): vid = the running counter `nxt`
+//     (starts at n). Const leaves and binops SHARE the post-order vid counter —
+//     the Rust --emit-mic3 oracle interleaves them (e.g. h(a){a*2+1} resolves
+//     PARAM %0, CONST %1, BINOP %2, CONST %3, BINOP %4). Since both non-param
+//     kinds fall through to the same `nxt++` branch, the post-order slot order
+//     IS the oracle's interleaved vid order. Returns the LAST slot's vid (root).
+// `i` is the current slot, `nxt` the next free non-param vid.
 pub fn tree_resolve_vids(nodes: i64, n_nodes: i64, n: i64, vidbuf: i64, i: i64, nxt: i64) -> i64 {
     if i >= n_nodes {
         return __mind_load_i64(vidbuf + (n_nodes - 1) * 8);
@@ -2541,37 +2550,36 @@ pub fn tree_resolve_vids(nodes: i64, n_nodes: i64, n: i64, vidbuf: i64, i: i64, 
     tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt + 1)
 }
 
-// Count BINOP nodes (kind == 1) across all slots.
-pub fn tree_count_binops(nodes: i64, n_nodes: i64, i: i64) -> i64 {
-    if i >= n_nodes {
-        return 0;
-    }
-    let kind: i64 = __mind_load_i64(nodes + i * 32);
-    if kind == 1 {
-        return 1 + tree_count_binops(nodes, n_nodes, i + 1);
-    }
-    tree_count_binops(nodes, n_nodes, i + 1)
-}
-
-// Pass 2: emit one BINOP per BINOP slot, in post-order array order. Each binop's
-// dst vid is vidbuf[slot]; lhs/rhs vids are vidbuf[left_slot]/vidbuf[right_slot].
-// LEAF slots emit nothing in the body (their PARAM was emitted in the param pass).
-pub fn emit_mic3_tree_binops(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, i: i64) -> EmitState {
+// Pass 2: emit one body instr per NON-PARAM slot, in post-order array order.
+//   kind 0 (PARAM leaf): emit nothing (its PARAM was written in the param pass).
+//   kind 1 (BINOP): dst = vidbuf[slot]; lhs/rhs = vidbuf[left]/vidbuf[right].
+//   kind 2 (CONST leaf): record[1] holds the RAW literal value; emit a ConstI64
+//     at vidbuf[slot] (emit_mic3_const_i64 zigzag-encodes it, so lit 2 -> the
+//     oracle's CONST 4). Const slots are interleaved with binops by post-order.
+// For a param-only tree no kind-2 slot exists, so this is byte-identical to the
+// former emit_mic3_tree_binops (Bound by MIND-CONSTITUTION §I — param-only path
+// unchanged).
+pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, i: i64) -> EmitState {
     if i >= n_nodes {
         return s;
     }
     let kind: i64 = __mind_load_i64(nodes + i * 32);
     if kind == 0 {
-        return emit_mic3_tree_binops(s, nodes, n_nodes, vidbuf, i + 1);
+        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, i + 1);
+    }
+    let dst: i64 = __mind_load_i64(vidbuf + i * 8);
+    if kind == 2 {
+        let lit: i64 = __mind_load_i64(nodes + i * 32 + 8);
+        let sc: EmitState = emit_mic3_const_i64(s, dst, lit);
+        return emit_mic3_tree_body(sc, nodes, n_nodes, vidbuf, i + 1);
     }
     let op_byte: i64 = __mind_load_i64(nodes + i * 32 + 8);
     let lslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
     let rslot: i64 = __mind_load_i64(nodes + i * 32 + 24);
-    let dst: i64 = __mind_load_i64(vidbuf + i * 8);
     let lvid: i64 = __mind_load_i64(vidbuf + lslot * 8);
     let rvid: i64 = __mind_load_i64(vidbuf + rslot * 8);
     let s1: EmitState = emit_mic3_binop(s, dst, op_byte, lvid, rvid);
-    emit_mic3_tree_binops(s1, nodes, n_nodes, vidbuf, i + 1)
+    emit_mic3_tree_body(s1, nodes, n_nodes, vidbuf, i + 1)
 }
 
 pub fn selftest_mic3_tree_fn(buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
@@ -2579,27 +2587,32 @@ pub fn selftest_mic3_tree_fn(buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i
 }
 
 // ===========================================================================
-// Phase 4g — AST-DRIVEN mic@3 expression emission (the bootstrap-parser bridge)
+// Phase 4g/4h — AST-DRIVEN mic@3 expression emission (the bootstrap-parser bridge)
 // ===========================================================================
 //
 // Phase 4f drove emit_mic3_tree_fn_module from a SYNTHETIC hand-built 4-i64 node
-// descriptor. Phase 4g closes the gap to self-compilation: it walks the LIVE
+// descriptor. Phase 4g closed the gap to self-compilation: it walks the LIVE
 // bootstrap-parser AST (real 56-byte ast_binop / ast_ident nodes — see
 // ast_new_binop at line ~621, ast_child0=lhs+24, ast_child1=rhs+32, ast_aux=op+48)
-// and FLATTENS it into the exact same 4-i64 post-order descriptor the proven 4f
-// emitter consumes. The byte-exact emitter (emit_mic3_tree_fn_module) is reused
-// UNTOUCHED — Phase 4g only adds the front-half flattener, so the param-only
-// path is byte-exact-by-construction with the Phase 4f path AND the Rust oracle.
+// and FLATTENS it into the same post-order descriptor the proven 4f emitter
+// consumes. The byte-exact emitter is reused, so the param-only path is byte-exact-
+// by-construction with the Phase 4f path AND the Rust oracle.
 //
-// SCOPE (param-only leaves). This pass handles ast_binop trees whose leaves are
-// all ast_ident PARAM references. ast_int_lit (const) leaves are the Phase 4h
-// WALL and are explicitly REJECTED here (flatten returns -1): the Rust --emit-mic3
-// oracle for a const leaf allocates the const's vid INTERLEAVED in the post-order
-// walk (e.g. h(a){a*2+1} emits PARAM %0, CONST %1, BINOP %2, CONST %3, BINOP %4 —
-// NOT params-first), and the stored const value is the tagged-int encoding
-// `literal*2` (lit 2 -> CONST 4, lit 3 -> CONST 6). The current 4f two-pass
-// emitter assumes params-first/all-leaves-are-params and cannot express interleaved
-// consts; threading that cleanly is Phase 4h.
+// Phase 4h adds CONST LEAVES (ast_int_lit). The descriptor gains a third record
+// kind (kind 2 = const, record[1] = raw literal). A const leaf gets its own
+// post-order slot whose vid is allocated INTERLEAVED with the binops (the oracle
+// does NOT batch consts with params): e.g. h(a){a*2+1} resolves
+//   PARAM %0, CONST %1, BINOP %2, CONST %3, BINOP %4
+// and the const value is zigzag-encoded at emit (lit 2 -> CONST 4, lit 3 -> CONST
+// 6) by the existing emit_mic3_const_i64. Pass 1 (tree_resolve_vids) already routes
+// every non-param node through the shared `nxt++` counter, and Pass 2
+// (emit_mic3_tree_body) emits a ConstI64 at a const slot — so param-only trees keep
+// the exact former bytes (no kind-2 slot fires) while const leaves now lower
+// byte-exact vs --emit-mic3 (Bound by MIND-CONSTITUTION §I).
+//
+// SCOPE: ast_binop trees whose leaves are ast_ident PARAM references and/or
+// ast_int_lit CONST literals. field access / calls / if / let are later-phase
+// walls (flatten_ast returns -1, the driver fails closed — no partial bytes).
 
 // AST binop op-tag (op_add()=1, op_sub()=2, op_mul()=3, op_div()=4 ..) -> the
 // mic@3 op_byte the oracle stores (add=0, sub=1, mul=2, div=3 ..). The mapping is
@@ -2635,6 +2648,21 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_int_lit() {
+        // Phase 4h: const leaf. The int-literal node carries no stored value, only
+        // its source span [lo,hi) — parse the decimal digits to the raw literal.
+        // Descriptor kind=2, record[1]=raw literal (emit_mic3_const_i64 zigzag-
+        // encodes it at emission, matching the oracle's CONST lit*2). A const leaf
+        // gets its own post-order slot (vid allocated interleaved with binops).
+        let lit: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 2);
+        __mind_store_i64(nodes + slot * 32 + 8, lit);
+        __mind_store_i64(nodes + slot * 32 + 16, 0);
+        __mind_store_i64(nodes + slot * 32 + 24, 0);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
     if k == ast_binop() {
         let lslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
         if lslot < 0 {
@@ -2652,7 +2680,7 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
-    // ast_int_lit (const leaf) and every other kind = Phase 4h wall — reject.
+    // Every other kind (field access, call, if, ...) = a later-phase wall — reject.
     0 - 1
 }
 
@@ -2665,6 +2693,9 @@ pub fn count_ast_nodes(node: i64) -> i64 {
         return count_ast_nodes(ast_child0(node));
     }
     if k == ast_ident() {
+        return 1;
+    }
+    if k == ast_int_lit() {
         return 1;
     }
     if k == ast_binop() {

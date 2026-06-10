@@ -460,21 +460,25 @@ def main() -> int:
     #     post-order; ret_vid = last node (root); body_len = n + #binops.
     #     mixed(a,b,c,d){a*b+c*d} == captured 77-byte oracle; f(a,b,c){(a+b)*c} == 60B. ---
     def ref_tree_fn(name, params, nodes):
+        # Node kinds: LEAF=(0, param_index, 0, 0); BINOP=(1, op_byte, left, right);
+        # CONST=(2, raw_literal, 0, 0) [Phase 4h]. PARAM leaves own vids 0..n-1; CONST
+        # leaves and BINOPs SHARE the post-order nxt++ counter (the oracle interleaves
+        # them, e.g. h(a){a*2+1} -> PARAM %0, CONST %1, BINOP %2, CONST %3, BINOP %4).
+        # body_len = total node count (every non-PARAM node emits one body instr, plus
+        # the n PARAM instrs). The const value is zigzag-encoded (lit 2 -> CONST 4).
         n = len(params)
         strs = [name] + params
-        # Pass 1: resolve slot vids (post-order; binops from n).
+        # Pass 1: resolve slot vids (post-order; CONST + BINOP from n via shared nxt).
         slot_vid = [0] * len(nodes)
         nxt = n
-        nbinops = 0
         for j, nd in enumerate(nodes):
-            if nd[0] == 0:                       # LEAF
+            if nd[0] == 0:                       # PARAM LEAF
                 slot_vid[j] = nd[1]              # param index == vid
-            else:                                # BINOP
+            else:                                # CONST (2) or BINOP (1)
                 slot_vid[j] = nxt
                 nxt += 1
-                nbinops += 1
         root_vid = slot_vid[-1]
-        body_len = n + nbinops
+        body_len = len(nodes)                    # n PARAMs + every non-param node
         out = b"MIC3\x02"
         out += ref_uleb128(len(strs)) + b"".join(ref_uleb128(len(x)) + x for x in strs)
         out += ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(3)   # next_id, exports, 3 instrs
@@ -491,6 +495,8 @@ def main() -> int:
                 _, ob, ls, rs = nd
                 out += bytes([4]) + ref_uleb128(slot_vid[j]) + bytes([ob]) \
                     + ref_uleb128(slot_vid[ls]) + ref_uleb128(slot_vid[rs])
+            elif nd[0] == 2:                     # CONST leaf, post-order (zigzag value)
+                out += bytes([1]) + ref_uleb128(slot_vid[j]) + ref_uleb128(ref_zigzag(nd[1]))
         out += bytes([1]) + ref_uleb128(0) + ref_uleb128(0)       # ConstI64(%0,0)
         out += bytes([0x13]) + ref_uleb128(0)                     # Output(%0)
         out += b"\x00\x00\x00"
@@ -554,7 +560,11 @@ def main() -> int:
     #   bodies. We therefore reuse ref_tree_fn as the golden (ref_ast_fn == it):
     #   each case carries its real source + the expected post-order node list, and
     #   we assert the .so's AST-flattened emit == ref_tree_fn(name, params, nodes).
-    #   Const-leaf bodies (ast_int_lit) are the Phase 4h WALL — not tested here.
+    #   Phase 4h: CONST LEAVES (ast_int_lit) now lower too — a const leaf is a
+    #   kind-2 node (value = raw literal); its vid is allocated INTERLEAVED with the
+    #   binops via the shared post-order counter and the value is zigzag-encoded at
+    #   emit (lit 2 -> CONST 4). Verified byte-for-byte vs the captured --emit-mic3
+    #   oracle (h(a){a*2+1}=50B, k(a,b){a*b+3}=55B, m(a){2*a+1}=50B const-LEFT).
     ref_ast_fn = ref_tree_fn  # AST path matches the synthetic-tree path byte-for-byte
     lib.selftest_mic3_ast_fn.restype = ctypes.c_void_p
     lib.selftest_mic3_ast_fn.argtypes = [ctypes.c_int64] * 7
@@ -582,6 +592,23 @@ def main() -> int:
          b"fn add(a: i64, b: i64, c: i64) -> i64 { a + b + c }",
          [(0, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 1),
           (0, 2, 0, 0), (1, 0, 2, 3)]),
+        # --- Phase 4h: CONST-LEAF bodies (ast_int_lit). CONST=(2, raw_literal, 0, 0).
+        #     Post-order interleaving confirmed byte-for-byte vs --emit-mic3 oracle.
+        # h(a){a*2+1}: +(*(a,2),1) — CONST RIGHT operand — 50B
+        (b"h", [b"a"],
+         b"fn h(a: i64) -> i64 { a * 2 + 1 }",
+         [(0, 0, 0, 0), (2, 2, 0, 0), (1, 2, 0, 1),
+          (2, 1, 0, 0), (1, 0, 2, 3)]),
+        # k(a,b){a*b+3}: +(*(a,b),3) — CONST as a leaf among two params — 55B
+        (b"k", [b"a", b"b"],
+         b"fn k(a: i64, b: i64) -> i64 { a * b + 3 }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 2, 0, 1),
+          (2, 3, 0, 0), (1, 0, 2, 3)]),
+        # m(a){2*a+1}: +(*(2,a),1) — CONST LEFT operand (mul lhs is the const) — 50B
+        (b"m", [b"a"],
+         b"fn m(a: i64) -> i64 { 2 * a + 1 }",
+         [(2, 2, 0, 0), (0, 0, 0, 0), (1, 2, 0, 1),
+          (2, 1, 0, 0), (1, 0, 2, 3)]),
     ]
     for name, params, src, nodes in ast_cases:
         n = len(params)
