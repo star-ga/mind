@@ -196,6 +196,59 @@ def main() -> int:
         if got == want else f"FAIL (want {want.hex()})"
     print(f"  strtab[{len(strings)}] = {got.hex()}  {tag}")
 
+    # --- exports section: uleb128(count) || count uleb128 indices ---
+    lib.selftest_mic3_exports.restype = ctypes.c_void_p
+    lib.selftest_mic3_exports.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    exp_idx = [0, 2, 4, 300]
+    idx_c = (ctypes.c_int64 * len(exp_idx))(*exp_idx)
+    es = lib.selftest_mic3_exports(ctypes.cast(idx_c, ctypes.c_void_p).value, len(exp_idx))
+    got = read_string_handle(read_i64_at(es, 0))
+    want = ref_uleb128(len(exp_idx)) + b"".join(ref_uleb128(e) for e in exp_idx)
+    failures += got != want
+    total += 1
+    print(f"  exports{exp_idx} = {got.hex():<12} {'OK' if got == want else 'FAIL want ' + want.hex()}")
+
+    # --- empty std-surface registries: three uleb128(0) ---
+    lib.selftest_mic3_empty_registries.restype = ctypes.c_void_p
+    lib.selftest_mic3_empty_registries.argtypes = []
+    es = lib.selftest_mic3_empty_registries()
+    got = read_string_handle(read_i64_at(es, 0))
+    want = b"\x00\x00\x00"
+    failures += got != want
+    total += 1
+    print(f"  empty_registries = {got.hex():<8} {'OK' if got == want else 'FAIL want ' + want.hex()}")
+
+    # --- COMPLETE bodiless module: header||strtab||next_id||exports||0-instrs||registries ---
+    lib.selftest_mic3_module_noinstr.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_noinstr.argtypes = [ctypes.c_int64] * 6
+    msyms = [b"f"]
+    mbuf = b"".join(msyms)
+    moffs = [0]
+    for sng in msyms:
+        moffs.append(moffs[-1] + len(sng))
+    mexports = [0]
+    next_id = 1
+    mbuf_c = ctypes.create_string_buffer(mbuf, len(mbuf))
+    moffs_c = (ctypes.c_int64 * len(moffs))(*moffs)
+    mexp_c = (ctypes.c_int64 * len(mexports))(*mexports)
+    es = lib.selftest_mic3_module_noinstr(
+        ctypes.cast(mbuf_c, ctypes.c_void_p).value,
+        ctypes.cast(moffs_c, ctypes.c_void_p).value,
+        len(msyms), next_id,
+        ctypes.cast(mexp_c, ctypes.c_void_p).value, len(mexports),
+    )
+    got = read_string_handle(read_i64_at(es, 0))
+    want = (b"MIC3\x02"
+            + ref_uleb128(len(msyms)) + b"".join(ref_uleb128(len(x)) + x for x in msyms)
+            + ref_uleb128(next_id)
+            + ref_uleb128(len(mexports)) + b"".join(ref_uleb128(e) for e in mexports)
+            + ref_uleb128(0)            # 0 instructions
+            + b"\x00\x00\x00")          # 3 empty registries
+    failures += got != want
+    total += 1
+    print(f"  module(noinstr, syms={msyms}) = {got.hex()}  "
+          f"{'OK (complete valid mic@3 module)' if got == want else 'FAIL want ' + want.hex()}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "

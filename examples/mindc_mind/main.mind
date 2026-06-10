@@ -2154,6 +2154,59 @@ pub fn selftest_mic3_strtab(buf_addr: i64, offs_addr: i64, count: i64) -> EmitSt
     emit_mic3_strtab(es_new(), buf_addr, offs_addr, count)
 }
 
+// ===== mic@3 exports + registries + module assembler (Phase 3d) =====
+//
+// Exports section: uleb128(count) || count uleb128 string-table indices. emit_mic3
+// sorts the export names then writes st.get(name) for each; here `idx` is a heap
+// array of (already-sorted) i64 indices (the sort belongs to collection).
+pub fn emit_mic3_exports(s: EmitState, idx: i64, count: i64) -> EmitState {
+    let s1: EmitState = emit_uleb128(s, count);
+    emit_mic3_exports_loop(s1, idx, count, 0)
+}
+
+pub fn emit_mic3_exports_loop(s: EmitState, idx: i64, count: i64, i: i64) -> EmitState {
+    if i >= count {
+        return s;
+    }
+    let v: i64 = __mind_load_i64(idx + i * 8);
+    let s1: EmitState = emit_uleb128(s, v);
+    emit_mic3_exports_loop(s1, idx, count, i + 1)
+}
+
+// The 3 std-surface registries (struct_defs, const_array_defs, repr_c_structs)
+// are each uleb128(count) || entries; for a program with none they are three
+// uleb128(0). emit_mic3 writes them last.
+pub fn emit_mic3_empty_registries(s: EmitState) -> EmitState {
+    let s1: EmitState = emit_uleb128(s, 0);
+    let s2: EmitState = emit_uleb128(s1, 0);
+    emit_uleb128(s2, 0)
+}
+
+// Assemble a COMPLETE mic@3 module for the no-instruction case, in the exact
+// section order emit_mic3 uses: header || strtab || uleb(next_id) || exports ||
+// uleb(0 instrs) || empty registries. The instruction stream (the Phase 4
+// real-body lowering) plugs in between exports and the registries.
+pub fn emit_mic3_module_noinstr(s: EmitState, buf: i64, offs: i64, str_count: i64, next_id: i64, idx: i64, exp_count: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, str_count);
+    let s3: EmitState = emit_uleb128(s2, next_id);
+    let s4: EmitState = emit_mic3_exports(s3, idx, exp_count);
+    let s5: EmitState = emit_uleb128(s4, 0);
+    emit_mic3_empty_registries(s5)
+}
+
+pub fn selftest_mic3_exports(idx_addr: i64, count: i64) -> EmitState {
+    emit_mic3_exports(es_new(), idx_addr, count)
+}
+
+pub fn selftest_mic3_empty_registries() -> EmitState {
+    emit_mic3_empty_registries(es_new())
+}
+
+pub fn selftest_mic3_module_noinstr(buf: i64, offs: i64, str_count: i64, next_id: i64, idx: i64, exp_count: i64) -> EmitState {
+    emit_mic3_module_noinstr(es_new(), buf, offs, str_count, next_id, idx, exp_count)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
