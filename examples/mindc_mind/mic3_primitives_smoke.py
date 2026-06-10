@@ -1383,6 +1383,52 @@ def main() -> int:
         if got == want else f"FAIL want {want.hex()}"
     print(f"  field_ast[{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- AST-DRIVEN field read at idx>0 (offset path: CONST(idx*8) + Add + load) -
+    #   The same single-struct/single-param driver, now resolving an accessed field
+    #   beyond idx 0. The Rust lowering adds CONST(idx*8) + BINOP Add(recv,off) +
+    #   CALL load([sum]); the string table grows to include every struct field in
+    #   declaration order (accessed field at index 4+fidx). Each case is byte-exact
+    #   vs the live --emit-mic3 oracle with a hard-coded golden staleness guard.
+    for fa2_src, fa2_golden_hex, fa2_note in (
+        (
+            "struct S { a: i64, b: i64 }\npub fn get_b(s: S) -> i64 { s.b }\n",
+            "4d4943330206056765745f6201730f5f5f6d696e645f6c6f61645f693634"
+            "015301610162020005010000130015000101000103000418000100010110"
+            "04020000011603020102010100130101030204050000",
+            "idx1 (CONST 8), 82B",
+        ),
+        (
+            "struct P { x: i64, y: i64, z: i64 }\npub fn get_z(p: P) -> i64 { p.z }\n",
+            "4d4943330207056765745f7a01700f5f5f6d696e645f6c6f61645f693634"
+            "015001780179017a02000501000013001500010100010300041800010001"
+            "01200402000001160302010201010013010103030405060000",
+            "idx2 (CONST 16), 85B",
+        ),
+    ):
+        fa2_srcb = fa2_src.encode()
+        fa2_srcc = ctypes.create_string_buffer(fa2_srcb, len(fa2_srcb))
+        fa2_strbuf = ctypes.create_string_buffer(256)
+        fa2_offs = (ctypes.c_int64 * 32)()
+        fa2_ccell = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_module_field_from_ast(
+            ctypes.cast(fa2_srcc, ctypes.c_void_p).value, len(fa2_srcb),
+            ctypes.cast(fa2_strbuf, ctypes.c_void_p).value,
+            ctypes.cast(fa2_offs, ctypes.c_void_p).value,
+            ctypes.cast(fa2_ccell, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(fa2_golden_hex)
+        live = _live_oracle(fa2_src)
+        if live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: field-from-ast idx>0 golden stale vs live\n"
+                f"  golden {golden.hex()}\n  live   {live.hex()}")
+        want = live if live is not None else golden
+        failures += got != want
+        total += 1
+        ok = f"OK (AST-driven field load {fa2_note}, byte-exact vs --emit-mic3)" \
+            if got == want else f"FAIL want {want.hex()}"
+        print(f"  field_ast[{len(got)}B] = {got.hex()}  {ok}")
+
     field_src = (
         "struct S { a: i64, b: i64 }\n"
         "pub fn get_a(s: S) -> i64 { s.a }\n"
