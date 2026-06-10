@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2746 | **Est. tokens:** ~6,838,509
-**Generated:** 2026-06-09 02:47 UTC
+**Files:** 2751 | **Est. tokens:** ~6,845,681
+**Generated:** 2026-06-10 01:52 UTC
 
 ## Token Budget Guide
 
@@ -38,9 +38,9 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 26 | ~37,392 |
+| `docs/` | 26 | ~37,437 |
 | `docs/backends/` | 1 | ~1,482 |
-| `docs/benchmarks/` | 2 | ~7,025 |
+| `docs/benchmarks/` | 3 | ~9,199 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~6,976 |
 | `docs/research/` | 1 | ~117 |
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 7 | ~32,141 |
+| `examples/mindc_mind/` | 7 | ~32,864 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -63,6 +63,8 @@
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
 | `scripts/` | 6 | ~8,732 |
+| `scripts/mind-vs-rust/` | 3 | ~933 |
+| `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
 | `sdk/ts/mic-map/dist/` | 36 | ~29,044 |
 | `sdk/ts/mic-map/node_modules/` | 1 | ~13,764 |
@@ -383,7 +385,7 @@
 | `src/ir/` | 4 | ~23,553 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~43,264 |
+| `src/ir/compact/v3/` | 4 | ~44,189 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 3 | ~5,415 |
@@ -602,10 +604,11 @@
 ### `docs/benchmarks/`
 
 - `mojo_comparison.md` (~2420 tok, huge) — MIND vs Mojo: Compilation Performance Comparison
+- `RESULTS-mind-vs-rust-2026-06-09.md` (~2174 tok, huge) — MIND vs Rust — integer-GEMM, apples-to-apples (2026-06-09)
 ### `docs/`
 
 - `byte-store-migration.md` (~3238 tok, huge) — Byte-Store Migration — closing `#306`
-- `cli.md` (~582 tok, large) — MIND CLI Reference
+- `cli.md` (~627 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
 - `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
@@ -724,7 +727,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `main.mind` (~21539 tok, huge) — examples/mindc_mind/main.mind — Phase 6.5 Stage 5 APEX driver.
-- `self_host_body_smoke.py` (~2272 tok, huge)
+- `self_host_body_smoke.py` (~2995 tok, huge)
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
@@ -811,6 +814,16 @@
 - `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
 - `install.sh` (~1054 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
+### `scripts/mind-vs-rust/`
+
+- `Cargo.toml` (~271 tok, medium) — [package]
+- `.gitignore` (~3 tok, tiny) — */target-*/
+- `run.sh` (~659 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
+### `scripts/mind-vs-rust/src/`
+
+- `main.rs` (~2372 tok, huge) — Copyright 2026 STARGA Inc.
+### `scripts/`
+
 - `preflight.sh` (~775 tok, large) — preflight.sh — local CI-parity gate. Run before pushing to avoid red CI.
 ### `sdk/ts/mic-map/dist/`
 
@@ -3697,8 +3710,8 @@
 
 - `emit.rs` (~10545 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~12742 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~9121 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13622 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~9166 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
