@@ -293,7 +293,7 @@ lanes pending RFC 0021 step 5 demotion to `mind-model@2`. See
 
 ## Testing
 
-The MIND compiler includes a comprehensive test suite with 1,264+ tests across 156 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
+The MIND compiler includes a comprehensive test suite with ~1,390 tests across 174 test files covering parsing, type checking, IR generation, MLIR lowering, and execution.
 
 ### Running Tests
 
@@ -336,23 +336,23 @@ The [`/docs/benchmarks.md`](docs/benchmarks.md) report covers baseline compiler/
 
 ### Compilation Speed
 
-#### Verified Benchmarks (frozen baseline, locked since v0.2.3)
+#### Verified Benchmarks (frozen bench-gate baseline, carried through v0.7.1)
 
-*Locked as the bench-gate baseline since v0.2.5 (April 2026). Phase
-10.5 and 10.6 parser additions ship within the bench-gate threshold
-documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](./.bench-baseline-2026-05-17-phase10-6.txt).*
+*The frontend bench-gate baseline was locked in April 2026 and carries
+forward unchanged to v0.7.1; later parser additions ship within the
+bench-gate threshold documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](./.bench-baseline-2026-05-17-phase10-6.txt).*
 
 
 | vs Framework | Compilation Time | MIND Ratio |
 |--------------|-----------------|------------|
-| **MIND v0.2.3** | **1.8-15.5 µs** | **1× (baseline)** |
+| **MIND v0.7.1** | **1.8-15.5 µs** | **1× (baseline)** |
 | PyTorch 2.10 GPU torch.compile | 99-878 ms | **35,000-176,000× faster** |
 | JAX 0.9 cold-start XLA (jax.jit) | 37.5-360.5 ms | **21,200-95,100× faster** |
 | Mojo 0.26.1 (mojo build) | 810-829 ms | **135,000-458,000× faster** |
 
-**Scope note:** MIND measures **frontend only** (parse + typecheck + IR). Other frameworks measure full compilation pipelines (code generation, optimization, linking). Ratios reflect this scope difference.
+**Scope note:** these ratios compare MIND's **compile-time frontend** (parse + typecheck + IR) against the other frameworks' GPU runtime / cold-start compilation — i.e. different operations, not a runtime-speed comparison. The defensible head-to-head speed comparison is MIND's frontend vs. the prior Rust-combinator frontend (the ~15× speedup below).
 
-| Benchmark | MIND v0.2.3 | Compilations/sec |
+| Benchmark | MIND v0.7.1 | Compilations/sec |
 |-----------|-------------|------------------|
 | scalar_math | **1.77 µs** | 565K cps |
 | small_matmul | **2.95 µs** | 339K cps |

@@ -1,13 +1,13 @@
 # MIND: The Native Language for Intelligent Systems
 
-**CPUTER Inc. — California, USA**  \
+**STARGA Inc. — California, USA**  \
 Contact: [info@star.ga](mailto:info@star.ga) | +1 (844) 394-1538 | Web: [mindlang.dev](https://mindlang.dev)
 
 ## Executive Summary
 
 MIND is a next-generation programming language and compiler stack designed to build intelligent systems natively. It offers a unified, end-to-end toolchain for machine learning and AI development, integrating tensor algebra, static shape inference, automatic differentiation, and device semantics directly into its type system. By compiling through MLIR and LLVM, MIND enables developers to write high-level AI models with compile-time guarantees that eliminate runtime shape and device mismatches, delivering memory-safe, deterministic executables with reproducible builds. The language and compiler front-end are implemented in Rust, ensuring performance and safety.
 
-**Market Need.** AI software development today is fragmented across languages, frameworks, and deployment environments. Teams often prototype in Python, reimplement in C++/CUDA, and manage distinct runtimes for cloud versus edge. This fragmentation slows delivery, increases operational risk, and contributes to the industry reality that over 85% of AI/ML projects never reach production. Organizations require a cohesive platform that unifies modeling, compilation, and deployment.
+**Market Need.** AI software development today is fragmented across languages, frameworks, and deployment environments. Teams often prototype in Python, reimplement in C++/CUDA, and manage distinct runtimes for cloud versus edge. This fragmentation slows delivery and increases operational risk. Organizations require a cohesive platform that unifies modeling, compilation, and deployment.
 
 **Solution.** MIND provides a unified language and compiler that boosts developer productivity by eliminating glue code, reducing errors, and automating low-level optimization. Enterprises benefit from deterministic performance, reproducible builds, and easier auditability. With an open-core (Apache-licensed) foundation and enterprise extensions, MIND encourages broad adoption while offering commercial-grade support and capabilities.
 
@@ -15,11 +15,11 @@ MIND is a next-generation programming language and compiler stack designed to bu
 
 ### Fragmentation of the AI Stack
 
-The modern AI workflow typically involves data scientists experimenting in Python, systems engineers rewriting critical components in C++/CUDA, and DevOps teams integrating models with disparate runtimes. Each framework introduces its own intermediate representation and hardware support, making optimizations non-transferable and integration error-prone. Dynamic typing hides errors until runtime, resulting in costly debugging and unreliable deployments. Fragmentation drives up operational costs, lengthens iteration cycles, and contributes to statistics such as the oft-cited 87% failure rate of AI projects reaching production.
+The modern AI workflow typically involves data scientists experimenting in Python, systems engineers rewriting critical components in C++/CUDA, and DevOps teams integrating models with disparate runtimes. Each framework introduces its own intermediate representation and hardware support, making optimizations non-transferable and integration error-prone. Dynamic typing hides errors until runtime, resulting in costly debugging and unreliable deployments. Fragmentation drives up operational costs and lengthens iteration cycles.
 
 ### Growing Demand for Integrated Tooling
 
-The global AI software market is projected to reach $174 billion in 2025 and grow to $467 billion by 2030. Enterprises across industries are investing in MLOps solutions to streamline AI lifecycles. Key trends amplifying the need for MIND include:
+Enterprises across industries are investing in MLOps solutions to streamline AI lifecycles. Key trends amplifying the need for MIND include:
 
 - **Specialized hardware proliferation.** MLIR-based compilation delivers performance portability across GPUs, TPUs, FPGAs, NPUs, and emerging edge devices.
 - **Rising model complexity.** Built-in automatic differentiation and static shape checking simplify development of large-scale, multi-modal models.
@@ -94,7 +94,7 @@ Revenue streams include licensing (per seat/device), enterprise support contract
 
 ## Financial Outlook
 
-Early revenue (years 1–2) is expected from pilot enterprise deals and support (~$0.5–3M). Mid-term growth (years 3–4) adds cloud services, hardware licensing, and expanding enterprise contracts, targeting $15M ARR with modest market penetration. Long-term potential exceeds $100M ARR with broader adoption across AI development teams.
+Early revenue is expected from pilot enterprise deals and support. Mid-term growth adds cloud services, hardware licensing, and expanding enterprise contracts. Long-term potential broadens with adoption across AI development teams.
 
 Key financial drivers:
 
@@ -130,7 +130,7 @@ Key financial drivers:
 
 ## Team
 
-CPUTER Inc. brings together compiler veterans, AI practitioners, and business leaders with proven experience delivering systems at scale. The team blends:
+STARGA Inc. brings together compiler veterans, AI practitioners, and business leaders with proven experience delivering systems at scale. The team blends:
 
 - **Compiler and systems experts** with backgrounds in LLVM, MLIR, and large-scale runtimes.
 - **AI domain specialists** who have led ML platform teams and understand practitioner pain points.
@@ -142,7 +142,7 @@ The broader vision encompasses Naestro, an AI operating system that leverages MI
 
 ## Contact
 
-**CPUTER Inc.**  \
+**STARGA Inc.**  \
 California, USA  \
 Phone: +1 (844) 394-1538  \
 Email: [info@star.ga](mailto:info@star.ga)  \
