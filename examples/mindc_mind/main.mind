@@ -2064,6 +2064,42 @@ pub fn selftest_mic3_lp_bytes(src_addr: i64, src_len: i64) -> EmitState {
     emit_mic3_lp_bytes(es_new(), src_addr, 0, src_len)
 }
 
+// ===== mic@3 instruction emitters (self-host mic@3 convergence, Phase 3) =====
+//
+// The per-opcode encoding of src/ir/compact/v3/emit.rs emit_instr. Operand
+// encodings (emit.rs §Low-level helpers): write_vid(id) = uleb128(id);
+// write_i64(v) = uleb128(zigzag(v)) — i.e. emit_sleb_zigzag above. These two
+// opcodes are the foundation the other 42 reuse (every dst is a vid, every
+// integer operand is a write_i64); the full set + the IRModule that feeds it is
+// Phase 3b/4. Tested as mechanisms (operands -> bytes) — keystone-isolated.
+
+// Instr::ConstI64(dst, v): OP_CONST_I64(0x01) || vid(dst) || i64(v)
+pub fn emit_mic3_const_i64(s: EmitState, dst: i64, v: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 1);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    emit_sleb_zigzag(s2, v)
+}
+
+// Instr::BinOp { dst, op, lhs, rhs }:
+//   OP_BINOP(0x04) || vid(dst) || binop_to_byte(op) || vid(lhs) || vid(rhs)
+// `op_byte` is binop_to_byte(op) — supplied by the (future) lowering; here it is
+// a parameter so the framing is tested independently of the op-code mapping.
+pub fn emit_mic3_binop(s: EmitState, dst: i64, op_byte: i64, lhs: i64, rhs: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 4);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    let s3: EmitState = es_push(s2, op_byte);
+    let s4: EmitState = emit_uleb128(s3, lhs);
+    emit_uleb128(s4, rhs)
+}
+
+pub fn selftest_mic3_const_i64(dst: i64, v: i64) -> EmitState {
+    emit_mic3_const_i64(es_new(), dst, v)
+}
+
+pub fn selftest_mic3_binop(dst: i64, op_byte: i64, lhs: i64, rhs: i64) -> EmitState {
+    emit_mic3_binop(es_new(), dst, op_byte, lhs, rhs)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
