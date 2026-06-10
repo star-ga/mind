@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2751 | **Est. tokens:** ~6,844,711
-**Generated:** 2026-06-10 00:19 UTC
+**Files:** 2751 | **Est. tokens:** ~6,845,681
+**Generated:** 2026-06-10 01:38 UTC
 
 ## Token Budget Guide
 
@@ -38,7 +38,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 26 | ~37,392 |
+| `docs/` | 26 | ~37,437 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,199 |
 | `docs/design/` | 3 | ~8,181 |
@@ -385,7 +385,7 @@
 | `src/ir/` | 4 | ~23,553 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~43,264 |
+| `src/ir/compact/v3/` | 4 | ~44,189 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 3 | ~5,415 |
@@ -608,7 +608,7 @@
 ### `docs/`
 
 - `byte-store-migration.md` (~3238 tok, huge) — Byte-Store Migration — closing `#306`
-- `cli.md` (~582 tok, large) — MIND CLI Reference
+- `cli.md` (~627 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
 - `execution-plan-performance-mode.md` (~8045 tok, huge) — Design: PerformanceMode + ExecutionPlan + ExecutionProvider
@@ -3710,8 +3710,8 @@
 
 - `emit.rs` (~10545 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~12742 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~9121 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~13622 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~9166 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
