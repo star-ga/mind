@@ -2894,6 +2894,228 @@ pub fn nth_fn_def_loop(items_addr: i64, items_len: i64, j: i64, seen: i64, i: i6
     nth_fn_def_loop(items_addr, items_len, j, seen, i + 1)
 }
 
+// Count the top-level fn_defs in the item list.
+pub fn count_fn_defs(items_addr: i64, items_len: i64, i: i64, acc: i64) -> i64 {
+    if i >= items_len {
+        return acc;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        return count_fn_defs(items_addr, items_len, i + 1, acc + 1);
+    }
+    count_fn_defs(items_addr, items_len, i + 1, acc)
+}
+
+// ===========================================================================
+// Phase 5d — N-FUNCTION mic@3 module assembly (Strategy A increment 5)
+// ===========================================================================
+//
+// Generalizes the fixed 2-function module driver to an ARBITRARY function count
+// (3, 4, .. N). Verified vs the Rust --emit-mic3 oracle, the module is a flat
+// sequence (decoded from 3-fn / 4-fn / mixed oracles):
+//   header || strtab(N+ in first-seen order) || next_id(=N) || exports(0) ||
+//   uleb(instr_count = 3*N) ||
+//   [ per fn k (0-based) : FN_DEF{body} || ConstI64(%k, 0) || Output(%k) ]*N ||
+//   3 empty registries.
+// The four module-wide invariants the 2-fn path already verifies are preserved
+// for all N: (1) ONE union string table in first-seen TRAVERSAL order across all
+// N fns (build_module_strtab is already N-general); (2) ONE flat next_id = N
+// threaded across the N scaffold ConstI64/Output pairs (scaffold vid == the fn
+// index k); (3) ONE flat top-level instr count = 3*N; (4) registries trailing.
+// Each FN_DEF body keeps its OWN vid space (params %0.., binop/call vids follow),
+// exactly as the per-shape 2-fn emitters do — only the module-level scaffold
+// threads the flat counter. ADDITIVE: exported via selftest_mic3_module_nfn only,
+// the canary mindc_compile / emit_fn_def mic@1 path is untouched (Bound by
+// MIND-CONSTITUTION §I — fixed point byte-identical).
+//
+// SCOPE: each fn must be one of the four proven body shapes — (a) zero-arg
+// const-return, (b) 2-param single-binop arith (direct `pa OP pb` or the
+// byte-identical `let t = pa OP pb; t`), (c) zero-arg CALL with two int-literal
+// args. Any fn outside these shapes makes the whole module fail closed (es_new(),
+// empty buf) so the harness detects non-emission — no partial bytes.
+
+// Emit the FN_DEF for a zero-arg const-return fn: name_idx, ret %0, body =
+// [ConstI64(%0, const_val)].
+pub fn emit_mic3_fndef_const(s: EmitState, name_idx: i64, const_val: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_fn_def_header(s, name_idx, 1, 0, 1);
+    emit_mic3_const_i64(s1, 0, const_val)
+}
+
+// Emit the FN_DEF for a 2-param single-binop arith fn: name_idx, params str
+// (p0_str,%0)/(p1_str,%1), ret %2, body = [PARAM %0, PARAM %1, BINOP %2=%0 op %1].
+pub fn emit_mic3_fndef_arith(s: EmitState, name_idx: i64, p0_str: i64, p1_str: i64, op_byte: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, name_idx);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, p0_str);
+    let s5: EmitState = emit_uleb128(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, p1_str);
+    let s7: EmitState = emit_uleb128(s6, 1);
+    let s8: EmitState = emit_mic3_opt_vid(s7, 1, 2);
+    let s9: EmitState = es_push(s8, 0);
+    let s10: EmitState = emit_uleb128(s9, 3);
+    let s11: EmitState = emit_mic3_param(s10, 0, p0_str, 0);
+    let s12: EmitState = emit_mic3_param(s11, 1, p1_str, 1);
+    emit_mic3_binop(s12, 2, op_byte, 0, 1)
+}
+
+// Emit the FN_DEF for a zero-arg fn whose body is a CALL to `callee_idx` with two
+// int-literal args: name_idx, ret %2, body = [ConstI64 %0=v0, ConstI64 %1=v1,
+// CALL %2 = callee(%0,%1)].
+pub fn emit_mic3_fndef_call(s: EmitState, name_idx: i64, callee_idx: i64, v0: i64, v1: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, name_idx);
+    let s3: EmitState = emit_uleb128(s2, 0);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, 2);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, 3);
+    let s7: EmitState = emit_mic3_const_i64(s6, 0, v0);
+    let s8: EmitState = emit_mic3_const_i64(s7, 1, v1);
+    emit_mic3_call2(s8, 2, callee_idx, 0, 1)
+}
+
+// Module-level scaffold for fn k: ConstI64(%k, 0) || Output(%k). The flat next_id
+// counter is realized by passing the fn's own index k.
+pub fn emit_mic3_scaffold(s: EmitState, k: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_const_i64(s, k, 0);
+    emit_mic3_output(s1, k)
+}
+
+// Resolve a 2-param arith fn's two param-name string indices into out[0]/out[1]
+// (the FN_DEF param list and body PARAM instrs reference them). Returns 1 on a
+// 2-param fn, 0 otherwise (fail-closed).
+pub fn arith_param_str_idxs(src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64, out: i64) -> i64 {
+    if ast_aux(fn_node) / 2 != 2 {
+        return 0;
+    }
+    let params_addr: i64 = ast_child1(fn_node);
+    let p0: i64 = __mind_load_i64(params_addr + 0);
+    let p1: i64 = __mind_load_i64(params_addr + 8);
+    let n0_leaf: i64 = ast_child0(p0);
+    let n1_leaf: i64 = ast_child0(p1);
+    let i0: i64 = intern_find(strbuf, offs, ncount, src, ast_span_lo(n0_leaf), ast_span_hi(n0_leaf), 0);
+    let i1: i64 = intern_find(strbuf, offs, ncount, src, ast_span_lo(n1_leaf), ast_span_hi(n1_leaf), 0);
+    if i0 < 0 {
+        return 0;
+    }
+    if i1 < 0 {
+        return 0;
+    }
+    __mind_store_i64(out + 0, i0);
+    __mind_store_i64(out + 8, i1);
+    1
+}
+
+// Resolve a fn's own name string index in the already-built string table.
+pub fn fn_name_idx(src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64) -> i64 {
+    let name_leaf: i64 = ast_child0(fn_node);
+    intern_find(strbuf, offs, ncount, src, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0)
+}
+
+// Emit the FN_DEF (body) for one function, dispatching on its proven shape. Does
+// NOT emit the module-level scaffold (the caller appends emit_mic3_scaffold(k)).
+// Writes a 1 into ok_cell on a matched shape, 0 (fail-closed) otherwise; on a
+// miss the returned state is unspecified (the caller discards the whole module).
+pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
+    let nidx: i64 = fn_name_idx(src, fn_node, strbuf, offs, ncount);
+    if nidx < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    // (a) zero-arg const-return.
+    let cv: i64 = const_fn_value(src, fn_node);
+    if cv >= 0 {
+        __mind_store_i64(ok_cell, 1);
+        return emit_mic3_fndef_const(s, nidx, cv);
+    }
+    // (b) 2-param arith (direct `pa OP pb`, or `let t = pa OP pb; t`).
+    let ob_direct: i64 = arith_fn_opbyte(src, fn_node);
+    let ob_let: i64 = let_arith_fn_opbyte(src, fn_node);
+    let ob: i64 = if ob_direct >= 0 {
+        ob_direct
+    } else {
+        ob_let
+    };
+    if ob >= 0 {
+        let pscratch: i64 = __mind_alloc(16);
+        let pok: i64 = arith_param_str_idxs(src, fn_node, strbuf, offs, ncount, pscratch);
+        if pok == 1 {
+            __mind_store_i64(ok_cell, 1);
+            let p0i: i64 = __mind_load_i64(pscratch + 0);
+            let p1i: i64 = __mind_load_i64(pscratch + 8);
+            return emit_mic3_fndef_arith(s, nidx, p0i, p1i, ob);
+        }
+    }
+    // (c) zero-arg CALL with two int-literal args.
+    let ascratch: i64 = __mind_alloc(16);
+    let aok: i64 = call_fn_args2(src, fn_node, ascratch);
+    if aok == 1 {
+        let cidx: i64 = call_fn_callee_idx(src, fn_node, strbuf, offs, ncount);
+        if cidx >= 0 {
+            __mind_store_i64(ok_cell, 1);
+            let cva: i64 = __mind_load_i64(ascratch + 0);
+            let cvb: i64 = __mind_load_i64(ascratch + 8);
+            return emit_mic3_fndef_call(s, nidx, cidx, cva, cvb);
+        }
+    }
+    __mind_store_i64(ok_cell, 0);
+    s
+}
+
+// Loop over the N top-level fn_defs (k = 0..n_fns), emitting each FN_DEF then its
+// scaffold ConstI64(%k,0)/Output(%k). If any fn's shape is unmatched, ok_cell is
+// left 0 and the caller fails the whole module closed. `k`/`item_i` advance in
+// lockstep: k counts fn_defs seen, item_i walks the raw item array.
+pub fn emit_mic3_module_fns_loop(s: EmitState, src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64, k: i64, item_i: i64) -> EmitState {
+    if item_i >= items_len {
+        return s;
+    }
+    let item: i64 = __mind_load_i64(items_addr + item_i * 8);
+    if ast_kind(item) != ast_fn_def() {
+        return emit_mic3_module_fns_loop(s, src, items_addr, items_len, strbuf, offs, ncount, ok_cell, k, item_i + 1);
+    }
+    let s1: EmitState = emit_mic3_module_fndef(s, src, item, strbuf, offs, ncount, ok_cell);
+    if __mind_load_i64(ok_cell) == 0 {
+        return s1;
+    }
+    let s2: EmitState = emit_mic3_scaffold(s1, k);
+    emit_mic3_module_fns_loop(s2, src, items_addr, items_len, strbuf, offs, ncount, ok_cell, k + 1, item_i + 1)
+}
+
+// AST-DRIVEN N-FUNCTION module driver: lex+parse `src`, build the deduped
+// first-seen string table, then assemble a complete mic@3 module for ANY number
+// of functions whose bodies are the proven shapes, byte-exact vs --emit-mic3.
+// Fails closed (es_new(), empty buf) when fewer than 1 fn is present or any fn's
+// shape is unmatched.
+pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let ncount: i64 = __mind_load_i64(ccell);
+    let n_fns: i64 = count_fn_defs(items_addr, items_len, 0, 0);
+    if n_fns < 1 {
+        return es_new();
+    }
+    // header || strtab || next_id(=N) || exports(0) || instr_count(=3N).
+    let s1: EmitState = emit_mic3_header(es_new());
+    let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, ncount);
+    let s3: EmitState = emit_uleb128(s2, n_fns);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, n_fns + n_fns + n_fns);
+    // Per-fn FN_DEF + scaffold, threaded through one ok_cell.
+    let ok_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(ok_cell, 1);
+    let s6: EmitState = emit_mic3_module_fns_loop(s5, src_addr, items_addr, items_len, strbuf, offs, ncount, ok_cell, 0, 0);
+    if __mind_load_i64(ok_cell) == 0 {
+        return es_new();
+    }
+    emit_mic3_empty_registries(s6)
+}
+
 // ===== mic@3 COMPLETE with-body module — the 2-param arithmetic function family (Phase 4c) =====
 //
 // Assembles the full mic@3 of `pub fn <name>(<pa>, <pb>) -> i64 { <pa> OP <pb> }`,
