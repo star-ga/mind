@@ -2033,6 +2033,37 @@ pub fn selftest_mic3_uleb(n: i64) -> EmitState {
     emit_uleb128(es_new(), n)
 }
 
+// ===== mic@3 header + string-table entry (self-host mic@3 convergence, Phase 2) =====
+//
+// The MIC3 header: the 4-byte "MIC3" magic + the version byte (mic@3 = 2). This
+// is exactly what src/ir/compact/v3/emit.rs emit_mic3 writes first (MIC3_MAGIC
+// then MIC3_VERSION). Bytes: M=77 I=73 C=67 '3'=51, version=2.
+pub fn emit_mic3_header(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, 77);
+    let s2: EmitState = es_push(s1, 73);
+    let s3: EmitState = es_push(s2, 67);
+    let s4: EmitState = es_push(s3, 51);
+    es_push(s4, 2)
+}
+
+// One mic@3 string-table entry: uleb128(len) || the `len` raw bytes of buf[lo..hi].
+// This is the per-string framing emit_mic3 uses (uleb128_write(len) then the
+// bytes), and the string-table is just `uleb128(count)` followed by `count` of
+// these. Composes the Phase 1 uleb128 with the existing byte-range writer.
+pub fn emit_mic3_lp_bytes(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
+    let len: i64 = hi - lo;
+    let s1: EmitState = emit_uleb128(s, len);
+    emit_byte_range(s1, buf, lo, hi)
+}
+
+pub fn selftest_mic3_header() -> EmitState {
+    emit_mic3_header(es_new())
+}
+
+pub fn selftest_mic3_lp_bytes(src_addr: i64, src_len: i64) -> EmitState {
+    emit_mic3_lp_bytes(es_new(), src_addr, 0, src_len)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
