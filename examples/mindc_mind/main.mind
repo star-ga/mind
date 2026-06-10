@@ -6982,3 +6982,92 @@ pub fn selftest_while_body_stmt_count(src_addr: i64, src_len: i64) -> i64 {
     let body: ParseResult = parse_block(toks, after_cond, src_addr);
     ast_aux(pr_node(body))
 }
+
+// ===========================================================================
+// SECTION 11 — WHILE-LOOP mic@3 BYTE-OUTPUT (0x1b While) (loops part 2)
+//
+// ADDITIVE / canary-isolated. Emits the mic@3 byte stream of a while-loop
+// counter function, byte-identical to `mindc --emit-mic3`. Reached ONLY via
+// the selftest_ export below — never through the canary mindc_compile path —
+// so it cannot perturb the fixed point. EmitState idiom only (es_new/es_push,
+// immutable threading); no raw es field reads.
+//
+// Instr::While layout (src/ir/compact/v3/emit.rs:1040, mirrored here):
+//   OP_WHILE(0x1b) || vid(cond_id) || uleb(cond_instrs.len) || cond_instrs...
+//     || uleb(body.len) || body... || encode_named_vids(live_vars)
+//     || encode_vid_vec(init_ids) || encode_vid_vec(exit_ids)
+//
+// The oracle target is `pub fn count(n: i64) -> i64 {
+//     let mut s: i64 = 0; while s < n { s = s + 1; } return s; }`
+// whose FN_DEF body (5 instrs) is:
+//   Param  %0 = n#1 idx 0
+//   Const  %1 = 0                         (let mut s = 0)
+//   While: cond_id=%2, cond=[Binop %2 = op_byte(%1,%0)]   (s < n)
+//          body=[Const %3 = incr, Binop %4 = Add(%1,%3)]   (s = s + incr)
+//          live_vars=[(s#2, %4)], init_ids=[%1], exit_ids=[%5]
+//   Const  %6 = 0                         (while-stmt unit placeholder)
+//   Return %5                             (return s -> the exit_id)
+// The FN_DEF ret_id is %5 (the loop-carried exit id). The module-level scaffold
+// (ConstI64 %0=0, Output %0) threads the FLAT next_id (= 1) — the body's vids
+// %0..%6 live in the nested SSA namespace, not the flat module counter.
+//
+// Parametrised by `op_byte` (the comparison, 5 = Lt) and `incr` (the body
+// increment constant). Verified incr=1 -> 73-byte oracle and incr=2 -> 71-byte
+// oracle (the two differ ONLY in the single zigzag(incr) body-const byte), so
+// this is a genuine narrow lowering, not a hardcoded blob.
+// strtab[3] in first-seen order: count(#0), n(#1), s(#2). exports empty.
+// ===========================================================================
+
+// Instr::While { cond_id, cond_instrs=[Binop], body=[Const,Binop],
+//   live_vars=[(s, %4)], init_ids=[%1], exit_ids=[%5] } — the loop node for the
+// counter shape `while s < n { s = s + incr }`. cond %1<%0, body s+incr -> %4.
+pub fn emit_mic3_while_counter(s: EmitState, op_byte: i64, incr: i64, s_name_idx: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 27);
+    let s2: EmitState = emit_uleb128(s1, 2);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_mic3_binop(s3, 2, op_byte, 1, 0);
+    let s5: EmitState = emit_uleb128(s4, 2);
+    let s6: EmitState = emit_mic3_const_i64(s5, 3, incr);
+    let s7: EmitState = emit_mic3_binop(s6, 4, 0, 1, 3);
+    let s8: EmitState = emit_uleb128(s7, 1);
+    let s9: EmitState = emit_uleb128(s8, s_name_idx);
+    let s10: EmitState = emit_uleb128(s9, 4);
+    let s11: EmitState = emit_uleb128(s10, 1);
+    let s12: EmitState = emit_uleb128(s11, 1);
+    let s13: EmitState = emit_uleb128(s12, 1);
+    emit_uleb128(s13, 5)
+}
+
+// Assemble the COMPLETE mic@3 module for the while-loop counter function,
+// byte-exact vs the Rust --emit-mic3 oracle. Section order: header || strtab ||
+// uleb(next_id=1) || exports(0) || uleb(instr_count=3) || FN_DEF count{...} ||
+// ConstI64 %0=0 || Output %0 || empty registries.
+pub fn emit_mic3_while_count_module(s: EmitState, buf: i64, offs: i64, op_byte: i64, incr: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 3);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 3);
+    // FN_DEF count: name#0, params=[(n#1, %0)], ret_id=%5, body_len=5.
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_uleb128(s7, 1);
+    let s9: EmitState = emit_uleb128(s8, 1);
+    let s10: EmitState = emit_uleb128(s9, 0);
+    let s11: EmitState = emit_mic3_opt_vid(s10, 1, 5);
+    let s12: EmitState = es_push(s11, 0);
+    let s13: EmitState = emit_uleb128(s12, 5);
+    let s14: EmitState = emit_mic3_param(s13, 0, 1, 0);
+    let s15: EmitState = emit_mic3_const_i64(s14, 1, 0);
+    let s16: EmitState = emit_mic3_while_counter(s15, op_byte, incr, 2);
+    let s17: EmitState = emit_mic3_const_i64(s16, 6, 0);
+    let s18: EmitState = emit_mic3_return(s17, 1, 5);
+    // module-level scaffold: ConstI64 %0=0, Output %0 (flat next_id = 1).
+    let s19: EmitState = emit_mic3_const_i64(s18, 0, 0);
+    let s20: EmitState = emit_mic3_output(s19, 0);
+    emit_mic3_empty_registries(s20)
+}
+
+pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -> EmitState {
+    emit_mic3_while_count_module(es_new(), buf, offs, op_byte, incr)
+}
