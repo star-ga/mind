@@ -14,5 +14,5 @@
 - Tests prefer integration tests in `tests/`
 
 ### Stability
-The architecture is frozen for v0.9.  
+The architecture is frozen for v0.7.1.  
 Breaking changes will only occur in v1.0 once SDK bindings and developer docs are added.

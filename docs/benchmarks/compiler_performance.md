@@ -6,7 +6,9 @@ MIND demonstrates **extremely fast compilation performance** across all tested w
 
 ## Production Benchmarks
 
-### Current: v0.2.0-hardened (February 17, 2026)
+### Frontend-latency snapshot: v0.2.0-hardened (February 17, 2026)
+
+> Current release is **v0.7.1**. The frontend latency numbers below were measured at the v0.2.0-hardened snapshot and carry forward as the locked bench-gate baseline; they are not re-labelled to the current version because they are point-in-time measurements.
 
 **Features**: Hand-written recursive descent parser, IR-first compilation, shape ops, MIC emission, full typed tensors, AOT pipeline, hardened IR verifier, intern_str memory safety, diagnostic preservation
 
@@ -198,10 +200,12 @@ tensor.matmul(a, b)
 
 | Framework | Scalar Compile | MatMul Compile | MLP Compile | Notes |
 |-----------|---------------|----------------|-------------|-------|
-| **MIND v0.2.1** | **1.77 µs** | **2.95 µs** | **6.15 µs** | Frontend: parse → typecheck → IR |
+| **MIND v0.7.1** | **1.77 µs** | **2.95 µs** | **6.15 µs** | Frontend: parse → typecheck → IR |
 | PyTorch 2.10 GPU | 99 ms | 105-162 ms | 752 ms | `torch.compile()` cold-start (caches cleared) |
 
 **Speed advantage: MIND frontend is 35,000-176,000× faster** than PyTorch 2.10 GPU torch.compile() full pipeline.
+
+> Honest caveat: this compares MIND's **compile-time frontend** against PyTorch's **GPU runtime / cold-start compilation** — different operations, not a runtime-speed comparison.
 
 **Scope note:** MIND measures frontend only (parse + typecheck + IR lowering). PyTorch measures the full compilation pipeline (FX capture + Inductor + Triton/cuBLAS codegen). Different amounts of work — the comparison demonstrates architectural advantage for the frontend stage.
 
@@ -209,7 +213,7 @@ tensor.matmul(a, b)
 
 | Framework | Compilation Model | Scalar | MatMul | MLP |
 |-----------|------------------|--------|--------|-----|
-| **MIND v0.2.1** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.95 µs** | **6.15 µs** |
+| **MIND v0.7.1** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.95 µs** | **6.15 µs** |
 | Mojo 0.26.1 | JIT + AOT (LLVM) | 810 ms | 827 ms | 829 ms |
 
 **Speed advantage: MIND frontend is 135,000-458,000× faster** than Mojo 0.26.1 full build compilation.
@@ -218,7 +222,7 @@ tensor.matmul(a, b)
 
 | Framework | Compilation Model | Scalar | MatMul | MLP |
 |-----------|------------------|--------|--------|-----|
-| **MIND v0.2.1** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.95 µs** | **6.15 µs** |
+| **MIND v0.7.1** | **AOT (Rust, hand-written parser)** | **1.77 µs** | **2.95 µs** | **6.15 µs** |
 | JAX 0.9 | JIT (XLA/LLVM) | 37.5 ms | 127.2-280.6 ms | 360.5 ms |
 
 **Speed advantage: MIND frontend is 21,200-95,100× faster** than JAX 0.9 cold-start XLA compilation (cache disabled).

@@ -2,20 +2,39 @@
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
 
-## Completed
+## Shipped (v0.7.1)
 
-- ✅ **v1.0 Stabilization** – Core syntax and IR semantics locked, conformance tests passing.
-- ✅ **GPU Backends** – CUDA (16K LOC), Metal (2.9K), ROCm (3.8K), WebGPU (5.1K) all complete.
+- ✅ **Cross-substrate Q16.16 bit-identity** – identical Q16.16 source compiles
+  to byte-identical artifacts across x86 and ARM (keystone gate). This is the
+  proven wedge; no vendor toolchain offers it.
+- ✅ **Emitted evidence chain** – each artifact carries an embedded evidence
+  chain, `trace_hash = SHA-256` of the canonical `mic@3` bytes. Cryptographic
+  Ed25519 *signing* of the chain is the next milestone (see Roadmap), so the
+  chain is emitted/embedded but not yet signed.
+- ✅ **Front-end bootstrap fixed-point** – the pure-MIND `mindc` reproduces its
+  own MLIR-text output byte-identically against the Rust reference. Full
+  real-codegen self-host is in progress (see Roadmap).
 - ✅ **Autodiff Engine** – Reverse-mode AD for the Core v1 tensor ops, single-output `main` entry point; non-Core-v1 ops error rather than emit a silent zero gradient.
 - ✅ **FFI Stabilization** – ABI frozen, C header generation.
-- ✅ **Distributed Runtime** – NCCL/Gloo collectives, RingAllReduce, pipeline parallelism (3.3K LOC).
-- ✅ **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, Prometheus metrics (4.7K LOC).
-- ✅ **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry (9.5K LOC).
-- ✅ **Docs Migration** – Documentation published to `mindlang.dev/docs/*`.
-- ✅ **Link-Check Automation** – CI enforces documentation link health.
 - ✅ **Phase 10.5: Governance Logic** – enum, struct, if/else, while,
   const, bitwise/boolean ops, struct literals, enum-variant `::`
   access shipped in v0.2.5–v0.2.10.
+- ✅ **Docs Migration** – Documentation published to `mindlang.dev/docs/*`.
+- ✅ **Link-Check Automation** – CI enforces documentation link health.
+
+## Roadmap
+
+- **Full real-codegen self-host** – the front-end fixed-point is reached; the
+  active frontier is self-hosting the full codegen path (Phase 15).
+- **Ed25519-signed evidence chain** – cryptographic signing of the
+  already-emitted evidence chain.
+- **GPU / accelerator backends** – execution is CPU-only today (selecting the
+  GPU target returns a structured error). CUDA, Metal, ROCm, and WebGPU
+  backends are planned.
+- **Distributed Runtime** – deterministic NCCL/Gloo collectives, RingAllReduce,
+  pipeline parallelism (see Phase 13.6).
+- **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, metrics.
+- **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry.
 
 ## In Progress
 
