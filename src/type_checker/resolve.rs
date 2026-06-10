@@ -122,7 +122,14 @@ fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
 fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
     static CACHE: OnceLock<BTreeMap<String, BTreeSet<String>>> = OnceLock::new();
     CACHE.get_or_init(|| {
+        // `project::stdlib` (the bundled std-surface registry) is gated behind
+        // `cross-module-imports`. With the feature off there is no std surface
+        // to resolve, so this map stays empty — keeps `--no-default-features`
+        // compiling while leaving the feature-on behaviour byte-for-byte
+        // unchanged.
+        #[allow(unused_mut)]
         let mut map = BTreeMap::new();
+        #[cfg(feature = "cross-module-imports")]
         for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
             let mut names = BTreeSet::new();
             collect_decl_names(&module, &mut names);
