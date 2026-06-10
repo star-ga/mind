@@ -1580,6 +1580,44 @@ def main() -> int:
         if got == want else f"FAIL want {want.hex()}"
     print(f"  field    [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 10: while-loop mic@3 byte-output (0x1b While; reuses OP_IF
+    #   block machinery + a back-edge to the loop header). Parametric over the
+    #   condition op-byte + increment; here lt(5) + incr 1 = the count fixture.
+    wl_src = (
+        "pub fn count(n: i64) -> i64 "
+        "{ let mut s: i64 = 0; while s < n { s = s + 1; } return s; }"
+    )
+    wl_golden = bytes.fromhex(
+        "4d494333020305636f756e74016e0173010003150001010001050005180001000101"
+        "001b02010402050100020103020404000103010204010101050106001701050100"
+        "001300000000"
+    )
+    lib.selftest_mic3_while_count.restype = ctypes.c_void_p
+    lib.selftest_mic3_while_count.argtypes = [ctypes.c_int64] * 4
+    wl_strs = [b"count", b"n", b"s"]
+    wl_sbuf = b"".join(wl_strs)
+    wl_soff = [0]
+    for s in wl_strs:
+        wl_soff.append(wl_soff[-1] + len(s))
+    wl_sbuf_c = ctypes.create_string_buffer(wl_sbuf, len(wl_sbuf))
+    wl_soff_c = (ctypes.c_int64 * len(wl_soff))(*wl_soff)
+    es = lib.selftest_mic3_while_count(
+        ctypes.cast(wl_sbuf_c, ctypes.c_void_p).value,
+        ctypes.cast(wl_soff_c, ctypes.c_void_p).value,
+        5, 1)  # op_byte = lt(5), incr = 1
+    got = read_string_handle(read_i64_at(es, 0))
+    live = _live_oracle(wl_src)
+    if live is not None and live != wl_golden:
+        raise SystemExit(
+            f"FAIL: while-loop golden stale vs live\n"
+            f"  golden {wl_golden.hex()}\n  live   {live.hex()}")
+    want = live if live is not None else wl_golden
+    failures += got != want
+    total += 1
+    ok = "OK (while-loop 0x1b, byte-exact vs --emit-mic3, 73B)" \
+        if got == want else f"FAIL want {want.hex()}"
+    print(f"  while    [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
