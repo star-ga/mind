@@ -107,9 +107,42 @@ def main() -> int:
         tag = "OK" if got == want else f"FAIL (want {want.hex()})"
         print(f"  lp_bytes(len={len(sval)}) = {got.hex():<18} {tag}")
 
+    # --- instruction emitters: operands -> mic@3 bytes (emit_instr arms) ---
+    def ref_zigzag(v):
+        return 2 * v if v >= 0 else (-v) * 2 - 1
+
+    def ref_const_i64(dst, v):
+        return bytes([1]) + ref_uleb128(dst) + ref_uleb128(ref_zigzag(v))
+
+    def ref_binop(dst, op, lhs, rhs):
+        return bytes([4]) + ref_uleb128(dst) + bytes([op]) + ref_uleb128(lhs) + ref_uleb128(rhs)
+
+    lib.selftest_mic3_const_i64.restype = ctypes.c_void_p
+    lib.selftest_mic3_const_i64.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    for dst, v in [(0, 0), (5, 300), (0, -1), (3, -1000), (10, 624485)]:
+        es = lib.selftest_mic3_const_i64(dst, v)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_const_i64(dst, v)
+        failures += got != want
+        total += 1
+        tag = "OK" if got == want else f"FAIL (want {want.hex()})"
+        print(f"  const_i64(dst={dst}, v={v}) = {got.hex():<14} {tag}")
+
+    lib.selftest_mic3_binop.restype = ctypes.c_void_p
+    lib.selftest_mic3_binop.argtypes = [ctypes.c_int64] * 4
+    for dst, op, lhs, rhs in [(2, 0, 0, 1), (5, 7, 3, 4), (100, 12, 50, 99)]:
+        es = lib.selftest_mic3_binop(dst, op, lhs, rhs)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_binop(dst, op, lhs, rhs)
+        failures += got != want
+        total += 1
+        tag = "OK" if got == want else f"FAIL (want {want.hex()})"
+        print(f"  binop(dst={dst},op={op},lhs={lhs},rhs={rhs}) = {got.hex():<12} {tag}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
-    print(f"  PASS — {total}/{total} byte-exact vs reference (uleb128 + header + string-table)")
+    print(f"  PASS — {total}/{total} byte-exact vs reference "
+          f"(uleb128 + header + string-table + instr emit)")
     return 0
 
 
