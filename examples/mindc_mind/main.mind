@@ -5411,3 +5411,159 @@ pub fn mindc_compile(src_addr: i64, src_len: i64) -> EmitState {
     let _tc: String = typecheck(ast_root, src_addr);
     lower_program(ast_root, src_addr)
 }
+
+// ===========================================================================
+// SECTION 6 — STRUCT FIELD-NAME RETENTION (field-access groundwork, part 1)
+//
+// ADDITIVE / canary-isolated. The canonical parse_struct_def (above) still
+// discards field names and emits exactly one stub leaf, so this code does NOT
+// touch the mic@1/mic@3 emit path, EmitState, or the fixed-point bytes. It only
+// PARSES the `name: type` field pairs of a struct and RETAINS the ordered
+// field-name spans in a heap table, exposed via the selftests below. The table
+// is the prerequisite for part 2 (param-type resolution + registry emit +
+// flatten_ast field-idx); nothing here is reached through mindc_compile.
+//
+// Heap field-table layout (a single __mind_alloc block):
+//   word[0]              : field count (n)
+//   word[1 + 2*k + 0]    : span_lo of field k's name
+//   word[1 + 2*k + 1]    : span_hi of field k's name
+// Capacity is fixed at 64 fields (table = 8 * (1 + 2*64) = 1032 bytes), which
+// comfortably covers any struct in main.mind's own grammar.
+// ===========================================================================
+
+pub fn sft_table_cap() -> i64 {
+    64
+}
+
+pub fn sft_table_alloc() -> i64 {
+    // 1 count word + cap*2 span words, 8 bytes each.
+    let t: i64 = __mind_alloc((1 + sft_table_cap() * 2) * 8);
+    __mind_store_i64(t + 0, 0);
+    t
+}
+
+pub fn sft_table_count(t: i64) -> i64 {
+    __mind_load_i64(t + 0)
+}
+
+pub fn sft_table_name_lo(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + k * 2 + 0) * 8)
+}
+
+pub fn sft_table_name_hi(t: i64, k: i64) -> i64 {
+    __mind_load_i64(t + (1 + k * 2 + 1) * 8)
+}
+
+// Append one field-name span (lo, hi) to the table, bumping the count. Silently
+// drops fields beyond sft_table_cap() (no struct in the grammar reaches it).
+pub fn sft_table_push(t: i64, name_lo: i64, name_hi: i64) -> i64 {
+    let n: i64 = sft_table_count(t);
+    if n >= sft_table_cap() {
+        return t;
+    }
+    __mind_store_i64(t + (1 + n * 2 + 0) * 8, name_lo);
+    __mind_store_i64(t + (1 + n * 2 + 1) * 8, name_hi);
+    __mind_store_i64(t + 0, n + 1);
+    t
+}
+
+// Scan the token stream for the `{` that opens the first struct body. Returns
+// the token index of the field-list start (just past `{`), or -1 if no struct.
+// Mirrors parse_item's dispatch: a tk_ident whose span spells "struct" is the
+// struct keyword; the next token is the name, then `{`.
+pub fn sft_find_struct_body(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        let lo: i64 = tok_lo(toks, pos);
+        let hi: i64 = tok_hi(toks, pos);
+        if is_struct_kw(buf, lo, hi) == 1 {
+            // pos = struct kw, pos+1 = Name, pos+2 = `{`, fields start at pos+3.
+            return pos + 3;
+        }
+    }
+    sft_find_struct_body(toks, buf, pos + 1)
+}
+
+// Parse the `name: type` field pairs of a struct body into the table `t`.
+// `pos` points just past `{`. Each field is `ident : type [,]`; the body ends at
+// `}`. Retains only the field-NAME span (the ident before `:`). Tail-recursive.
+pub fn sft_parse_fields(toks: Vec, pos: i64, t: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return t;
+    }
+    if tok_kind(toks, pos) == tk_rbrace() {
+        return t;
+    }
+    // Expect: ident(name) colon ident(type). Retain the name span.
+    if tok_kind(toks, pos) == tk_ident() {
+        let _t: i64 = sft_table_push(t, tok_lo(toks, pos), tok_hi(toks, pos));
+        // Skip `: type`. If the next token is a colon, step over colon + type.
+        if tok_kind(toks, pos + 1) == tk_colon() {
+            // After the type token may come a `,` separator; the loop's rbrace /
+            // ident checks handle both the trailing-comma and no-comma cases.
+            if tok_kind(toks, pos + 3) == tk_comma() {
+                return sft_parse_fields(toks, pos + 4, t);
+            }
+            return sft_parse_fields(toks, pos + 3, t);
+        }
+    }
+    // Defensive: unexpected token — advance one to avoid a non-terminating scan.
+    sft_parse_fields(toks, pos + 1, t)
+}
+
+// Build (and return) a fresh field table for the first struct in `src`.
+pub fn sft_build_table(src_addr: i64, src_len: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let t: i64 = sft_table_alloc();
+    let body: i64 = sft_find_struct_body(tokens, src_addr, 0);
+    if body < 0 {
+        return t;
+    }
+    sft_parse_fields(tokens, body, t)
+}
+
+// Selftest export: number of fields parsed for the (first) struct in `src`.
+pub fn selftest_struct_field_count(src_addr: i64, src_len: i64) -> i64 {
+    let t: i64 = sft_build_table(src_addr, src_len);
+    sft_table_count(t)
+}
+
+// Selftest export: the span_lo of field `i`'s name (or -1 if out of range).
+pub fn selftest_struct_field_name_lo(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = sft_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= sft_table_count(t) {
+        return 0 - 1;
+    }
+    sft_table_name_lo(t, i)
+}
+
+// Selftest export: the span_hi of field `i`'s name (or -1 if out of range).
+pub fn selftest_struct_field_name_hi(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = sft_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= sft_table_count(t) {
+        return 0 - 1;
+    }
+    sft_table_name_hi(t, i)
+}
+
+// Selftest export: the length (in bytes) of field `i`'s name span (hi - lo),
+// or -1 if out of range. Lets a harness verify the right ident was retained
+// without dealing in absolute source offsets.
+pub fn selftest_struct_field_name_len(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let t: i64 = sft_build_table(src_addr, src_len);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= sft_table_count(t) {
+        return 0 - 1;
+    }
+    sft_table_name_hi(t, i) - sft_table_name_lo(t, i)
+}
