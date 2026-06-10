@@ -394,6 +394,63 @@ def main() -> int:
         ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
         print(f"  ident_fn {name.decode()}({pa.decode()}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- COMPLETE WITH-BODY N-param chained-binop fn:
+    #     pub fn <name>(p0,..,p(n-1)) -> i64 { p0 OP p1 OP .. } — the first body that
+    #     emits MORE THAN ONE BINOP where each consumes the previous binop's result.
+    #     params take %0..%(n-1); %n = %0 op %1; %(n+k) = %(n+k-1) op %(k+1); the
+    #     FN_DEF ret_vid is the FINAL binop (2n-2), body_len = n PARAMs + (n-1) BINOPs.
+    #     chain(a,b,c){a+b+c} == captured 64-byte oracle; chain4{a+b+c+d} == 78-byte. ---
+    def ref_chain_fn(name, params, op_byte):
+        n = len(params)
+        strs = [name] + params
+        out = b"MIC3\x02"
+        out += ref_uleb128(len(strs)) + b"".join(ref_uleb128(len(x)) + x for x in strs)
+        out += ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(3)        # next_id, exports, 3 instrs
+        out += bytes([0x15]) + ref_uleb128(0)                          # FN_DEF, name_idx=0
+        out += ref_uleb128(n)                                          # param-list count
+        for i in range(n):
+            out += ref_uleb128(i + 1) + ref_uleb128(i)                 # (str_idx i+1, vid i)
+        out += bytes([1]) + ref_uleb128(2 * n - 2)                     # ret Some %(2n-2)
+        out += bytes([0]) + ref_uleb128(2 * n - 1)                     # reap None, body_len 2n-1
+        for i in range(n):
+            out += bytes([0x18]) + ref_uleb128(i) + ref_uleb128(i + 1) + ref_uleb128(i)  # PARAM %i
+        dst = n
+        for k in range(1, n):                                          # n-1 BINOPs
+            lhs, rhs = (0, 1) if k == 1 else (dst - 1, k)
+            out += bytes([4]) + ref_uleb128(dst) + bytes([op_byte]) + ref_uleb128(lhs) + ref_uleb128(rhs)
+            dst += 1
+        out += bytes([1]) + ref_uleb128(0) + ref_uleb128(0)           # ConstI64(%0,0)
+        out += bytes([0x13]) + ref_uleb128(0)                         # Output(%0)
+        out += b"\x00\x00\x00"
+        return out
+
+    lib.selftest_mic3_chain_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_chain_fn.argtypes = [ctypes.c_int64] * 4
+    for name, params, op in [(b"chain", [b"a", b"b", b"c"], 0),
+                             (b"chain4", [b"a", b"b", b"c", b"d"], 0),
+                             (b"mchain", [b"x", b"y", b"z"], 2)]:
+        sbuf = name + b"".join(params)
+        soff = [0, len(name)]
+        for p in params:
+            soff.append(soff[-1] + len(p))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        es = lib.selftest_mic3_chain_fn(
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value, len(params), op)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_chain_fn(name, params, op)
+        failures += got != want
+        total += 1
+        note = ""
+        if (name, op) == (b"chain", 0):
+            note = " (== chain(a,b,c){a+b+c} oracle, 64B)"
+        elif (name, op) == (b"chain4", 0):
+            note = " (== chain4(a,b,c,d){a+b+c+d} oracle, 78B)"
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        pnames = ",".join(p.decode() for p in params)
+        print(f"  chain_fn {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
