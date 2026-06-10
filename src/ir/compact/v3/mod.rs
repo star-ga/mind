@@ -119,7 +119,7 @@ mod parse;
 
 pub use emit::emit_mic3;
 pub use evidence::{emit_mic3_with_evidence, mic3_evidence_report};
-pub use parse::{Mic3Error, parse_mic3};
+pub use parse::{parse_mic3, Mic3Error};
 // Re-export the evidence vocabulary at the v3 level for convenience.
 pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};
 
@@ -714,6 +714,92 @@ mod tests {
             !err.message.is_empty(),
             "expected a clean Mic3Error message"
         );
+    }
+
+    /// Per-instruction element counts (`FnDef.body_len`, `While`/`If` block
+    /// lengths, `Region.body_len`, `ExternFnDecl` param/hint counts) are read as
+    /// raw ULEB128 from untrusted bytes. A tiny crafted header that declares a
+    /// `u64::MAX` count must fail CLOSED with a `Mic3Error` (truncation) — never
+    /// drive a giant `Vec::with_capacity` that panics ("capacity overflow") or
+    /// aborts the process (allocation failure). Regression for the mic@3
+    /// untrusted-bundle fuzz finding: every such count is clamped via
+    /// `bounded_cap(n, input_len)` before reservation.
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn reject_instr_count_overflow() {
+        use crate::ir::compact::v2::uleb128_write;
+
+        // mic@3 opcodes (src/ir/compact/v3/emit.rs).
+        const OP_FN_DEF: u8 = 0x15;
+        const OP_WHILE: u8 = 0x1B;
+        const OP_IF: u8 = 0x1C;
+        const OP_REGION: u8 = 0x24;
+        const OP_EXTERN_FN_DECL: u8 = 0x25;
+
+        // Common prefix: magic, version, 1-entry string table ("f"), next_id=0,
+        // n_exports=0, n_instrs=1. The single instruction's hostile count is the
+        // only thing that varies.
+        fn prefix() -> Vec<u8> {
+            let mut b = Vec::new();
+            b.extend_from_slice(&MIC3_MAGIC);
+            b.push(MIC3_VERSION);
+            uleb128_write(&mut b, 1).unwrap(); // n_strings
+            uleb128_write(&mut b, 1).unwrap(); // len("f")
+            b.push(b'f');
+            uleb128_write(&mut b, 0).unwrap(); // next_id
+            uleb128_write(&mut b, 0).unwrap(); // n_exports
+            uleb128_write(&mut b, 1).unwrap(); // n_instrs
+            b
+        }
+        let huge = u64::MAX;
+
+        // REGION: body_len is the first field read.
+        let mut region = prefix();
+        region.push(OP_REGION);
+        uleb128_write(&mut region, huge).unwrap();
+
+        // FN_DEF: name, params(0), ret_id(None), reap(None), then body_len.
+        let mut fndef = prefix();
+        fndef.push(OP_FN_DEF);
+        uleb128_write(&mut fndef, 0).unwrap(); // name -> "f"
+        uleb128_write(&mut fndef, 0).unwrap(); // params count
+        fndef.push(0); // ret_id None
+        fndef.push(0); // reap None
+        uleb128_write(&mut fndef, huge).unwrap(); // body_len HUGE
+
+        // WHILE: cond_id, then cond_len.
+        let mut whilei = prefix();
+        whilei.push(OP_WHILE);
+        uleb128_write(&mut whilei, 0).unwrap(); // cond_id
+        uleb128_write(&mut whilei, huge).unwrap(); // cond_len HUGE
+
+        // IF: cond_id, then cond_len.
+        let mut ifi = prefix();
+        ifi.push(OP_IF);
+        uleb128_write(&mut ifi, 0).unwrap(); // cond_id
+        uleb128_write(&mut ifi, huge).unwrap(); // cond_len HUGE
+
+        // EXTERN_FN_DECL: name, then np (param-type count).
+        let mut ext = prefix();
+        ext.push(OP_EXTERN_FN_DECL);
+        uleb128_write(&mut ext, 0).unwrap(); // name -> "f"
+        uleb128_write(&mut ext, huge).unwrap(); // np HUGE
+
+        for (label, bytes) in [
+            ("region", region),
+            ("fndef", fndef),
+            ("while", whilei),
+            ("if", ifi),
+            ("extern_fn_decl", ext),
+        ] {
+            let err = parse_mic3(&bytes)
+                .err()
+                .unwrap_or_else(|| panic!("{label}: hostile count must be rejected, not parsed"));
+            assert!(
+                !err.message.is_empty(),
+                "{label}: expected a clean Mic3Error, got empty message"
+            );
+        }
     }
 
     /// Build a mic@3 buffer whose single top-level instruction is a `FnDef`
