@@ -2598,6 +2598,183 @@ pub fn selftest_mic3_module_field(buf: i64, offs: i64, load_idx: i64, foff: i64)
     emit_mic3_field_module(es_new(), buf, offs, load_idx, foff)
 }
 
+// ===== mic@3 AST-DRIVEN single-struct field-read load (parts 1+2 wired) =====
+//
+// `struct S { a: i64 }  pub fn get_a(s: S) -> i64 { s.a }`, lowered from SOURCE
+// (not hand-fed indices) byte-exact vs the Rust `--emit-mic3` oracle (71 bytes).
+// This is the FIRST genuinely AST-driven field-access lowering: it resolves the
+// `recv.field` access by wiring SECTION 6 (the struct field table, part 1) and
+// SECTION 7 (the per-fn param-type table, part 2):
+//   * part 2 (ptt) binds the receiver param `s` -> its declared type span `S`;
+//   * part 1 (sft) gives the ordered field-name spans of the struct, against
+//     which the accessed field name `a` resolves to a field INDEX (here 0).
+// For field idx 0 the Rust lowering (src/eval/lower.rs FieldAccess arm) emits a
+// `__mind_load_i64` of the base receiver address directly (no offset add):
+//   FN_DEF get_a(s){ PARAM %0=recv ; CALL %1=__mind_load_i64([%0]) } ret %1.
+// SCOPE (this slice): exactly ONE struct, ONE param, the accessed field at index
+// 0. Any other shape returns the seed state unchanged (fail-closed, no partial
+// bytes). idx>0 (CONST(idx*8) + BINOP Add + CALL, see emit_mic3_field_module's
+// get_b arm) and multi-struct keying are the next increments.
+//
+// String table in FIRST-SEEN traversal order (emit_mic3 walks instrs before the
+// struct_defs registry, src/ir/compact/v3/emit.rs:701/705): the FnDef name,
+// then its param name, then the body Call name `__mind_load_i64`, then the
+// struct_defs registry name `S` and field `a` -> indices 0..4. `__mind_load_i64`
+// is synthetic (not in source), so it is written into `strbuf` as a literal and
+// interned like any source span (intern_load_i64_literal).
+//
+// ADDITIVE / canary-isolated: exported only via selftest_mic3_module_field_from_ast;
+// the canary mindc_compile / emit_expr_env ast_field path (const.i64 0) is
+// untouched, so the keystone fixed-point bytes are unchanged.
+
+// Write the literal "__mind_load_i64" (15 bytes) into `strbuf` at the current
+// interning cursor and register its offset/count, returning the freshly
+// allocated string index. Mirrors intern_span's allocate tail exactly, but the
+// source bytes are the fixed synthetic call name rather than a span of `src`.
+// (No dedup scan: this name is interned exactly once, after the source spans, in
+// the field-read lowering — matching the Rust collect order.)
+pub fn intern_load_i64_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let start: i64 = __mind_load_i64(offs + n * 8);
+    // "__mind_load_i64" = 95 95 109 105 110 100 95 108 111 97 100 95 105 54 52.
+    __mind_store_i8(strbuf + start + 0, 95);
+    __mind_store_i8(strbuf + start + 1, 95);
+    __mind_store_i8(strbuf + start + 2, 109);
+    __mind_store_i8(strbuf + start + 3, 105);
+    __mind_store_i8(strbuf + start + 4, 110);
+    __mind_store_i8(strbuf + start + 5, 100);
+    __mind_store_i8(strbuf + start + 6, 95);
+    __mind_store_i8(strbuf + start + 7, 108);
+    __mind_store_i8(strbuf + start + 8, 111);
+    __mind_store_i8(strbuf + start + 9, 97);
+    __mind_store_i8(strbuf + start + 10, 100);
+    __mind_store_i8(strbuf + start + 11, 95);
+    __mind_store_i8(strbuf + start + 12, 105);
+    __mind_store_i8(strbuf + start + 13, 54);
+    __mind_store_i8(strbuf + start + 14, 52);
+    __mind_store_i64(offs + (n + 1) * 8, start + 15);
+    __mind_store_i64(ccell, n + 1);
+    n
+}
+
+// Scan the token stream for the first field-access `.` and return the token
+// index of the dot, or -1 if none. The receiver ident is at dot-1, the field
+// ident at dot+1 (mirrors the surface `recv . field`).
+pub fn ffa_find_dot(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_dot() {
+        return pos;
+    }
+    ffa_find_dot(toks, pos + 1)
+}
+
+// Resolve the accessed field-name span buf[lo..hi) to its field INDEX in the
+// struct field table `t` (part 1), or -1 if not found. Linear scan + raw-byte
+// span equality (no hashing) — the field order IS the layout order.
+pub fn ffa_field_index(t: i64, buf: i64, lo: i64, hi: i64, k: i64) -> i64 {
+    if k >= sft_table_count(t) {
+        return 0 - 1;
+    }
+    if span_bytes_equal(buf, lo, hi, sft_table_name_lo(t, k), sft_table_name_hi(t, k)) == 1 {
+        return k;
+    }
+    ffa_field_index(t, buf, lo, hi, k + 1)
+}
+
+// AST-driven mic@3 module for a single-struct, single-param, idx-0 field read.
+// Returns the seed `s` unchanged on any unexpected shape (fail-closed).
+pub fn emit_mic3_field_module_from_ast(s: EmitState, src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> EmitState {
+    let tokens: Vec = lex(src, src_len);
+    let sft: i64 = sft_build_table(src, src_len);
+    let ptt: i64 = ptt_build_table(src, src_len);
+    // Shape guards: exactly one struct field and one fn param for this slice.
+    if sft_table_count(sft) != 1 {
+        return s;
+    }
+    if ptt_table_count(ptt) != 1 {
+        return s;
+    }
+    // Locate `recv.field`; resolve the field name to its struct field index.
+    let dot: i64 = ffa_find_dot(tokens, 0);
+    if dot < 1 {
+        return s;
+    }
+    let recv_lo: i64 = tok_lo(tokens, dot - 1);
+    let recv_hi: i64 = tok_hi(tokens, dot - 1);
+    let fld_lo: i64 = tok_lo(tokens, dot + 1);
+    let fld_hi: i64 = tok_hi(tokens, dot + 1);
+    let fidx: i64 = ffa_field_index(sft, src, fld_lo, fld_hi, 0);
+    if fidx != 0 {
+        return s;
+    }
+    // Receiver-type binding (part 2): the receiver param's declared type name is
+    // the struct type; confirm the receiver names param 0 (fail-closed if not).
+    if span_bytes_equal(src, recv_lo, recv_hi, ptt_table_name_lo(ptt, 0), ptt_table_name_hi(ptt, 0)) != 1 {
+        return s;
+    }
+    // The fn name is the ident two tokens before the param-list `(` — i.e. the
+    // token right before `(`. ptt_find_param_list returns the index just past `(`
+    // (params start = fn_kw+3), so the `(` is at params_start-1 and the name at
+    // params_start-2.
+    let pstart: i64 = ptt_find_param_list(tokens, 0);
+    if pstart < 2 {
+        return s;
+    }
+    let fn_lo: i64 = tok_lo(tokens, pstart - 2);
+    let fn_hi: i64 = tok_hi(tokens, pstart - 2);
+    // Struct type name span (part 2 binding -> the struct_defs registry key).
+    let ty_lo: i64 = ptt_table_type_lo(ptt, 0);
+    let ty_hi: i64 = ptt_table_type_hi(ptt, 0);
+    // Field name span (the struct_defs registry field, idx 0).
+    let sfld_lo: i64 = sft_table_name_lo(sft, 0);
+    let sfld_hi: i64 = sft_table_name_hi(sft, 0);
+    // Intern strings in FIRST-SEEN order (instrs before registry):
+    //   0: fn name, 1: param name, 2: __mind_load_i64, 3: type name, 4: field.
+    let i_fn: i64 = intern_span(strbuf, offs, ccell, src, fn_lo, fn_hi);
+    let i_recv: i64 = intern_span(strbuf, offs, ccell, src, recv_lo, recv_hi);
+    let i_load: i64 = intern_load_i64_literal(strbuf, offs, ccell);
+    let i_ty: i64 = intern_span(strbuf, offs, ccell, src, ty_lo, ty_hi);
+    let i_fld: i64 = intern_span(strbuf, offs, ccell, src, sfld_lo, sfld_hi);
+    // Assemble the module: header || strtab(5) || next_id(2) || exports(0) ||
+    //   5 instrs [ CONST %0 / OUTPUT %0  (struct scaffold)
+    //             FN_DEF get_a(s){ PARAM %0, CALL %1=load([%0]) } ret %1
+    //             CONST %1 / OUTPUT %1  (fn scaffold) ]
+    //   || struct_defs[ ty=[fld] ] || const_array_defs=0 || repr_c_structs=0.
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, 5);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 5);
+    let s6: EmitState = emit_mic3_const_i64(s5, 0, 0);
+    let s7: EmitState = emit_mic3_output(s6, 0);
+    // FN_DEF header: name idx, 1 param (name, vid 0), ret %1, body_len 2.
+    let s8: EmitState = es_push(s7, 21);
+    let s9: EmitState = emit_uleb128(s8, i_fn);
+    let s10: EmitState = emit_uleb128(s9, 1);
+    let s11: EmitState = emit_uleb128(s10, i_recv);
+    let s12: EmitState = emit_uleb128(s11, 0);
+    let s13: EmitState = emit_mic3_opt_vid(s12, 1, 1);
+    let s14: EmitState = es_push(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 2);
+    let s16: EmitState = emit_mic3_param(s15, 0, i_recv, 0);
+    let s17: EmitState = emit_mic3_call1(s16, 1, i_load, 0);
+    let s18: EmitState = emit_mic3_const_i64(s17, 1, 0);
+    let s19: EmitState = emit_mic3_output(s18, 1);
+    // Registry: a single 1-field struct (ty=[fld]).
+    let s20: EmitState = emit_uleb128(s19, 1);
+    let s21: EmitState = emit_uleb128(s20, i_ty);
+    let s22: EmitState = emit_uleb128(s21, 1);
+    let s23: EmitState = emit_uleb128(s22, i_fld);
+    let s24: EmitState = emit_uleb128(s23, 0);
+    emit_uleb128(s24, 0)
+}
+
+pub fn selftest_mic3_module_field_from_ast(src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> EmitState {
+    emit_mic3_field_module_from_ast(es_new(), src, src_len, strbuf, offs, ccell)
+}
+
 // ===========================================================================
 // Phase 5c — AST-DRIVEN full-module COLLECTION PASS (the hand-feeding removal)
 // ===========================================================================

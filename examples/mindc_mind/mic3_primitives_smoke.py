@@ -1341,6 +1341,48 @@ def main() -> int:
     #   LIVE `--emit-mic3` regeneration (golden-staleness guard). Additive: the canary
     #   mic@1 path (emit_expr_env ast_field -> const.i64 0) is untouched, so the fixed
     #   point stays byte-identical.
+    # --- AST-DRIVEN single-struct idx-0 field read (parts 1+2 wired) ------------
+    #   selftest_mic3_module_field_from_ast takes ONLY the source bytes (+ heap
+    #   scratch: a contiguous strbuf, an offsets array, a 1-i64 count cell). It
+    #   lexes, builds the part-1 field table + part-2 param-type table, RESOLVES
+    #   `s.a` (receiver param `s` -> declared type `S` -> field index 0), then
+    #   emits the whole module — FN_DEF body [PARAM %0, CALL %1=__mind_load_i64([%0])]
+    #   for idx 0 — with an AST-collected first-seen string table (get_a, s,
+    #   __mind_load_i64, S, a). Byte-exact vs the real `--emit-mic3` oracle (71B):
+    #   a hard-coded golden AND a LIVE regeneration (golden-staleness guard).
+    #   Additive: the canary mic@1 ast_field path is untouched (fixed point stable).
+    fa_src = "struct S { a: i64 }  pub fn get_a(s: S) -> i64 { s.a }"
+    fa_golden_hex = (
+        "4d4943330205056765745f6101730f5f5f6d696e645f6c6f61645f6936340153"
+        "016102000501000013001500010100010100021800010016010201000101001301"
+        "0103010400 00".replace(" ", "")
+    )
+    lib.selftest_mic3_module_field_from_ast.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_field_from_ast.argtypes = [ctypes.c_int64] * 5
+    fa_srcb = fa_src.encode()
+    fa_srcc = ctypes.create_string_buffer(fa_srcb, len(fa_srcb))
+    fa_strbuf = ctypes.create_string_buffer(128)
+    fa_offs = (ctypes.c_int64 * 16)()
+    fa_ccell = (ctypes.c_int64 * 1)()
+    es = lib.selftest_mic3_module_field_from_ast(
+        ctypes.cast(fa_srcc, ctypes.c_void_p).value, len(fa_srcb),
+        ctypes.cast(fa_strbuf, ctypes.c_void_p).value,
+        ctypes.cast(fa_offs, ctypes.c_void_p).value,
+        ctypes.cast(fa_ccell, ctypes.c_void_p).value)
+    got = read_string_handle(read_i64_at(es, 0))
+    golden = bytes.fromhex(fa_golden_hex)
+    live = _live_oracle(fa_src)
+    if live is not None and live != golden:
+        raise SystemExit(
+            f"FAIL: field-from-ast golden stale vs live\n  golden {golden.hex()}"
+            f"\n  live   {live.hex()}")
+    want = live if live is not None else golden
+    failures += got != want
+    total += 1
+    ok = "OK (AST-driven field load idx0, byte-exact vs --emit-mic3, 71B)" \
+        if got == want else f"FAIL want {want.hex()}"
+    print(f"  field_ast[{len(got)}B] = {got.hex()}  {ok}")
+
     field_src = (
         "struct S { a: i64, b: i64 }\n"
         "pub fn get_a(s: S) -> i64 { s.a }\n"
