@@ -1190,6 +1190,82 @@ def main() -> int:
             if got == want else f"FAIL want {want.hex()}"
         print(f"  mod_ast [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 5d: N-FUNCTION AST-driven module assembly (Strategy A inc. 5) -----
+    #   selftest_mic3_module_nfn generalizes the fixed 2-function module driver to
+    #   an ARBITRARY function count (3, 4, .. N). It lexes/parses the source, builds
+    #   the deduped first-seen string table, and assembles the whole module —
+    #   next_id = N, instr_count = 3*N, per fn k: FN_DEF{body} || ConstI64(%k,0) ||
+    #   Output(%k) — byte-exact vs the Rust --emit-mic3 oracle. Each case is
+    #   cross-checked against a hard-coded golden AND a LIVE `--emit-mic3`
+    #   regeneration (guards golden staleness). Additive: the canary mic@1 path is
+    #   untouched, so the fixed point stays byte-identical.
+    lib.selftest_mic3_module_nfn.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_nfn.argtypes = [ctypes.c_int64] * 5
+
+    nfn_cases = [
+        # 3 zero-arg const-return fns — next_id 3, instr_count 9 (71B oracle).
+        ("pub fn one() -> i64 { 1 }  pub fn two() -> i64 { 2 }  "
+         "pub fn three() -> i64 { 3 }",
+         "4d4943330203036f6e650374776f0574687265650300091500000100000101"
+         "00020100001300150100010000010100040101001301150200010000010100"
+         "060102001302000000"),
+        # 4 zero-arg const-return fns — next_id 4, instr_count 12 (91B oracle).
+        ("pub fn one() -> i64 { 1 }  pub fn two() -> i64 { 2 }  "
+         "pub fn three() -> i64 { 3 }  pub fn four() -> i64 { 4 }",
+         "4d4943330204036f6e650374776f05746872656504666f757204000c150000"
+         "010000010100020100001300150100010000010100040101001301150200010"
+         "000010100060102001302150300010000010100080103001303000000"),
+        # 3 MIXED-body fns: arith fn0 + const fn1 + CALL fn2 (the call to fn0
+        # DEDUPs to its string index 0). next_id 3, instr_count 9 (99B oracle).
+        ("pub fn add(a: i64, b: i64) -> i64 { a + b }  "
+         "pub fn one() -> i64 { 1 }  pub fn use_it() -> i64 { add(2, 3) }",
+         "4d49433302050361646401610162036f6e65067573655f6974030009150002"
+         "0100020101020003180001001801020104020000010100001300150300010000"
+         "010100020101001301150400010200030100040101061602000200010102001302"
+         "000000"),
+        # value/name variants — prove a genuine N-fn collection pass, not a blob.
+        ("pub fn first() -> i64 { 99 }  pub fn second() -> i64 { 100 }  "
+         "pub fn third() -> i64 { 7 }", None),
+        ("pub fn a() -> i64 { 1 }  pub fn b() -> i64 { 2 }  "
+         "pub fn c() -> i64 { 3 }  pub fn d() -> i64 { 4 }  "
+         "pub fn e() -> i64 { 5 }", None),
+        # 4-fn mixed: two arith + const + call (call dedups to sub's index 0).
+        ("pub fn sub(a: i64, b: i64) -> i64 { a - b }  "
+         "pub fn mul(x: i64, y: i64) -> i64 { x * y }  "
+         "pub fn z() -> i64 { 8 }  pub fn run() -> i64 { sub(9, 4) }", None),
+        # 2-fn regression THROUGH the N-fn path (must still match the 50B/68B
+        # oracles the fixed 2-fn driver produces).
+        ("pub fn one() -> i64 { 1 }  pub fn two() -> i64 { 2 }", None),
+        ("pub fn one() -> i64 { 1 }  pub fn add(a: i64, b: i64) -> i64 { a + b }",
+         None),
+    ]
+    for src, golden_hex in nfn_cases:
+        srcb = src.encode()
+        srcc = ctypes.create_string_buffer(srcb, len(srcb))
+        strbuf = ctypes.create_string_buffer(256)
+        offs = (ctypes.c_int64 * 32)()
+        ccell = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_module_nfn(
+            ctypes.cast(srcc, ctypes.c_void_p).value, len(srcb),
+            ctypes.cast(strbuf, ctypes.c_void_p).value,
+            ctypes.cast(offs, ctypes.c_void_p).value,
+            ctypes.cast(ccell, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(golden_hex) if golden_hex else None
+        live = _live_oracle(src)
+        if golden is not None and live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: nfn golden stale vs live\n  golden {golden.hex()}"
+                f"\n  live   {live.hex()}")
+        want = live if live is not None else golden
+        if want is None:
+            raise SystemExit("FAIL: no oracle for nfn case")
+        failures += got != want
+        total += 1
+        ok = "OK (N-fn AST-driven, byte-exact vs --emit-mic3)" \
+            if got == want else f"FAIL want {want.hex()}"
+        print(f"  mod_nfn [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
