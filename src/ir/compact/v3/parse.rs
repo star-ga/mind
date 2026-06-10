@@ -17,17 +17,17 @@
 use std::io::{Cursor, Read};
 
 use crate::ir::{IRModule, IndexSpec, Instr, SliceSpec, ValueId};
-use crate::types::ShapeDim;
 use crate::types::intern::intern_str;
+use crate::types::ShapeDim;
 
 use super::emit::{
-    OP_ARRAY_LOAD, OP_BINOP, OP_BREAK, OP_CALL, OP_CONST_ARRAY, OP_CONST_F64, OP_CONST_I64,
-    OP_CONST_TENSOR, OP_CONTINUE, OP_CONV2D, OP_CONV2D_GRAD_FILTER, OP_CONV2D_GRAD_INPUT, OP_DOT,
-    OP_EXPAND_DIMS, OP_EXTERN_FN_DECL, OP_FN_DEF, OP_GATHER, OP_IF, OP_INDEX, OP_MATMUL, OP_MEAN,
-    OP_OUTPUT, OP_PARAM, OP_REGION, OP_RELU, OP_RELU_GRAD, OP_RESHAPE, OP_RETURN, OP_SLICE,
-    OP_SPARSE_ATTR, OP_SQUEEZE, OP_SUM, OP_TRANSPOSE, OP_VEC_FMA, OP_VEC_LOAD, OP_VEC_LOAD_I32,
-    OP_VEC_MUL_ADD_Q16, OP_VEC_REDUCE_ADD, OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE,
-    byte_to_binop, byte_to_dtype, byte_to_padding, byte_to_sparse_layout,
+    byte_to_binop, byte_to_dtype, byte_to_padding, byte_to_sparse_layout, OP_ARRAY_LOAD, OP_BINOP,
+    OP_BREAK, OP_CALL, OP_CONST_ARRAY, OP_CONST_F64, OP_CONST_I64, OP_CONST_TENSOR, OP_CONTINUE,
+    OP_CONV2D, OP_CONV2D_GRAD_FILTER, OP_CONV2D_GRAD_INPUT, OP_DOT, OP_EXPAND_DIMS,
+    OP_EXTERN_FN_DECL, OP_FN_DEF, OP_GATHER, OP_IF, OP_INDEX, OP_MATMUL, OP_MEAN, OP_OUTPUT,
+    OP_PARAM, OP_REGION, OP_RELU, OP_RELU_GRAD, OP_RESHAPE, OP_RETURN, OP_SLICE, OP_SPARSE_ATTR,
+    OP_SQUEEZE, OP_SUM, OP_TRANSPOSE, OP_VEC_FMA, OP_VEC_LOAD, OP_VEC_LOAD_I32, OP_VEC_MUL_ADD_Q16,
+    OP_VEC_REDUCE_ADD, OP_VEC_REDUCE_ADD_I64, OP_VEC_STORE, OP_WHILE,
 };
 use super::{MIC3_MAGIC, MIC3_MIN_READ_VERSION, MIC3_VERSION};
 use crate::ir::compact::v2::{uleb128_read, zigzag_decode};
@@ -624,7 +624,7 @@ fn decode_instr<R: Read>(
             let ret_id = read_opt_vid(r)?;
             let reap_threshold = read_opt_f64(r)?;
             let body_len = read_uleb(r)? as usize;
-            let mut body = Vec::with_capacity(body_len);
+            let mut body = Vec::with_capacity(bounded_cap(body_len, limit));
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -674,12 +674,12 @@ fn decode_instr<R: Read>(
         OP_WHILE => {
             let cond_id = read_vid(r)?;
             let cond_len = read_uleb(r)? as usize;
-            let mut cond_instrs = Vec::with_capacity(cond_len);
+            let mut cond_instrs = Vec::with_capacity(bounded_cap(cond_len, limit));
             for _ in 0..cond_len {
                 cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let body_len = read_uleb(r)? as usize;
-            let mut body = Vec::with_capacity(body_len);
+            let mut body = Vec::with_capacity(bounded_cap(body_len, limit));
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -706,18 +706,18 @@ fn decode_instr<R: Read>(
         OP_IF => {
             let cond_id = read_vid(r)?;
             let cond_len = read_uleb(r)? as usize;
-            let mut cond_instrs = Vec::with_capacity(cond_len);
+            let mut cond_instrs = Vec::with_capacity(bounded_cap(cond_len, limit));
             for _ in 0..cond_len {
                 cond_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let then_len = read_uleb(r)? as usize;
-            let mut then_instrs = Vec::with_capacity(then_len);
+            let mut then_instrs = Vec::with_capacity(bounded_cap(then_len, limit));
             for _ in 0..then_len {
                 then_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
             let then_result = read_vid(r)?;
             let else_len = read_uleb(r)? as usize;
-            let mut else_instrs = Vec::with_capacity(else_len);
+            let mut else_instrs = Vec::with_capacity(bounded_cap(else_len, limit));
             for _ in 0..else_len {
                 else_instrs.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -829,7 +829,7 @@ fn decode_instr<R: Read>(
         #[cfg(feature = "std-surface")]
         OP_REGION => {
             let body_len = read_uleb(r)? as usize;
-            let mut body = Vec::with_capacity(body_len);
+            let mut body = Vec::with_capacity(bounded_cap(body_len, limit));
             for _ in 0..body_len {
                 body.push(decode_instr(r, strings, depth, limit, version)?);
             }
@@ -850,14 +850,14 @@ fn decode_instr<R: Read>(
             use super::emit::byte_to_callconv;
             let name = read_string(r, strings)?;
             let np = read_uleb(r)? as usize;
-            let mut param_types = Vec::with_capacity(np);
+            let mut param_types = Vec::with_capacity(bounded_cap(np, limit));
             for _ in 0..np {
                 param_types.push(read_string(r, strings)?);
             }
             let ret_type = read_opt_string(r, strings)?;
             let is_varargs = read_bool(r)?;
             let nh = read_uleb(r)? as usize;
-            let mut vararg_hints = Vec::with_capacity(nh);
+            let mut vararg_hints = Vec::with_capacity(bounded_cap(nh, limit));
             for _ in 0..nh {
                 vararg_hints.push(read_string(r, strings)?);
             }
