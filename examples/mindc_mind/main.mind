@@ -2125,6 +2125,35 @@ pub fn selftest_mic3_return(has_value: i64, id: i64) -> EmitState {
     emit_mic3_return(es_new(), has_value, id)
 }
 
+// ===== mic@3 string-table SECTION assembler (self-host convergence, Phase 3c) =====
+//
+// The complete mic@3 string table: uleb128(count) followed by `count`
+// length-prefixed entries (each via emit_mic3_lp_bytes). `offs` is a heap array
+// of (count+1) i64 byte-offsets into `buf`: string i is buf[offs[i] .. offs[i+1]].
+// This is the same section src/ir/compact/v3/emit.rs writes after the header
+// (uleb128(entries.len()) then each uleb128(len)||bytes), so a matching offsets
+// array reproduces the oracle string table byte-for-byte. The offsets are what
+// the (future) collect_strings pass will populate; here they are an input so the
+// section assembler is tested independently of string collection.
+pub fn emit_mic3_strtab(s: EmitState, buf: i64, offs: i64, count: i64) -> EmitState {
+    let s1: EmitState = emit_uleb128(s, count);
+    emit_mic3_strtab_entries(s1, buf, offs, count, 0)
+}
+
+pub fn emit_mic3_strtab_entries(s: EmitState, buf: i64, offs: i64, count: i64, i: i64) -> EmitState {
+    if i >= count {
+        return s;
+    }
+    let lo: i64 = __mind_load_i64(offs + i * 8);
+    let hi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    let s1: EmitState = emit_mic3_lp_bytes(s, buf, lo, hi);
+    emit_mic3_strtab_entries(s1, buf, offs, count, i + 1)
+}
+
+pub fn selftest_mic3_strtab(buf_addr: i64, offs_addr: i64, count: i64) -> EmitState {
+    emit_mic3_strtab(es_new(), buf_addr, offs_addr, count)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
