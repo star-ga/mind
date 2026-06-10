@@ -81,9 +81,35 @@ def main() -> int:
         tag = "OK" if ok else f"FAIL (want {want.hex()})"
         print(f"  uleb128({n}) = {got.hex():<10} {tag}")
 
+    total = len(cases)
+
+    # --- MIC3 header: "MIC3" magic + version byte (mic@3 = 2) ---
+    lib.selftest_mic3_header.restype = ctypes.c_void_p
+    lib.selftest_mic3_header.argtypes = []
+    es = lib.selftest_mic3_header()
+    got = read_string_handle(read_i64_at(es, 0))
+    want = b"MIC3\x02"
+    failures += got != want
+    total += 1
+    print(f"  header = {got.hex():<10} {'OK' if got == want else 'FAIL (want ' + want.hex() + ')'}")
+
+    # --- string-table entry: uleb128(len) || bytes (the per-string framing) ---
+    lib.selftest_mic3_lp_bytes.restype = ctypes.c_void_p
+    lib.selftest_mic3_lp_bytes.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    for sval in [b"", b"x", b"add", b"compute", b"a" * 200]:
+        cbuf = ctypes.create_string_buffer(sval, max(1, len(sval)))
+        addr = ctypes.cast(cbuf, ctypes.c_void_p).value
+        es = lib.selftest_mic3_lp_bytes(addr, len(sval))
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_uleb128(len(sval)) + sval
+        failures += got != want
+        total += 1
+        tag = "OK" if got == want else f"FAIL (want {want.hex()})"
+        print(f"  lp_bytes(len={len(sval)}) = {got.hex():<18} {tag}")
+
     if failures:
-        raise SystemExit(f"FAIL: {failures}/{len(cases)} ULEB128 mismatches")
-    print(f"  PASS — {len(cases)}/{len(cases)} byte-exact vs reference ULEB128")
+        raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
+    print(f"  PASS — {total}/{total} byte-exact vs reference (uleb128 + header + string-table)")
     return 0
 
 
