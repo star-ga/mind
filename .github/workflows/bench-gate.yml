@@ -3,11 +3,14 @@ name: Bench gate
 # Enforces the parser/typecheck/IR pipeline regression rule for mindc.
 #
 # The threshold is documented at docs/versioning.md (and pinned in
-# .bench-baseline-2026-05-18-rfc0005.txt). Going above it on any of the
-# canonical bench programs fails the job.
+# .bench-baseline-2026-05-18-rfc0005.txt). A regression beyond it on any of
+# the canonical bench programs fails the job.
 #
-# Threshold: <= 5% mean regression on any of the three pipeline benches
+# Threshold: ONE-SIDED +10% regression on any of the three pipeline benches
 # (small_matmul / medium_mlp / large_network) vs the RFC 0005 baseline.
+# A speedup of any size always passes — the gate never fails on improvement.
+# A trip is a stop-and-decide signal (revert, or re-bless the baseline with a
+# documented rationale when a dramatic win elsewhere justifies the slowdown).
 # This codifies the principle that `mindc`'s parser is the runtime
 # contract for `mind-runtime` (which re-evaluates IR per inference) —
 # letting the parser drift compounds downstream.
@@ -42,7 +45,7 @@ env:
 
 jobs:
   bench-gate:
-    name: Pipeline regression gate (<=2%)
+    name: Pipeline regression gate (+10% one-sided)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -86,7 +89,7 @@ jobs:
             --output-format bencher \
             | tee bench.out
 
-      - name: Enforce <=7% regression vs RFC-0005 baseline
+      - name: Enforce +10% one-sided regression vs RFC-0005 baseline
         # Re-baselined 2026-05-18 (third time, this release cycle) after
         # RFC 0005 Phase 2 shipped at star-ga/mind@v0.4.0: pure-MIND
         # std.vec / std.string / std.map / std.io on the seven `__mind_*`
@@ -113,11 +116,16 @@ jobs:
         # and adds nothing to the default-build hot path the bench
         # exercises, so the 0.29% over-shoot is pure runner variance
         # rather than real regression — confirmed by a local re-run
-        # showing small_matmul +1.78% on the same commit. The 7% band
-        # still defends the compile-speed moat (≥8% gets flagged) while
-        # tolerating the slower / noisier hosted runners.
+        # showing small_matmul +1.78% on the same commit.
+        #
+        # Bumped 7% -> 10% on 2026-06-10 (operator policy): the criterion gate
+        # is ONE-SIDED +10% and decision-triggering — a speedup of any size
+        # always passes, and a >10% regression is a stop-and-decide signal
+        # (worth-it vs a dramatic win elsewhere), not an absolute block. The
+        # 10% band still defends the compile-speed moat while tolerating the
+        # slower / noisier hosted runners.
         run: |
           python3 tools/bench_gate.py \
             --baseline .bench-baseline-2026-06-01-correctness.txt \
             --current bench.out \
-            --threshold 0.07
+            --threshold 0.10

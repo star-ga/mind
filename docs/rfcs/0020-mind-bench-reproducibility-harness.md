@@ -45,8 +45,8 @@ like internal-test hygiene rather than the load-bearing property they are.
 
 ## 2. Non-goals
 
-- **Not a replacement for criterion micro-benches.** The `<±2%` frontend µs drift
-  gate (RFC 0013 §5, Phase 15) stays in the existing criterion harness.
+- **Not a replacement for criterion micro-benches.** The one-sided `+10%` frontend µs
+  regression gate (RFC 0013 §5, Phase 15) stays in the existing criterion harness.
   mind-bench is reproducibility, not regression.
 - **Not a throughput claim.** mind-bench does NOT claim MIND is faster than
   PyTorch/JAX/Rust. Timing in receipts is informational, marked as such.
@@ -249,7 +249,7 @@ substrate = deferred (`null`), never = pass.
 - **Reference hash changes across mindc releases?** Expected only on an intentional
   lowering-pipeline change; RFC-amendment-worthy, documented in release notes with the
   specific transition. Unexpected changes are caught at the internal gate pre-release.
-- **Does mind-bench gate the ±2% frontend µs drift?** No — different property, different
+- **Does mind-bench gate the +10% frontend µs regression?** No — different property, different
   surface; the criterion gate stays independent.
 
 ## 14. Risks

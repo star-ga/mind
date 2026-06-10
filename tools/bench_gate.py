@@ -137,8 +137,12 @@ def main() -> int:
     ap.add_argument(
         "--threshold",
         type=float,
-        default=0.02,
-        help="max allowed mean regression (fraction; 0.02 = +2%%)",
+        default=0.10,
+        help=(
+            "max allowed mean REGRESSION as a fraction; 0.10 = +10%%. "
+            "One-sided: a speedup (negative delta) never fails, no upper "
+            "bound. Exceeding it is a stop-and-decide trigger, not a block."
+        ),
     )
     args = ap.parse_args()
 
@@ -153,6 +157,11 @@ def main() -> int:
         if b is None or c is None:
             print(f"::warning::missing bench for {name} (baseline={b}, current={c})")
             continue
+        # One-sided gate: delta < 0 is a speedup (always OK, no upper bound);
+        # only a regression strictly beyond +threshold trips it. A trip is a
+        # stop-and-decide signal (revert, or re-bless the baseline with a
+        # documented rationale when a dramatic win elsewhere justifies the
+        # slowdown), not a permanent block.
         delta = (c - b) / b
         ok = delta <= args.threshold
         failed = failed or not ok
@@ -169,8 +178,10 @@ def main() -> int:
 
     if failed:
         print(
-            f"::error::pipeline regression exceeded threshold "
-            f"(+{args.threshold:.0%})"
+            f"::error::pipeline regression exceeded +{args.threshold:.0%} "
+            f"(one-sided gate; a speedup never fails). STOP and decide if it "
+            f"is worth it: revert, or re-bless the baseline with a documented "
+            f"rationale when a dramatic win elsewhere justifies the slowdown."
         )
         return 1
     print("bench gate: PASS")
