@@ -2383,6 +2383,118 @@ pub fn selftest_mic3_module_const_arith(buf: i64, offs: i64, v0: i64, op_byte: i
     emit_mic3_const_arith_module(es_new(), buf, offs, v0, op_byte)
 }
 
+// ===== mic@3 MULTI-FUNCTION module — arith fn0 + const fn1 (Strategy A, let cover) =====
+//
+// `pub fn <n0>(<pa>,<pb>) -> i64 { <pa> OP <pb> }  pub fn <n1>() -> i64 { <v1> }`,
+// byte-exact vs the Rust --emit-mic3 oracle. This is the arith-FIRST ordering (the
+// const-arith module is const-first); it is the module shape a 2-param fn written
+// with a LET body lowers to (`f(a,b){let t=a+b; t}` == `f(a,b){a+b}` — the let-bound
+// value reuses the binop vid, emitting no distinct opcode or string). strtab[4] in
+// first-seen order: n0, pa, pb, n1 (indices 0,1,2,3). next_id = 2 (flat scaffold
+// consts %0 fn0, %1 fn1). instr_count = 6.
+//   FN_DEF n0{PARAM %0=str1, PARAM %1=str2, BINOP %2=%0 op %1} ret %2 ||
+//     ConstI64 %0=0 || Output %0 ||
+//   FN_DEF n1{ConstI64 %0=v1} ret %0 || ConstI64 %1=0 || Output %1.
+pub fn emit_mic3_arith_const_module(s: EmitState, buf: i64, offs: i64, op_byte: i64, v1: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 4);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 6);
+    // fn0: arith (name idx 0, params str 1/2).
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_uleb128(s7, 2);
+    let s9: EmitState = emit_uleb128(s8, 1);
+    let s10: EmitState = emit_uleb128(s9, 0);
+    let s11: EmitState = emit_uleb128(s10, 2);
+    let s12: EmitState = emit_uleb128(s11, 1);
+    let s13: EmitState = emit_mic3_opt_vid(s12, 1, 2);
+    let s14: EmitState = es_push(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 3);
+    let s16: EmitState = emit_mic3_param(s15, 0, 1, 0);
+    let s17: EmitState = emit_mic3_param(s16, 1, 2, 1);
+    let s18: EmitState = emit_mic3_binop(s17, 2, op_byte, 0, 1);
+    let s19: EmitState = emit_mic3_const_i64(s18, 0, 0);
+    let s20: EmitState = emit_mic3_output(s19, 0);
+    // fn1: const (name idx 3).
+    let s21: EmitState = emit_mic3_fn_def_header(s20, 3, 1, 0, 1);
+    let s22: EmitState = emit_mic3_const_i64(s21, 0, v1);
+    let s23: EmitState = emit_mic3_const_i64(s22, 1, 0);
+    let s24: EmitState = emit_mic3_output(s23, 1);
+    emit_mic3_empty_registries(s24)
+}
+
+pub fn selftest_mic3_module_arith_const(buf: i64, offs: i64, op_byte: i64, v1: i64) -> EmitState {
+    emit_mic3_arith_const_module(es_new(), buf, offs, op_byte, v1)
+}
+
+// ===== mic@3 MULTI-FUNCTION module — arith fn0 + const-args CALL fn1 (Strategy A) =====
+//
+// `pub fn <n0>(<pa>,<pb>) -> i64 { <pa> OP <pb> }
+//  pub fn <n1>() -> i64 { <n0>(<v0>, <v1>) }`, byte-exact vs --emit-mic3. fn1's
+// body is a CALL to fn0 with two int-literal args: each arg lowers to a ConstI64
+// taking the next body vid (%0, %1), then OP_CALL(0x16) %2 = name#callee(%0,%1)
+// (encode_string_idx(callee) || encode_vid_vec([%0,%1])). The FN_DEF ret is %2,
+// body_len 3. The callee string DEDUPS to fn0's name index (interned first during
+// fn0's FnDef; the call name interns idempotently during body traversal — handled
+// by collect_body_strings, so strtab[4] = n0, pa, pb, n1 in first-seen order with
+// the call referencing index 0). next_id = 2 (scaffold consts %0 fn0, %1 fn1).
+//   FN_DEF n0{PARAM,PARAM,BINOP} ret %2 || ConstI64 %0=0 || Output %0 ||
+//   FN_DEF n1{ConstI64 %0=v0, ConstI64 %1=v1, CALL %2=callee(%0,%1)} ret %2 ||
+//     ConstI64 %1=0 || Output %1.
+pub fn emit_mic3_arith_call_module(s: EmitState, buf: i64, offs: i64, op_byte: i64, callee_idx: i64, v0: i64, v1: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 4);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 6);
+    // fn0: arith (name idx 0, params str 1/2).
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_uleb128(s7, 2);
+    let s9: EmitState = emit_uleb128(s8, 1);
+    let s10: EmitState = emit_uleb128(s9, 0);
+    let s11: EmitState = emit_uleb128(s10, 2);
+    let s12: EmitState = emit_uleb128(s11, 1);
+    let s13: EmitState = emit_mic3_opt_vid(s12, 1, 2);
+    let s14: EmitState = es_push(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 3);
+    let s16: EmitState = emit_mic3_param(s15, 0, 1, 0);
+    let s17: EmitState = emit_mic3_param(s16, 1, 2, 1);
+    let s18: EmitState = emit_mic3_binop(s17, 2, op_byte, 0, 1);
+    let s19: EmitState = emit_mic3_const_i64(s18, 0, 0);
+    let s20: EmitState = emit_mic3_output(s19, 0);
+    // fn1: call body (name idx 3), ret %2, body_len 3.
+    let s21: EmitState = es_push(s20, 21);
+    let s22: EmitState = emit_uleb128(s21, 3);
+    let s23: EmitState = emit_uleb128(s22, 0);
+    let s24: EmitState = emit_mic3_opt_vid(s23, 1, 2);
+    let s25: EmitState = es_push(s24, 0);
+    let s26: EmitState = emit_uleb128(s25, 3);
+    let s27: EmitState = emit_mic3_const_i64(s26, 0, v0);
+    let s28: EmitState = emit_mic3_const_i64(s27, 1, v1);
+    let s29: EmitState = emit_mic3_call2(s28, 2, callee_idx, 0, 1);
+    let s30: EmitState = emit_mic3_const_i64(s29, 1, 0);
+    let s31: EmitState = emit_mic3_output(s30, 1);
+    emit_mic3_empty_registries(s31)
+}
+
+// Instr::Call { dst, name, args=[a0,a1] }:
+//   OP_CALL(0x16) || vid(dst) || string_idx(name) || uleb(2) || vid(a0) || vid(a1).
+pub fn emit_mic3_call2(s: EmitState, dst: i64, name_idx: i64, a0: i64, a1: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 22);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    let s3: EmitState = emit_uleb128(s2, name_idx);
+    let s4: EmitState = emit_uleb128(s3, 2);
+    let s5: EmitState = emit_uleb128(s4, a0);
+    emit_uleb128(s5, a1)
+}
+
+pub fn selftest_mic3_module_arith_call(buf: i64, offs: i64, op_byte: i64, callee_idx: i64, v0: i64, v1: i64) -> EmitState {
+    emit_mic3_arith_call_module(es_new(), buf, offs, op_byte, callee_idx, v0, v1)
+}
+
 // ===========================================================================
 // Phase 5c — AST-DRIVEN full-module COLLECTION PASS (the hand-feeding removal)
 // ===========================================================================
@@ -2469,7 +2581,59 @@ pub fn collect_fn_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, fn_node:
     let n0: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(name_leaf), ast_span_hi(name_leaf));
     let params_addr: i64 = ast_child1(fn_node);
     let n_params: i64 = ast_aux(fn_node) / 2;
-    collect_param_strings(strbuf, offs, ccell, src, params_addr, n_params, 0)
+    let rp: i64 = collect_param_strings(strbuf, offs, ccell, src, params_addr, n_params, 0);
+    // Recurse the body in statement order, interning any CALL callee names — the
+    // Rust collect_instr_strings(Instr::Call) interns the call name during the
+    // body traversal (verified: a forward call interns the callee BEFORE the
+    // callee fn's own params). Const/int/binop/param/ident bodies intern nothing.
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, 0)
+}
+
+// Intern call-callee names appearing in a fn body, in statement+expression order,
+// mirroring Rust collect_strings -> collect_instr_strings recursion. Only the
+// constructs the AST-driven path emits are walked (let-init, call); other leaves
+// intern nothing. Idempotent via intern_span's first-seen dedup.
+pub fn collect_body_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
+    collect_body_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+}
+
+pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_let() {
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
+    }
+    if k == ast_call() {
+        // Intern the callee name (call lowers to Instr::Call whose name interns).
+        let callee: i64 = ast_child0(node);
+        let nm: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(callee), ast_span_hi(callee));
+        // Then recurse args left-to-right (their own const lowerings precede the
+        // Call instr; int-literal args intern nothing, matching the oracle).
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        return collect_args_strings(strbuf, offs, ccell, src, args_addr, args_len, 0);
+    }
+    if k == ast_binop() {
+        let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node));
+    }
+    0
+}
+
+pub fn collect_args_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args_addr + i * 8);
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, arg);
+    collect_args_strings(strbuf, offs, ccell, src, args_addr, args_len, i + 1)
 }
 
 pub fn collect_param_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, params_addr: i64, n_params: i64, i: i64) -> i64 {
@@ -2544,6 +2708,99 @@ pub fn arith_fn_opbyte(src: i64, fn_node: i64) -> i64 {
     binop_to_byte(ast_aux(expr))
 }
 
+// Extract the mic@3 op-byte of a 2-param arith fn whose body is written as a
+// LET binding then a use of it: `{ let t: i64 = pa OP pb; t }`. The Rust lowering
+// produces a body BYTE-IDENTICAL to the direct `{ pa OP pb }` form — the let-bound
+// value simply takes the binop's vid (%2) and the trailing `t` resolves to it, so
+// no distinct opcode and no extra string is emitted (verified vs --emit-mic3 on
+// `f(a,b){let t=a+b; t}` == `f(a,b){a+b}`). Returns the op-byte, or -1 on shape
+// mismatch (fail-closed). Two body stmts required: a let with a 2-ident binop init,
+// then a trailing ident referencing the let name.
+pub fn let_arith_fn_opbyte(src: i64, fn_node: i64) -> i64 {
+    if ast_aux(fn_node) / 2 != 2 {
+        return 0 - 1;
+    }
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if stmts_len != 2 {
+        return 0 - 1;
+    }
+    let s0: i64 = __mind_load_i64(stmts_addr);
+    if ast_kind(s0) != ast_let() {
+        return 0 - 1;
+    }
+    let s1: i64 = __mind_load_i64(stmts_addr + 8);
+    if ast_kind(s1) != ast_ident() {
+        return 0 - 1;
+    }
+    // The trailing use must name the let-bound variable.
+    let let_name: i64 = ast_child0(s0);
+    if span_bytes_equal2(src, ast_span_lo(s1), ast_span_hi(s1), src, ast_span_lo(let_name), ast_span_hi(let_name)) != 1 {
+        return 0 - 1;
+    }
+    let init: i64 = ast_child2(s0);
+    if ast_kind(init) != ast_binop() {
+        return 0 - 1;
+    }
+    let l: i64 = ast_child0(init);
+    let r: i64 = ast_child1(init);
+    if ast_kind(l) != ast_ident() {
+        return 0 - 1;
+    }
+    if ast_kind(r) != ast_ident() {
+        return 0 - 1;
+    }
+    binop_to_byte(ast_aux(init))
+}
+
+// Extract the two int-literal argument values of a zero-arg fn whose body is a
+// single call with exactly two int-literal arguments: `{ callee(<v0>, <v1>) }`.
+// Writes v0 -> out[0], v1 -> out[1] and returns 1 on a match, 0 otherwise
+// (fail-closed). The callee name is resolved separately to its string index.
+pub fn call_fn_args2(src: i64, fn_node: i64, out: i64) -> i64 {
+    if ast_aux(fn_node) / 2 != 0 {
+        return 0;
+    }
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if stmts_len != 1 {
+        return 0;
+    }
+    let expr: i64 = __mind_load_i64(stmts_addr);
+    if ast_kind(expr) != ast_call() {
+        return 0;
+    }
+    if ast_aux(expr) != 2 {
+        return 0;
+    }
+    let args_addr: i64 = ast_child1(expr);
+    let a0: i64 = __mind_load_i64(args_addr);
+    let a1: i64 = __mind_load_i64(args_addr + 8);
+    if ast_kind(a0) != ast_int_lit() {
+        return 0;
+    }
+    if ast_kind(a1) != ast_int_lit() {
+        return 0;
+    }
+    let v0: i64 = parse_int_span(src, ast_span_lo(a0), ast_span_hi(a0), 0);
+    let v1: i64 = parse_int_span(src, ast_span_lo(a1), ast_span_hi(a1), 0);
+    __mind_store_i64(out + 0, v0);
+    __mind_store_i64(out + 8, v1);
+    1
+}
+
+// Resolve the string index of a zero-arg call-fn's callee name within the already
+// built string table (offs/n hold the interned strings). Returns the index, or -1.
+pub fn call_fn_callee_idx(src: i64, fn_node: i64, strbuf: i64, offs: i64, n_strings: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let expr: i64 = __mind_load_i64(stmts_addr);
+    let callee: i64 = ast_child0(expr);
+    intern_find(strbuf, offs, n_strings, src, ast_span_lo(callee), ast_span_hi(callee), 0)
+}
+
 // AST-DRIVEN full-module driver: lex+parse `src`, build the deduped first-seen
 // string table into caller-supplied scratch (strbuf/offs/ccell), detect which of
 // the two proven module shapes the source is, extract its const values / op-byte
@@ -2587,6 +2844,33 @@ pub fn selftest_mic3_module_from_ast(src_addr: i64, src_len: i64, strbuf: i64, o
         let ob: i64 = arith_fn_opbyte(src_addr, f1);
         if ob >= 0 {
             return emit_mic3_const_arith_module(es_new(), strbuf, offs, v0, ob);
+        }
+    }
+    // fn0 = a 2-param arith fn (direct `pa OP pb`, or `let t=pa OP pb; t`).
+    let ob0_direct: i64 = arith_fn_opbyte(src_addr, f0);
+    let ob0_let: i64 = let_arith_fn_opbyte(src_addr, f0);
+    let ob0: i64 = if ob0_direct >= 0 {
+        ob0_direct
+    } else {
+        ob0_let
+    };
+    if ob0 >= 0 {
+        // Shape (3): arith fn0 + const fn1 (the LET-body ordering — arith first).
+        let cv1: i64 = const_fn_value(src_addr, f1);
+        if cv1 >= 0 {
+            return emit_mic3_arith_const_module(es_new(), strbuf, offs, ob0, cv1);
+        }
+        // Shape (4): arith fn0 + const-args CALL fn1.
+        let scratch: i64 = __mind_alloc(16);
+        let ok: i64 = call_fn_args2(src_addr, f1, scratch);
+        if ok == 1 {
+            let ncount: i64 = __mind_load_i64(ccell);
+            let cidx: i64 = call_fn_callee_idx(src_addr, f1, strbuf, offs, ncount);
+            if cidx >= 0 {
+                let cva: i64 = __mind_load_i64(scratch + 0);
+                let cvb: i64 = __mind_load_i64(scratch + 8);
+                return emit_mic3_arith_call_module(es_new(), strbuf, offs, ob0, cidx, cva, cvb);
+            }
         }
     }
     es_new()

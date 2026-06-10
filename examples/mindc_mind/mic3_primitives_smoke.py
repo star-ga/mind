@@ -1101,6 +1101,30 @@ def main() -> int:
         ("pub fn first() -> i64 { 99 }  pub fn second() -> i64 { 100 }", None),
         ("pub fn one() -> i64 { 7 }  pub fn mul(x: i64, y: i64) -> i64 { x * y }",
          None),
+        # Strategy A — LET-body coverage. fn0 is a 2-param arith fn written with a
+        # `let t = a OP b; t` body; the Rust lowering reuses the binop vid for the
+        # let-bound value, so this is BYTE-IDENTICAL to the direct `{ a OP b }`
+        # form, i.e. the arith-first + const-second module shape (64B oracle).
+        ("pub fn f(a: i64, b: i64) -> i64 { let t: i64 = a + b; t }  "
+         "pub fn g() -> i64 { 1 }",
+         "4d4943330204016601610162016702000615000201000201010200031800010018"
+         "0102010402000001010000130015030001000001010002010100130100" + "0000"),
+        # value/op variant of the let-body shape (genuine collection, not a blob).
+        ("pub fn h(x: i64, y: i64) -> i64 { let s: i64 = x * y; s }  "
+         "pub fn k() -> i64 { 5 }",
+         None),
+        # Strategy A — CALL-body coverage. fn1 calls fn0 with two int-literal args;
+        # each arg lowers to a body ConstI64 (%0,%1) then OP_CALL %2 = add(%0,%1),
+        # the callee name DEDUPing to fn0's string index 0 (80B oracle).
+        ("pub fn add(a: i64, b: i64) -> i64 { a + b }  "
+         "pub fn use_it() -> i64 { add(2, 3) }",
+         "4d49433302040361646401610162067573655f697402000615000201000201010200"
+         "0318000100180102010402000001010000130015030001020003010004010106160200"
+         "0200010101001301" + "000000"),
+        # value/op variant of the call-body shape.
+        ("pub fn sub(a: i64, b: i64) -> i64 { a - b }  "
+         "pub fn run() -> i64 { sub(9, 4) }",
+         None),
     ]
     for src, golden_hex in ast_cases:
         srcb = src.encode()
