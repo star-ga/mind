@@ -119,7 +119,7 @@ mod parse;
 
 pub use emit::emit_mic3;
 pub use evidence::{emit_mic3_with_evidence, mic3_evidence_report};
-pub use parse::{parse_mic3, Mic3Error};
+pub use parse::{Mic3Error, parse_mic3};
 // Re-export the evidence vocabulary at the v3 level for convenience.
 pub use crate::ir::compact::v2::{Determinism, EvidenceError, EvidenceReport, TraceHashKind};
 
