@@ -139,6 +139,35 @@ def main() -> int:
         tag = "OK" if got == want else f"FAIL (want {want.hex()})"
         print(f"  binop(dst={dst},op={op},lhs={lhs},rhs={rhs}) = {got.hex():<12} {tag}")
 
+    # --- terminators: Output (0x13) and Return (0x17, opt vid) ---
+    def ref_output(idv):
+        return bytes([0x13]) + ref_uleb128(idv)
+
+    def ref_return(has, idv):
+        return bytes([0x17]) + (bytes([1]) + ref_uleb128(idv) if has else bytes([0]))
+
+    lib.selftest_mic3_output.restype = ctypes.c_void_p
+    lib.selftest_mic3_output.argtypes = [ctypes.c_int64]
+    for idv in [0, 5, 300]:
+        es = lib.selftest_mic3_output(idv)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_output(idv)
+        failures += got != want
+        total += 1
+        tag = "OK" if got == want else f"FAIL (want {want.hex()})"
+        print(f"  output(id={idv}) = {got.hex():<8} {tag}")
+
+    lib.selftest_mic3_return.restype = ctypes.c_void_p
+    lib.selftest_mic3_return.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    for has, idv in [(0, 0), (1, 3), (1, 300)]:
+        es = lib.selftest_mic3_return(has, idv)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_return(has, idv)
+        failures += got != want
+        total += 1
+        tag = "OK" if got == want else f"FAIL (want {want.hex()})"
+        print(f"  return(has={has},id={idv}) = {got.hex():<8} {tag}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
