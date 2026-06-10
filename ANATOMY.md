@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2755 | **Est. tokens:** ~6,845,912
-**Generated:** 2026-06-10 11:07 UTC
+**Files:** 2753 | **Est. tokens:** ~6,840,932
+**Generated:** 2026-06-10 11:11 UTC
 
 ## Token Budget Guide
 
@@ -22,14 +22,14 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~27,410 |
+| `./` | 34 | ~26,136 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 1 | ~693 |
 | `benches/` | 13 | ~30,521 |
-| `benchmarks/` | 14 | ~24,457 |
+| `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
@@ -59,10 +59,10 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,507 |
+| `.github/workflows/` | 8 | ~8,533 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
-| `scripts/` | 6 | ~8,764 |
+| `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
 | `sdk/ts/mic-map/` | 6 | ~22,706 |
@@ -469,8 +469,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~5010 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5008 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -523,7 +522,6 @@
 ### `benchmarks/`
 
 - `BENCHMARK_RESULTS.md` (~4311 tok, huge) — MIND Benchmark Results
-- `COPILOT_REVIEW_FIXES.md` (~1722 tok, huge) — Copilot Review Fixes - PR #172
 ### `benchmarks/determinism/`
 
 - `benchmark_determinism.py` (~2187 tok, huge)
@@ -574,7 +572,6 @@
 - `resnet.md` (~74 tok, small) — ResNet Benchmarks (Preliminary)
 - `run_all_benchmarks.sh` (~824 tok, large) — Master script to run all MIND patent benchmarks
 - `RUN_GUIDE.md` (~1465 tok, large) — MIND Patent Benchmarks - Environment Guide
-- `SAME_MACHINE_BENCHMARKS.md` (~2320 tok, huge) — Same-Machine Benchmarks - Addressing Copilot Concerns
 - `scientific_benchmark.py` (~1639 tok, huge)
 - `scientific_benchmark_raw.py` (~2485 tok, huge)
 ### `bench/`
@@ -795,7 +792,7 @@
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
 - `ci.yml` (~4079 tok, huge) — name: CI
-- `docs-claims.yml` (~338 tok, medium) — name: Docs Claims
+- `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
 - `release-drafter.yml` (~91 tok, small) — name: Release Drafter
@@ -814,6 +811,7 @@
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
 - `anatomy.sh` (~2010 tok, huge) — anatomy — Generate ANATOMY.md for any repo
 - `check_claims.py` (~2779 tok, huge) — Docs-claim CI gate — fail if any public surface drifts from config/capabilities.toml.
+- `check_no_ai_attribution.sh` (~310 tok, medium) — Public-artifact hygiene gate: no AI tool/model named as having worked on MIND.
 - `install.ps1` (~1856 tok, huge) — # install.ps1 - mindc one-line installer for Windows (PowerShell)
 - `install.sh` (~1054 tok, large) — MIND compiler (mindc) installer — downloads a pre-built binary from the
 ### `scripts/mind-vs-rust/`

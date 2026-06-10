@@ -366,7 +366,7 @@ bench-gate threshold documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](
 | medium_mlp | **6.15 µs** | 163K cps |
 | large_network | **15.49 µs** | 65K cps |
 
-*Measured via Rust Criterion (100 samples, 95% CI). Environment: Ubuntu 24.04, Ampere-class GPU, CUDA 12.8. See [benchmarks/FINAL_PATENT_RESULTS.md](benchmarks/FINAL_PATENT_RESULTS.md) for full methodology.*
+*Measured via Rust Criterion (100 samples, 95% CI). Environment: Ubuntu 24.04, Ampere-class GPU, CUDA 12.8. See [benchmarks/BENCHMARK_RESULTS.md](benchmarks/BENCHMARK_RESULTS.md) for full methodology.*
 
 ### MIC/MAP Format Efficiency
 
