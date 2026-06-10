@@ -6,6 +6,8 @@
 
 [![CI](https://github.com/star-ga/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/star-ga/mind/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](CHANGELOG.md)
+[![Cross-substrate](https://img.shields.io/badge/x86%20%2B%20ARM-bit--identical-success.svg)](docs/roadmap.md)
 
 ## Install
 
@@ -387,7 +389,11 @@ bench-gate threshold documented at [`.bench-baseline-2026-05-17-phase10-6.txt`](
 
 ## Proof of Systems
 
-MIND powers real-world applications demonstrating its capabilities:
+MIND powers real-world applications demonstrating its capabilities. Note: the
+GPU-accelerated showcases below run on the commercial `mind-runtime`; the
+open-source `mindc` compiler in this repo emits for the **CPU**. The runtime's
+GPU and accelerator backends are available to consumers under a commercial
+license (see the [Roadmap](docs/roadmap.md) for the determinism work).
 
 | Project | Description | Highlights |
 |---------|-------------|------------|

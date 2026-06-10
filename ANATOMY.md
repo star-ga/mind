@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2754 | **Est. tokens:** ~6,860,101
-**Generated:** 2026-06-10 05:32 UTC
+**Files:** 2754 | **Est. tokens:** ~6,860,603
+**Generated:** 2026-06-10 07:00 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 35 | ~27,238 |
+| `./` | 35 | ~27,410 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -38,9 +38,9 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 26 | ~37,437 |
+| `docs/` | 26 | ~37,651 |
 | `docs/backends/` | 1 | ~1,482 |
-| `docs/benchmarks/` | 3 | ~9,199 |
+| `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
 | `docs/mindcraft/` | 3 | ~6,976 |
 | `docs/research/` | 1 | ~117 |
@@ -470,7 +470,7 @@
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `PR_DESCRIPTION.md` (~1272 tok, large) — Complete Patent Benchmark Suite with Python Bindings
-- `README.md` (~4838 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5010 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -598,7 +598,7 @@
 - `benchmarking.md` (~1903 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
-- `compiler_performance.md` (~4605 tok, huge) — MIND Compiler Performance Benchmarks
+- `compiler_performance.md` (~4721 tok, huge) — MIND Compiler Performance Benchmarks
 ### `docs/`
 
 - `benchmarks.md` (~805 tok, large) — Benchmarks
@@ -671,7 +671,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~13082 tok, huge) — Roadmap
+- `roadmap.md` (~13398 tok, huge) — Roadmap
 - `security.md` (~1331 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -684,7 +684,7 @@
 - `type-system.md` (~947 tok, large) — Type System
 - `versioning.md` (~804 tok, large) — MIND Core Stability & Versioning
 - `version-matrix.md` (~1795 tok, huge) — MIND Ecosystem — Version Matrix
-- `whitepaper.md` (~2844 tok, huge) — MIND: The Native Language for Intelligent Systems
+- `whitepaper.md` (~2742 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
 - `autodiff_demo.mind` (~1715 tok, huge) — Autodiff Demonstration
