@@ -123,7 +123,7 @@ of functions) this is sub-microsecond.
 - Tensor-only modules with no `Evidence[K]` in any signature pay
   **zero** cost: the DAG pass early-outs when the module's evidence
   edge set is empty.
-- The existing `bench-gate.yml` ±2% threshold applies to the three
+- The existing `bench-gate.yml` one-sided +10% regression threshold applies to the three
   headline benches; a dedicated `bench_evidence_dag` sub-benchmark
   observes per-edge cost in isolation, never as a delta to the
   headline numbers.

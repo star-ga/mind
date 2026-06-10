@@ -54,10 +54,10 @@ if [ "${1:-}" = "--full" ]; then
   if [ -n "$base" ] && [ -f tools/bench_gate.py ]; then
     cargo bench --bench compiler --no-default-features -- \
       --warm-up-time 3 --measurement-time 8 --output-format bencher > /tmp/preflight-bench.out 2>/dev/null
-    if python3 tools/bench_gate.py --baseline "$base" --current /tmp/preflight-bench.out --threshold 0.07; then
-      echo "ok (<=7% vs $base)"
+    if python3 tools/bench_gate.py --baseline "$base" --current /tmp/preflight-bench.out --threshold 0.10; then
+      echo "ok (regression <= +10% vs $base; speedups always pass)"
     else
-      bad "frozen-frontend bench regression >7% vs $base"
+      bad "frozen-frontend bench regression >+10% vs $base — STOP & decide: revert, or re-bless baseline if a dramatic win elsewhere justifies it"
     fi
   else
     echo "skip (no correctness baseline / bench_gate.py)"

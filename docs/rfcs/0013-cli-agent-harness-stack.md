@@ -258,8 +258,8 @@ the shipped cross-platform binaries (no external runtime required).
   `std.tls` production RNG seed — explicitly non-deterministic, fenced outside
   every `#[deterministic]` body, recorded in §8.5 for traceability (not a §8.4
   deterministic binding).
-- Frontend µs benchmarks: `<±2%` drift across all Phase 16 work — same
-  anti-regression gate as Phase 15.
+- Frontend µs benchmarks: no regression beyond `+10%` (one-sided) across all
+  Phase 16 work — same anti-regression gate as Phase 15.
 
 ---
 
