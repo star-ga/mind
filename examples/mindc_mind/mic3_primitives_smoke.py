@@ -1074,6 +1074,63 @@ def main() -> int:
         ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
         print(f"  mod_carit v0={v0},op={op_byte} [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 5c: AST-DRIVEN full-module COLLECTION PASS (hand-feeding removal) -
+    #   selftest_mic3_module_from_ast takes ONLY the source bytes (+ heap scratch:
+    #   a contiguous string buffer, an offsets array, and a 1-i64 count cell). It
+    #   lexes/parses, then AUTOMATICALLY builds the deduped first-seen-traversal
+    #   string table + offsets (the hand-feeding the 5a/5b cases above still rely
+    #   on is gone) and extracts the const values / arith op-byte from the live
+    #   AST, driving the proven 5a/5b assemblers. Each case is cross-checked
+    #   BYTE-EXACT against a hard-coded golden AND a LIVE `--emit-mic3`
+    #   regeneration (guards golden staleness). Additive: the canary mic@1 path
+    #   is untouched, so the fixed point stays byte-identical.
+    lib.selftest_mic3_module_from_ast.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_from_ast.argtypes = [ctypes.c_int64] * 5
+
+    ast_cases = [
+        # (src, golden_hex). The first two are the known 50B / 68B targets.
+        ("pub fn one() -> i64 { 1 }  pub fn two() -> i64 { 2 }",
+         "4d4943330202036f6e650374776f0200061500000100000101000201000013001"
+         "50100010000010100040101001301000000"),
+        ("pub fn one() -> i64 { 1 }  pub fn add(a: i64, b: i64) -> i64 { a + b }",
+         "4d4943330204036f6e6503616464016101620200061500000100000101000201"
+         "000013001501020200030101020003180002001801030104020000010101001301"
+         "000000"),
+        # value/name variants — prove a genuine collection pass, not a byte blob.
+        ("pub fn one() -> i64 { 4 }  pub fn two() -> i64 { 10 }", None),
+        ("pub fn first() -> i64 { 99 }  pub fn second() -> i64 { 100 }", None),
+        ("pub fn one() -> i64 { 7 }  pub fn mul(x: i64, y: i64) -> i64 { x * y }",
+         None),
+    ]
+    for src, golden_hex in ast_cases:
+        srcb = src.encode()
+        srcc = ctypes.create_string_buffer(srcb, len(srcb))
+        # Scratch: a contiguous strbuf (+8B pad for the word-granular over-read),
+        # an offsets array, and a 1-i64 interned-count cell — all caller-owned.
+        strbuf = ctypes.create_string_buffer(128)
+        offs = (ctypes.c_int64 * 16)()
+        ccell = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_module_from_ast(
+            ctypes.cast(srcc, ctypes.c_void_p).value, len(srcb),
+            ctypes.cast(strbuf, ctypes.c_void_p).value,
+            ctypes.cast(offs, ctypes.c_void_p).value,
+            ctypes.cast(ccell, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(golden_hex) if golden_hex else None
+        live = _live_oracle(src)
+        if golden is not None and live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: from_ast golden stale vs live\n  golden {golden.hex()}"
+                f"\n  live   {live.hex()}")
+        want = live if live is not None else golden
+        if want is None:
+            raise SystemExit("FAIL: no oracle for from_ast case")
+        failures += got != want
+        total += 1
+        ok = "OK (AST-driven, byte-exact vs --emit-mic3)" \
+            if got == want else f"FAIL want {want.hex()}"
+        print(f"  mod_ast [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
