@@ -1125,6 +1125,41 @@ def main() -> int:
         ("pub fn sub(a: i64, b: i64) -> i64 { a - b }  "
          "pub fn run() -> i64 { sub(9, 4) }",
          None),
+        # Strategy A — COMPARISON-op body coverage. The six comparison ops lower
+        # exactly like an arith binop but with their own mic@3 op-byte (Lt=0x05,
+        # Le=0x06, Gt=0x07, Ge=0x08, Eq=0x09, Ne=0x0A — src/ir/compact/v3/emit.rs
+        # binop_to_byte). The MIND op-tag order (lt,gt,eq,le,ge,ne) differs from
+        # that byte order, so main.mind's binop_to_byte maps each explicitly. Each
+        # is the arith-fn0 + const-fn1 shape (65B), cross-checked byte-exact vs a
+        # hard-coded golden AND the live --emit-mic3 oracle. The op-byte is the
+        # third byte of the BINOP `04 02 XX 00 01` near the body tail.
+        ("pub fn lt(a: i64, b: i64) -> i64 { a < b }  pub fn g() -> i64 { 1 }",
+         "4d4943330204026c740161016201670200061500020100020101020003180001"
+         "001801020104020500010100001300150300010000010100020101001301" + "000000"),
+        ("pub fn le(a: i64, b: i64) -> i64 { a <= b }  pub fn g() -> i64 { 1 }",
+         "4d4943330204026c650161016201670200061500020100020101020003180001"
+         "001801020104020600010100001300150300010000010100020101001301" + "000000"),
+        ("pub fn gt(a: i64, b: i64) -> i64 { a > b }  pub fn g() -> i64 { 1 }",
+         "4d494333020402677401610162016702000615000201000201010200031800010"
+         "01801020104020700010100001300150300010000010100020101001301" + "000000"),
+        ("pub fn ge(a: i64, b: i64) -> i64 { a >= b }  pub fn g() -> i64 { 5 }",
+         "4d49433302040267650161016201670200061500020100020101020003180001"
+         "0018010201040208000101000013001503000100000101000a0101001301" + "000000"),
+        ("pub fn eq(a: i64, b: i64) -> i64 { a == b }  pub fn g() -> i64 { 1 }",
+         "4d49433302040265710161016201670200061500020100020101020003180001"
+         "001801020104020900010100001300150300010000010100020101001301" + "000000"),
+        ("pub fn ne(a: i64, b: i64) -> i64 { a != b }  pub fn g() -> i64 { 5 }",
+         "4d4943330204026e650161016201670200061500020100020101020003180001"
+         "001801020104020a000101000013001503000100000101000a0101001301" + "000000"),
+        # let-bound comparison: `{ let t = a > b; t }` is byte-identical to the
+        # direct `{ a > b }` form (the let reuses the binop vid), exercising the
+        # let-body comparison path (let_arith_fn_opbyte -> binop_to_byte).
+        ("pub fn gt(a: i64, b: i64) -> i64 { let t: i64 = a > b; t }  "
+         "pub fn g() -> i64 { 2 }", None),
+        # comparison fn0 + const-args CALL fn1 (le<=, 76B) — comparison op through
+        # the arith+call module shape.
+        ("pub fn le(a: i64, b: i64) -> i64 { a <= b }  "
+         "pub fn run() -> i64 { le(9, 4) }", None),
     ]
     for src, golden_hex in ast_cases:
         srcb = src.encode()

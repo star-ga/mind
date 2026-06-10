@@ -3208,10 +3208,33 @@ pub fn selftest_mic3_tree_fn(buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i
 // ast_int_lit CONST literals. field access / calls / if / let are later-phase
 // walls (flatten_ast returns -1, the driver fails closed — no partial bytes).
 
-// AST binop op-tag (op_add()=1, op_sub()=2, op_mul()=3, op_div()=4 ..) -> the
-// mic@3 op_byte the oracle stores (add=0, sub=1, mul=2, div=3 ..). The mapping is
-// op_byte = op_tag - 1 across the arithmetic ops (verified vs --emit-mic3).
+// AST binop op-tag (op_add()=1, op_sub()=2, op_mul()=3, op_div()=4,
+// op_lt()=5, op_gt()=6, op_eq()=7, op_le()=8, op_ge()=9, op_ne()=10) -> the
+// mic@3 op_byte the oracle stores. The arithmetic ops map op_byte = op_tag - 1
+// (add=0, sub=1, mul=2, div=3 — verified vs --emit-mic3). The comparison ops do
+// NOT share that offset: the MIND op-tag order (lt,gt,eq,le,ge,ne) differs from
+// the Rust BinOp byte order (Lt=0x05, Le=0x06, Gt=0x07, Ge=0x08, Eq=0x09,
+// Ne=0x0A — src/ir/compact/v3/emit.rs binop_to_byte), so each is mapped
+// explicitly. Verified byte-exact vs --emit-mic3 on lt/gt/eq/le/ge/ne fns.
 pub fn binop_to_byte(op_tag: i64) -> i64 {
+    if op_tag == op_lt() {
+        return 5;
+    }
+    if op_tag == op_gt() {
+        return 7;
+    }
+    if op_tag == op_eq() {
+        return 9;
+    }
+    if op_tag == op_le() {
+        return 6;
+    }
+    if op_tag == op_ge() {
+        return 8;
+    }
+    if op_tag == op_ne() {
+        return 10;
+    }
     op_tag - 1
 }
 
