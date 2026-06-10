@@ -2495,6 +2495,109 @@ pub fn selftest_mic3_module_arith_call(buf: i64, offs: i64, op_byte: i64, callee
     emit_mic3_arith_call_module(es_new(), buf, offs, op_byte, callee_idx, v0, v1)
 }
 
+// Instr::Call { dst, name, args=[a0] } (single-argument call):
+//   OP_CALL(0x16) || vid(dst) || string_idx(name) || uleb(1) || vid(a0).
+// The field-read lowering emits exactly this for `__mind_load_i64(<addr>)`.
+pub fn emit_mic3_call1(s: EmitState, dst: i64, name_idx: i64, a0: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 22);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    let s3: EmitState = emit_uleb128(s2, name_idx);
+    let s4: EmitState = emit_uleb128(s3, 1);
+    emit_uleb128(s4, a0)
+}
+
+// A NON-EMPTY std-surface struct_defs registry holding ONE 2-field struct, then
+// the two remaining registries empty. emit_mic3 writes the three registries last,
+// each as uleb(count) || entries. For struct_defs a single entry is
+// uleb(name_idx) || uleb(field_count) || uleb(field0_idx) || uleb(field1_idx).
+// The wire tail for `struct S { a, b }` (name str#4, a str#5, b str#6) is therefore
+//   01 04 02 05 06   00   00
+// (struct_defs=1 · S · 2 fields · a · b || const_array_defs=0 || repr_c_structs=0).
+// Mirrors src/ir/compact/v3/emit.rs:746-773 (BTreeMap key order — a single key is
+// trivially sorted). The field indices are string-table indices, NOT field offsets.
+pub fn emit_mic3_struct_defs_one(s: EmitState, name_idx: i64, f0_idx: i64, f1_idx: i64) -> EmitState {
+    let s1: EmitState = emit_uleb128(s, 1);
+    let s2: EmitState = emit_uleb128(s1, name_idx);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, f0_idx);
+    let s5: EmitState = emit_uleb128(s4, f1_idx);
+    let s6: EmitState = emit_uleb128(s5, 0);
+    emit_uleb128(s6, 0)
+}
+
+// ===== mic@3 MULTI-FUNCTION module — struct decl + two FIELD-READ fns (Strategy A) =====
+//
+// `struct S { a: i64, b: i64 }
+//  pub fn get_a(s: S) -> i64 { s.a }
+//  pub fn get_b(s: S) -> i64 { s.b }`, byte-exact vs the Rust --emit-mic3 oracle.
+// The FIRST pure-MIND emit of (1) a non-empty struct_defs registry and (2) the
+// field-access lowering. The Rust lowering (src/eval/lower.rs FieldAccess arm)
+// resolves a field READ `recv.field` via ir.struct_defs[ReceiverType] to a field
+// INDEX, then lowers to a `__mind_load_i64` of the field address:
+//   field idx 0 (s.a):  PARAM %0=recv ; CALL %1=__mind_load_i64([%0])
+//                       — base address direct, no offset added.
+//   field idx 1 (s.b):  PARAM %0=recv ; CONST %1=idx*8 (=8) ;
+//                       BINOP %2 = Add(%0,%1) ; CALL %3=__mind_load_i64([%2]).
+// Each top-level item (the struct decl AND each fn) emits a module-level scaffold
+// ConstI64/Output pair that produces no value, threading ONE FLAT next_id: struct
+// decl -> %0, get_a -> %1, get_b -> %2, so next_id = 3. The FN_DEF bodies keep
+// their own vid space (reset to %0 per fn). strtab[7] in FIRST-SEEN traversal
+// order (instrs walked before the struct_defs registry, per emit_mic3 lines
+// 701/705): get_a, s, __mind_load_i64, get_b, S, a, b -> indices 0..6.
+//   ConstI64 %0=0 || Output %0 ||                                  (struct S scaffold)
+//   FN_DEF get_a(s){PARAM %0, CALL %1=load([%0])} ret %1 ||
+//     ConstI64 %1=0 || Output %1 ||
+//   FN_DEF get_b(s){PARAM %0, CONST %1=foff, BINOP %2=add(%0,%1),
+//     CALL %3=load([%2])} ret %3 || ConstI64 %2=0 || Output %2 ||
+//   struct_defs[S=[a,b]] || const_array_defs=0 || repr_c_structs=0.
+// `foff` (the byte offset of field b = idx*8 = 8) is threaded as a parameter so the
+// emit is a genuine narrow lowering, not a hardcoded blob; reproduces the 111-byte
+// oracle for foff=8. `load_idx` = string index of "__mind_load_i64" (=2).
+pub fn emit_mic3_field_module(s: EmitState, buf: i64, offs: i64, load_idx: i64, foff: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 7);
+    let s3: EmitState = emit_uleb128(s2, 3);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 8);
+    // struct S decl -> module-level scaffold ConstI64 %0 / Output %0.
+    let s6: EmitState = emit_mic3_const_i64(s5, 0, 0);
+    let s7: EmitState = emit_mic3_output(s6, 0);
+    // get_a(s){ s.a } — name idx 0, one param "s" (str 1), ret %1, body_len 2.
+    let s8: EmitState = es_push(s7, 21);
+    let s9: EmitState = emit_uleb128(s8, 0);
+    let s10: EmitState = emit_uleb128(s9, 1);
+    let s11: EmitState = emit_uleb128(s10, 1);
+    let s12: EmitState = emit_uleb128(s11, 0);
+    let s13: EmitState = emit_mic3_opt_vid(s12, 1, 1);
+    let s14: EmitState = es_push(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 2);
+    let s16: EmitState = emit_mic3_param(s15, 0, 1, 0);
+    let s17: EmitState = emit_mic3_call1(s16, 1, load_idx, 0);
+    let s18: EmitState = emit_mic3_const_i64(s17, 1, 0);
+    let s19: EmitState = emit_mic3_output(s18, 1);
+    // get_b(s){ s.b } — name idx 3, one param "s" (str 1), ret %3, body_len 4.
+    let s20: EmitState = es_push(s19, 21);
+    let s21: EmitState = emit_uleb128(s20, 3);
+    let s22: EmitState = emit_uleb128(s21, 1);
+    let s23: EmitState = emit_uleb128(s22, 1);
+    let s24: EmitState = emit_uleb128(s23, 0);
+    let s25: EmitState = emit_mic3_opt_vid(s24, 1, 3);
+    let s26: EmitState = es_push(s25, 0);
+    let s27: EmitState = emit_uleb128(s26, 4);
+    let s28: EmitState = emit_mic3_param(s27, 0, 1, 0);
+    let s29: EmitState = emit_mic3_const_i64(s28, 1, foff);
+    let s30: EmitState = emit_mic3_binop(s29, 2, 0, 0, 1);
+    let s31: EmitState = emit_mic3_call1(s30, 3, load_idx, 2);
+    let s32: EmitState = emit_mic3_const_i64(s31, 2, 0);
+    let s33: EmitState = emit_mic3_output(s32, 2);
+    // Registries: struct_defs[S=[a,b]] (S str 4, a str 5, b str 6), rest empty.
+    emit_mic3_struct_defs_one(s33, 4, 5, 6)
+}
+
+pub fn selftest_mic3_module_field(buf: i64, offs: i64, load_idx: i64, foff: i64) -> EmitState {
+    emit_mic3_field_module(es_new(), buf, offs, load_idx, foff)
+}
+
 // ===========================================================================
 // Phase 5c — AST-DRIVEN full-module COLLECTION PASS (the hand-feeding removal)
 // ===========================================================================
