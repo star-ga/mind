@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2757 | **Est. tokens:** ~6,857,251
-**Generated:** 2026-06-10 22:55 UTC
+**Files:** 2757 | **Est. tokens:** ~6,857,872
+**Generated:** 2026-06-10 23:09 UTC
 
 ## Token Budget Guide
 
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 12 | ~37,936 |
+| `examples/mindc_mind/` | 12 | ~38,557 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -727,7 +727,7 @@
 - `method_callee_smoke.py` (~1350 tok, large)
 - `method_calls_smoke.py` (~1294 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
-- `mic3_primitives_smoke.py` (~20854 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `mic3_primitives_smoke.py` (~21475 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `struct_fields_smoke.py` (~1076 tok, large)

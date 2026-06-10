@@ -1493,6 +1493,53 @@ def main() -> int:
             if got == want else f"FAIL want {want.hex()}"
         print(f"  field_ms [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 9: AST-driven method-call lowering (UFCS desugar) ---
+    #   recv.method(args) lowers to a plain Call named {lowercase(RecvType)}_{method}
+    #   with the receiver threaded as the first arg: p.dist(7) -> point_dist(p, 7).
+    lib.selftest_mic3_module_method_from_ast.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_method_from_ast.argtypes = [ctypes.c_int64] * 8
+    for mc_src, mc_golden_hex, mc_note in (
+        (
+            "struct Point { x: i64, y: i64 }\n"
+            "pub fn point_dist(p: Point, k: i64) -> i64 { k }\n"
+            "pub fn use_it(p: Point) -> i64 { p.dist(7) }\n",
+            "4d49433302070a706f696e745f646973740170016b067573655f697405506f696e"
+            "740178017903000801000013001500020100020101010002180001001801020101"
+            "010013011503010100010200031800010001010e16020002000101020013020104"
+            "0205060000",
+            "p.dist(7) -> point_dist(p,7), 104B",
+        ),
+    ):
+        mc_srcb = mc_src.encode()
+        mc_srcc = ctypes.create_string_buffer(mc_srcb, len(mc_srcb))
+        mc_strbuf = ctypes.create_string_buffer(512)
+        mc_offs = (ctypes.c_int64 * 64)()
+        mc_ccell = (ctypes.c_int64 * 1)()
+        mc_cbuf = ctypes.create_string_buffer(256)
+        mc_argbuf = (ctypes.c_int64 * 64)()
+        mc_valbuf = (ctypes.c_int64 * 64)()
+        es = lib.selftest_mic3_module_method_from_ast(
+            ctypes.cast(mc_srcc, ctypes.c_void_p).value, len(mc_srcb),
+            ctypes.cast(mc_strbuf, ctypes.c_void_p).value,
+            ctypes.cast(mc_offs, ctypes.c_void_p).value,
+            ctypes.cast(mc_ccell, ctypes.c_void_p).value,
+            ctypes.cast(mc_cbuf, ctypes.c_void_p).value,
+            ctypes.cast(mc_argbuf, ctypes.c_void_p).value,
+            ctypes.cast(mc_valbuf, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        mc_golden = bytes.fromhex(mc_golden_hex)
+        live = _live_oracle(mc_src)
+        if live is not None and live != mc_golden:
+            raise SystemExit(
+                f"FAIL: method-call golden stale vs live ({mc_note})\n"
+                f"  golden {mc_golden.hex()}\n  live   {live.hex()}")
+        want = live if live is not None else mc_golden
+        failures += got != want
+        total += 1
+        ok = f"OK (AST-driven method-call UFCS, byte-exact vs --emit-mic3, {mc_note})" \
+            if got == want else f"FAIL want {want.hex()}"
+        print(f"  method   [{len(got)}B] = {got.hex()}  {ok}")
+
     field_src = (
         "struct S { a: i64, b: i64 }\n"
         "pub fn get_a(s: S) -> i64 { s.a }\n"

@@ -3006,6 +3006,246 @@ pub fn selftest_mic3_module_field_multi(src: i64, src_len: i64, strbuf: i64, off
 }
 
 // ===========================================================================
+// SECTION 9b — METHOD-CALL LOWERING -> UFCS CALL mic@3 BYTE-OUTPUT (part 3)
+//
+// ADDITIVE / canary-isolated (exported only via selftest_mic3_module_method_from_ast
+// below); the canary mindc_compile / emit_fn_def / emit_expr_env path is untouched,
+// so the fixed point stays byte-identical (Bound by MIND-CONSTITUTION §I).
+//
+// Emits the COMPLETE mic@3 module for the genuine method-call fixture
+//   struct Point { x: i64, y: i64 }
+//   pub fn point_dist(p: Point, k: i64) -> i64 { k }
+//   pub fn use_it(p: Point) -> i64 { p.dist(7) }
+// byte-for-byte vs `mindc --emit-mic3`. The payoff of parts 1+2: the parsed method
+// call (mc_parse_first) and the resolved UFCS callee name (part 2) now drive a real
+// Instr::Call. The Rust oracle (src/eval/lower.rs MethodCall arm) desugars
+// `recv.method(args)` to a plain Call named `{lowercase(ReceiverType)}_{method}`
+// with the RECEIVER threaded as the FIRST call arg, the int-literal args following:
+//   use_it body: PARAM %0=p ; CONST %1=7 ; CALL %2 = point_dist([%0, %1]) ; ret %2.
+// The callee fn (point_dist) returns its `k` param directly: body = the two PARAM
+// bindings, ret = the k param vid (no explicit Output in the body).
+//
+// String table FIRST-SEEN order mirrors Rust collect_strings walking module.instrs
+// (src/ir/compact/v3/emit.rs:492-525): for the callee FnDef intern name then each
+// param name; for the caller FnDef intern name, its param, then the body CALL's
+// callee name (a dedup HIT since `point_dist` already interned at 0); finally the
+// struct_defs registry interns the type name then each field. Yields the 7-entry
+// table: point_dist(0) p(1) k(2) use_it(3) Point(4) x(5) y(6).
+//
+// SCOPE (smallest byte-verifiable slice): exactly one struct, one receiver param,
+// one method call with N int-literal args lowering to CALL callee([recv,args...]).
+// Any other shape returns the seed state unchanged (fail-closed, no partial bytes).
+
+// Emit an N-argument Instr::Call:
+//   OP_CALL(0x16) || vid(dst) || string_idx(name) || uleb(nargs) || vid(arg0..N-1).
+// `args` is a heap array of `nargs` i64 vids. Generalises emit_mic3_call1.
+pub fn emit_mic3_calln(s: EmitState, dst: i64, name_idx: i64, args: i64, nargs: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 22);
+    let s2: EmitState = emit_uleb128(s1, dst);
+    let s3: EmitState = emit_uleb128(s2, name_idx);
+    let s4: EmitState = emit_uleb128(s3, nargs);
+    emit_mic3_calln_args(s4, args, nargs, 0)
+}
+
+pub fn emit_mic3_calln_args(s: EmitState, args: i64, nargs: i64, i: i64) -> EmitState {
+    if i >= nargs {
+        return s;
+    }
+    let v: i64 = __mind_load_i64(args + i * 8);
+    let s1: EmitState = emit_uleb128(s, v);
+    emit_mic3_calln_args(s1, args, nargs, i + 1)
+}
+
+// Emit one CONST_I64 per int-literal method-call argument, vids starting at
+// `vid0`. `argvals` is a heap array of `nargs` i64 literal values. Each arg lowers
+// to a CONST whose vid is consumed (in order) as the corresponding CALL arg vid.
+pub fn emit_mic3_method_arg_consts(s: EmitState, argvals: i64, nargs: i64, vid0: i64, i: i64) -> EmitState {
+    if i >= nargs {
+        return s;
+    }
+    let v: i64 = __mind_load_i64(argvals + i * 8);
+    let s1: EmitState = emit_mic3_const_i64(s, vid0 + i, v);
+    emit_mic3_method_arg_consts(s1, argvals, nargs, vid0, i + 1)
+}
+
+// Collect the int-literal VALUES of the first method call's args into `argvals`
+// (a caller-provided heap array of >= nargs i64s); returns nargs, or -1 if there
+// is no parseable method call. Re-parses the args at the call's `(` to recover the
+// literal spans (the ast_method node retains only the arg COUNT, not the values).
+pub fn mc_collect_arg_values(src_addr: i64, src_len: i64, argvals: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let rpos: i64 = mc_find_method_call(tokens, 0);
+    if rpos < 0 {
+        return 0 - 1;
+    }
+    let after_open: i64 = rpos + 4;
+    if tok_kind(tokens, after_open) == tk_rparen() {
+        return 0;
+    }
+    let args_res: ParseResult = parse_args_rest(tokens, after_open, src_addr, vec_new());
+    let args_node: i64 = pr_node(args_res);
+    let nargs: i64 = ast_aux(args_node);
+    let args_addr: i64 = ast_child0(args_node);
+    let _w: i64 = mc_write_arg_values(argvals, src_addr, args_addr, nargs, 0);
+    nargs
+}
+
+// Walk the parsed arg nodes; for each int-literal write its parsed value into
+// `argvals[i]`. (Smallest slice: args are int literals; mirrors the oracle's
+// per-arg CONST lowering.) Returns the number written.
+pub fn mc_write_arg_values(argvals: i64, src: i64, args_addr: i64, nargs: i64, i: i64) -> i64 {
+    if i >= nargs {
+        return i;
+    }
+    let node: i64 = __mind_load_i64(args_addr + i * 8);
+    let v: i64 = parse_int_span(src, ast_span_lo(node), ast_span_hi(node), 0);
+    __mind_store_i64(argvals + i * 8, v);
+    mc_write_arg_values(argvals, src, args_addr, nargs, i + 1)
+}
+
+// Assemble the full mic@3 module for the method-call fixture, AST-driven. The
+// caller provides scratch buffers: `strbuf`/`offs`/`ccell` (the string-table
+// interner), `cbuf` (a >= 64-byte scratch for the synthesized UFCS callee name),
+// `argbuf` (a >= 8*nargs scratch for the const arg vids), `valbuf` (>= 8*nargs for
+// the literal values). Returns the seed `s` unchanged on any unexpected shape.
+pub fn emit_mic3_method_module_from_ast(s: EmitState, src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64, cbuf: i64, argbuf: i64, valbuf: i64) -> EmitState {
+    let tokens: Vec = lex(src, src_len);
+    let srt: i64 = srt_build(src, src_len);
+    // Shape guards: exactly one struct; a parseable method call resolving to a
+    // known receiver-param type.
+    if srt_count(srt) != 1 {
+        return s;
+    }
+    let m: i64 = mc_parse_first(src, src_len);
+    if m == 0 {
+        return s;
+    }
+    let callee_len: i64 = selftest_method_callee_name_into(src, src_len, cbuf);
+    if callee_len < 0 {
+        return s;
+    }
+    let nargs: i64 = mc_collect_arg_values(src, src_len, valbuf);
+    if nargs < 0 {
+        return s;
+    }
+    // Locate the two fns. fn0 = the callee def (parsed first), fn1 = the caller.
+    // pstart0/pstart1 = the index just past each fn's `(` (params start).
+    let pstart0: i64 = ptt_find_param_list(tokens, 0);
+    if pstart0 < 3 {
+        return s;
+    }
+    let fn0_lo: i64 = tok_lo(tokens, pstart0 - 2);
+    let fn0_hi: i64 = tok_hi(tokens, pstart0 - 2);
+    let pstart1: i64 = ptt_find_param_list(tokens, pstart0);
+    if pstart1 < 3 {
+        return s;
+    }
+    let fn1_lo: i64 = tok_lo(tokens, pstart1 - 2);
+    let fn1_hi: i64 = tok_hi(tokens, pstart1 - 2);
+    // Callee (fn0) params: name0 : Type0 , name1 : Type1 . The two param NAME spans
+    // (the callee returns its 2nd param `k`, so we need both names interned and the
+    // 2nd as the ret vid).
+    let p0a_lo: i64 = tok_lo(tokens, pstart0);
+    let p0a_hi: i64 = tok_hi(tokens, pstart0);
+    let p0b_lo: i64 = tok_lo(tokens, pstart0 + 4);
+    let p0b_hi: i64 = tok_hi(tokens, pstart0 + 4);
+    // Caller (fn1) single param name (the receiver).
+    let p1_lo: i64 = tok_lo(tokens, pstart1);
+    let p1_hi: i64 = tok_hi(tokens, pstart1);
+    // Intern strings in FIRST-SEEN order (mirrors collect_strings over module.instrs):
+    //   fn0 name, fn0 param0, fn0 param1, fn1 name, fn1 param (dedup), callee (dedup
+    //   to fn0 name), then struct type name + each field.
+    let i_fn0: i64 = intern_span(strbuf, offs, ccell, src, fn0_lo, fn0_hi);
+    let i_p0a: i64 = intern_span(strbuf, offs, ccell, src, p0a_lo, p0a_hi);
+    let i_p0b: i64 = intern_span(strbuf, offs, ccell, src, p0b_lo, p0b_hi);
+    let i_fn1: i64 = intern_span(strbuf, offs, ccell, src, fn1_lo, fn1_hi);
+    let i_p1: i64 = intern_span(strbuf, offs, ccell, src, p1_lo, p1_hi);
+    let i_callee: i64 = intern_span(strbuf, offs, ccell, cbuf, 0, callee_len);
+    let i_ty: i64 = intern_span(strbuf, offs, ccell, src, srt_name_lo(srt, 0), srt_name_hi(srt, 0));
+    let _fld: i64 = srt_intern_fields(strbuf, offs, ccell, src, srt, 0, 0);
+    let fc: i64 = srt_field_count(srt, 0);
+    let i_f0: i64 = i_ty + 1;
+    let strc: i64 = i_ty + 1 + fc;
+    // The caller's CALL arg-vid list: receiver param (%0) FIRST, then the const-arg
+    // vids %1..%nargs.
+    let _r0: i64 = mc_build_call_arg_vids(argbuf, nargs);
+    // Header || strtab || next_id(3) || exports(0) || instr_count(8).
+    // Flat module-level next_id = one id per top-level item: struct decl -> %0,
+    // point_dist -> %1, use_it -> %2, so next_id = 3. instr_count = 8 (3 scaffold
+    // CONST/OUTPUT pairs interleaved with the 2 FN_DEFs).
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, strc);
+    // 3 top-level items (struct + 2 fns), each a module-level CONST/OUTPUT pair.
+    let s3: EmitState = emit_uleb128(s2, 3);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 8);
+    // struct Point decl -> scaffold CONST %0 / OUTPUT %0.
+    let s6: EmitState = emit_mic3_const_i64(s5, 0, 0);
+    let s7: EmitState = emit_mic3_output(s6, 0);
+    // FN_DEF point_dist(p=%0, k=%1) ret %1, body = PARAM %0 p, PARAM %1 k (body_len 2).
+    let s8: EmitState = es_push(s7, 21);
+    let s9: EmitState = emit_uleb128(s8, i_fn0);
+    let s10: EmitState = emit_uleb128(s9, 2);
+    let s11: EmitState = emit_uleb128(s10, i_p0a);
+    let s12: EmitState = emit_uleb128(s11, 0);
+    let s13: EmitState = emit_uleb128(s12, i_p0b);
+    let s14: EmitState = emit_uleb128(s13, 1);
+    let s15: EmitState = emit_mic3_opt_vid(s14, 1, 1);
+    let s16: EmitState = es_push(s15, 0);
+    let s17: EmitState = emit_uleb128(s16, 2);
+    let s18: EmitState = emit_mic3_param(s17, 0, i_p0a, 0);
+    let s19: EmitState = emit_mic3_param(s18, 1, i_p0b, 1);
+    // fn0 module-level scaffold pair CONST %1 / OUTPUT %1.
+    let s20: EmitState = emit_mic3_const_i64(s19, 1, 0);
+    let s21: EmitState = emit_mic3_output(s20, 1);
+    // FN_DEF use_it(p=%0) ret %(1+nargs), body = PARAM %0 p, CONST args, CALL.
+    let ret_vid: i64 = 1 + nargs;
+    let body_len: i64 = 2 + nargs;
+    let s22: EmitState = es_push(s21, 21);
+    let s23: EmitState = emit_uleb128(s22, i_fn1);
+    let s24: EmitState = emit_uleb128(s23, 1);
+    let s25: EmitState = emit_uleb128(s24, i_p1);
+    let s26: EmitState = emit_uleb128(s25, 0);
+    let s27: EmitState = emit_mic3_opt_vid(s26, 1, ret_vid);
+    let s28: EmitState = es_push(s27, 0);
+    let s29: EmitState = emit_uleb128(s28, body_len);
+    let s30: EmitState = emit_mic3_param(s29, 0, i_p1, 0);
+    let s31: EmitState = emit_mic3_method_arg_consts(s30, valbuf, nargs, 1, 0);
+    let s32: EmitState = emit_mic3_calln(s31, ret_vid, i_callee, argbuf, nargs + 1);
+    // fn1 module-level scaffold pair CONST %2 / OUTPUT %2.
+    let s33: EmitState = emit_mic3_const_i64(s32, 2, 0);
+    let s34: EmitState = emit_mic3_output(s33, 2);
+    // struct_defs registry: Point=[fields], const_array_defs=0, repr_c_structs=0.
+    let s35: EmitState = emit_uleb128(s34, 1);
+    let s36: EmitState = emit_uleb128(s35, i_ty);
+    let s37: EmitState = emit_uleb128(s36, fc);
+    let s38: EmitState = ffa_emit_field_idxs(s37, i_f0, fc, 0);
+    let s39: EmitState = emit_uleb128(s38, 0);
+    emit_uleb128(s39, 0)
+}
+
+// Build the CALL arg-vid list for the caller: argbuf[0] = receiver vid (%0), then
+// argbuf[1..nargs+1] = the const-arg vids %1..%nargs (matching the emit order of
+// emit_mic3_method_arg_consts). Returns nargs+1 (the total arg count).
+pub fn mc_build_call_arg_vids(argbuf: i64, nargs: i64) -> i64 {
+    __mind_store_i64(argbuf + 0, 0);
+    let _r: i64 = mc_fill_const_arg_vids(argbuf, nargs, 0);
+    nargs + 1
+}
+
+pub fn mc_fill_const_arg_vids(argbuf: i64, nargs: i64, i: i64) -> i64 {
+    if i >= nargs {
+        return i;
+    }
+    __mind_store_i64(argbuf + (i + 1) * 8, i + 1);
+    mc_fill_const_arg_vids(argbuf, nargs, i + 1)
+}
+
+pub fn selftest_mic3_module_method_from_ast(src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64, cbuf: i64, argbuf: i64, valbuf: i64) -> EmitState {
+    emit_mic3_method_module_from_ast(es_new(), src, src_len, strbuf, offs, ccell, cbuf, argbuf, valbuf)
+}
+
+// ===========================================================================
 // Phase 5c — AST-DRIVEN full-module COLLECTION PASS (the hand-feeding removal)
 // ===========================================================================
 //
