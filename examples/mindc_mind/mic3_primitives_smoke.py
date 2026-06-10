@@ -294,6 +294,34 @@ def main() -> int:
         ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
         print(f"  const_fn {name.decode()}()={{{val}}} [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- OP_PARAM (0x18): vid(dst) || string_idx(name) || uleb(index).
+    #     fn id(a): PARAM(%0, "a"=1, 0) = 18 00 01 00 ---
+    lib.selftest_mic3_param.restype = ctypes.c_void_p
+    lib.selftest_mic3_param.argtypes = [ctypes.c_int64] * 3
+    for dst, nidx, index in [(0, 1, 0), (2, 3, 1), (0, 300, 5)]:
+        es = lib.selftest_mic3_param(dst, nidx, index)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = bytes([0x18]) + ref_uleb128(dst) + ref_uleb128(nidx) + ref_uleb128(index)
+        failures += got != want
+        total += 1
+        note = " (== fn id(a) PARAM)" if (dst, nidx, index) == (0, 1, 0) else ""
+        print(f"  param(dst={dst},name={nidx},idx={index}) = {got.hex():<10} "
+              f"{'OK' + note if got == want else 'FAIL want ' + want.hex()}")
+
+    # --- encode_named_vids: uleb(count) || (string_idx, vid) per pair ---
+    lib.selftest_mic3_named_vids.restype = ctypes.c_void_p
+    lib.selftest_mic3_named_vids.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    for pairs in [[(1, 0)], [(1, 0), (2, 1)], [(1, 0), (2, 1), (3, 2)]]:
+        flat = [v for pr in pairs for v in pr]
+        pairs_c = (ctypes.c_int64 * len(flat))(*flat)
+        es = lib.selftest_mic3_named_vids(ctypes.cast(pairs_c, ctypes.c_void_p).value, len(pairs))
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_uleb128(len(pairs)) + b"".join(ref_uleb128(s) + ref_uleb128(v) for s, v in pairs)
+        failures += got != want
+        total += 1
+        print(f"  named_vids({pairs}) = {got.hex():<12} "
+              f"{'OK' if got == want else 'FAIL want ' + want.hex()}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
