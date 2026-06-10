@@ -2465,6 +2465,119 @@ pub fn selftest_mic3_chain_fn(buf: i64, offs: i64, n: i64, op_byte: i64) -> Emit
     emit_mic3_chain_fn_module(es_new(), buf, offs, n, op_byte)
 }
 
+// ===== mic@3 COMPLETE with-body module — the mixed-operator expression-tree family (Phase 4f) =====
+//
+// Assembles the full mic@3 of `pub fn <name>(p0, .., p(n-1)) -> i64 { <expr-tree> }`,
+// byte-exact vs the Rust oracle, for an ARBITRARY binary-expression tree of MIXED
+// operators — the first body that is NOT a left-spine accumulator. Examples:
+//   mixed(a,b,c,d){a*b+c*d}  (tree +(*(a,b),*(c,d)), 77-byte oracle)
+//   f(a,b,c){(a+b)*c}        (tree *(+(a,b),c),       60-byte oracle)
+//
+// The tree is supplied as a flat POST-ORDER node array (the standard flattening of
+// a recursive post-order walk — the lowering emits each subtree, allocates a fresh
+// vid, then references the two child vids). `nodes` is a heap array of `n_nodes`
+// 4-i64 records (32 bytes each):
+//   record[0] = kind: 0 = LEAF (param), 1 = BINOP.
+//   LEAF :  record[1] = param index (its vid IS the index, since param i -> vid i).
+//   BINOP:  record[1] = op_byte, record[2] = left child slot, record[3] = right slot.
+// Nodes are in post-order, so a binop's child slots always precede it. The vid of a
+// LEAF slot is its param index; the vid of a BINOP slot is allocated n, n+1, .. in
+// post-order array order (== emission order). The FN_DEF ret_vid is the LAST node's
+// vid (the tree root). body_len = n PARAMs + (#BINOP nodes). Decoded from the oracle:
+//   header || strtab(n+1: name,p0..p(n-1)) || next_id(1) || exports(0) || uleb(3) ||
+//     FN_DEF{name=0, params=[(1,%0)..(n,%(n-1))], ret=%root,
+//            body=[PARAM %0..%(n-1), then BINOP per binop-node in post-order with
+//                  the two child slot vids]} ||
+//     ConstI64(%0,0) || Output(%0) ||
+//   3 empty registries.
+// Generalizes Phase 4e (the left-spine chain is the special case where every binop's
+// left child is the previous binop and right child is the next leaf).
+//
+// `vidbuf` is a caller-supplied heap scratch array of `n_nodes` i64s used to record
+// each slot's resolved vid (a binop references children by slot, so the slot->vid map
+// must be materialized before the binops emit). It is filled by the first pass below.
+pub fn emit_mic3_tree_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
+    // Pass 1: resolve every slot's vid into vidbuf (post-order, binops from %n).
+    let root: i64 = tree_resolve_vids(nodes, n_nodes, n, vidbuf, 0, n);
+    let nbinops: i64 = tree_count_binops(nodes, n_nodes, 0);
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, n + 1);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 3);
+    // FN_DEF header: name_idx=0, encode_named_vids param list, ret Some %root, reap
+    // None, body_len = n PARAMs + nbinops.
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_mic3_chain_param_pairs(s7, n);
+    let s9: EmitState = emit_mic3_opt_vid(s8, 1, root);
+    let s10: EmitState = es_push(s9, 0);
+    let s11: EmitState = emit_uleb128(s10, n + nbinops);
+    // Body: n PARAM instrs (reuse the chain param-body writer), then the binops in
+    // post-order, each with its resolved child vids.
+    let s12: EmitState = emit_mic3_chain_params(s11, n, 0);
+    let s13: EmitState = emit_mic3_tree_binops(s12, nodes, n_nodes, vidbuf, 0);
+    // Module-level ConstI64(%0,0), Output(%0), 3 empty registries.
+    let s14: EmitState = emit_mic3_const_i64(s13, 0, 0);
+    let s15: EmitState = emit_mic3_output(s14, 0);
+    emit_mic3_empty_registries(s15)
+}
+
+// Pass 1: walk slots 0..n_nodes in order; LEAF slot vid = param index; BINOP slot
+// vid = the running counter `nxt` (starts at n). Records each slot's vid in vidbuf.
+// Returns the LAST slot's vid (the tree root). `i` is the current slot, `nxt` the
+// next free binop vid.
+pub fn tree_resolve_vids(nodes: i64, n_nodes: i64, n: i64, vidbuf: i64, i: i64, nxt: i64) -> i64 {
+    if i >= n_nodes {
+        return __mind_load_i64(vidbuf + (n_nodes - 1) * 8);
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 0 {
+        let pidx: i64 = __mind_load_i64(nodes + i * 32 + 8);
+        __mind_store_i64(vidbuf + i * 8, pidx);
+        return tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt);
+    }
+    __mind_store_i64(vidbuf + i * 8, nxt);
+    tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt + 1)
+}
+
+// Count BINOP nodes (kind == 1) across all slots.
+pub fn tree_count_binops(nodes: i64, n_nodes: i64, i: i64) -> i64 {
+    if i >= n_nodes {
+        return 0;
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 1 {
+        return 1 + tree_count_binops(nodes, n_nodes, i + 1);
+    }
+    tree_count_binops(nodes, n_nodes, i + 1)
+}
+
+// Pass 2: emit one BINOP per BINOP slot, in post-order array order. Each binop's
+// dst vid is vidbuf[slot]; lhs/rhs vids are vidbuf[left_slot]/vidbuf[right_slot].
+// LEAF slots emit nothing in the body (their PARAM was emitted in the param pass).
+pub fn emit_mic3_tree_binops(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, i: i64) -> EmitState {
+    if i >= n_nodes {
+        return s;
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 0 {
+        return emit_mic3_tree_binops(s, nodes, n_nodes, vidbuf, i + 1);
+    }
+    let op_byte: i64 = __mind_load_i64(nodes + i * 32 + 8);
+    let lslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
+    let rslot: i64 = __mind_load_i64(nodes + i * 32 + 24);
+    let dst: i64 = __mind_load_i64(vidbuf + i * 8);
+    let lvid: i64 = __mind_load_i64(vidbuf + lslot * 8);
+    let rvid: i64 = __mind_load_i64(vidbuf + rslot * 8);
+    let s1: EmitState = emit_mic3_binop(s, dst, op_byte, lvid, rvid);
+    emit_mic3_tree_binops(s1, nodes, n_nodes, vidbuf, i + 1)
+}
+
+pub fn selftest_mic3_tree_fn(buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
+    emit_mic3_tree_fn_module(es_new(), buf, offs, n, nodes, n_nodes, vidbuf)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
