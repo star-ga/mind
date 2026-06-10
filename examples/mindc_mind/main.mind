@@ -2340,6 +2340,43 @@ pub fn selftest_mic3_arith_fn(buf: i64, offs: i64, op_byte: i64) -> EmitState {
     emit_mic3_arith_fn_module(es_new(), buf, offs, op_byte)
 }
 
+// ===== mic@3 COMPLETE with-body module — the single-param identity family (Phase 4d) =====
+//
+// Assembles the full mic@3 of `pub fn <name>(<pa>) -> i64 { <pa> }`, byte-exact vs
+// the Rust oracle. This is the FIRST function whose RETURN is a PARAMETER directly:
+// the FN_DEF ret_vid is the param's own vid (%0) and the body is a single PARAM
+// instruction — no BINOP, no body ConstI64 (distinct from Phase 4a const-return,
+// where the body is a ConstI64, and Phase 4c arith, where the body is PARAM,PARAM,
+// BINOP). `buf`/`offs` carry 2 strings (name, pa). The exact shape emit_mic3 + the
+// lowering produce (decoded from the oracle for `ident(a){a}`, 38 bytes):
+//   header || strtab(2:name,pa) || next_id(1) || exports(0) || uleb(3 instrs) ||
+//     FN_DEF{name=0, params=[(1,%0)], ret=%0, body=[PARAM %0]} ||
+//     ConstI64(%0,0) || Output(%0) ||
+//   3 empty registries.
+pub fn emit_mic3_ident_fn_module(s: EmitState, buf: i64, offs: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 2);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 3);
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_uleb128(s7, 1);
+    let s9: EmitState = emit_uleb128(s8, 1);
+    let s10: EmitState = emit_uleb128(s9, 0);
+    let s11: EmitState = emit_mic3_opt_vid(s10, 1, 0);
+    let s12: EmitState = es_push(s11, 0);
+    let s13: EmitState = emit_uleb128(s12, 1);
+    let s14: EmitState = emit_mic3_param(s13, 0, 1, 0);
+    let s15: EmitState = emit_mic3_const_i64(s14, 0, 0);
+    let s16: EmitState = emit_mic3_output(s15, 0);
+    emit_mic3_empty_registries(s16)
+}
+
+pub fn selftest_mic3_ident_fn(buf: i64, offs: i64) -> EmitState {
+    emit_mic3_ident_fn_module(es_new(), buf, offs)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {

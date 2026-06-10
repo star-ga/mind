@@ -358,6 +358,42 @@ def main() -> int:
         ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
         print(f"  arith_fn {name.decode()}({pa.decode()},{pb.decode()}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- COMPLETE WITH-BODY identity fn: pub fn <name>(<pa>) -> i64 { <pa> }
+    #     The first function whose RETURN is a PARAMETER directly — ret_vid is the
+    #     param's own vid (%0) and the body is a single PARAM (no BINOP, no body
+    #     const). ident(a){a} == the captured 38-byte oracle byte-for-byte. ---
+    def ref_ident_fn(name, pa):
+        strs = [name, pa]
+        out = b"MIC3\x02"
+        out += ref_uleb128(2) + b"".join(ref_uleb128(len(x)) + x for x in strs)
+        out += ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(3)        # next_id, exports, 3 instrs
+        out += bytes([0x15]) + ref_uleb128(0)                          # FN_DEF, name_idx=0
+        out += ref_uleb128(1) + ref_uleb128(1) + ref_uleb128(0)        # 1 param (str=1, vid=0)
+        out += bytes([1]) + ref_uleb128(0) + bytes([0]) + ref_uleb128(1)  # ret Some %0, reap None, body_len 1
+        out += bytes([0x18]) + ref_uleb128(0) + ref_uleb128(1) + ref_uleb128(0)  # PARAM %0
+        out += bytes([1]) + ref_uleb128(0) + ref_uleb128(0)            # ConstI64(%0,0)
+        out += bytes([0x13]) + ref_uleb128(0)                          # Output(%0)
+        out += b"\x00\x00\x00"
+        return out
+
+    lib.selftest_mic3_ident_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_ident_fn.argtypes = [ctypes.c_int64] * 2
+    for name, pa in [(b"ident", b"a"), (b"id", b"x")]:
+        sbuf = name + pa
+        soff = [0, len(name), len(name) + len(pa)]
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        es = lib.selftest_mic3_ident_fn(
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_ident_fn(name, pa)
+        failures += got != want
+        total += 1
+        note = " (== ident(a){a} oracle, 38B)" if (name, pa) == (b"ident", b"a") else ""
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        print(f"  ident_fn {name.decode()}({pa.decode()}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
