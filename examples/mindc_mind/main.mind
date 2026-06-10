@@ -7071,3 +7071,191 @@ pub fn emit_mic3_while_count_module(s: EmitState, buf: i64, offs: i64, op_byte: 
 pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -> EmitState {
     emit_mic3_while_count_module(es_new(), buf, offs, op_byte, incr)
 }
+
+// ===========================================================================
+// SECTION 12 — MATCH STRUCTURE (the match frontier, part 1)
+//
+// ADDITIVE / canary-isolated. PARSER + STRUCTURE-READING only — NO mic@3
+// byte-output, NO EmitState, NO touch of the canary mindc_compile path. It
+// cannot perturb the fixed point and cannot hit the EmitState segfault.
+//
+// The Rust front-end lowers `match` as a PURE AST-level desugar to a nested
+// if/else chain (src/eval/lower.rs desugar_match_to_if): each test arm becomes
+// a `<scrutinee> == <pat>` comparison feeding the keystone-protected If
+// lowering, and a `_` / bare-ident arm becomes the terminal else. There is NO
+// dedicated match/switch opcode — `match k { 0 => 10, 1 => 20, _ => 99 }` and
+// the hand-written `if k == 0 { 10 } else if k == 1 { 20 } else { 99 }` emit
+// byte-IDENTICAL mic@3 (both end in OP_IF 0x1c chains). So match byte-output,
+// when it lands (part 2), reuses the OP_IF machinery — no new opcode.
+//
+// The bootstrap dispatch (parse_stmt / parse_primary) does NOT recognise the
+// `match` keyword — main.mind's own source uses NO surface `match` (it
+// dispatches AST node kinds with `if kind == X` chains) — so a `match`
+// spelling lexes as a bare tk_ident. These selftests therefore locate the
+// match by scanning the token stream for an ident-token spelling "match",
+// parse the scrutinee with the existing parse_expr (which stops at `{`), then
+// read the arm structure directly off the token stream. They never add `match`
+// to the shared statement dispatch, so the canary parse path — and the
+// byte-identical fixed point — is unchanged.
+//
+// Token shape: `match SCRUT { PAT => BODY , PAT => BODY , _ => BODY }`. The
+// fat arrow `=>` is NOT a bootstrap token: byte `=` (61) fails the `==`
+// peek-ahead and byte `>` (62) fails the `>=` peek-ahead, so `=>` lexes as the
+// two-token sequence tk_eq() then tk_gt(). Each arm has exactly one `=>`, so
+// the arm count is the number of `tk_eq tk_gt` pairs at brace-depth 0 inside
+// the match body. A wildcard arm is a bare `_` (a single tk_ident spelling
+// "_", byte 95 is alpha) immediately preceding a `=>` at depth 0.
+// ===========================================================================
+
+// Returns 1 if the bytes buf[lo..hi) spell "match" (5 bytes:
+// m=109,a=97,t=116,c=99,h=104), else 0.
+pub fn is_ident_match(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 5 {
+        if load_byte(buf, lo) == 109 {
+            if load_byte(buf, lo + 1) == 97 {
+                if load_byte(buf, lo + 2) == 116 {
+                    if load_byte(buf, lo + 3) == 99 {
+                        if load_byte(buf, lo + 4) == 104 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// Returns 1 if the bytes buf[lo..hi) spell "_" (1 byte: underscore=95), else 0.
+pub fn is_ident_underscore(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 1 {
+        if load_byte(buf, lo) == 95 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Scan the token stream for the first ident-token spelling "match". Returns the
+// token index of that `match` token, or -1 if none. Tail-recursive.
+pub fn mt_find_match(toks: Vec, buf: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0 - 1;
+    }
+    if tok_kind(toks, pos) == tk_ident() {
+        if is_ident_match(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+            return pos;
+        }
+    }
+    mt_find_match(toks, buf, pos + 1)
+}
+
+// Count the `=>` fat arrows (tk_eq immediately followed by tk_gt) at brace
+// depth 0 between the match body's opening `{` and its matching `}`. `pos` is
+// the token index just AFTER the opening `{`; `depth` is the open-brace nesting
+// (0 at the arm level). Each arm contributes exactly one depth-0 `=>`, so the
+// returned count is the arm count. Tail-recursive with an accumulator.
+pub fn mt_count_arrows(toks: Vec, pos: i64, depth: i64, acc: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return acc;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return mt_count_arrows(toks, pos + 1, depth + 1, acc);
+    }
+    if k == tk_rbrace() {
+        if depth == 0 {
+            return acc;
+        }
+        return mt_count_arrows(toks, pos + 1, depth - 1, acc);
+    }
+    if depth == 0 {
+        if k == tk_eq() {
+            if tok_kind(toks, pos + 1) == tk_gt() {
+                return mt_count_arrows(toks, pos + 2, depth, acc + 1);
+            }
+        }
+    }
+    mt_count_arrows(toks, pos + 1, depth + 0, acc)
+}
+
+// Scan the arm region for a wildcard arm: a bare `_` ident token immediately
+// followed by a `=>` (tk_eq tk_gt) at brace depth 0. Returns 1 if found, else
+// 0. `pos` is just after the opening `{`. Tail-recursive.
+pub fn mt_find_wildcard(toks: Vec, buf: i64, pos: i64, depth: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_lbrace() {
+        return mt_find_wildcard(toks, buf, pos + 1, depth + 1);
+    }
+    if k == tk_rbrace() {
+        if depth == 0 {
+            return 0;
+        }
+        return mt_find_wildcard(toks, buf, pos + 1, depth - 1);
+    }
+    if depth == 0 {
+        if k == tk_ident() {
+            if is_ident_underscore(buf, tok_lo(toks, pos), tok_hi(toks, pos)) == 1 {
+                if tok_kind(toks, pos + 1) == tk_eq() {
+                    if tok_kind(toks, pos + 2) == tk_gt() {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    mt_find_wildcard(toks, buf, pos + 1, depth + 0)
+}
+
+// Selftest export: 1 if `src` contains a `match` expression, else 0.
+pub fn selftest_match_present(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let mp: i64 = mt_find_match(toks, src_addr, 0);
+    if mp < 0 {
+        return 0;
+    }
+    1
+}
+
+// Selftest export: the number of arms in the match, or -1 if no match. The
+// scrutinee is parsed with the existing parse_expr (it stops at `{`), then the
+// arm count is the number of depth-0 `=>` arrows in the match body.
+pub fn selftest_match_arm_count(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let mp: i64 = mt_find_match(toks, src_addr, 0);
+    if mp < 0 {
+        return 0 - 1;
+    }
+    let scrut: ParseResult = parse_expr(toks, mp + 1, src_addr);
+    let lbrace_pos: i64 = pr_pos(scrut);
+    mt_count_arrows(toks, lbrace_pos + 1, 0, 0)
+}
+
+// Selftest export: the AST kind of the match SCRUTINEE expression, or -1 if no
+// match. Reuses parse_expr starting just after the `match` token; for a bare
+// identifier scrutinee (e.g. `match k`) this is ast_ident().
+pub fn selftest_match_scrut_kind(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let mp: i64 = mt_find_match(toks, src_addr, 0);
+    if mp < 0 {
+        return 0 - 1;
+    }
+    let scrut: ParseResult = parse_expr(toks, mp + 1, src_addr);
+    ast_kind(pr_node(scrut))
+}
+
+// Selftest export: 1 if the match has a wildcard `_` arm, 0 if not, -1 if no
+// match.
+pub fn selftest_match_has_wildcard(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let mp: i64 = mt_find_match(toks, src_addr, 0);
+    if mp < 0 {
+        return 0 - 1;
+    }
+    let scrut: ParseResult = parse_expr(toks, mp + 1, src_addr);
+    let lbrace_pos: i64 = pr_pos(scrut);
+    mt_find_wildcard(toks, src_addr, lbrace_pos + 1, 0)
+}
