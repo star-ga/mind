@@ -2578,6 +2578,151 @@ pub fn selftest_mic3_tree_fn(buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i
     emit_mic3_tree_fn_module(es_new(), buf, offs, n, nodes, n_nodes, vidbuf)
 }
 
+// ===========================================================================
+// Phase 4g — AST-DRIVEN mic@3 expression emission (the bootstrap-parser bridge)
+// ===========================================================================
+//
+// Phase 4f drove emit_mic3_tree_fn_module from a SYNTHETIC hand-built 4-i64 node
+// descriptor. Phase 4g closes the gap to self-compilation: it walks the LIVE
+// bootstrap-parser AST (real 56-byte ast_binop / ast_ident nodes — see
+// ast_new_binop at line ~621, ast_child0=lhs+24, ast_child1=rhs+32, ast_aux=op+48)
+// and FLATTENS it into the exact same 4-i64 post-order descriptor the proven 4f
+// emitter consumes. The byte-exact emitter (emit_mic3_tree_fn_module) is reused
+// UNTOUCHED — Phase 4g only adds the front-half flattener, so the param-only
+// path is byte-exact-by-construction with the Phase 4f path AND the Rust oracle.
+//
+// SCOPE (param-only leaves). This pass handles ast_binop trees whose leaves are
+// all ast_ident PARAM references. ast_int_lit (const) leaves are the Phase 4h
+// WALL and are explicitly REJECTED here (flatten returns -1): the Rust --emit-mic3
+// oracle for a const leaf allocates the const's vid INTERLEAVED in the post-order
+// walk (e.g. h(a){a*2+1} emits PARAM %0, CONST %1, BINOP %2, CONST %3, BINOP %4 —
+// NOT params-first), and the stored const value is the tagged-int encoding
+// `literal*2` (lit 2 -> CONST 4, lit 3 -> CONST 6). The current 4f two-pass
+// emitter assumes params-first/all-leaves-are-params and cannot express interleaved
+// consts; threading that cleanly is Phase 4h.
+
+// AST binop op-tag (op_add()=1, op_sub()=2, op_mul()=3, op_div()=4 ..) -> the
+// mic@3 op_byte the oracle stores (add=0, sub=1, mul=2, div=3 ..). The mapping is
+// op_byte = op_tag - 1 across the arithmetic ops (verified vs --emit-mic3).
+pub fn binop_to_byte(op_tag: i64) -> i64 {
+    op_tag - 1
+}
+
+// Recursive post-order flatten of a param-only binary-expression AST sub-tree into
+// the 4-i64 descriptor array `nodes` (kind,a,b,c per record, 32 bytes). `cursor` is
+// a 1-i64 heap cell holding the next free slot. Returns the slot index of `node`'s
+// emitted record, or -1 if the sub-tree contains an unsupported construct (a
+// const/int leaf, or anything that is not ast_ident / ast_binop). On -1 the caller
+// MUST abort (the descriptor is then partial/invalid) — fail-closed, never a
+// byte-mismatched emit (Bound by MIND-CONSTITUTION §I).
+pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        // Parentheses are purely structural — the mic@3 oracle carries no paren
+        // node (verified vs --emit-mic3 on (a+b)*c). Recurse transparently.
+        return flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 0);
+        __mind_store_i64(nodes + slot * 32 + 8, idx);
+        __mind_store_i64(nodes + slot * 32 + 16, 0);
+        __mind_store_i64(nodes + slot * 32 + 24, 0);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    if k == ast_binop() {
+        let lslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
+        if lslot < 0 {
+            return 0 - 1;
+        }
+        let rslot: i64 = flatten_ast(ast_child1(node), buf, params_addr, n_params, nodes, cursor);
+        if rslot < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 1);
+        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
+        __mind_store_i64(nodes + slot * 32 + 16, lslot);
+        __mind_store_i64(nodes + slot * 32 + 24, rslot);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    // ast_int_lit (const leaf) and every other kind = Phase 4h wall — reject.
+    0 - 1
+}
+
+// Count the slots a param-only AST sub-tree flattens to (= total nodes in the tree),
+// so the caller can size the descriptor / vidbuf scratch. Returns -1 on an
+// unsupported construct (mirrors flatten_ast's rejection set exactly).
+pub fn count_ast_nodes(node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return count_ast_nodes(ast_child0(node));
+    }
+    if k == ast_ident() {
+        return 1;
+    }
+    if k == ast_binop() {
+        let l: i64 = count_ast_nodes(ast_child0(node));
+        if l < 0 {
+            return 0 - 1;
+        }
+        let r: i64 = count_ast_nodes(ast_child1(node));
+        if r < 0 {
+            return 0 - 1;
+        }
+        return 1 + l + r;
+    }
+    0 - 1
+}
+
+// AST-driven driver: flatten a real param-only binary-expression AST `expr` into the
+// 4f descriptor, then emit byte-exact via the proven emit_mic3_tree_fn_module. Two
+// buffers: `src` (source bytes, holds the scattered param-name spans used by
+// flatten_ast for param-index resolution) and `strbuf`/`offs` (a CONTIGUOUS name
+// buffer + offset array — string i spans strbuf[offs[i]..offs[i+1]] — for the mic@3
+// string table; emit_mic3_strtab requires contiguous packing, the source spans are
+// not). `n` is the param count, `params_addr`/`n_params` the parsed param block.
+// `nodes`/`cursor`/`vidbuf` are caller-supplied heap scratch (nodes: n_nodes*32
+// bytes; cursor: 1 i64; vidbuf: n_nodes i64). On an unsupported body (const leaf /
+// non-arith) it returns the unmodified seed state `s` so the caller can detect
+// non-emission — fail-closed, no partial bytes (Bound by MIND-CONSTITUTION §I.4).
+pub fn emit_mic3_ast_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n: i64, params_addr: i64, n_params: i64, expr: i64, nodes: i64, cursor: i64, vidbuf: i64) -> EmitState {
+    __mind_store_i64(cursor, 0);
+    let root: i64 = flatten_ast(expr, src, params_addr, n_params, nodes, cursor);
+    if root < 0 {
+        return s;
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    emit_mic3_tree_fn_module(s, strbuf, offs, n, nodes, n_nodes, vidbuf)
+}
+
+// Self-test entry (Phase 4g): lex+parse `src`, find the first fn_def, take its
+// trailing body expression, flatten the REAL AST, and emit mic@3 — byte-exact vs
+// the Rust --emit-mic3 oracle for param-only bodies (e.g. mixed(a,b,c,d){a*b+c*d}).
+// `strbuf`/`offs` are the caller-supplied CONTIGUOUS string-table name buffer +
+// offsets (name then p0..p(n-1)); `nodes`/`cursor`/`vidbuf` are caller-supplied heap
+// scratch sized to the body's node count. Returns the EmitState (Python harness
+// decodes EmitState.buf); for a const-leaf body it returns es_new() unchanged (empty
+// buf) — the Phase 4h deferral, detectable by the harness.
+pub fn selftest_mic3_ast_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, nodes: i64, cursor: i64, vidbuf: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let fn_node: i64 = find_first_fn(ast_child0(ast_root), ast_aux(ast_root), 0);
+    let params_addr: i64 = ast_child1(fn_node);
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    let expr: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+    emit_mic3_ast_fn_module(es_new(), src_addr, strbuf, offs, n_params, params_addr, n_params, expr, nodes, cursor, vidbuf)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
