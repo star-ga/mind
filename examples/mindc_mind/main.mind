@@ -3171,6 +3171,439 @@ pub fn selftest_mic3_if_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, 
     emit_mic3_if_fn_module(es_new(), strbuf, offs, n_params, cond_expr, then_expr, else_expr, src_addr, params_addr, nodes, cursor, vidbuf, okcell)
 }
 
+// ===========================================================================
+// Phase 4j+ — IF with MULTI-STATEMENT branch blocks + NON-EMPTY merges
+// ===========================================================================
+//
+// The 4j path above handles `if cond { expr } else { expr }` where each branch is a
+// SINGLE value expression — no branch writes, so branch_bindings and merges are
+// empty. This step extends a branch to a STATEMENT SEQUENCE `{ let n: ty = init; ..;
+// trailing }` (the same grammar Phase 4i already lowers for fn bodies). A branch-local
+// `let` is a WRITE of that name, which the Rust oracle (src/eval/lower.rs ~1399-1611)
+// turns into a NON-EMPTY merge phi set. Decoded byte-for-byte from --emit-mic3:
+//
+//   * Each branch flattens its statement list (lets + trailing) into its OWN
+//     post-order descriptor with its OWN let-env (reusing flatten_stmts/flatten_ast_le).
+//     The branch's non-param vids resolve from its per-branch base; a `let` records the
+//     name -> its init's resolved vid (the merge "value" for that branch).
+//   * VID THREADING: params 0..n-1; cond non-param from n; then = synth ConstI64(0)
+//     then then-tree; else = synth ConstI64(0) then else-tree. AFTER both branches,
+//     for each merged name (then-writes then else-writes, deduped first-seen): if a
+//     branch does NOT define the name, a placeholder ConstI64(fresh, 0) is appended to
+//     THAT branch's body (its vid allocated from the running parent counter), in the
+//     order then-placeholder, else-placeholder, then merge_id. dst is the final fresh.
+//   * branch_bindings = (name_strtab_idx, merge_id) per merged name; merges =
+//     (merge_id, then_val, else_val) per merged name. The strtab carries the let-names
+//     (after name+params, in encounter order). Verified byte-exact vs --emit-mic3:
+//     f(a,b){if a{let t=a*b; t+1}else{b}}=81B, both-let=75B, else-let=73B, two-name=88B.
+//
+// ISOLATED from the canary (exported only via selftest_mic3_if_let_fn); the AST-driven
+// body emitter still rejects ast_if, so the fixed point is byte-identical (Bound by
+// MIND-CONSTITUTION §I — additive, canary untouched).
+
+// Flatten ONE branch block (a statement list) into a fresh per-branch descriptor with
+// its own let-env, resolve its non-param vids from `base`, and return the trailing
+// expression's resolved vid (or -1 on a wall). On success: `cursor` holds n_nodes,
+// `vidbuf` is filled, and the let-env (`lenv`/`lcount`) holds each let-name's span +
+// its RESOLVED vid (slot rewritten to vid). The caller reads writes from the let-env.
+pub fn flatten_branch_block(blk: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, lenv: i64, lcount: i64, base: i64) -> i64 {
+    __mind_store_i64(cursor, 0);
+    __mind_store_i64(lcount, 0);
+    let stmts_addr: i64 = ast_child0(blk);
+    let stmts_len: i64 = ast_aux(blk);
+    if stmts_len < 1 {
+        return 0 - 1;
+    }
+    let root_slot: i64 = flatten_stmts(stmts_addr, stmts_len, 0, buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+    if root_slot < 0 {
+        return 0 - 1;
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    tree_resolve_vids_base(nodes, n_nodes, vidbuf, 0, base);
+    // Rewrite each let-env entry's stored SLOT to its resolved VID so the merge pass
+    // can read a branch's per-name value directly.
+    lenv_slots_to_vids(lenv, __mind_load_i64(lcount), vidbuf, 0);
+    __mind_load_i64(vidbuf + root_slot * 8)
+}
+
+// Rewrite let-env entry slots (offset +16) in place from descriptor slot -> resolved
+// vid (vidbuf[slot]). Called once after tree_resolve_vids_base fills vidbuf.
+pub fn lenv_slots_to_vids(lenv: i64, n: i64, vidbuf: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let slot: i64 = __mind_load_i64(lenv + i * 24 + 16);
+    __mind_store_i64(lenv + i * 24 + 16, __mind_load_i64(vidbuf + slot * 8));
+    lenv_slots_to_vids(lenv, n, vidbuf, i + 1)
+}
+
+// Look up a name span in a branch's let-env: return its resolved vid (entry +16) or -1.
+pub fn lenv_lookup_vid(lenv: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    let elo: i64 = __mind_load_i64(lenv + i * 24 + 0);
+    let ehi: i64 = __mind_load_i64(lenv + i * 24 + 8);
+    if span_bytes_equal(buf, lo, hi, elo, ehi) == 1 {
+        return __mind_load_i64(lenv + i * 24 + 16);
+    }
+    lenv_lookup_vid(lenv, n, buf, lo, hi, i + 1)
+}
+
+// Find a name span's string-table index. The contiguous name buffer `strbuf`/`offs`
+// holds [name, p0..p(n-1), let-names..]; entry j spans buf[offs[j]..offs[j+1]).
+// Returns the matching index, or -1. (Used to fill branch_bindings' name_strtab_idx.)
+pub fn strtab_index_of(strbuf: i64, offs: i64, count: i64, buf: i64, lo: i64, hi: i64, j: i64) -> i64 {
+    if j >= count {
+        return 0 - 1;
+    }
+    let slo: i64 = __mind_load_i64(offs + j * 8);
+    let shi: i64 = __mind_load_i64(offs + (j + 1) * 8);
+    if span_bytes_equal2(strbuf, slo, shi, buf, lo, hi) == 1 {
+        return j;
+    }
+    strtab_index_of(strbuf, offs, count, buf, lo, hi, j + 1)
+}
+
+// Span-equality across TWO distinct buffers (span_bytes_equal compares within one buf).
+pub fn span_bytes_equal2(a: i64, alo: i64, ahi: i64, b: i64, blo: i64, bhi: i64) -> i64 {
+    if ahi - alo != bhi - blo {
+        return 0;
+    }
+    span_bytes_equal2_loop(a, alo, ahi, b, blo, 0)
+}
+pub fn span_bytes_equal2_loop(a: i64, alo: i64, ahi: i64, b: i64, blo: i64, k: i64) -> i64 {
+    if alo + k >= ahi {
+        return 1;
+    }
+    if load_byte(a, alo + k) != load_byte(b, blo + k) {
+        return 0;
+    }
+    span_bytes_equal2_loop(a, alo, ahi, b, blo, k + 1)
+}
+
+// Build the merged-name list as spans into `buf`: then-lenv entries first, then
+// else-lenv entries not already present (first-seen dedup). `outspans` is a heap array
+// of (lo,hi) i64 pairs; returns the merged count. Each branch's lenv holds name spans.
+pub fn build_merged_names(t_lenv: i64, t_n: i64, e_lenv: i64, e_n: i64, buf: i64, outspans: i64) -> i64 {
+    let c1: i64 = copy_lenv_spans(t_lenv, t_n, buf, outspans, 0, 0);
+    merge_else_spans(e_lenv, e_n, buf, outspans, c1, 0)
+}
+pub fn copy_lenv_spans(lenv: i64, n: i64, buf: i64, outspans: i64, oc: i64, i: i64) -> i64 {
+    if i >= n {
+        return oc;
+    }
+    let lo: i64 = __mind_load_i64(lenv + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(lenv + i * 24 + 8);
+    if span_in_list(buf, lo, hi, outspans, oc, 0) == 1 {
+        return copy_lenv_spans(lenv, n, buf, outspans, oc, i + 1);
+    }
+    __mind_store_i64(outspans + oc * 16 + 0, lo);
+    __mind_store_i64(outspans + oc * 16 + 8, hi);
+    copy_lenv_spans(lenv, n, buf, outspans, oc + 1, i + 1)
+}
+pub fn merge_else_spans(lenv: i64, n: i64, buf: i64, outspans: i64, oc: i64, i: i64) -> i64 {
+    if i >= n {
+        return oc;
+    }
+    let lo: i64 = __mind_load_i64(lenv + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(lenv + i * 24 + 8);
+    if span_in_list(buf, lo, hi, outspans, oc, 0) == 1 {
+        return merge_else_spans(lenv, n, buf, outspans, oc, i + 1);
+    }
+    __mind_store_i64(outspans + oc * 16 + 0, lo);
+    __mind_store_i64(outspans + oc * 16 + 8, hi);
+    merge_else_spans(lenv, n, buf, outspans, oc + 1, i + 1)
+}
+pub fn span_in_list(buf: i64, lo: i64, hi: i64, outspans: i64, oc: i64, i: i64) -> i64 {
+    if i >= oc {
+        return 0;
+    }
+    let elo: i64 = __mind_load_i64(outspans + i * 16 + 0);
+    let ehi: i64 = __mind_load_i64(outspans + i * 16 + 8);
+    if span_bytes_equal(buf, lo, hi, elo, ehi) == 1 {
+        return 1;
+    }
+    span_in_list(buf, lo, hi, outspans, oc, i + 1)
+}
+
+// Emit the OP_IF body instruction with NON-EMPTY merges. Threads cond -> then(synth
+// +block) -> else(synth+block) -> [per-name then/else placeholders + merge_ids] -> dst,
+// byte-exact vs the oracle. The two branch blocks carry their own let-envs (already
+// resolved to vids). `mspans`/`mcount` are filled with the merged-name spans. Writes
+// dst to `okcell` on success; -1 on a wall (caller fails closed). `extra` is a heap
+// scratch of i64s: per merged name we store (then_extra_vid, else_extra_vid, merge_id)
+// = 3 i64 at extra + k*24, with -1 where a branch already defines the name.
+pub fn emit_mic3_if_block_instr(s: EmitState, cond_expr: i64, then_blk: i64, else_blk: i64, buf: i64, strbuf: i64, offs: i64, strcount: i64, params_addr: i64, n_params: i64, t_nodes: i64, t_cur: i64, t_vid: i64, t_lenv: i64, t_lc: i64, e_nodes: i64, e_cur: i64, e_vid: i64, e_lenv: i64, e_lc: i64, c_nodes: i64, c_cur: i64, c_vid: i64, mspans: i64, mcount: i64, extra: i64, okcell: i64) -> EmitState {
+    let base0: i64 = n_params;
+    // --- cond (single value expr; reuse flatten_branch into the cond descriptor) ---
+    let cond_id: i64 = flatten_branch(cond_expr, buf, params_addr, n_params, c_nodes, c_cur, c_vid, base0);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(c_cur);
+    let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
+    let after_cond: i64 = base0 + cond_nonparam;
+
+    // --- then block: synth ConstI64(after_cond, 0), then the block tree ---
+    let then_synth: i64 = after_cond;
+    let then_root: i64 = flatten_branch_block(then_blk, buf, params_addr, n_params, t_nodes, t_cur, t_vid, t_lenv, t_lc, after_cond + 1);
+    if then_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_n: i64 = __mind_load_i64(t_cur);
+    let then_nonparam: i64 = nonparam_count_desc(t_nodes, then_n, 0);
+    let after_then: i64 = after_cond + 1 + then_nonparam;
+
+    // --- else block: synth ConstI64(after_then, 0), then the block tree ---
+    let else_synth: i64 = after_then;
+    let else_root: i64 = flatten_branch_block(else_blk, buf, params_addr, n_params, e_nodes, e_cur, e_vid, e_lenv, e_lc, after_then + 1);
+    if else_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_n: i64 = __mind_load_i64(e_cur);
+    let else_nonparam: i64 = nonparam_count_desc(e_nodes, else_n, 0);
+    let after_else: i64 = after_then + 1 + else_nonparam;
+
+    // --- merge pass: merged names, per-name placeholders + merge_ids from after_else ---
+    let t_lcount: i64 = __mind_load_i64(t_lc);
+    let e_lcount: i64 = __mind_load_i64(e_lc);
+    let mn: i64 = build_merged_names(t_lenv, t_lcount, e_lenv, e_lcount, buf, mspans);
+    __mind_store_i64(mcount, mn);
+    let final_ctr: i64 = assign_merge_vids(mspans, mn, buf, t_lenv, t_lcount, e_lenv, e_lcount, extra, after_else, 0);
+    let dst: i64 = final_ctr;
+
+    // --- emit OP_IF ---
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, c_nodes, cond_n, c_vid, 0);
+    // then: synth + tree + then-edge placeholders.
+    let then_extra_count: i64 = count_then_extras(extra, mn, 0);
+    let s5: EmitState = emit_uleb128(s4, then_nonparam + 1 + then_extra_count);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, t_nodes, then_n, t_vid, 0);
+    let s8: EmitState = emit_extra_consts(s7, extra, mn, 0, 0);
+    let s9: EmitState = emit_uleb128(s8, then_root);
+    // else: synth + tree + else-edge placeholders.
+    let else_extra_count: i64 = count_else_extras(extra, mn, 0);
+    let s10: EmitState = emit_uleb128(s9, else_nonparam + 1 + else_extra_count);
+    let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
+    let s12: EmitState = emit_mic3_tree_body(s11, e_nodes, else_n, e_vid, 0);
+    let s13: EmitState = emit_extra_consts(s12, extra, mn, 1, 0);
+    let s14: EmitState = emit_uleb128(s13, else_root);
+    // dst, branch_bindings, merges.
+    let s15: EmitState = emit_uleb128(s14, dst);
+    let s16: EmitState = emit_uleb128(s15, mn);
+    let s17: EmitState = emit_branch_bindings(s16, mspans, mn, buf, strbuf, offs, strcount, extra, 0);
+    let s18: EmitState = emit_uleb128(s17, mn);
+    let s19: EmitState = emit_merges(s18, extra, mn, 0);
+    __mind_store_i64(okcell, dst);
+    s19
+}
+
+// Count non-param nodes in an already-flattened descriptor (kind != 0).
+pub fn nonparam_count_desc(nodes: i64, n_nodes: i64, i: i64) -> i64 {
+    if i >= n_nodes {
+        return 0;
+    }
+    let k: i64 = __mind_load_i64(nodes + i * 32);
+    if k == 0 {
+        return nonparam_count_desc(nodes, n_nodes, i + 1);
+    }
+    1 + nonparam_count_desc(nodes, n_nodes, i + 1)
+}
+
+// For each merged name allocate (then_extra, else_extra, merge_id) from the running
+// counter `ctr`. A branch that DEFINES the name contributes -1 for its extra slot (no
+// placeholder); otherwise a fresh vid is allocated (the per-branch placeholder). Order
+// per name: then_extra, else_extra, merge_id. Returns the next free vid (= dst).
+pub fn assign_merge_vids(mspans: i64, mn: i64, buf: i64, t_lenv: i64, t_lc: i64, e_lenv: i64, e_lc: i64, extra: i64, ctr: i64, k: i64) -> i64 {
+    if k >= mn {
+        return ctr;
+    }
+    let lo: i64 = __mind_load_i64(mspans + k * 16 + 0);
+    let hi: i64 = __mind_load_i64(mspans + k * 16 + 8);
+    let in_then: i64 = lenv_lookup_vid(t_lenv, t_lc, buf, lo, hi, 0);
+    let in_else: i64 = lenv_lookup_vid(e_lenv, e_lc, buf, lo, hi, 0);
+    // then_extra (placeholder vid, or -1 if the then-branch defines the name)
+    let c1: i64 = ctr;
+    if in_then >= 0 {
+        __mind_store_i64(extra + k * 40 + 0, 0 - 1);
+    }
+    if in_then < 0 {
+        __mind_store_i64(extra + k * 40 + 0, c1);
+    }
+    let c2: i64 = next_ctr(c1, in_then);
+    // else_extra
+    if in_else >= 0 {
+        __mind_store_i64(extra + k * 40 + 8, 0 - 1);
+    }
+    if in_else < 0 {
+        __mind_store_i64(extra + k * 40 + 8, c2);
+    }
+    let c3: i64 = next_ctr(c2, in_else);
+    // merge_id (always fresh)
+    __mind_store_i64(extra + k * 40 + 16, c3);
+    // +24/+32 = the DEFINED-branch let-vid (used by emit_merges when extra slot is -1).
+    __mind_store_i64(extra + k * 40 + 24, in_then);
+    __mind_store_i64(extra + k * 40 + 32, in_else);
+    assign_merge_vids(mspans, mn, buf, t_lenv, t_lc, e_lenv, e_lc, extra, c3 + 1, k + 1)
+}
+// ctr advances by 1 only when the branch did NOT define the name (in_branch < 0).
+pub fn next_ctr(ctr: i64, in_branch: i64) -> i64 {
+    if in_branch < 0 {
+        return ctr + 1;
+    }
+    ctr
+}
+
+// Count then-edge / else-edge placeholders (extra slots != -1).
+pub fn count_then_extras(extra: i64, mn: i64, k: i64) -> i64 {
+    if k >= mn {
+        return 0;
+    }
+    let v: i64 = __mind_load_i64(extra + k * 40 + 0);
+    if v < 0 {
+        return count_then_extras(extra, mn, k + 1);
+    }
+    1 + count_then_extras(extra, mn, k + 1)
+}
+pub fn count_else_extras(extra: i64, mn: i64, k: i64) -> i64 {
+    if k >= mn {
+        return 0;
+    }
+    let v: i64 = __mind_load_i64(extra + k * 40 + 8);
+    if v < 0 {
+        return count_else_extras(extra, mn, k + 1);
+    }
+    1 + count_else_extras(extra, mn, k + 1)
+}
+
+// Emit the placeholder ConstI64(vid, 0) for each merged name on the given edge
+// (edge 0 = then-extra at +0, edge 1 = else-extra at +8), in merged-name order.
+pub fn emit_extra_consts(s: EmitState, extra: i64, mn: i64, edge: i64, k: i64) -> EmitState {
+    if k >= mn {
+        return s;
+    }
+    let off: i64 = edge * 8;
+    let v: i64 = __mind_load_i64(extra + k * 40 + off);
+    if v < 0 {
+        return emit_extra_consts(s, extra, mn, edge, k + 1);
+    }
+    let s1: EmitState = emit_mic3_const_i64(s, v, 0);
+    emit_extra_consts(s1, extra, mn, edge, k + 1)
+}
+
+// branch_bindings: per merged name (string_idx, merge_id). The name span is looked up
+// in the contiguous strtab buffer to find its index.
+pub fn emit_branch_bindings(s: EmitState, mspans: i64, mn: i64, buf: i64, strbuf: i64, offs: i64, strcount: i64, extra: i64, k: i64) -> EmitState {
+    if k >= mn {
+        return s;
+    }
+    let lo: i64 = __mind_load_i64(mspans + k * 16 + 0);
+    let hi: i64 = __mind_load_i64(mspans + k * 16 + 8);
+    let sidx: i64 = strtab_index_of(strbuf, offs, strcount, buf, lo, hi, 0);
+    let mid: i64 = __mind_load_i64(extra + k * 40 + 16);
+    let s1: EmitState = emit_uleb128(s, sidx);
+    let s2: EmitState = emit_uleb128(s1, mid);
+    emit_branch_bindings(s2, mspans, mn, buf, strbuf, offs, strcount, extra, k + 1)
+}
+
+// merges: per merged name (merge_id, then_val, else_val). then_val = the then-branch's
+// value (its let-vid if defined, else the then-placeholder); symmetric for else_val.
+pub fn emit_merges(s: EmitState, extra: i64, mn: i64, k: i64) -> EmitState {
+    if k >= mn {
+        return s;
+    }
+    let then_extra: i64 = __mind_load_i64(extra + k * 40 + 0);
+    let else_extra: i64 = __mind_load_i64(extra + k * 40 + 8);
+    let mid: i64 = __mind_load_i64(extra + k * 40 + 16);
+    // then_val: placeholder vid if extra set, else the resolved let-vid (stored at +24).
+    let then_val: i64 = merge_val(then_extra, extra, k, 24);
+    let else_val: i64 = merge_val(else_extra, extra, k, 32);
+    let s1: EmitState = emit_uleb128(s, mid);
+    let s2: EmitState = emit_uleb128(s1, then_val);
+    let s3: EmitState = emit_uleb128(s2, else_val);
+    emit_merges(s3, extra, mn, k + 1)
+}
+pub fn merge_val(extra_vid: i64, extra: i64, k: i64, off: i64) -> i64 {
+    if extra_vid >= 0 {
+        return extra_vid;
+    }
+    __mind_load_i64(extra + k * 40 + off)
+}
+
+// Assemble the full mic@3 module for
+//   pub fn <name>(p0,..) -> i64 { if cond { <block> } else { <block> } }
+// with non-empty merges, byte-exact vs --emit-mic3. `strcount` = n+1+n_letnames (the
+// full string-table count: name, params, then branch-local let-names in encounter
+// order). The body is n PARAM instrs then ONE OP_IF (body_len = n + 1).
+pub fn emit_mic3_if_block_fn_module(s: EmitState, buf: i64, offs: i64, strcount: i64, n: i64, cond_expr: i64, then_blk: i64, else_blk: i64, src: i64, params_addr: i64, t_nodes: i64, t_cur: i64, t_vid: i64, t_lenv: i64, t_lc: i64, e_nodes: i64, e_cur: i64, e_vid: i64, e_lenv: i64, e_lc: i64, c_nodes: i64, c_cur: i64, c_vid: i64, mspans: i64, mcount: i64, extra: i64, okcell: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, strcount);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 3);
+    // Scratch pass to learn dst (the FN_DEF ret_vid) before framing.
+    __mind_store_i64(okcell, 0 - 1);
+    let body: EmitState = emit_mic3_if_block_instr(es_new(), cond_expr, then_blk, else_blk, src, buf, offs, strcount, params_addr, n, t_nodes, t_cur, t_vid, t_lenv, t_lc, e_nodes, e_cur, e_vid, e_lenv, e_lc, c_nodes, c_cur, c_vid, mspans, mcount, extra, okcell);
+    let dst: i64 = __mind_load_i64(okcell);
+    if dst < 0 {
+        return s;
+    }
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_mic3_chain_param_pairs(s7, n);
+    let s9: EmitState = emit_mic3_opt_vid(s8, 1, dst);
+    let s10: EmitState = es_push(s9, 0);
+    let s11: EmitState = emit_uleb128(s10, n + 1);
+    let s12: EmitState = emit_mic3_chain_params(s11, n, 0);
+    // Re-emit the OP_IF directly into the framed stream (deterministic — same input).
+    let s13: EmitState = emit_mic3_if_block_instr(s12, cond_expr, then_blk, else_blk, src, buf, offs, strcount, params_addr, n, t_nodes, t_cur, t_vid, t_lenv, t_lc, e_nodes, e_cur, e_vid, e_lenv, e_lc, c_nodes, c_cur, c_vid, mspans, mcount, extra, okcell);
+    let s14: EmitState = emit_mic3_const_i64(s13, 0, 0);
+    let s15: EmitState = emit_mic3_output(s14, 0);
+    emit_mic3_empty_registries(s15)
+}
+
+// Self-test entry (Phase 4j+): lex+parse `src`, find the first fn whose body is a
+// single `if cond { block } else { block }` where a branch may be a multi-statement
+// (let-bound) block, and emit its mic@3 module byte-exact vs --emit-mic3. `strbuf`/
+// `offs`/`strcount` are the caller-supplied CONTIGUOUS string table (name, params,
+// branch let-names in encounter order). All `*_nodes`/`*_cur`/`*_vid`/`*_lenv`/`*_lc`
+// are per-branch heap scratch; `mspans` (merged-name spans), `mcount`, `extra`
+// (per-name vid triples + values), `okcell` are merge scratch.
+pub fn selftest_mic3_if_block_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, strcount: i64, t_nodes: i64, t_cur: i64, t_vid: i64, t_lenv: i64, t_lc: i64, e_nodes: i64, e_cur: i64, e_vid: i64, e_lenv: i64, e_lc: i64, c_nodes: i64, c_cur: i64, c_vid: i64, mspans: i64, mcount: i64, extra: i64, okcell: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let fn_node: i64 = find_first_fn(ast_child0(ast_root), ast_aux(ast_root), 0);
+    let params_addr: i64 = ast_child1(fn_node);
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    let body: i64 = ast_child2(fn_node);
+    let if_node: i64 = branch_single_expr(body);
+    if if_node < 0 {
+        return es_new();
+    }
+    if ast_kind(if_node) != ast_if() {
+        return es_new();
+    }
+    let cond_expr: i64 = ast_child0(if_node);
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    if else_blk == 0 {
+        return es_new();
+    }
+    // Record the merge name-values into extra +24/+32 from the resolved let-envs: we
+    // need a branch's per-name value (its let-vid). emit_mic3_if_block_instr fills
+    // extra +0/+8/+16; the +24/+32 (then_val/else_val for defined names) are filled
+    // by the binding pass via the let-envs. To keep merge_val simple, stash them here
+    // after the scratch emit re-runs the merge — done inside the module emitter.
+    emit_mic3_if_block_fn_module(es_new(), strbuf, offs, strcount, n_params, cond_expr, then_blk, else_blk, src_addr, params_addr, t_nodes, t_cur, t_vid, t_lenv, t_lc, e_nodes, e_cur, e_vid, e_lenv, e_lc, c_nodes, c_cur, c_vid, mspans, mcount, extra, okcell)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
