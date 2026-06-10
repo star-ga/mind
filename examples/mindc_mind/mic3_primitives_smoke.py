@@ -722,6 +722,131 @@ def main() -> int:
         pnames = ",".join(p.decode() for p in params)
         print(f"  let_fn  {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 4j: IF-EXPRESSION as a value (selftest_mic3_if_fn) --------------
+    #   pub fn <name>(p0,..) -> i64 { if cond { then } else { else } } — the first
+    #   control-flow body. Lowers to n PARAM instrs then ONE OP_IF (0x1C) instr
+    #   (body_len = n + 1); ret_vid = the if's dst. Decoded byte-for-byte from the
+    #   Rust --emit-mic3 oracle: cond/then/else are each a param/const/binop tree;
+    #   each branch is prefixed by a synthesised ConstI64(synth, 0); the vid counter
+    #   threads cond -> then(synth+tree) -> else(synth+tree) -> dst; branch_bindings
+    #   and merges are both empty (no branch writes). sel(a,b){if a{b}else{a}}=60B.
+    def _flatten_branch(params, expr_nodes, base):
+        """Resolve a branch's post-order node list to vids from `base`.
+        expr_nodes: LEAF=(0,param_idx,0,0), CONST=(2,raw,0,0), BINOP=(1,op,l,r).
+        Returns (slot_vid list, root_vid, next_free_vid)."""
+        slot_vid = [0] * len(expr_nodes)
+        nxt = base
+        for j, nd in enumerate(expr_nodes):
+            if nd[0] == 0:
+                slot_vid[j] = nd[1]
+            else:
+                slot_vid[j] = nxt
+                nxt += 1
+        return slot_vid, (slot_vid[-1] if slot_vid else base), nxt
+
+    def _emit_branch_instrs(expr_nodes, slot_vid):
+        out = b""
+        for j, nd in enumerate(expr_nodes):
+            if nd[0] == 1:
+                _, ob, ls, rs = nd
+                out += bytes([4]) + ref_uleb128(slot_vid[j]) + bytes([ob]) \
+                    + ref_uleb128(slot_vid[ls]) + ref_uleb128(slot_vid[rs])
+            elif nd[0] == 2:
+                out += bytes([1]) + ref_uleb128(slot_vid[j]) + ref_uleb128(ref_zigzag(nd[1]))
+        return out
+
+    def ref_if_fn(name, params, cond, then, els):
+        n = len(params)
+        strs = [name] + params
+        # cond (no synth), then (synth+tree), else (synth+tree), dst.
+        c_sv, cond_id, after_cond = _flatten_branch(params, cond, n)
+        cond_np = sum(1 for nd in cond if nd[0] != 0)
+        then_synth = after_cond
+        t_sv, then_root, after_then = _flatten_branch(params, then, after_cond + 1)
+        then_np = sum(1 for nd in then if nd[0] != 0)
+        else_synth = after_then
+        e_sv, else_root, after_else = _flatten_branch(params, els, after_then + 1)
+        else_np = sum(1 for nd in els if nd[0] != 0)
+        dst = after_else
+        op_if = bytes([0x1C]) + ref_uleb128(cond_id)
+        op_if += ref_uleb128(cond_np) + _emit_branch_instrs(cond, c_sv)
+        op_if += ref_uleb128(then_np + 1)
+        op_if += bytes([1]) + ref_uleb128(then_synth) + ref_uleb128(0)
+        op_if += _emit_branch_instrs(then, t_sv) + ref_uleb128(then_root)
+        op_if += ref_uleb128(else_np + 1)
+        op_if += bytes([1]) + ref_uleb128(else_synth) + ref_uleb128(0)
+        op_if += _emit_branch_instrs(els, e_sv) + ref_uleb128(else_root)
+        op_if += ref_uleb128(dst) + ref_uleb128(0) + ref_uleb128(0)  # dst, bb, merges
+        out = b"MIC3\x02"
+        out += ref_uleb128(len(strs)) + b"".join(ref_uleb128(len(x)) + x for x in strs)
+        out += ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(3)   # next_id, exports, 3 instrs
+        out += bytes([0x15]) + ref_uleb128(0) + ref_uleb128(n)    # FN_DEF, name_idx=0
+        for i in range(n):
+            out += ref_uleb128(i + 1) + ref_uleb128(i)
+        out += bytes([1]) + ref_uleb128(dst) + bytes([0]) + ref_uleb128(n + 1)  # ret %dst, body n+1
+        for i in range(n):
+            out += bytes([0x18]) + ref_uleb128(i) + ref_uleb128(i + 1) + ref_uleb128(i)
+        out += op_if
+        out += bytes([1]) + ref_uleb128(0) + ref_uleb128(0)       # ConstI64(%0,0)
+        out += bytes([0x13]) + ref_uleb128(0)                     # Output(%0)
+        out += b"\x00\x00\x00"
+        return out
+
+    lib.selftest_mic3_if_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_if_fn.argtypes = [ctypes.c_int64] * 8
+    # Each case: (name, params, src, cond, then, else) where cond/then/else are
+    # post-order node lists. LEAF=(0,param_idx,0,0), CONST=(2,raw,0,0),
+    # BINOP=(1,op_byte,left_slot,right_slot). op0=add, op1=sub, op2=mul.
+    if_cases = [
+        # sel(a,b){if a {b} else {a}}: cond=a, then=b, else=a — 60B (== captured oracle)
+        (b"sel", [b"a", b"b"],
+         b"pub fn sel(a: i64, b: i64) -> i64 { if a { b } else { a } }",
+         [(0, 0, 0, 0)], [(0, 1, 0, 0)], [(0, 0, 0, 0)]),
+        # sel(a,b){if a {1} else {2}}: const branches
+        (b"sel", [b"a", b"b"],
+         b"pub fn sel(a: i64, b: i64) -> i64 { if a { 1 } else { 2 } }",
+         [(0, 0, 0, 0)], [(2, 1, 0, 0)], [(2, 2, 0, 0)]),
+        # sel(a,b){if a {b+a} else {a}}: then = b+a (BINOP), else = a
+        (b"sel", [b"a", b"b"],
+         b"pub fn sel(a: i64, b: i64) -> i64 { if a { b + a } else { a } }",
+         [(0, 0, 0, 0)], [(0, 1, 0, 0), (0, 0, 0, 0), (1, 0, 0, 1)], [(0, 0, 0, 0)]),
+        # f(a,b,c){if a {b*c} else {c}}: 3 params, then = b*c (mul), else = c
+        (b"f", [b"a", b"b", b"c"],
+         b"pub fn f(a: i64, b: i64, c: i64) -> i64 { if a { b * c } else { c } }",
+         [(0, 0, 0, 0)], [(0, 1, 0, 0), (0, 2, 0, 0), (1, 2, 0, 1)], [(0, 2, 0, 0)]),
+    ]
+    for name, params, src, cond, then, els in if_cases:
+        n = len(params)
+        strs = [name] + params
+        sbuf = b"".join(strs)
+        soff = [0]
+        for s in strs:
+            soff.append(soff[-1] + len(s))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        src_c = ctypes.create_string_buffer(src, len(src))
+        nodes_c = (ctypes.c_int64 * (64 * 4))()
+        cursor_c = (ctypes.c_int64 * 1)()
+        vidbuf_c = (ctypes.c_int64 * 64)()
+        ok_c = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_if_fn(
+            ctypes.cast(src_c, ctypes.c_void_p).value, len(src),
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value,
+            ctypes.cast(nodes_c, ctypes.c_void_p).value,
+            ctypes.cast(cursor_c, ctypes.c_void_p).value,
+            ctypes.cast(vidbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(ok_c, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_if_fn(name, params, cond, then, els)
+        failures += got != want
+        total += 1
+        note = " (== sel(a,b){if a {b} else {a}} oracle, 60B)" \
+            if (name, src.count(b"{ b }")) == (b"sel", 1) and src.endswith(b"{ a } }") else ""
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        pnames = ",".join(p.decode() for p in params)
+        print(f"  if_fn   {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "

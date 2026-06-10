@@ -2922,6 +2922,255 @@ pub fn selftest_mic3_let_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64,
     emit_mic3_let_fn_module(es_new(), src_addr, strbuf, offs, n_params, params_addr, n_params, stmts_addr, stmts_len, nodes, cursor, vidbuf, lenv, lcount)
 }
 
+// ===========================================================================
+// Phase 4j — IF-EXPRESSION as a value (the control-flow frontier)
+// ===========================================================================
+//
+// `if cond { then } else { else }` used as a value lowers to ONE top-level body
+// instruction: OP_IF (0x1C). Decoded byte-for-byte from the Rust --emit-mic3
+// oracle (src/ir/compact/v3/emit.rs Instr::If arm + src/eval/lower.rs):
+//
+//   OP_IF(0x1C)
+//     vid(cond_id)
+//     uleb(cond_instrs.len) || cond_instrs...
+//     uleb(then_instrs.len) || then_instrs...
+//     vid(then_result)
+//     uleb(else_instrs.len) || else_instrs...
+//     vid(else_result)
+//     vid(dst)
+//     encode_named_vids(branch_bindings)   // uleb(count) || (str,vid)*
+//     encode_vid_triples(merges)           // uleb(count) || (vid,vid,vid)*
+//
+// VID THREADING (decoded; params own vids 0..n-1, the counter starts at n):
+//   * cond: its NON-param nodes take vids n, n+1, ... (params re-use their own
+//     vid, emit NO sub-instr). cond_id = cond's root vid. No synth const.
+//   * then: a SYNTHESISED ConstI64(synth, 0) is pushed FIRST (lower.rs:1406),
+//     then the then-expr's non-param nodes. then_result = then-expr's root vid.
+//   * else: a SYNTHESISED ConstI64(synth, 0) is pushed FIRST (lower.rs:1476),
+//     then the else-expr's non-param nodes. else_result = else-expr's root vid.
+//   * dst = the next free vid after both branches (the if's value / ret_vid).
+//
+// SCOPE (the SMALLEST canary-safe increment): cond / then-expr / else-expr are
+// each a param/const/binop tree (the same construct flatten_ast already lowers),
+// the else clause is PRESENT, and neither branch writes an outer var or binds a
+// branch-local let — so branch_bindings and merges are BOTH empty (count 0).
+// Let-in-branch, no-else, and nested if are later 4j sub-steps. This path is
+// ISOLATED from the canary (exported only via selftest_mic3_if_fn); the
+// AST-driven body emitter still rejects ast_if (flatten_ast/flatten_ast_le
+// return -1), so the fixed point stays byte-identical (Bound by
+// MIND-CONSTITUTION §I — additive, canary untouched).
+
+// Count the non-param nodes a param/const/binop tree flattens to (= CONST leaves
+// + BINOP nodes). Params contribute 0 (they re-use their own vid, no sub-instr).
+// Returns -1 on any unsupported construct (mirrors flatten_ast's rejection set).
+pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx < 0 {
+            return 0 - 1;
+        }
+        return 0;
+    }
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_binop() {
+        let l: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+        if l < 0 {
+            return 0 - 1;
+        }
+        let r: i64 = count_nonparam_nodes(ast_child1(node), buf, params_addr, n_params);
+        if r < 0 {
+            return 0 - 1;
+        }
+        return 1 + l + r;
+    }
+    0 - 1
+}
+
+// Pass-1 vid resolution with an arbitrary non-param base. Identical to
+// tree_resolve_vids except the non-param counter starts at `base` (instead of n):
+// param leaf -> param index; CONST/BINOP -> base, base+1, .. in post-order.
+// Returns the next free vid after this tree (so the caller can thread it onward).
+pub fn tree_resolve_vids_base(nodes: i64, n_nodes: i64, vidbuf: i64, i: i64, base: i64) -> i64 {
+    if i >= n_nodes {
+        return base;
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 0 {
+        let pidx: i64 = __mind_load_i64(nodes + i * 32 + 8);
+        __mind_store_i64(vidbuf + i * 8, pidx);
+        return tree_resolve_vids_base(nodes, n_nodes, vidbuf, i + 1, base);
+    }
+    __mind_store_i64(vidbuf + i * 8, base);
+    tree_resolve_vids_base(nodes, n_nodes, vidbuf, i + 1, base + 1)
+}
+
+// Flatten ONE branch/cond expression tree into a fresh descriptor (resets cursor),
+// resolve its slot vids from `base`, and return the root slot's resolved vid (or
+// -1 on a wall). On success `cursor` holds n_nodes and `vidbuf` is filled — the
+// caller emits the branch's non-param instrs via emit_mic3_tree_body.
+pub fn flatten_branch(expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64) -> i64 {
+    __mind_store_i64(cursor, 0);
+    let root_slot: i64 = flatten_ast(expr, buf, params_addr, n_params, nodes, cursor);
+    if root_slot < 0 {
+        return 0 - 1;
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    tree_resolve_vids_base(nodes, n_nodes, vidbuf, 0, base);
+    __mind_load_i64(vidbuf + root_slot * 8)
+}
+
+// Extract a block's single trailing expression. The minimal 4j branch is a block
+// whose only statement is the value expression (stmts_len == 1). Returns the
+// expr node, or -1 if the block has != 1 statement (a later 4j sub-step).
+pub fn branch_single_expr(blk: i64) -> i64 {
+    let stmts_addr: i64 = ast_child0(blk);
+    let stmts_len: i64 = ast_aux(blk);
+    if stmts_len != 1 {
+        return 0 - 1;
+    }
+    __mind_load_i64(stmts_addr + 0)
+}
+
+// Emit the OP_IF body instruction (0x1C) for the simplest if-expression: cond /
+// then-expr / else-expr are each a param/const/binop tree, else present, no
+// branch writes (branch_bindings + merges both empty). Threads the vid counter
+// through cond -> then(synth + tree) -> else(synth + tree) -> dst, byte-exact vs
+// the oracle. Returns the post-OP_IF EmitState; the if's result vid is `dst`
+// (the caller uses it as the FN_DEF ret_vid). On a wall returns the seed `s`
+// unchanged and writes -1 to `okcell` so the caller fails closed.
+pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
+    // --- cond ---
+    let cond_id: i64 = flatten_branch(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0);
+    let after_cond: i64 = base0 + cond_nonparam;
+
+    // --- then: synth ConstI64(after_cond, 0) FIRST, then the then-expr tree ---
+    let then_synth: i64 = after_cond;
+    let then_root: i64 = flatten_branch(then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1);
+    if then_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_n: i64 = __mind_load_i64(cursor);
+    let then_nonparam: i64 = count_nonparam_nodes(then_expr, buf, params_addr, n_params);
+    let s5: EmitState = emit_uleb128(s4, then_nonparam + 1);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0);
+    let s8: EmitState = emit_uleb128(s7, then_root);
+    let after_then: i64 = after_cond + 1 + then_nonparam;
+
+    // --- else: synth ConstI64(after_then, 0) FIRST, then the else-expr tree ---
+    let else_synth: i64 = after_then;
+    let else_root: i64 = flatten_branch(else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1);
+    if else_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_n: i64 = __mind_load_i64(cursor);
+    let else_nonparam: i64 = count_nonparam_nodes(else_expr, buf, params_addr, n_params);
+    let s9: EmitState = emit_uleb128(s8, else_nonparam + 1);
+    let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
+    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0);
+    let s12: EmitState = emit_uleb128(s11, else_root);
+    let after_else: i64 = after_then + 1 + else_nonparam;
+
+    // --- dst (the if's value) + empty branch_bindings + empty merges ---
+    let dst: i64 = after_else;
+    let s13: EmitState = emit_uleb128(s12, dst);
+    let s14: EmitState = emit_uleb128(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 0);
+    __mind_store_i64(okcell, dst);
+    s15
+}
+
+// Assemble the full mic@3 module of
+//   pub fn <name>(p0,..,p(n-1)) -> i64 { if cond { then } else { else } }
+// byte-exact vs the Rust --emit-mic3 oracle. The body is n PARAM instrs then the
+// single OP_IF instr (body_len = n + 1); ret_vid = the if's dst. Mirrors
+// emit_mic3_tree_fn_module's framing (header/strtab/next_id/exports/FN_DEF/tail).
+// Fails closed (returns the seed `s`) on any wall.
+pub fn emit_mic3_if_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, cond_expr: i64, then_expr: i64, else_expr: i64, src: i64, params_addr: i64, nodes: i64, cursor: i64, vidbuf: i64, okcell: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, n + 1);
+    let s3: EmitState = emit_uleb128(s2, 1);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 3);
+    // FN_DEF header: name_idx=0, param-pair list, ret Some %dst, reap None, body_len.
+    // The ret_vid (dst) is only known after the OP_IF is emitted, so emit the body
+    // into a SCRATCH EmitState first to learn dst + body bytes, then frame it.
+    __mind_store_i64(okcell, 0 - 1);
+    let body: EmitState = emit_mic3_if_instr(es_new(), cond_expr, then_expr, else_expr, src, params_addr, n, nodes, cursor, vidbuf, n, okcell);
+    let dst: i64 = __mind_load_i64(okcell);
+    if dst < 0 {
+        return s;
+    }
+    let s6: EmitState = es_push(s5, 21);
+    let s7: EmitState = emit_uleb128(s6, 0);
+    let s8: EmitState = emit_mic3_chain_param_pairs(s7, n);
+    let s9: EmitState = emit_mic3_opt_vid(s8, 1, dst);
+    let s10: EmitState = es_push(s9, 0);
+    let s11: EmitState = emit_uleb128(s10, n + 1);
+    let s12: EmitState = emit_mic3_chain_params(s11, n, 0);
+    // Re-emit the OP_IF directly into the framed stream (deterministic — same input).
+    let s13: EmitState = emit_mic3_if_instr(s12, cond_expr, then_expr, else_expr, src, params_addr, n, nodes, cursor, vidbuf, n, okcell);
+    let s14: EmitState = emit_mic3_const_i64(s13, 0, 0);
+    let s15: EmitState = emit_mic3_output(s14, 0);
+    emit_mic3_empty_registries(s15)
+}
+
+// Self-test entry (Phase 4j): lex+parse `src`, find the first fn_def whose body is
+// a single `if cond { then } else { else }` expression, and emit its mic@3 module
+// byte-exact vs the Rust --emit-mic3 oracle. `strbuf`/`offs` are the caller-supplied
+// CONTIGUOUS string-table name buffer + offsets (name then p0..p(n-1)); `nodes`/
+// `cursor`/`vidbuf` are heap scratch sized to the LARGEST single branch's node
+// count; `okcell` is a 1-i64 cell (holds dst on success, -1 on a wall).
+pub fn selftest_mic3_if_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, nodes: i64, cursor: i64, vidbuf: i64, okcell: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let fn_node: i64 = find_first_fn(ast_child0(ast_root), ast_aux(ast_root), 0);
+    let params_addr: i64 = ast_child1(fn_node);
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    let body: i64 = ast_child2(fn_node);
+    // The fn body block's single trailing statement must be the if-expression.
+    let if_node: i64 = branch_single_expr(body);
+    if if_node < 0 {
+        return es_new();
+    }
+    if ast_kind(if_node) != ast_if() {
+        return es_new();
+    }
+    let cond_expr: i64 = ast_child0(if_node);
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    if else_blk == 0 {
+        return es_new();
+    }
+    let then_expr: i64 = branch_single_expr(then_blk);
+    let else_expr: i64 = branch_single_expr(else_blk);
+    if then_expr < 0 {
+        return es_new();
+    }
+    if else_expr < 0 {
+        return es_new();
+    }
+    emit_mic3_if_fn_module(es_new(), strbuf, offs, n_params, cond_expr, then_expr, else_expr, src_addr, params_addr, nodes, cursor, vidbuf, okcell)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
