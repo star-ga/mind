@@ -980,10 +980,104 @@ def main() -> int:
         pnames = ",".join(p.decode() for p in params)
         print(f"  if_blk  {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 5: COMPLETE MULTI-FUNCTION module (Strategy A foundation) -------
+    #   The first pure-MIND emit of a module with MORE THAN ONE function. The four
+    #   multi-function deltas vs the single-fn families above: (1) ONE string table
+    #   deduped in first-seen traversal order; (2) ONE flat next_id threaded across
+    #   all fns + scaffolds; (3) ONE top-level instr list with a single uleb count;
+    #   (4) exports sorted (empty here — export-free fixtures). Each case is
+    #   cross-checked BYTE-EXACT against a hard-coded oracle AND, when
+    #   target/release/mindc is present, against a LIVE `--emit-mic3` regeneration
+    #   (guards golden staleness). Additive: does NOT touch the canary mic@1 path.
+
+    # (5a) two const-return fns: `pub fn one(){1} pub fn two(){2}` — 50B oracle.
+    lib.selftest_mic3_module_2fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_2fn.argtypes = [ctypes.c_int64] * 4
+    twofn_cases = [
+        # (strings-first-seen, v0, v1, src, golden_hex)
+        ([b"one", b"two"], 1, 2,
+         "pub fn one() -> i64 { 1 }  pub fn two() -> i64 { 2 }",
+         "4d4943330202036f6e650374776f0200061500000100000101000201000013001"
+         "50100010000010100040101001301000000"),
+        # value-variant (4, 10) proves a genuine narrow lowering, not a byte blob.
+        ([b"one", b"two"], 4, 10,
+         "pub fn one() -> i64 { 4 }  pub fn two() -> i64 { 10 }",
+         None),
+    ]
+    for strs, v0, v1, src, golden_hex in twofn_cases:
+        sbuf = b"".join(strs)
+        soff = [0]
+        for s in strs:
+            soff.append(soff[-1] + len(s))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        es = lib.selftest_mic3_module_2fn(
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value, v0, v1)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(golden_hex) if golden_hex else None
+        live = _live_oracle(src)
+        if golden is not None and live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: 2fn golden stale vs live\n  golden {golden.hex()}\n"
+                f"  live   {live.hex()}")
+        want = live if live is not None else golden
+        if want is None:
+            raise SystemExit("FAIL: no oracle for 2fn case (no golden, no mindc)")
+        failures += got != want
+        total += 1
+        note = " (== one(){1} two(){2} oracle, 50B)" if (v0, v1) == (1, 2) else ""
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        print(f"  mod_2fn one={v0},two={v1} [{len(got)}B] = {got.hex()}  {ok}")
+
+    # (5b) const fn0 + arith fn1: `pub fn one(){1} pub fn add(a,b){a+b}` — 68B oracle.
+    #   The two functions have DIFFERENT body shapes (const vs PARAM/PARAM/BINOP)
+    #   under one module header, with flat scaffold vids %0/%1.
+    lib.selftest_mic3_module_const_arith.restype = ctypes.c_void_p
+    lib.selftest_mic3_module_const_arith.argtypes = [ctypes.c_int64] * 4
+    ca_cases = [
+        # (strings-first-seen, v0, op_byte, src, golden_hex). op0=add.
+        ([b"one", b"add", b"a", b"b"], 1, 0,
+         "pub fn one() -> i64 { 1 }  pub fn add(a: i64, b: i64) -> i64 { a + b }",
+         "4d4943330204036f6e6503616464016101620200061500000100000101000201"
+         "000013001501020200030101020003180002001801030104020000010101001301"
+         "000000"),
+        # mul variant (v0=7, op2=mul) — genuine lowering across const + op.
+        ([b"one", b"mul", b"x", b"y"], 7, 2,
+         "pub fn one() -> i64 { 7 }  pub fn mul(x: i64, y: i64) -> i64 { x * y }",
+         None),
+    ]
+    for strs, v0, op_byte, src, golden_hex in ca_cases:
+        sbuf = b"".join(strs)
+        soff = [0]
+        for s in strs:
+            soff.append(soff[-1] + len(s))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        es = lib.selftest_mic3_module_const_arith(
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value, v0, op_byte)
+        got = read_string_handle(read_i64_at(es, 0))
+        golden = bytes.fromhex(golden_hex) if golden_hex else None
+        live = _live_oracle(src)
+        if golden is not None and live is not None and live != golden:
+            raise SystemExit(
+                f"FAIL: const_arith golden stale vs live\n  golden {golden.hex()}"
+                f"\n  live   {live.hex()}")
+        want = live if live is not None else golden
+        if want is None:
+            raise SystemExit("FAIL: no oracle for const_arith case")
+        failures += got != want
+        total += 1
+        note = " (== one(){1} add(a,b){a+b} oracle, 68B)" \
+            if (v0, op_byte) == (1, 0) else ""
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        print(f"  mod_carit v0={v0},op={op_byte} [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
-          f"(uleb128 + header + string-table + instr emit)")
+          f"(uleb128 + header + string-table + instr emit + multi-fn module)")
     return 0
 
 

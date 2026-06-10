@@ -2300,6 +2300,89 @@ pub fn selftest_mic3_const_fn(buf: i64, offs: i64, name_idx: i64, const_val: i64
     emit_mic3_const_fn_module(es_new(), buf, offs, name_idx, const_val)
 }
 
+// ===== mic@3 COMPLETE MULTI-FUNCTION module — two const-return fns (Phase 5a) =====
+//
+// The first pure-MIND emit of a module with MORE THAN ONE function. Assembles the
+// full mic@3 of `pub fn <n0>() -> i64 { <v0> }  pub fn <n1>() -> i64 { <v1> }`
+// (no export{} block -> empty exports table), byte-exact vs the Rust --emit-mic3
+// oracle. The four multi-function deltas vs the single-fn const family (Phase 4a):
+//   (1) ONE string table deduped in FIRST-SEEN TRAVERSAL order (n0 then n1) — the
+//       offsets array carries 3 i64s (2 strings); name indices are 0 and 1.
+//   (2) ONE FLAT next_id threaded across both fns + their scaffolds: the two
+//       scaffold ConstI64s take %0 (fn0) and %1 (fn1), so next_id = 2.
+//   (3) ONE flat top-level instruction list with a SINGLE uleb count (= 6) covering
+//       both FN_DEFs and both scaffold ConstI64/Output pairs.
+//   (4) exports sorted (empty here — the export-free fixture).
+// The FN_DEF body vids reset to %0 per function (each body is its own vid space),
+// while the module-level scaffold const/output threads the flat counter (%0, %1).
+// Verified across const values (one=1->zz 0x02, two=2->zz 0x04) so it is a genuine
+// narrow multi-fn lowering, not a hardcoded blob.
+pub fn emit_mic3_const_fn2_module(s: EmitState, buf: i64, offs: i64, v0: i64, v1: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 2);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 6);
+    let s6: EmitState = emit_mic3_fn_def_header(s5, 0, 1, 0, 1);
+    let s7: EmitState = emit_mic3_const_i64(s6, 0, v0);
+    let s8: EmitState = emit_mic3_const_i64(s7, 0, 0);
+    let s9: EmitState = emit_mic3_output(s8, 0);
+    let s10: EmitState = emit_mic3_fn_def_header(s9, 1, 1, 0, 1);
+    let s11: EmitState = emit_mic3_const_i64(s10, 0, v1);
+    let s12: EmitState = emit_mic3_const_i64(s11, 1, 0);
+    let s13: EmitState = emit_mic3_output(s12, 1);
+    emit_mic3_empty_registries(s13)
+}
+
+pub fn selftest_mic3_module_2fn(buf: i64, offs: i64, v0: i64, v1: i64) -> EmitState {
+    emit_mic3_const_fn2_module(es_new(), buf, offs, v0, v1)
+}
+
+// ===== mic@3 MULTI-FUNCTION module — const-return fn0 + arith fn1 (Phase 5b) =====
+//
+// `pub fn <n0>() -> i64 { <v0> }  pub fn <n1>(<pa>,<pb>) -> i64 { <pa> OP <pb> }`,
+// byte-exact vs the Rust --emit-mic3 oracle. Combines a Phase 4a const-return body
+// with a Phase 4c PARAM/PARAM/BINOP body under ONE module header, exercising the
+// multi-function deltas where the two functions have DIFFERENT body shapes:
+//   strtab[4] in FIRST-SEEN order: n0, n1, pa, pb (name indices 0,1,2,3).
+//   next_id = 2 (flat scaffold consts %0, %1 — the FN_DEF bodies keep their own vid
+//   spaces: fn0 body %0, fn1 body %0,%1,%2).
+//   instr_count = 6: FN_DEF n0{ConstI64 %0=v0} || ConstI64 %0=0 || Output %0 ||
+//     FN_DEF n1{PARAM %0, PARAM %1, BINOP %2=%0 op %1} || ConstI64 %1=0 || Output %1.
+// For `one(){1}` + `add(a,b){a+b}` (op_byte 0) this reproduces the 68-byte oracle
+// byte-for-byte; verified vs live --emit-mic3 in mic3_primitives_smoke.py.
+pub fn emit_mic3_const_arith_module(s: EmitState, buf: i64, offs: i64, v0: i64, op_byte: i64) -> EmitState {
+    let s1: EmitState = emit_mic3_header(s);
+    let s2: EmitState = emit_mic3_strtab(s1, buf, offs, 4);
+    let s3: EmitState = emit_uleb128(s2, 2);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, 6);
+    let s6: EmitState = emit_mic3_fn_def_header(s5, 0, 1, 0, 1);
+    let s7: EmitState = emit_mic3_const_i64(s6, 0, v0);
+    let s8: EmitState = emit_mic3_const_i64(s7, 0, 0);
+    let s9: EmitState = emit_mic3_output(s8, 0);
+    let s10: EmitState = es_push(s9, 21);
+    let s11: EmitState = emit_uleb128(s10, 1);
+    let s12: EmitState = emit_uleb128(s11, 2);
+    let s13: EmitState = emit_uleb128(s12, 2);
+    let s14: EmitState = emit_uleb128(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 3);
+    let s16: EmitState = emit_uleb128(s15, 1);
+    let s17: EmitState = emit_mic3_opt_vid(s16, 1, 2);
+    let s18: EmitState = es_push(s17, 0);
+    let s19: EmitState = emit_uleb128(s18, 3);
+    let s20: EmitState = emit_mic3_param(s19, 0, 2, 0);
+    let s21: EmitState = emit_mic3_param(s20, 1, 3, 1);
+    let s22: EmitState = emit_mic3_binop(s21, 2, op_byte, 0, 1);
+    let s23: EmitState = emit_mic3_const_i64(s22, 1, 0);
+    let s24: EmitState = emit_mic3_output(s23, 1);
+    emit_mic3_empty_registries(s24)
+}
+
+pub fn selftest_mic3_module_const_arith(buf: i64, offs: i64, v0: i64, op_byte: i64) -> EmitState {
+    emit_mic3_const_arith_module(es_new(), buf, offs, v0, op_byte)
+}
+
 // ===== mic@3 COMPLETE with-body module — the 2-param arithmetic function family (Phase 4c) =====
 //
 // Assembles the full mic@3 of `pub fn <name>(<pa>, <pb>) -> i64 { <pa> OP <pb> }`,
