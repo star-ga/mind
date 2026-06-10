@@ -642,6 +642,86 @@ def main() -> int:
         pnames = ",".join(p.decode() for p in params)
         print(f"  ast_fn  {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- Phase 4i: LET-BOUND LOCALS / multi-statement bodies (selftest_mic3_let_fn)
+    #   The body is a STATEMENT SEQUENCE: zero+ `let name: ty = init;` bindings then a
+    #   trailing expression. Oracle-decoded rule (verified byte-for-byte vs
+    #   --emit-mic3): each let flattens its init post-order into the SAME descriptor;
+    #   the init's ROOT slot vid is bound to the let-name (no instr, no strtab entry
+    #   for the name). A later ident referencing a let-name returns that bound SLOT
+    #   (a pure vid alias — `s*s` reuses one slot twice). The trailing expr's root
+    #   slot = ret_vid. We build the post-order descriptor the SAME way the .so does
+    #   (let-init nodes, then trailing-expr nodes, with let-names aliasing slots) and
+    #   assert byte-for-byte via ref_tree_fn — so this reuses the proven 4f golden.
+    #   letf f(a,b){let t=a*b; t+1}=55B, letg g(a){let x=a+1; let y=x*2; y}=50B,
+    #   leth h(a,b){let s=a+b; s*s}=52B.
+    lib.selftest_mic3_let_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_let_fn.argtypes = [ctypes.c_int64] * 9
+    # Each case: (name, params, src, nodes). `nodes` is the FULL post-order descriptor
+    # (let-init nodes then trailing-expr nodes); LEAF=(0,param_index,0,0),
+    # BINOP=(1,op_byte,left_slot,right_slot), CONST=(2,raw_literal,0,0). Slot indices
+    # reference the SHARED post-order array, so a let-name reference is encoded as the
+    # binop pointing at the let-init's already-emitted slot.
+    let_cases = [
+        # f(a,b){let t = a*b; t+1}: init a*b -> PARAM a(s0),PARAM b(s1),mul(s2);
+        # trailing t+1 -> t aliases s2, CONST 1(s3), add(s2,s3)(s4). 55B.
+        (b"f", [b"a", b"b"],
+         b"pub fn f(a: i64, b: i64) -> i64 { let t: i64 = a * b; t + 1 }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 2, 0, 1),
+          (2, 1, 0, 0), (1, 0, 2, 3)]),
+        # g(a){let x=a+1; let y=x*2; y}: x init -> PARAM a(s0),CONST 1(s1),add(s2);
+        # y init -> x aliases s2, CONST 2(s3), mul(s2,s3)(s4); trailing y aliases s4. 50B.
+        (b"g", [b"a"],
+         b"pub fn g(a: i64) -> i64 { let x: i64 = a + 1; let y: i64 = x * 2; y }",
+         [(0, 0, 0, 0), (2, 1, 0, 0), (1, 0, 0, 1),
+          (2, 2, 0, 0), (1, 2, 2, 3)]),
+        # h(a,b){let s=a+b; s*s}: init a+b -> PARAM a(s0),PARAM b(s1),add(s2);
+        # trailing s*s -> mul(s2,s2)(s3). 52B (ret=%3).
+        (b"h", [b"a", b"b"],
+         b"pub fn h(a: i64, b: i64) -> i64 { let s: i64 = a + b; s * s }",
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 1),
+          (1, 2, 2, 2)]),
+    ]
+    for name, params, src, nodes in let_cases:
+        n = len(params)
+        strs = [name] + params
+        sbuf = b"".join(strs)
+        soff = [0]
+        for s in strs:
+            soff.append(soff[-1] + len(s))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        src_c = ctypes.create_string_buffer(src, len(src))
+        n_nodes = len(nodes)
+        # n_lets = #non-final statements; size the let-env generously by node count.
+        nodes_c = (ctypes.c_int64 * (n_nodes * 4))()
+        cursor_c = (ctypes.c_int64 * 1)()
+        vidbuf_c = (ctypes.c_int64 * n_nodes)()
+        lenv_c = (ctypes.c_int64 * (n_nodes * 3))()
+        lcount_c = (ctypes.c_int64 * 1)()
+        es = lib.selftest_mic3_let_fn(
+            ctypes.cast(src_c, ctypes.c_void_p).value, len(src),
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value,
+            ctypes.cast(nodes_c, ctypes.c_void_p).value,
+            ctypes.cast(cursor_c, ctypes.c_void_p).value,
+            ctypes.cast(vidbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(lenv_c, ctypes.c_void_p).value,
+            ctypes.cast(lcount_c, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_tree_fn(name, params, nodes)
+        failures += got != want
+        total += 1
+        note = ""
+        if name == b"f":
+            note = " (== f(a,b){let t=a*b; t+1} oracle, 55B)"
+        elif name == b"g":
+            note = " (== g(a){let x=a+1; let y=x*2; y} oracle, 50B)"
+        elif name == b"h":
+            note = " (== h(a,b){let s=a+b; s*s} oracle, 52B)"
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        pnames = ",".join(p.decode() for p in params)
+        print(f"  let_fn  {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "

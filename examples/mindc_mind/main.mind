@@ -2754,6 +2754,174 @@ pub fn selftest_mic3_ast_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64,
     emit_mic3_ast_fn_module(es_new(), src_addr, strbuf, offs, n_params, params_addr, n_params, expr, nodes, cursor, vidbuf)
 }
 
+// ===========================================================================
+// Phase 4i — LET-BOUND LOCALS / multi-statement bodies (the let-env bridge)
+// ===========================================================================
+//
+// Phase 4g/4h emitted a SINGLE trailing-expression body. Phase 4i extends the
+// AST walk to a STATEMENT SEQUENCE: zero or more `let name: ty = init;` bindings
+// feeding a final expression. The oracle (--emit-mic3) rule, decoded byte-for-byte
+// from f(a,b){let t=a*b; t+1}, g(a){let x=a+1; let y=x*2; y}, h(a,b){let s=a+b; s*s}:
+//
+//   * Each `let name = init` flattens `init` post-order into the SAME descriptor
+//     array; the resulting ROOT slot's vid is bound to `name`. No instruction and
+//     no string-table entry is emitted for the let-name — it is a pure vid ALIAS
+//     (strtab carries only the fn name + params; t/x/y/s are absent).
+//   * A later ast_ident referencing a let-name returns that bound SLOT (an alias,
+//     emits no new node) — exactly as a param ident returns its param slot. So
+//     `t+1` -> BINOP whose lhs is the let-init's slot; `s*s` reuses ONE slot twice.
+//   * The trailing expression flattens normally; its root slot vid = the FN_DEF
+//     ret_vid. body_len = total descriptor nodes (PARAMs + every CONST/BINOP);
+//     let-name aliases contribute nothing (Bound by MIND-CONSTITUTION §I —
+//     verified byte-exact: letf 55B / letg 50B / leth 52B).
+//
+// The single-expression path (selftest_mic3_ast_fn) is UNTOUCHED below this point;
+// flatten_ast / emit_mic3_ast_fn_module stay byte-identical for param/const bodies.
+//
+// SCOPE: bodies whose statements are `let` bindings (param/const/binop inits, the
+// 4g/4h expr grammar) plus a trailing expression. A let whose init contains a
+// non-arith construct, or any statement that is not a let / final expr, is a
+// later-phase wall (flatten returns -1, the driver fails closed — no partial bytes).
+
+// Let-env: parallel heap array. Entry j at `lenv + j*24` = [name_lo, name_hi, slot].
+// `lcount` is a 1-i64 cell holding the live entry count. Look up the ident span
+// buf[lo..hi): return the bound descriptor slot, or -1 if not a let-name. Span
+// comparison (span_bytes_equal) mirrors resolve_param exactly — no hashing, so no
+// collision risk on fresh let names.
+pub fn resolve_let(lenv: i64, lcount: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    resolve_let_loop(lenv, __mind_load_i64(lcount), buf, lo, hi, 0)
+}
+pub fn resolve_let_loop(lenv: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    let elo: i64 = __mind_load_i64(lenv + i * 24 + 0);
+    let ehi: i64 = __mind_load_i64(lenv + i * 24 + 8);
+    if span_bytes_equal(buf, lo, hi, elo, ehi) == 1 {
+        return __mind_load_i64(lenv + i * 24 + 16);
+    }
+    resolve_let_loop(lenv, n, buf, lo, hi, i + 1)
+}
+
+// Let-env-aware post-order flatten. Identical to flatten_ast (Phase 4g/4h) except
+// the ast_ident branch first tries params, THEN let-names (alias to the bound slot,
+// no new node). Threads lenv/lcount through paren/binop recursion. Returns the
+// node's slot index, or -1 on an unsupported construct (fail-closed).
+pub fn flatten_ast_le(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, lenv: i64, lcount: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx >= 0 {
+            let slot: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(nodes + slot * 32 + 0, 0);
+            __mind_store_i64(nodes + slot * 32 + 8, idx);
+            __mind_store_i64(nodes + slot * 32 + 16, 0);
+            __mind_store_i64(nodes + slot * 32 + 24, 0);
+            __mind_store_i64(cursor, slot + 1);
+            return slot;
+        }
+        // Not a param: a let-bound local resolves to its init's already-emitted
+        // slot (an alias — emit no new node, return the bound slot directly).
+        let lslot: i64 = resolve_let(lenv, lcount, buf, ast_span_lo(node), ast_span_hi(node));
+        if lslot >= 0 {
+            return lslot;
+        }
+        return 0 - 1;
+    }
+    if k == ast_int_lit() {
+        let lit: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 2);
+        __mind_store_i64(nodes + slot * 32 + 8, lit);
+        __mind_store_i64(nodes + slot * 32 + 16, 0);
+        __mind_store_i64(nodes + slot * 32 + 24, 0);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    if k == ast_binop() {
+        let ls: i64 = flatten_ast_le(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+        if ls < 0 {
+            return 0 - 1;
+        }
+        let rs: i64 = flatten_ast_le(ast_child1(node), buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+        if rs < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 1);
+        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
+        __mind_store_i64(nodes + slot * 32 + 16, ls);
+        __mind_store_i64(nodes + slot * 32 + 24, rs);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    0 - 1
+}
+
+// Walk a block's statement list: each `let` flattens its init and binds the
+// let-name span -> the init's root slot in the let-env; the FINAL statement is the
+// trailing expression, flattened and its root slot returned (the fn ret slot).
+// Returns the trailing expr's root slot, or -1 on any wall (a non-let / non-final
+// statement, a let-init that doesn't flatten, or an unsupported trailing expr).
+pub fn flatten_stmts(stmts_addr: i64, stmts_len: i64, i: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, lenv: i64, lcount: i64) -> i64 {
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if i + 1 >= stmts_len {
+        // Final statement = the trailing value expression.
+        return flatten_ast_le(stmt, buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+    }
+    // Non-final statements must be `let` bindings.
+    if ast_kind(stmt) != ast_let() {
+        return 0 - 1;
+    }
+    let init: i64 = ast_child2(stmt);
+    let slot: i64 = flatten_ast_le(init, buf, params_addr, n_params, nodes, cursor, lenv, lcount);
+    if slot < 0 {
+        return 0 - 1;
+    }
+    let name_leaf: i64 = ast_child0(stmt);
+    let j: i64 = __mind_load_i64(lcount);
+    __mind_store_i64(lenv + j * 24 + 0, ast_span_lo(name_leaf));
+    __mind_store_i64(lenv + j * 24 + 8, ast_span_hi(name_leaf));
+    __mind_store_i64(lenv + j * 24 + 16, slot);
+    __mind_store_i64(lcount, j + 1);
+    flatten_stmts(stmts_addr, stmts_len, i + 1, buf, params_addr, n_params, nodes, cursor, lenv, lcount)
+}
+
+// AST-driven driver for multi-statement (let-bound) bodies: flatten the whole
+// statement sequence into the 4f descriptor, then emit byte-exact via the proven
+// emit_mic3_tree_fn_module. Fails closed (returns the seed state `s`) on any wall.
+pub fn emit_mic3_let_fn_module(s: EmitState, src: i64, strbuf: i64, offs: i64, n: i64, params_addr: i64, n_params: i64, stmts_addr: i64, stmts_len: i64, nodes: i64, cursor: i64, vidbuf: i64, lenv: i64, lcount: i64) -> EmitState {
+    __mind_store_i64(cursor, 0);
+    __mind_store_i64(lcount, 0);
+    let root: i64 = flatten_stmts(stmts_addr, stmts_len, 0, src, params_addr, n_params, nodes, cursor, lenv, lcount);
+    if root < 0 {
+        return s;
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    emit_mic3_tree_fn_module(s, strbuf, offs, n, nodes, n_nodes, vidbuf)
+}
+
+// Self-test entry (Phase 4i): lex+parse `src`, find the first fn_def, walk its full
+// body statement list (let bindings + trailing expr), and emit mic@3 — byte-exact
+// vs the Rust --emit-mic3 oracle. `strbuf`/`offs` are the caller-supplied CONTIGUOUS
+// string-table name buffer + offsets (name then p0..p(n-1)); `nodes`/`cursor`/`vidbuf`
+// are heap scratch sized to the body node count; `lenv`/`lcount` are the let-env
+// scratch (lenv: n_lets*24 bytes; lcount: 1 i64).
+pub fn selftest_mic3_let_fn(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, nodes: i64, cursor: i64, vidbuf: i64, lenv: i64, lcount: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let fn_node: i64 = find_first_fn(ast_child0(ast_root), ast_aux(ast_root), 0);
+    let params_addr: i64 = ast_child1(fn_node);
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    emit_mic3_let_fn_module(es_new(), src_addr, strbuf, offs, n_params, params_addr, n_params, stmts_addr, stmts_len, nodes, cursor, vidbuf, lenv, lcount)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
