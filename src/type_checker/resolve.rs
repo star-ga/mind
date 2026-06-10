@@ -49,7 +49,8 @@
 //! may legitimately come from the import). Bare-variable references are still
 //! reported even then — imports bring functions/types, never loose variables.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
 
 use crate::ast::{Literal, Module, Node, Pattern};
 
@@ -82,12 +83,11 @@ struct ModuleSyms {
     has_unresolved_imports: bool,
 }
 
-/// Collect the module-level resolvable-name set. `injected` carries any symbol
-/// names that the cross-module resolver already merged into the type env for
-/// this module (so populated project tables resolve imports precisely).
-fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSyms {
-    let mut names: BTreeSet<String> = injected.clone();
-    let mut has_unresolved_imports = false;
+/// Collect the top-level declaration names a module defines (fn / const / let /
+/// struct / enum / type-alias / extern), recursing into the `Block` that a
+/// `module NAME { ... }` body unwraps into. Pure: it does NOT resolve imports,
+/// so it is safe to call while building the std-export cache (no re-entrancy).
+fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
     for item in &module.items {
         match item {
             Node::FnDef { name, .. }
@@ -96,32 +96,73 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
             | Node::StructDef { name, .. }
             | Node::EnumDef { name, .. }
             | Node::TypeAlias { name, .. } => {
-                names.insert(name.clone());
+                out.insert(name.clone());
             }
             Node::ExternBlock { fns, .. } => {
                 for efn in fns {
-                    names.insert(efn.name.clone());
+                    out.insert(efn.name.clone());
                 }
             }
-            // A `module NAME { ... }` body is unwrapped into a Block at the top
-            // level; its inner declarations are resolvable in this scope too.
             Node::Block { stmts, .. } => {
                 let inner = Module {
                     items: stmts.clone(),
                 };
-                let inner_syms = collect_module_syms(&inner, injected);
-                names.extend(inner_syms.names);
-                has_unresolved_imports |= inner_syms.has_unresolved_imports;
-            }
-            Node::Import { .. } => {
-                // In the populated-table path the symbols were already merged
-                // into `injected`; if nothing was injected for this module we
-                // cannot enumerate the import surface, so be conservative.
-                if injected.is_empty() {
-                    has_unresolved_imports = true;
-                }
+                collect_decl_names(&inner, out);
             }
             _ => {}
+        }
+    }
+}
+
+/// Cached map of std-module path (`"std.vec"`) to the set of top-level names it
+/// exports. Built exactly once from the bundled stdlib registry so the
+/// single-file `mindc check` path resolves std-surface calls (`vec_new`,
+/// `sha256`, ...) PRECISELY — no false positive, and no blanket suppression
+/// that would also hide a genuine typo.
+fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
+    static CACHE: OnceLock<BTreeMap<String, BTreeSet<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let mut map = BTreeMap::new();
+        for (path, module) in crate::project::stdlib::parsed_stdlib_modules() {
+            let mut names = BTreeSet::new();
+            collect_decl_names(&module, &mut names);
+            map.insert(path, names);
+        }
+        map
+    })
+}
+
+/// Collect the module-level resolvable-name set. `injected` carries any symbol
+/// names the cross-module resolver already merged into the type env (so a
+/// populated project table resolves imports precisely). On top of that we
+/// resolve `import std.X` against the bundled stdlib registry so the single-file
+/// path knows the std-surface API; a non-std import whose symbols cannot be
+/// enumerated here suppresses undefined-CALL reports only — bare undefined
+/// variables are still reported, since imports bring fns/types, never vars.
+fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSyms {
+    let mut names: BTreeSet<String> = injected.clone();
+    collect_decl_names(module, &mut names);
+    let std_exports = stdlib_exports();
+    // The std-surface is the language standard library: its public names are
+    // always resolvable. std modules reference each other WITHOUT explicit
+    // imports (they are compiled as one bundle — e.g. std/io.mind calls
+    // std.string's `string_push_byte` with no import line), and a std-surface
+    // function is never a *genuinely-undefined* reference. So make the whole
+    // surface visible rather than per-import. (Whether a user module should be
+    // forced to `import std.X` before calling it is a separate "missing import"
+    // lint, not the undefined-reference question issue #23 owns.)
+    for exports in std_exports.values() {
+        names.extend(exports.iter().cloned());
+    }
+    // A non-std (user) import whose symbols cannot be enumerated in the
+    // single-file path suppresses undefined-CALL reports only — bare undefined
+    // variables are still reported, since imports bring fns/types, never vars.
+    let mut has_unresolved_imports = false;
+    for item in &module.items {
+        if let Node::Import { path, .. } = item {
+            if !std_exports.contains_key(&path.join(".")) {
+                has_unresolved_imports = true;
+            }
         }
     }
     ModuleSyms {
