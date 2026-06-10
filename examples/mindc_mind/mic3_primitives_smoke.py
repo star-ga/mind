@@ -451,6 +451,100 @@ def main() -> int:
         pnames = ",".join(p.decode() for p in params)
         print(f"  chain_fn {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
 
+    # --- COMPLETE WITH-BODY mixed-operator expression-tree fn:
+    #     pub fn <name>(p0,..,p(n-1)) -> i64 { <arbitrary binary expr-tree> } — the
+    #     first body that is NOT a left-spine accumulator. The tree is a flat
+    #     POST-ORDER node array (4 i64 per node: kind, a, b, c). LEAF (kind 0):
+    #     a=param index (vid==index). BINOP (kind 1): a=op_byte, b=left slot,
+    #     c=right slot. LEAF vid = param index; BINOP vid allocated n,n+1,.. in
+    #     post-order; ret_vid = last node (root); body_len = n + #binops.
+    #     mixed(a,b,c,d){a*b+c*d} == captured 77-byte oracle; f(a,b,c){(a+b)*c} == 60B. ---
+    def ref_tree_fn(name, params, nodes):
+        n = len(params)
+        strs = [name] + params
+        # Pass 1: resolve slot vids (post-order; binops from n).
+        slot_vid = [0] * len(nodes)
+        nxt = n
+        nbinops = 0
+        for j, nd in enumerate(nodes):
+            if nd[0] == 0:                       # LEAF
+                slot_vid[j] = nd[1]              # param index == vid
+            else:                                # BINOP
+                slot_vid[j] = nxt
+                nxt += 1
+                nbinops += 1
+        root_vid = slot_vid[-1]
+        body_len = n + nbinops
+        out = b"MIC3\x02"
+        out += ref_uleb128(len(strs)) + b"".join(ref_uleb128(len(x)) + x for x in strs)
+        out += ref_uleb128(1) + ref_uleb128(0) + ref_uleb128(3)   # next_id, exports, 3 instrs
+        out += bytes([0x15]) + ref_uleb128(0)                     # FN_DEF, name_idx=0
+        out += ref_uleb128(n)
+        for i in range(n):
+            out += ref_uleb128(i + 1) + ref_uleb128(i)            # (str_idx i+1, vid i)
+        out += bytes([1]) + ref_uleb128(root_vid)                 # ret Some %root
+        out += bytes([0]) + ref_uleb128(body_len)                 # reap None, body_len
+        for i in range(n):
+            out += bytes([0x18]) + ref_uleb128(i) + ref_uleb128(i + 1) + ref_uleb128(i)  # PARAM %i
+        for j, nd in enumerate(nodes):
+            if nd[0] == 1:                       # BINOP, post-order
+                _, ob, ls, rs = nd
+                out += bytes([4]) + ref_uleb128(slot_vid[j]) + bytes([ob]) \
+                    + ref_uleb128(slot_vid[ls]) + ref_uleb128(slot_vid[rs])
+        out += bytes([1]) + ref_uleb128(0) + ref_uleb128(0)       # ConstI64(%0,0)
+        out += bytes([0x13]) + ref_uleb128(0)                     # Output(%0)
+        out += b"\x00\x00\x00"
+        return out
+
+    lib.selftest_mic3_tree_fn.restype = ctypes.c_void_p
+    lib.selftest_mic3_tree_fn.argtypes = [ctypes.c_int64] * 6
+    # Each case: (name, params, nodes) where a node is a 4-tuple (kind, a, b, c).
+    # LEAF=(0, param_index, 0, 0); BINOP=(1, op_byte, left_slot, right_slot). op0=add, op2=mul.
+    tree_cases = [
+        # mixed(a,b,c,d){a*b+c*d}: +(*(a,b),*(c,d))
+        (b"mixed", [b"a", b"b", b"c", b"d"],
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 2, 0, 1),
+          (0, 2, 0, 0), (0, 3, 0, 0), (1, 2, 3, 4),
+          (1, 0, 2, 5)]),
+        # f(a,b,c){(a+b)*c}: *(+(a,b),c)
+        (b"f", [b"a", b"b", b"c"],
+         [(0, 0, 0, 0), (0, 1, 0, 0), (1, 0, 0, 1),
+          (0, 2, 0, 0), (1, 2, 2, 3)]),
+        # g(a,b,c,d){a+b*c-d}: -(+(a,*(b,c)),d) with op1=sub, op0=add, op2=mul
+        (b"g", [b"a", b"b", b"c", b"d"],
+         [(0, 0, 0, 0), (0, 1, 0, 0), (0, 2, 0, 0), (1, 2, 1, 2),
+          (1, 0, 0, 3), (0, 3, 0, 0), (1, 1, 4, 5)]),
+    ]
+    for name, params, nodes in tree_cases:
+        sbuf = name + b"".join(params)
+        soff = [0, len(name)]
+        for p in params:
+            soff.append(soff[-1] + len(p))
+        sbuf_c = ctypes.create_string_buffer(sbuf, len(sbuf))
+        soff_c = (ctypes.c_int64 * len(soff))(*soff)
+        # Flatten nodes into a 4-i64-per-node heap array; scratch vidbuf of n_nodes i64.
+        flat = [v for nd in nodes for v in nd]
+        nodes_c = (ctypes.c_int64 * len(flat))(*flat)
+        vidbuf_c = (ctypes.c_int64 * len(nodes))()
+        es = lib.selftest_mic3_tree_fn(
+            ctypes.cast(sbuf_c, ctypes.c_void_p).value,
+            ctypes.cast(soff_c, ctypes.c_void_p).value,
+            len(params),
+            ctypes.cast(nodes_c, ctypes.c_void_p).value, len(nodes),
+            ctypes.cast(vidbuf_c, ctypes.c_void_p).value)
+        got = read_string_handle(read_i64_at(es, 0))
+        want = ref_tree_fn(name, params, nodes)
+        failures += got != want
+        total += 1
+        note = ""
+        if name == b"mixed":
+            note = " (== mixed(a,b,c,d){a*b+c*d} oracle, 77B)"
+        elif name == b"f":
+            note = " (== f(a,b,c){(a+b)*c} oracle, 60B)"
+        ok = "OK" + note if got == want else f"FAIL want {want.hex()}"
+        pnames = ",".join(p.decode() for p in params)
+        print(f"  tree_fn {name.decode()}({pnames}) [{len(got)}B] = {got.hex()}  {ok}")
+
     if failures:
         raise SystemExit(f"FAIL: {failures}/{total} mic@3 primitive mismatches")
     print(f"  PASS — {total}/{total} byte-exact vs reference "
