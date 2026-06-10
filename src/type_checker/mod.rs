@@ -2834,6 +2834,7 @@ pub fn check_module_types_in_file(
             Node::FnDef {
                 params,
                 body,
+                ret_type,
                 span: fn_span,
                 ..
             } => {
@@ -2890,7 +2891,20 @@ pub fn check_module_types_in_file(
                 // is the module env's keys (module fns/consts/lets + any
                 // cross-module symbols merged by the import resolver); passing
                 // them can only make MORE names resolve, never false-positive.
-                let injected: BTreeSet<String> = tenv.keys().cloned().collect();
+                let mut injected: BTreeSet<String> = tenv.keys().cloned().collect();
+                // Symbolic tensor shape-dimension identifiers declared in the
+                // parameter and return types (`fn f(x: tensor<f32[batch, 32]>)
+                // -> tensor<f32[batch, 10]>`) are in scope throughout the body
+                // wherever the shape is referenced (`reshape(x, [batch, 800])`).
+                // Pre-bind them so they resolve; numeric dims (`32`, `800`) are
+                // literals and are skipped. This only adds names, never removes,
+                // so it cannot turn a genuine undefined ident into a pass.
+                for param in params {
+                    resolve::collect_shape_vars(&param.ty, &mut injected);
+                }
+                if let Some(rt) = ret_type {
+                    resolve::collect_shape_vars(rt, &mut injected);
+                }
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 for u in resolve::resolve_fn_body(body, &param_names, module, &injected) {
                     let (msg, code) = if u.is_call {
