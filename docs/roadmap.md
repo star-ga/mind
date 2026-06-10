@@ -28,11 +28,14 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   active frontier is self-hosting the full codegen path (Phase 15).
 - **Ed25519-signed evidence chain** – cryptographic signing of the
   already-emitted evidence chain.
-- **GPU / accelerator backends** – execution is CPU-only today (selecting the
-  GPU target returns a structured error). CUDA, Metal, ROCm, and WebGPU
-  backends are planned.
-- **Distributed Runtime** – deterministic NCCL/Gloo collectives, RingAllReduce,
-  pipeline parallelism (see Phase 13.6).
+- **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
+  emits for the **CPU**. GPU and accelerator execution (CUDA, Metal, ROCm,
+  WebGPU, and the broader chip-target set) ships today in the commercial
+  `mind-runtime`, available to consumers under a commercial license. What is on
+  the roadmap is **bit-identical determinism** across those substrates.
+- **Deterministic distributed runtime** – the commercial runtime ships NCCL/Gloo
+  collectives, RingAllReduce, and pipeline parallelism today; making them
+  bit-identical by fixed reduction order is the active work (see Phase 13.6).
 - **Deployment & Serving** – HTTP/gRPC inference, dynamic batching, metrics.
 - **Package Manager** – PubGrub resolver, SLSA provenance, SBOM, sparse registry.
 
@@ -389,8 +392,8 @@ Introduce language-level support for observation-dependent computation. MIND alr
 
 ### Goals
 
-Today the runtime ships TCP transport, NCCL/Gloo backends, RingAllReduce,
-pipeline parallelism, and fault tolerance — production-grade but
+Today, distributed AI runtimes ship TCP transport, NCCL/Gloo backends,
+RingAllReduce, pipeline parallelism, and fault tolerance — production-grade but
 **non-deterministic by reduction order**. Different runs of the same
 sharded model produce slightly different logits because IEEE-754
 floating-point reductions are not associative under parallel scheduling.
