@@ -1990,6 +1990,49 @@ pub fn emit_byte_range(s: EmitState, buf: i64, lo: i64, hi: i64) -> EmitState {
     emit_byte_range(s2, buf, lo + 1, hi)
 }
 
+// ===== mic@3 encoding primitives (self-host mic@3 convergence, Phase 1) =====
+//
+// ULEB128 + zigzag varints — the foundation of the mic@3 wire format (mirrors
+// src/ir/compact/v3/emit.rs uleb128_write / zigzag_encode). The bootstrap
+// language has `&` and `/` but no `>>` / `while`, so this is arithmetic +
+// recursion: the low 7 bits are `n & 127`, the shift is `n / 128`, and the
+// continuation bit is `+ 128` (the kept byte is < 128, so `+` equals `|`). Pure:
+// identical n yields identical bytes on every substrate (the wedge invariant).
+// Verified against the Rust oracle: uleb128(300) = [172, 2] = [0xAC, 0x02].
+//
+// Additive + isolated from the canary mic@1 emit path (these are not yet wired
+// into the keystone fixed-point; they are exercised by selftest_mic3_uleb below
+// until Phase 2 builds the mic@3 section emitter on top of them).
+pub fn emit_uleb128(s: EmitState, n: i64) -> EmitState {
+    let low: i64 = n & 127;
+    let rest: i64 = n / 128;
+    if rest == 0 {
+        return es_push(s, low);
+    }
+    let s2: EmitState = es_push(s, low + 128);
+    emit_uleb128(s2, rest)
+}
+
+// zigzag: signed -> unsigned so small-magnitude values stay short.
+//   zigzag(n) = n >= 0 ? 2n : -2n - 1   (== (n<<1) ^ (n>>63) for i64)
+pub fn zigzag_encode(n: i64) -> i64 {
+    if n < 0 {
+        return (0 - n) * 2 - 1;
+    }
+    n * 2
+}
+
+pub fn emit_sleb_zigzag(s: EmitState, n: i64) -> EmitState {
+    emit_uleb128(s, zigzag_encode(n))
+}
+
+// Selftest export (cdylib pub-fn symbol, like selftest_emit_fn_body): emit the
+// ULEB128 of `n` into a fresh EmitState so the Python gate can read the bytes
+// back and check them against the Rust encoder. Keeps the primitives live + gated.
+pub fn selftest_mic3_uleb(n: i64) -> EmitState {
+    emit_uleb128(es_new(), n)
+}
+
 // ===== Fixed-literal writers =====
 
 pub fn emit_lit_module_open(s: EmitState) -> EmitState {
