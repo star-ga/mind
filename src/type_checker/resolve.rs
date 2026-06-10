@@ -52,7 +52,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
-use crate::ast::{Literal, Module, Node, Pattern};
+use crate::ast::{Literal, Module, Node, Pattern, TypeAnn};
 
 /// Undefined-variable diagnostic code (issue #23). A bare identifier that
 /// resolves to nothing in any scope frame or module-level symbol source.
@@ -78,9 +78,6 @@ struct ModuleSyms {
     /// struct/enum/type-alias names, in-file extern fn names, and (when the
     /// project table is populated) cross-module imported symbols.
     names: BTreeSet<String>,
-    /// True when the module has at least one `import` whose symbols could not
-    /// be enumerated (empty project table). Suppresses undefined-CALL reports.
-    has_unresolved_imports: bool,
 }
 
 /// Collect the top-level declaration names a module defines (fn / const / let /
@@ -161,21 +158,78 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     for exports in std_exports.values() {
         names.extend(exports.iter().cloned());
     }
-    // A non-std (user) import whose symbols cannot be enumerated in the
-    // single-file path suppresses undefined-CALL reports only — bare undefined
-    // variables are still reported, since imports bring fns/types, never vars.
-    let mut has_unresolved_imports = false;
-    for item in &module.items {
-        if let Node::Import { path, .. } = item {
-            if !std_exports.contains_key(&path.join(".")) {
-                has_unresolved_imports = true;
+    ModuleSyms { names }
+}
+
+/// Collect the symbolic shape-dimension identifiers declared in a type
+/// annotation into `out`. A tensor type's `dims` are raw strings: a numeric
+/// dim (`32`, `800`, `[]`) is a literal, while a non-numeric dim (`batch`,
+/// `N`) is a symbolic shape variable that is in scope throughout the function
+/// body wherever that shape is referenced (e.g. `reshape(x, [batch, 800])`).
+/// We recurse through compound annotations (`Slice`/`Ref`/`Array`/`Tuple`/
+/// `Generic`/`FnPtr`/`RawPtr`/`SparseTensor`) so a shape var nested inside,
+/// say, a `Vec<tensor<f32[N]>>` parameter is also pre-bound. This only ever
+/// ADDS resolvable names, so it can never produce a false positive.
+pub fn collect_shape_vars(ty: &TypeAnn, out: &mut BTreeSet<String>) {
+    match ty {
+        TypeAnn::Tensor { dims, .. } | TypeAnn::DiffTensor { dims, .. } => {
+            for d in dims {
+                add_shape_dim_str(d, out);
             }
         }
+        TypeAnn::SparseTensor { element, shape, .. } => {
+            collect_shape_vars(element, out);
+            for sd in shape {
+                if let crate::types::ShapeDim::Sym(s) = sd {
+                    out.insert((*s).to_string());
+                }
+            }
+        }
+        TypeAnn::Slice { element, .. } => collect_shape_vars(element, out),
+        TypeAnn::Array { element, .. } => collect_shape_vars(element, out),
+        TypeAnn::Ref { target, .. } => collect_shape_vars(target, out),
+        TypeAnn::RawPtr { pointee, .. } => collect_shape_vars(pointee, out),
+        TypeAnn::Tuple { elements } => {
+            for e in elements {
+                collect_shape_vars(e, out);
+            }
+        }
+        TypeAnn::Generic { args, .. } => {
+            for a in args {
+                collect_shape_vars(a, out);
+            }
+        }
+        TypeAnn::FnPtr { params, ret } => {
+            for p in params {
+                collect_shape_vars(p, out);
+            }
+            if let Some(r) = ret {
+                collect_shape_vars(r, out);
+            }
+        }
+        // Scalars and user-named types carry no shape dimensions.
+        TypeAnn::ScalarI32
+        | TypeAnn::ScalarI64
+        | TypeAnn::ScalarF32
+        | TypeAnn::ScalarF64
+        | TypeAnn::ScalarBool
+        | TypeAnn::ScalarU32
+        | TypeAnn::Named(_) => {}
     }
-    ModuleSyms {
-        names,
-        has_unresolved_imports,
+}
+
+/// Insert a tensor dim string into `out` iff it is a symbolic identifier (not a
+/// numeric literal and not the empty scalar-shape marker).
+fn add_shape_dim_str(dim: &str, out: &mut BTreeSet<String>) {
+    let d = dim.trim();
+    if d.is_empty() {
+        return;
     }
+    // A numeric dim is a literal extent, not an identifier.
+    if d.bytes().all(|b| b.is_ascii_digit()) {
+        return;
+    }
+    out.insert(d.to_string());
 }
 
 /// A stack of lexical scope frames. Frame 0 holds the fn parameters; nested
@@ -253,10 +307,20 @@ impl<'a> Resolver<'a> {
         self.scopes.contains(name) || self.syms.names.contains(name)
     }
 
-    fn call_resolvable(&self, name: &str) -> bool {
-        self.ident_resolvable(name)
-            || name.starts_with("__mind_")
-            || self.syms.has_unresolved_imports
+    fn call_resolvable(&self, _name: &str) -> bool {
+        // #23 call-resolution is DEFERRED to the dedicated scoped
+        // name-resolution pass (mind-ecosystem-audit/ISSUE-23). The prior
+        // heuristic (scope/syms membership + `__mind_` prefix + unresolved
+        // imports) does NOT model tensor/autodiff builtins (`backward`, `sum`,
+        // `matmul`, `reshape`, `relu`, `sigmoid`, ...), module-local functions,
+        // or the cross-module import table, so it false-flagged valid calls as
+        // E2003 (e.g. every call in examples/autodiff_demo.mind, and a
+        // module-local `reduce`). Until the full pass unions all four name
+        // sources with nested scope frames, every call is treated as
+        // resolvable: unknown `__mind_*` intrinsics are still caught by
+        // intrinsic dispatch, and undefined-IDENT detection (E2002, below) is
+        // unchanged — so genuinely-unknown bare identifiers are still reported.
+        true
     }
 
     /// Register every binding introduced by a pattern (`match` arms). Bare
