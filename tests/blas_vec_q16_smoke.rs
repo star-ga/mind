@@ -325,7 +325,7 @@ fn vec_dot_q16_byte_identical_to_scalar_oracle_all_lengths() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     for &len in LENGTHS {
         let (a, b) = make_pair_q16(len, 0xC0FF_EE00 + len as u64);
@@ -357,7 +357,7 @@ fn vec_dot_l1_q16_byte_identical_to_scalar_oracle_all_lengths() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     for &len in LENGTHS {
         let (a, b) = make_pair_q16(len, 0x1111_AA00 + len as u64);
@@ -386,7 +386,7 @@ fn vec_dot_q16_zero_length_is_zero() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
     let got = call3(&lib, b"dotq\0", 0, 0, 0);
     assert_eq!(got, 0, "len=0 Q16.16 vector dot must be 0");
 }
@@ -396,7 +396,7 @@ fn vec_dot_l1_f32_within_1e4_rel_of_f64_oracle() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     for &len in &[1usize, 7, 8, 9, 16, 17, 1024, 4096, 65537] {
         let (a, b) = make_pair_f32(len, 0xABCD_0000 + len as u64);
@@ -422,7 +422,7 @@ fn vec_dot_linf_f32_within_1e4_rel_of_f64_oracle() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     for &len in &[1usize, 7, 8, 9, 16, 17, 1024, 4096, 65537] {
         let (a, b) = make_pair_f32(len, 0x9999_0000 + len as u64);
@@ -466,7 +466,7 @@ fn vec_matmul_rmajor_f32_within_1e4_rel_of_f64_oracle() {
     let Some(so) = build_matmul_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen matmul .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen matmul .so") };
     let matmul: libloading::Symbol<MatmulFn> = unsafe {
         lib.get(b"matmul\0")
             .expect("symbol 'matmul' missing from matmul .so")
@@ -542,7 +542,7 @@ fn vec_matmul_q16_byte_identical_to_scalar_oracle_required_shapes() {
     let Some(so) = build_matmul_q16_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Q16 matmul .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Q16 matmul .so") };
     let matmul_q16: libloading::Symbol<MatmulFn> = unsafe {
         lib.get(b"matmul_q16\0")
             .expect("symbol 'matmul_q16' missing from Q16 matmul .so")
@@ -594,8 +594,8 @@ fn vec_matmul_q16_matches_dot_q16_per_row() {
     let Some(dot_so) = build_vec_so() else {
         return;
     };
-    let matmul_lib = unsafe { Library::new(&matmul_so).expect("dlopen Q16 matmul .so") };
-    let dot_lib = unsafe { Library::new(&dot_so).expect("dlopen dot .so") };
+    let matmul_lib = unsafe { Library::new(matmul_so).expect("dlopen Q16 matmul .so") };
+    let dot_lib = unsafe { Library::new(dot_so).expect("dlopen dot .so") };
     let matmul_q16: libloading::Symbol<MatmulFn> = unsafe {
         matmul_lib
             .get(b"matmul_q16\0")

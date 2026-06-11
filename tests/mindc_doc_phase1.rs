@@ -295,7 +295,7 @@ fn find_html_containing(dir: &std::path::Path, needle: &str) -> Option<PathBuf> 
             if let Some(found) = find_html_containing(&path, needle) {
                 return Some(found);
             }
-        } else if path.extension().map_or(false, |e| e == "html") {
+        } else if path.extension().is_some_and(|e| e == "html") {
             if let Ok(text) = fs::read_to_string(&path) {
                 if text.contains(needle) {
                     return Some(path);

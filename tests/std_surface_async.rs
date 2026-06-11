@@ -222,7 +222,7 @@ fn sched_kind_accessor_in_ir() {
 
 #[cfg(feature = "mlir-build")]
 mod mlir_tests {
-    use libmind::project::stdlib::parsed_stdlib_modules;
+    
     use std::path::PathBuf;
 
     fn mindc_bin() -> PathBuf {

@@ -184,7 +184,7 @@ fn vec_dot_f32_within_1e4_rel_of_f64_oracle() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     // 1024 and 1,000,000 elements — the RFC-mandated equivalence sizes.
     for &len in &[1024usize, 1_000_000] {
@@ -208,7 +208,7 @@ fn vec_dot_f32_byte_identical_to_scalar_below_one_lane_group() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     for &len in &[0usize, 1, 2, 7] {
         let (a, b) = make_pair(len, 0x1234_5678 + len as u64);
@@ -229,7 +229,7 @@ fn vec_dot_f32_handles_ragged_lengths() {
     let Some(so) = build_vec_so() else {
         return;
     };
-    let lib = unsafe { Library::new(&so).expect("dlopen Track B .so") };
+    let lib = unsafe { Library::new(so).expect("dlopen Track B .so") };
 
     for &len in &[8usize, 9, 15, 16, 17, 31, 32, 33, 4096, 65537] {
         let (a, b) = make_pair(len, 0xBEEF_CAFE + len as u64);

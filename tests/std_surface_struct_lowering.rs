@@ -293,7 +293,7 @@ fn struct_lit_alloc_uses_8_times_field_count_bytes() {
         .find_map(|i| match i {
             Instr::BinOp {
                 dst, op, lhs, rhs, ..
-            } if *dst == bytes_id => Some((op.clone(), *lhs, *rhs)),
+            } if *dst == bytes_id => Some((*op, *lhs, *rhs)),
             _ => None,
         })
         .expect("bytes arg should be produced by a BinOp");

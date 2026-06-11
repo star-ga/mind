@@ -514,7 +514,7 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             let rx10 = compile_fn(pat10.as_ptr() as i64, pat10.len() as i64);
             assert!(rx10 != 0, "IPv4-like pattern must compile");
             let inp10a = b"192.168.1.1";
-            let inp10b = b"not.an.ip";
+            let _inp10b = b"not.an.ip";
             assert_eq!(
                 is_match_fn(rx10, inp10a.as_ptr() as i64, inp10a.len() as i64),
                 1,

@@ -167,33 +167,30 @@ fn vec_push_call_threads_receiver(instrs: &[Instr]) -> bool {
             // second (the pushed value) — proving it is the desugared
             // `vec_push(recv, value)`, not a zero-arg accessor or const-0.
             Instr::Call { name, args, .. } if name == "vec_push" && args.len() == 2 => return true,
-            Instr::FnDef { body, .. } => {
-                if vec_push_call_threads_receiver(body) {
+            Instr::FnDef { body, .. }
+                if vec_push_call_threads_receiver(body) => {
                     return true;
                 }
-            }
             Instr::If {
                 cond_instrs,
                 then_instrs,
                 else_instrs,
                 ..
-            } => {
-                if vec_push_call_threads_receiver(cond_instrs)
+            }
+                if (vec_push_call_threads_receiver(cond_instrs)
                     || vec_push_call_threads_receiver(then_instrs)
-                    || vec_push_call_threads_receiver(else_instrs)
-                {
+                    || vec_push_call_threads_receiver(else_instrs))
+                => {
                     return true;
                 }
-            }
             Instr::While {
                 body, cond_instrs, ..
-            } => {
-                if vec_push_call_threads_receiver(cond_instrs)
-                    || vec_push_call_threads_receiver(body)
-                {
+            }
+                if (vec_push_call_threads_receiver(cond_instrs)
+                    || vec_push_call_threads_receiver(body))
+                => {
                     return true;
                 }
-            }
             _ => {}
         }
     }
