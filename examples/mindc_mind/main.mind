@@ -6440,9 +6440,12 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                         let p4_vidbuf: i64 = __mind_alloc(256 * 8);
                         let p4_cell: i64 = __mind_alloc(8);
                         __mind_store_i64(p4_cell, 0 - 1);
-                        let p4_lvenv: i64 = __mind_alloc(24);
-                        let p4_lvbuf: i64 = __mind_alloc((t4_nlets + 8) * 24);
-                        let p4: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p4_nodes, p4_cursor, p4_vidbuf, 0, p4_cell, p4_lvenv, 0, p4_lvbuf, 0, 0, 0);
+                        // Name-only seq lv-env (vids unresolved at probe time) so the
+                        // cond / then-lets can reference sequence-level lets.
+                        let p4_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
+                        let _p4lv: i64 = seq_env_to_lvenv(env, nlets, 0, p4_lvenv, 0, 0);
+                        let p4_lvbuf: i64 = __mind_alloc((nlets + t4_nlets + 8) * 24);
+                        let p4: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p4_nodes, p4_cursor, p4_vidbuf, 0, p4_cell, p4_lvenv, nlets, p4_lvbuf, 0, 0, 0);
                         let p4_dst: i64 = __mind_load_i64(p4_cell);
                         if p4_dst >= 0 {
                             __mind_store_i64(plan + p * 64 + 0, 4);
@@ -6462,8 +6465,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let pr_vidbuf: i64 = __mind_alloc(256 * 8);
                 let pr_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(pr_cell, 0 - 1);
-                let pr_lvenv: i64 = __mind_alloc(24);
-                let pr: EmitState = emit_if_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, pr_nodes, pr_cursor, pr_vidbuf, 0, pr_cell, pr_lvenv, 0, 0, 0, 0);
+                let pr_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
+                let _prlv: i64 = seq_env_to_lvenv(env, nlets, 0, pr_lvenv, 0, 0);
+                let pr: EmitState = emit_if_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, pr_nodes, pr_cursor, pr_vidbuf, 0, pr_cell, pr_lvenv, nlets, 0, 0, 0);
                 let pr_dst: i64 = __mind_load_i64(pr_cell);
                 if pr_dst >= 0 {
                     __mind_store_i64(plan + p * 64 + 0, 3);
@@ -6491,6 +6495,32 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             let inner_then: i64 = ast_child1(ret_stmt);
             let inner_ret: i64 = branch_single_expr(inner_then);
             if inner_ret < 0 {
+                return 0;
+            }
+            // (type 5) depth>=3 single nested-if-chain: the inner is ITSELF a nested
+            // if (not a direct return) -> route the WHOLE chain through the recursive
+            // emit_if_chain_instr_lv (arbitrary depth; the depth-2 type-2 only handles
+            // inner==return). Self-contained; the name-only seq lv-env lets the cond
+            // reference sequence-level lets (e.g. classify_ident's `if n == 4`).
+            if ast_kind(inner_ret) == ast_if() {
+                let p5_nodes: i64 = __mind_alloc(256 * 32);
+                let p5_cursor: i64 = __mind_alloc(8);
+                let p5_vidbuf: i64 = __mind_alloc(256 * 8);
+                let p5_cell: i64 = __mind_alloc(8);
+                __mind_store_i64(p5_cell, 0 - 1);
+                let p5_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
+                let _p5lv: i64 = seq_env_to_lvenv(env, nlets, 0, p5_lvenv, 0, 0);
+                let p5: EmitState = emit_if_chain_instr_lv(es_new(), stmt, src, params_addr, n_params, p5_nodes, p5_cursor, p5_vidbuf, 0, p5_cell, p5_lvenv, nlets, 0, 0, 0);
+                let p5_dst: i64 = __mind_load_i64(p5_cell);
+                if p5_dst >= 0 {
+                    __mind_store_i64(plan + p * 64 + 0, 5);
+                    __mind_store_i64(plan + p * 64 + 8, stmt);
+                    __mind_store_i64(plan + p * 64 + 16, p5_dst + 1);
+                    __mind_store_i64(plan + p * 64 + 24, params_addr);
+                    __mind_store_i64(plan + p * 64 + 32, n_params);
+                    __mind_store_i64(nplan_cell, p + 1);
+                    return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+                }
                 return 0;
             }
             if ast_kind(inner_ret) != ast_return() {
@@ -6558,6 +6588,27 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
 // cond tree from base, then injects the OP_IF synth/dst vids: then-synth, the ret
 // tree (from then-synth+1), the else-synth, and dst — advancing base past the whole
 // block, exactly as emit_mic3_if_stmt_instr lays them out. Returns the final base.
+// Convert the seq let-env (name_lo, name_hi, root_SLOT) into an lv-env (name_lo,
+// name_hi, VID) for the _lv segment emitters, so a segment cond/init that refers
+// to a sequence-level let (e.g. `if n == 2` where `let n = ...` precedes it)
+// resolves it. When resolve==1, vid = vidbuf[root_slot] (Pass-B-resolved); when 0
+// (probe, vids not yet assigned) vid = 0 (only the NAME matters — let-refs are
+// 0-count leaves whose vid does not affect the dst delta). Returns nlets.
+pub fn seq_env_to_lvenv(env: i64, nlets: i64, vidbuf: i64, lvbuf: i64, resolve: i64, i: i64) -> i64 {
+    if i >= nlets {
+        return nlets;
+    }
+    __mind_store_i64(lvbuf + i * 24 + 0, __mind_load_i64(env + i * 24 + 0));
+    __mind_store_i64(lvbuf + i * 24 + 8, __mind_load_i64(env + i * 24 + 8));
+    let v: i64 = if resolve == 1 {
+        __mind_load_i64(vidbuf + __mind_load_i64(env + i * 24 + 16) * 8)
+    } else {
+        0
+    };
+    __mind_store_i64(lvbuf + i * 24 + 16, v);
+    seq_env_to_lvenv(env, nlets, vidbuf, lvbuf, resolve, i + 1)
+}
+
 pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64, i: i64) -> i64 {
     if i >= nplan {
         return base;
@@ -6582,6 +6633,11 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
         // consumes `next_delta` vids relative to `base`.
         let next_delta4: i64 = __mind_load_i64(plan + i * 64 + 16);
         return seq_assign_vids(nodes, vidbuf, plan, nplan, base + next_delta4, i + 1);
+    }
+    if ty == 5 {
+        // single nested-if-chain segment (arbitrary depth). Base-relative delta.
+        let next_delta5: i64 = __mind_load_i64(plan + i * 64 + 16);
+        return seq_assign_vids(nodes, vidbuf, plan, nplan, base + next_delta5, i + 1);
     }
     if ty == 2 {
         // NESTED if-return segment. Same vid layout as emit_mic3_nested_if_instr,
@@ -6614,7 +6670,7 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
 // its [start,end) tree. An if-return block emits ONE OP_IF (0x1C): cond tree, then
 // (synth const + ret tree + Return(ret_root_vid)), else (synth const), dst, empty
 // bindings/merges — reading every vid from the shared vidbuf resolved in Pass B.
-pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, ncount: i64, plan: i64, nplan: i64, base: i64, i: i64) -> EmitState {
+pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, ncount: i64, plan: i64, nplan: i64, base: i64, i: i64, seq_lvbuf: i64, seq_nlv: i64) -> EmitState {
     if i >= nplan {
         return s;
     }
@@ -6624,12 +6680,13 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let end: i64 = __mind_load_i64(plan + i * 64 + 16);
         let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
         let s1: EmitState = emit_mic3_tree_body(s, nodes, end, vidbuf, src, strbuf, offs, ncount, start);
-        return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1);
+        return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1, seq_lvbuf, seq_nlv);
     }
     if ty == 3 {
         // if-with-SEQ-then-block -> ONE outer OP_IF whose then-branch is a sequence
         // of if-segments. Self-contained (own scratch so the shared nodes/vidbuf used
         // by other segments are untouched); base-threaded. dst = base + next_delta - 1.
+        // The seq lv-env lets the cond reference sequence-level lets (`if n == 2`).
         let if_node3: i64 = __mind_load_i64(plan + i * 64 + 8);
         let next_delta3: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa3: i64 = __mind_load_i64(plan + i * 64 + 24);
@@ -6639,13 +6696,14 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e3_vidbuf: i64 = __mind_alloc(256 * 8);
         let e3_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e3_cell, 0 - 1);
-        let e3_lvenv: i64 = __mind_alloc(24);
-        let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, e3_lvenv, 0, strbuf, offs, ncount);
-        return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1);
+        let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount);
+        return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1, seq_lvbuf, seq_nlv);
     }
     if ty == 4 {
         // if-with-LET-then-block (merge tail) -> ONE outer OP_IF. Self-contained
-        // scratch; base-threaded. strbuf/offs/ncount resolve the binding names.
+        // scratch; base-threaded. strbuf/offs/ncount resolve the binding names. The
+        // seq lv-env (seq_lvbuf/seq_nlv) seeds lvenv0 so the cond + then-lets resolve
+        // sequence-level lets; the then-block lets append after seq_nlv.
         let if_node4: i64 = __mind_load_i64(plan + i * 64 + 8);
         let next_delta4: i64 = __mind_load_i64(plan + i * 64 + 16);
         let pa4: i64 = __mind_load_i64(plan + i * 64 + 24);
@@ -6655,12 +6713,27 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e4_vidbuf: i64 = __mind_alloc(256 * 8);
         let e4_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e4_cell, 0 - 1);
-        let e4_lvenv: i64 = __mind_alloc(24);
         let e4_then_blk: i64 = ast_child1(if_node4);
         let e4_nlets: i64 = count_leading_lets(ast_child0(e4_then_blk), ast_aux(e4_then_blk), 0);
-        let e4_lvbuf: i64 = __mind_alloc((e4_nlets + 8) * 24);
-        let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, e4_lvenv, 0, e4_lvbuf, strbuf, offs, ncount);
-        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1);
+        let e4_lvbuf: i64 = __mind_alloc((seq_nlv + e4_nlets + 8) * 24);
+        let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount);
+        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv);
+    }
+    if ty == 5 {
+        // single nested-if-chain segment of ARBITRARY depth -> ONE OP_IF via the
+        // recursive chain emitter (subsumes the depth-2 type-2). Self-contained
+        // scratch; base-threaded; seq lv-env lets the cond reference sequence lets.
+        let if_node5: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let next_delta5: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let pa5: i64 = __mind_load_i64(plan + i * 64 + 24);
+        let np5: i64 = __mind_load_i64(plan + i * 64 + 32);
+        let e5_nodes: i64 = __mind_alloc(256 * 32);
+        let e5_cursor: i64 = __mind_alloc(8);
+        let e5_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e5_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(e5_cell, 0 - 1);
+        let s5i: EmitState = emit_if_chain_instr_lv(s, if_node5, src, pa5, np5, e5_nodes, e5_cursor, e5_vidbuf, base, e5_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount);
+        return emit_stmt_seq(s5i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta5, i + 1, seq_lvbuf, seq_nlv);
     }
     if ty == 2 {
         // NESTED if-return segment -> ONE outer OP_IF whose then-branch is `synth +
@@ -6722,7 +6795,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let q26: EmitState = emit_uleb128(q25, n2_outer_dst);
         let q27: EmitState = emit_uleb128(q26, 0);
         let q28: EmitState = emit_uleb128(q27, 0);
-        return emit_stmt_seq(q28, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n2_outer_dst + 1, i + 1);
+        return emit_stmt_seq(q28, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n2_outer_dst + 1, i + 1, seq_lvbuf, seq_nlv);
     }
     // if-return block. Recompute the same vid layout as Pass B to learn synth/dst.
     let cstart: i64 = __mind_load_i64(plan + i * 64 + 8);
@@ -6759,7 +6832,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
     let s13: EmitState = emit_uleb128(s12, dst);
     let s14: EmitState = emit_uleb128(s13, 0);
     let s15: EmitState = emit_uleb128(s14, 0);
-    emit_stmt_seq(s15, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, dst + 1, i + 1)
+    emit_stmt_seq(s15, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, dst + 1, i + 1, seq_lvbuf, seq_nlv)
 }
 
 // Emit ONE fn's FN_DEF whose body is a general statement sequence (lets and
@@ -6796,6 +6869,10 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     let seg_instrs: i64 = seq_body_len(nodes, plan, nplan, 0);
     let trail_instrs: i64 = count_descriptor_nonparam_range(nodes, trail_start, trail_end);
     let body_len: i64 = n_params + seg_instrs + trail_instrs;
+    // Build the RESOLVED seq lv-env (sequence-level lets -> their vids) so type-3/4/5
+    // segment conds/inits can reference earlier sequence lets (e.g. `if n == 2`).
+    let seq_lvbuf: i64 = __mind_alloc((nlets + 1) * 24);
+    let seq_nlv: i64 = seq_env_to_lvenv(env, nlets, vidbuf, seq_lvbuf, 1, 0);
     let s1: EmitState = es_push(s, 21);
     let s2: EmitState = emit_uleb128(s1, nidx);
     let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
@@ -6803,7 +6880,7 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     let s5: EmitState = es_push(s4, 0);
     let s6: EmitState = emit_uleb128(s5, body_len);
     let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
-    let s8: EmitState = emit_stmt_seq(s7, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n_params, 0);
+    let s8: EmitState = emit_stmt_seq(s7, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n_params, 0, seq_lvbuf, seq_nlv);
     let s9: EmitState = emit_mic3_tree_body(s8, nodes, trail_end, vidbuf, src, strbuf, offs, ncount, trail_start);
     __mind_store_i64(ok_cell, 1);
     s9
@@ -7532,6 +7609,49 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     let s8: EmitState = srt_emit_registry_sorted_interned(s7, strbuf, offs, ccell, src_addr, srt, 0);
     let s9: EmitState = emit_uleb128(s8, 0);
     emit_uleb128(s9, 0)
+}
+
+// DIAGNOSTIC (cutover tooling): walk every fn_def, emit_mic3_module_fndef each, and
+// return the SOURCE span_lo (fn-name byte offset) of the FIRST fn that fails closed
+// (ok_cell==0), or -1 if all fns emit. Locates the next nfn-driver wall on main.mind.
+pub fn nfn_first_fail_loop(src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, item_i: i64) -> i64 {
+    if item_i >= items_len {
+        return 0 - 1;
+    }
+    let item: i64 = __mind_load_i64(items_addr + item_i * 8);
+    if ast_kind(item) != ast_fn_def() {
+        return nfn_first_fail_loop(src, items_addr, items_len, strbuf, offs, ncount, item_i + 1);
+    }
+    let ok: i64 = __mind_alloc(8);
+    __mind_store_i64(ok, 1);
+    let _s: EmitState = emit_mic3_module_fndef(es_new(), src, item, strbuf, offs, ncount, ok);
+    if __mind_load_i64(ok) == 0 {
+        let nm: i64 = ast_child0(item);
+        return ast_span_lo(nm);
+    }
+    nfn_first_fail_loop(src, items_addr, items_len, strbuf, offs, ncount, item_i + 1)
+}
+
+pub fn selftest_nfn_fail_span(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let srt: i64 = srt_build(src_addr, src_len);
+    let slit_acell: i64 = __mind_alloc(16);
+    let slit_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, slit_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, slit_scell) == 1 {
+            let _sl: i64 = slit_desugar_module(src_addr, src_len, items_addr, items_len, srt, __mind_load_i64(slit_acell + 0), __mind_load_i64(slit_acell + 8), __mind_load_i64(slit_scell + 0), __mind_load_i64(slit_scell + 8), 0);
+        }
+    }
+    let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let _sall: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
+    let ncount: i64 = __mind_load_i64(ccell);
+    nfn_first_fail_loop(src_addr, items_addr, items_len, strbuf, offs, ncount, 0)
 }
 
 // ===== mic@3 COMPLETE with-body module — the 2-param arithmetic function family (Phase 4c) =====
