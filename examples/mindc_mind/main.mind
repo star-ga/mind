@@ -586,6 +586,13 @@ pub fn ast_field() -> i64 {
 pub fn ast_method() -> i64 {
     18
 }
+// `Ident { f: e, ... }` struct-literal CONSTRUCTION expression. PARSE-ONLY for
+// now: the parser builds this node, but flatten_ast / flatten_ast_le reject it
+// (fail-closed, no byte emit yet — the desugar/lowering half lands separately).
+// Mirrors the Rust front-end's ast::Node::StructLit { name, fields }.
+pub fn ast_struct_lit() -> i64 {
+    19
+}
 
 // ===== Binop operator tags =====
 
@@ -842,6 +849,24 @@ pub fn ast_new_field(span_lo: i64, span_hi: i64, receiver: i64, field_lo: i64, f
     n
 }
 
+// `Name { f0: e0, f1: e1, ... }`: child0=struct-name span_lo, child1=fields
+// vec addr, child2=struct-name span_hi, aux=field count. The fields vec stores
+// 3×i64 per field in SOURCE ORDER: (field-name span_lo, field-name span_hi,
+// value-expr node). PARSE-ONLY — flatten_ast rejects ast_struct_lit so the
+// emitter fails closed (no bytes) until the desugar half lands. Mirrors the
+// Rust front-end's ast::Node::StructLit { name, fields }.
+pub fn ast_new_struct_lit(span_lo: i64, span_hi: i64, name_lo: i64, name_hi: i64, fields_addr: i64, field_count: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_struct_lit());
+    __mind_store_i64(n + 8, span_lo);
+    __mind_store_i64(n + 16, span_hi);
+    __mind_store_i64(n + 24, name_lo);
+    __mind_store_i64(n + 32, fields_addr);
+    __mind_store_i64(n + 40, name_hi);
+    __mind_store_i64(n + 48, field_count);
+    n
+}
+
 // `if cond { then } else { else }`: child0=cond expr, child1=then-block,
 // child2=else-block (0 when no else clause).  Matches the Rust front-end's
 // ast::Node::If (cond / then_branch / else_branch).
@@ -1035,7 +1060,25 @@ pub fn tk_to_op(kind: i64) -> i64 {
 
 // ===== Primary / prefix parser =====
 
+// Struct-literal disambiguation (mirrors the Rust front-end): an `Ident {` in
+// expression position is a struct-literal CONSTRUCTION, EXCEPT in CONDITION
+// position (the head of `if`/`while`/`for`/`match`), where the `{` opens the
+// block, not a literal. The `no_struct` flag carries that context: it is set
+// only on the condition expression and threaded down parse_expr → parse_postfix
+// → parse_primary → parse_pratt. It is RESET to "allowed" inside any
+// parenthesised group (parse_expr) and any call-arg list (parse_args_rest), so
+// `if f(P { .. }) { }` still parses the inner literal. main.mind never uses a
+// struct-literal as a condition, so the only observable effect of this rule is
+// that existing `if/while/for IDENT {` parses stay byte-identical.
+//
+// `parse_primary` keeps its 3-arg signature (struct-lit ALLOWED) as a thin
+// wrapper so every pre-existing call-site is unchanged; the threaded core lives
+// in `parse_primary_ns`.
 pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    parse_primary_ns(toks, pos, buf, 0)
+}
+
+pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseResult {
     let k: i64 = tok_kind(toks, pos);
     let lo: i64 = tok_lo(toks, pos);
     let hi: i64 = tok_hi(toks, pos);
@@ -1045,14 +1088,14 @@ pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     }
 
     if k == tk_minus() {
-        let operand: ParseResult = parse_primary(toks, pos + 1, buf);
+        let operand: ParseResult = parse_primary_ns(toks, pos + 1, buf, no_struct);
         let opnode: i64 = pr_node(operand);
         let neg: i64 = ast_new_neg(lo, ast_span_hi(opnode), opnode);
         return pr_new(pr_pos(operand), neg);
     }
 
     if k == tk_bang() {
-        let operand: ParseResult = parse_primary(toks, pos + 1, buf);
+        let operand: ParseResult = parse_primary_ns(toks, pos + 1, buf, no_struct);
         let opnode: i64 = pr_node(operand);
         let notn: i64 = ast_new_not(lo, ast_span_hi(opnode), opnode);
         return pr_new(pr_pos(operand), notn);
@@ -1064,6 +1107,7 @@ pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     }
 
     if k == tk_lparen() {
+        // Parenthesised group RESETS no_struct: `( Ident { .. } )` is a literal.
         let inner: ParseResult = parse_expr(toks, pos + 1, buf);
         let after_inner: i64 = pr_pos(inner);
         let close_hi: i64 = tok_hi(toks, after_inner);
@@ -1082,12 +1126,81 @@ pub fn parse_primary(toks: Vec, pos: i64, buf: i64) -> ParseResult {
                 return parse_call(toks, pos, buf);
             }
         }
+        // Struct-literal: `Ident {` in non-condition expression position. Gated
+        // by no_struct so condition-position `if IDENT {` keeps the `{` as the
+        // block opener (byte-identical to the pre-existing parse).
+        if no_struct == 0 {
+            if at_eof(toks, pos + 1) == 0 {
+                if tok_kind(toks, pos + 1) == tk_lbrace() {
+                    return parse_struct_lit(toks, pos, buf);
+                }
+            }
+        }
         let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
         return pr_new(pos + 1, n);
     }
 
     let fallback: i64 = ast_new_leaf(ast_ident(), lo, hi);
     pr_new(pos + 1, fallback)
+}
+
+// Parse `Name { f0: e0, f1: e1, ... }` (optional trailing comma) into an
+// ast_struct_lit. `pos` is the struct-name ident; `pos+1` is the `{`. Field
+// values are full expressions (struct-lit ALLOWED inside — each value resets
+// the no_struct context via parse_expr). Fields are collected in SOURCE ORDER
+// as 3×i64 (name_lo, name_hi, value_node) so a later desugar can sort them to
+// declared field order. PARSE-ONLY: the resulting node is rejected by
+// flatten_ast, so no bytes are emitted yet.
+pub fn parse_struct_lit(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let name_lo: i64 = tok_lo(toks, pos);
+    let name_hi: i64 = tok_hi(toks, pos);
+    let open: i64 = pos + 1;
+    let fields: Vec = vec_new();
+
+    if tok_kind(toks, open + 1) == tk_rbrace() {
+        let close_hi: i64 = tok_hi(toks, open + 1);
+        let node: i64 = ast_new_struct_lit(name_lo, close_hi, name_lo, name_hi, vec_addr(fields), 0);
+        return pr_new(open + 2, node);
+    }
+
+    let res: ParseResult = parse_struct_fields_rest(toks, open + 1, buf, fields);
+    let after_fields: i64 = pr_pos(res);
+    let fields_node: i64 = pr_node(res);
+    let fields_addr: i64 = ast_child0(fields_node);
+    let triples: i64 = ast_aux(fields_node);
+
+    let close_hi: i64 = tok_hi(toks, after_fields);
+    let after_close: i64 = if tok_kind(toks, after_fields) == tk_rbrace() {
+        after_fields + 1
+    } else {
+        after_fields
+    };
+    let node: i64 = ast_new_struct_lit(name_lo, close_hi, name_lo, name_hi, fields_addr, triples / 3);
+    pr_new(after_close, node)
+}
+
+// Collect `name: expr` field-inits (comma-separated, optional trailing comma)
+// into `acc` as 3×i64 triples (name_lo, name_hi, value_node). Stops at `}` or a
+// trailing comma followed by `}`. Returns a sentinel block node carrying the
+// accumulated vec (child0=addr, aux=triple count), matching parse_args_rest.
+pub fn parse_struct_fields_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
+    if tok_kind(toks, pos) == tk_rbrace() {
+        let s: i64 = ast_new_block(0, 0, vec_addr(acc), vec_len(acc));
+        return pr_new(pos, s);
+    }
+    let fname_lo: i64 = tok_lo(toks, pos);
+    let fname_hi: i64 = tok_hi(toks, pos);
+    // pos = field-name ident, pos+1 = `:`, pos+2 = value expression.
+    let val: ParseResult = parse_expr(toks, pos + 2, buf);
+    let after_val: i64 = pr_pos(val);
+    let a1: Vec = vec_push(acc, fname_lo);
+    let a2: Vec = vec_push(a1, fname_hi);
+    let a3: Vec = vec_push(a2, pr_node(val));
+    if tok_kind(toks, after_val) == tk_comma() {
+        return parse_struct_fields_rest(toks, after_val + 1, buf, a3);
+    }
+    let s: i64 = ast_new_block(0, 0, vec_addr(a3), vec_len(a3));
+    pr_new(after_val, s)
 }
 
 // ===== Call parser =====
@@ -1137,8 +1250,15 @@ pub fn parse_args_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult {
 // ===== Pratt expression parser =====
 
 pub fn parse_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
-    let prim: ParseResult = parse_postfix(toks, pos, buf);
-    parse_pratt(toks, pr_pos(prim), buf, pr_node(prim), 1)
+    parse_expr_ns(toks, pos, buf, 0)
+}
+
+// no_struct-threaded expression entry. `parse_expr` (struct-lit ALLOWED) is the
+// 3-arg wrapper; condition parsers (parse_if + the while/for/match heads) call
+// this with no_struct=1 so an `Ident {` head is NOT mis-read as a struct-lit.
+pub fn parse_expr_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseResult {
+    let prim: ParseResult = parse_postfix_ns(toks, pos, buf, no_struct);
+    parse_pratt_ns(toks, pr_pos(prim), buf, pr_node(prim), 1, no_struct)
 }
 
 // Postfix wrapper around parse_primary: after a primary is parsed, greedily
@@ -1149,7 +1269,11 @@ pub fn parse_expr(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 // be followed by an identifier; a bare trailing dot is left for the primary
 // fallback (it simply stops the loop).
 pub fn parse_postfix(toks: Vec, pos: i64, buf: i64) -> ParseResult {
-    let prim: ParseResult = parse_primary(toks, pos, buf);
+    parse_postfix_ns(toks, pos, buf, 0)
+}
+
+pub fn parse_postfix_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseResult {
+    let prim: ParseResult = parse_primary_ns(toks, pos, buf, no_struct);
     parse_postfix_rest(toks, pr_pos(prim), buf, pr_node(prim))
 }
 
@@ -1171,6 +1295,12 @@ pub fn parse_postfix_rest(toks: Vec, pos: i64, buf: i64, recv: i64) -> ParseResu
 }
 
 pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> ParseResult {
+    parse_pratt_ns(toks, pos, buf, lhs, min_prec, 0)
+}
+
+// no_struct propagates to every RHS operand: in `i < n` condition position the
+// `n` is still condition position, so `n { ... }` is NOT a struct-lit either.
+pub fn parse_pratt_ns(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64, no_struct: i64) -> ParseResult {
     if at_eof(toks, pos) == 1 {
         return pr_new(pos, lhs);
     }
@@ -1184,14 +1314,14 @@ pub fn parse_pratt(toks: Vec, pos: i64, buf: i64, lhs: i64, min_prec: i64) -> Pa
     }
 
     let op_tag: i64 = tk_to_op(k);
-    let rhs_prim: ParseResult = parse_postfix(toks, pos + 1, buf);
-    let rhs_full: ParseResult = parse_pratt(toks, pr_pos(rhs_prim), buf, pr_node(rhs_prim), prec + 1);
+    let rhs_prim: ParseResult = parse_postfix_ns(toks, pos + 1, buf, no_struct);
+    let rhs_full: ParseResult = parse_pratt_ns(toks, pr_pos(rhs_prim), buf, pr_node(rhs_prim), prec + 1, no_struct);
 
     let lhs_lo: i64 = ast_span_lo(lhs);
     let rhs_hi: i64 = ast_span_hi(pr_node(rhs_full));
     let combined: i64 = ast_new_binop(lhs_lo, rhs_hi, lhs, pr_node(rhs_full), op_tag);
 
-    parse_pratt(toks, pr_pos(rhs_full), buf, combined, min_prec)
+    parse_pratt_ns(toks, pr_pos(rhs_full), buf, combined, min_prec, no_struct)
 }
 
 // ===== Statements =====
@@ -1293,7 +1423,9 @@ pub fn parse_block_stmts(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult
 // child2 is left 0.  Mirrors the Rust front-end's ast::Node::If.
 pub fn parse_if(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let kw_lo: i64 = tok_lo(toks, pos);
-    let cond: ParseResult = parse_expr(toks, pos + 1, buf);
+    // Condition position: no_struct=1 so `if IDENT {` keeps `{` as the block
+    // opener (byte-identical to the pre-struct-lit parse).
+    let cond: ParseResult = parse_expr_ns(toks, pos + 1, buf, 1);
     let after_cond: i64 = pr_pos(cond);
 
     let then_res: ParseResult = parse_block(toks, after_cond, buf);
@@ -4949,6 +5081,11 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_struct_lit() {
+        // PARSE-ONLY frontier: struct-literal CONSTRUCTION is parsed but not yet
+        // lowered. Fail closed (no bytes) — the desugar/emit half lands later.
+        return 0 - 1;
+    }
     // Every other kind (field access, if, ...) = a later-phase wall — reject.
     0 - 1
 }
@@ -5154,6 +5291,10 @@ pub fn flatten_ast_le(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         __mind_store_i64(nodes + slot * 32 + 24, rs);
         __mind_store_i64(cursor, slot + 1);
         return slot;
+    }
+    if k == ast_struct_lit() {
+        // PARSE-ONLY frontier: reject struct-literal construction (fail closed).
+        return 0 - 1;
     }
     0 - 1
 }
@@ -7798,6 +7939,29 @@ pub fn selftest_method_recv_kind(src_addr: i64, src_len: i64) -> i64 {
     ast_kind(ast_child0(m))
 }
 
+// PARSE-ONLY struct-literal probes (additive, canary-isolated — reached only via
+// these exports, never through mindc_compile). Parse the WHOLE source buffer as a
+// single expression with struct-lit ALLOWED (no_struct=0) starting at token 0;
+// `selftest_struct_lit_kind` returns the root AST kind (ast_struct_lit()==19 for
+// `Name { .. }`), `selftest_struct_lit_field_count` the field count. These prove
+// the parse half landed; the emit half still fails closed (flatten_ast rejects
+// ast_struct_lit), so no bytes are produced for a struct-lit body yet.
+pub fn selftest_struct_lit_kind(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let e: ParseResult = parse_expr_ns(toks, 0, src_addr, 0);
+    ast_kind(pr_node(e))
+}
+
+pub fn selftest_struct_lit_field_count(src_addr: i64, src_len: i64) -> i64 {
+    let toks: Vec = lex(src_addr, src_len);
+    let e: ParseResult = parse_expr_ns(toks, 0, src_addr, 0);
+    let n: i64 = pr_node(e);
+    if ast_kind(n) != ast_struct_lit() {
+        return 0 - 1;
+    }
+    ast_aux(n)
+}
+
 // Selftest export: the span_lo of the RECEIVER (or -1). Lets a harness confirm
 // the receiver binding is intact for the later UFCS type-prefix resolution.
 pub fn selftest_method_recv_lo(src_addr: i64, src_len: i64) -> i64 {
@@ -8017,7 +8181,7 @@ pub fn selftest_while_cond_kind(src_addr: i64, src_len: i64) -> i64 {
     if wp < 0 {
         return 0 - 1;
     }
-    let cond: ParseResult = parse_expr(toks, wp + 1, src_addr);
+    let cond: ParseResult = parse_expr_ns(toks, wp + 1, src_addr, 1);
     ast_kind(pr_node(cond))
 }
 
@@ -8030,7 +8194,7 @@ pub fn selftest_while_body_stmt_count(src_addr: i64, src_len: i64) -> i64 {
     if wp < 0 {
         return 0 - 1;
     }
-    let cond: ParseResult = parse_expr(toks, wp + 1, src_addr);
+    let cond: ParseResult = parse_expr_ns(toks, wp + 1, src_addr, 1);
     let after_cond: i64 = pr_pos(cond);
     let body: ParseResult = parse_block(toks, after_cond, src_addr);
     ast_aux(pr_node(body))
@@ -8282,7 +8446,7 @@ pub fn selftest_match_arm_count(src_addr: i64, src_len: i64) -> i64 {
     if mp < 0 {
         return 0 - 1;
     }
-    let scrut: ParseResult = parse_expr(toks, mp + 1, src_addr);
+    let scrut: ParseResult = parse_expr_ns(toks, mp + 1, src_addr, 1);
     let lbrace_pos: i64 = pr_pos(scrut);
     mt_count_arrows(toks, lbrace_pos + 1, 0, 0)
 }
@@ -8296,7 +8460,7 @@ pub fn selftest_match_scrut_kind(src_addr: i64, src_len: i64) -> i64 {
     if mp < 0 {
         return 0 - 1;
     }
-    let scrut: ParseResult = parse_expr(toks, mp + 1, src_addr);
+    let scrut: ParseResult = parse_expr_ns(toks, mp + 1, src_addr, 1);
     ast_kind(pr_node(scrut))
 }
 
@@ -8308,7 +8472,7 @@ pub fn selftest_match_has_wildcard(src_addr: i64, src_len: i64) -> i64 {
     if mp < 0 {
         return 0 - 1;
     }
-    let scrut: ParseResult = parse_expr(toks, mp + 1, src_addr);
+    let scrut: ParseResult = parse_expr_ns(toks, mp + 1, src_addr, 1);
     let lbrace_pos: i64 = pr_pos(scrut);
     mt_find_wildcard(toks, src_addr, lbrace_pos + 1, 0)
 }
