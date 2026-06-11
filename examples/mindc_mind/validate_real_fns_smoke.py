@@ -27,11 +27,12 @@ that main.mind's own functions actually use:
                                          each init a param/const/binop/let-ref tree;
                                          substitution-equivalent to the nested expr)
 
-  WALL  (returns empty buf today — the cutover frontier):
-    - if-STATEMENT early return         (statement-form if, not if-expr)
-    - the `&` bitand / mask operator    (binop_to_byte has no & — load_byte uses it)
-    - a call with an expression arg     (__mind_load_i64(buf + i); the (c) call
-                                         path only takes two int-LITERAL args)
+  GREEN  (folded into nfn as of the if-statement cutover increment):
+    - if-STATEMENT early return         (else-less `if cond { return E; } TRAIL`;
+                                         one OP_IF — then-block = synth + E + Return,
+                                         empty else — then the trailing value expr)
+
+  WALL  (returns empty buf today — the remaining cutover frontier):
     - struct-literal construction       (EmitState { .. } returns; 27 in real code)
 
 Each WALL case is asserted to FAIL-CLOSED (empty buf), not silently mis-emit, so
@@ -133,8 +134,11 @@ CASES = [
     ("multi-arg call with expr args", "green",
      "fn add(a: i64, b: i64) -> i64 { a + b }\n"
      "pub fn f(x: i64, y: i64) -> i64 { add(x + 1, y * 2) }"),
-    # --- WALL: the cutover frontier — each must FAIL-CLOSED (empty buf) ---
-    ("if-statement early return", "wall",
+    # if-STATEMENT early return — the final cutover construct. An else-less if
+    # whose then-block is a single `return E`, plus a trailing value expr; lowers
+    # to one OP_IF (then-block carries the synth const + E's tree + Return) then
+    # the trailing expr, byte-exact vs --emit-mic3.
+    ("if-statement early return", "green",
      "pub fn s(b: i64) -> i64 { if b == 1 { return 1; } 0 }"),
 ]
 
