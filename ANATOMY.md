@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2761 | **Est. tokens:** ~6,863,560
-**Generated:** 2026-06-11 02:06 UTC
+**Files:** 2762 | **Est. tokens:** ~6,865,223
+**Generated:** 2026-06-11 02:15 UTC
 
 ## Token Budget Guide
 
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 16 | ~44,045 |
+| `examples/mindc_mind/` | 17 | ~45,708 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -725,6 +725,7 @@
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
+- `full_strtab_smoke.py` (~1663 tok, huge)
 - `match_struct_smoke.py` (~1311 tok, large)
 - `method_callee_smoke.py` (~1350 tok, large)
 - `method_calls_smoke.py` (~1294 tok, large)
