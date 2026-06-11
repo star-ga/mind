@@ -22,8 +22,12 @@ that main.mind's own functions actually use:
     - single if-EXPRESSION value       (the (e) if-expr path)
     - N functions, each of the above
 
+  GREEN  (folded into nfn as of the multi-let cutover increment):
+    - multi-statement let chains       (>1 stmt; let bindings then a value expr,
+                                         each init a param/const/binop/let-ref tree;
+                                         substitution-equivalent to the nested expr)
+
   WALL  (returns empty buf today — the cutover frontier):
-    - multi-statement let chains       (>1 stmt; nfn requires stmts_len == 1)
     - if-STATEMENT early return         (statement-form if, not if-expr)
     - the `&` bitand / mask operator    (binop_to_byte has no & — load_byte uses it)
     - a call with an expression arg     (__mind_load_i64(buf + i); the (c) call
@@ -100,9 +104,12 @@ CASES = [
      "pub fn s(b: i64) -> i64 { if b == 1 { 1 } else { 0 } }"),
     ("N const fns (module)", "green",
      " ".join(f"pub fn t{i}() -> i64 {{ {i} }}" for i in range(5))),
-    # --- WALL: the cutover frontier — each must FAIL-CLOSED (empty buf) ---
-    ("multi-stmt let chain", "wall",
+    ("multi-stmt let chain", "green",
      "pub fn f(a: i64) -> i64 { let x: i64 = a + 1; let y: i64 = x + 2; y }"),
+    ("3-let chain (final ref)", "green",
+     "pub fn h(x: i64) -> i64 { let a: i64 = x + 1; let b: i64 = a + 2; "
+     "let c: i64 = b + 3; c }"),
+    # --- WALL: the cutover frontier — each must FAIL-CLOSED (empty buf) ---
     ("if-statement early return", "wall",
      "pub fn s(b: i64) -> i64 { if b == 1 { return 1; } 0 }"),
     ("& bitand / mask operator", "wall",
