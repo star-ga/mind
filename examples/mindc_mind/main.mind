@@ -5235,18 +5235,18 @@ pub fn assign_merge_vids(mspans: i64, mn: i64, buf: i64, t_lenv: i64, t_lc: i64,
     // then_extra (placeholder vid, or -1 if the then-branch defines the name)
     let c1: i64 = ctr;
     if in_then >= 0 {
-        __mind_store_i64(extra + k * 40 + 0, 0 - 1);
+        __mind_store_i64(extra + k * 40 + 0, 0 - 1)
     }
     if in_then < 0 {
-        __mind_store_i64(extra + k * 40 + 0, c1);
+        __mind_store_i64(extra + k * 40 + 0, c1)
     }
     let c2: i64 = next_ctr(c1, in_then);
     // else_extra
     if in_else >= 0 {
-        __mind_store_i64(extra + k * 40 + 8, 0 - 1);
+        __mind_store_i64(extra + k * 40 + 8, 0 - 1)
     }
     if in_else < 0 {
-        __mind_store_i64(extra + k * 40 + 8, c2);
+        __mind_store_i64(extra + k * 40 + 8, c2)
     }
     let c3: i64 = next_ctr(c2, in_else);
     // merge_id (always fresh)
