@@ -2818,25 +2818,40 @@ pub fn check_module_types_in_file(
                 // intra-module fn calls (`reduce(&buf)` calling a sibling `fn
                 // reduce`) as resolvable rather than undefined. Sound: these are
                 // genuine declarations; injecting them only adds resolvable names.
-                let mut sibling_decls: std::collections::BTreeSet<String> =
-                    std::collections::BTreeSet::new();
-                let block_module = Module {
-                    items: stmts.clone(),
-                };
-                resolve::collect_decl_names(&block_module, &mut sibling_decls);
-                let mut inner_env = env.clone();
-                for name in &sibling_decls {
-                    inner_env
-                        .entry(name.clone())
-                        .or_insert(ValueType::ScalarI64);
-                }
-                for inner in stmts {
-                    let inner_module = Module {
-                        items: vec![inner.clone()],
+                // A single-item block has no siblings, so the decl-collection +
+                // env clone below would be pure overhead — skip it and pass the
+                // env straight through. Only multi-item blocks need sibling
+                // injection so the #23 resolve pass sees intra-module calls
+                // (`reduce(&buf)` → sibling `fn reduce`) as resolvable. Keeps the
+                // compile hot path cheap (no per-check clone for the common case).
+                if stmts.len() < 2 {
+                    for inner in stmts {
+                        let inner_module = Module {
+                            items: vec![inner.clone()],
+                        };
+                        errs.extend(check_module_types_in_file(&inner_module, src, file, env));
+                    }
+                } else {
+                    let mut sibling_decls: std::collections::BTreeSet<String> =
+                        std::collections::BTreeSet::new();
+                    let block_module = Module {
+                        items: stmts.clone(),
                     };
-                    let inner_errs =
-                        check_module_types_in_file(&inner_module, src, file, &inner_env);
-                    errs.extend(inner_errs);
+                    resolve::collect_decl_names(&block_module, &mut sibling_decls);
+                    let mut inner_env = env.clone();
+                    for name in &sibling_decls {
+                        inner_env
+                            .entry(name.clone())
+                            .or_insert(ValueType::ScalarI64);
+                    }
+                    for inner in stmts {
+                        let inner_module = Module {
+                            items: vec![inner.clone()],
+                        };
+                        let inner_errs =
+                            check_module_types_in_file(&inner_module, src, file, &inner_env);
+                        errs.extend(inner_errs);
+                    }
                 }
             }
             // RFC 0010 Phase J-A: `region { ... }` at module level.
