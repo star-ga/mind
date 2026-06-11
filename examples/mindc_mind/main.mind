@@ -6767,7 +6767,22 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         __mind_store_i64(nplan_cell, p + 1);
         return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
     }
-    0
+    // BARE EXPRESSION STATEMENT (a call/expr emitted for side-effect; its result vid
+    // is allocated then discarded, e.g. `__mind_store_i64(n, kind);` in ast_new_leaf).
+    // Flatten it like a let-init but bind NO name — Pass B/C treat it as a type-0
+    // segment (resolve the [start,end) range, emit its tree). Fails closed if
+    // flatten_expr_env rejects the stmt (then this fn / seq is unsupported).
+    let bstart: i64 = __mind_load_i64(cursor);
+    let broot: i64 = flatten_expr_env(stmt, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if broot < 0 {
+        return 0;
+    }
+    let bend: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(plan + p * 64 + 0, 0);
+    __mind_store_i64(plan + p * 64 + 8, bstart);
+    __mind_store_i64(plan + p * 64 + 16, bend);
+    __mind_store_i64(nplan_cell, p + 1);
+    flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1)
 }
 
 // Pass B — assign vids across the plan in source order, threading `base`. A let
