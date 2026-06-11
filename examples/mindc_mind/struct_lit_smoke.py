@@ -131,6 +131,20 @@ CASES = [
      "fn id(x: i64) -> i64 { x }\n"
      "pub struct B { v: i64 }\n"
      "pub fn w(a: i64) -> B { B { v: id(a) } }"),
+    # Step C: LET-CHAIN ctor bodies. Lets are emitted BEFORE the alloc/store spine
+    # (each let SSA-aliases its init's root vid); field values reference the locals
+    # (let-ref) or params. The alloc/store spine vid base shifts past the let body.
+    ("let-chain, single let then struct-lit, field refs the local",
+     "pub struct P { x: i64, y: i64 }\n"
+     "pub fn mk(a: i64) -> P { let t: i64 = a + 1; P { x: t, y: a } }"),
+    ("let-chain, two lets, both fields ref locals",
+     "pub struct P { x: i64, y: i64 }\n"
+     "pub fn mk(a: i64, b: i64) -> P "
+     "{ let t: i64 = a + 1; let u: i64 = b * 2; P { x: t, y: u } }"),
+    ("let-chain, let + literal + param field values",
+     "pub struct Q { a: i64, b: i64, c: i64 }\n"
+     "pub fn mk(p: i64) -> Q "
+     "{ let s: i64 = p + p; Q { a: s, b: 9, c: p } }"),
 ]
 
 

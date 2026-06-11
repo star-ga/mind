@@ -3916,6 +3916,336 @@ pub fn slit_emit_items_loop(s: EmitState, src: i64, items_addr: i64, items_len: 
     slit_emit_items_loop(sh2, src, items_addr, items_len, strbuf, offs, ncount, strc, ctor_fn, i_fn, pstr, n_params, params_addr, sft, n_fields, fields_addr, ntriples, i_alloc, i_load, i_store, nodes, cursor, vidbuf, ok_cell, k + 1, item_i + 1)
 }
 
+// ===========================================================================
+// Step C — LET-CHAIN struct-literal constructor bodies.
+//
+// A ctor fn body `{ let n0 = E0; ...; T { f0: v0, ... } }` lowers BYTE-IDENTICAL
+// to the same shape as a no-let ctor, with the let inits emitted FIRST (each let
+// name SSA-aliases its init's root vid), THEN the alloc/store spine shifted past
+// the let body instrs. A field value that names a let resolves to that let's vid
+// (no instr, no string); a field value that names a param resolves to the param
+// vid; an int-literal field value emits ONE CONST. Reuses the proven let-chain
+// flatten (flatten_let_chain / flatten_expr_env / the slot->vid resolution) for
+// the let prefix and the alloc/store spine of the no-let path for the body.
+// Byte-exact vs --emit-mic3 (Bound by MIND-CONSTITUTION §I); fail-closed (returns
+// seed `s`) on any field value that is not a param-ident / let-ref / int-literal.
+// ===========================================================================
+
+// Rewrite each let-env record's stored descriptor slot into its RESOLVED vid
+// (read from `vidbuf` after the let prefix's tree_resolve_vids_base). After this
+// the let-env maps a let name-span directly to the SSA vid its init produced, so
+// a field-value let-ref resolves with no descriptor lookup. Tail-recursive.
+pub fn slit_letenv_slot_to_vid(env: i64, nlets: i64, vidbuf: i64, i: i64) -> i64 {
+    if i >= nlets {
+        return 0;
+    }
+    let slot: i64 = __mind_load_i64(env + i * 24 + 16);
+    __mind_store_i64(env + i * 24 + 16, __mind_load_i64(vidbuf + slot * 8));
+    slit_letenv_slot_to_vid(env, nlets, vidbuf, i + 1)
+}
+
+// Field VALUE classification for the let-aware ctor body. Returns:
+//   1  -> int-literal (emits one CONST, consumes one vid)
+//   0  -> param-ident OR let-ref-ident (emits nothing, reuses an existing vid)
+//  -1  -> any other shape (fail-closed; arith-over-let / call / field-access are
+//         NOT yet supported on the let-chain path — reported as remaining work).
+pub fn slit_letaware_value_kind(vnode: i64, src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64) -> i64 {
+    let k: i64 = ast_kind(vnode);
+    if k == ast_paren() {
+        return slit_letaware_value_kind(ast_child0(vnode), src, params_addr, n_params, env, nlets);
+    }
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_ident() {
+        let pidx: i64 = resolve_param(params_addr, n_params, src, ast_span_lo(vnode), ast_span_hi(vnode));
+        if pidx >= 0 {
+            return 0;
+        }
+        // env records now hold VIDs (slit_letenv_slot_to_vid); a hit means let-ref.
+        let lvid: i64 = letenv_lookup(src, ast_span_lo(vnode), ast_span_hi(vnode), env, nlets, 0);
+        if lvid >= 0 {
+            return 0;
+        }
+        return 0 - 1;
+    }
+    0 - 1
+}
+
+// The non-spine instr count contributed by ONE let-aware field value: int-literal
+// = 1 (one CONST), param/let-ref ident = 0. Caller guarantees a supported shape.
+pub fn slit_letaware_value_count(vnode: i64, src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64) -> i64 {
+    let kind: i64 = slit_letaware_value_kind(vnode, src, params_addr, n_params, env, nlets);
+    if kind == 1 {
+        return 1;
+    }
+    0
+}
+
+// The result vid a let-aware field VALUE produces. For a param-ident: the param
+// vid (= its declaration index). For a let-ref ident: the let's resolved vid (the
+// env now stores vids). For an int-literal: the freshly-emitted CONST's vid =
+// `vid` (the next free vid). Caller guarantees the shape (kind != -1).
+pub fn slit_letaware_value_vid(vnode: i64, src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64, vid: i64) -> i64 {
+    let k: i64 = ast_kind(vnode);
+    if k == ast_paren() {
+        return slit_letaware_value_vid(ast_child0(vnode), src, params_addr, n_params, env, nlets, vid);
+    }
+    if k == ast_int_lit() {
+        return vid;
+    }
+    let pidx: i64 = resolve_param(params_addr, n_params, src, ast_span_lo(vnode), ast_span_hi(vnode));
+    if pidx >= 0 {
+        return pidx;
+    }
+    letenv_lookup(src, ast_span_lo(vnode), ast_span_hi(vnode), env, nlets, 0)
+}
+
+// Emit the let-aware field VALUE's instrs: an int-literal emits ONE CONST at
+// `vid`; a param/let-ref ident emits nothing (its vid already exists). Returns
+// the post-emit EmitState.
+pub fn slit_emit_letaware_value(s: EmitState, vnode: i64, src: i64, vid: i64) -> EmitState {
+    let v: i64 = if ast_kind(vnode) == ast_paren() {
+        ast_child0(vnode)
+    } else {
+        vnode
+    };
+    if ast_kind(v) == ast_int_lit() {
+        let lit: i64 = parse_int_span(src, ast_span_lo(v), ast_span_hi(v), 0);
+        return emit_mic3_const_i64(s, vid, lit);
+    }
+    s
+}
+
+// Emit ONE field's store for the let-aware ctor body. The VALUE comes FIRST (a
+// CONST for a literal, nothing for an ident), THEN the address (direct ptr for
+// idx 0; CONST(idx*8)+Add(ptr,off) for idx>0), THEN the store CALL — matching the
+// no-let path's per-field interleaving and the --emit-mic3 oracle.
+pub fn slit_emit_letaware_field(s: EmitState, src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64, ptr_vid: i64, i_store: i64, vnode: i64, idx: i64, vid: i64) -> EmitState {
+    let val_vid: i64 = slit_letaware_value_vid(vnode, src, params_addr, n_params, env, nlets, vid);
+    let vcount: i64 = slit_letaware_value_count(vnode, src, params_addr, n_params, env, nlets);
+    let s1: EmitState = slit_emit_letaware_value(s, vnode, src, vid);
+    let vid1: i64 = vid + vcount;
+    let addr_vid: i64 = if idx == 0 {
+        ptr_vid
+    } else {
+        vid1 + 1
+    };
+    let s2: EmitState = if idx == 0 {
+        s1
+    } else {
+        emit_mic3_const_i64(s1, vid1, idx * 8)
+    };
+    let s3: EmitState = if idx == 0 {
+        s2
+    } else {
+        emit_mic3_binop(s2, vid1 + 1, 0, ptr_vid, vid1)
+    };
+    let vid2: i64 = if idx == 0 {
+        vid1
+    } else {
+        vid1 + 2
+    };
+    emit_mic3_call2(s3, vid2, i_store, addr_vid, val_vid)
+}
+
+// Recursively emit every declared field's store (DECLARED order) for the let-aware
+// ctor body, threading the running vid. Mirrors slit_emit_fields but resolves
+// field values against params AND the let-env.
+pub fn slit_emit_letaware_fields(s: EmitState, src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64, sft: i64, fields_addr: i64, ntriples: i64, ptr_vid: i64, i_store: i64, k: i64, vid: i64) -> EmitState {
+    if k >= sft_table_count(sft) {
+        return s;
+    }
+    let dlo: i64 = sft_table_name_lo(sft, k);
+    let dhi: i64 = sft_table_name_hi(sft, k);
+    let vnode: i64 = slit_value_for(fields_addr, ntriples, src, dlo, dhi, 0);
+    let vcount: i64 = slit_letaware_value_count(vnode, src, params_addr, n_params, env, nlets);
+    let s1: EmitState = slit_emit_letaware_field(s, src, params_addr, n_params, env, nlets, ptr_vid, i_store, vnode, k, vid);
+    let next_vid: i64 = vid + slit_field_instr_count(vcount, k);
+    slit_emit_letaware_fields(s1, src, params_addr, n_params, env, nlets, sft, fields_addr, ntriples, ptr_vid, i_store, k + 1, next_vid)
+}
+
+// Body length contributed by the per-field stores in the let-aware ctor body.
+pub fn slit_letaware_body_len(src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64, sft: i64, fields_addr: i64, ntriples: i64, k: i64, acc: i64) -> i64 {
+    if k >= sft_table_count(sft) {
+        return acc;
+    }
+    let dlo: i64 = sft_table_name_lo(sft, k);
+    let dhi: i64 = sft_table_name_hi(sft, k);
+    let vnode: i64 = slit_value_for(fields_addr, ntriples, src, dlo, dhi, 0);
+    let vcount: i64 = slit_letaware_value_count(vnode, src, params_addr, n_params, env, nlets);
+    slit_letaware_body_len(src, params_addr, n_params, env, nlets, sft, fields_addr, ntriples, k + 1, acc + slit_field_instr_count(vcount, k))
+}
+
+// Shape guard: every DECLARED field has a let-aware-resolvable value (param-ident /
+// let-ref / int-literal). 1 if all OK, 0 (fail-closed) otherwise.
+pub fn slit_letaware_fields_ok(src: i64, params_addr: i64, n_params: i64, env: i64, nlets: i64, sft: i64, fields_addr: i64, ntriples: i64, k: i64) -> i64 {
+    if k >= sft_table_count(sft) {
+        return 1;
+    }
+    let dlo: i64 = sft_table_name_lo(sft, k);
+    let dhi: i64 = sft_table_name_hi(sft, k);
+    let vnode: i64 = slit_value_for(fields_addr, ntriples, src, dlo, dhi, 0);
+    if vnode == 0 {
+        return 0;
+    }
+    if slit_letaware_value_kind(vnode, src, params_addr, n_params, env, nlets) < 0 {
+        return 0;
+    }
+    slit_letaware_fields_ok(src, params_addr, n_params, env, nlets, sft, fields_addr, ntriples, k + 1)
+}
+
+// Locate the single fn_def item in the parsed module (the ctor fn). Returns the
+// fn AST node or 0. Used by the let-aware from_ast path to recover the ctor body's
+// let statements (the token-based slit_find_ctor finds only the `T {` literal).
+pub fn slit_single_fn_def(items_addr: i64, items_len: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        return item;
+    }
+    slit_single_fn_def(items_addr, items_len, i + 1)
+}
+
+// Emit the let-chain ctor fn's FN_DEF (single-fn from_ast path). `n_nodes_letp` is
+// the number of descriptor slots the let prefix flattened into `nodes`, already
+// vid-resolved in `vidbuf` (base n_params); `env`/`nlets` the let-env with records
+// REWRITTEN to vids (slit_letenv_slot_to_vid). The body:
+//   PARAM %0..%(n-1) || <let prefix body instrs> || CONST 8 || CONST n_fields ||
+//   Mul || alloc(ptr) || per-field stores.
+pub fn slit_emit_letchain_ctor_fndef(s: EmitState, src: i64, i_fn: i64, n_params: i64, params_addr: i64, sft: i64, n_fields: i64, fields_addr: i64, ntriples: i64, i_alloc: i64, i_store: i64, nodes: i64, n_nodes_letp: i64, vidbuf: i64, let_nonparam: i64, env: i64, nlets: i64) -> EmitState {
+    let let_base: i64 = n_params + let_nonparam;
+    let ptr_vid: i64 = let_base + 3;
+    let body_len: i64 = n_params + let_nonparam + 4 + slit_letaware_body_len(src, params_addr, n_params, env, nlets, sft, fields_addr, ntriples, 0, 0);
+    // FN_DEF header: name || (string 1+k, vid k) pairs || ret %ptr_vid || None || len.
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, i_fn);
+    let s3: EmitState = emit_uleb128(s2, n_params);
+    let s4: EmitState = slit_emit_param_pairs(s3, n_params, 0);
+    let s5: EmitState = emit_mic3_opt_vid(s4, 1, ptr_vid);
+    let s6: EmitState = es_push(s5, 0);
+    let s7: EmitState = emit_uleb128(s6, body_len);
+    // Body: PARAMs, then the let-prefix body instrs (tree_body over the let slots).
+    let s8: EmitState = slit_emit_param_instrs(s7, n_params, 0);
+    let s9: EmitState = emit_mic3_tree_body(s8, nodes, n_nodes_letp, vidbuf, src, 0, 0, 0, 0);
+    // Spine: CONST 8, CONST n_fields, Mul, alloc -> ptr (shifted past the let body).
+    let s10: EmitState = emit_mic3_const_i64(s9, let_base, 8);
+    let s11: EmitState = emit_mic3_const_i64(s10, let_base + 1, n_fields);
+    let s12: EmitState = emit_mic3_binop(s11, let_base + 2, 2, let_base, let_base + 1);
+    let s13: EmitState = emit_mic3_call1(s12, ptr_vid, i_alloc, let_base + 2);
+    // Per-field stores (declared order); values resolve vs params + let-env.
+    slit_emit_letaware_fields(s13, src, params_addr, n_params, env, nlets, sft, fields_addr, ntriples, ptr_vid, i_store, 0, ptr_vid + 1)
+}
+
+// AST-driven mic@3 module for a single-struct, single-fn ctor whose body is a
+// LET CHAIN followed by ONE struct-literal return. Fail-closed (returns seed `s`)
+// on any shape this path does not cover (so the no-let path keeps its bytes).
+pub fn emit_mic3_module_structlit_letchain_from_ast(s: EmitState, src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64, ctor_fn: i64) -> EmitState {
+    let tokens: Vec = lex(src, src_len);
+    let sft: i64 = sft_build_table(src, src_len);
+    let ptt: i64 = ptt_build_table(src, src_len);
+    let srt: i64 = srt_build(src, src_len);
+    if sft_table_count(sft) < 1 {
+        return s;
+    }
+    if ptt_table_count(ptt) < 1 {
+        return s;
+    }
+    if srt_count(srt) != 1 {
+        return s;
+    }
+    let n_params: i64 = ptt_table_count(ptt);
+    let ty_lo: i64 = srt_name_lo(srt, 0);
+    let ty_hi: i64 = srt_name_hi(srt, 0);
+    // Locate the `T { .. }` construction (token scan) and recover its field triples.
+    let ctor: i64 = slit_find_ctor(tokens, 0, src, ty_lo, ty_hi);
+    if ctor < 0 {
+        return s;
+    }
+    let slit: ParseResult = parse_struct_lit(tokens, ctor, src);
+    let snode: i64 = pr_node(slit);
+    if ast_kind(snode) != ast_struct_lit() {
+        return s;
+    }
+    let fields_addr: i64 = ast_child1(snode);
+    let ntriples: i64 = ast_aux(snode);
+    let n_fields: i64 = sft_table_count(sft);
+    let params_addr: i64 = slit_build_params_addr(ptt, src);
+    // Recover the ctor body's leading let statements (all stmts but the last).
+    let body: i64 = ast_child2(ctor_fn);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if stmts_len < 2 {
+        return s;
+    }
+    // Flatten the let prefix into a fresh descriptor + let-env.
+    let nodes: i64 = __mind_alloc(256 * 32);
+    let cursor: i64 = __mind_alloc(8);
+    let vidbuf: i64 = __mind_alloc(256 * 8);
+    let env: i64 = __mind_alloc(64 * 24);
+    let nlets_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(cursor, 0);
+    __mind_store_i64(nlets_cell, 0);
+    let chain_ok: i64 = flatten_let_chain(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, 0);
+    if chain_ok == 0 {
+        return s;
+    }
+    let nlets: i64 = __mind_load_i64(nlets_cell);
+    let n_nodes_letp: i64 = __mind_load_i64(cursor);
+    let let_nonparam: i64 = count_descriptor_nonparam(nodes, n_nodes_letp, 0);
+    // Resolve the let-prefix slot vids (non-param base = n_params), then rewrite the
+    // let-env to hold vids so field-value let-refs resolve directly.
+    let _rv: i64 = tree_resolve_vids_base(nodes, n_nodes_letp, vidbuf, 0, n_params);
+    let _ev: i64 = slit_letenv_slot_to_vid(env, nlets, vidbuf, 0);
+    // Every declared field must be a let-aware-resolvable value (param/let-ref/lit).
+    if slit_letaware_fields_ok(src, params_addr, n_params, env, nlets, sft, fields_addr, ntriples, 0) != 1 {
+        return s;
+    }
+    // The fn name: token right before the param-list `(`.
+    let pstart: i64 = ptt_find_param_list(tokens, 0);
+    if pstart < 2 {
+        return s;
+    }
+    let fn_lo: i64 = tok_lo(tokens, pstart - 2);
+    let fn_hi: i64 = tok_hi(tokens, pstart - 2);
+    // String table — first-seen: fn name (0), params (1..1+n), __mind_alloc,
+    // __mind_store_i64, type name, then each field name. (No field-access here, so
+    // __mind_load_i64 is never interned — keeping strtab identical to the no-let
+    // path for the same struct/field/param names.)
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let i_fn: i64 = intern_span(strbuf, offs, ccell, src, fn_lo, fn_hi);
+    let _ip: i64 = slit_intern_params(strbuf, offs, ccell, src, ptt, 0);
+    let i_alloc: i64 = intern_alloc_literal(strbuf, offs, ccell);
+    let i_store: i64 = intern_store_i64_literal(strbuf, offs, ccell);
+    let i_ty: i64 = intern_span(strbuf, offs, ccell, src, ty_lo, ty_hi);
+    let _f: i64 = ffa_intern_fields(strbuf, offs, ccell, src, sft, 0);
+    let strc: i64 = __mind_load_i64(ccell);
+    // Module: header || strtab || next_id(2) || exports(0) || 5 instrs:
+    //   CONST %0 / OUTPUT %0  (struct scaffold)
+    //   FN_DEF ctor { let prefix + alloc/store body }
+    //   CONST %1 / OUTPUT %1  (fn scaffold)
+    // || struct_defs[ ty=[fields] ] || const_array_defs=0 || repr_c_structs=0.
+    let h1: EmitState = emit_mic3_header(s);
+    let h2: EmitState = emit_mic3_strtab(h1, strbuf, offs, strc);
+    let h3: EmitState = emit_uleb128(h2, 2);
+    let h4: EmitState = emit_uleb128(h3, 0);
+    let h5: EmitState = emit_uleb128(h4, 5);
+    let h6: EmitState = emit_mic3_const_i64(h5, 0, 0);
+    let h7: EmitState = emit_mic3_output(h6, 0);
+    let h8: EmitState = slit_emit_letchain_ctor_fndef(h7, src, i_fn, n_params, params_addr, sft, n_fields, fields_addr, ntriples, i_alloc, i_store, nodes, n_nodes_letp, vidbuf, let_nonparam, env, nlets);
+    let h9: EmitState = emit_mic3_const_i64(h8, 1, 0);
+    let h10: EmitState = emit_mic3_output(h9, 1);
+    let h11: EmitState = emit_uleb128(h10, 1);
+    let h12: EmitState = emit_uleb128(h11, i_ty);
+    let h13: EmitState = emit_uleb128(h12, n_fields);
+    let h14: EmitState = ffa_emit_field_idxs_interned(h13, strbuf, offs, ccell, src, sft, 0);
+    let h15: EmitState = emit_uleb128(h14, 0);
+    emit_uleb128(h15, 0)
+}
+
 // AST-driven mic@3 module for a single-struct, single-param fn returning ONE
 // struct-literal. Fail-closed (returns seed `s`) on any other shape.
 pub fn emit_mic3_module_structlit_from_ast(s: EmitState, src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> EmitState {
@@ -3933,6 +4263,16 @@ pub fn emit_mic3_module_structlit_from_ast(s: EmitState, src: i64, src_len: i64,
     let mitems_len: i64 = ast_aux(mroot);
     if count_fn_defs(mitems_addr, mitems_len, 0, 0) > 1 {
         return emit_mic3_module_structlit_nfn(s, src, src_len, strbuf, offs, ccell);
+    }
+    // Single-fn LET-CHAIN ctor body (`{ let .. ; T { .. } }`): route to the
+    // let-aware driver. The no-let single-stmt path below is untouched for the
+    // 14 existing cases (it sees stmts_len == 1 and falls through).
+    let only_fn: i64 = slit_single_fn_def(mitems_addr, mitems_len, 0);
+    if only_fn != 0 {
+        let ofbody: i64 = ast_child2(only_fn);
+        if ast_aux(ofbody) >= 2 {
+            return emit_mic3_module_structlit_letchain_from_ast(s, src, src_len, strbuf, offs, ccell, only_fn);
+        }
     }
     // Shape guards: exactly one struct (>=1 field) and at least one fn param.
     if sft_table_count(sft) < 1 {
