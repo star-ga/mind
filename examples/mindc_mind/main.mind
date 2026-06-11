@@ -5651,6 +5651,87 @@ pub fn emit_mic3_module_fndef_ifstmt(s: EmitState, src: i64, fn_node: i64, nidx:
     s9
 }
 
+// Emit the OP_IF for a NESTED else-less if whose then-block is ITSELF an else-less
+// if-return: `if oc { if ic { return E } }`. The outer then-block carries a synth
+// const + the INNER OP_IF (emit_mic3_if_stmt_instr), then-result = inner dst; the
+// outer else is the lone synth const. Byte-exact vs --emit-mic3 (decoded from
+// is_digit). `base0` = n_params. Writes outer dst to `okcell` (-1 on a wall).
+pub fn emit_mic3_nested_if_instr(s: EmitState, oc_expr: i64, ic_expr: i64, ir_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
+    // --- outer cond ---
+    let oc_id: i64 = flatten_branch(oc_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0);
+    if oc_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let oc_n: i64 = __mind_load_i64(cursor);
+    let oc_nonparam: i64 = count_nonparam_nodes(oc_expr, buf, params_addr, n_params);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, oc_id);
+    let s3: EmitState = emit_uleb128(s2, oc_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, oc_n, vidbuf, 0, 0, 0, 0, 0);
+    let after_oc: i64 = base0 + oc_nonparam;
+    // --- outer then: synth const + the INNER OP_IF (2 instrs) ---
+    let s5: EmitState = emit_uleb128(s4, 2);
+    let s6: EmitState = emit_mic3_const_i64(s5, after_oc, 0);
+    let inner_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(inner_cell, 0 - 1);
+    let s7: EmitState = emit_mic3_if_stmt_instr(s6, ic_expr, ir_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_oc + 1, inner_cell);
+    let inner_dst: i64 = __mind_load_i64(inner_cell);
+    if inner_dst < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // outer then-result = the inner OP_IF's dst (no outer Return).
+    let s8: EmitState = emit_uleb128(s7, inner_dst);
+    // --- outer else (EMPTY): synth const; else_result = synth ---
+    let outer_else_synth: i64 = inner_dst + 1;
+    let s9: EmitState = emit_uleb128(s8, 1);
+    let s10: EmitState = emit_mic3_const_i64(s9, outer_else_synth, 0);
+    let s11: EmitState = emit_uleb128(s10, outer_else_synth);
+    // --- outer dst + empty bindings + empty merges ---
+    let outer_dst: i64 = outer_else_synth + 1;
+    let s12: EmitState = emit_uleb128(s11, outer_dst);
+    let s13: EmitState = emit_uleb128(s12, 0);
+    let s14: EmitState = emit_uleb128(s13, 0);
+    __mind_store_i64(okcell, outer_dst);
+    s14
+}
+
+// Emit ONE fn's FN_DEF whose body is `{ if oc { if ic { return E; } } TRAIL }` — a
+// nested else-less if-return then a trailing value. Mirrors emit_mic3_module_fndef_ifstmt
+// but for the nested OP_IF. body_len = n PARAM + 1 OP_IF + trailing non-param instrs;
+// FN_DEF ret_vid = trailing root. Writes 1 to ok_cell on success, 0 (fail-closed) else.
+pub fn emit_mic3_module_fndef_nested_if(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, oc_expr: i64, ic_expr: i64, ir_expr: i64, trail_expr: i64, nodes: i64, cursor: i64, vidbuf: i64, t_nodes: i64, t_cursor: i64, t_vidbuf: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    let dst_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(dst_cell, 0 - 1);
+    let probe: EmitState = emit_mic3_nested_if_instr(es_new(), oc_expr, ic_expr, ir_expr, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell);
+    let dst: i64 = __mind_load_i64(dst_cell);
+    if dst < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let trail_root: i64 = flatten_branch(trail_expr, src, params_addr, n_params, t_nodes, t_cursor, t_vidbuf, dst + 1);
+    if trail_root < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let trail_n: i64 = __mind_load_i64(t_cursor);
+    let trail_nonparam: i64 = count_nonparam_nodes(trail_expr, src, params_addr, n_params);
+    let body_len: i64 = n_params + 1 + trail_nonparam;
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, trail_root);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, body_len);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    let s8: EmitState = emit_mic3_nested_if_instr(s7, oc_expr, ic_expr, ir_expr, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell);
+    let s9: EmitState = emit_mic3_tree_body(s8, t_nodes, trail_n, t_vidbuf, 0, 0, 0, 0, 0);
+    __mind_store_i64(ok_cell, 1);
+    s9
+}
+
 // ===========================================================================
 // GENERAL statement sequencing — lets + if-early-returns in arbitrary order
 // ===========================================================================
@@ -6473,6 +6554,32 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                     let then_blk: i64 = ast_child1(if_stmt);
                     let ret_stmt: i64 = branch_single_expr(then_blk);
                     if ret_stmt >= 0 {
+                        // (g2) NESTED if-return: the then-block's single stmt is ITSELF
+                        // an else-less if whose then-block is `return E` -> nested OP_IF.
+                        if ast_kind(ret_stmt) == ast_if() {
+                            if ast_child2(ret_stmt) == 0 {
+                                let inner_then: i64 = ast_child1(ret_stmt);
+                                let inner_ret: i64 = branch_single_expr(inner_then);
+                                if inner_ret >= 0 {
+                                    if ast_kind(inner_ret) == ast_return() {
+                                        let oc_expr: i64 = ast_child0(if_stmt);
+                                        let ic_expr: i64 = ast_child0(ret_stmt);
+                                        let ir_expr: i64 = ast_child0(inner_ret);
+                                        let ntrail: i64 = __mind_load_i64(stmts_addr + 8);
+                                        let nnodes: i64 = __mind_alloc(256 * 32);
+                                        let ncursor: i64 = __mind_alloc(8);
+                                        let nvidbuf: i64 = __mind_alloc(256 * 8);
+                                        let ntnodes: i64 = __mind_alloc(256 * 32);
+                                        let ntcursor: i64 = __mind_alloc(8);
+                                        let ntvidbuf: i64 = __mind_alloc(256 * 8);
+                                        let snif: EmitState = emit_mic3_module_fndef_nested_if(s, src, fn_node, nidx, pstr, n_params, oc_expr, ic_expr, ir_expr, ntrail, nnodes, ncursor, nvidbuf, ntnodes, ntcursor, ntvidbuf, ok_cell);
+                                        if __mind_load_i64(ok_cell) == 1 {
+                                            return snif;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if ast_kind(ret_stmt) == ast_return() {
                             let cond_expr: i64 = ast_child0(if_stmt);
                             let ret_expr: i64 = ast_child0(ret_stmt);
