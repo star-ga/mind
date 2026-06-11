@@ -131,10 +131,10 @@ fn cdylib_has_no_undefined_mind_symbols() {
     ];
 
     for sym_line in &undefined {
-        let name = sym_line.trim().split_whitespace().last().unwrap_or("");
+        let name = sym_line.split_whitespace().last().unwrap_or("");
         let bare = name.split('@').next().unwrap_or(name);
         assert!(
-            allowed.iter().any(|a| *a == bare),
+            allowed.contains(&bare),
             "unexpected undefined symbol in cdylib: {sym_line}\n\
              Full undefined list: {undefined:#?}"
         );

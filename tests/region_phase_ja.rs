@@ -91,11 +91,10 @@ fn alloc_in_region() -> i64 {
         for instr in instrs {
             match instr {
                 Instr::Region { .. } => return true,
-                Instr::FnDef { body, .. } => {
-                    if has_region(body) {
+                Instr::FnDef { body, .. }
+                    if has_region(body) => {
                         return true;
                     }
-                }
                 _ => {}
             }
         }
@@ -138,16 +137,14 @@ fn escape_test() -> i64 {
             match instr {
                 Instr::Region {
                     result, alloc_ids, ..
-                } => {
-                    if alloc_ids.contains(result) {
+                }
+                    if alloc_ids.contains(result) => {
                         return true;
                     }
-                }
-                Instr::FnDef { body, .. } => {
-                    if find_region_escape(body) {
+                Instr::FnDef { body, .. }
+                    if find_region_escape(body) => {
                         return true;
                     }
-                }
                 _ => {}
             }
         }
