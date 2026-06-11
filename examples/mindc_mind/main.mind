@@ -1121,6 +1121,13 @@ pub fn parse_primary_ns(toks: Vec, pos: i64, buf: i64, no_struct: i64) -> ParseR
     }
 
     if k == tk_ident() {
+        // Match-expression: `match SCRUT { ... }` desugars at parse time to an
+        // ast_if. Detected via is_ident_match (match is a bare ident, not a
+        // keyword token), mirroring the is_struct_kw dispatch. Checked before
+        // the call/struct-lit shapes so `match c { ... }` never misreads.
+        if is_ident_match(buf, lo, hi) == 1 {
+            return parse_match(toks, pos, buf);
+        }
         if at_eof(toks, pos + 1) == 0 {
             if tok_kind(toks, pos + 1) == tk_lparen() {
                 return parse_call(toks, pos, buf);
@@ -1444,6 +1451,77 @@ pub fn parse_if(toks: Vec, pos: i64, buf: i64) -> ParseResult {
 
     let if_node: i64 = ast_new_if(kw_lo, then_hi, pr_node(cond), then_blk, 0);
     pr_new(after_then, if_node)
+}
+
+// ===== Match-expressions (parse-time desugar to if) =====
+//
+// `match SCRUT { PAT => VAL0, _ => VAL1 }` desugars at PARSE TIME to the
+// equivalent `if SCRUT == PAT { VAL0 } else { VAL1 }`.  Both forms lower to a
+// byte-IDENTICAL mic@3 stream (an OP_IF 0x1C chain) — proven against
+// `mindc --emit-mic3` — so building the ast_if here reuses the existing
+// if-emitter (emit_mic3_module_fndef_if and the recursive if path) with ZERO
+// new emit code.  `match` is NOT a keyword token: it lexes as a bare tk_ident
+// spelling "match" (detected via is_ident_match), the same disambiguation the
+// struct-literal path uses for is_struct_kw.
+//
+// SCOPE: the minimal 2-arm shape — one int-literal pattern arm plus one
+// wildcard `_` arm.  N-arm / nested patterns are a later increment.
+//
+// Token layout (the fat arrow `=>` lexes as the two tokens tk_eq tk_gt):
+//   match SCRUT { PAT => VAL0 , _ => VAL1 }
+//   ^pos         ^lbrace
+// SCRUT is parsed with no_struct=1 so `match c {` keeps the `{` as the arm
+// block (NOT a struct literal), byte-identical to the if-condition parse.
+pub fn parse_match(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let kw_lo: i64 = tok_lo(toks, pos);
+    // Scrutinee: no_struct=1 so the `{` opens the arms, not a struct literal.
+    let scrut: ParseResult = parse_expr_ns(toks, pos + 1, buf, 1);
+    let lbrace_pos: i64 = pr_pos(scrut);
+    let scrut_node: i64 = pr_node(scrut);
+
+    // Arm 0 pattern: int-literal token at lbrace_pos+1.
+    let pat_pos: i64 = lbrace_pos + 1;
+    let pat_lo: i64 = tok_lo(toks, pat_pos);
+    let pat_hi: i64 = tok_hi(toks, pat_pos);
+    let pat_lit: i64 = ast_new_leaf(ast_int_lit(), pat_lo, pat_hi);
+
+    // `=>` is two tokens (tk_eq tk_gt); arm-0 value expression follows it.
+    let val0_pos: i64 = pat_pos + 3;
+    let val0: ParseResult = parse_expr(toks, val0_pos, buf);
+    let after_val0: i64 = pr_pos(val0);
+
+    // Optional comma, then the wildcard `_` arm.
+    let wild_pos: i64 = if tok_kind(toks, after_val0) == tk_comma() {
+        after_val0 + 1
+    } else {
+        after_val0
+    };
+    // wild_pos = `_` ident, wild_pos+1/+2 = `=>`, wild_pos+3 = value expr.
+    let val1_pos: i64 = wild_pos + 3;
+    let val1: ParseResult = parse_expr(toks, val1_pos, buf);
+    let after_val1: i64 = pr_pos(val1);
+
+    let close_hi: i64 = tok_hi(toks, after_val1);
+    let after_close: i64 = if tok_kind(toks, after_val1) == tk_rbrace() {
+        after_val1 + 1
+    } else {
+        after_val1
+    };
+
+    // cond = SCRUT == PAT.
+    let cond: i64 = ast_new_binop(kw_lo, pat_hi, scrut_node, pat_lit, op_eq());
+
+    // then = { VAL0 } (single-statement block), else = { VAL1 }.
+    let then_acc: Vec = vec_new();
+    let then_acc1: Vec = vec_push(then_acc, pr_node(val0));
+    let then_blk: i64 = ast_new_block(val0_pos, ast_span_hi(pr_node(val0)), vec_addr(then_acc1), vec_len(then_acc1));
+
+    let else_acc: Vec = vec_new();
+    let else_acc1: Vec = vec_push(else_acc, pr_node(val1));
+    let else_blk: i64 = ast_new_block(val1_pos, ast_span_hi(pr_node(val1)), vec_addr(else_acc1), vec_len(else_acc1));
+
+    let if_node: i64 = ast_new_if(kw_lo, close_hi, cond, then_blk, else_blk);
+    pr_new(after_close, if_node)
 }
 
 // ===== Function definitions =====
