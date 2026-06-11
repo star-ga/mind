@@ -5887,7 +5887,7 @@ pub fn emit_if_seq_then_instr(s: EmitState, if_node: i64, buf: i64, params_addr:
 // NO bytes (Bound by MIND-CONSTITUTION §I). 6c-2 populates the lv-env to deliver the
 // lets-in-then capability.
 
-pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64) -> EmitState {
+pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
     if ast_child2(if_node) != 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -5909,7 +5909,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
-    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
     if ast_kind(inner) == ast_return() {
@@ -5923,7 +5923,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         let then_nonparam: i64 = count_nonparam_nodes_lv(ret_expr, buf, params_addr, n_params, lvenv, nlv);
         let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
         let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-        let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0);
+        let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, buf, strbuf, offs, ncount, 0);
         let s8: EmitState = emit_mic3_return(s7, 1, then_root);
         let s9: EmitState = emit_uleb128(s8, then_root);
         let after_then: i64 = after_cond + 1 + then_nonparam;
@@ -5943,7 +5943,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
         let inner_cell: i64 = __mind_alloc(8);
         __mind_store_i64(inner_cell, 0 - 1);
-        let s7: EmitState = emit_if_chain_instr_lv(s6, inner, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, inner_cell, lvenv, nlv);
+        let s7: EmitState = emit_if_chain_instr_lv(s6, inner, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, inner_cell, lvenv, nlv, strbuf, offs, ncount);
         let inner_dst: i64 = __mind_load_i64(inner_cell);
         if inner_dst < 0 {
             __mind_store_i64(okcell, 0 - 1);
@@ -5965,7 +5965,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     s
 }
 
-pub fn emit_if_seq_segments_lv(s: EmitState, stmts_addr: i64, stmts_len: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, last_dst: i64, dst_cell: i64, i: i64, lvenv: i64, nlv: i64) -> EmitState {
+pub fn emit_if_seq_segments_lv(s: EmitState, stmts_addr: i64, stmts_len: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, last_dst: i64, dst_cell: i64, i: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
     if i >= stmts_len {
         __mind_store_i64(dst_cell, last_dst);
         return s;
@@ -5977,16 +5977,16 @@ pub fn emit_if_seq_segments_lv(s: EmitState, stmts_addr: i64, stmts_len: i64, bu
     }
     let seg_cell: i64 = __mind_alloc(8);
     __mind_store_i64(seg_cell, 0 - 1);
-    let s1: EmitState = emit_if_chain_instr_lv(s, stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, seg_cell, lvenv, nlv);
+    let s1: EmitState = emit_if_chain_instr_lv(s, stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, seg_cell, lvenv, nlv, strbuf, offs, ncount);
     let seg_dst: i64 = __mind_load_i64(seg_cell);
     if seg_dst < 0 {
         __mind_store_i64(dst_cell, 0 - 1);
         return s;
     }
-    emit_if_seq_segments_lv(s1, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_dst + 1, seg_dst, dst_cell, i + 1, lvenv, nlv)
+    emit_if_seq_segments_lv(s1, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_dst + 1, seg_dst, dst_cell, i + 1, lvenv, nlv, strbuf, offs, ncount)
 }
 
-pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64) -> EmitState {
+pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
     if ast_child2(if_node) != 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -6009,14 +6009,14 @@ pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_ad
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
-    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
     let s5: EmitState = emit_uleb128(s4, stmts_len + 1);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
     let seq_cell: i64 = __mind_alloc(8);
     __mind_store_i64(seq_cell, 0 - 1);
-    let s7: EmitState = emit_if_seq_segments_lv(s6, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, after_cond, seq_cell, 0, lvenv, nlv);
+    let s7: EmitState = emit_if_seq_segments_lv(s6, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, after_cond, seq_cell, 0, lvenv, nlv, strbuf, offs, ncount);
     let last_dst: i64 = __mind_load_i64(seq_cell);
     if last_dst < 0 {
         __mind_store_i64(okcell, 0 - 1);
@@ -6072,7 +6072,7 @@ pub fn count_leading_lets(stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
 // A let init may reference an EARLIER let (lvbuf already holds nlv0+idx entries).
 // Writes 0 to okcell + returns the seed on any flatten wall (defensive; the probe
 // already validated, so this should not trigger).
-pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv0: i64, okcell: i64) -> EmitState {
+pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv0: i64, okcell: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
     if idx >= nlets {
         return s;
     }
@@ -6090,13 +6090,13 @@ pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, bu
         return s;
     }
     let init_n: i64 = __mind_load_i64(cursor);
-    let s1: EmitState = emit_mic3_tree_body(s, nodes, init_n, vidbuf, 0, 0, 0, 0, 0);
+    let s1: EmitState = emit_mic3_tree_body(s, nodes, init_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let nn: i64 = count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv_now);
     __mind_store_i64(lvbuf + nlv_now * 24 + 0, ast_span_lo(name));
     __mind_store_i64(lvbuf + nlv_now * 24 + 8, ast_span_hi(name));
     __mind_store_i64(lvbuf + nlv_now * 24 + 16, root);
     __mind_store_i64(base_cell, cur_base + nn);
-    emit_let_inits_lv(s1, stmts_addr, nlets, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv0, okcell)
+    emit_let_inits_lv(s1, stmts_addr, nlets, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv0, okcell, strbuf, offs, ncount)
 }
 
 // Emit the per-let MERGE PLACEHOLDER consts in the else block: ConstI64(0) at
@@ -6184,7 +6184,7 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
-    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
     // THEN length = 1 (synth) + sum(let init nonparam) + n_segs (one OP_IF each).
@@ -6196,7 +6196,7 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     __mind_store_i64(base_cell, after_cond + 1);
     let li_ok: i64 = __mind_alloc(8);
     __mind_store_i64(li_ok, 1);
-    let s7: EmitState = emit_let_inits_lv(s6, stmts_addr, nlets, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv0, li_ok);
+    let s7: EmitState = emit_let_inits_lv(s6, stmts_addr, nlets, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv0, li_ok, strbuf, offs, ncount);
     if __mind_load_i64(li_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -6205,7 +6205,7 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     let seg_base: i64 = after_cond + 1 + let_instrs;
     let seq_cell: i64 = __mind_alloc(8);
     __mind_store_i64(seq_cell, 0 - 1);
-    let s8: EmitState = emit_if_seq_segments_lv(s7, segs_addr, n_segs, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_base, seg_base - 1, seq_cell, 0, lvbuf, nlv_total);
+    let s8: EmitState = emit_if_seq_segments_lv(s7, segs_addr, n_segs, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_base, seg_base - 1, seq_cell, 0, lvbuf, nlv_total, strbuf, offs, ncount);
     let last_dst: i64 = __mind_load_i64(seq_cell);
     if last_dst < 0 {
         __mind_store_i64(okcell, 0 - 1);
@@ -6463,7 +6463,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 let pr_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(pr_cell, 0 - 1);
                 let pr_lvenv: i64 = __mind_alloc(24);
-                let pr: EmitState = emit_if_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, pr_nodes, pr_cursor, pr_vidbuf, 0, pr_cell, pr_lvenv, 0);
+                let pr: EmitState = emit_if_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, pr_nodes, pr_cursor, pr_vidbuf, 0, pr_cell, pr_lvenv, 0, 0, 0, 0);
                 let pr_dst: i64 = __mind_load_i64(pr_cell);
                 if pr_dst >= 0 {
                     __mind_store_i64(plan + p * 64 + 0, 3);
@@ -6640,7 +6640,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e3_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e3_cell, 0 - 1);
         let e3_lvenv: i64 = __mind_alloc(24);
-        let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, e3_lvenv, 0);
+        let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, e3_lvenv, 0, strbuf, offs, ncount);
         return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1);
     }
     if ty == 4 {
