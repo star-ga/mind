@@ -131,6 +131,21 @@ pub fn tk_kw_if() -> i64 {
 pub fn tk_kw_else() -> i64 {
     29
 }
+pub fn tk_amp() -> i64 {
+    30
+}
+pub fn tk_pipe() -> i64 {
+    31
+}
+pub fn tk_caret() -> i64 {
+    32
+}
+pub fn tk_shl() -> i64 {
+    33
+}
+pub fn tk_shr() -> i64 {
+    34
+}
 
 // ===== Byte loads =====
 
@@ -396,6 +411,15 @@ pub fn match_punct(b: i64) -> i64 {
     if b == 33 {
         return tk_bang();
     }
+    if b == 38 {
+        return tk_amp();
+    }
+    if b == 124 {
+        return tk_pipe();
+    }
+    if b == 94 {
+        return tk_caret();
+    }
     tk_ident()
 }
 
@@ -464,6 +488,25 @@ pub fn scan(buf: i64, i: i64, buf_len: i64, toks: Vec) -> Vec {
         if i + 1 < buf_len {
             if load_byte(buf, i + 1) == 61 {
                 let next_toks: Vec = push_token(toks, tk_ne(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    // `<<` (60,60): left-shift two-char token. Checked before the `<` / `<=`
+    // single-char paths so `a << b` lexes as one tk_shl, not two tk_lt.
+    if b == 60 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 60 {
+                let next_toks: Vec = push_token(toks, tk_shl(), i, i + 2);
+                return scan(buf, i + 2, buf_len, next_toks);
+            }
+        }
+    }
+    // `>>` (62,62): right-shift two-char token (same precedence as `<<`).
+    if b == 62 {
+        if i + 1 < buf_len {
+            if load_byte(buf, i + 1) == 62 {
+                let next_toks: Vec = push_token(toks, tk_shr(), i, i + 2);
                 return scan(buf, i + 2, buf_len, next_toks);
             }
         }
@@ -575,6 +618,21 @@ pub fn op_ge() -> i64 {
 }
 pub fn op_ne() -> i64 {
     10
+}
+pub fn op_bitand() -> i64 {
+    11
+}
+pub fn op_bitor() -> i64 {
+    12
+}
+pub fn op_bitxor() -> i64 {
+    13
+}
+pub fn op_shl() -> i64 {
+    14
+}
+pub fn op_shr() -> i64 {
+    15
 }
 
 // ===== Token-stream accessors =====
@@ -864,39 +922,61 @@ pub fn is_ident_return(buf: i64, lo: i64, hi: i64) -> i64 {
 
 // ===== Pratt precedence table =====
 
+// Binding precedence (higher = tighter). The bitwise/shift ops are interleaved to
+// match the Rust mindc parser exactly (verified vs --emit-mic3): multiplicative >
+// additive > comparison > shift > bitand > bitxor > bitor > assignment. The
+// pre-existing levels (assignment / comparison / additive / multiplicative) keep
+// their relative order; the bitwise tiers are inserted between comparison and
+// assignment, so the existing levels are renumbered upward (no tree-shape change
+// for non-bitwise expressions — relative ordering is what the Pratt loop reads).
 pub fn infix_prec(kind: i64) -> i64 {
     if kind == tk_eq() {
         return 1;
     }
-    if kind == tk_lt() {
+    if kind == tk_pipe() {
         return 2;
+    }
+    if kind == tk_caret() {
+        return 3;
+    }
+    if kind == tk_amp() {
+        return 4;
+    }
+    if kind == tk_shl() {
+        return 5;
+    }
+    if kind == tk_shr() {
+        return 5;
+    }
+    if kind == tk_lt() {
+        return 6;
     }
     if kind == tk_gt() {
-        return 2;
+        return 6;
     }
     if kind == tk_eqeq() {
-        return 2;
+        return 6;
     }
     if kind == tk_le() {
-        return 2;
+        return 6;
     }
     if kind == tk_ge() {
-        return 2;
+        return 6;
     }
     if kind == tk_ne() {
-        return 2;
+        return 6;
     }
     if kind == tk_plus() {
-        return 3;
+        return 7;
     }
     if kind == tk_minus() {
-        return 3;
+        return 7;
     }
     if kind == tk_star() {
-        return 4;
+        return 8;
     }
     if kind == tk_slash() {
-        return 4;
+        return 8;
     }
     0
 }
@@ -934,6 +1014,21 @@ pub fn tk_to_op(kind: i64) -> i64 {
     }
     if kind == tk_ne() {
         return op_ne();
+    }
+    if kind == tk_amp() {
+        return op_bitand();
+    }
+    if kind == tk_pipe() {
+        return op_bitor();
+    }
+    if kind == tk_caret() {
+        return op_bitxor();
+    }
+    if kind == tk_shl() {
+        return op_shl();
+    }
+    if kind == tk_shr() {
+        return op_shr();
     }
     0
 }
@@ -4540,6 +4635,25 @@ pub fn binop_to_byte(op_tag: i64) -> i64 {
     }
     if op_tag == op_ne() {
         return 10;
+    }
+    // Bitwise / shift ops. The MIND op-tag order (bitand=11, bitor=12, bitxor=13,
+    // shl=14, shr=15) matches the Rust BinOp byte order (BitAnd=0x0B, BitOr=0x0C,
+    // BitXor=0x0D, Shl=0x0E, Shr=0x0F — src/ir/compact/v3/emit.rs binop_to_byte),
+    // so the offset is op_tag - 0 = op_tag here. Verified byte-exact vs --emit-mic3.
+    if op_tag == op_bitand() {
+        return 11;
+    }
+    if op_tag == op_bitor() {
+        return 12;
+    }
+    if op_tag == op_bitxor() {
+        return 13;
+    }
+    if op_tag == op_shl() {
+        return 14;
+    }
+    if op_tag == op_shr() {
+        return 15;
     }
     op_tag - 1
 }

@@ -109,11 +109,27 @@ CASES = [
     ("3-let chain (final ref)", "green",
      "pub fn h(x: i64) -> i64 { let a: i64 = x + 1; let b: i64 = a + 2; "
      "let c: i64 = b + 3; c }"),
+    # bitwise / shift operators — recursive N-fn emit reproduces them byte-exact
+    # (binop_to_byte maps & ^ | << >> to 0x0B..0x0F; precedence interleaved to
+    # match the Rust mindc parser — verified vs --emit-mic3).
+    ("& bitand / mask operator", "green",
+     "pub fn f(x: i64) -> i64 { x & 255 }"),
+    ("| bitor operator", "green",
+     "pub fn f(a: i64, b: i64) -> i64 { a | b }"),
+    ("^ bitxor operator", "green",
+     "pub fn f(a: i64, b: i64) -> i64 { a ^ b }"),
+    ("<< left shift", "green",
+     "pub fn f(a: i64, b: i64) -> i64 { a << b }"),
+    (">> right shift", "green",
+     "pub fn f(a: i64, b: i64) -> i64 { a >> b }"),
+    ("bitwise precedence mix", "green",
+     "pub fn f(a: i64, b: i64, c: i64) -> i64 { a & b | c }"),
+    ("mask in let chain", "green",
+     "pub fn f(x: i64) -> i64 { let lo: i64 = x & 255; let hi: i64 = x >> 8; "
+     "lo + hi }"),
     # --- WALL: the cutover frontier — each must FAIL-CLOSED (empty buf) ---
     ("if-statement early return", "wall",
      "pub fn s(b: i64) -> i64 { if b == 1 { return 1; } 0 }"),
-    ("& bitand / mask operator", "wall",
-     "pub fn f(x: i64) -> i64 { x & 255 }"),
     ("call with expression arg", "wall",
      "pub fn ld(buf: i64) -> i64 { __mind_load_i64(buf + 1) }"),
 ]
