@@ -4069,7 +4069,7 @@ pub fn emit_mic3_params_mod(s: EmitState, pstr: i64, n: i64, i: i64) -> EmitStat
 // ok_cell on success, 0 (fail-closed, returns seed `s`) on a non-tree body. This
 // is the FN_DEF-only counterpart of emit_mic3_tree_fn_module (no header/scaffold/
 // registries — the caller frames the module).
-pub fn emit_mic3_module_fndef_tree(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, expr: i64, nodes: i64, cursor: i64, vidbuf: i64, ok_cell: i64) -> EmitState {
+pub fn emit_mic3_module_fndef_tree(s: EmitState, src: i64, strbuf: i64, offs: i64, ncount: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, expr: i64, nodes: i64, cursor: i64, vidbuf: i64, ok_cell: i64) -> EmitState {
     let params_addr: i64 = ast_child1(fn_node);
     __mind_store_i64(cursor, 0);
     let root_slot: i64 = flatten_ast(expr, src, params_addr, n_params, nodes, cursor);
@@ -4099,7 +4099,7 @@ pub fn emit_mic3_module_fndef_tree(s: EmitState, src: i64, fn_node: i64, nidx: i
     let s5: EmitState = es_push(s4, 0);
     let s6: EmitState = emit_uleb128(s5, body_len);
     let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
-    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, 0);
+    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, src, strbuf, offs, ncount, 0);
     __mind_store_i64(ok_cell, 1);
     s8
 }
@@ -4215,7 +4215,7 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
             }
             // (d) arbitrary param/const/binop expression tree.
             if ast_kind(expr) != ast_if() {
-                let stree: EmitState = emit_mic3_module_fndef_tree(s, src, fn_node, nidx, pstr, n_params, expr, nodes, cursor, vidbuf, ok_cell);
+                let stree: EmitState = emit_mic3_module_fndef_tree(s, src, strbuf, offs, ncount, fn_node, nidx, pstr, n_params, expr, nodes, cursor, vidbuf, ok_cell);
                 if __mind_load_i64(ok_cell) == 1 {
                     return stree;
                 }
@@ -4515,7 +4515,7 @@ pub fn emit_mic3_tree_fn_module(s: EmitState, buf: i64, offs: i64, n: i64, nodes
     // non-param node in post-order — binops with resolved child vids, const leaves
     // as their own ConstI64 at the interleaved slot.
     let s12: EmitState = emit_mic3_chain_params(s11, n, 0);
-    let s13: EmitState = emit_mic3_tree_body(s12, nodes, n_nodes, vidbuf, 0);
+    let s13: EmitState = emit_mic3_tree_body(s12, nodes, n_nodes, vidbuf, 0, 0, 0, 0, 0);
     // Module-level ConstI64(%0,0), Output(%0), 3 empty registries.
     let s14: EmitState = emit_mic3_const_i64(s13, 0, 0);
     let s15: EmitState = emit_mic3_output(s14, 0);
@@ -4541,6 +4541,15 @@ pub fn tree_resolve_vids(nodes: i64, n_nodes: i64, n: i64, vidbuf: i64, i: i64, 
         __mind_store_i64(vidbuf + i * 8, pidx);
         return tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt);
     }
+    // kind 4 (arg-cons) and kind 5 (callee leaf) are STRUCTURAL — they emit no instr
+    // and consume NO vid (mirror the param-leaf skip). The call node (kind 3) and the
+    // value-producing kinds (1 binop / 2 const / 3 call) take the running counter.
+    if kind == 4 {
+        return tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt);
+    }
+    if kind == 5 {
+        return tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt);
+    }
     __mind_store_i64(vidbuf + i * 8, nxt);
     tree_resolve_vids(nodes, n_nodes, n, vidbuf, i + 1, nxt + 1)
 }
@@ -4554,19 +4563,45 @@ pub fn tree_resolve_vids(nodes: i64, n_nodes: i64, n: i64, vidbuf: i64, i: i64, 
 // For a param-only tree no kind-2 slot exists, so this is byte-identical to the
 // former emit_mic3_tree_binops (Bound by MIND-CONSTITUTION §I — param-only path
 // unchanged).
-pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, i: i64) -> EmitState {
+pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, n_strings: i64, i: i64) -> EmitState {
     if i >= n_nodes {
         return s;
     }
     let kind: i64 = __mind_load_i64(nodes + i * 32);
     if kind == 0 {
-        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, i + 1);
+        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    // kind 4 (arg-cons) and kind 5 (callee leaf) are STRUCTURAL metadata — emit
+    // nothing (their vids were never assigned; the call node walks them).
+    if kind == 4 {
+        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    if kind == 5 {
+        return emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
     let dst: i64 = __mind_load_i64(vidbuf + i * 8);
     if kind == 2 {
         let lit: i64 = __mind_load_i64(nodes + i * 32 + 8);
         let sc: EmitState = emit_mic3_const_i64(s, dst, lit);
-        return emit_mic3_tree_body(sc, nodes, n_nodes, vidbuf, i + 1);
+        return emit_mic3_tree_body(sc, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
+    }
+    if kind == 3 {
+        // CALL: child0 = callee leaf slot (its span -> strtab index), child1 = first
+        // arg-cons slot. nargs is the chain length; arg vids are each cons node's
+        // child0 arg-root-slot's vid (vidbuf). OP_CALL (0x16): dst || name_idx ||
+        // nargs || arg_vids — matches --emit-mic3 (Bound by MIND-CONSTITUTION §I).
+        let cleaf: i64 = __mind_load_i64(nodes + i * 32 + 16);
+        let lo: i64 = __mind_load_i64(nodes + cleaf * 32 + 8);
+        let hi: i64 = __mind_load_i64(nodes + cleaf * 32 + 16);
+        let name_idx: i64 = intern_find(strbuf, offs, n_strings, src, lo, hi, 0);
+        let first_cons: i64 = __mind_load_i64(nodes + i * 32 + 24);
+        let nargs: i64 = argcons_len(nodes, first_cons, 0);
+        let s1: EmitState = es_push(s, 22);
+        let s2: EmitState = emit_uleb128(s1, dst);
+        let s3: EmitState = emit_uleb128(s2, name_idx);
+        let s4: EmitState = emit_uleb128(s3, nargs);
+        let s5: EmitState = emit_argcons_vids(s4, nodes, vidbuf, first_cons);
+        return emit_mic3_tree_body(s5, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1);
     }
     let op_byte: i64 = __mind_load_i64(nodes + i * 32 + 8);
     let lslot: i64 = __mind_load_i64(nodes + i * 32 + 16);
@@ -4574,7 +4609,29 @@ pub fn emit_mic3_tree_body(s: EmitState, nodes: i64, n_nodes: i64, vidbuf: i64, 
     let lvid: i64 = __mind_load_i64(vidbuf + lslot * 8);
     let rvid: i64 = __mind_load_i64(vidbuf + rslot * 8);
     let s1: EmitState = emit_mic3_binop(s, dst, op_byte, lvid, rvid);
-    emit_mic3_tree_body(s1, nodes, n_nodes, vidbuf, i + 1)
+    emit_mic3_tree_body(s1, nodes, n_nodes, vidbuf, src, strbuf, offs, n_strings, i + 1)
+}
+
+// Count the arg-cons chain length starting at cons slot `c` (0 = end).
+pub fn argcons_len(nodes: i64, c: i64, acc: i64) -> i64 {
+    if c == 0 {
+        return acc;
+    }
+    let next: i64 = __mind_load_i64(nodes + c * 32 + 24);
+    argcons_len(nodes, next, acc + 1)
+}
+
+// Emit each arg's resolved vid by walking the arg-cons chain in order. Each cons
+// node's child0 (offset 16) is the arg-root descriptor slot; its vid is vidbuf[slot].
+pub fn emit_argcons_vids(s: EmitState, nodes: i64, vidbuf: i64, c: i64) -> EmitState {
+    if c == 0 {
+        return s;
+    }
+    let arg_root: i64 = __mind_load_i64(nodes + c * 32 + 16);
+    let vid: i64 = __mind_load_i64(vidbuf + arg_root * 8);
+    let s1: EmitState = emit_uleb128(s, vid);
+    let next: i64 = __mind_load_i64(nodes + c * 32 + 24);
+    emit_argcons_vids(s1, nodes, vidbuf, next)
 }
 
 pub fn selftest_mic3_tree_fn(buf: i64, offs: i64, n: i64, nodes: i64, n_nodes: i64, vidbuf: i64) -> EmitState {
@@ -4717,8 +4774,70 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
-    // Every other kind (field access, call, if, ...) = a later-phase wall — reject.
+    if k == ast_call() {
+        // Strategy-A cutover: a call with arbitrary expression arguments, encoded as
+        // an ARG-CONS CHAIN inside the existing 32B descriptor array — no separate
+        // arglist buffer, no flatten-param threading. Post-order is preserved: each
+        // arg EXPRESSION sub-tree is flattened first (so its vids are assigned before
+        // the call), then the structural callee-leaf (kind=5) + arg-cons (kind=4)
+        // nodes (which emit NOTHING and consume NO vid), then the call node (kind=3)
+        // LAST so it takes the final vid (matching the --emit-mic3 oracle).
+        let callee: i64 = ast_child0(node);
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        // (1)+(2): flatten each arg expr post-order + build the arg-cons chain.
+        let first_cons: i64 = flatten_argcons(args_addr, args_len, 0, buf, params_addr, n_params, nodes, cursor);
+        if first_cons < 0 {
+            return 0 - 1;
+        }
+        // (3): callee leaf — stores the callee NAME span (resolved to a strtab index
+        // at emit time). kind=5, [span_lo, span_hi], emits nothing.
+        let cslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + cslot * 32 + 0, 5);
+        __mind_store_i64(nodes + cslot * 32 + 8, ast_span_lo(callee));
+        __mind_store_i64(nodes + cslot * 32 + 16, ast_span_hi(callee));
+        __mind_store_i64(nodes + cslot * 32 + 24, 0);
+        __mind_store_i64(cursor, cslot + 1);
+        // (4): the call node, LAST in post-order. child0=callee leaf, child1=first
+        // arg-cons slot (0 when zero-arg).
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 3);
+        __mind_store_i64(nodes + slot * 32 + 8, 0);
+        __mind_store_i64(nodes + slot * 32 + 16, cslot);
+        __mind_store_i64(nodes + slot * 32 + 24, first_cons);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    // Every other kind (field access, if, ...) = a later-phase wall — reject.
     0 - 1
+}
+
+// Flatten the args of a call into the descriptor array as an arg-cons chain. Arg
+// `i`'s EXPRESSION sub-tree is flattened first (post-order — its vids are assigned
+// before any later arg and before the call), then this arg's cons node (kind=4,
+// child0=arg-root-slot, child1=next-cons-slot) is written. Returns the slot of the
+// FIRST cons node (the head the call node points at), 0 when args_len == 0, or -1 if
+// any arg sub-tree contains an unsupported construct (fail-closed, no partial bytes).
+pub fn flatten_argcons(args_addr: i64, args_len: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64) -> i64 {
+    if idx >= args_len {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args_addr + idx * 8);
+    let arg_root: i64 = flatten_ast(arg, buf, params_addr, n_params, nodes, cursor);
+    if arg_root < 0 {
+        return 0 - 1;
+    }
+    let next_cons: i64 = flatten_argcons(args_addr, args_len, idx + 1, buf, params_addr, n_params, nodes, cursor);
+    if next_cons < 0 {
+        return 0 - 1;
+    }
+    let slot: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + slot * 32 + 0, 4);
+    __mind_store_i64(nodes + slot * 32 + 8, 0);
+    __mind_store_i64(nodes + slot * 32 + 16, arg_root);
+    __mind_store_i64(nodes + slot * 32 + 24, next_cons);
+    __mind_store_i64(cursor, slot + 1);
+    return slot;
 }
 
 // Count the slots a param-only AST sub-tree flattens to (= total nodes in the tree),
@@ -5026,7 +5145,36 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
         }
         return 1 + l + r;
     }
+    if k == ast_call() {
+        // The call emits ONE instr (the OP_CALL). The structural callee-leaf and
+        // arg-cons descriptor nodes emit nothing. Each arg contributes its own
+        // non-param instrs (consts/binops/nested calls).
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        let a: i64 = count_nonparam_args(args_addr, args_len, 0, buf, params_addr, n_params);
+        if a < 0 {
+            return 0 - 1;
+        }
+        return 1 + a;
+    }
     0 - 1
+}
+
+// Sum the non-param instr counts of a call's arguments (left-to-right).
+pub fn count_nonparam_args(args_addr: i64, args_len: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64) -> i64 {
+    if idx >= args_len {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args_addr + idx * 8);
+    let c: i64 = count_nonparam_nodes(arg, buf, params_addr, n_params);
+    if c < 0 {
+        return 0 - 1;
+    }
+    let rest: i64 = count_nonparam_args(args_addr, args_len, idx + 1, buf, params_addr, n_params);
+    if rest < 0 {
+        return 0 - 1;
+    }
+    c + rest
 }
 
 // ===========================================================================
@@ -5184,7 +5332,7 @@ pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nid
     let s5: EmitState = es_push(s4, 0);
     let s6: EmitState = emit_uleb128(s5, body_len);
     let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
-    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, 0);
+    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, src, 0, 0, 0, 0);
     __mind_store_i64(ok_cell, 1);
     s8
 }
@@ -5267,7 +5415,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
-    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
     let after_cond: i64 = base0 + cond_nonparam;
 
     // --- then: synth ConstI64(after_cond, 0) FIRST, then the then-expr tree ---
@@ -5281,7 +5429,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let then_nonparam: i64 = count_nonparam_nodes(then_expr, buf, params_addr, n_params);
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 1);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0);
     let s8: EmitState = emit_uleb128(s7, then_root);
     let after_then: i64 = after_cond + 1 + then_nonparam;
 
@@ -5296,7 +5444,7 @@ pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_exp
     let else_nonparam: i64 = count_nonparam_nodes(else_expr, buf, params_addr, n_params);
     let s9: EmitState = emit_uleb128(s8, else_nonparam + 1);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
-    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0);
+    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0);
     let s12: EmitState = emit_uleb128(s11, else_root);
     let after_else: i64 = after_then + 1 + else_nonparam;
 
@@ -5591,19 +5739,19 @@ pub fn emit_mic3_if_block_instr(s: EmitState, cond_expr: i64, then_blk: i64, els
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
-    let s4: EmitState = emit_mic3_tree_body(s3, c_nodes, cond_n, c_vid, 0);
+    let s4: EmitState = emit_mic3_tree_body(s3, c_nodes, cond_n, c_vid, 0, 0, 0, 0, 0);
     // then: synth + tree + then-edge placeholders.
     let then_extra_count: i64 = count_then_extras(extra, mn, 0);
     let s5: EmitState = emit_uleb128(s4, then_nonparam + 1 + then_extra_count);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let s7: EmitState = emit_mic3_tree_body(s6, t_nodes, then_n, t_vid, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, t_nodes, then_n, t_vid, 0, 0, 0, 0, 0);
     let s8: EmitState = emit_extra_consts(s7, extra, mn, 0, 0);
     let s9: EmitState = emit_uleb128(s8, then_root);
     // else: synth + tree + else-edge placeholders.
     let else_extra_count: i64 = count_else_extras(extra, mn, 0);
     let s10: EmitState = emit_uleb128(s9, else_nonparam + 1 + else_extra_count);
     let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
-    let s12: EmitState = emit_mic3_tree_body(s11, e_nodes, else_n, e_vid, 0);
+    let s12: EmitState = emit_mic3_tree_body(s11, e_nodes, else_n, e_vid, 0, 0, 0, 0, 0);
     let s13: EmitState = emit_extra_consts(s12, extra, mn, 1, 0);
     let s14: EmitState = emit_uleb128(s13, else_root);
     // dst, branch_bindings, merges.

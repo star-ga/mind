@@ -128,10 +128,14 @@ CASES = [
      "pub fn f(x: i64) -> i64 { let lo: i64 = x & 255; let hi: i64 = x >> 8; "
      "lo + hi }"),
     # --- WALL: the cutover frontier — each must FAIL-CLOSED (empty buf) ---
+    ("call with expression arg", "green",
+     "pub fn ld(buf: i64) -> i64 { __mind_load_i64(buf + 1) }"),
+    ("multi-arg call with expr args", "green",
+     "fn add(a: i64, b: i64) -> i64 { a + b }\n"
+     "pub fn f(x: i64, y: i64) -> i64 { add(x + 1, y * 2) }"),
+    # --- WALL: the cutover frontier — each must FAIL-CLOSED (empty buf) ---
     ("if-statement early return", "wall",
      "pub fn s(b: i64) -> i64 { if b == 1 { return 1; } 0 }"),
-    ("call with expression arg", "wall",
-     "pub fn ld(buf: i64) -> i64 { __mind_load_i64(buf + 1) }"),
 ]
 
 
