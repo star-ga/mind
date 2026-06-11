@@ -5748,7 +5748,7 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
             let vidbuf2: i64 = __mind_alloc(256 * 8);
             let env: i64 = __mind_alloc(64 * 24);
             let nlets_cell: i64 = __mind_alloc(8);
-            let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, ok_cell);
+            let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, strbuf, offs, ncount, ok_cell);
             if __mind_load_i64(ok_cell) == 1 {
                 return slet;
             }
@@ -6823,7 +6823,63 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_call() {
+        // Let-env-aware CALL fold — mirrors flatten_ast's ast_call arm exactly (the
+        // call-cons pattern: each arg sub-tree post-order, then the arg-cons chain
+        // [kind=4], then the callee leaf [kind=5], then the call node [kind=3] LAST
+        // so it takes the final vid). Args resolve idents against params THEN the
+        // let-env, so a let-ref flowing into a later call (e.g. `let a = g(x);
+        // h(a, k)`) reuses the earlier call's vid with no new node — byte-exact vs
+        // --emit-mic3 (Bound by MIND-CONSTITUTION §I).
+        let callee: i64 = ast_child0(node);
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        let first_cons: i64 = flatten_argcons_env(args_addr, args_len, 0, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if first_cons < 0 {
+            return 0 - 1;
+        }
+        let cslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + cslot * 32 + 0, 5);
+        __mind_store_i64(nodes + cslot * 32 + 8, ast_span_lo(callee));
+        __mind_store_i64(nodes + cslot * 32 + 16, ast_span_hi(callee));
+        __mind_store_i64(nodes + cslot * 32 + 24, 0);
+        __mind_store_i64(cursor, cslot + 1);
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 3);
+        __mind_store_i64(nodes + slot * 32 + 8, 0);
+        __mind_store_i64(nodes + slot * 32 + 16, cslot);
+        __mind_store_i64(nodes + slot * 32 + 24, first_cons);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
     0 - 1
+}
+
+// Let-env-aware arg-cons builder — the flatten_argcons counterpart that resolves a
+// let-ref arg to its bound slot. Arg `i`'s expression flattens first (post-order),
+// then this arg's cons node (kind=4, child0=arg-root-slot, child1=next-cons-slot).
+// Returns the FIRST cons slot, 0 when args_len == 0, or -1 on an unsupported
+// construct (fail-closed, no partial bytes).
+pub fn flatten_argcons_env(args_addr: i64, args_len: i64, idx: i64, src: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets: i64) -> i64 {
+    if idx >= args_len {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args_addr + idx * 8);
+    let arg_root: i64 = flatten_expr_env(arg, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if arg_root < 0 {
+        return 0 - 1;
+    }
+    let next_cons: i64 = flatten_argcons_env(args_addr, args_len, idx + 1, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if next_cons < 0 {
+        return 0 - 1;
+    }
+    let slot: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + slot * 32 + 0, 4);
+    __mind_store_i64(nodes + slot * 32 + 8, 0);
+    __mind_store_i64(nodes + slot * 32 + 16, arg_root);
+    __mind_store_i64(nodes + slot * 32 + 24, next_cons);
+    __mind_store_i64(cursor, slot + 1);
+    return slot;
 }
 
 // Walk the body's let-statement sequence (stmts 0..stmts_len-1), flattening each
@@ -6859,7 +6915,7 @@ pub fn flatten_let_chain(src: i64, stmts_addr: i64, stmts_len: i64, params_addr:
 // init/expr a param/const/binop/let-ref tree). Substitution-equivalent to the
 // nested expression, so byte-exact vs --emit-mic3. Writes 1 to ok_cell on success,
 // 0 (fail-closed, returns seed `s`) on any wall.
-pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, stmts_addr: i64, stmts_len: i64, nodes: i64, cursor: i64, vidbuf: i64, env: i64, nlets_cell: i64, ok_cell: i64) -> EmitState {
+pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, stmts_addr: i64, stmts_len: i64, nodes: i64, cursor: i64, vidbuf: i64, env: i64, nlets_cell: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
     let params_addr: i64 = ast_child1(fn_node);
     __mind_store_i64(cursor, 0);
     __mind_store_i64(nlets_cell, 0);
@@ -6888,20 +6944,29 @@ pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nid
     let s5: EmitState = es_push(s4, 0);
     let s6: EmitState = emit_uleb128(s5, body_len);
     let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
-    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, src, 0, 0, 0, 0);
+    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, src, strbuf, offs, ncount, 0);
     __mind_store_i64(ok_cell, 1);
     s8
 }
 
-// Count the non-param (kind != 0) descriptor slots in nodes[0..n_nodes) — the
-// number of body instrs the tree emits (each CONST/BINOP). Mirrors the body_len
-// derivation; param leaves (kind 0) are excluded (they emit via the PARAM pass).
+// Count the BODY-INSTR descriptor slots in nodes[0..n_nodes) — the number of body
+// instrs the tree emits (each CONST / BINOP / CALL). Mirrors the body_len
+// derivation. Param leaves (kind 0) emit via the PARAM pass, and the structural
+// arg-cons (kind 4) / callee-leaf (kind 5) nodes of a call emit NOTHING (they are
+// walked by the call node), so both are excluded — matching tree_resolve_vids's
+// vid-skip. Without the 4/5 skip a call body over-counts body_len by 2 per call.
 pub fn count_descriptor_nonparam(nodes: i64, n_nodes: i64, i: i64) -> i64 {
     if i >= n_nodes {
         return 0;
     }
     let kind: i64 = __mind_load_i64(nodes + i * 32);
     if kind == 0 {
+        return count_descriptor_nonparam(nodes, n_nodes, i + 1);
+    }
+    if kind == 4 {
+        return count_descriptor_nonparam(nodes, n_nodes, i + 1);
+    }
+    if kind == 5 {
         return count_descriptor_nonparam(nodes, n_nodes, i + 1);
     }
     1 + count_descriptor_nonparam(nodes, n_nodes, i + 1)
