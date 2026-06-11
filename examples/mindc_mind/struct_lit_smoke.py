@@ -120,6 +120,17 @@ CASES = [
     ("field-access + literal mix",
      "pub struct P { x: i64, y: i64 }\n"
      "pub fn shift(p: P) -> P { P { x: p.x, y: 0 } }"),
+    # Step B2b: MULTI-FN modules — a struct-lit ctor fn alongside helper fns, with
+    # call-valued fields (B{v:id(a)}). Needs item-order multi-fn assembly + the
+    # `pub struct` parse fix + the structural-call-node vid skip in _base.
+    ("multi-fn, param value, B{v:a}",
+     "fn id(x: i64) -> i64 { x }\n"
+     "pub struct B { v: i64 }\n"
+     "pub fn mk(a: i64) -> B { B { v: a } }"),
+    ("multi-fn, CALL value, B{v:id(a)}",
+     "fn id(x: i64) -> i64 { x }\n"
+     "pub struct B { v: i64 }\n"
+     "pub fn w(a: i64) -> B { B { v: id(a) } }"),
 ]
 
 
