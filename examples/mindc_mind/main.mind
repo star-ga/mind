@@ -6164,6 +6164,202 @@ pub fn field_prefold_module(src: i64, src_len: i64, items_addr: i64, items_len: 
     field_prefold_module(src, src_len, items_addr, items_len, i + 1, srt)
 }
 
+// ===========================================================================
+// STRUCT-LIT CONSTRUCTION DESUGAR — pre-resolve `T { a: x, b: y }` into the
+// alloc+stores+ret let-chain the oracle lowers it to (src/eval/lower.rs StructLit
+// arm; see the intern_*_literal comment block): `let __sl = __mind_alloc(8 *
+// nfields); __mind_store_i64(__sl (+ idx*8), val) per field in DECLARED order; __sl`.
+// Run in the prefold pass BEFORE build_module_strtab so __mind_alloc / __mind_store_i64
+// intern in body order, and the resulting let-chain emits via the proven case (f).
+// Synthetic let names reuse the `__mind_alloc` (ptr) / `__mind_store_i64` (throwaway)
+// source spans — letenv resolves by source-byte span, and those literals are present
+// in the module (they are the call callees). NO threading; flatten_ast unchanged.
+// ===========================================================================
+
+// "__mind_alloc" (12 bytes) per-index byte source.
+pub fn alloc_name_byte(j: i64) -> i64 {
+    if j == 0 { return 95; }
+    if j == 1 { return 95; }
+    if j == 2 { return 109; }
+    if j == 3 { return 105; }
+    if j == 4 { return 110; }
+    if j == 5 { return 100; }
+    if j == 6 { return 95; }
+    if j == 7 { return 97; }
+    if j == 8 { return 108; }
+    if j == 9 { return 108; }
+    if j == 10 { return 111; }
+    99
+}
+
+pub fn alloc_name_matches_at(src: i64, at: i64, j: i64) -> i64 {
+    if j >= 12 {
+        return 1;
+    }
+    if load_byte(src, at + j) != alloc_name_byte(j) {
+        return 0;
+    }
+    alloc_name_matches_at(src, at, j + 1)
+}
+
+pub fn find_alloc_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
+    if i + 12 > len {
+        return 0;
+    }
+    if alloc_name_matches_at(src, i, 0) == 1 {
+        __mind_store_i64(cell + 0, i);
+        __mind_store_i64(cell + 8, i + 12);
+        return 1;
+    }
+    find_alloc_name_span(src, len, i + 1, cell)
+}
+
+// "__mind_store_i64" (16 bytes) per-index byte source.
+pub fn store_name_byte(j: i64) -> i64 {
+    if j == 0 { return 95; }
+    if j == 1 { return 95; }
+    if j == 2 { return 109; }
+    if j == 3 { return 105; }
+    if j == 4 { return 110; }
+    if j == 5 { return 100; }
+    if j == 6 { return 95; }
+    if j == 7 { return 115; }
+    if j == 8 { return 116; }
+    if j == 9 { return 111; }
+    if j == 10 { return 114; }
+    if j == 11 { return 101; }
+    if j == 12 { return 95; }
+    if j == 13 { return 105; }
+    if j == 14 { return 54; }
+    52
+}
+
+pub fn store_name_matches_at(src: i64, at: i64, j: i64) -> i64 {
+    if j >= 16 {
+        return 1;
+    }
+    if load_byte(src, at + j) != store_name_byte(j) {
+        return 0;
+    }
+    store_name_matches_at(src, at, j + 1)
+}
+
+pub fn find_store_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
+    if i + 16 > len {
+        return 0;
+    }
+    if store_name_matches_at(src, i, 0) == 1 {
+        __mind_store_i64(cell + 0, i);
+        __mind_store_i64(cell + 8, i + 16);
+        return 1;
+    }
+    find_store_name_span(src, len, i + 1, cell)
+}
+
+// Value node for CANONICAL field `j` of struct `k` (match its declared name span
+// against the source-order triples). Returns the value AST node, or 0 if absent.
+pub fn slit_canon_value(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, j: i64) -> i64 {
+    let clo: i64 = srt_field_lo(srt, k, j);
+    let chi: i64 = srt_field_hi(srt, k, j);
+    slit_value_for(fields_addr, ntriples, src, clo, chi, 0)
+}
+
+// Build `let __sN = __mind_store_i64(addr, val)` for canonical field index `j`:
+// addr = ptr ref (j==0) or Add(ptr, idx*8). The let name + ptr ref reuse the
+// `__mind_alloc` span (alo/ahi); the store callee + let name reuse `__mind_store_i64`.
+pub fn slit_build_store_let(alo: i64, ahi: i64, slo: i64, shi: i64, j: i64, val: i64) -> i64 {
+    let sl_ref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let addr: i64 = if j == 0 {
+        sl_ref
+    } else {
+        ast_new_binop(0, 0, sl_ref, mk_syn_intlit(j * 8), op_add())
+    };
+    let callee: i64 = ast_new_leaf(ast_ident(), slo, shi);
+    let args: i64 = __mind_alloc(16);
+    __mind_store_i64(args + 0, addr);
+    __mind_store_i64(args + 8, val);
+    let call: i64 = ast_new_call(0, 0, callee, args, 2);
+    let name: i64 = ast_new_leaf(ast_ident(), slo, shi);
+    ast_new_let(0, 0, name, 0, call)
+}
+
+// Fill new_stmts[1 .. 1+nfields] with per-canonical-field store-lets. Returns 1, or
+// 0 if any canonical field is missing from the literal (fail-closed).
+pub fn slit_fill_stores(new_stmts: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    if j >= nfields {
+        return 1;
+    }
+    let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
+    if val == 0 {
+        return 0;
+    }
+    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, val);
+    __mind_store_i64(new_stmts + (1 + j) * 8, slet);
+    slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
+}
+
+// Desugar a single-stmt struct-lit-bodied fn body in place into the let-chain.
+// Returns 1 if rewritten, 0 if not applicable (body left intact, fails closed later).
+pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    if stmts_len != 1 {
+        return 0;
+    }
+    let snode: i64 = __mind_load_i64(stmts_addr + 0);
+    if ast_kind(snode) != ast_struct_lit() {
+        return 0;
+    }
+    let ty_lo: i64 = ast_child0(snode);
+    let ty_hi: i64 = ast_child2(snode);
+    let k: i64 = srt_find_by_name(srt, src, ty_lo, ty_hi, 0);
+    if k < 0 {
+        return 0;
+    }
+    let nfields: i64 = srt_field_count(srt, k);
+    let fields_addr: i64 = ast_child1(snode);
+    let ntriples: i64 = ast_aux(snode);
+    if ntriples != nfields {
+        return 0;
+    }
+    let new_len: i64 = nfields + 2;
+    let new_stmts: i64 = __mind_alloc(new_len * 8);
+    // (0) `let __sl = __mind_alloc(8 * nfields)`.
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
+    __mind_store_i64(new_stmts + 0, alet);
+    // (1..nfields) per-field stores in canonical order.
+    let okf: i64 = slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, 0);
+    if okf == 0 {
+        return 0;
+    }
+    // (last) trailing ptr ref -> ret vid = alloc vid.
+    let tref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    __mind_store_i64(new_stmts + (nfields + 1) * 8, tref);
+    // Replace the body block's statements (child0 = stmts_addr, aux = stmts_len).
+    __mind_store_i64(body + 24, new_stmts);
+    __mind_store_i64(body + 48, new_len);
+    1
+}
+
+// Module pass: desugar struct-lit ctors in every top-level fn_def.
+pub fn slit_desugar_module(src: i64, src_len: i64, items_addr: i64, items_len: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let _r: i64 = slit_desugar_body(item, src, srt, alo, ahi, slo, shi);
+    }
+    slit_desugar_module(src, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, i + 1)
+}
+
 // Emit the FN_DEF (body) for one function, dispatching on its proven shape. Does
 // NOT emit the module-level scaffold (the caller appends emit_mic3_scaffold(k)).
 // Writes a 1 into ok_cell on a matched shape, 0 (fail-closed) otherwise; on a
@@ -6378,6 +6574,18 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // and the bytes are unchanged from the original fns-only path.
     let srt: i64 = srt_build(src_addr, src_len);
     let n_structs: i64 = srt_count(srt);
+    // STRUCT-LIT CONSTRUCTION DESUGAR: rewrite `T{..}` ctors into the
+    // alloc+stores+ret let-chain BEFORE the strtab pass (so __mind_alloc /
+    // __mind_store_i64 intern in body order) and BEFORE the field-read prefold (so
+    // field-read values inside store args still fold). No-op when those literals are
+    // absent from source or no fn constructs a struct (fails closed downstream).
+    let slit_acell: i64 = __mind_alloc(16);
+    let slit_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, slit_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, slit_scell) == 1 {
+            let _sl: i64 = slit_desugar_module(src_addr, src_len, items_addr, items_len, srt, __mind_load_i64(slit_acell + 0), __mind_load_i64(slit_acell + 8), __mind_load_i64(slit_scell + 0), __mind_load_i64(slit_scell + 8), 0);
+        }
+    }
     // FIELD-READ PRE-RESOLVE: rewrite every resolvable `recv.field` into the
     // equivalent `__mind_load_i64(field_addr)` Call subtree, IN PLACE, BEFORE the
     // strtab pass. Order is load-bearing: the oracle interns "__mind_load_i64" at
@@ -7528,7 +7736,13 @@ pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nid
         return s;
     }
     let n_nodes: i64 = __mind_load_i64(cursor);
-    let root_vid: i64 = tree_resolve_vids(nodes, n_nodes, n_params, vidbuf, 0, n_params);
+    // tree_resolve_vids FILLS vidbuf (side effect) and returns vidbuf[last]. Take
+    // root_vid from the FINAL EXPR's resolved slot instead: they coincide when the
+    // trailing expr builds a node (its root IS the last node), but a BARE let-ref
+    // trailing (e.g. the struct-lit desugar's `__sl` -> alloc ptr) reuses an earlier
+    // slot and creates NO node, so vidbuf[last] would be the wrong (last-store) vid.
+    let _fill: i64 = tree_resolve_vids(nodes, n_nodes, n_params, vidbuf, 0, n_params);
+    let root_vid: i64 = __mind_load_i64(vidbuf + root_slot * 8);
     // body_len = n_params PARAM instrs + every non-param descriptor node (every
     // kind-1 BINOP + kind-2 CONST; kind-0 param leaves emit no body instr — they
     // are mirrored by the de-duplicated PARAM emission). Count non-param slots.
