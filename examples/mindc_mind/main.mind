@@ -6451,6 +6451,172 @@ pub fn selftest_collect_field_strings_byte(src_addr: i64, src_len: i64, i: i64, 
     load_byte(strbuf, lo + j)
 }
 
+// ---------------------------------------------------------------------------
+// SECTION 6c (step 2) — RECURSIVE-EMIT REGISTRY-STRTAB COLLECTION.
+// COLLECTION ONLY — no mic@3 byte-output, no canary touch. Purely additive.
+//
+// After the body-traversal pass (build_module_strtab, step 1) interns the instr
+// strings, the canonical full string table APPENDS the struct_defs registry
+// strings. The Rust oracle (src/ir/compact/v3/emit.rs collect_struct_def_strings,
+// ~600-609) iterates module.struct_defs, which is a BTreeMap<String, Vec<String>>
+// — so structs are visited in NAME-SORTED (alphabetical) order, NOT declaration
+// order, and for each struct its TYPE name is interned first, then each FIELD name
+// in declared order. Verified vs real --emit-mic3 on an out-of-declaration-order
+// pair (declared Zeta, Alpha -> interned Alpha,p,q then Zeta,x,y).
+//
+// SECTION 6b's srt_* registry stores structs in DECLARATION order, so this pass
+// drives a sorted traversal: srt_sorted_kth picks the k-th-smallest struct name,
+// then srt_intern_all-style interning runs in that order. intern_span dedups, so
+// re-interning is idempotent; struct/field names are distinct from instr strings.
+// ---------------------------------------------------------------------------
+
+// Lexicographic comparison of src[alo..ahi) vs src[blo..bhi): -1 if a<b, 0 if
+// equal, 1 if a>b. Byte-wise compare to the shorter length; on a tie the shorter
+// span is smaller. Mirrors Rust String Ord (BTreeMap key ordering) for ASCII
+// identifier names. Both spans index the SAME source buffer.
+pub fn span_cmp(src: i64, alo: i64, ahi: i64, blo: i64, bhi: i64) -> i64 {
+    span_cmp_loop(src, alo, ahi, blo, bhi, 0)
+}
+pub fn span_cmp_loop(src: i64, alo: i64, ahi: i64, blo: i64, bhi: i64, k: i64) -> i64 {
+    if alo + k >= ahi {
+        if blo + k >= bhi {
+            return 0;
+        }
+        return 0 - 1;
+    }
+    if blo + k >= bhi {
+        return 1;
+    }
+    let ca: i64 = load_byte(src, alo + k);
+    let cb: i64 = load_byte(src, blo + k);
+    if ca < cb {
+        return 0 - 1;
+    }
+    if ca > cb {
+        return 1;
+    }
+    span_cmp_loop(src, alo, ahi, blo, bhi, k + 1)
+}
+
+// Count how many struct names in registry `t` are strictly less than struct k's
+// name (lexicographically). This is k's rank in sorted order — a selection-sort
+// position without mutating the registry. (Struct names are distinct, so rank is
+// unique.)
+pub fn srt_rank_of(t: i64, src: i64, k: i64) -> i64 {
+    srt_rank_loop(t, src, k, 0, 0)
+}
+pub fn srt_rank_loop(t: i64, src: i64, k: i64, j: i64, acc: i64) -> i64 {
+    if j >= srt_count(t) {
+        return acc;
+    }
+    if j == k {
+        return srt_rank_loop(t, src, k, j + 1, acc);
+    }
+    if span_cmp(src, srt_name_lo(t, j), srt_name_hi(t, j), srt_name_lo(t, k), srt_name_hi(t, k)) < 0 {
+        return srt_rank_loop(t, src, k, j + 1, acc + 1);
+    }
+    srt_rank_loop(t, src, k, j + 1, acc)
+}
+
+// Return the DECLARATION-order index of the struct whose name has sorted rank
+// `r` (i.e. the r-th-smallest name), or -1 if none. Used to walk the registry in
+// the BTreeMap order the oracle interns.
+pub fn srt_sorted_kth(t: i64, src: i64, r: i64) -> i64 {
+    srt_sorted_kth_loop(t, src, r, 0)
+}
+pub fn srt_sorted_kth_loop(t: i64, src: i64, r: i64, k: i64) -> i64 {
+    if k >= srt_count(t) {
+        return 0 - 1;
+    }
+    if srt_rank_of(t, src, k) == r {
+        return k;
+    }
+    srt_sorted_kth_loop(t, src, r, k + 1)
+}
+
+// Append the registry strings (struct type names + field names) to the strtab in
+// BTreeMap-sorted order, reusing srt_intern_all's per-struct interning (type name
+// then each field). `r` is the current sorted rank. Idempotent / additive.
+pub fn build_module_registry_strtab(strbuf: i64, offs: i64, ccell: i64, src: i64, t: i64, r: i64) -> i64 {
+    if r >= srt_count(t) {
+        return 0;
+    }
+    let k: i64 = srt_sorted_kth(t, src, r);
+    let _ty: i64 = intern_span(strbuf, offs, ccell, src, srt_name_lo(t, k), srt_name_hi(t, k));
+    let _f: i64 = srt_intern_fields(strbuf, offs, ccell, src, t, k, 0);
+    build_module_registry_strtab(strbuf, offs, ccell, src, t, r + 1)
+}
+
+// Run the FULL strtab collection for a field-using module: the step-1 body pass
+// (instr strings) THEN the step-2 registry pass (struct type+field names, sorted),
+// into internally-allocated scratch. Returns a 4-i64 cell:
+//   cell[0]=strbuf, cell[1]=offs, cell[2]=ccell, cell[3]=interned count.
+// This is the recursive-emit equivalent of emit_mic3's pre-pass
+// (collect_strings ; collect_struct_def_strings). COLLECTION ONLY.
+pub fn cfs_full_run(src_addr: i64, src_len: i64) -> i64 {
+    let strbuf: i64 = __mind_alloc(4096);
+    let offs: i64 = __mind_alloc(256 * 8);
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let r0: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let srt: i64 = srt_build(src_addr, src_len);
+    let r1: i64 = build_module_registry_strtab(strbuf, offs, ccell, src_addr, srt, 0);
+    let cell: i64 = __mind_alloc(4 * 8);
+    __mind_store_i64(cell + 0, strbuf);
+    __mind_store_i64(cell + 8, offs);
+    __mind_store_i64(cell + 16, ccell);
+    __mind_store_i64(cell + 24, __mind_load_i64(ccell));
+    cell
+}
+
+// Selftest export: total strings interned by the FULL (instr + registry) pass.
+pub fn selftest_full_strtab_count(src_addr: i64, src_len: i64) -> i64 {
+    let cell: i64 = cfs_full_run(src_addr, src_len);
+    __mind_load_i64(cell + 24)
+}
+
+// Selftest export: byte length of FULL-pass interned string `i`, or -1.
+pub fn selftest_full_strtab_len(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let cell: i64 = cfs_full_run(src_addr, src_len);
+    let n: i64 = __mind_load_i64(cell + 24);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= n {
+        return 0 - 1;
+    }
+    let offs: i64 = __mind_load_i64(cell + 8);
+    __mind_load_i64(offs + (i + 1) * 8) - __mind_load_i64(offs + i * 8)
+}
+
+// Selftest export: the j-th byte of FULL-pass interned string `i`, or -1.
+pub fn selftest_full_strtab_byte(src_addr: i64, src_len: i64, i: i64, j: i64) -> i64 {
+    let cell: i64 = cfs_full_run(src_addr, src_len);
+    let n: i64 = __mind_load_i64(cell + 24);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= n {
+        return 0 - 1;
+    }
+    let strbuf: i64 = __mind_load_i64(cell + 0);
+    let offs: i64 = __mind_load_i64(cell + 8);
+    let lo: i64 = __mind_load_i64(offs + i * 8);
+    let hi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if j < 0 {
+        return 0 - 1;
+    }
+    if j >= hi - lo {
+        return 0 - 1;
+    }
+    load_byte(strbuf, lo + j)
+}
+
 // ===========================================================================
 // SECTION 6b — MULTI-STRUCT REGISTRY TABLE (field-access groundwork, part 1b)
 //
