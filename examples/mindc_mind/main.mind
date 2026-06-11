@@ -5942,6 +5942,228 @@ pub fn seq_body_len(nodes: i64, plan: i64, nplan: i64, i: i64) -> i64 {
     1 + seq_body_len(nodes, plan, nplan, i + 1)
 }
 
+// ===========================================================================
+// FIELD-READ PRE-RESOLVE (call-fold) — rewrite `recv.field` AST nodes into the
+// equivalent `__mind_load_i64(field_addr)` Call subtree BEFORE flatten_ast runs.
+// flatten_ast/flatten_expr_env/count_nonparam_nodes already lower calls (kind
+// 3/4/5) with zero threading, so this is a PURE in-place AST rewrite — no new
+// params on flatten_ast and no dedicated shape-case. Mirrors lower.rs's
+// FieldAccess resolved arm: idx==0 -> addr is the receiver vid directly; idx>0
+// -> ConstI64(idx*8) + BinOp Add(recv, off); then Call("__mind_load_i64",[addr]).
+// Fail-closed: an unresolvable field read is left as ast_field (flatten rejects
+// it), so the module simply fails to emit — never partial/wrong bytes.
+// ===========================================================================
+
+// Match the 15-byte literal "__mind_load_i64" in `src` starting at offset `at`.
+pub fn load_name_matches_at(src: i64, at: i64, j: i64) -> i64 {
+    if j >= 15 {
+        return 1;
+    }
+    let want: i64 = load_i64_name_byte(j);
+    if load_byte(src, at + j) != want {
+        return 0;
+    }
+    load_name_matches_at(src, at + 0, j + 1)
+}
+
+// Scan `src[0..len)` for the literal "__mind_load_i64"; store [lo,hi) of the
+// first occurrence into the 2-i64 cell and return 1, else 0. Used so the
+// pre-fold's synthetic callee leaf carries a REAL source span (whose interned
+// bytes equal the oracle's "__mind_load_i64" string-table entry).
+pub fn find_load_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
+    if i + 15 > len {
+        return 0;
+    }
+    if load_name_matches_at(src, i, 0) == 1 {
+        __mind_store_i64(cell + 0, i);
+        __mind_store_i64(cell + 8, i + 15);
+        return 1;
+    }
+    find_load_name_span(src, len, i + 1, cell)
+}
+
+// Build a synthetic int-literal leaf carrying `value` DIRECTLY (no source decimal
+// to parse): child0(+24)=value, child1(+32)=1 SENTINEL (flatten reads child0 when
+// child1==1; real source int-lits have child1==0). Used for the idx*8 field offset.
+pub fn mk_syn_intlit(value: i64) -> i64 {
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_int_lit());
+    __mind_store_i64(n + 8, 0);
+    __mind_store_i64(n + 16, 0);
+    __mind_store_i64(n + 24, value);
+    __mind_store_i64(n + 32, 1);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, 0);
+    n
+}
+
+// Resolve `recv.field` (recv an ast_ident param of struct type) to the field
+// index. `fn_node` supplies the params; `srt` the struct registry. Returns the
+// 0-based field index, or -1 on any failure (unknown param / non-struct type /
+// unknown field) — fail-closed.
+pub fn field_recv_field_idx(fn_node: i64, src: i64, srt: i64, recv_lo: i64, recv_hi: i64, fld_lo: i64, fld_hi: i64) -> i64 {
+    let params_addr: i64 = ast_child1(fn_node);
+    let n_params: i64 = ast_aux(fn_node) / 2;
+    let pidx: i64 = resolve_param(params_addr, n_params, src, recv_lo, recv_hi);
+    if pidx < 0 {
+        return 0 - 1;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + pidx * 8);
+    let ty: i64 = ast_child1(pnode);
+    let k: i64 = srt_find_by_name(srt, src, ast_span_lo(ty), ast_span_hi(ty), 0);
+    if k < 0 {
+        return 0 - 1;
+    }
+    srt_field_index(srt, k, src, fld_lo, fld_hi, 0)
+}
+
+// Build the `__mind_load_i64(field_addr)` Call subtree for `recv.field` at field
+// index `fidx`. idx==0 -> addr is the receiver node directly; idx>0 -> Add(recv,
+// const idx*8). callee = ast_ident leaf spanning the source "__mind_load_i64".
+pub fn field_build_load_call(recv_node: i64, fidx: i64, load_lo: i64, load_hi: i64) -> i64 {
+    let addr: i64 = if fidx == 0 {
+        recv_node
+    } else {
+        ast_new_binop(0, 0, recv_node, mk_syn_intlit(fidx * 8), op_add())
+    };
+    let callee: i64 = ast_new_leaf(ast_ident(), load_lo, load_hi);
+    let args: i64 = __mind_alloc(8);
+    __mind_store_i64(args + 0, addr);
+    ast_new_call(0, 0, callee, args, 1)
+}
+
+// Recursively rewrite every resolvable `recv.field` node under `node` into the
+// load-call subtree, in place. Returns the (possibly new) node to store back.
+// ast_field with an ast_ident receiver that resolves -> the load call; otherwise
+// the node is returned unchanged (fail-closed). Recurses through paren / binop /
+// neg / not / call args, storing rewritten children back into their slots.
+pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: i64, load_hi: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_field() {
+        let recv: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 24, recv);
+        if ast_kind(recv) != ast_ident() {
+            return node;
+        }
+        let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(recv), ast_span_hi(recv), ast_child1(node), ast_child2(node));
+        if fidx < 0 {
+            return node;
+        }
+        return field_build_load_call(recv, fidx, load_lo, load_hi);
+    }
+    if k == ast_paren() {
+        let inner: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 24, inner);
+        return node;
+    }
+    if k == ast_neg() {
+        let inner: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 24, inner);
+        return node;
+    }
+    if k == ast_not() {
+        let inner: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 24, inner);
+        return node;
+    }
+    if k == ast_binop() {
+        let l: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 24, l);
+        let r: i64 = field_rewrite_expr(ast_child1(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 32, r);
+        return node;
+    }
+    if k == ast_call() {
+        let _a: i64 = field_rewrite_args(ast_child1(node), ast_aux(node), 0, src, srt, fn_node, load_lo, load_hi);
+        return node;
+    }
+    node
+}
+
+// Rewrite each arg of a call's args vec in place.
+pub fn field_rewrite_args(args_addr: i64, args_len: i64, i: i64, src: i64, srt: i64, fn_node: i64, load_lo: i64, load_hi: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args_addr + i * 8);
+    let na: i64 = field_rewrite_expr(arg, src, srt, fn_node, load_lo, load_hi);
+    __mind_store_i64(args_addr + i * 8, na);
+    field_rewrite_args(args_addr, args_len, i + 1, src, srt, fn_node, load_lo, load_hi)
+}
+
+// Rewrite each statement of a fn body block in place: let -> rewrite init
+// (child2/+40); return -> rewrite value (child0/+24); if -> cond + then/else
+// blocks; block -> recurse its stmts; else -> rewrite the stmt expr in place.
+pub fn field_rewrite_stmts(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, srt: i64, fn_node: i64, load_lo: i64, load_hi: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let init: i64 = field_rewrite_expr(ast_child2(stmt), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(stmt + 40, init);
+    } else {
+        if k == ast_return() {
+            let v: i64 = field_rewrite_expr(ast_child0(stmt), src, srt, fn_node, load_lo, load_hi);
+            __mind_store_i64(stmt + 24, v);
+        } else {
+            if k == ast_if() {
+                let c: i64 = field_rewrite_expr(ast_child0(stmt), src, srt, fn_node, load_lo, load_hi);
+                __mind_store_i64(stmt + 24, c);
+                let then_blk: i64 = ast_child1(stmt);
+                if ast_kind(then_blk) == ast_block() {
+                    let _t: i64 = field_rewrite_stmts(ast_child0(then_blk), ast_aux(then_blk), 0, src, srt, fn_node, load_lo, load_hi);
+                }
+                let else_blk: i64 = ast_child2(stmt);
+                if else_blk != 0 {
+                    if ast_kind(else_blk) == ast_block() {
+                        let _e: i64 = field_rewrite_stmts(ast_child0(else_blk), ast_aux(else_blk), 0, src, srt, fn_node, load_lo, load_hi);
+                    }
+                }
+            } else {
+                let e: i64 = field_rewrite_expr(stmt, src, srt, fn_node, load_lo, load_hi);
+                __mind_store_i64(stmts_addr + i * 8, e);
+            }
+        }
+    }
+    field_rewrite_stmts(stmts_addr, stmts_len, i + 1, src, srt, fn_node, load_lo, load_hi)
+}
+
+// Pre-fold one fn's body. Guard: at least one struct in the registry AND the
+// literal "__mind_load_i64" present in source (else no fold can resolve and the
+// callee span would be invalid). Rewrites the body block's statements in place.
+pub fn field_prefold_body(src: i64, src_len: i64, fn_node: i64, srt: i64) -> i64 {
+    if srt_count(srt) < 1 {
+        return 0;
+    }
+    let cell: i64 = __mind_alloc(16);
+    if find_load_name_span(src, src_len, 0, cell) == 0 {
+        return 0;
+    }
+    let load_lo: i64 = __mind_load_i64(cell + 0);
+    let load_hi: i64 = __mind_load_i64(cell + 8);
+    let body: i64 = ast_child2(fn_node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    field_rewrite_stmts(stmts_addr, stmts_len, 0, src, srt, fn_node, load_lo, load_hi)
+}
+
+// Iterate every top-level fn_def, pre-folding its body. Other items are skipped.
+pub fn field_prefold_module(src: i64, src_len: i64, items_addr: i64, items_len: i64, i: i64, srt: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let _r: i64 = field_prefold_body(src, src_len, item, srt);
+    }
+    field_prefold_module(src, src_len, items_addr, items_len, i + 1, srt)
+}
+
 // Emit the FN_DEF (body) for one function, dispatching on its proven shape. Does
 // NOT emit the module-level scaffold (the caller appends emit_mic3_scaffold(k)).
 // Writes a 1 into ok_cell on a matched shape, 0 (fail-closed) otherwise; on a
@@ -6156,6 +6378,12 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // and the bytes are unchanged from the original fns-only path.
     let srt: i64 = srt_build(src_addr, src_len);
     let n_structs: i64 = srt_count(srt);
+    // FIELD-READ PRE-RESOLVE: rewrite every resolvable `recv.field` into the
+    // equivalent `__mind_load_i64(field_addr)` Call subtree, IN PLACE, BEFORE the
+    // strtab pass. Order is load-bearing: the oracle interns "__mind_load_i64" at
+    // the field-read's first-seen position, so the strtab must walk the rewritten
+    // calls (not ast_field) to match the oracle's first-seen string order.
+    let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
@@ -6650,7 +6878,14 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         // Descriptor kind=2, record[1]=raw literal (emit_mic3_const_i64 zigzag-
         // encodes it at emission, matching the oracle's CONST lit*2). A const leaf
         // gets its own post-order slot (vid allocated interleaved with binops).
-        let lit: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        // SYNTHETIC int-lit (field-read offset idx*8): child1==1 sentinel carries the
+        // value DIRECT in child0 (no source decimal); real source int-lits have
+        // child1==0 so this never fires for them.
+        let lit: i64 = if ast_child1(node) == 1 {
+            ast_child0(node)
+        } else {
+            parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0)
+        };
         let slot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 2);
         __mind_store_i64(nodes + slot * 32 + 8, lit);
@@ -7152,7 +7387,13 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         return lslot;
     }
     if k == ast_int_lit() {
-        let lit: i64 = parse_int_span(src, ast_span_lo(node), ast_span_hi(node), 0);
+        // SYNTHETIC int-lit (field-read offset): child1==1 sentinel -> value in
+        // child0 direct; real source int-lits have child1==0.
+        let lit: i64 = if ast_child1(node) == 1 {
+            ast_child0(node)
+        } else {
+            parse_int_span(src, ast_span_lo(node), ast_span_hi(node), 0)
+        };
         let slot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 2);
         __mind_store_i64(nodes + slot * 32 + 8, lit);
