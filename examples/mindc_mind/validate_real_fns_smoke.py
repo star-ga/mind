@@ -145,6 +145,16 @@ CASES = [
     # if-emit (case (e)) reproduces it byte-exact vs --emit-mic3. Zero new emit.
     ("match 2-arm desugar to if", "green",
      "pub fn pick(c: i64) -> i64 { match c { 0 => 10, _ => 20 } }"),
+    # call-in-let-chain — main.mind's canonical idiom (push_token / vec_push). Each
+    # let-init is a CALL and a let-ref flows into the next call's args. The let-chain
+    # flattener now routes inits + trailing expr through the general flatten_expr_env
+    # call-fold (callee-leaf kind=5 / arg-cons kind=4 / call node kind=3), carrying
+    # the let-env so `a` resolves to g(toks)'s vid — byte-exact vs --emit-mic3.
+    ("call-in-let-chain (let-ref into call)", "green",
+     "pub fn f(toks: i64, k: i64) -> i64 { let a: i64 = g(toks); "
+     "let b: i64 = h(a, k); b }\n"
+     "fn g(x: i64) -> i64 { x }\n"
+     "fn h(x: i64, y: i64) -> i64 { x + y }"),
 ]
 
 
