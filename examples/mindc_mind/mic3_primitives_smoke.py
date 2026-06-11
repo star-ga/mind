@@ -1468,6 +1468,31 @@ def main() -> int:
             "010301040000",
             "single-struct subset, idx0, 71B",
         ),
+        (
+            # cutover fold step 3: structs declared OUT of alphabetical order
+            # (Zeta then Alpha). The canonical strtab + struct_defs registry intern
+            # in BTreeMap-sorted (name) order, so Alpha's strings precede Zeta's and
+            # the registry walks sorted with sorted-rank string indices. Single
+            # field each (offset idx0).
+            "struct Zeta { x: i64 }  struct Alpha { p: i64 }  "
+            "pub fn g(a: Alpha) -> i64 { a.p }",
+            "4d4943330207016701610f5f5f6d696e645f6c6f61645f69363405416c706861"
+            "0170045a6574610178030007010000130001010013011500010100010100021800"
+            "010016010201000102001302020301040501060000",
+            "OUT-of-order Zeta,Alpha sorted registry, idx0, 86B",
+        ),
+        (
+            # cutover fold step 3 (multi-FIELD sorted strbases): Beta then Alpha,
+            # two fields each. The sorted-rank field string indices must skip past
+            # Alpha's two fields when computing Beta's strbase; receiver is the 1st
+            # declared (Beta), field n = idx1 (offset path).
+            "struct Beta { m: i64, n: i64 }  struct Alpha { p: i64, q: i64 }  "
+            "pub fn h(b: Beta) -> i64 { b.n }",
+            "4d4943330209016801620f5f5f6d696e645f6c6f61645f69363405416c706861"
+            "017001710442657461016d016e030007010000130001010013011500010100010300"
+            "04180001000101100402000001160302010201020013020203020405060207080000",
+            "OUT-of-order Beta,Alpha 2-field sorted strbases, idx1, 100B",
+        ),
     ):
         ms_srcb = ms_src.encode()
         ms_srcc = ctypes.create_string_buffer(ms_srcb, len(ms_srcb))

@@ -3061,7 +3061,9 @@ pub fn emit_mic3_field_module_multi(s: EmitState, src: i64, src_len: i64, strbuf
     let i_fn: i64 = intern_span(strbuf, offs, ccell, src, fn_lo, fn_hi);
     let i_recv: i64 = intern_span(strbuf, offs, ccell, src, recv_lo, recv_hi);
     let i_load: i64 = intern_load_i64_literal(strbuf, offs, ccell);
-    let _all: i64 = srt_intern_all(strbuf, offs, ccell, src, srt, 0);
+    // Registry strings intern in BTreeMap-sorted (struct-name) order to match the
+    // canonical full string table (cutover fold step 3).
+    let _all: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src, srt, 0);
     let strc: i64 = srt_total_strings(srt);
     let body_len: i64 = ffa_body_len(fidx);
     let ret_vid: i64 = ffa_ret_vid(fidx);
@@ -3087,9 +3089,9 @@ pub fn emit_mic3_field_module_multi(s: EmitState, src: i64, src_len: i64, strbuf
     // The fn's own module-level placeholder pair (vid N).
     let s17: EmitState = emit_mic3_const_i64(s16, n_structs, 0);
     let s18: EmitState = emit_mic3_output(s17, n_structs);
-    // Registry: all N structs.
+    // Registry: all N structs in BTreeMap-sorted order, sorted-rank strbases.
     let s19: EmitState = emit_uleb128(s18, n_structs);
-    let s20: EmitState = srt_emit_registry(s19, srt, 0);
+    let s20: EmitState = srt_emit_registry_sorted(s19, srt, src, 0);
     // const_array_defs = 0, repr_c_structs = 0.
     let s21: EmitState = emit_uleb128(s20, 0);
     emit_uleb128(s21, 0)
@@ -6810,6 +6812,63 @@ pub fn srt_field_strbase(t: i64, k: i64) -> i64 {
 // String index of struct k's TYPE name.
 pub fn srt_type_strbase(t: i64, k: i64) -> i64 {
     3 + k + srt_cumulative_fields(t, k, 0)
+}
+
+// ---- SORTED-ORDER strbase math (cutover fold step 3) ----
+// The canonical full string table appends registry strings in BTreeMap-sorted
+// (struct-name) order, so a struct's string indices are keyed on its SORTED RANK,
+// not its declaration index. These mirror srt_cumulative_fields / *_strbase but
+// walk the first `r` SORTED-rank structs. cumulative_fields_sorted(r) sums the
+// field counts of the r smallest-named structs; type_strbase_sorted(r) =
+// 3 + r + that; field_strbase_sorted(r) = one past the type name.
+
+// Sum of field counts across the structs of sorted rank 0..r (exclusive).
+pub fn srt_cumulative_fields_sorted(t: i64, src: i64, r: i64, acc: i64) -> i64 {
+    if r <= 0 {
+        return acc;
+    }
+    let kp: i64 = srt_sorted_kth(t, src, r - 1);
+    srt_cumulative_fields_sorted(t, src, r - 1, acc + srt_field_count(t, kp))
+}
+
+// String index of the TYPE name of the struct at sorted rank r.
+pub fn srt_type_strbase_sorted(t: i64, src: i64, r: i64) -> i64 {
+    3 + r + srt_cumulative_fields_sorted(t, src, r, 0)
+}
+
+// String index of the FIRST field of the struct at sorted rank r.
+pub fn srt_field_strbase_sorted(t: i64, src: i64, r: i64) -> i64 {
+    srt_type_strbase_sorted(t, src, r) + 1
+}
+
+// Intern every struct's strings in BTreeMap-sorted (name) order: for each sorted
+// rank r, intern the type name then each field in declared order. Mirrors the
+// Rust oracle's collect_struct_def_strings BTreeMap traversal (step 2's
+// build_module_registry_strtab) but into the byte-emitter's own strbuf, so the
+// emitted string indices match the sorted strtab. intern_span dedups.
+pub fn srt_intern_all_sorted(strbuf: i64, offs: i64, ccell: i64, src: i64, t: i64, r: i64) -> i64 {
+    if r >= srt_count(t) {
+        return 0;
+    }
+    let k: i64 = srt_sorted_kth(t, src, r);
+    let _ty: i64 = intern_span(strbuf, offs, ccell, src, srt_name_lo(t, k), srt_name_hi(t, k));
+    let _f: i64 = srt_intern_fields(strbuf, offs, ccell, src, t, k, 0);
+    srt_intern_all_sorted(strbuf, offs, ccell, src, t, r + 1)
+}
+
+// Emit the struct_defs registry for ALL N structs in BTreeMap-sorted (name) order:
+// each entry is uleb(type_str_idx) || uleb(field_count) || field string idxs, the
+// idxs computed against SORTED rank. Mirrors srt_emit_registry but sorted.
+pub fn srt_emit_registry_sorted(s: EmitState, t: i64, src: i64, r: i64) -> EmitState {
+    if r >= srt_count(t) {
+        return s;
+    }
+    let k: i64 = srt_sorted_kth(t, src, r);
+    let s1: EmitState = emit_uleb128(s, srt_type_strbase_sorted(t, src, r));
+    let fc: i64 = srt_field_count(t, k);
+    let s2: EmitState = emit_uleb128(s1, fc);
+    let s3: EmitState = ffa_emit_field_idxs(s2, srt_field_strbase_sorted(t, src, r), fc, 0);
+    srt_emit_registry_sorted(s3, t, src, r + 1)
 }
 
 // ===========================================================================
