@@ -3452,6 +3452,48 @@ pub fn slit_value_count(value_node: i64, src: i64, params_addr: i64, n_params: i
     count_nonparam_nodes(value_node, src, params_addr, n_params)
 }
 
+// CONTAINED field-access value support (Step B2): a field VALUE of the form
+// `recv.field` where `recv` is a PARAM of the SAME struct being constructed (so
+// `sft` gives the field offset). Returns the accessed field's INDEX in `sft`
+// (offset = idx*8) when the shape qualifies, else -1. The qualification:
+//   * value_node is ast_field;
+//   * its receiver (child0) is an ident that resolves to a param (resolve_param);
+//   * its field name (child1/child2 span) resolves in `sft` (ffa_field_index).
+// This special-cases ast_field BEFORE the general flatten_ast path (which rejects
+// ast_field), so the struct-type context (`sft`) need not be threaded through the
+// general emitter's many call-sites.
+pub fn slit_value_fa_idx(value_node: i64, src: i64, params_addr: i64, n_params: i64, sft: i64) -> i64 {
+    if ast_kind(value_node) != ast_field() {
+        return 0 - 1;
+    }
+    let recv: i64 = ast_child0(value_node);
+    if ast_kind(recv) != ast_ident() {
+        return 0 - 1;
+    }
+    let pv: i64 = resolve_param(params_addr, n_params, src, ast_span_lo(recv), ast_span_hi(recv));
+    if pv < 0 {
+        return 0 - 1;
+    }
+    ffa_field_index(sft, src, ast_child1(value_node), ast_child2(value_node), 0)
+}
+
+// Non-param instr count of a field VALUE, unifying the general expr path with the
+// CONTAINED field-access path. Field-access values do NOT go through the general
+// tree emitter (count_nonparam_nodes returns -1 for ast_field); instead a
+// field-READ lowers to a single CALL load when the field offset is 0, or
+// CONST(off) + Add(base,off) + CALL load (3 instrs) when offset>0 — mirroring
+// ffa_emit_body. Any other shape falls through to count_nonparam_nodes.
+pub fn slit_value_instr_count(value_node: i64, src: i64, params_addr: i64, n_params: i64, sft: i64) -> i64 {
+    let fa: i64 = slit_value_fa_idx(value_node, src, params_addr, n_params, sft);
+    if fa >= 0 {
+        if fa == 0 {
+            return 1;
+        }
+        return 3;
+    }
+    count_nonparam_nodes(value_node, src, params_addr, n_params)
+}
+
 // Is the value-node an int-literal (1) or the param ident (0)? Fail-closed
 // callers already guarantee one of the two. ast_int_lit -> 1, else 0.
 pub fn slit_value_is_lit(node: i64) -> i64 {
@@ -3479,6 +3521,41 @@ pub fn slit_param_vid_loop(ptt: i64, src: i64, lo: i64, hi: i64, k: i64) -> i64 
     slit_param_vid_loop(ptt, src, lo, hi, k + 1)
 }
 
+// The field VALUE's root vid (the operand the store consumes). For a CONTAINED
+// field-access (fa>=0): offset 0 -> the lone load CALL at `vid`; offset>0 ->
+// CONST(vid)+Add(vid+1)+load(vid+2), so the load dst is `vid+2`. For any other
+// value (fa<0): flatten it through the general tree emitter, which returns its
+// root vid and populates `nodes`/`cursor` for the subsequent slit_emit_value.
+pub fn slit_value_val_vid(value_node: i64, src: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, sft: i64, fa: i64, vid: i64) -> i64 {
+    if fa >= 0 {
+        if fa == 0 {
+            return vid;
+        }
+        return vid + 2;
+    }
+    flatten_branch(value_node, src, params_addr, n_params, nodes, cursor, vidbuf, vid)
+}
+
+// Emit the field VALUE's body instrs. CONTAINED field-access (fa>=0) lowers a
+// field-READ: load(base) directly for offset 0, else CONST(off)+Add(base,off)+
+// load(addr) — `base` is the receiver param's vid, `i_load` the interned
+// `__mind_load_i64` string index. Any other value (fa<0) emits the general tree
+// body already flattened into `nodes` by slit_value_val_vid (n_nodes via cursor).
+pub fn slit_emit_value(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, sft: i64, i_load: i64, fa: i64, value_node: i64, vid: i64) -> EmitState {
+    if fa >= 0 {
+        let recv: i64 = ast_child0(value_node);
+        let base_vid: i64 = resolve_param(params_addr, n_params, src, ast_span_lo(recv), ast_span_hi(recv));
+        if fa == 0 {
+            return emit_mic3_call1(s, vid, i_load, base_vid);
+        }
+        let sa: EmitState = emit_mic3_const_i64(s, vid, fa * 8);
+        let sb: EmitState = emit_mic3_binop(sa, vid + 1, 0, base_vid, vid);
+        return emit_mic3_call1(sb, vid + 2, i_load, vid + 1);
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, strc, 0)
+}
+
 // Emit one field's store. `ptr_vid` is the alloc base. `vid` is the next free
 // vid. The field VALUE is an ARBITRARY expression, lowered via the GENERAL tree
 // emitter (flatten_branch resolves its slot vids from `vid`, returning the root
@@ -3486,14 +3563,17 @@ pub fn slit_param_vid_loop(ptt: i64, src: i64, lo: i64, hi: i64, k: i64) -> i64 
 // FIRST and consume vids, THEN the address (direct ptr for idx 0; CONST(idx*8)+Add
 // for idx>0) threads from the vid past the value, THEN the store CALL — matching
 // the --emit-mic3 oracle's per-field interleaving (Bound by MIND-CONSTITUTION §I).
-pub fn slit_emit_field(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, ptr_vid: i64, i_store: i64, value_node: i64, idx: i64, vid: i64) -> EmitState {
-    // value: flatten the field-value expr into the scratch descriptor array,
-    // resolve its slot vids from `vid`, then emit its non-param body instrs. The
-    // root vid is the store's value operand.
-    let val_vid: i64 = flatten_branch(value_node, src, params_addr, n_params, nodes, cursor, vidbuf, vid);
-    let vcount: i64 = count_nonparam_nodes(value_node, src, params_addr, n_params);
-    let n_nodes: i64 = __mind_load_i64(cursor);
-    let s1: EmitState = emit_mic3_tree_body(s, nodes, n_nodes, vidbuf, src, strbuf, offs, strc, 0);
+pub fn slit_emit_field(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, sft: i64, i_load: i64, ptr_vid: i64, i_store: i64, value_node: i64, idx: i64, vid: i64) -> EmitState {
+    // value: lower the field-value expression to its result vid + its body instrs.
+    // CONTAINED field-access (recv.field, recv a param of THIS struct) is special-
+    // cased here (the general tree emitter rejects ast_field): it emits a field-READ
+    // load (CALL load(base) for offset 0; CONST+Add+CALL load for offset>0), with
+    // the receiver param vid as the base. Any other value goes through the general
+    // tree emitter (flatten_branch + emit_mic3_tree_body).
+    let fa: i64 = slit_value_fa_idx(value_node, src, params_addr, n_params, sft);
+    let val_vid: i64 = slit_value_val_vid(value_node, src, params_addr, n_params, nodes, cursor, vidbuf, sft, fa, vid);
+    let vcount: i64 = slit_value_instr_count(value_node, src, params_addr, n_params, sft);
+    let s1: EmitState = slit_emit_value(s, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, sft, i_load, fa, value_node, vid);
     let vid1: i64 = vid + vcount;
     // address
     let addr_vid: i64 = if idx == 0 {
@@ -3523,17 +3603,17 @@ pub fn slit_emit_field(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64
 // Recursively emit every field's store in DECLARED order, threading the running
 // vid. `sft` gives the declared field names/order; `fields_addr`/`ntriples` the
 // source-order initializer triples. Returns the EmitState after all stores.
-pub fn slit_emit_fields(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, sft: i64, fields_addr: i64, ntriples: i64, ptr_vid: i64, i_store: i64, k: i64, vid: i64) -> EmitState {
+pub fn slit_emit_fields(s: EmitState, src: i64, strbuf: i64, offs: i64, strc: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, sft: i64, i_load: i64, fields_addr: i64, ntriples: i64, ptr_vid: i64, i_store: i64, k: i64, vid: i64) -> EmitState {
     if k >= sft_table_count(sft) {
         return s;
     }
     let dlo: i64 = sft_table_name_lo(sft, k);
     let dhi: i64 = sft_table_name_hi(sft, k);
     let vnode: i64 = slit_value_for(fields_addr, ntriples, src, dlo, dhi, 0);
-    let vcount: i64 = count_nonparam_nodes(vnode, src, params_addr, n_params);
-    let s1: EmitState = slit_emit_field(s, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, ptr_vid, i_store, vnode, k, vid);
+    let vcount: i64 = slit_value_instr_count(vnode, src, params_addr, n_params, sft);
+    let s1: EmitState = slit_emit_field(s, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, sft, i_load, ptr_vid, i_store, vnode, k, vid);
     let next_vid: i64 = vid + slit_field_instr_count(vcount, k);
-    slit_emit_fields(s1, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, sft, fields_addr, ntriples, ptr_vid, i_store, k + 1, next_vid)
+    slit_emit_fields(s1, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, sft, i_load, fields_addr, ntriples, ptr_vid, i_store, k + 1, next_vid)
 }
 
 // Total FN_DEF body length contributed by the per-field stores. The fixed
@@ -3546,8 +3626,24 @@ pub fn slit_body_len(src: i64, params_addr: i64, n_params: i64, sft: i64, fields
     let dlo: i64 = sft_table_name_lo(sft, k);
     let dhi: i64 = sft_table_name_hi(sft, k);
     let vnode: i64 = slit_value_for(fields_addr, ntriples, src, dlo, dhi, 0);
-    let vcount: i64 = count_nonparam_nodes(vnode, src, params_addr, n_params);
+    let vcount: i64 = slit_value_instr_count(vnode, src, params_addr, n_params, sft);
     slit_body_len(src, params_addr, n_params, sft, fields_addr, ntriples, k + 1, acc + slit_field_instr_count(vcount, k))
+}
+
+// Does ANY declared field's value lower to a field-READ (CONTAINED ast_field)?
+// If so the body emits `__mind_load_i64` and its name must be interned (first-seen,
+// between __mind_alloc and __mind_store_i64). Returns 1 if any, else 0.
+pub fn slit_any_field_access(src: i64, params_addr: i64, n_params: i64, sft: i64, fields_addr: i64, ntriples: i64, k: i64) -> i64 {
+    if k >= sft_table_count(sft) {
+        return 0;
+    }
+    let dlo: i64 = sft_table_name_lo(sft, k);
+    let dhi: i64 = sft_table_name_hi(sft, k);
+    let vnode: i64 = slit_value_for(fields_addr, ntriples, src, dlo, dhi, 0);
+    if slit_value_fa_idx(vnode, src, params_addr, n_params, sft) >= 0 {
+        return 1;
+    }
+    slit_any_field_access(src, params_addr, n_params, sft, fields_addr, ntriples, k + 1)
 }
 
 // AST-driven mic@3 module for a single-struct, single-param fn returning ONE
@@ -3609,6 +3705,11 @@ pub fn emit_mic3_module_structlit_from_ast(s: EmitState, src: i64, src_len: i64,
     let i_fn: i64 = intern_span(strbuf, offs, ccell, src, fn_lo, fn_hi);
     let _ip: i64 = slit_intern_params(strbuf, offs, ccell, src, ptt, 0);
     let i_alloc: i64 = intern_alloc_literal(strbuf, offs, ccell);
+    let i_load: i64 = if slit_any_field_access(src, params_addr, n_params, sft, fields_addr, ntriples, 0) == 1 {
+        intern_load_i64_name(strbuf, offs, ccell)
+    } else {
+        0 - 1
+    };
     let i_store: i64 = intern_store_i64_literal(strbuf, offs, ccell);
     let i_ty: i64 = intern_span(strbuf, offs, ccell, src, ty_lo, ty_hi);
     let _f: i64 = ffa_intern_fields(strbuf, offs, ccell, src, sft, 0);
@@ -3649,7 +3750,7 @@ pub fn emit_mic3_module_structlit_from_ast(s: EmitState, src: i64, src_len: i64,
     let s20: EmitState = emit_mic3_call1(s19, ptr_vid, i_alloc, n_params + 2);
     // Per-field stores (declared order), vids start just past the alloc ptr. Field
     // VALUES are lowered by the general tree emitter (arbitrary expressions).
-    let s21: EmitState = slit_emit_fields(s20, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, sft, fields_addr, ntriples, ptr_vid, i_store, 0, ptr_vid + 1);
+    let s21: EmitState = slit_emit_fields(s20, src, strbuf, offs, strc, params_addr, n_params, nodes, cursor, vidbuf, sft, i_load, fields_addr, ntriples, ptr_vid, i_store, 0, ptr_vid + 1);
     let s22: EmitState = emit_mic3_const_i64(s21, 1, 0);
     let s23: EmitState = emit_mic3_output(s22, 1);
     // Registry: one struct (ty=[field0..fieldN-1]). Each field's string index is
@@ -3708,7 +3809,7 @@ pub fn slit_fields_ok(src: i64, params_addr: i64, n_params: i64, sft: i64, field
     if vnode == 0 {
         return 0;
     }
-    if count_nonparam_nodes(vnode, src, params_addr, n_params) < 0 {
+    if slit_value_instr_count(vnode, src, params_addr, n_params, sft) < 0 {
         return 0;
     }
     slit_fields_ok(src, params_addr, n_params, sft, fields_addr, ntriples, k + 1)
