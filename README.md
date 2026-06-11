@@ -402,7 +402,7 @@ license (see the [Roadmap](docs/roadmap.md) for the determinism work).
 | [Mind-Ray](https://github.com/star-ga/mind-ray) | GPU path tracer | 10-50x faster than Mitsuba 3, Cycles, Falcor |
 | [NikolaChess](https://github.com/star-ga/NikolaChess) | NNUE chess engine | GPU-accelerated search, +600 Elo with NNUE |
 | [Fractal Voyager](https://github.com/star-ga/fractal-voyager) | Real-time fractal explorer | WebGPU/WebGL2, audio-reactive, infinite zoom |
-| [mind-mem](https://github.com/star-ga/mind-mem) | Persistent memory for AI coding agents | 84 MCP tools, hybrid BM25+vector+RRF, governed memory (propose → review → apply) |
+| [mind-mem](https://github.com/star-ga/mind-mem) | Persistent memory for AI coding agents | 83 MCP tools, hybrid BM25+vector+RRF, governed memory (propose → review → apply) |
 | [Swarm Brain](https://mindlang.dev/demo/swarm-brain/) | Cognitive runtime demo (live, WebGPU) | 5-invariant cognitive cycle verified every frame at 60 fps |
 
 ## Roadmap
