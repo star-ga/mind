@@ -5651,6 +5651,297 @@ pub fn emit_mic3_module_fndef_ifstmt(s: EmitState, src: i64, fn_node: i64, nidx:
     s9
 }
 
+// ===========================================================================
+// GENERAL statement sequencing — lets + if-early-returns in arbitrary order
+// ===========================================================================
+//
+// Generalises cases (f) [let-chain] and (g) [single if-early-return then trail]
+// into ONE recursive statement walker: a body is an arbitrary sequence of
+//   `let NAME: TYPE = INIT`           (binds NAME -> its init's root descriptor slot)
+//   `if COND { return E; }`           (else-less if; then-block ends in `return E`)
+// then a trailing value expression (the FN_DEF result). Decoded byte-for-byte from
+// --emit-mic3 on `fn foo(a,b){ let t=a+b; if t==0 {return 0;} let u=t*2; u }`:
+//   PARAM%0 PARAM%1
+//   BINOP%2 = %0 add %1                 (let t)
+//   OP_IF{ cond: CONST%3=0, BINOP%4=%2 eq %3 ;
+//          then: CONST%5=0(synth), CONST%6=0(ret literal), RETURN%6 ; then_res %6 ;
+//          else: CONST%7=0(synth) ; else_res %7 ; dst %8 ; bindings0 merges0 }
+//   CONST%9=2 BINOP%10=%2 mul %9        (let u)  -> ret_vid %10 (= trailing `u`)
+// All let-inits, every if cond/ret expr, and the trailing flatten into ONE shared
+// descriptor array carrying the let-env, so let-refs in a later cond / init / the
+// trailing reuse the earlier slot's vid with no new node. Vids are assigned in
+// SOURCE order per segment (a let segment, then the OP_IF block which injects the
+// synth/dst vids, then the next segment), threading a running base — matching the
+// Rust SSA numbering exactly. ISOLATED from the canary (flatten_ast still rejects
+// ast_if/ast_let at expression level, so the fixed point stays byte-identical;
+// Bound by MIND-CONSTITUTION §I — additive, canary untouched).
+
+// Count the body-instr (non-structural) descriptor slots in nodes[lo..hi). Mirrors
+// count_descriptor_nonparam but over a half-open sub-range, used to size per-segment
+// vid blocks and the cond/ret OP_IF lengths.
+pub fn count_descriptor_nonparam_range(nodes: i64, lo: i64, hi: i64) -> i64 {
+    if lo >= hi {
+        return 0;
+    }
+    let kind: i64 = __mind_load_i64(nodes + lo * 32);
+    if kind == 0 {
+        return count_descriptor_nonparam_range(nodes, lo + 1, hi);
+    }
+    if kind == 4 {
+        return count_descriptor_nonparam_range(nodes, lo + 1, hi);
+    }
+    if kind == 5 {
+        return count_descriptor_nonparam_range(nodes, lo + 1, hi);
+    }
+    1 + count_descriptor_nonparam_range(nodes, lo + 1, hi)
+}
+
+// Resolve vids for nodes[lo..hi) starting the non-param counter at `base`. Reuses
+// tree_resolve_vids_base's logic but bounded to a sub-range (so a let segment, the
+// trailing, or an OP_IF cond/ret tree each resolve against a private base while
+// referring to already-resolved earlier slots). Returns the next free vid.
+pub fn seq_resolve_range(nodes: i64, lo: i64, hi: i64, vidbuf: i64, base: i64) -> i64 {
+    if lo >= hi {
+        return base;
+    }
+    let kind: i64 = __mind_load_i64(nodes + lo * 32);
+    if kind == 0 {
+        let pidx: i64 = __mind_load_i64(nodes + lo * 32 + 8);
+        __mind_store_i64(vidbuf + lo * 8, pidx);
+        return seq_resolve_range(nodes, lo + 1, hi, vidbuf, base);
+    }
+    if kind == 4 {
+        return seq_resolve_range(nodes, lo + 1, hi, vidbuf, base);
+    }
+    if kind == 5 {
+        return seq_resolve_range(nodes, lo + 1, hi, vidbuf, base);
+    }
+    __mind_store_i64(vidbuf + lo * 8, base);
+    seq_resolve_range(nodes, lo + 1, hi, vidbuf, base + 1)
+}
+
+// Walk the statements [0..stmts_len-1) (everything before the trailing value),
+// flattening each into the SHARED descriptor array and recording a plan entry
+// (64-byte record) per statement. Plan record layout:
+//   [0]=type (0=let, 1=if-return)
+//   let:  [8]=slot_start, [16]=slot_end
+//   if :  [8]=cond_start, [16]=cond_end, [24]=cond_root_slot,
+//         [32]=ret_start,  [40]=ret_end,  [48]=ret_root_slot
+// Returns 1 on success (plan/env/nodes filled), 0 on any wall (unsupported stmt or
+// init/cond/ret the flatten rejects). `nplan_cell` accumulates the plan length;
+// `nlets_cell` the let-env length. Threaded through recursion.
+pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets_cell: i64, plan: i64, nplan_cell: i64, i: i64) -> i64 {
+    if i >= stmts_len - 1 {
+        return 1;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let nlets: i64 = __mind_load_i64(nlets_cell);
+    let p: i64 = __mind_load_i64(nplan_cell);
+    if ast_kind(stmt) == ast_let() {
+        let name: i64 = ast_child0(stmt);
+        let init: i64 = ast_child2(stmt);
+        let start: i64 = __mind_load_i64(cursor);
+        let root_slot: i64 = flatten_expr_env(init, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if root_slot < 0 {
+            return 0;
+        }
+        let end: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(name));
+        __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(name));
+        __mind_store_i64(env + nlets * 24 + 16, root_slot);
+        __mind_store_i64(nlets_cell, nlets + 1);
+        __mind_store_i64(plan + p * 64 + 0, 0);
+        __mind_store_i64(plan + p * 64 + 8, start);
+        __mind_store_i64(plan + p * 64 + 16, end);
+        __mind_store_i64(nplan_cell, p + 1);
+        return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+    }
+    if ast_kind(stmt) == ast_if() {
+        // else-less if whose then-block's single statement is `return E`.
+        if ast_child2(stmt) != 0 {
+            return 0;
+        }
+        let then_blk: i64 = ast_child1(stmt);
+        let ret_stmt: i64 = branch_single_expr(then_blk);
+        if ret_stmt < 0 {
+            return 0;
+        }
+        if ast_kind(ret_stmt) != ast_return() {
+            return 0;
+        }
+        let cond_expr: i64 = ast_child0(stmt);
+        let ret_expr: i64 = ast_child0(ret_stmt);
+        let cstart: i64 = __mind_load_i64(cursor);
+        let cond_root: i64 = flatten_expr_env(cond_expr, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if cond_root < 0 {
+            return 0;
+        }
+        let cend: i64 = __mind_load_i64(cursor);
+        let rstart: i64 = __mind_load_i64(cursor);
+        let ret_root: i64 = flatten_expr_env(ret_expr, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if ret_root < 0 {
+            return 0;
+        }
+        let rend: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(plan + p * 64 + 0, 1);
+        __mind_store_i64(plan + p * 64 + 8, cstart);
+        __mind_store_i64(plan + p * 64 + 16, cend);
+        __mind_store_i64(plan + p * 64 + 24, cond_root);
+        __mind_store_i64(plan + p * 64 + 32, rstart);
+        __mind_store_i64(plan + p * 64 + 40, rend);
+        __mind_store_i64(plan + p * 64 + 48, ret_root);
+        __mind_store_i64(nplan_cell, p + 1);
+        return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+    }
+    0
+}
+
+// Pass B — assign vids across the plan in source order, threading `base`. A let
+// segment resolves its [start,end) slots from base. An if-return block resolves the
+// cond tree from base, then injects the OP_IF synth/dst vids: then-synth, the ret
+// tree (from then-synth+1), the else-synth, and dst — advancing base past the whole
+// block, exactly as emit_mic3_if_stmt_instr lays them out. Returns the final base.
+pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64, i: i64) -> i64 {
+    if i >= nplan {
+        return base;
+    }
+    let ty: i64 = __mind_load_i64(plan + i * 64 + 0);
+    if ty == 0 {
+        let start: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let end: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
+        return seq_assign_vids(nodes, vidbuf, plan, nplan, nb, i + 1);
+    }
+    // if-return block.
+    let cstart: i64 = __mind_load_i64(plan + i * 64 + 8);
+    let cend: i64 = __mind_load_i64(plan + i * 64 + 16);
+    let rstart: i64 = __mind_load_i64(plan + i * 64 + 32);
+    let rend: i64 = __mind_load_i64(plan + i * 64 + 40);
+    let after_cond: i64 = seq_resolve_range(nodes, cstart, cend, vidbuf, base);
+    // then-synth at after_cond; ret tree resolves from after_cond+1; else-synth and
+    // dst follow.
+    let after_ret: i64 = seq_resolve_range(nodes, rstart, rend, vidbuf, after_cond + 1);
+    let next_base: i64 = after_ret + 2;
+    seq_assign_vids(nodes, vidbuf, plan, nplan, next_base, i + 1)
+}
+
+// Pass C — emit the body instrs for the plan in source order. A let segment emits
+// its [start,end) tree. An if-return block emits ONE OP_IF (0x1C): cond tree, then
+// (synth const + ret tree + Return(ret_root_vid)), else (synth const), dst, empty
+// bindings/merges — reading every vid from the shared vidbuf resolved in Pass B.
+pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i64, offs: i64, ncount: i64, plan: i64, nplan: i64, base: i64, i: i64) -> EmitState {
+    if i >= nplan {
+        return s;
+    }
+    let ty: i64 = __mind_load_i64(plan + i * 64 + 0);
+    if ty == 0 {
+        let start: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let end: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
+        let s1: EmitState = emit_mic3_tree_body(s, nodes, end, vidbuf, src, strbuf, offs, ncount, start);
+        return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1);
+    }
+    // if-return block. Recompute the same vid layout as Pass B to learn synth/dst.
+    let cstart: i64 = __mind_load_i64(plan + i * 64 + 8);
+    let cend: i64 = __mind_load_i64(plan + i * 64 + 16);
+    let cond_root: i64 = __mind_load_i64(plan + i * 64 + 24);
+    let rstart: i64 = __mind_load_i64(plan + i * 64 + 32);
+    let rend: i64 = __mind_load_i64(plan + i * 64 + 40);
+    let ret_root: i64 = __mind_load_i64(plan + i * 64 + 48);
+    let after_cond: i64 = base + count_descriptor_nonparam_range(nodes, cstart, cend);
+    let then_synth: i64 = after_cond;
+    let ret_n: i64 = count_descriptor_nonparam_range(nodes, rstart, rend);
+    let after_ret: i64 = after_cond + 1 + ret_n;
+    let else_synth: i64 = after_ret;
+    let dst: i64 = after_ret + 1;
+    let cond_vid: i64 = __mind_load_i64(vidbuf + cond_root * 8);
+    let ret_vid: i64 = __mind_load_i64(vidbuf + ret_root * 8);
+    // OP_IF: cond.
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_vid);
+    let cond_n: i64 = count_descriptor_nonparam_range(nodes, cstart, cend);
+    let s3: EmitState = emit_uleb128(s2, cond_n);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cend, vidbuf, src, strbuf, offs, ncount, cstart);
+    // then: synth const + ret tree + Return(ret_vid). length = ret_n + 2.
+    let s5: EmitState = emit_uleb128(s4, ret_n + 2);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, nodes, rend, vidbuf, src, strbuf, offs, ncount, rstart);
+    let s8: EmitState = emit_mic3_return(s7, 1, ret_vid);
+    let s9: EmitState = emit_uleb128(s8, ret_vid);
+    // else: synth const only.
+    let s10: EmitState = emit_uleb128(s9, 1);
+    let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
+    let s12: EmitState = emit_uleb128(s11, else_synth);
+    // dst + empty bindings + empty merges.
+    let s13: EmitState = emit_uleb128(s12, dst);
+    let s14: EmitState = emit_uleb128(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 0);
+    emit_stmt_seq(s15, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, dst + 1, i + 1)
+}
+
+// Emit ONE fn's FN_DEF whose body is a general statement sequence (lets and
+// if-early-returns in any order, then a trailing value expr). Generalises cases
+// (f)+(g). Writes 1 to ok_cell on success, 0 (fail-closed, returns seed `s`) on any
+// wall. Byte-exact vs --emit-mic3 (Bound by MIND-CONSTITUTION §I).
+pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, stmts_addr: i64, stmts_len: i64, nodes: i64, cursor: i64, vidbuf: i64, env: i64, nlets_cell: i64, plan: i64, nplan_cell: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    __mind_store_i64(cursor, 0);
+    __mind_store_i64(nlets_cell, 0);
+    __mind_store_i64(nplan_cell, 0);
+    let plan_ok: i64 = flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, 0);
+    if plan_ok == 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let nlets: i64 = __mind_load_i64(nlets_cell);
+    let nplan: i64 = __mind_load_i64(nplan_cell);
+    // Trailing value expr (the final statement) -> the FN_DEF ret vid.
+    let trail_start: i64 = __mind_load_i64(cursor);
+    let final_expr: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+    let trail_root: i64 = flatten_expr_env(final_expr, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if trail_root < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let trail_end: i64 = __mind_load_i64(cursor);
+    // Pass B — assign vids across statement segments (lets + OP_IF blocks).
+    let trail_base: i64 = seq_assign_vids(nodes, vidbuf, plan, nplan, n_params, 0);
+    // Trailing segment resolves last, from trail_base.
+    seq_resolve_range(nodes, trail_start, trail_end, vidbuf, trail_base);
+    let ret_vid: i64 = __mind_load_i64(vidbuf + trail_root * 8);
+    // body_len = n_params PARAMs + per-segment non-param body instrs + 1 per OP_IF.
+    let seg_instrs: i64 = seq_body_len(nodes, plan, nplan, 0);
+    let trail_instrs: i64 = count_descriptor_nonparam_range(nodes, trail_start, trail_end);
+    let body_len: i64 = n_params + seg_instrs + trail_instrs;
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, ret_vid);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, body_len);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    let s8: EmitState = emit_stmt_seq(s7, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n_params, 0);
+    let s9: EmitState = emit_mic3_tree_body(s8, nodes, trail_end, vidbuf, src, strbuf, offs, ncount, trail_start);
+    __mind_store_i64(ok_cell, 1);
+    s9
+}
+
+// body_len contribution of the statement segments: each let segment's non-param
+// descriptor instrs, plus 1 OP_IF instr per if-return block (its cond/then/else
+// trees live INSIDE the OP_IF, so they do NOT count as top-level body instrs).
+pub fn seq_body_len(nodes: i64, plan: i64, nplan: i64, i: i64) -> i64 {
+    if i >= nplan {
+        return 0;
+    }
+    let ty: i64 = __mind_load_i64(plan + i * 64 + 0);
+    if ty == 0 {
+        let start: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let end: i64 = __mind_load_i64(plan + i * 64 + 16);
+        return count_descriptor_nonparam_range(nodes, start, end) + seq_body_len(nodes, plan, nplan, i + 1);
+    }
+    1 + seq_body_len(nodes, plan, nplan, i + 1)
+}
+
 // Emit the FN_DEF (body) for one function, dispatching on its proven shape. Does
 // NOT emit the module-level scaffold (the caller appends emit_mic3_scaffold(k)).
 // Writes a 1 into ok_cell on a matched shape, 0 (fail-closed) otherwise; on a
@@ -5781,6 +6072,23 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                         }
                     }
                 }
+            }
+        }
+        // (h) GENERAL statement sequence: >1 stmts mixing `let NAME = INIT` and
+        // `if COND { return E; }` in arbitrary order, then a trailing value expr.
+        // Strict superset of (f)+(g); reached only when those narrow shapes miss.
+        // Byte-exact vs --emit-mic3 (additive; canary untouched).
+        if stmts_len >= 2 {
+            let hnodes: i64 = __mind_alloc(512 * 32);
+            let hcursor: i64 = __mind_alloc(8);
+            let hvidbuf: i64 = __mind_alloc(512 * 8);
+            let henv: i64 = __mind_alloc(64 * 24);
+            let hnlets: i64 = __mind_alloc(8);
+            let hplan: i64 = __mind_alloc(64 * 64);
+            let hnplan: i64 = __mind_alloc(8);
+            let sseq: EmitState = emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, hnodes, hcursor, hvidbuf, henv, hnlets, hplan, hnplan, strbuf, offs, ncount, ok_cell);
+            if __mind_load_i64(ok_cell) == 1 {
+                return sseq;
             }
         }
     }
