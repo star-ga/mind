@@ -88,6 +88,21 @@ CASES = [
     ("three fields, mixed",
      "pub struct Tri { a: i64, b: i64, c: i64 }\n"
      "pub fn mk(p: i64) -> Tri { Tri { a: p, b: 7, c: p } }"),
+    # Multi-param: each field value is an int-literal or ANY param ident, resolved
+    # to that param's %SSA vid (param k binds vid k). The first self-host
+    # constructor shape (pr_new-style: 2+ params, param-ident field values).
+    ("pr_new, two params, both param-idents (field names alias params)",
+     "pub struct ParseResult { next_pos: i64, node: i64 }\n"
+     "pub fn pr_new(next_pos: i64, node: i64) -> ParseResult "
+     "{ ParseResult { next_pos: next_pos, node: node } }"),
+    ("report, three params, all param-idents",
+     "pub struct Report { ok: i64, warns: i64, errs: i64 }\n"
+     "pub fn mk_report(ok: i64, warns: i64, errs: i64) -> Report "
+     "{ Report { ok: ok, warns: warns, errs: errs } }"),
+    ("env, three params, mixed literal + cross-ordered param-idents",
+     "pub struct Env { a: i64, b: i64, c: i64 }\n"
+     "pub fn mk_env(p: i64, q: i64, r: i64) -> Env "
+     "{ Env { a: q, b: 5, c: p } }"),
 ]
 
 
