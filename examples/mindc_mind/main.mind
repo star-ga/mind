@@ -3246,6 +3246,51 @@ pub fn selftest_mic3_module_method_from_ast(src: i64, src_len: i64, strbuf: i64,
 }
 
 // ===========================================================================
+// UNIFIED AST-driven mic@3 module dispatcher (Strategy A — cutover prep)
+// ===========================================================================
+//
+// A SINGLE entry that, given only the source bytes, detects which construct
+// class the module uses and routes to the correct ALREADY-PROVEN driver. This
+// is a pure DISPATCHER over the three byte-verified emitters — NO new lowering,
+// NO canary touch (mindc_compile / emit_fn_def / emit_expr_env are untouched, so
+// the fixed point stays byte-identical; Bound by MIND-CONSTITUTION §I).
+//
+// Detection (token + struct-table driven):
+//   1. Build the part-1 struct field table. If no struct is present
+//      (sft_table_count < 1) the body uses only const/binop/let/call/if shapes ->
+//      the AST-flatten N-function driver (selftest_mic3_module_from_ast).
+//   2. A struct IS present -> scan the token stream for the first field-access
+//      dot (ffa_find_dot). The receiver is at dot-1, the accessed ident at dot+1.
+//      - If the token AFTER the accessed ident (dot+2) is `(`, it is a METHOD
+//        call `recv.method(args)` -> the UFCS method driver
+//        (emit_mic3_method_module_from_ast).
+//      - Otherwise it is a plain FIELD read `recv.field` -> the field driver
+//        (emit_mic3_field_module_from_ast).
+//      - No dot at all (struct declared but unused in a body) falls back to the
+//        N-function driver (defensive; the field/method drivers would fail-closed).
+// Each routed driver already fails closed (returns an empty buf) on any shape it
+// does not recognize, so the dispatcher inherits that fail-closed contract.
+//
+// The signature is the UNION of the three drivers' params: the method driver
+// needs the extra cbuf / argbuf / valbuf scratch; the field and N-fn drivers
+// ignore them.
+pub fn selftest_mic3_module_unified_from_ast(src: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64, cbuf: i64, argbuf: i64, valbuf: i64) -> EmitState {
+    let tokens: Vec = lex(src, src_len);
+    let sft: i64 = sft_build_table(src, src_len);
+    if sft_table_count(sft) < 1 {
+        return selftest_mic3_module_from_ast(src, src_len, strbuf, offs, ccell);
+    }
+    let dot: i64 = ffa_find_dot(tokens, 0);
+    if dot < 0 {
+        return selftest_mic3_module_from_ast(src, src_len, strbuf, offs, ccell);
+    }
+    if tok_kind(tokens, dot + 2) == tk_lparen() {
+        return emit_mic3_method_module_from_ast(es_new(), src, src_len, strbuf, offs, ccell, cbuf, argbuf, valbuf);
+    }
+    emit_mic3_field_module_from_ast(es_new(), src, src_len, strbuf, offs, ccell)
+}
+
+// ===========================================================================
 // Phase 5c — AST-DRIVEN full-module COLLECTION PASS (the hand-feeding removal)
 // ===========================================================================
 //
