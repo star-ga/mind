@@ -5030,15 +5030,22 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         // call names (and field-loads) inside an if-body intern at their oracle
         // first-seen position. Byte-identical for if-bodies that carry no strings
         // (constants/params); enables fns whose if-returns call other fns (e.g.
-        // classify_ident's `return tk_kw_fn()`).
+        // classify_ident's `return tk_kw_fn()`). Then intern the then-block's leading
+        // `let` NAMES (the OP_IF branch_bindings) — AFTER all cond/then/else strings,
+        // mirroring Rust collect_instr_strings (branch_bindings interned last). A let
+        // that escapes the then-block as a merge binds its name into the strtab; the
+        // 2-let oracle decode confirmed source order (x before y), branch-bindings-last
+        // (a call after the let interns BEFORE the let name). No-let blocks: no-op.
         let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
         let then_blk: i64 = ast_child1(node);
-        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(then_blk), ast_aux(then_blk), 0);
+        let then_sa: i64 = ast_child0(then_blk);
+        let then_sl: i64 = ast_aux(then_blk);
+        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, then_sa, then_sl, 0);
         let else_blk: i64 = ast_child2(node);
         if else_blk != 0 {
-            return collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
+            let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
         }
-        return 0;
+        return intern_leading_let_names(strbuf, offs, ccell, src, then_sa, then_sl, 0);
     }
     if k == ast_return() {
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
@@ -5056,6 +5063,24 @@ pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts
     let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
     let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
     collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+}
+
+// Intern the NAMES of the leading `let` statements of a then-block (its OP_IF
+// branch_bindings), in source order. Stops at the first non-let (bounded
+// recursion). Called by the ast_if arm AFTER the cond/then/else strings, matching
+// Rust collect_instr_strings's branch_bindings-last interning. No-op (byte-
+// identical) for then-blocks with no leading lets.
+pub fn intern_leading_let_names(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if ast_kind(stmt) != ast_let() {
+        return 0;
+    }
+    let name: i64 = ast_child0(stmt);
+    let ni: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(name), ast_span_hi(name));
+    intern_leading_let_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
 }
 
 pub fn collect_args_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
@@ -6010,6 +6035,231 @@ pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_ad
     s14
 }
 
+// ===========================================================================
+// 6c-2b — if-with-LET-then-block + MERGE TAIL. The outer if's then-block is a
+// SEQUENCE of leading `let NAME = INIT` bindings followed by >=1 if-segment(s)
+// (each an arbitrary-depth nested if-return). Decoded byte-for-byte from
+// --emit-mic3 on `g(b){ if b>=5 { let x=b+1; if x>=9 {return x} } 9 }` (106B) and
+// the 2-let variant (121B). The outer OP_IF carries a non-empty MERGE TAIL: each
+// then-block let escapes as a `branch_binding` (name -> merge_id) plus a
+// `merge` triple (merge_id, then_val=let's value vid, else_val=a placeholder
+// ConstI64(0) emitted in the else block). VID layout after the inner segments'
+// last dst: else_synth, then PER let (placeholder, merge_id) interleaved, then
+// dst. else_len = 1 + nlets (synth + placeholders; merge_ids are named, NOT
+// emitted as instrs). Mirrors src/ir/compact/v3/emit.rs Instr::If encoding
+// (encode_named_vids branch_bindings then encode_vid_triples merges) and the
+// strtab order (collect_instr_strings interns branch_binding names AFTER all
+// cond/then/else strings — verified vs the oracle). Bound by MIND-CONSTITUTION §I:
+// additive, fail-closed, canary untouched.
+// ===========================================================================
+
+// Number of leading `let` statements in stmts[0..stmts_len). Bounded recursion
+// (i strictly increases to stmts_len) — returns the index of the first non-let.
+pub fn count_leading_lets(stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return i;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if ast_kind(stmt) != ast_let() {
+        return i;
+    }
+    count_leading_lets(stmts_addr, stmts_len, i + 1)
+}
+
+// Emit each leading let's INIT tree into the THEN block, recording NAME -> its
+// value (root) vid in the lv-env (lvbuf at slot nlv0+idx). cur_base (in base_cell)
+// threads the running vid base; each init consumes count_nonparam_nodes_lv vids.
+// A let init may reference an EARLIER let (lvbuf already holds nlv0+idx entries).
+// Writes 0 to okcell + returns the seed on any flatten wall (defensive; the probe
+// already validated, so this should not trigger).
+pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv0: i64, okcell: i64) -> EmitState {
+    if idx >= nlets {
+        return s;
+    }
+    if __mind_load_i64(okcell) == 0 {
+        return s;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
+    let name: i64 = ast_child0(stmt);
+    let init: i64 = ast_child2(stmt);
+    let cur_base: i64 = __mind_load_i64(base_cell);
+    let nlv_now: i64 = nlv0 + idx;
+    let root: i64 = flatten_branch_lv(init, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, lvbuf, nlv_now);
+    if root < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let init_n: i64 = __mind_load_i64(cursor);
+    let s1: EmitState = emit_mic3_tree_body(s, nodes, init_n, vidbuf, 0, 0, 0, 0, 0);
+    let nn: i64 = count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv_now);
+    __mind_store_i64(lvbuf + nlv_now * 24 + 0, ast_span_lo(name));
+    __mind_store_i64(lvbuf + nlv_now * 24 + 8, ast_span_hi(name));
+    __mind_store_i64(lvbuf + nlv_now * 24 + 16, root);
+    __mind_store_i64(base_cell, cur_base + nn);
+    emit_let_inits_lv(s1, stmts_addr, nlets, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv0, okcell)
+}
+
+// Emit the per-let MERGE PLACEHOLDER consts in the else block: ConstI64(0) at
+// vid base+2*i for i in 0..nlets (base = else_synth+1; merge_ids interleave at
+// base+1+2*i and are NOT emitted).
+pub fn emit_merge_placeholders(s: EmitState, base: i64, nlets: i64, i: i64) -> EmitState {
+    if i >= nlets {
+        return s;
+    }
+    let s1: EmitState = emit_mic3_const_i64(s, base + 2 * i, 0);
+    emit_merge_placeholders(s1, base, nlets, i + 1)
+}
+
+// Emit the branch_bindings list: per let (name_str_idx, merge_id). merge_id =
+// else_synth+2+2*i. name_str_idx via intern_find over the strtab.
+pub fn emit_merge_bindings(s: EmitState, lvbuf: i64, nlv0: i64, nlets: i64, else_synth: i64, strbuf: i64, offs: i64, ncount: i64, src: i64, i: i64) -> EmitState {
+    if i >= nlets {
+        return s;
+    }
+    let lo: i64 = __mind_load_i64(lvbuf + (nlv0 + i) * 24 + 0);
+    let hi: i64 = __mind_load_i64(lvbuf + (nlv0 + i) * 24 + 8);
+    let nidx: i64 = intern_find(strbuf, offs, ncount, src, lo, hi, 0);
+    let merge_id: i64 = else_synth + 2 + 2 * i;
+    let s1: EmitState = emit_uleb128(s, nidx);
+    let s2: EmitState = emit_uleb128(s1, merge_id);
+    emit_merge_bindings(s2, lvbuf, nlv0, nlets, else_synth, strbuf, offs, ncount, src, i + 1)
+}
+
+// Emit the merges list: per let (merge_id, then_val=let value vid, else_val=
+// placeholder). merge_id=else_synth+2+2*i, placeholder=else_synth+1+2*i.
+pub fn emit_merge_triples(s: EmitState, lvbuf: i64, nlv0: i64, nlets: i64, else_synth: i64, i: i64) -> EmitState {
+    if i >= nlets {
+        return s;
+    }
+    let merge_id: i64 = else_synth + 2 + 2 * i;
+    let val_vid: i64 = __mind_load_i64(lvbuf + (nlv0 + i) * 24 + 16);
+    let placeholder: i64 = else_synth + 1 + 2 * i;
+    let s1: EmitState = emit_uleb128(s, merge_id);
+    let s2: EmitState = emit_uleb128(s1, val_vid);
+    let s3: EmitState = emit_uleb128(s2, placeholder);
+    emit_merge_triples(s3, lvbuf, nlv0, nlets, else_synth, i + 1)
+}
+
+// Outer OP_IF whose then-block = leading lets + if-segments, WITH the merge tail.
+// Generalises emit_if_seq_then_instr_lv (no-let) to lets-in-then. base0 = the vid
+// base for the cond. okcell <- dst on success, -1 on any wall. lvbuf is a private
+// scratch (>= (nlv0+nlets)*24 bytes); strbuf/offs/ncount resolve binding names.
+pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv0: i64, nlv0: i64, lvbuf: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+    if ast_child2(if_node) != 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_expr: i64 = ast_child0(if_node);
+    let then_blk: i64 = ast_child1(if_node);
+    let stmts_addr: i64 = ast_child0(then_blk);
+    let stmts_len: i64 = ast_aux(then_blk);
+    let nlets: i64 = count_leading_lets(stmts_addr, stmts_len, 0);
+    let n_segs: i64 = stmts_len - nlets;
+    // Require >=1 let (else the no-let path owns it) and >=1 trailing if-segment,
+    // all of which must be if-statements.
+    if nlets < 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    if n_segs < 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let segs_addr: i64 = stmts_addr + nlets * 8;
+    if seq_then_all_ifs(segs_addr, n_segs, 0) != 1 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // Seed the lv-env with the outer lets (nlv0 entries) so a let init can refer to
+    // them; the leading lets append at slots nlv0..nlv0+nlets.
+    let copy_ok: i64 = lvenv_copy(lvbuf, lvenv0, nlv0, 0);
+    // OP_IF cond.
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvbuf, nlv0);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvbuf, nlv0);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
+    let after_cond: i64 = base0 + cond_nonparam;
+    let then_synth: i64 = after_cond;
+    // THEN length = 1 (synth) + sum(let init nonparam) + n_segs (one OP_IF each).
+    let let_instrs: i64 = sum_let_init_nonparam(stmts_addr, nlets, 0, buf, params_addr, n_params, lvbuf, nlv0);
+    let s5: EmitState = emit_uleb128(s4, 1 + let_instrs + n_segs);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    // Emit the let init trees, building the lv-env (nlv0..nlv0+nlets).
+    let base_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(base_cell, after_cond + 1);
+    let li_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(li_ok, 1);
+    let s7: EmitState = emit_let_inits_lv(s6, stmts_addr, nlets, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv0, li_ok);
+    if __mind_load_i64(li_ok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let nlv_total: i64 = nlv0 + nlets;
+    let seg_base: i64 = after_cond + 1 + let_instrs;
+    let seq_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(seq_cell, 0 - 1);
+    let s8: EmitState = emit_if_seq_segments_lv(s7, segs_addr, n_segs, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_base, seg_base - 1, seq_cell, 0, lvbuf, nlv_total);
+    let last_dst: i64 = __mind_load_i64(seq_cell);
+    if last_dst < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // then_result = last segment's dst.
+    let s9: EmitState = emit_uleb128(s8, last_dst);
+    // MERGE TAIL — else block: else_synth + per-let placeholders.
+    let else_synth: i64 = last_dst + 1;
+    let s10: EmitState = emit_uleb128(s9, 1 + nlets);
+    let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
+    let s12: EmitState = emit_merge_placeholders(s11, else_synth + 1, nlets, 0);
+    let s13: EmitState = emit_uleb128(s12, else_synth);
+    let dst: i64 = else_synth + 1 + 2 * nlets;
+    let s14: EmitState = emit_uleb128(s13, dst);
+    let s15: EmitState = emit_uleb128(s14, nlets);
+    let s16: EmitState = emit_merge_bindings(s15, lvbuf, nlv0, nlets, else_synth, strbuf, offs, ncount, buf, 0);
+    let s17: EmitState = emit_uleb128(s16, nlets);
+    let s18: EmitState = emit_merge_triples(s17, lvbuf, nlv0, nlets, else_synth, 0);
+    __mind_store_i64(okcell, dst);
+    s18
+}
+
+// Copy `n` 24-byte lv-env entries from src to dst. Returns 1.
+pub fn lvenv_copy(dst: i64, src: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    __mind_store_i64(dst + i * 24 + 0, __mind_load_i64(src + i * 24 + 0));
+    __mind_store_i64(dst + i * 24 + 8, __mind_load_i64(src + i * 24 + 8));
+    __mind_store_i64(dst + i * 24 + 16, __mind_load_i64(src + i * 24 + 16));
+    lvenv_copy(dst, src, n, i + 1)
+}
+
+// Sum the nonparam (vid-consuming) node counts of the leading lets' inits. Each
+// let i resolves against the lv-env built from the prior lets (nlv0+i entries),
+// matching emit_let_inits_lv's per-let base advance. Populates each let's NAME
+// into lvbuf (with a placeholder vid 0) BEFORE measuring the next, so a later
+// let's init that references an earlier let resolves (the real vids are written
+// by emit_let_inits_lv afterwards; only the name spans matter for counting).
+pub fn sum_let_init_nonparam(stmts_addr: i64, nlets: i64, i: i64, buf: i64, params_addr: i64, n_params: i64, lvbuf: i64, nlv0: i64) -> i64 {
+    if i >= nlets {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let init: i64 = ast_child2(stmt);
+    let nn: i64 = count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv0 + i);
+    let name: i64 = ast_child0(stmt);
+    __mind_store_i64(lvbuf + (nlv0 + i) * 24 + 0, ast_span_lo(name));
+    __mind_store_i64(lvbuf + (nlv0 + i) * 24 + 8, ast_span_hi(name));
+    __mind_store_i64(lvbuf + (nlv0 + i) * 24 + 16, 0);
+    nn + sum_let_init_nonparam(stmts_addr, nlets, i + 1, buf, params_addr, n_params, lvbuf, nlv0)
+}
+
 // FN_DEF whose body is `{ <if-chain>; TRAIL }` — one arbitrary-depth nested if-return
 // then a trailing value. Mirrors emit_mic3_module_fndef_nested_if but for the recursive
 // chain (any depth >= 1). Supersedes the depth-2 dedicated case byte-identically.
@@ -6175,7 +6425,37 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // emitter once (base0=0) to learn the vid delta, store it + the stmt node.
         let then_sa: i64 = ast_child0(then_blk);
         let then_sl: i64 = ast_aux(then_blk);
+        // (type 4) if-with-LET-then-block: the then-block is leading `let` bindings
+        // then >=1 if-segment(s), carrying a merge tail. Probe the let-aware emitter
+        // (base0=0, empty outer lv-env) to learn the vid delta. Takes priority over
+        // type 3 when leading lets are present (type 3 requires 0 lets).
         if then_sl >= 2 {
+            let t4_nlets: i64 = count_leading_lets(then_sa, then_sl, 0);
+            if t4_nlets >= 1 {
+                let t4_segs: i64 = then_sl - t4_nlets;
+                if t4_segs >= 1 {
+                    if seq_then_all_ifs(then_sa + t4_nlets * 8, t4_segs, 0) == 1 {
+                        let p4_nodes: i64 = __mind_alloc(256 * 32);
+                        let p4_cursor: i64 = __mind_alloc(8);
+                        let p4_vidbuf: i64 = __mind_alloc(256 * 8);
+                        let p4_cell: i64 = __mind_alloc(8);
+                        __mind_store_i64(p4_cell, 0 - 1);
+                        let p4_lvenv: i64 = __mind_alloc(24);
+                        let p4_lvbuf: i64 = __mind_alloc((t4_nlets + 8) * 24);
+                        let p4: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p4_nodes, p4_cursor, p4_vidbuf, 0, p4_cell, p4_lvenv, 0, p4_lvbuf, 0, 0, 0);
+                        let p4_dst: i64 = __mind_load_i64(p4_cell);
+                        if p4_dst >= 0 {
+                            __mind_store_i64(plan + p * 64 + 0, 4);
+                            __mind_store_i64(plan + p * 64 + 8, stmt);
+                            __mind_store_i64(plan + p * 64 + 16, p4_dst + 1);
+                            __mind_store_i64(plan + p * 64 + 24, params_addr);
+                            __mind_store_i64(plan + p * 64 + 32, n_params);
+                            __mind_store_i64(nplan_cell, p + 1);
+                            return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+                        }
+                    }
+                }
+            }
             if seq_then_all_ifs(then_sa, then_sl, 0) == 1 {
                 let pr_nodes: i64 = __mind_alloc(256 * 32);
                 let pr_cursor: i64 = __mind_alloc(8);
@@ -6296,6 +6576,13 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
         let next_delta: i64 = __mind_load_i64(plan + i * 64 + 16);
         return seq_assign_vids(nodes, vidbuf, plan, nplan, base + next_delta, i + 1);
     }
+    if ty == 4 {
+        // if-with-LET-then-block (merge tail). Same base-relative delta convention
+        // as type 3 — the whole OP_IF (cond + let inits + segments + merge tail)
+        // consumes `next_delta` vids relative to `base`.
+        let next_delta4: i64 = __mind_load_i64(plan + i * 64 + 16);
+        return seq_assign_vids(nodes, vidbuf, plan, nplan, base + next_delta4, i + 1);
+    }
     if ty == 2 {
         // NESTED if-return segment. Same vid layout as emit_mic3_nested_if_instr,
         // base-threaded: outer cond -> then-synth -> inner cond -> inner-then-synth ->
@@ -6355,6 +6642,25 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e3_lvenv: i64 = __mind_alloc(24);
         let s3i: EmitState = emit_if_seq_then_instr_lv(s, if_node3, src, pa3, np3, e3_nodes, e3_cursor, e3_vidbuf, base, e3_cell, e3_lvenv, 0);
         return emit_stmt_seq(s3i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta3, i + 1);
+    }
+    if ty == 4 {
+        // if-with-LET-then-block (merge tail) -> ONE outer OP_IF. Self-contained
+        // scratch; base-threaded. strbuf/offs/ncount resolve the binding names.
+        let if_node4: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let next_delta4: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let pa4: i64 = __mind_load_i64(plan + i * 64 + 24);
+        let np4: i64 = __mind_load_i64(plan + i * 64 + 32);
+        let e4_nodes: i64 = __mind_alloc(256 * 32);
+        let e4_cursor: i64 = __mind_alloc(8);
+        let e4_vidbuf: i64 = __mind_alloc(256 * 8);
+        let e4_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(e4_cell, 0 - 1);
+        let e4_lvenv: i64 = __mind_alloc(24);
+        let e4_then_blk: i64 = ast_child1(if_node4);
+        let e4_nlets: i64 = count_leading_lets(ast_child0(e4_then_blk), ast_aux(e4_then_blk), 0);
+        let e4_lvbuf: i64 = __mind_alloc((e4_nlets + 8) * 24);
+        let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, e4_lvenv, 0, e4_lvbuf, strbuf, offs, ncount);
+        return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1);
     }
     if ty == 2 {
         // NESTED if-return segment -> ONE outer OP_IF whose then-branch is `synth +
