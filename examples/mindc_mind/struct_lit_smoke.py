@@ -114,6 +114,12 @@ CASES = [
     ("arith value, nested precedence + literal field",
      "pub struct T3 { a: i64, b: i64, c: i64 }\n"
      "pub fn mk(p: i64, q: i64) -> T3 { T3 { a: p * q + 1, b: 7, c: q - p } }"),
+    ("field-access values, copy(s:E)->E{a:s.a,b:s.b}",
+     "pub struct E { a: i64, b: i64 }\n"
+     "pub fn copy(s: E) -> E { E { a: s.a, b: s.b } }"),
+    ("field-access + literal mix",
+     "pub struct P { x: i64, y: i64 }\n"
+     "pub fn shift(p: P) -> P { P { x: p.x, y: 0 } }"),
 ]
 
 
