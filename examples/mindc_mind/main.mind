@@ -5025,7 +5025,37 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         let rr: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
         return intern_load_i64_name(strbuf, offs, ccell);
     }
+    if k == ast_if() {
+        // Recurse cond -> then-block stmts -> else-block stmts, in SOURCE order, so
+        // call names (and field-loads) inside an if-body intern at their oracle
+        // first-seen position. Byte-identical for if-bodies that carry no strings
+        // (constants/params); enables fns whose if-returns call other fns (e.g.
+        // classify_ident's `return tk_kw_fn()`).
+        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let then_blk: i64 = ast_child1(node);
+        let rt: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(then_blk), ast_aux(then_blk), 0);
+        let else_blk: i64 = ast_child2(node);
+        if else_blk != 0 {
+            return collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
+        }
+        return 0;
+    }
+    if k == ast_return() {
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+    }
     0
+}
+
+// Collect strings from a block's statements in source order (each stmt via
+// collect_expr_strings: a let recurses its init, an if recurses cond/then/else,
+// a return its value). Used by the ast_if arm to walk if-body sub-statements.
+pub fn collect_block_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let r: i64 = collect_expr_strings(strbuf, offs, ccell, src, stmt);
+    collect_block_strings(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
 }
 
 pub fn collect_args_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
