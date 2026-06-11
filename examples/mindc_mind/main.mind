@@ -5847,6 +5847,49 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         if ret_stmt < 0 {
             return 0;
         }
+        // (type 2) NESTED if-return segment: the outer then-block's single stmt is
+        // ITSELF an else-less if whose then-block is `return E`. Flatten the 3 trees
+        // (outer cond, inner cond, inner ret) CONSECUTIVELY into the shared array and
+        // store the contiguous range + 2 split points + 3 roots (fits the 64B entry).
+        if ast_kind(ret_stmt) == ast_if() {
+            if ast_child2(ret_stmt) != 0 {
+                return 0;
+            }
+            let inner_then: i64 = ast_child1(ret_stmt);
+            let inner_ret: i64 = branch_single_expr(inner_then);
+            if inner_ret < 0 {
+                return 0;
+            }
+            if ast_kind(inner_ret) != ast_return() {
+                return 0;
+            }
+            let n2_rs: i64 = __mind_load_i64(cursor);
+            let n2_ocr: i64 = flatten_expr_env(ast_child0(stmt), src, params_addr, n_params, nodes, cursor, env, nlets);
+            if n2_ocr < 0 {
+                return 0;
+            }
+            let n2_s1: i64 = __mind_load_i64(cursor);
+            let n2_icr: i64 = flatten_expr_env(ast_child0(ret_stmt), src, params_addr, n_params, nodes, cursor, env, nlets);
+            if n2_icr < 0 {
+                return 0;
+            }
+            let n2_s2: i64 = __mind_load_i64(cursor);
+            let n2_irr: i64 = flatten_expr_env(ast_child0(inner_ret), src, params_addr, n_params, nodes, cursor, env, nlets);
+            if n2_irr < 0 {
+                return 0;
+            }
+            let n2_re: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(plan + p * 64 + 0, 2);
+            __mind_store_i64(plan + p * 64 + 8, n2_rs);
+            __mind_store_i64(plan + p * 64 + 16, n2_re);
+            __mind_store_i64(plan + p * 64 + 24, n2_ocr);
+            __mind_store_i64(plan + p * 64 + 32, n2_icr);
+            __mind_store_i64(plan + p * 64 + 40, n2_irr);
+            __mind_store_i64(plan + p * 64 + 48, n2_s1);
+            __mind_store_i64(plan + p * 64 + 56, n2_s2);
+            __mind_store_i64(nplan_cell, p + 1);
+            return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+        }
         if ast_kind(ret_stmt) != ast_return() {
             return 0;
         }
@@ -5893,6 +5936,20 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
         let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
         return seq_assign_vids(nodes, vidbuf, plan, nplan, nb, i + 1);
     }
+    if ty == 2 {
+        // NESTED if-return segment. Same vid layout as emit_mic3_nested_if_instr,
+        // base-threaded: outer cond -> then-synth -> inner cond -> inner-then-synth ->
+        // inner ret -> inner-else-synth -> inner-dst -> outer-else-synth -> outer-dst.
+        let n2_rs: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let n2_re: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let n2_s1: i64 = __mind_load_i64(plan + i * 64 + 48);
+        let n2_s2: i64 = __mind_load_i64(plan + i * 64 + 56);
+        let n2_after_oc: i64 = seq_resolve_range(nodes, n2_rs, n2_s1, vidbuf, base);
+        let n2_after_ic: i64 = seq_resolve_range(nodes, n2_s1, n2_s2, vidbuf, n2_after_oc + 1);
+        let n2_after_ir: i64 = seq_resolve_range(nodes, n2_s2, n2_re, vidbuf, n2_after_ic + 1);
+        let n2_next: i64 = n2_after_ir + 4;
+        return seq_assign_vids(nodes, vidbuf, plan, nplan, n2_next, i + 1);
+    }
     // if-return block.
     let cstart: i64 = __mind_load_i64(plan + i * 64 + 8);
     let cend: i64 = __mind_load_i64(plan + i * 64 + 16);
@@ -5921,6 +5978,68 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let nb: i64 = seq_resolve_range(nodes, start, end, vidbuf, base);
         let s1: EmitState = emit_mic3_tree_body(s, nodes, end, vidbuf, src, strbuf, offs, ncount, start);
         return emit_stmt_seq(s1, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, nb, i + 1);
+    }
+    if ty == 2 {
+        // NESTED if-return segment -> ONE outer OP_IF whose then-branch is `synth +
+        // inner OP_IF`. Reads vids from the shared vidbuf (resolved in Pass B), trees
+        // from the shared node ranges. Mirrors emit_mic3_nested_if_instr, base-threaded.
+        let n2_rs: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let n2_re: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let n2_ocr: i64 = __mind_load_i64(plan + i * 64 + 24);
+        let n2_icr: i64 = __mind_load_i64(plan + i * 64 + 32);
+        let n2_irr: i64 = __mind_load_i64(plan + i * 64 + 40);
+        let n2_s1: i64 = __mind_load_i64(plan + i * 64 + 48);
+        let n2_s2: i64 = __mind_load_i64(plan + i * 64 + 56);
+        let n2_oc_n: i64 = count_descriptor_nonparam_range(nodes, n2_rs, n2_s1);
+        let n2_after_oc: i64 = base + n2_oc_n;
+        let n2_ic_n: i64 = count_descriptor_nonparam_range(nodes, n2_s1, n2_s2);
+        let n2_after_ic: i64 = n2_after_oc + 1 + n2_ic_n;
+        let n2_ir_n: i64 = count_descriptor_nonparam_range(nodes, n2_s2, n2_re);
+        let n2_after_ir: i64 = n2_after_ic + 1 + n2_ir_n;
+        let n2_inner_dst: i64 = n2_after_ir + 1;
+        let n2_outer_else: i64 = n2_after_ir + 2;
+        let n2_outer_dst: i64 = n2_after_ir + 3;
+        let n2_oc_vid: i64 = __mind_load_i64(vidbuf + n2_ocr * 8);
+        let n2_ic_vid: i64 = __mind_load_i64(vidbuf + n2_icr * 8);
+        let n2_ir_vid: i64 = __mind_load_i64(vidbuf + n2_irr * 8);
+        // outer OP_IF: cond
+        let q1: EmitState = es_push(s, 28);
+        let q2: EmitState = emit_uleb128(q1, n2_oc_vid);
+        let q3: EmitState = emit_uleb128(q2, n2_oc_n);
+        let q4: EmitState = emit_mic3_tree_body(q3, nodes, n2_s1, vidbuf, src, strbuf, offs, ncount, n2_rs);
+        // outer then = synth + inner OP_IF (2 instrs)
+        let q5: EmitState = emit_uleb128(q4, 2);
+        let q6: EmitState = emit_mic3_const_i64(q5, n2_after_oc, 0);
+        // inner OP_IF: cond
+        let q7: EmitState = es_push(q6, 28);
+        let q8: EmitState = emit_uleb128(q7, n2_ic_vid);
+        let q9: EmitState = emit_uleb128(q8, n2_ic_n);
+        let q10: EmitState = emit_mic3_tree_body(q9, nodes, n2_s2, vidbuf, src, strbuf, offs, ncount, n2_s1);
+        // inner then = synth + ret tree + Return
+        let q11: EmitState = emit_uleb128(q10, n2_ir_n + 2);
+        let q12: EmitState = emit_mic3_const_i64(q11, n2_after_ic, 0);
+        let q13: EmitState = emit_mic3_tree_body(q12, nodes, n2_re, vidbuf, src, strbuf, offs, ncount, n2_s2);
+        let q14: EmitState = emit_mic3_return(q13, 1, n2_ir_vid);
+        let q15: EmitState = emit_uleb128(q14, n2_ir_vid);
+        // inner else = synth
+        let q16: EmitState = emit_uleb128(q15, 1);
+        let q17: EmitState = emit_mic3_const_i64(q16, n2_after_ir, 0);
+        let q18: EmitState = emit_uleb128(q17, n2_after_ir);
+        // inner dst + bindings + merges
+        let q19: EmitState = emit_uleb128(q18, n2_inner_dst);
+        let q20: EmitState = emit_uleb128(q19, 0);
+        let q21: EmitState = emit_uleb128(q20, 0);
+        // outer then-result = inner dst
+        let q22: EmitState = emit_uleb128(q21, n2_inner_dst);
+        // outer else = synth
+        let q23: EmitState = emit_uleb128(q22, 1);
+        let q24: EmitState = emit_mic3_const_i64(q23, n2_outer_else, 0);
+        let q25: EmitState = emit_uleb128(q24, n2_outer_else);
+        // outer dst + bindings + merges
+        let q26: EmitState = emit_uleb128(q25, n2_outer_dst);
+        let q27: EmitState = emit_uleb128(q26, 0);
+        let q28: EmitState = emit_uleb128(q27, 0);
+        return emit_stmt_seq(q28, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n2_outer_dst + 1, i + 1);
     }
     // if-return block. Recompute the same vid layout as Pass B to learn synth/dst.
     let cstart: i64 = __mind_load_i64(plan + i * 64 + 8);
