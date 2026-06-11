@@ -103,6 +103,17 @@ CASES = [
      "pub struct Env { a: i64, b: i64, c: i64 }\n"
      "pub fn mk_env(p: i64, q: i64, r: i64) -> Env "
      "{ Env { a: q, b: 5, c: p } }"),
+    # Step B: field VALUES are arbitrary ARITHMETIC expressions, lowered by the
+    # general tree emitter and vid-interleaved through the alloc/store spine.
+    ("arith value, param+1 in field 0",
+     "pub struct Point { x: i64, y: i64 }\n"
+     "pub fn mk(a: i64, b: i64) -> Point { Point { x: a + 1, y: b } }"),
+    ("arith value, both fields arithmetic",
+     "pub struct Vec2 { x: i64, y: i64 }\n"
+     "pub fn mk(a: i64, b: i64) -> Vec2 { Vec2 { x: a * 2, y: a + b } }"),
+    ("arith value, nested precedence + literal field",
+     "pub struct T3 { a: i64, b: i64, c: i64 }\n"
+     "pub fn mk(p: i64, q: i64) -> T3 { T3 { a: p * q + 1, b: 7, c: q - p } }"),
 ]
 
 
