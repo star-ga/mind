@@ -5,9 +5,9 @@
 # MIND — Machine Intelligence Native Design
 
 [![CI](https://github.com/star-ga/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/star-ga/mind/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](CHANGELOG.md)
-[![Cross-substrate](https://img.shields.io/badge/x86%20%2B%20ARM-bit--identical-success.svg)](docs/roadmap.md)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.7.1-blue?style=flat-square)](CHANGELOG.md)
+[![Cross-substrate](https://img.shields.io/badge/deterministic-byte--identical-brightgreen?style=flat-square)](docs/roadmap.md)
 
 ## Install
 
@@ -20,7 +20,9 @@ See [`docs/install.md`](docs/install.md) for all install options including manua
 
 ## Overview
 
-MIND is a Rust-first language and runtime for building intelligent systems with auditable foundations. It blends declarative tensor algebra, static shape inference, automatic differentiation, and MLIR/LLVM lowering in a compact toolchain that scales from research prototypes to production.
+**MIND** is a deterministic compiler whose output is bit-identical across CPU, ARM, and GPU substrates, with a signed evidence chain embedded in the artifact itself.
+
+It is also a Rust-first language and runtime for building intelligent systems with auditable foundations. It blends declarative tensor algebra, static shape inference, automatic differentiation, and MLIR/LLVM lowering in a compact toolchain that scales from research prototypes to production.
 
 The compiler produces deterministic binaries that execute inside the [Cognitive Kernel](https://mindlang.dev/docs/cognitive-kernel), MIND's microkernel runtime architecture with Control, Memory, and Verification planes.
 
