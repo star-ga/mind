@@ -4126,6 +4126,21 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                 }
             }
         }
+        // (f) multi-statement let chain: >1 stmts, a sequence of `let NAME = INIT`
+        // bindings then a trailing value expression (every init/expr a param /
+        // const / binop / let-ref tree). Substitution-equivalent to the nested
+        // expression, so byte-exact vs --emit-mic3.
+        if stmts_len >= 2 {
+            let nodes2: i64 = __mind_alloc(256 * 32);
+            let cursor2: i64 = __mind_alloc(8);
+            let vidbuf2: i64 = __mind_alloc(256 * 8);
+            let env: i64 = __mind_alloc(64 * 24);
+            let nlets_cell: i64 = __mind_alloc(8);
+            let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, ok_cell);
+            if __mind_load_i64(ok_cell) == 1 {
+                return slet;
+            }
+        }
     }
     __mind_store_i64(ok_cell, 0);
     s
@@ -4898,6 +4913,180 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
         return 1 + l + r;
     }
     0 - 1
+}
+
+// ===========================================================================
+// Multi-statement LET CHAINS — substitution-based flatten (cutover construct)
+// ===========================================================================
+//
+// A body `{ let n0: i64 = E0; let n1: i64 = E1; ... ; FINAL }` lowers BYTE-
+// IDENTICAL to the fully-substituted nested expression (verified vs --emit-mic3:
+// `f(x){let a=x+1; let b=a*2; b}` == `f(x){(x+1)*2}`). The Rust front-end treats
+// sequential let-bindings as pure SSA aliasing — each let name takes the vid of
+// its init expression's ROOT, and a later reference to that name reuses that vid
+// with no extra instruction or string. We reproduce that by flattening every let
+// init and the trailing expression into ONE shared post-order descriptor array,
+// carrying a let-environment (name-span -> root descriptor slot). An ident that
+// names a previously-bound let resolves to that slot (reused, no new node) exactly
+// as a param leaf is reused; params still resolve first. The resulting descriptor
+// feeds the SAME proven tree_resolve_vids + emit_mic3_tree_body pair, so the body
+// is byte-exact by construction (Bound by MIND-CONSTITUTION §I).
+//
+// The let-environment is a scratch buffer of 24-byte records [name_lo, name_hi,
+// slot]; `nlets`-cell holds the count. Lookup compares the reference span to each
+// recorded name span (both in `src`, via span_bytes_equal2), latest-first is not
+// required — let names within one body are distinct (the Rust checker rejects
+// shadowing in this subset), so first-match is unambiguous.
+
+// Resolve an ident span against the let-environment. Returns the bound descriptor
+// slot, or -1 if the name is not a let-bound variable.
+pub fn letenv_lookup(src: i64, lo: i64, hi: i64, env: i64, nlets: i64, i: i64) -> i64 {
+    if i >= nlets {
+        return 0 - 1;
+    }
+    let nlo: i64 = __mind_load_i64(env + i * 24 + 0);
+    let nhi: i64 = __mind_load_i64(env + i * 24 + 8);
+    if span_bytes_equal2(src, lo, hi, src, nlo, nhi) == 1 {
+        return __mind_load_i64(env + i * 24 + 16);
+    }
+    letenv_lookup(src, lo, hi, env, nlets, i + 1)
+}
+
+// Flatten ONE expression tree into the shared descriptor, resolving idents against
+// (a) params, then (b) the let-environment. A param ident emits a kind-0 leaf (as
+// flatten_ast). A let-bound ident emits NO node — it returns the let's recorded
+// root slot (SSA-aliased reuse, matching the oracle). Returns the node's slot, or
+// -1 on an unsupported construct (fail-closed, identical rejection set to
+// flatten_ast plus an unbound ident).
+pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_paren() {
+        return flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+    }
+    if k == ast_ident() {
+        let pidx: i64 = resolve_param(params_addr, n_params, src, ast_span_lo(node), ast_span_hi(node));
+        if pidx >= 0 {
+            let slot: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(nodes + slot * 32 + 0, 0);
+            __mind_store_i64(nodes + slot * 32 + 8, pidx);
+            __mind_store_i64(nodes + slot * 32 + 16, 0);
+            __mind_store_i64(nodes + slot * 32 + 24, 0);
+            __mind_store_i64(cursor, slot + 1);
+            return slot;
+        }
+        // Not a param: must be a previously-bound let name (reuse its slot).
+        let lslot: i64 = letenv_lookup(src, ast_span_lo(node), ast_span_hi(node), env, nlets, 0);
+        return lslot;
+    }
+    if k == ast_int_lit() {
+        let lit: i64 = parse_int_span(src, ast_span_lo(node), ast_span_hi(node), 0);
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 2);
+        __mind_store_i64(nodes + slot * 32 + 8, lit);
+        __mind_store_i64(nodes + slot * 32 + 16, 0);
+        __mind_store_i64(nodes + slot * 32 + 24, 0);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    if k == ast_binop() {
+        let lslot: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+        if lslot < 0 {
+            return 0 - 1;
+        }
+        let rslot: i64 = flatten_expr_env(ast_child1(node), src, params_addr, n_params, nodes, cursor, env, nlets);
+        if rslot < 0 {
+            return 0 - 1;
+        }
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 1);
+        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(ast_aux(node)));
+        __mind_store_i64(nodes + slot * 32 + 16, lslot);
+        __mind_store_i64(nodes + slot * 32 + 24, rslot);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
+    0 - 1
+}
+
+// Walk the body's let-statement sequence (stmts 0..stmts_len-1), flattening each
+// let's init expression into the shared descriptor and recording its name -> root
+// slot in the let-env. Each stmt before the last must be `let NAME: TYPE = INIT`
+// where INIT is a param/const/binop/let-ref tree. Returns 1 on success (env and
+// nodes filled, cursor advanced), 0 on any wall (a non-let stmt, or an init the
+// flatten rejects). Threads through recursion; `nlets_cell` accumulates the count.
+pub fn flatten_let_chain(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, env: i64, nlets_cell: i64, i: i64) -> i64 {
+    if i >= stmts_len - 1 {
+        return 1;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if ast_kind(stmt) != ast_let() {
+        return 0;
+    }
+    let name: i64 = ast_child0(stmt);
+    let init: i64 = ast_child2(stmt);
+    let nlets: i64 = __mind_load_i64(nlets_cell);
+    let root_slot: i64 = flatten_expr_env(init, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if root_slot < 0 {
+        return 0;
+    }
+    __mind_store_i64(env + nlets * 24 + 0, ast_span_lo(name));
+    __mind_store_i64(env + nlets * 24 + 8, ast_span_hi(name));
+    __mind_store_i64(env + nlets * 24 + 16, root_slot);
+    __mind_store_i64(nlets_cell, nlets + 1);
+    flatten_let_chain(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, i + 1)
+}
+
+// Emit ONE fn's FN_DEF whose body is a multi-statement let chain (>1 stmts: a
+// sequence of `let NAME = INIT` bindings then a trailing value expression, every
+// init/expr a param/const/binop/let-ref tree). Substitution-equivalent to the
+// nested expression, so byte-exact vs --emit-mic3. Writes 1 to ok_cell on success,
+// 0 (fail-closed, returns seed `s`) on any wall.
+pub fn emit_mic3_module_fndef_letchain(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, stmts_addr: i64, stmts_len: i64, nodes: i64, cursor: i64, vidbuf: i64, env: i64, nlets_cell: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    __mind_store_i64(cursor, 0);
+    __mind_store_i64(nlets_cell, 0);
+    let chain_ok: i64 = flatten_let_chain(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, 0);
+    if chain_ok == 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let nlets: i64 = __mind_load_i64(nlets_cell);
+    let final_expr: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+    let root_slot: i64 = flatten_expr_env(final_expr, src, params_addr, n_params, nodes, cursor, env, nlets);
+    if root_slot < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let n_nodes: i64 = __mind_load_i64(cursor);
+    let root_vid: i64 = tree_resolve_vids(nodes, n_nodes, n_params, vidbuf, 0, n_params);
+    // body_len = n_params PARAM instrs + every non-param descriptor node (every
+    // kind-1 BINOP + kind-2 CONST; kind-0 param leaves emit no body instr — they
+    // are mirrored by the de-duplicated PARAM emission). Count non-param slots.
+    let body_len: i64 = n_params + count_descriptor_nonparam(nodes, n_nodes, 0);
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, root_vid);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, body_len);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    let s8: EmitState = emit_mic3_tree_body(s7, nodes, n_nodes, vidbuf, 0);
+    __mind_store_i64(ok_cell, 1);
+    s8
+}
+
+// Count the non-param (kind != 0) descriptor slots in nodes[0..n_nodes) — the
+// number of body instrs the tree emits (each CONST/BINOP). Mirrors the body_len
+// derivation; param leaves (kind 0) are excluded (they emit via the PARAM pass).
+pub fn count_descriptor_nonparam(nodes: i64, n_nodes: i64, i: i64) -> i64 {
+    if i >= n_nodes {
+        return 0;
+    }
+    let kind: i64 = __mind_load_i64(nodes + i * 32);
+    if kind == 0 {
+        return count_descriptor_nonparam(nodes, n_nodes, i + 1);
+    }
+    1 + count_descriptor_nonparam(nodes, n_nodes, i + 1)
 }
 
 // Pass-1 vid resolution with an arbitrary non-param base. Identical to
