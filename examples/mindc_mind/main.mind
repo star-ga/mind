@@ -2664,6 +2664,100 @@ pub fn intern_load_i64_literal(strbuf: i64, offs: i64, ccell: i64) -> i64 {
     n
 }
 
+// The j-th byte (0..15) of the synthetic call name "__mind_load_i64". Shared by
+// the dedup-aware interner so the literal lives in exactly one place.
+pub fn load_i64_name_byte(j: i64) -> i64 {
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 108;
+    }
+    if j == 8 {
+        return 111;
+    }
+    if j == 9 {
+        return 97;
+    }
+    if j == 10 {
+        return 100;
+    }
+    if j == 11 {
+        return 95;
+    }
+    if j == 12 {
+        return 105;
+    }
+    if j == 13 {
+        return 54;
+    }
+    52
+}
+
+// Does the already-interned string at index i equal "__mind_load_i64"? Raw-byte
+// compare against the synthetic literal (no hashing), mirroring StringTable
+// dedup on the synthetic Call name.
+pub fn load_i64_name_eq_at(strbuf: i64, offs: i64, i: i64, j: i64) -> i64 {
+    let elo: i64 = __mind_load_i64(offs + i * 8);
+    let ehi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if ehi - elo != 15 {
+        return 0;
+    }
+    if j >= 15 {
+        return 1;
+    }
+    if load_byte(strbuf, elo + j) != load_i64_name_byte(j) {
+        return 0;
+    }
+    load_i64_name_eq_at(strbuf, offs, i, j + 1)
+}
+
+// Find the string index of "__mind_load_i64" among the n already-interned
+// strings, or -1. Mirrors StringTable::intern's first-seen dedup lookup.
+pub fn load_i64_name_find(strbuf: i64, offs: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if load_i64_name_eq_at(strbuf, offs, i, 0) == 1 {
+        return i;
+    }
+    load_i64_name_find(strbuf, offs, n, i + 1)
+}
+
+// Dedup-aware intern of the synthetic "__mind_load_i64" call name: returns the
+// existing index on a hit, else allocates it (via intern_load_i64_literal) and
+// returns the fresh index. This is the idempotent form the COLLECTION PASS needs
+// (a body with multiple field reads interns the name once), matching the Rust
+// `Instr::Call { name } => st.intern(name)` first-seen behaviour. The direct
+// field driver (emit_mic3_field_module_from_ast) still calls the no-dedup
+// intern_load_i64_literal because that path interns the name exactly once.
+pub fn intern_load_i64_name(strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let n: i64 = __mind_load_i64(ccell);
+    let hit: i64 = load_i64_name_find(strbuf, offs, n, 0);
+    if hit >= 0 {
+        return hit;
+    }
+    intern_load_i64_literal(strbuf, offs, ccell)
+}
+
 // Scan the token stream for the first field-access `.` and return the token
 // index of the dot, or -1 if none. The receiver ident is at dot-1, the field
 // ident at dot+1 (mirrors the surface `recv . field`).
@@ -3418,6 +3512,15 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     if k == ast_binop() {
         let rl: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child1(node));
+    }
+    if k == ast_field() {
+        // FieldAccess lowers (src/eval/lower.rs ast::Node::FieldAccess resolved arm)
+        // to: receiver instrs, optional CONST(idx*8), optional BINOP Add, then
+        // Call("__mind_load_i64", [addr]). Mirror the Rust collect order: recurse
+        // the receiver first (its own Call names, if any, intern before this one),
+        // then intern the synthetic load-call name. CONST/BINOP intern nothing.
+        let rr: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        return intern_load_i64_name(strbuf, offs, ccell);
     }
     0
 }
@@ -6258,6 +6361,94 @@ pub fn selftest_struct_field_name_len(src_addr: i64, src_len: i64, i: i64) -> i6
         return 0 - 1;
     }
     sft_table_name_hi(t, i) - sft_table_name_lo(t, i)
+}
+
+// ===========================================================================
+// SECTION 6c — RECURSIVE-EMIT STRTAB COLLECTION FOR FIELD STRINGS (cutover
+// fold, step 1). COLLECTION ONLY — no mic@3 byte-output, no canary touch.
+//
+// The recursive emit (selftest_mic3_module_from_ast) builds its string table via
+// a SEPARATE collection pass (build_module_strtab -> collect_fn_strings ->
+// collect_body_strings -> collect_expr_strings), mirroring Rust collect_strings /
+// collect_instr_strings (src/ir/compact/v3/emit.rs ~492-586). Step 1 extends that
+// pass so an ast_field (kind 17) anywhere in a body interns the synthetic
+// "__mind_load_i64" call name in the EXACT first-seen order the oracle's
+// collect_instr_strings(Instr::Call) produces (receiver strings first, then the
+// load name; the CONST/BINOP offset path interns nothing; struct type/field names
+// come from the registry pass, NOT the body traversal).
+//
+// These selftest exports run the collection pass over a parsed module into
+// internally-allocated scratch and expose the interned table by index, so a unit
+// smoke can assert names + first-seen order WITHOUT any byte emission.
+// ===========================================================================
+
+// Allocate scratch, lex+parse `src`, run build_module_strtab over the top-level
+// item list, and return the strtab triple packed into a 4-i64 cell:
+//   cell[0] = strbuf, cell[1] = offs, cell[2] = ccell, cell[3] = interned count.
+// Returns the cell pointer. Scratch is sized for any small field-using module in
+// the test grammar (4 KiB names, 256 offset slots).
+pub fn cfs_run(src_addr: i64, src_len: i64) -> i64 {
+    let strbuf: i64 = __mind_alloc(4096);
+    let offs: i64 = __mind_alloc(256 * 8);
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let cell: i64 = __mind_alloc(4 * 8);
+    __mind_store_i64(cell + 0, strbuf);
+    __mind_store_i64(cell + 8, offs);
+    __mind_store_i64(cell + 16, ccell);
+    __mind_store_i64(cell + 24, __mind_load_i64(ccell));
+    cell
+}
+
+// Selftest export: number of strings interned by the collection pass for `src`.
+pub fn selftest_collect_field_strings_count(src_addr: i64, src_len: i64) -> i64 {
+    let cell: i64 = cfs_run(src_addr, src_len);
+    __mind_load_i64(cell + 24)
+}
+
+// Selftest export: byte length of interned string `i` (offs[i+1]-offs[i]), or -1
+// if out of range. Lets the smoke verify e.g. "__mind_load_i64" landed (len 15).
+pub fn selftest_collect_field_strings_len(src_addr: i64, src_len: i64, i: i64) -> i64 {
+    let cell: i64 = cfs_run(src_addr, src_len);
+    let n: i64 = __mind_load_i64(cell + 24);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= n {
+        return 0 - 1;
+    }
+    let offs: i64 = __mind_load_i64(cell + 8);
+    __mind_load_i64(offs + (i + 1) * 8) - __mind_load_i64(offs + i * 8)
+}
+
+// Selftest export: the j-th byte of interned string `i`, or -1 if out of range.
+// The smoke reconstructs each interned name to assert first-seen order exactly.
+pub fn selftest_collect_field_strings_byte(src_addr: i64, src_len: i64, i: i64, j: i64) -> i64 {
+    let cell: i64 = cfs_run(src_addr, src_len);
+    let n: i64 = __mind_load_i64(cell + 24);
+    if i < 0 {
+        return 0 - 1;
+    }
+    if i >= n {
+        return 0 - 1;
+    }
+    let strbuf: i64 = __mind_load_i64(cell + 0);
+    let offs: i64 = __mind_load_i64(cell + 8);
+    let lo: i64 = __mind_load_i64(offs + i * 8);
+    let hi: i64 = __mind_load_i64(offs + (i + 1) * 8);
+    if j < 0 {
+        return 0 - 1;
+    }
+    if j >= hi - lo {
+        return 0 - 1;
+    }
+    load_byte(strbuf, lo + j)
 }
 
 // ===========================================================================
