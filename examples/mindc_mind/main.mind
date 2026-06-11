@@ -6116,6 +6116,31 @@ pub fn emit_mic3_module_fns_loop(s: EmitState, src: i64, items_addr: i64, items_
     emit_mic3_module_fns_loop(s2, src, items_addr, items_len, strbuf, offs, ncount, ok_cell, k + 1, item_i + 1)
 }
 
+// ITEM-ORDER N-ITEM module loop: walk EVERY top-level item in declaration order,
+// emitting one module-level scaffold per item at the running vid `k` (which counts
+// BOTH struct decls and fn defs, matching the oracle's flat module-level vid space).
+// A struct decl emits only its CONST/OUTPUT placeholder pair; a fn def emits its
+// FN_DEF body then its placeholder pair. Fails closed via ok_cell on any unmatched
+// fn shape. Generalizes emit_mic3_module_fns_loop (fns only) to struct-containing
+// modules so the scaffold vids interleave exactly as --emit-mic3 produces them.
+pub fn emit_mic3_module_items_loop(s: EmitState, src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64, k: i64, item_i: i64) -> EmitState {
+    if item_i >= items_len {
+        return s;
+    }
+    let item: i64 = __mind_load_i64(items_addr + item_i * 8);
+    if ast_kind(item) != ast_fn_def() {
+        // Struct (or other non-fn) decl: scaffold-only placeholder at vid k.
+        let ss: EmitState = emit_mic3_scaffold(s, k);
+        return emit_mic3_module_items_loop(ss, src, items_addr, items_len, strbuf, offs, ncount, ok_cell, k + 1, item_i + 1);
+    }
+    let s1: EmitState = emit_mic3_module_fndef(s, src, item, strbuf, offs, ncount, ok_cell);
+    if __mind_load_i64(ok_cell) == 0 {
+        return s1;
+    }
+    let s2: EmitState = emit_mic3_scaffold(s1, k);
+    emit_mic3_module_items_loop(s2, src, items_addr, items_len, strbuf, offs, ncount, ok_cell, k + 1, item_i + 1)
+}
+
 // AST-DRIVEN N-FUNCTION module driver: lex+parse `src`, build the deduped
 // first-seen string table, then assemble a complete mic@3 module for ANY number
 // of functions whose bodies are the proven shapes, byte-exact vs --emit-mic3.
@@ -6126,28 +6151,50 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
+    // Multi-struct registry (declaration order with per-struct field spans). N==0
+    // for struct-less modules, in which case the registry/strtab tail stays empty
+    // and the bytes are unchanged from the original fns-only path.
+    let srt: i64 = srt_build(src_addr, src_len);
+    let n_structs: i64 = srt_count(srt);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    // Append every struct's TYPE + FIELD names to the strtab in BTreeMap-sorted
+    // (struct-name) order, matching the oracle's collect_struct_def_strings pass
+    // (registry strings come AFTER all instruction strings). intern_span dedups, so
+    // a struct/field name that already appeared as a fn/param name reuses its slot.
+    let _sall: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
     let ncount: i64 = __mind_load_i64(ccell);
     let n_fns: i64 = count_fn_defs(items_addr, items_len, 0, 0);
     if n_fns < 1 {
         return es_new();
     }
-    // header || strtab || next_id(=N) || exports(0) || instr_count(=3N).
+    // header || strtab || next_id(=n_structs+n_fns) || exports(0) ||
+    //   instr_count(=2*n_structs + 3*n_fns: each struct const+output, each fn
+    //   FN_DEF+const+output).
+    let n_items: i64 = n_structs + n_fns;
     let s1: EmitState = emit_mic3_header(es_new());
     let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, ncount);
-    let s3: EmitState = emit_uleb128(s2, n_fns);
+    let s3: EmitState = emit_uleb128(s2, n_items);
     let s4: EmitState = emit_uleb128(s3, 0);
-    let s5: EmitState = emit_uleb128(s4, n_fns + n_fns + n_fns);
-    // Per-fn FN_DEF + scaffold, threaded through one ok_cell.
+    let s5: EmitState = emit_uleb128(s4, n_structs + n_structs + n_fns + n_fns + n_fns);
+    // Per-item placeholder + per-fn FN_DEF, in declaration order, threaded through
+    // one ok_cell. The running vid counts both structs and fns (flat module space).
     let ok_cell: i64 = __mind_alloc(8);
     __mind_store_i64(ok_cell, 1);
-    let s6: EmitState = emit_mic3_module_fns_loop(s5, src_addr, items_addr, items_len, strbuf, offs, ncount, ok_cell, 0, 0);
+    let s6: EmitState = emit_mic3_module_items_loop(s5, src_addr, items_addr, items_len, strbuf, offs, ncount, ok_cell, 0, 0);
     if __mind_load_i64(ok_cell) == 0 {
         return es_new();
     }
-    emit_mic3_empty_registries(s6)
+    // Registries: populated struct_defs (BTreeMap-sorted, sorted-rank strbases)
+    // when structs exist, else the empty triple. const_array_defs / repr_c = 0.
+    if n_structs == 0 {
+        return emit_mic3_empty_registries(s6);
+    }
+    let s7: EmitState = emit_uleb128(s6, n_structs);
+    let s8: EmitState = srt_emit_registry_sorted_interned(s7, strbuf, offs, ccell, src_addr, srt, 0);
+    let s9: EmitState = emit_uleb128(s8, 0);
+    emit_uleb128(s9, 0)
 }
 
 // ===== mic@3 COMPLETE with-body module — the 2-param arithmetic function family (Phase 4c) =====
@@ -9258,6 +9305,39 @@ pub fn srt_emit_registry_sorted(s: EmitState, t: i64, src: i64, r: i64) -> EmitS
     let s2: EmitState = emit_uleb128(s1, fc);
     let s3: EmitState = ffa_emit_field_idxs(s2, srt_field_strbase_sorted(t, src, r), fc, 0);
     srt_emit_registry_sorted(s3, t, src, r + 1)
+}
+
+// Emit the struct_defs registry for ALL N structs in BTreeMap-sorted (name) order,
+// resolving each string index by RE-INTERNING its span (intern_span is idempotent
+// and dedup-aware, so it returns the slot already assigned by the strtab pass —
+// independent of how many instruction strings preceded it). This is the dedup- and
+// base-offset-correct variant of srt_emit_registry_sorted (which assumes the fixed
+// 3-string field-read instr base); used by the general N-fn nfn driver where the
+// instruction-string base varies per module. Each entry =
+// uleb(type_str_idx) || uleb(field_count) || field string idxs.
+pub fn srt_emit_registry_sorted_interned(s: EmitState, strbuf: i64, offs: i64, ccell: i64, src: i64, t: i64, r: i64) -> EmitState {
+    if r >= srt_count(t) {
+        return s;
+    }
+    let k: i64 = srt_sorted_kth(t, src, r);
+    let ty_idx: i64 = intern_span(strbuf, offs, ccell, src, srt_name_lo(t, k), srt_name_hi(t, k));
+    let s1: EmitState = emit_uleb128(s, ty_idx);
+    let fc: i64 = srt_field_count(t, k);
+    let s2: EmitState = emit_uleb128(s1, fc);
+    let s3: EmitState = srt_emit_field_idxs_interned(s2, strbuf, offs, ccell, src, t, k, 0);
+    srt_emit_registry_sorted_interned(s3, strbuf, offs, ccell, src, t, r + 1)
+}
+
+// Emit struct k's field string indices by re-interning each field-name span
+// (idempotent), in declared field order. Mirrors ffa_emit_field_idxs_interned but
+// keyed on the multi-struct registry's per-struct field spans.
+pub fn srt_emit_field_idxs_interned(s: EmitState, strbuf: i64, offs: i64, ccell: i64, src: i64, t: i64, k: i64, j: i64) -> EmitState {
+    if j >= srt_field_count(t, k) {
+        return s;
+    }
+    let idx: i64 = intern_span(strbuf, offs, ccell, src, srt_field_lo(t, k, j), srt_field_hi(t, k, j));
+    let s1: EmitState = emit_uleb128(s, idx);
+    srt_emit_field_idxs_interned(s1, strbuf, offs, ccell, src, t, k, j + 1)
 }
 
 // ===========================================================================

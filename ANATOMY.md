@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2766 | **Est. tokens:** ~6,871,716
-**Generated:** 2026-06-11 09:46 UTC
+**Files:** 2767 | **Est. tokens:** ~6,873,954
+**Generated:** 2026-06-11 11:15 UTC
 
 ## Token Budget Guide
 
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 21 | ~52,201 |
+| `examples/mindc_mind/` | 22 | ~54,439 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -721,6 +721,7 @@
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
 - `collect_field_strings_smoke.py` (~1161 tok, large)
+- `cutover_coverage_measure.py` (~2238 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
