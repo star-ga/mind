@@ -155,6 +155,16 @@ CASES = [
      "let b: i64 = h(a, k); b }\n"
      "fn g(x: i64) -> i64 { x }\n"
      "fn h(x: i64, y: i64) -> i64 { x + y }"),
+    # GENERAL statement sequence — lets and if-early-returns interleaved in
+    # arbitrary order, then a trailing value. main.mind's real fns mix them
+    # (a guard let, an early-return on a sentinel, more lets, the result). The
+    # unified statement walker flattens every let-init, the if cond/ret, and the
+    # trailing into ONE shared descriptor with the let-env, assigning vids in
+    # source order with the OP_IF block's synth/dst vids injected between
+    # segments — byte-exact vs --emit-mic3.
+    ("let + if-return + let + trailing", "green",
+     "pub fn foo(a: i64, b: i64) -> i64 { let t: i64 = a + b; "
+     "if t == 0 { return 0; } let u: i64 = t * 2; u }"),
 ]
 
 
