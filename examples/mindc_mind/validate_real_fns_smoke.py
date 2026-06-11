@@ -140,6 +140,11 @@ CASES = [
     # the trailing expr, byte-exact vs --emit-mic3.
     ("if-statement early return", "green",
      "pub fn s(b: i64) -> i64 { if b == 1 { return 1; } 0 }"),
+    # match-expression — PARSE-TIME desugar to if. `match c { 0 => 10, _ => 20 }`
+    # builds the same ast_if as `if c == 0 { 10 } else { 20 }`, so the existing
+    # if-emit (case (e)) reproduces it byte-exact vs --emit-mic3. Zero new emit.
+    ("match 2-arm desugar to if", "green",
+     "pub fn pick(c: i64) -> i64 { match c { 0 => 10, _ => 20 } }"),
 ]
 
 
