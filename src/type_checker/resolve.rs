@@ -136,7 +136,7 @@ struct ModuleSyms {
 /// struct / enum / type-alias / extern), recursing into the `Block` that a
 /// `module NAME { ... }` body unwraps into. Pure: it does NOT resolve imports,
 /// so it is safe to call while building the std-export cache (no re-entrancy).
-fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
+pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
     for item in &module.items {
         match item {
             Node::FnDef { name, .. }
@@ -381,6 +381,17 @@ impl<'a> Resolver<'a> {
         //      and every legitimate builtin it flagged was folded in here.
         // Anything matching none of these is a genuinely-undefined call → E2003.
         if self.ident_resolvable(name) {
+            return true;
+        }
+        // A QUALIFIED path callee (`Vec::new`, `String::with_capacity`,
+        // `Vec::with_capacity`) references a *type's associated function*, not a
+        // bare module-level name. The parser folds the `::` segments into one
+        // contiguous callee string. This pass owns the BARE undefined-reference
+        // question (E2003) — verifying that an associated function actually
+        // exists on a type is a separate type-resolution concern — so a callee
+        // carrying `::` is never a bare undefined reference and must not be
+        // flagged. A bare `foo()` (no `::`) is still fully checked below.
+        if name.contains("::") {
             return true;
         }
         if name.starts_with("__mind_") || name.starts_with("tensor.") {
