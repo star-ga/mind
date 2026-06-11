@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2759 | **Est. tokens:** ~6,860,646
-**Generated:** 2026-06-10 23:47 UTC
+**Files:** 2760 | **Est. tokens:** ~6,862,199
+**Generated:** 2026-06-11 00:08 UTC
 
 ## Token Budget Guide
 
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 14 | ~41,331 |
+| `examples/mindc_mind/` | 15 | ~42,884 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~12,885 |
@@ -732,6 +732,7 @@
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `struct_fields_smoke.py` (~1076 tok, large)
+- `unified_dispatch_smoke.py` (~1553 tok, huge)
 - `while_struct_smoke.py` (~1031 tok, large)
 ### `examples/`
 
