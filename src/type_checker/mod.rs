@@ -2810,11 +2810,32 @@ pub fn check_module_types_in_file(
             // `module NAME { ... }` declaration (Phase 10.5). Walk its
             // statements as if they were at top level.
             Node::Block { stmts, .. } => {
+                // Each inner item is checked in isolation (`items: vec![inner]`),
+                // which strips its sibling module-level declarations. Pre-collect
+                // the whole block's declaration names (fn / const / let / struct /
+                // enum / type-alias / extern) and inject them into the env so that
+                // the per-item recursion — and the #23 resolve pass it runs — sees
+                // intra-module fn calls (`reduce(&buf)` calling a sibling `fn
+                // reduce`) as resolvable rather than undefined. Sound: these are
+                // genuine declarations; injecting them only adds resolvable names.
+                let mut sibling_decls: std::collections::BTreeSet<String> =
+                    std::collections::BTreeSet::new();
+                let block_module = Module {
+                    items: stmts.clone(),
+                };
+                resolve::collect_decl_names(&block_module, &mut sibling_decls);
+                let mut inner_env = env.clone();
+                for name in &sibling_decls {
+                    inner_env
+                        .entry(name.clone())
+                        .or_insert(ValueType::ScalarI64);
+                }
                 for inner in stmts {
                     let inner_module = Module {
                         items: vec![inner.clone()],
                     };
-                    let inner_errs = check_module_types_in_file(&inner_module, src, file, env);
+                    let inner_errs =
+                        check_module_types_in_file(&inner_module, src, file, &inner_env);
                     errs.extend(inner_errs);
                 }
             }

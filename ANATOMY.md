@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2760 | **Est. tokens:** ~6,862,199
-**Generated:** 2026-06-11 00:28 UTC
+**Files:** 2760 | **Est. tokens:** ~6,862,399
+**Generated:** 2026-06-11 01:14 UTC
 
 ## Token Budget Guide
 
@@ -393,12 +393,12 @@
 | `src/opt/` | 4 | ~9,186 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~25,228 |
+| `src/project/` | 3 | ~25,251 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,848 |
-| `src/type_checker/` | 1 | ~6,744 |
+| `src/type_checker/` | 1 | ~6,921 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
@@ -3774,7 +3774,7 @@
 
 - `mod.rs` (~18045 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3517 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
@@ -3801,7 +3801,7 @@
 - `mod.rs` (~5848 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~6744 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~6921 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.

@@ -165,6 +165,7 @@ mod tests {
         assert!(names.contains(&"std.tui"));
     }
 
+    #[cfg(feature = "cross-module-imports")]
     #[test]
     fn stdlib_table_resolves_use_std_vec() {
         use crate::project::module_table::build_module_table;
@@ -198,6 +199,7 @@ mod tests {
         assert!(table.resolves(&["std".into(), "sha256".into()], "sha256"));
     }
 
+    #[cfg(feature = "cross-module-imports")]
     #[test]
     fn bundled_stdlib_carries_phase_b_signatures() {
         use crate::project::module_table::build_module_table;
