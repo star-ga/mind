@@ -5045,7 +5045,14 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         if else_blk != 0 {
             let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
         }
-        return intern_leading_let_names(strbuf, offs, ccell, src, then_sa, then_sl, 0);
+        // branch_bindings = then-block lets THEN else-block lets (the fill_binds_block /
+        // lower.rs merged_names order). An if-EXPRESSION's else-branch lets ALSO escape,
+        // so intern both. else block is empty for if-STATEMENTS -> no-op, byte-identical.
+        let rtl: i64 = intern_leading_let_names(strbuf, offs, ccell, src, then_sa, then_sl, 0);
+        if else_blk != 0 {
+            return intern_leading_let_names(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
+        }
+        return 0;
     }
     if k == ast_return() {
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
@@ -6067,10 +6074,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     let s2: EmitState = if is_value_if_expr(init) == 1 {
         let q_cell: i64 = __mind_alloc(8);
         __mind_store_i64(q_cell, 0 - 1);
-        let qc: i64 = ast_child0(init);
-        let qt: i64 = branch_single_expr(ast_child1(init));
-        let qe: i64 = branch_single_expr(ast_child2(init));
-        let sq: EmitState = emit_if_expr_lv(s, qc, qt, qe, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, q_cell, lvbuf, nlv, strbuf, offs, ncount);
+        let sq: EmitState = emit_if_expr_any_lv(s, init, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, q_cell, lvbuf, nlv, strbuf, offs, ncount);
         let qdst: i64 = __mind_load_i64(q_cell);
         if qdst < 0 {
             __mind_store_i64(okcell, 0);
@@ -6505,10 +6509,7 @@ pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, bu
     if is_value_if_expr(init) == 1 {
         let q_cell: i64 = __mind_alloc(8);
         __mind_store_i64(q_cell, 0 - 1);
-        let qc: i64 = ast_child0(init);
-        let qt: i64 = branch_single_expr(ast_child1(init));
-        let qe: i64 = branch_single_expr(ast_child2(init));
-        let sq: EmitState = emit_if_expr_lv(s, qc, qt, qe, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, q_cell, lvbuf, nlv_now, strbuf, offs, ncount);
+        let sq: EmitState = emit_if_expr_any_lv(s, init, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, q_cell, lvbuf, nlv_now, strbuf, offs, ncount);
         let qdst: i64 = __mind_load_i64(q_cell);
         if qdst < 0 {
             __mind_store_i64(okcell, 0);
@@ -6840,6 +6841,202 @@ pub fn seq_then_all_ifs(stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
 // lv-env, and resolves call name_idx via strbuf/offs/ncount. then_result = then-value,
 // else_result = else-value, dst = the merged value; 0 bindings / 0 merges (an
 // if-expression value, not a variable merge). okcell <- dst (-1 on a wall).
+// Emit ONE if-EXPRESSION whose branches are BLOCKS (`let* VALUE`), with the F2
+// two-sided merge: each branch-local let escapes as a branch_binding + merge. Vid
+// layout (decoded): then(synth, then-lets, then-value), else(synth, else-lets,
+// else-value), then PER merged name (placeholder, merge_id), then dst. A then-only
+// name's placeholder goes in the ELSE block (and vice-versa); then_val/else_val use
+// the let's value on its own side and the placeholder on the other. okcell <- dst.
+pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+    let cond_expr: i64 = ast_child0(if_node);
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+    let then_nlets: i64 = then_sl - 1;
+    let else_nlets: i64 = else_sl - 1;
+    let then_val_expr: i64 = __mind_load_i64(then_sa + then_nlets * 8);
+    let else_val_expr: i64 = __mind_load_i64(else_sa + else_nlets * 8);
+    let n_merged: i64 = then_nlets + else_nlets;
+    // cond
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    let after_cond: i64 = base0 + cond_nonparam;
+    let then_synth: i64 = after_cond;
+    // then lv-env + measure then-let instrs.
+    let then_lvbuf: i64 = __mind_alloc((nlv + then_nlets + 2) * 24);
+    let _tc: i64 = lvenv_copy(then_lvbuf, lvenv, nlv, 0);
+    let then_let_instrs: i64 = sum_let_init_nonparam(then_sa, then_nlets, 0, buf, params_addr, n_params, then_lvbuf, nlv);
+    let then_val_nonparam: i64 = count_nonparam_nodes_lv(then_val_expr, buf, params_addr, n_params, then_lvbuf, nlv + then_nlets);
+    if then_val_nonparam < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // else lv-env + measure else-let instrs.
+    let else_lvbuf: i64 = __mind_alloc((nlv + else_nlets + 2) * 24);
+    let _ec: i64 = lvenv_copy(else_lvbuf, lvenv, nlv, 0);
+    let else_let_instrs: i64 = sum_let_init_nonparam(else_sa, else_nlets, 0, buf, params_addr, n_params, else_lvbuf, nlv);
+    let else_val_nonparam: i64 = count_nonparam_nodes_lv(else_val_expr, buf, params_addr, n_params, else_lvbuf, nlv + else_nlets);
+    if else_val_nonparam < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    // vid layout
+    let then_val_end: i64 = after_cond + 1 + then_let_instrs + then_val_nonparam;
+    let else_synth: i64 = then_val_end;
+    let else_val_end: i64 = else_synth + 1 + else_let_instrs + else_val_nonparam;
+    let ph_start: i64 = else_val_end;
+    let dst: i64 = ph_start + 2 * n_merged;
+    // THEN block: then_len = 1 + then_let_instrs + then_val_nonparam + else_nlets(placeholders).
+    let then_len: i64 = 1 + then_let_instrs + then_val_nonparam + else_nlets;
+    let s5: EmitState = emit_uleb128(s4, then_len);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let t_base: i64 = __mind_alloc(8);
+    __mind_store_i64(t_base, after_cond + 1);
+    let t_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(t_ok, 1);
+    let s7: EmitState = emit_let_inits_lv(s6, then_sa, then_nlets, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, t_base, then_lvbuf, nlv, t_ok, strbuf, offs, ncount);
+    if __mind_load_i64(t_ok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_val_base: i64 = __mind_load_i64(t_base);
+    let then_root: i64 = flatten_branch_lv(then_val_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, then_val_base, then_lvbuf, nlv + then_nlets);
+    if then_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_n: i64 = __mind_load_i64(cursor);
+    let s8: EmitState = emit_mic3_tree_body(s7, nodes, then_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    // then placeholders: for else-only names (merged idx >= then_nlets), CONST(ph_i).
+    let s9: EmitState = emit_block_ph(s8, ph_start, then_nlets, n_merged, then_nlets);
+    let s10: EmitState = emit_uleb128(s9, then_root);
+    // ELSE block: else_len = 1 + else_let_instrs + else_val_nonparam + then_nlets.
+    let else_len: i64 = 1 + else_let_instrs + else_val_nonparam + then_nlets;
+    let s11: EmitState = emit_uleb128(s10, else_len);
+    let s12: EmitState = emit_mic3_const_i64(s11, else_synth, 0);
+    let e_base: i64 = __mind_alloc(8);
+    __mind_store_i64(e_base, else_synth + 1);
+    let e_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(e_ok, 1);
+    let s13: EmitState = emit_let_inits_lv(s12, else_sa, else_nlets, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, e_base, else_lvbuf, nlv, e_ok, strbuf, offs, ncount);
+    if __mind_load_i64(e_ok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_val_base: i64 = __mind_load_i64(e_base);
+    let else_root: i64 = flatten_branch_lv(else_val_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, else_val_base, else_lvbuf, nlv + else_nlets);
+    if else_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_n: i64 = __mind_load_i64(cursor);
+    let s14: EmitState = emit_mic3_tree_body(s13, nodes, else_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    // else placeholders: for then-only names (merged idx < then_nlets), CONST(ph_i).
+    let s15: EmitState = emit_block_ph(s14, ph_start, 0, then_nlets, then_nlets);
+    let s16: EmitState = emit_uleb128(s15, else_root);
+    let s17: EmitState = emit_uleb128(s16, dst);
+    // bindings + merges: build a 40-byte record per merged name.
+    let bb: i64 = __mind_alloc((n_merged + 1) * 40);
+    let _fb: i64 = fill_binds_block(bb, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, ph_start, 0);
+    let s18: EmitState = emit_uleb128(s17, n_merged);
+    let s19: EmitState = emit_block_bindings(s18, bb, n_merged, strbuf, offs, ncount, buf, 0);
+    let s20: EmitState = emit_uleb128(s19, n_merged);
+    let s21: EmitState = emit_block_merges(s20, bb, n_merged, 0);
+    __mind_store_i64(okcell, dst);
+    s21
+}
+
+// Emit CONST(ph_start + 2*i) placeholders for merged indices i in [lo, hi).
+pub fn emit_block_ph(s: EmitState, ph_start: i64, lo: i64, hi: i64, then_nlets: i64) -> EmitState {
+    if lo >= hi {
+        return s;
+    }
+    let s1: EmitState = emit_mic3_const_i64(s, ph_start + 2 * lo, 0);
+    emit_block_ph(s1, ph_start, lo + 1, hi, then_nlets)
+}
+
+// Fill 40-byte records [name_lo, name_hi, merge_id, then_val, else_val] per merged
+// name (then-lets then else-lets). merge_id = ph_start+2i+1; placeholder = ph_start+2i.
+pub fn fill_binds_block(bb: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64, then_nlets: i64, else_nlets: i64, ph_start: i64, i: i64) -> i64 {
+    let total: i64 = then_nlets + else_nlets;
+    if i >= total {
+        return total;
+    }
+    let ph: i64 = ph_start + 2 * i;
+    let mid: i64 = ph + 1;
+    if i < then_nlets {
+        __mind_store_i64(bb + i * 40 + 0, __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 0));
+        __mind_store_i64(bb + i * 40 + 8, __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 8));
+        __mind_store_i64(bb + i * 40 + 16, mid);
+        __mind_store_i64(bb + i * 40 + 24, __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 16));
+        __mind_store_i64(bb + i * 40 + 32, ph);
+    } else {
+        let j: i64 = i - then_nlets;
+        __mind_store_i64(bb + i * 40 + 0, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 0));
+        __mind_store_i64(bb + i * 40 + 8, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 8));
+        __mind_store_i64(bb + i * 40 + 16, mid);
+        __mind_store_i64(bb + i * 40 + 24, ph);
+        __mind_store_i64(bb + i * 40 + 32, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 16));
+    }
+    fill_binds_block(bb, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, ph_start, i + 1)
+}
+
+pub fn emit_block_bindings(s: EmitState, bb: i64, n: i64, strbuf: i64, offs: i64, ncount: i64, src: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let lo: i64 = __mind_load_i64(bb + i * 40 + 0);
+    let hi: i64 = __mind_load_i64(bb + i * 40 + 8);
+    let nidx: i64 = intern_find(strbuf, offs, ncount, src, lo, hi, 0);
+    let mid: i64 = __mind_load_i64(bb + i * 40 + 16);
+    let s1: EmitState = emit_uleb128(s, nidx);
+    let s2: EmitState = emit_uleb128(s1, mid);
+    emit_block_bindings(s2, bb, n, strbuf, offs, ncount, src, i + 1)
+}
+
+pub fn emit_block_merges(s: EmitState, bb: i64, n: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let mid: i64 = __mind_load_i64(bb + i * 40 + 16);
+    let tv: i64 = __mind_load_i64(bb + i * 40 + 24);
+    let ev: i64 = __mind_load_i64(bb + i * 40 + 32);
+    let s1: EmitState = emit_uleb128(s, mid);
+    let s2: EmitState = emit_uleb128(s1, tv);
+    let s3: EmitState = emit_uleb128(s2, ev);
+    emit_block_merges(s3, bb, n, i + 1)
+}
+
+// Dispatcher: route a value if-expr `init` to the single-expr emitter (both branches
+// 0 lets, byte-identical to before) or the general block emitter.
+pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    let tn: i64 = ast_aux(then_blk) - 1;
+    let en: i64 = ast_aux(else_blk) - 1;
+    if tn == 0 {
+        if en == 0 {
+            let c: i64 = ast_child0(if_node);
+            let t: i64 = branch_single_expr(then_blk);
+            let e: i64 = branch_single_expr(else_blk);
+            return emit_if_expr_lv(s, c, t, e, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount);
+        }
+    }
+    emit_if_expr_block_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount)
+}
+
 pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
     if cond_id < 0 {
@@ -6889,6 +7086,30 @@ pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: 
 
 // True iff `node` is an if-EXPRESSION usable as a value: an else-ful if whose then
 // and else blocks are each a single value-expression (branch_single_expr).
+// A branch usable as an if-EXPRESSION value: `let* VALUE` where VALUE is a plain
+// value expression (not a return, not a bare if-statement). Single-expr branches
+// (0 lets) are the common case; block branches carry leading lets that escape.
+pub fn branch_is_value_block(blk: i64) -> i64 {
+    let sa: i64 = ast_child0(blk);
+    let sl: i64 = ast_aux(blk);
+    if sl < 1 {
+        return 0;
+    }
+    let nl: i64 = count_leading_lets(sa, sl, 0);
+    if nl != sl - 1 {
+        return 0;
+    }
+    let last: i64 = __mind_load_i64(sa + (sl - 1) * 8);
+    let lk: i64 = ast_kind(last);
+    if lk == ast_return() {
+        return 0;
+    }
+    if lk == ast_if() {
+        return 0;
+    }
+    1
+}
+
 pub fn is_value_if_expr(node: i64) -> i64 {
     if ast_kind(node) != ast_if() {
         return 0;
@@ -6896,10 +7117,10 @@ pub fn is_value_if_expr(node: i64) -> i64 {
     if ast_child2(node) == 0 {
         return 0;
     }
-    if branch_single_expr(ast_child1(node)) < 0 {
+    if branch_is_value_block(ast_child1(node)) == 0 {
         return 0;
     }
-    if branch_single_expr(ast_child2(node)) < 0 {
+    if branch_is_value_block(ast_child2(node)) == 0 {
         return 0;
     }
     1
@@ -6927,10 +7148,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             __mind_store_i64(q7_cell, 0 - 1);
             let q7_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
             let _q7lv: i64 = seq_env_to_lvenv(env, nlets, 0, q7_lvenv, 0, 0);
-            let q7_cond: i64 = ast_child0(init);
-            let q7_then: i64 = branch_single_expr(ast_child1(init));
-            let q7_else: i64 = branch_single_expr(ast_child2(init));
-            let q7: EmitState = emit_if_expr_lv(es_new(), q7_cond, q7_then, q7_else, src, params_addr, n_params, q7_nodes, q7_cursor, q7_vidbuf, 0, q7_cell, q7_lvenv, nlets, 0, 0, 0);
+            let q7: EmitState = emit_if_expr_any_lv(es_new(), init, src, params_addr, n_params, q7_nodes, q7_cursor, q7_vidbuf, 0, q7_cell, q7_lvenv, nlets, 0, 0, 0);
             let q7_dst: i64 = __mind_load_i64(q7_cell);
             if q7_dst >= 0 {
                 let dst_slot: i64 = __mind_load_i64(cursor);
@@ -7396,10 +7614,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e7_vidbuf: i64 = __mind_alloc(256 * 8);
         let e7_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e7_cell, 0 - 1);
-        let c7: i64 = ast_child0(init7);
-        let t7: i64 = branch_single_expr(ast_child1(init7));
-        let l7: i64 = branch_single_expr(ast_child2(init7));
-        let s7i: EmitState = emit_if_expr_lv(s, c7, t7, l7, src, pa7, np7, e7_nodes, e7_cursor, e7_vidbuf, base, e7_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount);
+        let s7i: EmitState = emit_if_expr_any_lv(s, init7, src, pa7, np7, e7_nodes, e7_cursor, e7_vidbuf, base, e7_cell, seq_lvbuf, seq_nlv, strbuf, offs, ncount);
         return emit_stmt_seq(s7i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta7, i + 1, seq_lvbuf, seq_nlv);
     }
     if ty == 6 {
