@@ -7037,6 +7037,43 @@ pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i6
     emit_if_expr_block_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount)
 }
 
+// Emit one if-expr BRANCH VALUE at `base`, returning its result vid via rcell. A plain
+// expression flattens + emits its tree (result = root vid); a NESTED if-EXPRESSION value
+// (else-if chains) emits ONE recursive OP_IF (result = its dst). In both cases the value
+// occupies vids [base .. result], so the caller's next vid is result+1. okcell<-0 wall.
+pub fn emit_branch_value_lv(s: EmitState, expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, rcell: i64, okcell: i64) -> EmitState {
+    if is_value_if_expr(expr) == 1 {
+        let ic: i64 = __mind_alloc(8);
+        __mind_store_i64(ic, 0 - 1);
+        let sx: EmitState = emit_if_expr_any_lv(s, expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base, ic, lvenv, nlv, strbuf, offs, ncount);
+        let d: i64 = __mind_load_i64(ic);
+        if d < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        __mind_store_i64(rcell, d);
+        return sx;
+    }
+    let root: i64 = flatten_branch_lv(expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base, lvenv, nlv);
+    if root < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let n: i64 = __mind_load_i64(cursor);
+    let se: EmitState = emit_mic3_tree_body(s, nodes, n, vidbuf, buf, strbuf, offs, ncount, 0);
+    __mind_store_i64(rcell, root);
+    se
+}
+
+// Instr count a branch value contributes to a block length: 1 for a nested if-expr
+// (one OP_IF), else its non-param node count.
+pub fn branch_val_instrs(expr: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64) -> i64 {
+    if is_value_if_expr(expr) == 1 {
+        return 1;
+    }
+    count_nonparam_nodes_lv(expr, buf, params_addr, n_params, lvenv, nlv)
+}
+
 pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
     let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
     if cond_id < 0 {
@@ -7051,31 +7088,55 @@ pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: 
     let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
-    let then_root: i64 = flatten_branch_lv(then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, lvenv, nlv);
-    if then_root < 0 {
-        __mind_store_i64(okcell, 0 - 1);
-        return s;
-    }
-    let then_n: i64 = __mind_load_i64(cursor);
-    let then_nonparam: i64 = count_nonparam_nodes_lv(then_expr, buf, params_addr, n_params, lvenv, nlv);
-    let s5: EmitState = emit_uleb128(s4, then_nonparam + 1);
+    let then_is_if: i64 = is_value_if_expr(then_expr);
+    let then_instrs: i64 = if then_is_if == 1 {
+        1
+    } else {
+        count_nonparam_nodes_lv(then_expr, buf, params_addr, n_params, lvenv, nlv)
+    };
+    let s5: EmitState = emit_uleb128(s4, then_instrs + 1);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, buf, strbuf, offs, ncount, 0);
-    let s8: EmitState = emit_uleb128(s7, then_root);
-    let after_then: i64 = after_cond + 1 + then_nonparam;
-    let else_synth: i64 = after_then;
-    let else_root: i64 = flatten_branch_lv(else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1, lvenv, nlv);
-    if else_root < 0 {
+    let trcell: i64 = __mind_alloc(8);
+    let tvok: i64 = __mind_alloc(8);
+    __mind_store_i64(tvok, 1);
+    let s7: EmitState = emit_branch_value_lv(s6, then_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, lvenv, nlv, strbuf, offs, ncount, trcell, tvok);
+    if __mind_load_i64(tvok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let else_n: i64 = __mind_load_i64(cursor);
-    let else_nonparam: i64 = count_nonparam_nodes_lv(else_expr, buf, params_addr, n_params, lvenv, nlv);
-    let s9: EmitState = emit_uleb128(s8, else_nonparam + 1);
+    let then_root: i64 = __mind_load_i64(trcell);
+    let s8: EmitState = emit_uleb128(s7, then_root);
+    // after_branch = result+1 for an if-expr value (its dst is the last fresh vid);
+    // base + nonparam for a plain value (a param/let-ref result has a LOW reused vid).
+    let after_then: i64 = if then_is_if == 1 {
+        then_root + 1
+    } else {
+        after_cond + 1 + then_instrs
+    };
+    let else_synth: i64 = after_then;
+    let else_is_if: i64 = is_value_if_expr(else_expr);
+    let else_instrs: i64 = if else_is_if == 1 {
+        1
+    } else {
+        count_nonparam_nodes_lv(else_expr, buf, params_addr, n_params, lvenv, nlv)
+    };
+    let s9: EmitState = emit_uleb128(s8, else_instrs + 1);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
-    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    let ercell: i64 = __mind_alloc(8);
+    let evok: i64 = __mind_alloc(8);
+    __mind_store_i64(evok, 1);
+    let s11: EmitState = emit_branch_value_lv(s10, else_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, else_synth + 1, lvenv, nlv, strbuf, offs, ncount, ercell, evok);
+    if __mind_load_i64(evok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_root: i64 = __mind_load_i64(ercell);
     let s12: EmitState = emit_uleb128(s11, else_root);
-    let after_else: i64 = after_then + 1 + else_nonparam;
+    let after_else: i64 = if else_is_if == 1 {
+        else_root + 1
+    } else {
+        else_synth + 1 + else_instrs
+    };
     let dst: i64 = after_else;
     let s13: EmitState = emit_uleb128(s12, dst);
     let s14: EmitState = emit_uleb128(s13, 0);
@@ -7104,8 +7165,10 @@ pub fn branch_is_value_block(blk: i64) -> i64 {
     if lk == ast_return() {
         return 0;
     }
+    // A trailing if-EXPRESSION value is allowed (nested `else if` chains) — it must
+    // itself be a value if-expr (recursively). A bare if-statement (no else) is not.
     if lk == ast_if() {
-        return 0;
+        return is_value_if_expr(last);
     }
     1
 }
@@ -8570,6 +8633,52 @@ pub fn selftest_nfn_fail_span(src_addr: i64, src_len: i64, strbuf: i64, offs: i6
     let _sall: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
     let ncount: i64 = __mind_load_i64(ccell);
     nfn_first_fail_loop(src_addr, items_addr, items_len, strbuf, offs, ncount, 0)
+}
+
+// Count how many fn_defs fail-closed (the cutover progress metric: 0 == full self-host).
+pub fn nfn_fail_count_loop(src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, item_i: i64, acc: i64) -> i64 {
+    if item_i >= items_len {
+        return acc;
+    }
+    let item: i64 = __mind_load_i64(items_addr + item_i * 8);
+    if ast_kind(item) != ast_fn_def() {
+        return nfn_fail_count_loop(src, items_addr, items_len, strbuf, offs, ncount, item_i + 1, acc);
+    }
+    let ok: i64 = __mind_alloc(8);
+    __mind_store_i64(ok, 1);
+    let _s: EmitState = emit_mic3_module_fndef(es_new(), src, item, strbuf, offs, ncount, ok);
+    let nacc: i64 = if __mind_load_i64(ok) == 0 {
+        acc + 1
+    } else {
+        acc
+    };
+    nfn_fail_count_loop(src, items_addr, items_len, strbuf, offs, ncount, item_i + 1, nacc)
+}
+
+// Returns fail_count * 100000 + total_fn_defs (so one i64 carries both: progress = how
+// many of total still fail-closed; 0 fails == ready to flip the fixed_point oracle).
+pub fn selftest_nfn_fail_count(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let srt: i64 = srt_build(src_addr, src_len);
+    let slit_acell: i64 = __mind_alloc(16);
+    let slit_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, slit_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, slit_scell) == 1 {
+            let _sl: i64 = slit_desugar_module(src_addr, src_len, items_addr, items_len, srt, __mind_load_i64(slit_acell + 0), __mind_load_i64(slit_acell + 8), __mind_load_i64(slit_scell + 0), __mind_load_i64(slit_scell + 8), 0);
+        }
+    }
+    let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let _sall: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
+    let ncount: i64 = __mind_load_i64(ccell);
+    let nfail: i64 = nfn_fail_count_loop(src_addr, items_addr, items_len, strbuf, offs, ncount, 0, 0);
+    let ntotal: i64 = count_fn_defs(items_addr, items_len, 0, 0);
+    nfail * 100000 + ntotal
 }
 
 // ===== mic@3 COMPLETE with-body module — the 2-param arithmetic function family (Phase 4c) =====
