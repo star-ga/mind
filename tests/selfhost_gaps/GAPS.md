@@ -34,10 +34,19 @@ toward a fully general mic@3 driver.
   params, so the trailing read of the shadowed name picks the let. Additive — main.mind has no
   let-shadows-param, so the flip stays byte-identical. (commit: let-shadows-param)
 
-## Progress: fuzz mismatch set 26 -> 8 (70% cleared byte-exact, flip preserved throughout)
+## Fixed (cont.)
+- **leading-let INIT escape bubble** (`mixed-prefix_3/4`). A leading let whose INIT is an
+  escaping value if-expr — `let x = if b>0 { let m=b; m } else { let m=c; m }` — surfaces the
+  inner same-name phi `m` into the enclosing block scope (the Rust lowering keeps it live after
+  the let), so it must bubble into the enclosing if's merge as an extra phi. `block_init_escape_probe`
+  probes each leading let's if-expr init at the init's vid base and appends its escapes BEFORE the
+  value escapes (union order [lets, init-escapes, value-escapes]); the value real-append shifts
+  past them. blk_layout/blk_fill_own then re-merge them uniformly. (commit: block_init_escape)
 
-## Open — MISMATCH (deep combinations / cross-pass; out-of-subset; for a focused follow-up)
-1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, 6 of 8). The merge is
+## Progress: fuzz mismatch set 26 -> 6 (77% cleared byte-exact, flip preserved throughout)
+
+## Open — MISMATCH (deep cross-pass; out-of-subset; one focused class)
+1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, all 6 remaining). The merge is
    byte-exact but the trailing read of a name SHADOWED inside a fall-through if resolves to the
    OUTER vid, not the merge vid. Cross-pass: the trailing value flattens in Pass A against `env`
    (which stores let SLOTS); a fall-through merge has no flatten slot, and its vid is only known
@@ -45,10 +54,6 @@ toward a fully general mic@3 driver.
    inject the merge vid. Proper fix: synthesise a slot per fall-through-merge binding whose
    vidbuf is set to the merge vid in Pass B, and bind it in `env` before the trailing flatten
    (or fail-closed on shadow-read until supported). The single deepest remaining class.
-2. **mixed-prefix residuals** (`mixed-prefix_3/4`, 2 of 8): a `let X = <value if-expr>` whose
-   if-expr nests same-name phis / bubbles behind a multi-stmt prefix — the fixed pieces
-   interacting through the let-init (type-7) path. Each needs the same probe-decode-match loop,
-   additive + gated.
 
 ## Open — FAIL_CLOSED (safe refusal; in-subset coverage gaps)
 - struct-lit in non-let-RHS positions: call argument, nested ctor field, field-read of a
