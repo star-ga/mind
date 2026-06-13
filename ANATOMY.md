@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2768 | **Est. tokens:** ~6,875,153
-**Generated:** 2026-06-13 12:20 UTC
+**Files:** 2834 | **Est. tokens:** ~6,878,025
+**Generated:** 2026-06-13 13:29 UTC
 
 ## Token Budget Guide
 
@@ -428,6 +428,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
 | `tests/runtime/` | 2 | ~135 |
+| `tests/selfhost_gaps/` | 66 | ~2,872 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~3,423 |
@@ -4131,6 +4132,74 @@
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
+### `tests/selfhost_gaps/`
+
+- `call-arg-nesting_1.mind` (~25 tok, tiny)
+- `call-arg-nesting_2.mind` (~35 tok, tiny)
+- `call-arg-nesting_3.mind` (~41 tok, tiny)
+- `call-arg-nesting_4.mind` (~48 tok, tiny)
+- `call-arg-nesting_5.mind` (~20 tok, tiny)
+- `call-arg-nesting_6.mind` (~28 tok, tiny)
+- `call-arg-nesting_7.mind` (~28 tok, tiny)
+- `call-arg-nesting_8.mind` (~50 tok, small)
+- `call-arg-nesting_9.mind` (~10 tok, tiny)
+- `deep-combos_1.mind` (~42 tok, tiny)
+- `deep-combos_2.mind` (~42 tok, tiny)
+- `deep-combos_3.mind` (~35 tok, tiny)
+- `deep-combos_4.mind` (~35 tok, tiny)
+- `deep-combos_5.mind` (~69 tok, small)
+- `deep-combos_6.mind` (~128 tok, small)
+- `deep-combos_7.mind` (~87 tok, small)
+- `deep-combos_8.mind` (~14 tok, tiny)
+- `fallthrough-shadow_1.mind` (~28 tok, tiny)
+- `fallthrough-shadow_2.mind` (~42 tok, tiny)
+- `fallthrough-shadow_3.mind` (~55 tok, small)
+- `fallthrough-shadow_4.mind` (~29 tok, tiny)
+- `fallthrough-shadow_5.mind` (~57 tok, small)
+- `fallthrough-shadow_6.mind` (~38 tok, tiny)
+- `fallthrough-shadow_7.mind` (~33 tok, tiny)
+- `fallthrough-shadow_8.mind` (~25 tok, tiny)
+- `field-read_1.mind` (~63 tok, small)
+- `field-read_2.mind` (~41 tok, tiny)
+- `field-read_3.mind` (~27 tok, tiny)
+- `field-read_4.mind` (~29 tok, tiny)
+- `field-read_5.mind` (~61 tok, small)
+- `let-ifexpr-seq_1.mind` (~23 tok, tiny)
+- `let-ifexpr-seq_2.mind` (~34 tok, tiny)
+- `let-ifexpr-seq_3.mind` (~23 tok, tiny)
+- `let-ifexpr-seq_4.mind` (~21 tok, tiny)
+- `let-ifexpr-seq_5.mind` (~19 tok, tiny)
+- `let-ifexpr-seq_6.mind` (~27 tok, tiny)
+- `let-ifexpr-seq_7.mind` (~46 tok, tiny)
+- `mixed-prefix_10.mind` (~32 tok, tiny)
+- `mixed-prefix_11.mind` (~27 tok, tiny)
+- `mixed-prefix_12.mind` (~40 tok, tiny)
+- `mixed-prefix_1.mind` (~28 tok, tiny)
+- `mixed-prefix_2.mind` (~38 tok, tiny)
+- `mixed-prefix_3.mind` (~65 tok, small)
+- `mixed-prefix_4.mind` (~59 tok, small)
+- `mixed-prefix_5.mind` (~41 tok, tiny)
+- `mixed-prefix_6.mind` (~38 tok, tiny)
+- `mixed-prefix_7.mind` (~29 tok, tiny)
+- `mixed-prefix_8.mind` (~49 tok, tiny)
+- `mixed-prefix_9.mind` (~50 tok, small)
+- `operator-edges_1.mind` (~24 tok, tiny)
+- `operator-edges_2.mind` (~26 tok, tiny)
+- `operator-edges_3.mind` (~26 tok, tiny)
+- `operator-edges_4.mind` (~8 tok, tiny)
+- `operator-edges_5.mind` (~16 tok, tiny)
+- `operator-edges_6.mind` (~14 tok, tiny)
+- `struct-lit_1.mind` (~63 tok, small)
+- `struct-lit_2.mind` (~56 tok, small)
+- `struct-lit_3.mind` (~60 tok, small)
+- `value-ifexpr_1.mind` (~98 tok, small) — MISMATCH: a `let`-block in a NESTED (else-if) branch of a value if-expr.
+- `value-ifexpr_2.mind` (~79 tok, small) — MISMATCH: same-named `let` in two SIBLING branches of a value if-expr.
+- `value-ifexpr_3.mind` (~71 tok, small) — MISMATCH: a `let` inside a NESTED if-expr that sits in the THEN-side of an
+- `value-ifexpr_4.mind` (~75 tok, small) — MISMATCH: let-block then-side whose trailing value is a nested if-expr that
+- `value-ifexpr_5.mind` (~83 tok, small) — FAIL_CLOSED (in-subset): value if-expr whose else-branch is
+- `value-ifexpr_6.mind` (~77 tok, small) — FAIL_CLOSED (in-subset): `let outer; if .. { use outer } else { use outer }`
+- `value-ifexpr_7.mind` (~78 tok, small) — FAIL_CLOSED (in-subset): struct-lit construction as a value if-expr branch.
+- `value-ifexpr_8.mind` (~64 tok, small) — FAIL_CLOSED (in-subset): field-read `recv.field` as a value if-expr branch.
 ### `tests/`
 
 - `sha256_smoke.rs` (~1654 tok, huge) — Copyright 2025 STARGA Inc.
