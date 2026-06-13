@@ -25,10 +25,19 @@ toward a fully general mic@3 driver.
   branch-value escapes after the leading lets so blk_layout/blk_fill_own union them. (commit:
   block_lv bubble)
 
-## Progress: fuzz mismatch set 26 -> 10 (62% cleared byte-exact, flip preserved throughout)
+## Fixed (cont.)
+- **let-shadows-param inside a value-if-expr branch** (`deep-combos_3/4`, `call-arg-nesting_4`).
+  `let p = if c { let p = p + 1; p } else { p }` — an inner `let p` shadows the same-named
+  param `p`. Two fixes, one logical change: (1) `blk_layout` resolves a branch binding's source
+  via `lvenv_lookup` first and falls back to `resolve_param`, so the merge binds the let's vid
+  (not the param's); (2) `flatten_ast_lv`'s ident arm resolves the lv-env (lets in scope) BEFORE
+  params, so the trailing read of the shadowed name picks the let. Additive — main.mind has no
+  let-shadows-param, so the flip stays byte-identical. (commit: let-shadows-param)
+
+## Progress: fuzz mismatch set 26 -> 8 (70% cleared byte-exact, flip preserved throughout)
 
 ## Open — MISMATCH (deep combinations / cross-pass; out-of-subset; for a focused follow-up)
-1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, 6 of 10). The merge is
+1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, 6 of 8). The merge is
    byte-exact but the trailing read of a name SHADOWED inside a fall-through if resolves to the
    OUTER vid, not the merge vid. Cross-pass: the trailing value flattens in Pass A against `env`
    (which stores let SLOTS); a fall-through merge has no flatten slot, and its vid is only known
@@ -36,18 +45,10 @@ toward a fully general mic@3 driver.
    inject the merge vid. Proper fix: synthesise a slot per fall-through-merge binding whose
    vidbuf is set to the merge vid in Pass B, and bind it in `env` before the trailing flatten
    (or fail-closed on shadow-read until supported). The single deepest remaining class.
-2. **deep combinations** (`mixed-prefix_3/4`, `call-arg-nesting_4`, `deep-combos_3/4`): a
-   `let X = <value if-expr>` whose if-expr nests same-name phis / param-shadows / bubbles —
-   the fixed pieces interacting through the let-init (type-7) path. Each needs the same
-   probe-decode-match loop, additive + gated.
-2. **fall-through shadow trailing-read** (`fallthrough-shadow_1..6`). `let y=p; if c {let y=..};
-   y` — the inner `let y` shadows the outer; the merge is byte-exact but the trailing `y`
-   resolves to the OUTER vid, not the merged vid. Root cause: the trailing value is flattened
-   in Pass A against `env` (letenv, slots), which has no representation for a Pass-C fall-through
-   merge vid; `flatten_expr_env` drops the name span on ident leaves so post-emit re-resolution
-   against the live env is blocked. Proper fix: thread the segment merge bindings into the
-   trailing-value resolution (cross-pass) — or fail-closed on shadow-read until supported.
-3. **mixed-prefix / call-arg / deep-combos residuals** — combinations of (1) above with prefixes.
+2. **mixed-prefix residuals** (`mixed-prefix_3/4`, 2 of 8): a `let X = <value if-expr>` whose
+   if-expr nests same-name phis / bubbles behind a multi-stmt prefix — the fixed pieces
+   interacting through the let-init (type-7) path. Each needs the same probe-decode-match loop,
+   additive + gated.
 
 ## Open — FAIL_CLOSED (safe refusal; in-subset coverage gaps)
 - struct-lit in non-let-RHS positions: call argument, nested ctor field, field-read of a
