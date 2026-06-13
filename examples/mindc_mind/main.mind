@@ -6109,7 +6109,7 @@ pub fn measure_mixed_instrs(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_
 // (acc 24B name records + acc_cell count). A let emits its init (if-expr or normal),
 // binds NAME->its value vid, records NAME. A segment emits its OP_IF and appends its
 // bubbled bindings. okcell <- 0 on any wall.
-pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv_cell: i64, acc: i64, acc_cell: i64, okcell: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base_cell: i64, lvbuf: i64, nlv_cell: i64, acc: i64, acc_cell: i64, okcell: i64, strbuf: i64, offs: i64, ncount: i64, esc_to_lv: i64) -> EmitState {
     if idx >= n {
         return s;
     }
@@ -6137,8 +6137,17 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
             return s;
         }
         let _ap: i64 = bind_append(acc, acc_cell, seg_bind, __mind_load_i64(seg_nb), 0);
+        // FALL-THROUGH walks (esc_to_lv==1): a segment's escaping bindings are LIVE for the
+        // rest of the block, so a later statement that REDEFINES one of these names (a shadow)
+        // sees the outer vid in the env and its own merge reuses it (bound, no placeholder).
+        // VALUE-branch walks (esc_to_lv==0) keep nlv == direct lets (their merge tail + the
+        // acc==nlets guard depend on it), so they do NOT grow the env here.
+        if esc_to_lv == 1 {
+            let _le: i64 = lvenv_append_escapes(lvbuf, nlv, seg_bind, __mind_load_i64(seg_nb), 0);
+            __mind_store_i64(nlv_cell, nlv + __mind_load_i64(seg_nb));
+        }
         __mind_store_i64(base_cell, seg_dst + 1);
-        return emit_mixed_walk(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount);
+        return emit_mixed_walk(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
     }
     if ast_kind(stmt) != ast_let() {
         // Bare expression-statement (call/binop used for its side effect). Emit its
@@ -6152,7 +6161,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         let be_nn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, lvbuf, nlv);
         let be_s: EmitState = emit_mic3_tree_body(s, nodes, be_n, vidbuf, buf, strbuf, offs, ncount, 0);
         __mind_store_i64(base_cell, cur_base + be_nn);
-        return emit_mixed_walk(be_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount);
+        return emit_mixed_walk(be_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
     }
     let name: i64 = ast_child0(stmt);
     let init: i64 = ast_child2(stmt);
@@ -6197,7 +6206,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     // so a fall-through merge tail can read then_val from acc. (POISON-tail callers ignore it.)
     __mind_store_i64(acc + at * 24 + 16, __mind_load_i64(lvbuf + nlv * 24 + 16));
     __mind_store_i64(acc_cell, at + 1);
-    emit_mixed_walk(s2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount)
+    emit_mixed_walk(s2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv)
 }
 
 // Fill 32-byte bind records from the ordered NAME accumulator (acc), all POISON.
@@ -6301,7 +6310,7 @@ pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let s7: EmitState = emit_mixed_walk(s6, then_sa, n_prefix, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount);
+    let s7: EmitState = emit_mixed_walk(s6, then_sa, n_prefix, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 0);
     if __mind_load_i64(w_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -6542,7 +6551,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         // leading-let merge bindings via bindout for this level's caller to re-merge.
         if cn_segs >= 0 {
             if seq_then_all_ifs(then_sa + nlets_then * 8, cn_segs, 0) == 1 {
-                let d_lvbuf: i64 = __mind_alloc((nlv + nlets_then + 4) * 24);
+                let d_lvbuf: i64 = __mind_alloc((nlv + nlets_then + 512) * 24);
                 let d_cell: i64 = __mind_alloc(8);
                 __mind_store_i64(d_cell, 0 - 1);
                 let sd: EmitState = emit_if_let_seq_then_instr_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, d_cell, lvenv, nlv, d_lvbuf, strbuf, offs, ncount, bindout, nbind_cell);
@@ -6560,7 +6569,7 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     // is handled.) Placed after the type-4 delegate (leading-lets + all-if-segments) and
     // before the mixed-RETURNING delegation (which needs a terminal return).
     if mixed_prefix_ok(then_sa, then_sl, 0) == 1 {
-        let ftc_lvbuf: i64 = __mind_alloc((nlv + then_sl + 8) * 24);
+        let ftc_lvbuf: i64 = __mind_alloc((nlv + then_sl + 512) * 24);
         let ftc_cell: i64 = __mind_alloc(8);
         __mind_store_i64(ftc_cell, 0 - 1);
         let sftc: EmitState = emit_if_fallthrough_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, ftc_cell, lvenv, nlv, ftc_lvbuf, strbuf, offs, ncount, bindout, nbind_cell);
@@ -6728,8 +6737,15 @@ pub fn emit_if_seq_segments_lv(s: EmitState, stmts_addr: i64, stmts_len: i64, bu
         __mind_store_i64(dst_cell, 0 - 1);
         return s;
     }
-    let _ap: i64 = bind_append(acc_bind, acc_cell, seg_bindout, __mind_load_i64(seg_nbind), 0);
-    emit_if_seq_segments_lv(s1, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_dst + 1, seg_dst, dst_cell, i + 1, lvenv, nlv, strbuf, offs, ncount, acc_bind, acc_cell)
+    // DEDUPED merge accumulator: a later segment that redefines a name updates that
+    // binding's value (the join binds it once, latest value).
+    let _ap: i64 = bind_append_dedup(acc_bind, acc_cell, buf, seg_bindout, __mind_load_i64(seg_nbind), 0);
+    // The segment's escaping bindings are LIVE for the rest of this segment-sequence: a
+    // later segment that REDEFINES one (a shadow) must see the outer vid in the env so its
+    // own merge reuses it (bound, no placeholder). Appended at `nlv`, looked up last-match.
+    let snb: i64 = __mind_load_i64(seg_nbind);
+    let _le: i64 = lvenv_append_escapes(lvenv, nlv, seg_bindout, snb, 0);
+    emit_if_seq_segments_lv(s1, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_dst + 1, seg_dst, dst_cell, i + 1, lvenv, nlv + snb, strbuf, offs, ncount, acc_bind, acc_cell)
 }
 
 // Append `n` 24-byte (name_lo, name_hi, merge_id) records from src to the
@@ -6744,6 +6760,42 @@ pub fn bind_append(acc_bind: i64, acc_cell: i64, src: i64, n: i64, i: i64) -> i6
     __mind_store_i64(acc_bind + at * 24 + 16, __mind_load_i64(src + i * 24 + 16));
     __mind_store_i64(acc_cell, at + 1);
     bind_append(acc_bind, acc_cell, src, n, i + 1)
+}
+
+// Find a 24-byte (name_lo, name_hi, *) record in `acc` [0,n) whose NAME (compared by
+// content in `buf`) equals buf[lo..hi). Returns its index or -1.
+pub fn binddup_find(acc: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if span_bytes_equal(buf, lo, hi, __mind_load_i64(acc + i * 24 + 0), __mind_load_i64(acc + i * 24 + 8)) == 1 {
+        return i;
+    }
+    binddup_find(acc, n, buf, lo, hi, i + 1)
+}
+
+// Like bind_append but DEDUPED by name: a binding whose name already appears in `acc`
+// UPDATES that entry's merge_id (keeping its first-seen position); a new name appends.
+// This is the SSA join for a sequence of if-segments that REDEFINE the same name across
+// segments (the join binds the name ONCE, with the value the LAST segment produced).
+pub fn bind_append_dedup(acc_bind: i64, acc_cell: i64, buf: i64, src: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return __mind_load_i64(acc_cell);
+    }
+    let lo: i64 = __mind_load_i64(src + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(src + i * 24 + 8);
+    let mid: i64 = __mind_load_i64(src + i * 24 + 16);
+    let cur: i64 = __mind_load_i64(acc_cell);
+    let found: i64 = binddup_find(acc_bind, cur, buf, lo, hi, 0);
+    if found >= 0 {
+        __mind_store_i64(acc_bind + found * 24 + 16, mid);
+    } else {
+        __mind_store_i64(acc_bind + cur * 24 + 0, lo);
+        __mind_store_i64(acc_bind + cur * 24 + 8, hi);
+        __mind_store_i64(acc_bind + cur * 24 + 16, mid);
+        __mind_store_i64(acc_cell, cur + 1);
+    }
+    bind_append_dedup(acc_bind, acc_cell, buf, src, n, i + 1)
 }
 
 pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
@@ -6779,23 +6831,36 @@ pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_ad
     let t3_acc: i64 = __mind_alloc(64 * 24);
     let t3_acc_cell: i64 = __mind_alloc(8);
     __mind_store_i64(t3_acc_cell, 0);
-    let s7: EmitState = emit_if_seq_segments_lv(s6, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, after_cond, seq_cell, 0, lvenv, nlv, strbuf, offs, ncount, t3_acc, t3_acc_cell);
+    // Growable env COPY for the segment walk: a segment's escapes append here so a later
+    // segment that redefines a name sees it (the original lvenv/nlv below drives THIS if's
+    // own merge fresh/bound — a name not live before this if is fresh).
+    let seg_lvbuf: i64 = __mind_alloc((nlv + stmts_len + 512) * 24);
+    let _sc: i64 = lvenv_copy(seg_lvbuf, lvenv, nlv, 0);
+    let s7: EmitState = emit_if_seq_segments_lv(s6, stmts_addr, stmts_len, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, after_cond, seq_cell, 0, seg_lvbuf, nlv, strbuf, offs, ncount, t3_acc, t3_acc_cell);
     let last_dst: i64 = __mind_load_i64(seq_cell);
     if last_dst < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
+    // then_result = the last segment's dst; ELSE block + merge tail re-merge every binding
+    // the segments escaped (deduped in t3_acc), fresh/bound vs the ORIGINAL outer env.
     let s8: EmitState = emit_uleb128(s7, last_dst);
+    let nb: i64 = __mind_load_i64(t3_acc_cell);
     let else_synth: i64 = last_dst + 1;
-    let s9: EmitState = emit_uleb128(s8, 1);
+    let lay: i64 = __mind_alloc((nb + 1) * 48);
+    let dst: i64 = caseB_layout(lay, t3_acc, nb, buf, lvenv, nlv, 0, else_synth + 1);
+    let else_len: i64 = 1 + caseA_fresh_count(lay, nb, 0);
+    let s9: EmitState = emit_uleb128(s8, else_len);
     let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
-    let s11: EmitState = emit_uleb128(s10, else_synth);
-    let dst: i64 = last_dst + 2;
-    let s12: EmitState = emit_uleb128(s11, dst);
-    let s13: EmitState = emit_uleb128(s12, 0);
-    let s14: EmitState = emit_uleb128(s13, 0);
+    let s11: EmitState = caseA_emit_placeholders(s10, lay, nb, 0);
+    let s12: EmitState = emit_uleb128(s11, else_synth);
+    let s13: EmitState = emit_uleb128(s12, dst);
+    let s14: EmitState = emit_uleb128(s13, nb);
+    let s15: EmitState = caseA_emit_bindings(s14, lay, nb, strbuf, offs, ncount, buf, 0);
+    let s16: EmitState = emit_uleb128(s15, nb);
+    let s17: EmitState = caseA_emit_merges(s16, lay, nb, 0);
     __mind_store_i64(okcell, dst);
-    s14
+    s17
 }
 
 // ===========================================================================
@@ -7136,7 +7201,7 @@ pub fn emit_if_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let s7: EmitState = emit_mixed_walk(s6, stmts_addr, stmts_len, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount);
+    let s7: EmitState = emit_mixed_walk(s6, stmts_addr, stmts_len, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 1);
     if __mind_load_i64(w_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -7548,7 +7613,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let s5: EmitState = emit_uleb128(s4, then_len);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let then_lvbuf: i64 = __mind_alloc((nlv0 + then_sl + 8) * 24);
+    let then_lvbuf: i64 = __mind_alloc((nlv0 + then_sl + 512) * 24);
     let _tc: i64 = lvenv_copy(then_lvbuf, lvenv0, nlv0, 0);
     let then_base: i64 = __mind_alloc(8);
     __mind_store_i64(then_base, after_cond + 1);
@@ -7559,7 +7624,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(then_acc_cell, 0);
     let then_ok: i64 = __mind_alloc(8);
     __mind_store_i64(then_ok, 1);
-    let s7: EmitState = emit_mixed_walk(s6, then_sa, then_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, then_base, then_lvbuf, then_e_nlv, then_acc, then_acc_cell, then_ok, strbuf, offs, ncount);
+    let s7: EmitState = emit_mixed_walk(s6, then_sa, then_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, then_base, then_lvbuf, then_e_nlv, then_acc, then_acc_cell, then_ok, strbuf, offs, ncount, 1);
     if __mind_load_i64(then_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -7569,7 +7634,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     let s9: EmitState = emit_uleb128(s8, then_result);
     let s10: EmitState = emit_uleb128(s9, else_len);
     let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
-    let else_lvbuf: i64 = __mind_alloc((nlv0 + else_sl + 8) * 24);
+    let else_lvbuf: i64 = __mind_alloc((nlv0 + else_sl + 512) * 24);
     let _ec: i64 = lvenv_copy(else_lvbuf, lvenv0, nlv0, 0);
     let else_base: i64 = __mind_alloc(8);
     __mind_store_i64(else_base, else_synth + 1);
@@ -7580,7 +7645,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(else_acc_cell, 0);
     let else_ok: i64 = __mind_alloc(8);
     __mind_store_i64(else_ok, 1);
-    let s12: EmitState = emit_mixed_walk(s11, else_sa, else_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, else_base, else_lvbuf, else_e_nlv, else_acc, else_acc_cell, else_ok, strbuf, offs, ncount);
+    let s12: EmitState = emit_mixed_walk(s11, else_sa, else_sl, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, else_base, else_lvbuf, else_e_nlv, else_acc, else_acc_cell, else_ok, strbuf, offs, ncount, 1);
     if __mind_load_i64(else_ok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -7614,7 +7679,7 @@ pub fn probe_mixed_walk(sa: i64, sl: i64, base: i64, buf: i64, params_addr: i64,
     let pn: i64 = __mind_alloc(256 * 32);
     let pc: i64 = __mind_alloc(8);
     let pv: i64 = __mind_alloc(256 * 8);
-    let lvbuf: i64 = __mind_alloc((nlv0 + sl + 8) * 24);
+    let lvbuf: i64 = __mind_alloc((nlv0 + sl + 512) * 24);
     let _cp: i64 = lvenv_copy(lvbuf, lvenv0, nlv0, 0);
     let base_cell: i64 = __mind_alloc(8);
     __mind_store_i64(base_cell, base);
@@ -7625,7 +7690,7 @@ pub fn probe_mixed_walk(sa: i64, sl: i64, base: i64, buf: i64, params_addr: i64,
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let _sw: EmitState = emit_mixed_walk(es_new(), sa, sl, 0, buf, params_addr, n_params, pn, pc, pv, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount);
+    let _sw: EmitState = emit_mixed_walk(es_new(), sa, sl, 0, buf, params_addr, n_params, pn, pc, pv, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 1);
     if __mind_load_i64(w_ok) == 0 {
         return 0 - 1;
     }
@@ -7803,7 +7868,7 @@ pub fn emit_mixed_value_branch(s: EmitState, sa: i64, sl: i64, buf: i64, params_
     __mind_store_i64(acc_cell, 0);
     let w_ok: i64 = __mind_alloc(8);
     __mind_store_i64(w_ok, 1);
-    let s1: EmitState = emit_mixed_walk(s, sa, sl - 1, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount);
+    let s1: EmitState = emit_mixed_walk(s, sa, sl - 1, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount, 0);
     if __mind_load_i64(w_ok) == 0 {
         __mind_store_i64(ok_out, 0);
         return s;
@@ -8531,7 +8596,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                 __mind_store_i64(ft_cell, 0 - 1);
                 let ft_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
                 let _ftlv: i64 = seq_env_to_lvenv(env, nlets, 0, ft_lvenv, 0, 0);
-                let ft_lvbuf: i64 = __mind_alloc((nlets + then_sl + 8) * 24);
+                let ft_lvbuf: i64 = __mind_alloc((nlets + then_sl + 512) * 24);
                 let ft_bo: i64 = __mind_alloc(64 * 24);
                 let ft_nb: i64 = __mind_alloc(8);
                 let ftp: EmitState = emit_if_fallthrough_lv(es_new(), stmt, src, params_addr, n_params, ft_nodes, ft_cursor, ft_vidbuf, 0, ft_cell, ft_lvenv, nlets, ft_lvbuf, 0, 0, 0, ft_bo, ft_nb);
@@ -8673,7 +8738,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
             __mind_store_i64(fs_cell, 0 - 1);
             let fs_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
             let _fslv: i64 = seq_env_to_lvenv(env, nlets, 0, fs_lvenv, 0, 0);
-            let fs_lvbuf: i64 = __mind_alloc((nlets + then_sl + 8) * 24);
+            let fs_lvbuf: i64 = __mind_alloc((nlets + then_sl + 512) * 24);
             let fs_bo: i64 = __mind_alloc(64 * 24);
             let fs_nb: i64 = __mind_alloc(8);
             let fsp: EmitState = emit_if_fallthrough_lv(es_new(), stmt, src, params_addr, n_params, fs_nodes, fs_cursor, fs_vidbuf, 0, fs_cell, fs_lvenv, nlets, fs_lvbuf, 0, 0, 0, fs_bo, fs_nb);
@@ -8912,7 +8977,7 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let q_cell: i64 = __mind_alloc(8);
         __mind_store_i64(q_cell, 0 - 1);
         let q_then: i64 = ast_child1(if8);
-        let q_lvbuf: i64 = __mind_alloc((nnames + ast_aux(q_then) + 8) * 24);
+        let q_lvbuf: i64 = __mind_alloc((nnames + ast_aux(q_then) + 512) * 24);
         let q_bo: i64 = __mind_alloc(64 * 24);
         let q_nb: i64 = __mind_alloc(8);
         __mind_store_i64(q_nb, 0);
@@ -9158,7 +9223,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         __mind_store_i64(e4_cell, 0 - 1);
         let e4_then_blk: i64 = ast_child1(if_node4);
         let e4_nlets: i64 = count_leading_lets(ast_child0(e4_then_blk), ast_aux(e4_then_blk), 0);
-        let e4_lvbuf: i64 = __mind_alloc((seq_nlv + e4_nlets + 8) * 24);
+        let e4_lvbuf: i64 = __mind_alloc((seq_nlv + e4_nlets + 512) * 24);
         let e4_bo: i64 = __mind_alloc(64 * 24);
         let e4_nb: i64 = __mind_alloc(8);
         let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount, e4_bo, e4_nb);
@@ -9235,7 +9300,7 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e8_cell: i64 = __mind_alloc(8);
         __mind_store_i64(e8_cell, 0 - 1);
         let e8_then_blk: i64 = ast_child1(if_node8);
-        let e8_lvbuf: i64 = __mind_alloc((seq_nlv + ast_aux(e8_then_blk) + 8) * 24);
+        let e8_lvbuf: i64 = __mind_alloc((seq_nlv + ast_aux(e8_then_blk) + 512) * 24);
         let e8_bo: i64 = __mind_alloc(64 * 24);
         let e8_nb: i64 = __mind_alloc(8);
         let s8i: EmitState = emit_if_fallthrough_lv(s, if_node8, src, pa8, np8, e8_nodes, e8_cursor, e8_vidbuf, base, e8_cell, seq_lvbuf, seq_nlv, e8_lvbuf, strbuf, offs, ncount, e8_bo, e8_nb);
@@ -10596,15 +10661,18 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     if n_fns < 1 {
         return es_new();
     }
-    // header || strtab || next_id(=n_structs+n_fns) || exports(0) ||
-    //   instr_count(=2*n_structs + 3*n_fns: each struct const+output, each fn
-    //   FN_DEF+const+output).
-    let n_items: i64 = n_structs + n_fns;
+    // header || strtab || next_id(=items_len) || exports(0) ||
+    //   instr_count(=2*items_len + n_fns). The scaffold loop emits ONE placeholder per
+    //   TOP-LEVEL ITEM (each consumes vid k => next_id == items_len) plus a FN_DEF for
+    //   each fn. A module may carry items that are neither a registry struct nor a fn
+    //   (e.g. extra struct decls beyond the lit registry), so count items_len directly
+    //   rather than n_structs+n_fns, which undercounts those.
+    let n_items: i64 = items_len;
     let s1: EmitState = emit_mic3_header(es_new());
     let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, ncount);
     let s3: EmitState = emit_uleb128(s2, n_items);
     let s4: EmitState = emit_uleb128(s3, 0);
-    let s5: EmitState = emit_uleb128(s4, n_structs + n_structs + n_fns + n_fns + n_fns);
+    let s5: EmitState = emit_uleb128(s4, items_len + items_len + n_fns);
     // Per-item placeholder + per-fn FN_DEF, in declaration order, threaded through
     // one ok_cell. The running vid counts both structs and fns (flat module space).
     let ok_cell: i64 = __mind_alloc(8);
