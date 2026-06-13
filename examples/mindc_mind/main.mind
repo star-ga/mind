@@ -8849,10 +8849,10 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         // const / binop / let-ref tree). Substitution-equivalent to the nested
         // expression, so byte-exact vs --emit-mic3.
         if stmts_len >= 2 {
-            let nodes2: i64 = __mind_alloc(256 * 32);
+            let nodes2: i64 = __mind_alloc(4096 * 32);
             let cursor2: i64 = __mind_alloc(8);
-            let vidbuf2: i64 = __mind_alloc(256 * 8);
-            let env: i64 = __mind_alloc(64 * 24);
+            let vidbuf2: i64 = __mind_alloc(4096 * 8);
+            let env: i64 = __mind_alloc(512 * 24);
             let nlets_cell: i64 = __mind_alloc(8);
             let slet: EmitState = emit_mic3_module_fndef_letchain(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, nodes2, cursor2, vidbuf2, env, nlets_cell, strbuf, offs, ncount, ok_cell);
             if __mind_load_i64(ok_cell) == 1 {
@@ -8912,12 +8912,12 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         // Strict superset of (f)+(g); reached only when those narrow shapes miss.
         // Byte-exact vs --emit-mic3 (additive; canary untouched).
         if stmts_len >= 2 {
-            let hnodes: i64 = __mind_alloc(512 * 32);
+            let hnodes: i64 = __mind_alloc(4096 * 32);
             let hcursor: i64 = __mind_alloc(8);
-            let hvidbuf: i64 = __mind_alloc(512 * 8);
-            let henv: i64 = __mind_alloc(64 * 24);
+            let hvidbuf: i64 = __mind_alloc(4096 * 8);
+            let henv: i64 = __mind_alloc(512 * 24);
             let hnlets: i64 = __mind_alloc(8);
-            let hplan: i64 = __mind_alloc(64 * 64);
+            let hplan: i64 = __mind_alloc(512 * 64);
             let hnplan: i64 = __mind_alloc(8);
             let sseq: EmitState = emit_mic3_module_fndef_seq(s, src, fn_node, nidx, pstr, n_params, stmts_addr, stmts_len, hnodes, hcursor, hvidbuf, henv, hnlets, hplan, hnplan, strbuf, offs, ncount, ok_cell);
             if __mind_load_i64(ok_cell) == 1 {
