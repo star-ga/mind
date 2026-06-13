@@ -6329,6 +6329,18 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         __mind_store_i64(okcell, ftc_dst);
         return sftc;
     }
+    // (nested MIXED returning then-block inside a chain) `(let | bare-call | if-segment)*
+    // + return` with >=1 if-segment — a recursively-mixed block. Delegate to the mixed
+    // emitter; its emit_mixed_walk recurses into the if-segment which re-enters HERE,
+    // delegating again for arbitrarily-nested mixed segments. Bindings bubble via bindout.
+    if mixed_shape_segs(then_sa, then_sl, 0, 0) >= 1 {
+        let mx_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(mx_cell, 0 - 1);
+        let smx: EmitState = emit_if_mixed_then_instr_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, mx_cell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell);
+        let mx_dst: i64 = __mind_load_i64(mx_cell);
+        __mind_store_i64(okcell, mx_dst);
+        return smx;
+    }
     if then_sl - nlets_then != 1 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
