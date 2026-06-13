@@ -5990,9 +5990,6 @@ pub fn emit_chain_merges(s: EmitState, binds: i64, n: i64, else_synth: i64, i: i
 // the last is `return E`, with >=1 if-segment. Returns n_segs (>=1) or -1.
 pub fn mixed_shape_segs(stmts_addr: i64, stmts_len: i64, i: i64, nseg: i64) -> i64 {
     if i >= stmts_len - 1 {
-        if nseg < 1 {
-            return 0 - 1;
-        }
         let last: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
         if ast_kind(last) != ast_return() {
             return 0 - 1;
@@ -6010,7 +6007,10 @@ pub fn mixed_shape_segs(stmts_addr: i64, stmts_len: i64, i: i64, nseg: i64) -> i
         }
         return mixed_shape_segs(stmts_addr, stmts_len, i + 1, nseg + 1);
     }
-    0 - 1
+    // A bare expression-statement (a call/binop used for its side effect — e.g.
+    // `__mind_store_i64(cell, v);`). It emits its instr tree but binds no name and
+    // creates no merge. Accept it as a prefix statement (does not count as a segment).
+    mixed_shape_segs(stmts_addr, stmts_len, i + 1, nseg)
 }
 
 // Measuring walk: top-level body-instr count of the prefix stmts[0..n) (a let = its
@@ -6021,8 +6021,16 @@ pub fn measure_mixed_instrs(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
-    if ast_kind(stmt) != ast_let() {
+    if ast_kind(stmt) == ast_if() {
+        // An if-segment lowers to a single OP_IF instruction.
         return 1 + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell);
+    }
+    if ast_kind(stmt) != ast_let() {
+        // A bare expression-statement contributes its FULL instr tree (not 1) and
+        // binds no name (no lv-env entry).
+        let be_nlv: i64 = __mind_load_i64(nlv_cell);
+        let be_c: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, lvbuf, be_nlv);
+        return be_c + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell);
     }
     let nlv: i64 = __mind_load_i64(nlv_cell);
     let init: i64 = ast_child2(stmt);
@@ -6068,6 +6076,20 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         let _ap: i64 = bind_append(acc, acc_cell, seg_bind, __mind_load_i64(seg_nb), 0);
         __mind_store_i64(base_cell, seg_dst + 1);
         return emit_mixed_walk(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount);
+    }
+    if ast_kind(stmt) != ast_let() {
+        // Bare expression-statement (call/binop used for its side effect). Emit its
+        // instr tree, advance the vid base, but bind NO name and accumulate NO merge.
+        let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, lvbuf, nlv);
+        if be_root < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let be_n: i64 = __mind_load_i64(cursor);
+        let be_nn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, lvbuf, nlv);
+        let be_s: EmitState = emit_mic3_tree_body(s, nodes, be_n, vidbuf, buf, strbuf, offs, ncount, 0);
+        __mind_store_i64(base_cell, cur_base + be_nn);
+        return emit_mixed_walk(be_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount);
     }
     let name: i64 = ast_child0(stmt);
     let init: i64 = ast_child2(stmt);
@@ -6160,7 +6182,9 @@ pub fn emit_if_mixed_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_
     __mind_store_i64(m_nlv, nlv);
     let prefix_instrs: i64 = measure_mixed_instrs(then_sa, n_prefix, 0, buf, params_addr, n_params, lvbuf, m_nlv);
     let ret_expr: i64 = ast_child0(final_stmt);
-    let nlv_total: i64 = nlv + nlets_total;
+    // Use the ACTUAL let count measure_mixed_instrs accumulated (bare expression-
+    // statements in the prefix add instrs but NO lv-env entry), not n_prefix - n_segs.
+    let nlv_total: i64 = __mind_load_i64(m_nlv);
     let ret_nonparam: i64 = count_nonparam_nodes_lv(ret_expr, buf, params_addr, n_params, lvbuf, nlv_total);
     if ret_nonparam < 0 {
         __mind_store_i64(okcell, 0 - 1);
