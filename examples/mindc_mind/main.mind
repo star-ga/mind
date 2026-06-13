@@ -8204,15 +8204,65 @@ pub fn mk_syn_intlit(value: i64) -> i64 {
 // index. `fn_node` supplies the params; `srt` the struct registry. Returns the
 // 0-based field index, or -1 on any failure (unknown param / non-struct type /
 // unknown field) — fail-closed.
-pub fn field_recv_field_idx(fn_node: i64, src: i64, srt: i64, recv_lo: i64, recv_hi: i64, fld_lo: i64, fld_hi: i64) -> i64 {
+// Find the declared type node of a `let <name>: TYPE = ..` binding in a statement
+// list, recursing through if then/else blocks. Returns the type node, or 0 if no such
+// let. Names are SSA-unique in the bootstrap source (s1, s2, ..) so the first match is
+// authoritative.
+pub fn find_let_ty_in_stmts(stmts_addr: i64, stmts_len: i64, src: i64, recv_lo: i64, recv_hi: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let name: i64 = ast_child0(stmt);
+        if span_bytes_equal(src, recv_lo, recv_hi, ast_span_lo(name), ast_span_hi(name)) == 1 {
+            return ast_child1(stmt);
+        }
+    }
+    if k == ast_if() {
+        let then_blk: i64 = ast_child1(stmt);
+        if ast_kind(then_blk) == ast_block() {
+            let t: i64 = find_let_ty_in_stmts(ast_child0(then_blk), ast_aux(then_blk), src, recv_lo, recv_hi, 0);
+            if t != 0 {
+                return t;
+            }
+        }
+        let else_blk: i64 = ast_child2(stmt);
+        if else_blk != 0 {
+            if ast_kind(else_blk) == ast_block() {
+                let e: i64 = find_let_ty_in_stmts(ast_child0(else_blk), ast_aux(else_blk), src, recv_lo, recv_hi, 0);
+                if e != 0 {
+                    return e;
+                }
+            }
+        }
+    }
+    find_let_ty_in_stmts(stmts_addr, stmts_len, src, recv_lo, recv_hi, i + 1)
+}
+
+// Resolve the TYPE node of a field-access receiver: a param (from the signature) or a
+// let-bound local (scanning the body). Returns the type node, or 0 if unresolvable.
+pub fn field_recv_ty(fn_node: i64, src: i64, recv_lo: i64, recv_hi: i64) -> i64 {
     let params_addr: i64 = ast_child1(fn_node);
     let n_params: i64 = ast_aux(fn_node) / 2;
     let pidx: i64 = resolve_param(params_addr, n_params, src, recv_lo, recv_hi);
-    if pidx < 0 {
+    if pidx >= 0 {
+        let pnode: i64 = __mind_load_i64(params_addr + pidx * 8);
+        return ast_child1(pnode);
+    }
+    let body: i64 = ast_child2(fn_node);
+    if ast_kind(body) != ast_block() {
+        return 0;
+    }
+    find_let_ty_in_stmts(ast_child0(body), ast_aux(body), src, recv_lo, recv_hi, 0)
+}
+
+pub fn field_recv_field_idx(fn_node: i64, src: i64, srt: i64, recv_lo: i64, recv_hi: i64, fld_lo: i64, fld_hi: i64) -> i64 {
+    let ty: i64 = field_recv_ty(fn_node, src, recv_lo, recv_hi);
+    if ty == 0 {
         return 0 - 1;
     }
-    let pnode: i64 = __mind_load_i64(params_addr + pidx * 8);
-    let ty: i64 = ast_child1(pnode);
     let k: i64 = srt_find_by_name(srt, src, ast_span_lo(ty), ast_span_hi(ty), 0);
     if k < 0 {
         return 0 - 1;
@@ -8551,6 +8601,147 @@ pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, s
     1
 }
 
+// If `stmt` is a desugarable struct-lit STATEMENT (`let x = T{..}`, `return T{..}`, or a
+// bare `T{..}` trailing value), return the struct-lit AST node; else 0.
+pub fn slit_stmt_snode(stmt: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_struct_lit() {
+        return stmt;
+    }
+    if k == ast_let() {
+        if ast_kind(ast_child2(stmt)) == ast_struct_lit() {
+            return ast_child2(stmt);
+        }
+        return 0;
+    }
+    if k == ast_return() {
+        if ast_kind(ast_child0(stmt)) == ast_struct_lit() {
+            return ast_child0(stmt);
+        }
+        return 0;
+    }
+    0
+}
+
+// Number of output statements a top-level statement expands to: a desugarable struct-lit
+// (resolvable type, all fields present) -> nfields + 2 (alloc-let + stores + final), else 1.
+pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64) -> i64 {
+    let snode: i64 = slit_stmt_snode(stmt);
+    if snode == 0 {
+        return 1;
+    }
+    let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
+    if k < 0 {
+        return 1;
+    }
+    let nfields: i64 = srt_field_count(srt, k);
+    if ast_aux(snode) != nfields {
+        return 1;
+    }
+    nfields + 2
+}
+
+// Sum of expanded lengths over a statement list (used to size the new array).
+pub fn slit_seq_len(stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    slit_stmt_outn(stmt, src, srt) + slit_seq_len(stmts_addr, stmts_len, src, srt, i + 1)
+}
+
+// Write the per-field store-lets for one struct-lit into new_stmts[base..base+nfields).
+pub fn slit_fill_stores_at(new_stmts: i64, base: i64, fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    if j >= nfields {
+        return 1;
+    }
+    let val: i64 = slit_canon_value(fields_addr, ntriples, src, srt, k, j);
+    if val == 0 {
+        return 0;
+    }
+    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, val);
+    __mind_store_i64(new_stmts + (base + j) * 8, slet);
+    slit_fill_stores_at(new_stmts, base, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
+}
+
+// Expand one struct-lit statement into [alloc-let, stores, final] at new_stmts[out..].
+// final = `let x = __sl` (let-init) / `return __sl` (return) / bare `__sl` (trailing).
+// __sl (the alloc handle) is named with the __mind_alloc span; at a function's TOP LEVEL
+// (no enclosing if) these synthetic lets bind no merge, matching the oracle's anonymous
+// alloc/store SSA values byte-for-byte.
+pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
+    __mind_store_i64(new_stmts + out * 8, alet);
+    let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, alo, ahi, slo, shi, 0);
+    let sl_ref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let kind: i64 = ast_kind(orig_stmt);
+    let final: i64 = if kind == ast_let() {
+        ast_new_let(0, 0, ast_child0(orig_stmt), 0, sl_ref)
+    } else {
+        if kind == ast_return() {
+            ast_new_return(0, 0, sl_ref)
+        } else {
+            sl_ref
+        }
+    };
+    __mind_store_i64(new_stmts + (out + nfields + 1) * 8, final);
+    1
+}
+
+// Fill the new (expanded) statement array, copying non-struct-lit statements and
+// expanding struct-lit statements via slit_emit_ctor. `out_cell` threads the running
+// output index.
+pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let out: i64 = __mind_load_i64(out_cell);
+    let outn: i64 = slit_stmt_outn(stmt, src, srt);
+    if outn == 1 {
+        __mind_store_i64(new_stmts + out * 8, stmt);
+        __mind_store_i64(out_cell, out + 1);
+    } else {
+        let snode: i64 = slit_stmt_snode(stmt);
+        let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
+        let nfields: i64 = srt_field_count(srt, k);
+        let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
+        __mind_store_i64(out_cell, out + nfields + 2);
+    }
+    slit_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, src, srt, alo, ahi, slo, shi, i + 1)
+}
+
+// Desugar struct-lit STATEMENTS in a function's TOP-LEVEL body block (a let-init,
+// return, or trailing value among other statements). Does NOT recurse into if-blocks —
+// a struct-lit inside an if-branch needs expression-level (anonymous-value) lowering,
+// since a named let there would wrongly escape as a merge binding. Returns 1 if it
+// rewrote the body, else 0.
+pub fn slit_desugar_body_seq(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let body: i64 = ast_child2(fn_node);
+    if ast_kind(body) != ast_block() {
+        return 0;
+    }
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    let new_len: i64 = slit_seq_len(stmts_addr, stmts_len, src, srt, 0);
+    if new_len == stmts_len {
+        return 0;
+    }
+    let new_stmts: i64 = __mind_alloc(new_len * 8);
+    let out_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(out_cell, 0);
+    let _fl: i64 = slit_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, src, srt, alo, ahi, slo, shi, 0);
+    __mind_store_i64(body + 24, new_stmts);
+    __mind_store_i64(body + 48, new_len);
+    1
+}
+
 // Module pass: desugar struct-lit ctors in every top-level fn_def.
 pub fn slit_desugar_module(src: i64, src_len: i64, items_addr: i64, items_len: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
     if i >= items_len {
@@ -8558,7 +8749,10 @@ pub fn slit_desugar_module(src: i64, src_len: i64, items_addr: i64, items_len: i
     }
     let item: i64 = __mind_load_i64(items_addr + i * 8);
     if ast_kind(item) == ast_fn_def() {
-        let _r: i64 = slit_desugar_body(item, src, srt, alo, ahi, slo, shi);
+        let handled: i64 = slit_desugar_body(item, src, srt, alo, ahi, slo, shi);
+        if handled == 0 {
+            let _r2: i64 = slit_desugar_body_seq(item, src, srt, alo, ahi, slo, shi);
+        }
     }
     slit_desugar_module(src, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, i + 1)
 }
