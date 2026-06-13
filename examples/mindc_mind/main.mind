@@ -6094,7 +6094,13 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         __mind_store_i64(seg_cell, 0 - 1);
         let seg_bind: i64 = __mind_alloc(64 * 24);
         let seg_nb: i64 = __mind_alloc(8);
-        let s1: EmitState = emit_if_chain_instr_lv(s, stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, seg_cell, lvbuf, nlv, strbuf, offs, ncount, seg_bind, seg_nb);
+        // A two-sided `if C {..} else {..}` STATEMENT segment delegates to the two-sided
+        // fall-through emitter (recursive); an else-less if stays on the chain emitter.
+        let s1: EmitState = if ast_child2(stmt) != 0 {
+            emit_if_else_fallthrough_lv(s, stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, seg_cell, lvbuf, nlv, 0, strbuf, offs, ncount, seg_bind, seg_nb)
+        } else {
+            emit_if_chain_instr_lv(s, stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, seg_cell, lvbuf, nlv, strbuf, offs, ncount, seg_bind, seg_nb)
+        };
         let seg_dst: i64 = __mind_load_i64(seg_cell);
         if seg_dst < 0 {
             __mind_store_i64(okcell, 0);
@@ -7260,11 +7266,14 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     let then_sl: i64 = ast_aux(then_blk);
     let else_sa: i64 = ast_child0(else_blk);
     let else_sl: i64 = ast_aux(else_blk);
-    if fallthrough_all_sidefx(then_sa, then_sl, 0) != 1 {
+    // Both branches must FALL THROUGH (no top-level return); they may contain lets,
+    // bare-calls, if-segments AND nested two-sided if-else statements (handled by the
+    // mixed walk's recursion). Escaping bindings (direct lets + bubbled) flow via acc.
+    if mixed_prefix_ok(then_sa, then_sl, 0) != 1 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    if fallthrough_all_sidefx(else_sa, else_sl, 0) != 1 {
+    if mixed_prefix_ok(else_sa, else_sl, 0) != 1 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
@@ -7277,38 +7286,43 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     }
     let cond_n: i64 = __mind_load_i64(cursor);
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv0, nlv0);
+    let after_cond: i64 = base0 + cond_nonparam;
+    let then_synth: i64 = after_cond;
+    let then_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl, buf, params_addr, n_params, nlv0);
+    let else_instrs: i64 = measure_mixed_instrs_probe(else_sa, else_sl, buf, params_addr, n_params, nlv0);
+    // PROBE each branch (into throwaway scratch) to learn its VID SPAN (an if-segment /
+    // nested if-else consumes more vids than its 1 instr) + ESCAPING-binding count.
+    let then_nb_c: i64 = __mind_alloc(8);
+    let then_end: i64 = probe_mixed_walk(then_sa, then_sl, after_cond + 1, buf, params_addr, n_params, lvenv0, nlv0, strbuf, offs, ncount, then_nb_c);
+    if then_end < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_nb: i64 = __mind_load_i64(then_nb_c);
+    let then_result: i64 = then_end - 1;
+    let else_synth: i64 = then_end;
+    let else_nb_c: i64 = __mind_alloc(8);
+    let else_end: i64 = probe_mixed_walk(else_sa, else_sl, else_synth + 1, buf, params_addr, n_params, lvenv0, nlv0, strbuf, offs, ncount, else_nb_c);
+    if else_end < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_nb: i64 = __mind_load_i64(else_nb_c);
+    let else_result: i64 = else_end - 1;
+    let ph_start: i64 = else_end;
+    let n_merged: i64 = then_nb + else_nb;
+    let dst: i64 = ph_start + 2 * n_merged;
+    let then_len: i64 = 1 + then_instrs + else_nb;
+    let else_len: i64 = 1 + else_instrs + then_nb;
+    // EMIT for real.
     let s1: EmitState = es_push(s, 28);
     let s2: EmitState = emit_uleb128(s1, cond_id);
     let s3: EmitState = emit_uleb128(s2, cond_nonparam);
     let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
-    let after_cond: i64 = base0 + cond_nonparam;
-    let then_synth: i64 = after_cond;
-    // Measure each branch's side-effect instrs + let count (bare-calls add no lv-env entry).
-    let then_lvbuf: i64 = __mind_alloc((nlv0 + then_sl + 2) * 24);
-    let _tc: i64 = lvenv_copy(then_lvbuf, lvenv0, nlv0, 0);
-    let then_m: i64 = __mind_alloc(8);
-    __mind_store_i64(then_m, nlv0);
-    let then_instrs: i64 = measure_mixed_instrs(then_sa, then_sl, 0, buf, params_addr, n_params, then_lvbuf, then_m);
-    let then_nlets: i64 = __mind_load_i64(then_m) - nlv0;
-    let else_lvbuf: i64 = __mind_alloc((nlv0 + else_sl + 2) * 24);
-    let _ec: i64 = lvenv_copy(else_lvbuf, lvenv0, nlv0, 0);
-    let else_m: i64 = __mind_alloc(8);
-    __mind_store_i64(else_m, nlv0);
-    let else_instrs: i64 = measure_mixed_instrs(else_sa, else_sl, 0, buf, params_addr, n_params, else_lvbuf, else_m);
-    let else_nlets: i64 = __mind_load_i64(else_m) - nlv0;
-    let n_merged: i64 = then_nlets + else_nlets;
-    // VID layout (placeholders NOT counted in the branch-result offsets).
-    let then_result: i64 = after_cond + then_instrs;
-    let else_synth: i64 = then_result + 1;
-    let else_result: i64 = else_synth + else_instrs;
-    let ph_start: i64 = else_result + 1;
-    let dst: i64 = ph_start + 2 * n_merged;
-    let then_len: i64 = 1 + then_instrs + else_nlets;
-    let else_len: i64 = 1 + else_instrs + then_nlets;
-    // THEN block: synth + then side-effects + else-only placeholders.
     let s5: EmitState = emit_uleb128(s4, then_len);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
-    let _tc2: i64 = lvenv_copy(then_lvbuf, lvenv0, nlv0, 0);
+    let then_lvbuf: i64 = __mind_alloc((nlv0 + then_sl + 8) * 24);
+    let _tc: i64 = lvenv_copy(then_lvbuf, lvenv0, nlv0, 0);
     let then_base: i64 = __mind_alloc(8);
     __mind_store_i64(then_base, after_cond + 1);
     let then_e_nlv: i64 = __mind_alloc(8);
@@ -7323,12 +7337,13 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let s8: EmitState = emit_block_ph(s7, ph_start, then_nlets, n_merged, then_nlets);
+    // THEN-side placeholders cover the ELSE-only escaping names (merged idx >= then_nb).
+    let s8: EmitState = emit_block_ph(s7, ph_start, then_nb, n_merged, then_nb);
     let s9: EmitState = emit_uleb128(s8, then_result);
-    // ELSE block: synth + else side-effects + then-only placeholders.
     let s10: EmitState = emit_uleb128(s9, else_len);
     let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
-    let _ec2: i64 = lvenv_copy(else_lvbuf, lvenv0, nlv0, 0);
+    let else_lvbuf: i64 = __mind_alloc((nlv0 + else_sl + 8) * 24);
+    let _ec: i64 = lvenv_copy(else_lvbuf, lvenv0, nlv0, 0);
     let else_base: i64 = __mind_alloc(8);
     __mind_store_i64(else_base, else_synth + 1);
     let else_e_nlv: i64 = __mind_alloc(8);
@@ -7343,18 +7358,46 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let s13: EmitState = emit_block_ph(s12, ph_start, 0, then_nlets, then_nlets);
+    // ELSE-side placeholders cover the THEN-only escaping names (merged idx < then_nb).
+    let s13: EmitState = emit_block_ph(s12, ph_start, 0, then_nb, then_nb);
     let s14: EmitState = emit_uleb128(s13, else_result);
     let s15: EmitState = emit_uleb128(s14, dst);
-    // bindings + merges (then-lets then else-lets; intern_find dedups same names).
+    // bindings + merges from acc (then escaping then else escaping; direct lets AND bubbled).
     let bb: i64 = __mind_alloc((n_merged + 1) * 40);
-    let _fb: i64 = fill_binds_block(bb, then_lvbuf, else_lvbuf, nlv0, then_nlets, else_nlets, ph_start, 0);
+    let _fb: i64 = fill_binds_block(bb, then_acc, else_acc, 0, then_nb, else_nb, ph_start, 0);
     let s16: EmitState = emit_uleb128(s15, n_merged);
     let s17: EmitState = emit_block_bindings(s16, bb, n_merged, strbuf, offs, ncount, buf, 0);
     let s18: EmitState = emit_uleb128(s17, n_merged);
     let s19: EmitState = emit_block_merges(s18, bb, n_merged, 0);
     __mind_store_i64(okcell, dst);
     s19
+}
+
+// Probe a mixed walk into THROWAWAY scratch: returns the end vid (base after the walk) +
+// the escaping-binding count (acc) via nb_out. -1 on a wall. Used to learn a fall-through
+// branch's vid span (which includes interior if-segment / nested if-else deltas) and its
+// escaping-binding count BEFORE the real two-sided layout is committed.
+pub fn probe_mixed_walk(sa: i64, sl: i64, base: i64, buf: i64, params_addr: i64, n_params: i64, lvenv0: i64, nlv0: i64, strbuf: i64, offs: i64, ncount: i64, nb_out: i64) -> i64 {
+    let pn: i64 = __mind_alloc(256 * 32);
+    let pc: i64 = __mind_alloc(8);
+    let pv: i64 = __mind_alloc(256 * 8);
+    let lvbuf: i64 = __mind_alloc((nlv0 + sl + 8) * 24);
+    let _cp: i64 = lvenv_copy(lvbuf, lvenv0, nlv0, 0);
+    let base_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(base_cell, base);
+    let e_nlv: i64 = __mind_alloc(8);
+    __mind_store_i64(e_nlv, nlv0);
+    let acc: i64 = __mind_alloc(128 * 24);
+    let acc_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(acc_cell, 0);
+    let w_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(w_ok, 1);
+    let _sw: EmitState = emit_mixed_walk(es_new(), sa, sl, 0, buf, params_addr, n_params, pn, pc, pv, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount);
+    if __mind_load_i64(w_ok) == 0 {
+        return 0 - 1;
+    }
+    __mind_store_i64(nb_out, __mind_load_i64(acc_cell));
+    __mind_load_i64(base_cell)
 }
 
 // Emit CONST(ph_start + 2*i) placeholders for merged indices i in [lo, hi).
@@ -7939,8 +7982,8 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         if ast_child2(stmt) != 0 {
             let te_blk: i64 = ast_child1(stmt);
             let ee_blk: i64 = ast_child2(stmt);
-            if fallthrough_all_sidefx(ast_child0(te_blk), ast_aux(te_blk), 0) == 1 {
-                if fallthrough_all_sidefx(ast_child0(ee_blk), ast_aux(ee_blk), 0) == 1 {
+            if mixed_prefix_ok(ast_child0(te_blk), ast_aux(te_blk), 0) == 1 {
+                if mixed_prefix_ok(ast_child0(ee_blk), ast_aux(ee_blk), 0) == 1 {
                     let i9_nodes: i64 = __mind_alloc(256 * 32);
                     let i9_cursor: i64 = __mind_alloc(8);
                     let i9_vidbuf: i64 = __mind_alloc(256 * 8);
