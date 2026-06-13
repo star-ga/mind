@@ -7084,8 +7084,16 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     let then_lvbuf: i64 = __mind_alloc((nlv + then_nlets + 2) * 24);
     let _tc: i64 = lvenv_copy(then_lvbuf, lvenv, nlv, 0);
     let then_let_instrs: i64 = sum_let_init_nonparam(then_sa, then_nlets, 0, buf, params_addr, n_params, then_lvbuf, nlv);
-    let then_val_nonparam: i64 = count_nonparam_nodes_lv(then_val_expr, buf, params_addr, n_params, then_lvbuf, nlv + then_nlets);
-    if then_val_nonparam < 0 {
+    let then_val_base0: i64 = after_cond + 1 + then_let_instrs;
+    // INSTR count = block length contribution (an if-expr value is ONE OP_IF); SPAN =
+    // its vid delta (an if-expr value consumes its whole OP_IF's vids).
+    let then_val_instrs: i64 = branch_val_instrs(then_val_expr, buf, params_addr, n_params, then_lvbuf, nlv + then_nlets);
+    if then_val_instrs < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_val_span: i64 = branch_val_span(then_val_expr, buf, params_addr, n_params, then_val_base0, then_lvbuf, nlv + then_nlets, strbuf, offs, ncount);
+    if then_val_span < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
@@ -7093,19 +7101,25 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     let else_lvbuf: i64 = __mind_alloc((nlv + else_nlets + 2) * 24);
     let _ec: i64 = lvenv_copy(else_lvbuf, lvenv, nlv, 0);
     let else_let_instrs: i64 = sum_let_init_nonparam(else_sa, else_nlets, 0, buf, params_addr, n_params, else_lvbuf, nlv);
-    let else_val_nonparam: i64 = count_nonparam_nodes_lv(else_val_expr, buf, params_addr, n_params, else_lvbuf, nlv + else_nlets);
-    if else_val_nonparam < 0 {
+    let else_val_instrs: i64 = branch_val_instrs(else_val_expr, buf, params_addr, n_params, else_lvbuf, nlv + else_nlets);
+    if else_val_instrs < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    // vid layout
-    let then_val_end: i64 = after_cond + 1 + then_let_instrs + then_val_nonparam;
+    // vid layout — the else value's base depends on then_val_end, so its span (which may
+    // probe a nested if-expr) is computed here once the synth/let offsets are known.
+    let then_val_end: i64 = then_val_base0 + then_val_span;
     let else_synth: i64 = then_val_end;
-    let else_val_end: i64 = else_synth + 1 + else_let_instrs + else_val_nonparam;
+    let else_val_base0: i64 = else_synth + 1 + else_let_instrs;
+    let else_val_span: i64 = branch_val_span(else_val_expr, buf, params_addr, n_params, else_val_base0, else_lvbuf, nlv + else_nlets, strbuf, offs, ncount);
+    if else_val_span < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_val_end: i64 = else_val_base0 + else_val_span;
     let ph_start: i64 = else_val_end;
     let dst: i64 = ph_start + 2 * n_merged;
-    // THEN block: then_len = 1 + then_let_instrs + then_val_nonparam + else_nlets(placeholders).
-    let then_len: i64 = 1 + then_let_instrs + then_val_nonparam + else_nlets;
+    let then_len: i64 = 1 + then_let_instrs + then_val_instrs + else_nlets;
     let s5: EmitState = emit_uleb128(s4, then_len);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
     let t_base: i64 = __mind_alloc(8);
@@ -7118,18 +7132,19 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
         return s;
     }
     let then_val_base: i64 = __mind_load_i64(t_base);
-    let then_root: i64 = flatten_branch_lv(then_val_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, then_val_base, then_lvbuf, nlv + then_nlets);
-    if then_root < 0 {
+    let then_rcell: i64 = __mind_alloc(8);
+    let then_vok: i64 = __mind_alloc(8);
+    __mind_store_i64(then_vok, 1);
+    let s8: EmitState = emit_branch_value_lv(s7, then_val_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, then_val_base, then_lvbuf, nlv + then_nlets, strbuf, offs, ncount, then_rcell, then_vok);
+    if __mind_load_i64(then_vok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let then_n: i64 = __mind_load_i64(cursor);
-    let s8: EmitState = emit_mic3_tree_body(s7, nodes, then_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    let then_root: i64 = __mind_load_i64(then_rcell);
     // then placeholders: for else-only names (merged idx >= then_nlets), CONST(ph_i).
     let s9: EmitState = emit_block_ph(s8, ph_start, then_nlets, n_merged, then_nlets);
     let s10: EmitState = emit_uleb128(s9, then_root);
-    // ELSE block: else_len = 1 + else_let_instrs + else_val_nonparam + then_nlets.
-    let else_len: i64 = 1 + else_let_instrs + else_val_nonparam + then_nlets;
+    let else_len: i64 = 1 + else_let_instrs + else_val_instrs + then_nlets;
     let s11: EmitState = emit_uleb128(s10, else_len);
     let s12: EmitState = emit_mic3_const_i64(s11, else_synth, 0);
     let e_base: i64 = __mind_alloc(8);
@@ -7142,13 +7157,15 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
         return s;
     }
     let else_val_base: i64 = __mind_load_i64(e_base);
-    let else_root: i64 = flatten_branch_lv(else_val_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, else_val_base, else_lvbuf, nlv + else_nlets);
-    if else_root < 0 {
+    let else_rcell: i64 = __mind_alloc(8);
+    let else_vok: i64 = __mind_alloc(8);
+    __mind_store_i64(else_vok, 1);
+    let s14: EmitState = emit_branch_value_lv(s13, else_val_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, else_val_base, else_lvbuf, nlv + else_nlets, strbuf, offs, ncount, else_rcell, else_vok);
+    if __mind_load_i64(else_vok) == 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let else_n: i64 = __mind_load_i64(cursor);
-    let s14: EmitState = emit_mic3_tree_body(s13, nodes, else_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    let else_root: i64 = __mind_load_i64(else_rcell);
     // else placeholders: for then-only names (merged idx < then_nlets), CONST(ph_i).
     let s15: EmitState = emit_block_ph(s14, ph_start, 0, then_nlets, then_nlets);
     let s16: EmitState = emit_uleb128(s15, else_root);
@@ -7276,6 +7293,27 @@ pub fn emit_branch_value_lv(s: EmitState, expr: i64, buf: i64, params_addr: i64,
 pub fn branch_val_instrs(expr: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64) -> i64 {
     if is_value_if_expr(expr) == 1 {
         return 1;
+    }
+    count_nonparam_nodes_lv(expr, buf, params_addr, n_params, lvenv, nlv)
+}
+
+// VID SPAN of a branch value placed at descriptor base `base`: a plain value occupies
+// its nonparam node count; a nested if-EXPRESSION value occupies its whole OP_IF vid
+// delta (dst - base + 1), learned by probing emit_if_expr_any_lv into throwaway scratch.
+// Returns -1 on a wall.
+pub fn branch_val_span(expr: i64, buf: i64, params_addr: i64, n_params: i64, base: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> i64 {
+    if is_value_if_expr(expr) == 1 {
+        let pn: i64 = __mind_alloc(256 * 32);
+        let pc: i64 = __mind_alloc(8);
+        let pv: i64 = __mind_alloc(256 * 8);
+        let pcell: i64 = __mind_alloc(8);
+        __mind_store_i64(pcell, 0 - 1);
+        let _ps: EmitState = emit_if_expr_any_lv(es_new(), expr, buf, params_addr, n_params, pn, pc, pv, base, pcell, lvenv, nlv, strbuf, offs, ncount);
+        let pdst: i64 = __mind_load_i64(pcell);
+        if pdst < 0 {
+            return 0 - 1;
+        }
+        return pdst - base + 1;
     }
     count_nonparam_nodes_lv(expr, buf, params_addr, n_params, lvenv, nlv)
 }
