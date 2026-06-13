@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — self-host fixed-point at the canonical `mic@3` binary IR (byte-identical)
+
+- **The pure-MIND bootstrap compiler now reproduces the canonical `mic@3` binary IR
+  of its own ~15k-line source byte-for-byte against the Rust reference.**
+  `selftest_mic3_module_nfn(main.mind)` emits the exact same 221k-byte `mic@3` module as
+  `mindc --emit-mic3 main.mind`. This advances the self-host fixed-point from the `mic@1`
+  MLIR-text layer to the **canonical binary-IR layer the evidence chain's `trace_hash`
+  anchors on** — so the Rust front-end is decorative at the layer that matters for
+  provenance. Driven by SSA fresh/bound merge tails, nested if-else / if-expr escape
+  bubbling, a same-name two-branch phi unification in `blk_layout`, per-ctor struct-lit
+  alloc-handle resolution (`letenv_lookup` last-match), and an `items_len`-based module
+  header. CI-enforced by a new `mic3_flip_smoke.py` gate (hard-fails when `MINDC_SO` is set).
+- **Hardened the self-host driver against a fuzz sweep** (497 programs across construct
+  families): fixed the two dominant silent-miscompile classes (same-name value-if-expr phi;
+  per-ctor struct-lit alloc handle); remaining out-of-subset gaps catalogued in
+  `tests/selfhost_gaps/GAPS.md` (they never fire on `main.mind`, so the flip stays
+  byte-identical).
+
 ### Fixed — dead-code elimination operand coverage (silent prune of call/return operands)
 
 - **DCE no longer prunes a value used only as a `Call` argument or `Return` value.**
