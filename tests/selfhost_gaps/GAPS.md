@@ -13,14 +13,20 @@ toward a fully general mic@3 driver.
 - **Per-ctor struct-lit alloc handle** — two `S{..}` ctors in one body. `letenv_lookup`
   last-match binds each ctor's stores to its own `__mind_alloc` handle. (commit: letenv_lookup)
 
+## Fixed (cont.)
+- **value-if-expr branch-value escape bubble — single-expr path** (`value-ifexpr_1/3`).
+  `emit_if_expr_lv` now probes each branch value's escape count and, when nonzero, routes to
+  `emit_if_expr_lv_bubble`, re-merging the captured escapes via the two-sided F2 block tail
+  (gated so the empty-merge happy path stays byte-identical). (commit: emit_if_expr_lv bubble)
+
 ## Open — MISMATCH (silent wrong bytes; out-of-subset; priority for general-compiler use)
-1. **value-if-expr branch-value escape bubble** (`value-ifexpr_1/3/4`, some `deep-combos`).
-   When a value if-expr branch VALUE is itself a nested value if-expr (else-if chain) whose
-   branches carry lets, the nested merge bindings must bubble into the enclosing merge. The
-   single-expr path `emit_if_expr_lv` emits `nb=0` and `emit_if_expr_block_lv` passes `0,0` to
-   `emit_branch_value_lv`, so the nested escapes are dropped. Proper fix: probe + capture the
-   branch-value escapes (vbind/vnb, already built for `emit_mixed_value_branch`) and emit them
-   as merge rows (placeholder on the non-defining side), in the value-if-expr emitters.
+1. **value-if-expr branch-value escape bubble — LEADING-LET-BLOCK path** (`value-ifexpr_4`,
+   `mixed-prefix_2/3/4`, some `deep-combos`). Same as the fixed single-expr case but for
+   `emit_if_expr_block_lv`, whose merge already carries the leading lets — the branch-value
+   escapes must be UNIONED into that merge. Proper fix: probe the branch-value escape counts,
+   append them to the then/else lvbufs after the leading lets (own vid = captured merge_id),
+   and let the existing blk_layout/blk_fill_own treat them uniformly (gated; no-escape =
+   byte-identical).
 2. **fall-through shadow trailing-read** (`fallthrough-shadow_1..6`). `let y=p; if c {let y=..};
    y` — the inner `let y` shadows the outer; the merge is byte-exact but the trailing `y`
    resolves to the OUTER vid, not the merged vid. Root cause: the trailing value is flattened
