@@ -7496,8 +7496,8 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv0, nlv0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
-    let then_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl, buf, params_addr, n_params, nlv0);
-    let else_instrs: i64 = measure_mixed_instrs_probe(else_sa, else_sl, buf, params_addr, n_params, nlv0);
+    let then_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl, buf, params_addr, n_params, lvenv0, nlv0);
+    let else_instrs: i64 = measure_mixed_instrs_probe(else_sa, else_sl, buf, params_addr, n_params, lvenv0, nlv0);
     // PROBE each branch (into throwaway scratch) to learn its VID SPAN (an if-segment /
     // nested if-else consumes more vids than its 1 instr) + ESCAPING-binding count.
     let then_nb_c: i64 = __mind_alloc(8);
@@ -8055,10 +8055,10 @@ pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_a
     let dst: i64 = blk_layout(bl, p_then_lvbuf, p_else_lvbuf, nlv, then_nlets, n_merged, buf, lvenv, nlv, 0, ph_start);
     // Block INSTR lengths. Placeholders emitted in a branch = the FRESH lets of the OPPOSITE
     // side (a then-block let's placeholder lives in the else branch, and vice versa).
-    let then_pf_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl - 1, buf, params_addr, n_params, nlv);
+    let then_pf_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl - 1, buf, params_addr, n_params, lvenv, nlv);
     let then_v_instrs: i64 = branch_val_instrs(__mind_load_i64(then_sa + (then_sl - 1) * 8), buf, params_addr, n_params, p_then_lvbuf, nlv + then_nlets);
     let then_len: i64 = 1 + then_pf_instrs + then_v_instrs + blk_fresh_side(bl, n_merged, 0, 0);
-    let else_pf_instrs: i64 = measure_mixed_instrs_probe(else_sa, else_sl - 1, buf, params_addr, n_params, nlv);
+    let else_pf_instrs: i64 = measure_mixed_instrs_probe(else_sa, else_sl - 1, buf, params_addr, n_params, lvenv, nlv);
     let else_v_instrs: i64 = branch_val_instrs(__mind_load_i64(else_sa + (else_sl - 1) * 8), buf, params_addr, n_params, p_else_lvbuf, nlv + else_nlets);
     let else_len: i64 = 1 + else_pf_instrs + else_v_instrs + blk_fresh_side(bl, n_merged, 1, 0);
     // EMIT for real.
@@ -8105,10 +8105,12 @@ pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_a
     s19
 }
 
-// measure_mixed_instrs over a fresh throwaway lvbuf/nlv-cell (for block-length sizing
-// when the real lvbuf is not needed).
-pub fn measure_mixed_instrs_probe(stmts_addr: i64, n: i64, buf: i64, params_addr: i64, n_params: i64, nlv0: i64) -> i64 {
+// measure_mixed_instrs over a fresh throwaway lvbuf/nlv-cell (for block-length sizing).
+// The outer env NAMES must be copied in so a prefix bare-call/let that references an outer
+// let (not just a param) resolves while measuring — otherwise count_nonparam_nodes_lv fails.
+pub fn measure_mixed_instrs_probe(stmts_addr: i64, n: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv0: i64) -> i64 {
     let lvbuf: i64 = __mind_alloc((nlv0 + n + 8) * 24);
+    let _c: i64 = lvenv_copy(lvbuf, lvenv, nlv0, 0);
     let m: i64 = __mind_alloc(8);
     __mind_store_i64(m, nlv0);
     measure_mixed_instrs(stmts_addr, n, 0, buf, params_addr, n_params, lvbuf, m)
