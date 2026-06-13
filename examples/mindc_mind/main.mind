@@ -7483,7 +7483,7 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     let n_merged: i64 = then_nle + else_nle - blk_shared;
     let eix: i64 = __mind_alloc((then_nle + else_nle + 1) * 8);
     let bl: i64 = __mind_alloc((n_merged + 1) * 64);
-    let dst: i64 = blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nle, else_nle, n_merged, buf, lvenv, nlv, 0, ph_start);
+    let dst: i64 = blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nle, else_nle, n_merged, buf, params_addr, n_params, lvenv, nlv, 0, ph_start);
     let then_len: i64 = 1 + then_let_instrs + then_val_instrs + blk_fresh_side(bl, n_merged, 0, 0);
     let s5: EmitState = emit_uleb128(s4, then_len);
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
@@ -7988,7 +7988,7 @@ pub fn blk_nth_nonshared_else(else_lvbuf: i64, nlv: i64, else_nlets: i64, then_l
 // are the respective branch's own vid, filled post-emit; eix[i] = the matching else index).
 // A then-only / else-only let keeps the fresh/bound rule vs the outer env. eix carries the
 // else-source index for phi + else-only rows so blk_fill_own can resolve the post-emit vids.
-pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64, then_nlets: i64, else_nlets: i64, n_merged: i64, buf: i64, lvenv: i64, nlv_outer: i64, i: i64, running: i64) -> i64 {
+pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64, then_nlets: i64, else_nlets: i64, n_merged: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv_outer: i64, i: i64, running: i64) -> i64 {
     if i >= n_merged {
         return running;
     }
@@ -8009,10 +8009,11 @@ pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64,
             __mind_store_i64(bl + i * 64 + 40, 0);
             __mind_store_i64(bl + i * 64 + 48, 2);
             __mind_store_i64(eix + i * 8, eidx);
-            return blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, lvenv, nlv_outer, i + 1, running + 1);
+            return blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, params_addr, n_params, lvenv, nlv_outer, i + 1, running + 1);
         }
         let own: i64 = __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 16);
-        let outer: i64 = lvenv_lookup(buf, nlo, nhi, lvenv, nlv_outer, 0);
+        let ol: i64 = lvenv_lookup(buf, nlo, nhi, lvenv, nlv_outer, 0);
+        let outer: i64 = if ol >= 0 { ol } else { resolve_param(params_addr, n_params, buf, nlo, nhi) };
         let bound: i64 = if outer >= 0 { 1 } else { 0 };
         let opp: i64 = if bound == 1 { outer } else { running };
         let mid: i64 = if bound == 1 { running } else { running + 1 };
@@ -8026,14 +8027,15 @@ pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64,
         __mind_store_i64(bl + i * 64 + 40, isf);
         __mind_store_i64(bl + i * 64 + 48, 1);
         __mind_store_i64(eix + i * 8, 0 - 1);
-        return blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, lvenv, nlv_outer, i + 1, nextr);
+        return blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, params_addr, n_params, lvenv, nlv_outer, i + 1, nextr);
     }
     let k: i64 = i - then_nlets;
     let eidx2: i64 = blk_nth_nonshared_else(else_lvbuf, nlv, else_nlets, then_lvbuf, then_nlets, buf, k, 0);
     let nlo2: i64 = __mind_load_i64(else_lvbuf + (nlv + eidx2) * 24 + 0);
     let nhi2: i64 = __mind_load_i64(else_lvbuf + (nlv + eidx2) * 24 + 8);
     let own2: i64 = __mind_load_i64(else_lvbuf + (nlv + eidx2) * 24 + 16);
-    let outer2: i64 = lvenv_lookup(buf, nlo2, nhi2, lvenv, nlv_outer, 0);
+    let ol2: i64 = lvenv_lookup(buf, nlo2, nhi2, lvenv, nlv_outer, 0);
+    let outer2: i64 = if ol2 >= 0 { ol2 } else { resolve_param(params_addr, n_params, buf, nlo2, nhi2) };
     let bound2: i64 = if outer2 >= 0 { 1 } else { 0 };
     let opp2: i64 = if bound2 == 1 { outer2 } else { running };
     let mid2: i64 = if bound2 == 1 { running } else { running + 1 };
@@ -8047,7 +8049,7 @@ pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64,
     __mind_store_i64(bl + i * 64 + 40, isf2);
     __mind_store_i64(bl + i * 64 + 48, 0);
     __mind_store_i64(eix + i * 8, eidx2);
-    blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, lvenv, nlv_outer, i + 1, nextr2)
+    blk_layout(bl, eix, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, params_addr, n_params, lvenv, nlv_outer, i + 1, nextr2)
 }
 // Count FRESH lets whose is_then matches `want` (placeholders emitted in the OPPOSITE branch).
 pub fn blk_fresh_side(bl: i64, n: i64, want: i64, i: i64) -> i64 {
@@ -8226,7 +8228,7 @@ pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_a
     // Fresh/bound layout: a branch let already live in the outer env reuses that OUTER vid on
     // the opposite side (no placeholder, 1 vid); a fresh let gets a placeholder (2 vids).
     let bl: i64 = __mind_alloc((n_merged + 1) * 64);
-    let dst: i64 = blk_layout(bl, eix, p_then_lvbuf, p_else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, lvenv, nlv, 0, ph_start);
+    let dst: i64 = blk_layout(bl, eix, p_then_lvbuf, p_else_lvbuf, nlv, then_nlets, else_nlets, n_merged, buf, params_addr, n_params, lvenv, nlv, 0, ph_start);
     // Block INSTR lengths. Placeholders emitted in a branch = the FRESH lets of the OPPOSITE
     // side (a then-block let's placeholder lives in the else branch, and vice versa).
     let then_pf_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl - 1, buf, params_addr, n_params, lvenv, nlv);
@@ -12110,14 +12112,12 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         return flatten_ast_lv(ast_child0(node), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
     }
     if k == ast_ident() {
-        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
-        if idx < 0 {
-            // Not a param: try the lv-env (a then-block let). lvenv_lookup returns the
-            // let's vid; emit a kind-0 leaf carrying that vid (like a param leaf).
-            let lvid: i64 = lvenv_lookup(buf, ast_span_lo(node), ast_span_hi(node), lvenv, nlv, 0);
-            if lvid < 0 {
-                return 0 - 1;
-            }
+        // A `let` SHADOWS a same-named param within its scope, so resolve the lv-env (lets in
+        // scope at this position) BEFORE params; fall back to params. For a non-shadow ident
+        // exactly one side matches, so the order is immaterial; and a let's init lv-env excludes
+        // the let itself, so a self-referential `let p = p + 1` still binds the param on the RHS.
+        let lvid: i64 = lvenv_lookup(buf, ast_span_lo(node), ast_span_hi(node), lvenv, nlv, 0);
+        if lvid >= 0 {
             let lslot: i64 = __mind_load_i64(cursor);
             __mind_store_i64(nodes + lslot * 32 + 0, 0);
             __mind_store_i64(nodes + lslot * 32 + 8, lvid);
@@ -12125,6 +12125,10 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
             __mind_store_i64(nodes + lslot * 32 + 24, 0);
             __mind_store_i64(cursor, lslot + 1);
             return lslot;
+        }
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx < 0 {
+            return 0 - 1;
         }
         let slot: i64 = __mind_load_i64(cursor);
         __mind_store_i64(nodes + slot * 32 + 0, 0);
