@@ -671,7 +671,11 @@ pub fn at_eof(toks: Vec, pos: i64) -> i64 {
 // ===== AST node layout (7×i64 heap record, 56 bytes) =====
 
 pub fn ast_alloc() -> i64 {
-    __mind_alloc(56)
+    // 64 (not 56): the trailing slot at +56 is a spare used to ANNOTATE an ast_struct_lit
+    // node with its resolved [alloc/store spans + def-ordered field values] during the
+    // nfn struct-lit prefold, so flatten_ast_lv can lower a struct-lit EXPRESSION without
+    // threading srt/spans. Over-allocation is inert for every other node (offsets 0..48).
+    __mind_alloc(64)
 }
 
 pub fn ast_new_leaf(kind: i64, span_lo: i64, span_hi: i64) -> i64 {
@@ -864,6 +868,9 @@ pub fn ast_new_struct_lit(span_lo: i64, span_hi: i64, name_lo: i64, name_hi: i64
     __mind_store_i64(n + 32, fields_addr);
     __mind_store_i64(n + 40, name_hi);
     __mind_store_i64(n + 48, field_count);
+    // +56 = struct-lit annotation slot (0 until the prefold resolves it; 0 => flatten_ast
+    // fails closed on this struct-lit, keeping the canary/oracle path).
+    __mind_store_i64(n + 56, 0);
     n
 }
 
@@ -5057,7 +5064,28 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     if k == ast_return() {
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
     }
+    if k == ast_struct_lit() {
+        // Mirror flatten_struct_lit_lv's emit order so the oracle strtab matches: intern
+        // __mind_alloc once, then PER FIELD (declared order) [field value's strings, then
+        // __mind_store_i64]. Spans + def-ordered values come from the +56 annotation; an
+        // unannotated struct-lit interns nothing (it will also fail flatten -> oracle path).
+        let ann: i64 = __mind_load_i64(node + 56);
+        if ann == 0 {
+            return 0;
+        }
+        let _ia: i64 = intern_span(strbuf, offs, ccell, src, __mind_load_i64(ann + 0), __mind_load_i64(ann + 8));
+        return slit_collect_field_strings(strbuf, offs, ccell, src, __mind_load_i64(ann + 32), ast_aux(node), __mind_load_i64(ann + 16), __mind_load_i64(ann + 24), 0);
+    }
     0
+}
+// Per struct-lit field (declared order): the field VALUE's strings then __mind_store_i64.
+pub fn slit_collect_field_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, values: i64, nf: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 0;
+    }
+    let _v: i64 = collect_expr_strings(strbuf, offs, ccell, src, __mind_load_i64(values + j * 8));
+    let _is: i64 = intern_span(strbuf, offs, ccell, src, slo, shi);
+    slit_collect_field_strings(strbuf, offs, ccell, src, values, nf, slo, shi, j + 1)
 }
 
 // Collect strings from a block's statements in source order (each stmt via
@@ -8964,7 +8992,25 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
         let _a: i64 = field_rewrite_args(ast_child1(node), ast_aux(node), 0, src, srt, fn_node, load_lo, load_hi);
         return node;
     }
+    if k == ast_struct_lit() {
+        // Rewrite field-reads inside each struct-lit field VALUE in place (e.g.
+        // `EmitState { buf: s3.buf, .. }`), so the later struct-lit annotation captures
+        // the already-folded `__mind_load_i64(..)` value.
+        let _sf: i64 = field_rewrite_slit_fields(ast_child1(node), ast_aux(node), 0, src, srt, fn_node, load_lo, load_hi);
+        return node;
+    }
     node
+}
+
+// Rewrite each struct-lit field value (triple slot +16) in place.
+pub fn field_rewrite_slit_fields(fields_addr: i64, ntriples: i64, i: i64, src: i64, srt: i64, fn_node: i64, load_lo: i64, load_hi: i64) -> i64 {
+    if i >= ntriples {
+        return 0;
+    }
+    let val: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    let nv: i64 = field_rewrite_expr(val, src, srt, fn_node, load_lo, load_hi);
+    __mind_store_i64(fields_addr + (i * 3 + 2) * 8, nv);
+    field_rewrite_slit_fields(fields_addr, ntriples, i + 1, src, srt, fn_node, load_lo, load_hi)
 }
 
 // Rewrite each arg of a call's args vec in place.
@@ -9388,6 +9434,141 @@ pub fn slit_desugar_module(src: i64, src_len: i64, items_addr: i64, items_len: i
     slit_desugar_module(src, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, i + 1)
 }
 
+// STRUCT-LIT ANNOTATION PREFOLD. For every struct-lit EXPRESSION that survived the
+// statement-level desugar (i.e. the ones inside if-branches), store at node+56 a
+// resolved [alo, ahi, slo, shi, def-ordered-value-nodes] record, so flatten_struct_lit_lv
+// can lower it into the alloc/store descriptor subtree with NO srt/span threading. Runs
+// AFTER field_prefold (so field-read field values are already folded) and BEFORE the
+// strtab pass + emit. Unresolvable struct-lits keep node+56 = 0 (flatten fails closed).
+pub fn slit_set_annotation(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let k: i64 = srt_find_by_name(srt, src, ast_child0(node), ast_child2(node), 0);
+    if k < 0 {
+        return 0;
+    }
+    let nf: i64 = srt_field_count(srt, k);
+    if ast_aux(node) != nf {
+        return 0;
+    }
+    let fields: i64 = ast_child1(node);
+    let values: i64 = __mind_alloc(nf * 8 + 8);
+    let ok: i64 = slit_fill_defvalues(values, fields, nf, src, srt, k, nf, 0);
+    if ok == 0 {
+        return 0;
+    }
+    let ann: i64 = __mind_alloc(40);
+    __mind_store_i64(ann + 0, alo);
+    __mind_store_i64(ann + 8, ahi);
+    __mind_store_i64(ann + 16, slo);
+    __mind_store_i64(ann + 24, shi);
+    __mind_store_i64(ann + 32, values);
+    __mind_store_i64(node + 56, ann);
+    1
+}
+pub fn slit_fill_defvalues(values: i64, fields: i64, ntriples: i64, src: i64, srt: i64, k: i64, nf: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 1;
+    }
+    let val: i64 = slit_value_for(fields, ntriples, src, srt_field_lo(srt, k, j), srt_field_hi(srt, k, j), 0);
+    if val == 0 {
+        return 0;
+    }
+    __mind_store_i64(values + j * 8, val);
+    slit_fill_defvalues(values, fields, ntriples, src, srt, k, nf, j + 1)
+}
+pub fn slit_annotate_expr(node: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(node);
+    if k == ast_struct_lit() {
+        let _fv: i64 = slit_annotate_fieldvals(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
+        let _sa: i64 = slit_set_annotation(node, src, srt, alo, ahi, slo, shi);
+        return 0;
+    }
+    if k == ast_paren() {
+        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+    }
+    if k == ast_neg() {
+        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+    }
+    if k == ast_not() {
+        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+    }
+    if k == ast_binop() {
+        let _l: i64 = slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        return slit_annotate_expr(ast_child1(node), src, srt, alo, ahi, slo, shi);
+    }
+    if k == ast_field() {
+        return slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+    }
+    if k == ast_call() {
+        return slit_annotate_args(ast_child1(node), ast_aux(node), 0, src, srt, alo, ahi, slo, shi);
+    }
+    if k == ast_if() {
+        let _c: i64 = slit_annotate_expr(ast_child0(node), src, srt, alo, ahi, slo, shi);
+        let tb: i64 = ast_child1(node);
+        if ast_kind(tb) == ast_block() {
+            let _t: i64 = slit_annotate_stmts(ast_child0(tb), ast_aux(tb), 0, src, srt, alo, ahi, slo, shi);
+        }
+        let eb: i64 = ast_child2(node);
+        if eb != 0 {
+            if ast_kind(eb) == ast_block() {
+                let _e: i64 = slit_annotate_stmts(ast_child0(eb), ast_aux(eb), 0, src, srt, alo, ahi, slo, shi);
+            }
+        }
+        return 0;
+    }
+    0
+}
+pub fn slit_annotate_args(args_addr: i64, args_len: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let _a: i64 = slit_annotate_expr(__mind_load_i64(args_addr + i * 8), src, srt, alo, ahi, slo, shi);
+    slit_annotate_args(args_addr, args_len, i + 1, src, srt, alo, ahi, slo, shi)
+}
+pub fn slit_annotate_fieldvals(fields: i64, ntriples: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    if i >= ntriples {
+        return 0;
+    }
+    let _v: i64 = slit_annotate_expr(__mind_load_i64(fields + (i * 3 + 2) * 8), src, srt, alo, ahi, slo, shi);
+    slit_annotate_fieldvals(fields, ntriples, i + 1, src, srt, alo, ahi, slo, shi)
+}
+pub fn slit_annotate_stmts(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let _i: i64 = slit_annotate_expr(ast_child2(stmt), src, srt, alo, ahi, slo, shi);
+    } else {
+        if k == ast_return() {
+            let _r: i64 = slit_annotate_expr(ast_child0(stmt), src, srt, alo, ahi, slo, shi);
+        } else {
+            if k == ast_if() {
+                let _x: i64 = slit_annotate_expr(stmt, src, srt, alo, ahi, slo, shi);
+            } else {
+                let _e: i64 = slit_annotate_expr(stmt, src, srt, alo, ahi, slo, shi);
+            }
+        }
+    }
+    slit_annotate_stmts(stmts_addr, stmts_len, i + 1, src, srt, alo, ahi, slo, shi)
+}
+pub fn slit_annotate_module(src: i64, items_addr: i64, items_len: i64, srt: i64, alo: i64, ahi: i64, slo: i64, shi: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        let body: i64 = ast_child2(item);
+        if ast_kind(body) == ast_block() {
+            let _b: i64 = slit_annotate_stmts(ast_child0(body), ast_aux(body), 0, src, srt, alo, ahi, slo, shi);
+        }
+    }
+    slit_annotate_module(src, items_addr, items_len, srt, alo, ahi, slo, shi, i + 1)
+}
+
 // Emit the FN_DEF (body) for one function, dispatching on its proven shape. Does
 // NOT emit the module-level scaffold (the caller appends emit_mic3_scaffold(k)).
 // Writes a 1 into ok_cell on a matched shape, 0 (fail-closed) otherwise; on a
@@ -9648,6 +9829,13 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // the field-read's first-seen position, so the strtab must walk the rewritten
     // calls (not ast_field) to match the oracle's first-seen string order.
     let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    let sa_acell: i64 = __mind_alloc(16);
+    let sa_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
+            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+        }
+    }
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
@@ -9724,6 +9912,13 @@ pub fn selftest_nfn_fail_span(src_addr: i64, src_len: i64, strbuf: i64, offs: i6
         }
     }
     let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    let sa_acell: i64 = __mind_alloc(16);
+    let sa_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
+            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+        }
+    }
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
@@ -9766,6 +9961,13 @@ pub fn selftest_nfn_emit_nth(src_addr: i64, src_len: i64, strbuf: i64, offs: i64
         }
     }
     let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    let sa_acell: i64 = __mind_alloc(16);
+    let sa_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
+            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+        }
+    }
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
@@ -9810,6 +10012,13 @@ pub fn selftest_nfn_fail_count(src_addr: i64, src_len: i64, strbuf: i64, offs: i
         }
     }
     let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    let sa_acell: i64 = __mind_alloc(16);
+    let sa_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
+            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
+        }
+    }
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
     let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
@@ -10750,6 +10959,121 @@ pub fn lvenv_lookup(src: i64, lo: i64, hi: i64, lvenv: i64, nlv: i64, i: i64) ->
     lvenv_lookup(src, lo, hi, lvenv, nlv, i + 1)
 }
 
+// Descriptor-node emit helpers (write one node into nodes[cursor], advance cursor, return
+// its slot). Kinds: 2=CONST, 1=BINOP(op byte + l/r slots), 4=arg-cons(arg slot + next),
+// 5=callee-leaf(name span), 3=CALL(callee slot + first-cons slot). Match flatten_ast_lv.
+pub fn desc_emit_const(nodes: i64, cursor: i64, val: i64) -> i64 {
+    let slot: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + slot * 32 + 0, 2);
+    __mind_store_i64(nodes + slot * 32 + 8, val);
+    __mind_store_i64(nodes + slot * 32 + 16, 0);
+    __mind_store_i64(nodes + slot * 32 + 24, 0);
+    __mind_store_i64(cursor, slot + 1);
+    slot
+}
+pub fn desc_emit_binop(nodes: i64, cursor: i64, op_byte: i64, l: i64, r: i64) -> i64 {
+    let slot: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + slot * 32 + 0, 1);
+    __mind_store_i64(nodes + slot * 32 + 8, op_byte);
+    __mind_store_i64(nodes + slot * 32 + 16, l);
+    __mind_store_i64(nodes + slot * 32 + 24, r);
+    __mind_store_i64(cursor, slot + 1);
+    slot
+}
+pub fn desc_emit_call1(nodes: i64, cursor: i64, clo: i64, chi: i64, arg0: i64) -> i64 {
+    let cons0: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + cons0 * 32 + 0, 4);
+    __mind_store_i64(nodes + cons0 * 32 + 8, 0);
+    __mind_store_i64(nodes + cons0 * 32 + 16, arg0);
+    __mind_store_i64(nodes + cons0 * 32 + 24, 0);
+    __mind_store_i64(cursor, cons0 + 1);
+    let cleaf: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + cleaf * 32 + 0, 5);
+    __mind_store_i64(nodes + cleaf * 32 + 8, clo);
+    __mind_store_i64(nodes + cleaf * 32 + 16, chi);
+    __mind_store_i64(nodes + cleaf * 32 + 24, 0);
+    __mind_store_i64(cursor, cleaf + 1);
+    let call: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + call * 32 + 0, 3);
+    __mind_store_i64(nodes + call * 32 + 8, 0);
+    __mind_store_i64(nodes + call * 32 + 16, cleaf);
+    __mind_store_i64(nodes + call * 32 + 24, cons0);
+    __mind_store_i64(cursor, call + 1);
+    call
+}
+pub fn desc_emit_call2(nodes: i64, cursor: i64, clo: i64, chi: i64, arg0: i64, arg1: i64) -> i64 {
+    let vcons: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + vcons * 32 + 0, 4);
+    __mind_store_i64(nodes + vcons * 32 + 8, 0);
+    __mind_store_i64(nodes + vcons * 32 + 16, arg1);
+    __mind_store_i64(nodes + vcons * 32 + 24, 0);
+    __mind_store_i64(cursor, vcons + 1);
+    let acons: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + acons * 32 + 0, 4);
+    __mind_store_i64(nodes + acons * 32 + 8, 0);
+    __mind_store_i64(nodes + acons * 32 + 16, arg0);
+    __mind_store_i64(nodes + acons * 32 + 24, vcons);
+    __mind_store_i64(cursor, acons + 1);
+    let cleaf: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + cleaf * 32 + 0, 5);
+    __mind_store_i64(nodes + cleaf * 32 + 8, clo);
+    __mind_store_i64(nodes + cleaf * 32 + 16, chi);
+    __mind_store_i64(nodes + cleaf * 32 + 24, 0);
+    __mind_store_i64(cursor, cleaf + 1);
+    let call: i64 = __mind_load_i64(cursor);
+    __mind_store_i64(nodes + call * 32 + 0, 3);
+    __mind_store_i64(nodes + call * 32 + 8, 0);
+    __mind_store_i64(nodes + call * 32 + 16, cleaf);
+    __mind_store_i64(nodes + call * 32 + 24, acons);
+    __mind_store_i64(cursor, call + 1);
+    call
+}
+
+// Lower a struct-lit EXPRESSION into existing descriptor kinds: `8*nf -> __mind_alloc`
+// (the ROOT = the struct handle) then, per declared field in order, the field VALUE tree,
+// the field ADDR (alloc for field 0, else alloc + idx*8), and a `__mind_store_i64(addr,
+// value)` CALL. Reads the resolved alloc/store spans + def-ordered field-value nodes from
+// the node's +56 annotation (set by the nfn struct-lit prefold) — no srt/span threading.
+// Returns the alloc slot, or -1 if unannotated / a field value fails to flatten.
+pub fn flatten_struct_lit_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, lvenv: i64, nlv: i64) -> i64 {
+    let ann: i64 = __mind_load_i64(node + 56);
+    if ann == 0 {
+        return 0 - 1;
+    }
+    let alo: i64 = __mind_load_i64(ann + 0);
+    let ahi: i64 = __mind_load_i64(ann + 8);
+    let slo: i64 = __mind_load_i64(ann + 16);
+    let shi: i64 = __mind_load_i64(ann + 24);
+    let values: i64 = __mind_load_i64(ann + 32);
+    let nf: i64 = ast_aux(node);
+    let c8: i64 = desc_emit_const(nodes, cursor, 8);
+    let cnf: i64 = desc_emit_const(nodes, cursor, nf);
+    let mul: i64 = desc_emit_binop(nodes, cursor, binop_to_byte(op_mul()), c8, cnf);
+    let alloc_slot: i64 = desc_emit_call1(nodes, cursor, alo, ahi, mul);
+    let ok: i64 = slit_emit_field_stores(buf, params_addr, n_params, nodes, cursor, lvenv, nlv, values, nf, alloc_slot, slo, shi, 0);
+    if ok == 0 {
+        return 0 - 1;
+    }
+    alloc_slot
+}
+pub fn slit_emit_field_stores(buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, lvenv: i64, nlv: i64, values: i64, nf: i64, alloc_slot: i64, slo: i64, shi: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 1;
+    }
+    let val_slot: i64 = flatten_ast_lv(__mind_load_i64(values + j * 8), buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
+    if val_slot < 0 {
+        return 0;
+    }
+    let addr_slot: i64 = if j == 0 {
+        alloc_slot
+    } else {
+        let coff: i64 = desc_emit_const(nodes, cursor, j * 8);
+        desc_emit_binop(nodes, cursor, binop_to_byte(op_add()), alloc_slot, coff)
+    };
+    let _st: i64 = desc_emit_call2(nodes, cursor, slo, shi, addr_slot, val_slot);
+    slit_emit_field_stores(buf, params_addr, n_params, nodes, cursor, lvenv, nlv, values, nf, alloc_slot, slo, shi, j + 1)
+}
+
 // Exactly flatten_ast, except an ident found in the lv-env (lvenv_lookup >= 0) emits
 // a KIND-0 leaf carrying the let's vid in +8 (mirroring the param-leaf shape). All
 // other arms identical, recursing via flatten_ast_lv.
@@ -10837,7 +11161,7 @@ pub fn flatten_ast_lv(node: i64, buf: i64, params_addr: i64, n_params: i64, node
         return slot;
     }
     if k == ast_struct_lit() {
-        return 0 - 1;
+        return flatten_struct_lit_lv(node, buf, params_addr, n_params, nodes, cursor, lvenv, nlv);
     }
     0 - 1
 }
@@ -10917,7 +11241,39 @@ pub fn count_nonparam_nodes_lv(node: i64, buf: i64, params_addr: i64, n_params: 
         }
         return 1 + a;
     }
+    if k == ast_struct_lit() {
+        // vid count = 4 (CONST 8 / CONST nf / BINOP mul / alloc CALL) + per field
+        // (value_nonparam + (idx>0 ? 2 : 0) [CONST off + BINOP add] + 1 [store CALL]).
+        let ann: i64 = __mind_load_i64(node + 56);
+        if ann == 0 {
+            return 0 - 1;
+        }
+        let fc: i64 = slit_count_fields(__mind_load_i64(ann + 32), ast_aux(node), buf, params_addr, n_params, lvenv, nlv, 0);
+        if fc < 0 {
+            return 0 - 1;
+        }
+        return 4 + fc;
+    }
     0 - 1
+}
+pub fn slit_count_fields(values: i64, nf: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 0;
+    }
+    let vc: i64 = count_nonparam_nodes_lv(__mind_load_i64(values + j * 8), buf, params_addr, n_params, lvenv, nlv);
+    if vc < 0 {
+        return 0 - 1;
+    }
+    let addr_extra: i64 = if j == 0 {
+        0
+    } else {
+        2
+    };
+    let rest: i64 = slit_count_fields(values, nf, buf, params_addr, n_params, lvenv, nlv, j + 1);
+    if rest < 0 {
+        return 0 - 1;
+    }
+    vc + addr_extra + 1 + rest
 }
 
 // count_nonparam_args, recursing via count_nonparam_nodes_lv.
