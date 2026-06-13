@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,888,872
-**Generated:** 2026-06-13 22:36 UTC
+**Files:** 2836 | **Est. tokens:** ~6,890,564
+**Generated:** 2026-06-13 22:51 UTC
 
 ## Token Budget Guide
 
@@ -38,7 +38,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 27 | ~47,385 |
+| `docs/` | 27 | ~49,077 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -631,7 +631,7 @@
 
 - `mlir-lowering.md` (~210 tok, medium) — MLIR lowering pipeline (public)
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
-- `optimization-frontier.md` (~9541 tok, huge) — MIND Optimization Frontier
+- `optimization-frontier.md` (~11233 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~742 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
