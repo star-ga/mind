@@ -7475,10 +7475,16 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     // A branch VALUE that is itself an escaping value if-expr bubbles its merge bindings up:
     // append them after the leading lets (names now; real merge_ids at the value emit) so
     // blk_layout re-merges them with the leading lets. no-escape -> eff==nlets, byte-identical.
-    let then_ec: i64 = branch_escape_probe(then_val_expr, buf, params_addr, n_params, then_val_base0, then_lvbuf, nlv + then_nlets, strbuf, offs, ncount, then_lvbuf, nlv + then_nlets);
-    let else_ec: i64 = branch_escape_probe(else_val_expr, buf, params_addr, n_params, else_val_base0, else_lvbuf, nlv + else_nlets, strbuf, offs, ncount, else_lvbuf, nlv + else_nlets);
-    let then_nle: i64 = then_nlets + then_ec;
-    let else_nle: i64 = else_nlets + else_ec;
+    // A leading let whose INIT is an escaping value if-expr (`let x = if .. { let m=.. } ..`)
+    // surfaces that inner merge binding (m) into the block scope; bubble it BEFORE the value
+    // escapes so the union order is [lets, init-escapes, value-escapes] (matches the oracle's
+    // vid-allocation order: the let inits emit before the trailing value).
+    let then_init_ec: i64 = block_init_escape_probe(then_sa, then_nlets, after_cond + 1, buf, params_addr, n_params, then_lvbuf, nlv, strbuf, offs, ncount, then_lvbuf, nlv + then_nlets, 0, 0);
+    let else_init_ec: i64 = block_init_escape_probe(else_sa, else_nlets, else_synth + 1, buf, params_addr, n_params, else_lvbuf, nlv, strbuf, offs, ncount, else_lvbuf, nlv + else_nlets, 0, 0);
+    let then_ec: i64 = branch_escape_probe(then_val_expr, buf, params_addr, n_params, then_val_base0, then_lvbuf, nlv + then_nlets, strbuf, offs, ncount, then_lvbuf, nlv + then_nlets + then_init_ec);
+    let else_ec: i64 = branch_escape_probe(else_val_expr, buf, params_addr, n_params, else_val_base0, else_lvbuf, nlv + else_nlets, strbuf, offs, ncount, else_lvbuf, nlv + else_nlets + else_init_ec);
+    let then_nle: i64 = then_nlets + then_init_ec + then_ec;
+    let else_nle: i64 = else_nlets + else_init_ec + else_ec;
     let blk_shared: i64 = blk_count_shared(then_lvbuf, nlv, then_nle, else_lvbuf, else_nle, buf, 0, 0);
     let n_merged: i64 = then_nle + else_nle - blk_shared;
     let eix: i64 = __mind_alloc((then_nle + else_nle + 1) * 8);
@@ -7508,7 +7514,7 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let _tae: i64 = lvenv_append_escapes(then_lvbuf, nlv + then_nlets, then_vb, __mind_load_i64(then_vnb), 0);
+    let _tae: i64 = lvenv_append_escapes(then_lvbuf, nlv + then_nlets + then_init_ec, then_vb, __mind_load_i64(then_vnb), 0);
     let then_root: i64 = __mind_load_i64(then_rcell);
     // then placeholders: FRESH else-block lets only (bound names reuse the outer vid).
     let s9: EmitState = blk_emit_ph(s8, bl, n_merged, 0, 0);
@@ -7537,7 +7543,7 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    let _eae: i64 = lvenv_append_escapes(else_lvbuf, nlv + else_nlets, else_vb, __mind_load_i64(else_vnb), 0);
+    let _eae: i64 = lvenv_append_escapes(else_lvbuf, nlv + else_nlets + else_init_ec, else_vb, __mind_load_i64(else_vnb), 0);
     let else_root: i64 = __mind_load_i64(else_rcell);
     // else placeholders: FRESH then-block lets only (bound names reuse the outer vid).
     let s15: EmitState = blk_emit_ph(s14, bl, n_merged, 1, 0);
@@ -8441,6 +8447,27 @@ pub fn branch_escape_probe(expr: i64, buf: i64, params_addr: i64, n_params: i64,
     let n: i64 = __mind_load_i64(vnb);
     let _ap: i64 = lvenv_append_escapes(dest, dest_at, vb, n, 0);
     n
+}
+
+// Probe the escaping bindings of a leading-let block's LET INITS (not its trailing value). A
+// `let X = <value if-expr>` whose init is a same-name phi / escaping if-expr surfaces that
+// inner merge binding into the enclosing scope (the Rust lowering keeps it live after the let),
+// so it must bubble into the enclosing if's merge. For each leading let i with an if-expr init,
+// probe it at the init's vid base (base after the i prior let inits) with the env [0..nlv+i),
+// appending each escape's NAME+vid into `dest` starting at `dest_at + acc`. Returns the running
+// count. A block with no if-expr-init lets returns 0 (eff == nlets, byte-identical).
+pub fn block_init_escape_probe(stmts_addr: i64, nlets: i64, base0: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, dest: i64, dest_at: i64, i: i64, acc: i64) -> i64 {
+    if i >= nlets {
+        return acc;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let init: i64 = ast_child2(stmt);
+    if is_any_value_if_expr(init) != 1 {
+        return block_init_escape_probe(stmts_addr, nlets, base0, buf, params_addr, n_params, lvenv, nlv, strbuf, offs, ncount, dest, dest_at, i + 1, acc);
+    }
+    let init_base: i64 = letchain_vid_base(stmts_addr, i, base0, buf, params_addr, n_params, lvenv, nlv, strbuf, offs, ncount);
+    let ec: i64 = branch_escape_probe(init, buf, params_addr, n_params, init_base, lvenv, nlv + i, strbuf, offs, ncount, dest, dest_at + acc);
+    block_init_escape_probe(stmts_addr, nlets, base0, buf, params_addr, n_params, lvenv, nlv, strbuf, offs, ncount, dest, dest_at, i + 1, acc + ec)
 }
 
 // emit_if_expr_lv for the case where a branch VALUE is itself a value if-expr that escapes
