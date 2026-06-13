@@ -6386,10 +6386,14 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
             }
         }
     }
-    // (fall-through inside a chain) `if C { lets + bare-calls }` with no return and no
-    // if-segment — route to the side-effect fall-through emitter, exposing the let merge
-    // bindings via bindout for this level's caller to re-merge.
-    if fallthrough_all_sidefx(then_sa, then_sl, 0) == 1 {
+    // (fall-through inside a chain) `if C { lets + bare-calls + if-segments }` with no
+    // top-level return — route to the side-effect fall-through emitter (which handles
+    // interleaved if-segments + bubbled bindings), exposing the merge bindings via bindout
+    // for this level's caller to re-merge. (mixed_prefix_ok, not fallthrough_all_sidefx,
+    // so a then-block of only/interleaved if-segments like `if c { if a{ret} if b{ret} }`
+    // is handled.) Placed after the type-4 delegate (leading-lets + all-if-segments) and
+    // before the mixed-RETURNING delegation (which needs a terminal return).
+    if mixed_prefix_ok(then_sa, then_sl, 0) == 1 {
         let ftc_lvbuf: i64 = __mind_alloc((nlv + then_sl + 8) * 24);
         let ftc_cell: i64 = __mind_alloc(8);
         __mind_store_i64(ftc_cell, 0 - 1);
