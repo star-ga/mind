@@ -9736,7 +9736,16 @@ pub fn slit_canon_value(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: 
 // Build `let __sN = __mind_store_i64(addr, val)` for canonical field index `j`:
 // addr = ptr ref (j==0) or Add(ptr, idx*8). The let name + ptr ref reuse the
 // `__mind_alloc` span (alo/ahi); the store callee + let name reuse `__mind_store_i64`.
-pub fn slit_build_store_let(alo: i64, ahi: i64, slo: i64, shi: i64, j: i64, val: i64) -> i64 {
+// Bind the field VALUE to a let BEFORE its store, so the value is emitted ahead of the
+// store address — matching the oracle's StructLit lowering (eval field value, THEN compute
+// the address, THEN store). The let's name span = the value node's own span (unique per
+// field, never collides with a sequence let), and the store references it by that span. A
+// plain `__mind_store_i64(addr, val)` call would otherwise flatten the addr arg first.
+pub fn slit_build_value_let(val: i64) -> i64 {
+    let name: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
+    ast_new_let(0, 0, name, 0, val)
+}
+pub fn slit_build_store_let(alo: i64, ahi: i64, slo: i64, shi: i64, j: i64, vref: i64) -> i64 {
     let sl_ref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
     let addr: i64 = if j == 0 {
         sl_ref
@@ -9746,7 +9755,7 @@ pub fn slit_build_store_let(alo: i64, ahi: i64, slo: i64, shi: i64, j: i64, val:
     let callee: i64 = ast_new_leaf(ast_ident(), slo, shi);
     let args: i64 = __mind_alloc(16);
     __mind_store_i64(args + 0, addr);
-    __mind_store_i64(args + 8, val);
+    __mind_store_i64(args + 8, vref);
     let call: i64 = ast_new_call(0, 0, callee, args, 2);
     let name: i64 = ast_new_leaf(ast_ident(), slo, shi);
     ast_new_let(0, 0, name, 0, call)
@@ -9762,8 +9771,11 @@ pub fn slit_fill_stores(new_stmts: i64, fields_addr: i64, ntriples: i64, src: i6
     if val == 0 {
         return 0;
     }
-    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, val);
-    __mind_store_i64(new_stmts + (1 + j) * 8, slet);
+    let vlet: i64 = slit_build_value_let(val);
+    let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
+    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
+    __mind_store_i64(new_stmts + (1 + 2 * j) * 8, vlet);
+    __mind_store_i64(new_stmts + (1 + 2 * j + 1) * 8, slet);
     slit_fill_stores(new_stmts, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
 }
 
@@ -9792,7 +9804,7 @@ pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, s
     if ntriples != nfields {
         return 0;
     }
-    let new_len: i64 = nfields + 2;
+    let new_len: i64 = 2 * nfields + 2;
     let new_stmts: i64 = __mind_alloc(new_len * 8);
     // (0) `let __sl = __mind_alloc(8 * nfields)`.
     let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
@@ -9810,7 +9822,7 @@ pub fn slit_desugar_body(fn_node: i64, src: i64, srt: i64, alo: i64, ahi: i64, s
     }
     // (last) trailing ptr ref -> ret vid = alloc vid.
     let tref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
-    __mind_store_i64(new_stmts + (nfields + 1) * 8, tref);
+    __mind_store_i64(new_stmts + (2 * nfields + 1) * 8, tref);
     // Replace the body block's statements (child0 = stmts_addr, aux = stmts_len).
     __mind_store_i64(body + 24, new_stmts);
     __mind_store_i64(body + 48, new_len);
@@ -9854,7 +9866,7 @@ pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64) -> i64 {
     if ast_aux(snode) != nfields {
         return 1;
     }
-    nfields + 2
+    2 * nfields + 2
 }
 
 // Sum of expanded lengths over a statement list (used to size the new array).
@@ -9875,8 +9887,11 @@ pub fn slit_fill_stores_at(new_stmts: i64, base: i64, fields_addr: i64, ntriples
     if val == 0 {
         return 0;
     }
-    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, val);
-    __mind_store_i64(new_stmts + (base + j) * 8, slet);
+    let vlet: i64 = slit_build_value_let(val);
+    let vref: i64 = ast_new_leaf(ast_ident(), ast_span_lo(val), ast_span_hi(val));
+    let slet: i64 = slit_build_store_let(alo, ahi, slo, shi, j, vref);
+    __mind_store_i64(new_stmts + (base + 2 * j) * 8, vlet);
+    __mind_store_i64(new_stmts + (base + 2 * j + 1) * 8, slet);
     slit_fill_stores_at(new_stmts, base, fields_addr, ntriples, src, srt, k, nfields, alo, ahi, slo, shi, j + 1)
 }
 
@@ -9906,7 +9921,7 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
             sl_ref
         }
     };
-    __mind_store_i64(new_stmts + (out + nfields + 1) * 8, final);
+    __mind_store_i64(new_stmts + (out + 2 * nfields + 1) * 8, final);
     1
 }
 
@@ -9928,7 +9943,7 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
         let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
         let nfields: i64 = srt_field_count(srt, k);
         let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
-        __mind_store_i64(out_cell, out + nfields + 2);
+        __mind_store_i64(out_cell, out + 2 * nfields + 2);
     }
     slit_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, src, srt, alo, ahi, slo, shi, i + 1)
 }
