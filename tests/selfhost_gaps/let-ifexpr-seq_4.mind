@@ -1,0 +1,4 @@
+pub fn f(c: i64) -> i64 {
+    let k: i64 = 3;
+    if c == 0 { k } else { k + 1 }
+}

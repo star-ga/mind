@@ -1,0 +1,5 @@
+// MISMATCH: same-named `let` in two SIBLING branches of a value if-expr.
+// Oracle interns the name once; nfn double-interns -> +11 bytes, wrong indices.
+// (Distinct names in the same shape are byte-exact.)
+pub fn f(c: i64, x: i64) -> i64 {
+    if c == 0 { let v: i64 = x + 1; v } else { let v: i64 = x + 2; v } }

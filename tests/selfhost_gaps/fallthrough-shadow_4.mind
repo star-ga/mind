@@ -1,0 +1,7 @@
+pub fn f(c: i64, p: i64) -> i64 {
+    let y: i64 = p + 9;
+    if c > 0 {
+        let y: i64 = y + 5;
+    }
+    y
+}

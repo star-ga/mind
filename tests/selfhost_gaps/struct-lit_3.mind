@@ -1,0 +1,8 @@
+struct S { a: i64, b: i64 }
+pub fn g(s: S) -> i64 { s.a }
+pub fn f(p: i64, q: i64) -> i64 { g(S { a: p, b: q }) }
+pub fn _seed(p: i64) -> i64 {
+    let a: i64 = __mind_alloc(8);
+    __mind_store_i64(a + 0, p);
+    __mind_load_i64(a + 0)
+}
