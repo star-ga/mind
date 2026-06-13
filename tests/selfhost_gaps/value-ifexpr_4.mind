@@ -1,0 +1,5 @@
+// MISMATCH: let-block then-side whose trailing value is a nested if-expr that
+// ITSELF carries a let in a branch. Drops the inner let-init (-8 bytes).
+pub fn f(c: i64, d: i64, x: i64) -> i64 {
+    if c == 0 { let a: i64 = x + 1; if d == 0 { let b: i64 = a + 1; b } else { a } }
+    else { x } }

@@ -1,0 +1,5 @@
+// MISMATCH: a `let` inside a NESTED if-expr that sits in the THEN-side of an
+// outer value if-expr. nfn emits 8 fewer bytes than oracle (drops let-init).
+pub fn f(c: i64, d: i64, x: i64) -> i64 {
+    if c == 0 { if d == 0 { x } else { let z: i64 = x + 9; z } }
+    else { x + 1 } }

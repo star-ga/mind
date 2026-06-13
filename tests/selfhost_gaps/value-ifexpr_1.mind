@@ -1,0 +1,7 @@
+// MISMATCH: a `let`-block in a NESTED (else-if) branch of a value if-expr.
+// nfn drops the let-init instrs -> emits 16 fewer bytes (silent wrong output).
+// Depth-2 chain with distinct names is byte-exact; depth-3 nested-branch lets break.
+pub fn f(c: i64, x: i64) -> i64 {
+    if c == 0 { x }
+    else { if c == 1 { let b: i64 = x + 2; b }
+           else { let d: i64 = x + 3; d } } }

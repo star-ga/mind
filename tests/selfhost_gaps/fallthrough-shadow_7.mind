@@ -1,0 +1,6 @@
+struct S { a: i64, b: i64 }
+pub fn f(p: i64) -> i64 {
+    let y: i64 = mk(S { a: p, b: p });
+    y
+}
+pub fn mk(z: i64) -> i64 { z }

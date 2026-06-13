@@ -1,0 +1,5 @@
+pub fn ld(p: i64) -> i64 { __mind_load_i64(p) }
+pub fn al(n: i64) -> i64 { __mind_alloc(n) }
+pub fn st(p: i64, v: i64) -> i64 { __mind_store_i64(p, v) }
+struct S { a: i64, b: i64 }
+pub fn f(s: S) -> i64 { let t: S = S { a: s.b, b: s.a }; t.a }

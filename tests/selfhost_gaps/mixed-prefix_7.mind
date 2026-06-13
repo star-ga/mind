@@ -1,0 +1,4 @@
+pub fn f(a: i64, b: i64) -> i64 {
+    let s: i64 = a + b;
+    if s > 0 { let r: i64 = s * 2; r + 1 } else { s }
+}

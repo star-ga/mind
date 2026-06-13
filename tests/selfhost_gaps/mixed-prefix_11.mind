@@ -1,0 +1,6 @@
+pub fn g(z: i64) -> i64 { z }
+pub fn f(a: i64, b: i64) -> i64 {
+    let x: i64 = -a;
+    g(x);
+    -x + b
+}

@@ -1,0 +1,10 @@
+pub fn g(z: i64) -> i64 { z }
+pub fn f(a: i64, b: i64, c: i64) -> i64 {
+    let r: i64 = if a > 0 {
+        let inner: i64 = if b > 0 { let w: i64 = b; w } else { let w: i64 = c; w };
+        inner
+    } else {
+        c
+    };
+    r
+}
