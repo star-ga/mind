@@ -6061,7 +6061,7 @@ pub fn measure_mixed_instrs(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_
     }
     let nlv: i64 = __mind_load_i64(nlv_cell);
     let init: i64 = ast_child2(stmt);
-    let c: i64 = if is_value_if_expr(init) == 1 {
+    let c: i64 = if is_any_value_if_expr(init) == 1 {
         1
     } else {
         count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv)
@@ -6120,7 +6120,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     }
     let name: i64 = ast_child0(stmt);
     let init: i64 = ast_child2(stmt);
-    let s2: EmitState = if is_value_if_expr(init) == 1 {
+    let s2: EmitState = if is_any_value_if_expr(init) == 1 {
         let q_cell: i64 = __mind_alloc(8);
         __mind_store_i64(q_cell, 0 - 1);
         let sq: EmitState = emit_if_expr_any_lv(s, init, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, q_cell, lvbuf, nlv, strbuf, offs, ncount);
@@ -6605,7 +6605,7 @@ pub fn emit_let_inits_lv(s: EmitState, stmts_addr: i64, nlets: i64, idx: i64, bu
     // let's value. Cond/branches resolve params + earlier lets via the lv-env prefix
     // (nlv_now). The vid base advances past the whole OP_IF (dst + 1) — its delta,
     // not the 1 instr it contributes to then_len.
-    if is_value_if_expr(init) == 1 {
+    if is_any_value_if_expr(init) == 1 {
         let q_cell: i64 = __mind_alloc(8);
         __mind_store_i64(q_cell, 0 - 1);
         let sq: EmitState = emit_if_expr_any_lv(s, init, buf, params_addr, n_params, nodes, cursor, vidbuf, cur_base, q_cell, lvbuf, nlv_now, strbuf, offs, ncount);
@@ -6919,7 +6919,7 @@ pub fn sum_let_init_nonparam(stmts_addr: i64, nlets: i64, i: i64, buf: i64, para
     // instruction (its cond/branch instrs live INSIDE the OP_IF, not at the
     // then-block top level) — so it contributes 1 to the instr count, while its
     // VID consumption (handled in emit_let_inits_lv) is the OP_IF's full delta.
-    let nn: i64 = if is_value_if_expr(init) == 1 {
+    let nn: i64 = if is_any_value_if_expr(init) == 1 {
         1
     } else {
         count_nonparam_nodes_lv(init, buf, params_addr, n_params, lvbuf, nlv0 + i)
@@ -7724,7 +7724,7 @@ pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: 
     let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
     let after_cond: i64 = base0 + cond_nonparam;
     let then_synth: i64 = after_cond;
-    let then_is_if: i64 = is_value_if_expr(then_expr);
+    let then_is_if: i64 = is_any_value_if_expr(then_expr);
     let then_instrs: i64 = if then_is_if == 1 {
         1
     } else {
@@ -7750,7 +7750,7 @@ pub fn emit_if_expr_lv(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: 
         after_cond + 1 + then_instrs
     };
     let else_synth: i64 = after_then;
-    let else_is_if: i64 = is_value_if_expr(else_expr);
+    let else_is_if: i64 = is_any_value_if_expr(else_expr);
     let else_instrs: i64 = if else_is_if == 1 {
         1
     } else {
@@ -7839,7 +7839,7 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // Emit the OP_IF (then_result/else_result = the branch values, dst = the merged
         // value); bind X -> a synthetic dst-slot whose vid is set to the OP_IF dst in
         // Pass B, so later refs to X resolve to the merged value.
-        if is_value_if_expr(init) == 1 {
+        if is_any_value_if_expr(init) == 1 {
             let q7_nodes: i64 = __mind_alloc(256 * 32);
             let q7_cursor: i64 = __mind_alloc(8);
             let q7_vidbuf: i64 = __mind_alloc(256 * 8);
