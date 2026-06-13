@@ -1,0 +1,4 @@
+pub fn g2(a: i64, b: i64) -> i64 { a + b }
+pub fn f(c: i64, p: i64, q: i64) -> i64 {
+    if c == 0 { let x: i64 = p; g2(x, q) } else { let x: i64 = q; g2(x, p) }
+}

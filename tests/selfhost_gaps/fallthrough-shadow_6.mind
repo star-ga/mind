@@ -1,0 +1,9 @@
+pub fn f(a: i64, b: i64, p: i64) -> i64 {
+    let y: i64 = p;
+    if a > 0 {
+        if b > 0 {
+            let y: i64 = p + 5;
+        }
+    }
+    y
+}

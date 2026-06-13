@@ -1,0 +1,4 @@
+pub fn f(c: i64) -> i64 {
+    let x: i64 = if c == 0 { 1 } else { 2 };
+    if x == 1 { 100 } else { 200 }
+}

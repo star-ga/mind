@@ -1,0 +1,2 @@
+pub fn g3(a: i64, b: i64, c: i64) -> i64 { a + b + c }
+pub fn f(p: i64, q: i64) -> i64 { return g3(p, 0, q); }

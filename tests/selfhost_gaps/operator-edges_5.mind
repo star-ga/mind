@@ -1,0 +1,2 @@
+pub fn g(z: i64) -> i64 { z }
+pub fn f(a: i64) -> i64 { g(-a) }

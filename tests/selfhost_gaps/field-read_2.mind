@@ -1,0 +1,3 @@
+pub fn ld(p: i64) -> i64 { __mind_load_i64(p) }
+struct S { a: i64, b: i64 }
+pub fn f(s: S, c: i64) -> i64 { let v: i64 = if c == 0 { s.a } else { s.b }; v + 1 }

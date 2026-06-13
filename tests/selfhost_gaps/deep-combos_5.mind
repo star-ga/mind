@@ -1,0 +1,13 @@
+struct S { a: i64, b: i64 }
+pub fn f(c: i64, s: i64, t: i64) -> i64 {
+    if c > 0 {
+        let r: i64 = if s > t {
+            mk(S { a: s, b: t })
+        } else {
+            mk(S { a: t, b: s })
+        };
+        return r;
+    }
+    0
+}
+pub fn mk(z: i64) -> i64 { z }

@@ -1,0 +1,9 @@
+struct R { lo: i64, hi: i64 }
+pub fn g(z: i64) -> i64 { z }
+pub fn f(r: R, a: i64) -> i64 {
+    let lo: i64 = r.lo;
+    g(lo);
+    let hi: i64 = r.hi;
+    if hi > lo { return hi - lo; }
+    lo + a
+}

@@ -1,0 +1,5 @@
+// FAIL_CLOSED (in-subset): `let outer; if .. { use outer } else { use outer }`
+// — an escaped outer binding read inside value if-expr branches; nfn fails closed.
+pub fn f(c: i64, d: i64, x: i64) -> i64 {
+    let outer: i64 = x + 100;
+    if c == 0 { let inner: i64 = outer + 1; inner } else { outer } }

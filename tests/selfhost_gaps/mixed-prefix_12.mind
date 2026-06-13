@@ -1,0 +1,6 @@
+pub fn f(a: i64, b: i64) -> i64 {
+    let acc: i64 = a;
+    g(acc);
+    if b > 0 { let acc: i64 = acc + b; acc } else { acc }
+}
+pub fn g(z: i64) -> i64 { z }

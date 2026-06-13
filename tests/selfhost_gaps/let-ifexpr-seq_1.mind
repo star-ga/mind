@@ -1,0 +1,5 @@
+pub fn f(c: i64) -> i64 {
+    let x: i64 = c + 1;
+    let x: i64 = x + 2;
+    return x;
+}

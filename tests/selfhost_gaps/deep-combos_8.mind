@@ -1,0 +1,4 @@
+pub fn f(p: i64) -> i64 {
+    let u: i64 = -p;
+    u
+}

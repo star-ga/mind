@@ -1,0 +1,6 @@
+// FAIL_CLOSED (in-subset): value if-expr whose else-branch is
+// `let <shadows an outer binding>; <use of outer binding on a sibling path>`.
+// The escaped-outer-binding reuse path on the merge else side is unhandled.
+pub fn f(c: i64, x: i64) -> i64 {
+    let v: i64 = x + 10;
+    if c == 0 { let v: i64 = x + 1; v } else { v } }

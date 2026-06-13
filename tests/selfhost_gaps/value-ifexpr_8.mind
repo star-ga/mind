@@ -1,0 +1,5 @@
+// FAIL_CLOSED (in-subset): field-read `recv.field` as a value if-expr branch.
+// (Also fails closed in plain-body position in the whole-module nfn driver.)
+struct S { a: i64, b: i64 }
+pub fn f(c: i64, s: i64) -> i64 {
+    if c == 0 { s.a } else { s.b } }

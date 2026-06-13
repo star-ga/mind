@@ -1,0 +1,7 @@
+pub fn f(c: i64) -> i64 {
+    let a: i64 = if c == 0 { 1 } else { 2 };
+    let b: i64 = a + 1;
+    let a: i64 = if b == 2 { 10 } else { 20 };
+    let d: i64 = a + b;
+    return d;
+}

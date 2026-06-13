@@ -1,0 +1,3 @@
+pub fn f(c: i64, p: i64) -> i64 {
+    if c == 0 { let x: i64 = p; x } else { let x: i64 = p; x }
+}
