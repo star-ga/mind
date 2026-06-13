@@ -5604,6 +5604,33 @@ pub fn emit_mic3_module_fndef_if(s: EmitState, src: i64, fn_node: i64, nidx: i64
     s8
 }
 
+// FN_DEF whose body is a GENERAL value if-EXPRESSION (block branches with leading lets,
+// nested else-if chains) — routed through the lv-aware emit_if_expr_any_lv (which itself
+// dispatches single-expr branches to emit_if_expr_lv, byte-identical to the narrow path,
+// and block/nested-if branches to emit_if_expr_block_lv). Mirrors emit_mic3_module_fndef_if's
+// probe-then-reframe pattern. Fails closed (ok_cell=0, returns seed s) on any wall.
+pub fn emit_mic3_module_fndef_ifany(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, if_node: i64, nodes: i64, cursor: i64, vidbuf: i64, strbuf: i64, offs: i64, ncount: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    let dst_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(dst_cell, 0 - 1);
+    let probe: EmitState = emit_if_expr_any_lv(es_new(), if_node, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell, 0, 0, strbuf, offs, ncount);
+    let dst: i64 = __mind_load_i64(dst_cell);
+    if dst < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, dst);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, n_params + 1);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    let s8: EmitState = emit_if_expr_any_lv(s7, if_node, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell, 0, 0, strbuf, offs, ncount);
+    __mind_store_i64(ok_cell, 1);
+    s8
+}
+
 // ===========================================================================
 // IF-STATEMENT early-return — the final cutover construct
 // ===========================================================================
@@ -8833,6 +8860,16 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                                 return sif;
                             }
                         }
+                    }
+                }
+                // General value if-EXPRESSION body: block branches with leading lets and/or
+                // a nested else-if chain trailing value (the narrow path above only takes
+                // single param/const/binop branches). Gate on is_value_if_expr (NOT ok_cell,
+                // which the narrow path leaves seeded when its branch_single_expr guards skip).
+                if is_value_if_expr(expr) == 1 {
+                    let sany: EmitState = emit_mic3_module_fndef_ifany(s, src, fn_node, nidx, pstr, n_params, expr, nodes, cursor, vidbuf, strbuf, offs, ncount, ok_cell);
+                    if __mind_load_i64(ok_cell) == 1 {
+                        return sany;
                     }
                 }
             }
