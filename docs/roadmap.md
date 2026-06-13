@@ -11,9 +11,13 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   chain, `trace_hash = SHA-256` of the canonical `mic@3` bytes. Cryptographic
   Ed25519 *signing* of the chain is the next milestone (see Roadmap), so the
   chain is emitted/embedded but not yet signed.
-- ✅ **Front-end bootstrap fixed-point** – the pure-MIND `mindc` reproduces its
-  own MLIR-text output byte-identically against the Rust reference. Full
-  real-codegen self-host is in progress (see Roadmap).
+- ✅ **Self-host fixed-point — canonical binary IR (`mic@3`)** – the pure-MIND
+  `mindc` front-end reproduces the **canonical `mic@3` binary IR** of its own
+  ~15k-line source **byte-for-byte** against the Rust reference
+  (`selftest_mic3_module_nfn(main.mind) == mindc --emit-mic3 main.mind`). This
+  goes beyond the earlier `mic@1` MLIR-text fixed-point: the Rust front-end is now
+  decorative at the canonical-binary-IR layer (the layer the evidence chain's
+  `trace_hash` anchors on). CI-enforced by `mic3_flip_smoke.py`.
 - ✅ **Autodiff Engine** – Reverse-mode AD for the Core v1 tensor ops, single-output `main` entry point; non-Core-v1 ops error rather than emit a silent zero gradient.
 - ✅ **FFI Stabilization** – ABI frozen, C header generation.
 - ✅ **Phase 10.5: Governance Logic** – enum, struct, if/else, while,
@@ -24,8 +28,9 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## Roadmap
 
-- **Full real-codegen self-host** – the front-end fixed-point is reached; the
-  active frontier is self-hosting the full codegen path (Phase 15).
+- **Full real-codegen self-host** – the front-end **and the canonical `mic@3`
+  binary-IR** fixed-points are both reached byte-identically; the remaining
+  frontier is self-hosting the full MLIR→ELF codegen path (Phase 15).
 - **Ed25519-signed evidence chain** – cryptographic signing of the
   already-emitted evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo

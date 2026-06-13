@@ -26,6 +26,11 @@ It is also a Rust-first language and runtime for building intelligent systems wi
 
 The compiler produces deterministic binaries that execute inside the [Cognitive Kernel](https://mindlang.dev/docs/cognitive-kernel), MIND's microkernel runtime architecture with Control, Memory, and Verification planes.
 
+**MIND self-hosts.** The pure-MIND bootstrap front-end reproduces the canonical `mic@3`
+binary IR of its own source byte-for-byte against the Rust reference — the layer the evidence
+chain's `trace_hash` anchors on — so the Rust front-end is decorative at the layer that
+matters for provenance. See [`docs/roadmap.md`](docs/roadmap.md).
+
 ## Open-core vs proprietary runtime
 
 This repository contains the open-core stack: the MIND language, type system, compiler front-end, IR, and MLIR lowering passes. The open `src/exec/cpu.rs` ships a **reference CPU interpreter** — naive, unoptimized implementations that produce correct results for learning, prototyping, and small workloads (gated behind the `cpu-exec` feature). Production-grade runtime backends for CPU (SIMD, tiled matmul), GPU, and accelerators live in the private [`mind-runtime`](https://github.com/star-ga/mind-runtime) repository. A few operations the open interpreter does not cover (for example Conv2D in `src/exec/conv.rs`) return `ExecError::Unsupported`; these are architectural boundary markers that the proprietary backend fulfills.
