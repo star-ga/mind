@@ -19,14 +19,27 @@ toward a fully general mic@3 driver.
   `emit_if_expr_lv_bubble`, re-merging the captured escapes via the two-sided F2 block tail
   (gated so the empty-merge happy path stays byte-identical). (commit: emit_if_expr_lv bubble)
 
-## Open — MISMATCH (silent wrong bytes; out-of-subset; priority for general-compiler use)
-1. **value-if-expr branch-value escape bubble — LEADING-LET-BLOCK path** (`value-ifexpr_4`,
-   `mixed-prefix_2/3/4`, some `deep-combos`). Same as the fixed single-expr case but for
-   `emit_if_expr_block_lv`, whose merge already carries the leading lets — the branch-value
-   escapes must be UNIONED into that merge. Proper fix: probe the branch-value escape counts,
-   append them to the then/else lvbufs after the leading lets (own vid = captured merge_id),
-   and let the existing blk_layout/blk_fill_own treat them uniformly (gated; no-escape =
-   byte-identical).
+## Fixed (cont.)
+- **value-if-expr branch-value escape bubble — LEADING-LET-BLOCK path** (`value-ifexpr_4`,
+  `mixed-prefix_2`). `emit_if_expr_block_lv` now probes (`branch_escape_probe`) + appends the
+  branch-value escapes after the leading lets so blk_layout/blk_fill_own union them. (commit:
+  block_lv bubble)
+
+## Progress: fuzz mismatch set 26 -> 10 (62% cleared byte-exact, flip preserved throughout)
+
+## Open — MISMATCH (deep combinations / cross-pass; out-of-subset; for a focused follow-up)
+1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, 6 of 10). The merge is
+   byte-exact but the trailing read of a name SHADOWED inside a fall-through if resolves to the
+   OUTER vid, not the merge vid. Cross-pass: the trailing value flattens in Pass A against `env`
+   (which stores let SLOTS); a fall-through merge has no flatten slot, and its vid is only known
+   in Pass C — and `flatten_expr_env`'s let-ident reuses the let's slot, so there is nowhere to
+   inject the merge vid. Proper fix: synthesise a slot per fall-through-merge binding whose
+   vidbuf is set to the merge vid in Pass B, and bind it in `env` before the trailing flatten
+   (or fail-closed on shadow-read until supported). The single deepest remaining class.
+2. **deep combinations** (`mixed-prefix_3/4`, `call-arg-nesting_4`, `deep-combos_3/4`): a
+   `let X = <value if-expr>` whose if-expr nests same-name phis / param-shadows / bubbles —
+   the fixed pieces interacting through the let-init (type-7) path. Each needs the same
+   probe-decode-match loop, additive + gated.
 2. **fall-through shadow trailing-read** (`fallthrough-shadow_1..6`). `let y=p; if c {let y=..};
    y` — the inner `let y` shadows the outer; the merge is byte-exact but the trailing `y`
    resolves to the OUTER vid, not the merged vid. Root cause: the trailing value is flattened
