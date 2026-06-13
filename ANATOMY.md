@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,890,564
-**Generated:** 2026-06-13 22:51 UTC
+**Files:** 2836 | **Est. tokens:** ~6,890,509
+**Generated:** 2026-06-13 22:59 UTC
 
 ## Token Budget Guide
 
@@ -402,7 +402,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 176 | ~315,998 |
+| `tests/` | 176 | ~315,943 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3861,7 +3861,7 @@
 - `gpu_graceful_failure.mind` (~73 tok, small) — Backend test: GPU backend graceful failure
 ### `tests/`
 
-- `blas_smoke.rs` (~5883 tok, huge) — Copyright 2025 STARGA Inc.
+- `blas_smoke.rs` (~5888 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5739 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2229 tok, huge) — Copyright 2025 STARGA Inc.
 - `cerebras_stencil_tile.rs` (~1929 tok, huge) — Copyright 2025-2026 STARGA Inc.
@@ -4120,7 +4120,7 @@
 - `reap_threshold.rs` (~2047 tok, huge) — Copyright 2025 STARGA Inc.
 - `reductions_grad.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
 - `reductions_preview.rs` (~390 tok, medium) — Copyright 2025 STARGA Inc.
-- `region_phase_ja.rs` (~4249 tok, huge) — Copyright 2025 STARGA Inc.
+- `region_phase_ja.rs` (~4228 tok, huge) — Copyright 2025 STARGA Inc.
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
@@ -4227,8 +4227,8 @@
 - `std_mlir_bindings_smoke.rs` (~4814 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_arena.rs` (~1348 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_array_literals.rs` (~1334 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_async.rs` (~4332 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_bitwise_binops.rs` (~2406 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_async.rs` (~4331 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_bitwise_binops.rs` (~2391 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_bool_return.rs` (~1247 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_break_continue.rs` (~1320 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
@@ -4249,7 +4249,7 @@
 - `std_surface_json.rs` (~4349 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_logical_ops.rs` (~1193 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2044 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_method_call.rs` (~2837 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_method_call.rs` (~2814 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~7345 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.

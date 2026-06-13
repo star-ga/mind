@@ -126,10 +126,12 @@ fn open_lib(path: &Path) -> Library {
 /// Resolve the named symbol with the requested function signature.
 /// The lifetime of the returned `Symbol` is tied to the library — the
 /// callers below pass it inline so the symbol stays valid for the call.
-unsafe fn sym<'lib, F>(lib: &'lib Library, name: &[u8]) -> Symbol<'lib, F> { unsafe {
-    lib.get::<F>(name)
-        .unwrap_or_else(|e| panic!("symbol {} missing: {e}", String::from_utf8_lossy(name)))
-}}
+unsafe fn sym<'lib, F>(lib: &'lib Library, name: &[u8]) -> Symbol<'lib, F> {
+    unsafe {
+        lib.get::<F>(name)
+            .unwrap_or_else(|e| panic!("symbol {} missing: {e}", String::from_utf8_lossy(name)))
+    }
+}
 
 fn set_avx2(lib: &Library, v: i32) -> i32 {
     unsafe {
