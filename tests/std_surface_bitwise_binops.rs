@@ -36,22 +36,20 @@ fn find_binop(instrs: &[Instr], target: BinOp) -> bool {
     for instr in instrs {
         match instr {
             Instr::BinOp { op, .. } if *op == target => return true,
-            Instr::FnDef { body, .. }
-                if find_binop(body, target) => {
-                    return true;
-                }
+            Instr::FnDef { body, .. } if find_binop(body, target) => {
+                return true;
+            }
             Instr::If {
                 cond_instrs,
                 then_instrs,
                 else_instrs,
                 ..
+            } if (find_binop(cond_instrs, target)
+                || find_binop(then_instrs, target)
+                || find_binop(else_instrs, target)) =>
+            {
+                return true;
             }
-                if (find_binop(cond_instrs, target)
-                    || find_binop(then_instrs, target)
-                    || find_binop(else_instrs, target))
-                => {
-                    return true;
-                }
             _ => {}
         }
     }

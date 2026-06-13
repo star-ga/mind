@@ -6144,7 +6144,7 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
         // acc==nlets guard depend on it), so they do NOT grow the env here.
         if esc_to_lv == 1 {
             let _le: i64 = lvenv_append_escapes(lvbuf, nlv, seg_bind, __mind_load_i64(seg_nb), 0);
-            __mind_store_i64(nlv_cell, nlv + __mind_load_i64(seg_nb));
+            __mind_store_i64(nlv_cell, nlv + __mind_load_i64(seg_nb))
         }
         __mind_store_i64(base_cell, seg_dst + 1);
         return emit_mixed_walk(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
@@ -6788,12 +6788,12 @@ pub fn bind_append_dedup(acc_bind: i64, acc_cell: i64, buf: i64, src: i64, n: i6
     let cur: i64 = __mind_load_i64(acc_cell);
     let found: i64 = binddup_find(acc_bind, cur, buf, lo, hi, 0);
     if found >= 0 {
-        __mind_store_i64(acc_bind + found * 24 + 16, mid);
+        __mind_store_i64(acc_bind + found * 24 + 16, mid)
     } else {
         __mind_store_i64(acc_bind + cur * 24 + 0, lo);
         __mind_store_i64(acc_bind + cur * 24 + 8, hi);
         __mind_store_i64(acc_bind + cur * 24 + 16, mid);
-        __mind_store_i64(acc_cell, cur + 1);
+        __mind_store_i64(acc_cell, cur + 1)
     }
     bind_append_dedup(acc_bind, acc_cell, buf, src, n, i + 1)
 }
@@ -7557,7 +7557,7 @@ pub fn emit_if_expr_block_lv(s: EmitState, if_node: i64, buf: i64, params_addr: 
     let s21: EmitState = blk_emit_merges(s20, bl, n_merged, 0);
     if bindout != 0 {
         let _bo: i64 = blk_lay_to_bindout(bl, bindout, n_merged, 0);
-        __mind_store_i64(nbind_cell, n_merged);
+        __mind_store_i64(nbind_cell, n_merged)
     }
     __mind_store_i64(okcell, dst);
     s21
@@ -7689,7 +7689,7 @@ pub fn emit_if_else_fallthrough_lv(s: EmitState, if_node: i64, buf: i64, params_
     // bubble them up when this if-else is itself a nested statement in a branch.
     if bindout != 0 {
         let _bo: i64 = bb_to_bindout(bb, bindout, n_merged, 0);
-        __mind_store_i64(nbind_cell, n_merged);
+        __mind_store_i64(nbind_cell, n_merged)
     }
     __mind_store_i64(okcell, dst);
     s19
@@ -7745,14 +7745,14 @@ pub fn fill_binds_block(bb: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64, the
         __mind_store_i64(bb + i * 40 + 8, __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 8));
         __mind_store_i64(bb + i * 40 + 16, mid);
         __mind_store_i64(bb + i * 40 + 24, __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 16));
-        __mind_store_i64(bb + i * 40 + 32, ph);
+        __mind_store_i64(bb + i * 40 + 32, ph)
     } else {
         let j: i64 = i - then_nlets;
         __mind_store_i64(bb + i * 40 + 0, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 0));
         __mind_store_i64(bb + i * 40 + 8, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 8));
         __mind_store_i64(bb + i * 40 + 16, mid);
         __mind_store_i64(bb + i * 40 + 24, ph);
-        __mind_store_i64(bb + i * 40 + 32, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 16));
+        __mind_store_i64(bb + i * 40 + 32, __mind_load_i64(else_lvbuf + (nlv + j) * 24 + 16))
     }
     fill_binds_block(bb, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, ph_start, i + 1)
 }
@@ -8019,12 +8019,36 @@ pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64,
         }
         let own: i64 = __mind_load_i64(then_lvbuf + (nlv + i) * 24 + 16);
         let ol: i64 = lvenv_lookup(buf, nlo, nhi, lvenv, nlv_outer, 0);
-        let outer: i64 = if ol >= 0 { ol } else { resolve_param(params_addr, n_params, buf, nlo, nhi) };
-        let bound: i64 = if outer >= 0 { 1 } else { 0 };
-        let opp: i64 = if bound == 1 { outer } else { running };
-        let mid: i64 = if bound == 1 { running } else { running + 1 };
-        let isf: i64 = if bound == 1 { 0 } else { 1 };
-        let nextr: i64 = if bound == 1 { running + 1 } else { running + 2 };
+        let outer: i64 = if ol >= 0 {
+            ol
+        } else {
+            resolve_param(params_addr, n_params, buf, nlo, nhi)
+        };
+        let bound: i64 = if outer >= 0 {
+            1
+        } else {
+            0
+        };
+        let opp: i64 = if bound == 1 {
+            outer
+        } else {
+            running
+        };
+        let mid: i64 = if bound == 1 {
+            running
+        } else {
+            running + 1
+        };
+        let isf: i64 = if bound == 1 {
+            0
+        } else {
+            1
+        };
+        let nextr: i64 = if bound == 1 {
+            running + 1
+        } else {
+            running + 2
+        };
         __mind_store_i64(bl + i * 64 + 0, nlo);
         __mind_store_i64(bl + i * 64 + 8, nhi);
         __mind_store_i64(bl + i * 64 + 16, mid);
@@ -8041,12 +8065,36 @@ pub fn blk_layout(bl: i64, eix: i64, then_lvbuf: i64, else_lvbuf: i64, nlv: i64,
     let nhi2: i64 = __mind_load_i64(else_lvbuf + (nlv + eidx2) * 24 + 8);
     let own2: i64 = __mind_load_i64(else_lvbuf + (nlv + eidx2) * 24 + 16);
     let ol2: i64 = lvenv_lookup(buf, nlo2, nhi2, lvenv, nlv_outer, 0);
-    let outer2: i64 = if ol2 >= 0 { ol2 } else { resolve_param(params_addr, n_params, buf, nlo2, nhi2) };
-    let bound2: i64 = if outer2 >= 0 { 1 } else { 0 };
-    let opp2: i64 = if bound2 == 1 { outer2 } else { running };
-    let mid2: i64 = if bound2 == 1 { running } else { running + 1 };
-    let isf2: i64 = if bound2 == 1 { 0 } else { 1 };
-    let nextr2: i64 = if bound2 == 1 { running + 1 } else { running + 2 };
+    let outer2: i64 = if ol2 >= 0 {
+        ol2
+    } else {
+        resolve_param(params_addr, n_params, buf, nlo2, nhi2)
+    };
+    let bound2: i64 = if outer2 >= 0 {
+        1
+    } else {
+        0
+    };
+    let opp2: i64 = if bound2 == 1 {
+        outer2
+    } else {
+        running
+    };
+    let mid2: i64 = if bound2 == 1 {
+        running
+    } else {
+        running + 1
+    };
+    let isf2: i64 = if bound2 == 1 {
+        0
+    } else {
+        1
+    };
+    let nextr2: i64 = if bound2 == 1 {
+        running + 1
+    } else {
+        running + 2
+    };
     __mind_store_i64(bl + i * 64 + 0, nlo2);
     __mind_store_i64(bl + i * 64 + 8, nhi2);
     __mind_store_i64(bl + i * 64 + 16, mid2);
@@ -8285,7 +8333,7 @@ pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_a
     let s19: EmitState = blk_emit_merges(s18, bl, n_merged, 0);
     if bindout != 0 {
         let _bo: i64 = blk_lay_to_bindout(bl, bindout, n_merged, 0);
-        __mind_store_i64(nbind_cell, n_merged);
+        __mind_store_i64(nbind_cell, n_merged)
     }
     __mind_store_i64(okcell, dst);
     s19
@@ -8309,7 +8357,7 @@ pub fn measure_mixed_instrs_probe(stmts_addr: i64, n: i64, buf: i64, params_addr
 // re-merge them — its branch-local lets stay live through the value position (SSA F2).
 pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
     if nbind_cell != 0 {
-        __mind_store_i64(nbind_cell, 0);
+        __mind_store_i64(nbind_cell, 0)
     }
     if is_mixed_value_if_expr(if_node) == 1 {
         return emit_if_expr_mixedblock_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell);
@@ -8347,7 +8395,7 @@ pub fn is_any_value_if_expr(node: i64) -> i64 {
 // stay live past the value). A plain expression value escapes nothing -> vnb := 0.
 pub fn emit_branch_value_lv(s: EmitState, expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, rcell: i64, okcell: i64, vbind: i64, vnb: i64) -> EmitState {
     if vnb != 0 {
-        __mind_store_i64(vnb, 0);
+        __mind_store_i64(vnb, 0)
     }
     if is_any_value_if_expr(expr) == 1 {
         let ic: i64 = __mind_alloc(8);
@@ -9169,7 +9217,7 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         let _v: EmitState = emit_if_expr_any_lv(es_new(), init7, src, pa7, np7, v_nodes, v_cursor, v_vidbuf, 0, v_cell, names_buf, nnames, 0, 0, 0, 0, 0);
         let v_dst: i64 = __mind_load_i64(v_cell);
         if v_dst >= 0 {
-            __mind_store_i64(plan + i * 64 + 16, v_dst + 1);
+            __mind_store_i64(plan + i * 64 + 16, v_dst + 1)
         }
         __mind_store_i64(names_buf + nnames * 24 + 0, __mind_load_i64(env + env_k * 24 + 0));
         __mind_store_i64(names_buf + nnames * 24 + 8, __mind_load_i64(env + env_k * 24 + 8));
@@ -9984,11 +10032,11 @@ pub fn field_rewrite_stmts(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, sr
     let k: i64 = ast_kind(stmt);
     if k == ast_let() {
         let init: i64 = field_rewrite_expr(ast_child2(stmt), src, srt, fn_node, load_lo, load_hi);
-        __mind_store_i64(stmt + 40, init);
+        __mind_store_i64(stmt + 40, init)
     } else {
         if k == ast_return() {
             let v: i64 = field_rewrite_expr(ast_child0(stmt), src, srt, fn_node, load_lo, load_hi);
-            __mind_store_i64(stmt + 24, v);
+            __mind_store_i64(stmt + 24, v)
         } else {
             if k == ast_if() {
                 let c: i64 = field_rewrite_expr(ast_child0(stmt), src, srt, fn_node, load_lo, load_hi);
@@ -10005,7 +10053,7 @@ pub fn field_rewrite_stmts(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, sr
                 }
             } else {
                 let e: i64 = field_rewrite_expr(stmt, src, srt, fn_node, load_lo, load_hi);
-                __mind_store_i64(stmts_addr + i * 8, e);
+                __mind_store_i64(stmts_addr + i * 8, e)
             }
         }
     }
@@ -10057,17 +10105,39 @@ pub fn field_prefold_module(src: i64, src_len: i64, items_addr: i64, items_len: 
 
 // "__mind_alloc" (12 bytes) per-index byte source.
 pub fn alloc_name_byte(j: i64) -> i64 {
-    if j == 0 { return 95; }
-    if j == 1 { return 95; }
-    if j == 2 { return 109; }
-    if j == 3 { return 105; }
-    if j == 4 { return 110; }
-    if j == 5 { return 100; }
-    if j == 6 { return 95; }
-    if j == 7 { return 97; }
-    if j == 8 { return 108; }
-    if j == 9 { return 108; }
-    if j == 10 { return 111; }
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 97;
+    }
+    if j == 8 {
+        return 108;
+    }
+    if j == 9 {
+        return 108;
+    }
+    if j == 10 {
+        return 111;
+    }
     99
 }
 
@@ -10095,21 +10165,51 @@ pub fn find_alloc_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
 
 // "__mind_store_i64" (16 bytes) per-index byte source.
 pub fn store_name_byte(j: i64) -> i64 {
-    if j == 0 { return 95; }
-    if j == 1 { return 95; }
-    if j == 2 { return 109; }
-    if j == 3 { return 105; }
-    if j == 4 { return 110; }
-    if j == 5 { return 100; }
-    if j == 6 { return 95; }
-    if j == 7 { return 115; }
-    if j == 8 { return 116; }
-    if j == 9 { return 111; }
-    if j == 10 { return 114; }
-    if j == 11 { return 101; }
-    if j == 12 { return 95; }
-    if j == 13 { return 105; }
-    if j == 14 { return 54; }
+    if j == 0 {
+        return 95;
+    }
+    if j == 1 {
+        return 95;
+    }
+    if j == 2 {
+        return 109;
+    }
+    if j == 3 {
+        return 105;
+    }
+    if j == 4 {
+        return 110;
+    }
+    if j == 5 {
+        return 100;
+    }
+    if j == 6 {
+        return 95;
+    }
+    if j == 7 {
+        return 115;
+    }
+    if j == 8 {
+        return 116;
+    }
+    if j == 9 {
+        return 111;
+    }
+    if j == 10 {
+        return 114;
+    }
+    if j == 11 {
+        return 101;
+    }
+    if j == 12 {
+        return 95;
+    }
+    if j == 13 {
+        return 105;
+    }
+    if j == 14 {
+        return 54;
+    }
     52
 }
 
@@ -10347,13 +10447,13 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
     let outn: i64 = slit_stmt_outn(stmt, src, srt);
     if outn == 1 {
         __mind_store_i64(new_stmts + out * 8, stmt);
-        __mind_store_i64(out_cell, out + 1);
+        __mind_store_i64(out_cell, out + 1)
     } else {
         let snode: i64 = slit_stmt_snode(stmt);
         let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
         let nfields: i64 = srt_field_count(srt, k);
         let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
-        __mind_store_i64(out_cell, out + 2 * nfields + 2);
+        __mind_store_i64(out_cell, out + 2 * nfields + 2)
     }
     slit_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, src, srt, alo, ahi, slo, shi, i + 1)
 }
@@ -10729,47 +10829,47 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                 node_has_call(__mind_load_i64(stmts_addr + 8))
             };
             if g_has_call == 0 {
-            if ast_kind(if_stmt) == ast_if() {
-                if ast_child2(if_stmt) == 0 {
-                    let then_blk: i64 = ast_child1(if_stmt);
-                    let ret_stmt: i64 = branch_single_expr(then_blk);
-                    if ret_stmt >= 0 {
-                        // (g2) NESTED if-return: the then-block's single stmt is ITSELF
-                        // an else-less if whose then-block is `return E` -> nested OP_IF.
-                        if ast_kind(ret_stmt) == ast_if() {
-                            // RECURSIVE if-chain (any depth): then-block's single stmt is
-                            // itself an else-less if. The chain emitter validates + emits
-                            // arbitrary depth; supersedes the depth-2 dedicated case.
-                            let ntrail: i64 = __mind_load_i64(stmts_addr + 8);
-                            let cnodes: i64 = __mind_alloc(256 * 32);
-                            let ccursor: i64 = __mind_alloc(8);
-                            let cvidbuf: i64 = __mind_alloc(256 * 8);
-                            let ctnodes: i64 = __mind_alloc(256 * 32);
-                            let ctcursor: i64 = __mind_alloc(8);
-                            let ctvidbuf: i64 = __mind_alloc(256 * 8);
-                            let snif: EmitState = emit_mic3_module_fndef_if_chain(s, src, fn_node, nidx, pstr, n_params, if_stmt, ntrail, cnodes, ccursor, cvidbuf, ctnodes, ctcursor, ctvidbuf, ok_cell);
-                            if __mind_load_i64(ok_cell) == 1 {
-                                return snif;
+                if ast_kind(if_stmt) == ast_if() {
+                    if ast_child2(if_stmt) == 0 {
+                        let then_blk: i64 = ast_child1(if_stmt);
+                        let ret_stmt: i64 = branch_single_expr(then_blk);
+                        if ret_stmt >= 0 {
+                            // (g2) NESTED if-return: the then-block's single stmt is ITSELF
+                            // an else-less if whose then-block is `return E` -> nested OP_IF.
+                            if ast_kind(ret_stmt) == ast_if() {
+                                // RECURSIVE if-chain (any depth): then-block's single stmt is
+                                // itself an else-less if. The chain emitter validates + emits
+                                // arbitrary depth; supersedes the depth-2 dedicated case.
+                                let ntrail: i64 = __mind_load_i64(stmts_addr + 8);
+                                let cnodes: i64 = __mind_alloc(256 * 32);
+                                let ccursor: i64 = __mind_alloc(8);
+                                let cvidbuf: i64 = __mind_alloc(256 * 8);
+                                let ctnodes: i64 = __mind_alloc(256 * 32);
+                                let ctcursor: i64 = __mind_alloc(8);
+                                let ctvidbuf: i64 = __mind_alloc(256 * 8);
+                                let snif: EmitState = emit_mic3_module_fndef_if_chain(s, src, fn_node, nidx, pstr, n_params, if_stmt, ntrail, cnodes, ccursor, cvidbuf, ctnodes, ctcursor, ctvidbuf, ok_cell);
+                                if __mind_load_i64(ok_cell) == 1 {
+                                    return snif;
+                                }
                             }
-                        }
-                        if ast_kind(ret_stmt) == ast_return() {
-                            let cond_expr: i64 = ast_child0(if_stmt);
-                            let ret_expr: i64 = ast_child0(ret_stmt);
-                            let trail_expr: i64 = __mind_load_i64(stmts_addr + 8);
-                            let gnodes: i64 = __mind_alloc(256 * 32);
-                            let gcursor: i64 = __mind_alloc(8);
-                            let gvidbuf: i64 = __mind_alloc(256 * 8);
-                            let tnodes: i64 = __mind_alloc(256 * 32);
-                            let tcursor: i64 = __mind_alloc(8);
-                            let tvidbuf: i64 = __mind_alloc(256 * 8);
-                            let sif: EmitState = emit_mic3_module_fndef_ifstmt(s, src, fn_node, nidx, pstr, n_params, cond_expr, ret_expr, trail_expr, gnodes, gcursor, gvidbuf, tnodes, tcursor, tvidbuf, ok_cell);
-                            if __mind_load_i64(ok_cell) == 1 {
-                                return sif;
+                            if ast_kind(ret_stmt) == ast_return() {
+                                let cond_expr: i64 = ast_child0(if_stmt);
+                                let ret_expr: i64 = ast_child0(ret_stmt);
+                                let trail_expr: i64 = __mind_load_i64(stmts_addr + 8);
+                                let gnodes: i64 = __mind_alloc(256 * 32);
+                                let gcursor: i64 = __mind_alloc(8);
+                                let gvidbuf: i64 = __mind_alloc(256 * 8);
+                                let tnodes: i64 = __mind_alloc(256 * 32);
+                                let tcursor: i64 = __mind_alloc(8);
+                                let tvidbuf: i64 = __mind_alloc(256 * 8);
+                                let sif: EmitState = emit_mic3_module_fndef_ifstmt(s, src, fn_node, nidx, pstr, n_params, cond_expr, ret_expr, trail_expr, gnodes, gcursor, gvidbuf, tnodes, tcursor, tvidbuf, ok_cell);
+                                if __mind_load_i64(ok_cell) == 1 {
+                                    return sif;
+                                }
                             }
                         }
                     }
                 }
-            }
             }
         }
         // (h) GENERAL statement sequence: >1 stmts mixing `let NAME = INIT` and
