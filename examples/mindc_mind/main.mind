@@ -6330,16 +6330,19 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
         return sftc;
     }
     // (nested MIXED returning then-block inside a chain) `(let | bare-call | if-segment)*
-    // + return` with >=1 if-segment — a recursively-mixed block. Delegate to the mixed
-    // emitter; its emit_mixed_walk recurses into the if-segment which re-enters HERE,
-    // delegating again for arbitrarily-nested mixed segments. Bindings bubble via bindout.
-    if mixed_shape_segs(then_sa, then_sl, 0, 0) >= 1 {
-        let mx_cell: i64 = __mind_alloc(8);
-        __mind_store_i64(mx_cell, 0 - 1);
-        let smx: EmitState = emit_if_mixed_then_instr_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, mx_cell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell);
-        let mx_dst: i64 = __mind_load_i64(mx_cell);
-        __mind_store_i64(okcell, mx_dst);
-        return smx;
+    // + return` whose prefix is NOT pure leading-lets (>=1 bare-call or if-segment) — a
+    // recursively-mixed block. Delegate to the mixed emitter; its emit_mixed_walk recurses
+    // into any if-segment which re-enters HERE, delegating again for arbitrarily-nested
+    // mixed segments. Pure `let* + return` (nlets_then == then_sl-1) stays on CASE A below.
+    if nlets_then < then_sl - 1 {
+        if mixed_shape_segs(then_sa, then_sl, 0, 0) >= 0 {
+            let mx_cell: i64 = __mind_alloc(8);
+            __mind_store_i64(mx_cell, 0 - 1);
+            let smx: EmitState = emit_if_mixed_then_instr_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, mx_cell, lvenv, nlv, strbuf, offs, ncount, bindout, nbind_cell);
+            let mx_dst: i64 = __mind_load_i64(mx_cell);
+            __mind_store_i64(okcell, mx_dst);
+            return smx;
+        }
     }
     if then_sl - nlets_then != 1 {
         __mind_store_i64(okcell, 0 - 1);
@@ -7370,9 +7373,261 @@ pub fn emit_block_merges(s: EmitState, bb: i64, n: i64, i: i64) -> EmitState {
     emit_block_merges(s3, bb, n, i + 1)
 }
 
+// Does a block's PREFIX (all-but-last statements) contain any non-let statement (a bare
+// call or an if-segment)? If so the block is a MIXED value block, not a leading-lets one.
+pub fn block_prefix_has_nonlet(blk: i64) -> i64 {
+    let sa: i64 = ast_child0(blk);
+    let sl: i64 = ast_aux(blk);
+    block_prefix_has_nonlet_loop(sa, sl - 1, 0)
+}
+pub fn block_prefix_has_nonlet_loop(sa: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    if ast_kind(__mind_load_i64(sa + i * 8)) != ast_let() {
+        return 1;
+    }
+    block_prefix_has_nonlet_loop(sa, n, i + 1)
+}
+
+// Is `blk` a MIXED value block: prefix = lets / bare-calls / if-segments, then a trailing
+// VALUE expression (not a return, not a let; a trailing if-EXPR must itself be a value).
+pub fn branch_is_mixed_value_block(blk: i64) -> i64 {
+    let sa: i64 = ast_child0(blk);
+    let sl: i64 = ast_aux(blk);
+    if sl < 1 {
+        return 0;
+    }
+    let last: i64 = __mind_load_i64(sa + (sl - 1) * 8);
+    let lk: i64 = ast_kind(last);
+    if lk == ast_return() {
+        return 0;
+    }
+    if lk == ast_let() {
+        return 0;
+    }
+    if lk == ast_if() {
+        if is_value_if_expr(last) != 1 {
+            if is_mixed_value_if_expr(last) != 1 {
+                return 0;
+            }
+        }
+    }
+    // Prefix statements: let / bare-expr / if-segment (no bare return).
+    mixed_prefix_ok(sa, sl - 1, 0)
+}
+pub fn mixed_prefix_ok(sa: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 1;
+    }
+    if ast_kind(__mind_load_i64(sa + i * 8)) == ast_return() {
+        return 0;
+    }
+    mixed_prefix_ok(sa, n, i + 1)
+}
+
+// A value if-EXPRESSION whose branches are mixed value blocks AND at least one branch is
+// genuinely MIXED (a non-let prefix stmt) — so it is NOT handled by the leading-lets-only
+// emit_if_expr_block_lv and routes to emit_if_expr_mixedblock_lv.
+pub fn is_mixed_value_if_expr(node: i64) -> i64 {
+    if ast_kind(node) != ast_if() {
+        return 0;
+    }
+    let then_blk: i64 = ast_child1(node);
+    let else_blk: i64 = ast_child2(node);
+    if else_blk == 0 {
+        return 0;
+    }
+    if block_prefix_has_nonlet(then_blk) == 0 {
+        if block_prefix_has_nonlet(else_blk) == 0 {
+            return 0;
+        }
+    }
+    if branch_is_mixed_value_block(then_blk) != 1 {
+        return 0;
+    }
+    if branch_is_mixed_value_block(else_blk) != 1 {
+        return 0;
+    }
+    1
+}
+
+// Emit ONE if-expr branch that is a mixed value block: the prefix (sl-1 stmts) via the
+// mixed walk, then the trailing VALUE via emit_branch_value_lv. Populates `lvbuf` with the
+// direct lets (for the merge tail), and returns via cells: the let count, the value result
+// vid, and the end vid (base after the value). Fails closed (ok_out=0) on a wall OR if any
+// interior if-segment escapes a binding (acc_count != nlets — the bubbled case is unhandled).
+pub fn emit_mixed_value_branch(s: EmitState, sa: i64, sl: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64, lvenv0: i64, nlv0: i64, lvbuf: i64, strbuf: i64, offs: i64, ncount: i64, nlets_out: i64, result_out: i64, end_out: i64, ok_out: i64) -> EmitState {
+    let _cp: i64 = lvenv_copy(lvbuf, lvenv0, nlv0, 0);
+    let base_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(base_cell, base);
+    let e_nlv: i64 = __mind_alloc(8);
+    __mind_store_i64(e_nlv, nlv0);
+    let acc: i64 = __mind_alloc(128 * 24);
+    let acc_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(acc_cell, 0);
+    let w_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(w_ok, 1);
+    let s1: EmitState = emit_mixed_walk(s, sa, sl - 1, 0, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, e_nlv, acc, acc_cell, w_ok, strbuf, offs, ncount);
+    if __mind_load_i64(w_ok) == 0 {
+        __mind_store_i64(ok_out, 0);
+        return s;
+    }
+    let nlets: i64 = __mind_load_i64(e_nlv) - nlv0;
+    if __mind_load_i64(acc_cell) != nlets {
+        __mind_store_i64(ok_out, 0);
+        return s;
+    }
+    __mind_store_i64(nlets_out, nlets);
+    let val_base: i64 = __mind_load_i64(base_cell);
+    let val: i64 = __mind_load_i64(sa + (sl - 1) * 8);
+    let nlv_now: i64 = __mind_load_i64(e_nlv);
+    let vspan: i64 = branch_val_span(val, buf, params_addr, n_params, val_base, lvbuf, nlv_now, strbuf, offs, ncount);
+    if vspan < 0 {
+        __mind_store_i64(ok_out, 0);
+        return s;
+    }
+    let rcell: i64 = __mind_alloc(8);
+    let vok: i64 = __mind_alloc(8);
+    __mind_store_i64(vok, 1);
+    let s2: EmitState = emit_branch_value_lv(s1, val, buf, params_addr, n_params, nodes, cursor, vidbuf, val_base, lvbuf, nlv_now, strbuf, offs, ncount, rcell, vok);
+    if __mind_load_i64(vok) == 0 {
+        __mind_store_i64(ok_out, 0);
+        return s;
+    }
+    __mind_store_i64(result_out, __mind_load_i64(rcell));
+    __mind_store_i64(end_out, val_base + vspan);
+    __mind_store_i64(ok_out, 1);
+    s2
+}
+
+// Emit a value if-EXPRESSION whose branches are MIXED value blocks (`(let|bare-call|
+// if-segment)* + trailing VALUE`). Mirrors emit_if_expr_block_lv but uses emit_mixed_value_branch
+// for each branch (mixed walk + value); the branch SPANS (which include interior OP_IF vid
+// deltas) are learned by probing each branch into throwaway scratch first, then the layout
+// (else_synth / ph_start / dst) is computed and the branches are re-emitted for real. The
+// branch-local lets escape via the two-sided F2 merge (emit_block_ph / fill_binds_block /
+// emit_block_bindings / emit_block_merges). okcell <- dst (-1 on a wall).
+pub fn emit_if_expr_mixedblock_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+    let cond_expr: i64 = ast_child0(if_node);
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+    // OP_IF cond.
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, lvenv, nlv);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_nonparam: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
+    let after_cond: i64 = base0 + cond_nonparam;
+    let then_synth: i64 = after_cond;
+    // PROBE both branches into throwaway scratch to learn their vid spans + let counts.
+    let pn: i64 = __mind_alloc(256 * 32);
+    let pc: i64 = __mind_alloc(8);
+    let pv: i64 = __mind_alloc(256 * 8);
+    let p_then_lvbuf: i64 = __mind_alloc((nlv + then_sl + 8) * 24);
+    let then_nl_c: i64 = __mind_alloc(8);
+    let then_rs_c: i64 = __mind_alloc(8);
+    let then_end_c: i64 = __mind_alloc(8);
+    let then_ok_c: i64 = __mind_alloc(8);
+    __mind_store_i64(then_ok_c, 0);
+    let _pt: EmitState = emit_mixed_value_branch(es_new(), then_sa, then_sl, buf, params_addr, n_params, pn, pc, pv, after_cond + 1, lvenv, nlv, p_then_lvbuf, strbuf, offs, ncount, then_nl_c, then_rs_c, then_end_c, then_ok_c);
+    if __mind_load_i64(then_ok_c) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_nlets: i64 = __mind_load_i64(then_nl_c);
+    let then_end: i64 = __mind_load_i64(then_end_c);
+    let else_synth: i64 = then_end;
+    let p_else_lvbuf: i64 = __mind_alloc((nlv + else_sl + 8) * 24);
+    let else_nl_c: i64 = __mind_alloc(8);
+    let else_rs_c: i64 = __mind_alloc(8);
+    let else_end_c: i64 = __mind_alloc(8);
+    let else_ok_c: i64 = __mind_alloc(8);
+    __mind_store_i64(else_ok_c, 0);
+    let _pe: EmitState = emit_mixed_value_branch(es_new(), else_sa, else_sl, buf, params_addr, n_params, pn, pc, pv, else_synth + 1, lvenv, nlv, p_else_lvbuf, strbuf, offs, ncount, else_nl_c, else_rs_c, else_end_c, else_ok_c);
+    if __mind_load_i64(else_ok_c) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_nlets: i64 = __mind_load_i64(else_nl_c);
+    let else_end: i64 = __mind_load_i64(else_end_c);
+    let n_merged: i64 = then_nlets + else_nlets;
+    let ph_start: i64 = else_end;
+    let dst: i64 = ph_start + 2 * n_merged;
+    // Block INSTR lengths (an if-segment / if-expr value counts as 1 instr).
+    let then_pf_instrs: i64 = measure_mixed_instrs_probe(then_sa, then_sl - 1, buf, params_addr, n_params, nlv);
+    let then_v_instrs: i64 = branch_val_instrs(__mind_load_i64(then_sa + (then_sl - 1) * 8), buf, params_addr, n_params, p_then_lvbuf, nlv + then_nlets);
+    let then_len: i64 = 1 + then_pf_instrs + then_v_instrs + else_nlets;
+    let else_pf_instrs: i64 = measure_mixed_instrs_probe(else_sa, else_sl - 1, buf, params_addr, n_params, nlv);
+    let else_v_instrs: i64 = branch_val_instrs(__mind_load_i64(else_sa + (else_sl - 1) * 8), buf, params_addr, n_params, p_else_lvbuf, nlv + else_nlets);
+    let else_len: i64 = 1 + else_pf_instrs + else_v_instrs + then_nlets;
+    // EMIT for real.
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, buf, strbuf, offs, ncount, 0);
+    let s5: EmitState = emit_uleb128(s4, then_len);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let then_lvbuf: i64 = __mind_alloc((nlv + then_sl + 8) * 24);
+    let r_then_nl: i64 = __mind_alloc(8);
+    let r_then_rs: i64 = __mind_alloc(8);
+    let r_then_end: i64 = __mind_alloc(8);
+    let r_then_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(r_then_ok, 0);
+    let s7: EmitState = emit_mixed_value_branch(s6, then_sa, then_sl, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1, lvenv, nlv, then_lvbuf, strbuf, offs, ncount, r_then_nl, r_then_rs, r_then_end, r_then_ok);
+    if __mind_load_i64(r_then_ok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let s8: EmitState = emit_block_ph(s7, ph_start, then_nlets, n_merged, then_nlets);
+    let s9: EmitState = emit_uleb128(s8, __mind_load_i64(r_then_rs));
+    let s10: EmitState = emit_uleb128(s9, else_len);
+    let s11: EmitState = emit_mic3_const_i64(s10, else_synth, 0);
+    let else_lvbuf: i64 = __mind_alloc((nlv + else_sl + 8) * 24);
+    let r_else_nl: i64 = __mind_alloc(8);
+    let r_else_rs: i64 = __mind_alloc(8);
+    let r_else_end: i64 = __mind_alloc(8);
+    let r_else_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(r_else_ok, 0);
+    let s12: EmitState = emit_mixed_value_branch(s11, else_sa, else_sl, buf, params_addr, n_params, nodes, cursor, vidbuf, else_synth + 1, lvenv, nlv, else_lvbuf, strbuf, offs, ncount, r_else_nl, r_else_rs, r_else_end, r_else_ok);
+    if __mind_load_i64(r_else_ok) == 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let s13: EmitState = emit_block_ph(s12, ph_start, 0, then_nlets, then_nlets);
+    let s14: EmitState = emit_uleb128(s13, __mind_load_i64(r_else_rs));
+    let s15: EmitState = emit_uleb128(s14, dst);
+    let bb: i64 = __mind_alloc((n_merged + 1) * 40);
+    let _fb: i64 = fill_binds_block(bb, then_lvbuf, else_lvbuf, nlv, then_nlets, else_nlets, ph_start, 0);
+    let s16: EmitState = emit_uleb128(s15, n_merged);
+    let s17: EmitState = emit_block_bindings(s16, bb, n_merged, strbuf, offs, ncount, buf, 0);
+    let s18: EmitState = emit_uleb128(s17, n_merged);
+    let s19: EmitState = emit_block_merges(s18, bb, n_merged, 0);
+    __mind_store_i64(okcell, dst);
+    s19
+}
+
+// measure_mixed_instrs over a fresh throwaway lvbuf/nlv-cell (for block-length sizing
+// when the real lvbuf is not needed).
+pub fn measure_mixed_instrs_probe(stmts_addr: i64, n: i64, buf: i64, params_addr: i64, n_params: i64, nlv0: i64) -> i64 {
+    let lvbuf: i64 = __mind_alloc((nlv0 + n + 8) * 24);
+    let m: i64 = __mind_alloc(8);
+    __mind_store_i64(m, nlv0);
+    measure_mixed_instrs(stmts_addr, n, 0, buf, params_addr, n_params, lvbuf, m)
+}
+
 // Dispatcher: route a value if-expr `init` to the single-expr emitter (both branches
 // 0 lets, byte-identical to before) or the general block emitter.
 pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+    if is_mixed_value_if_expr(if_node) == 1 {
+        return emit_if_expr_mixedblock_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, okcell, lvenv, nlv, strbuf, offs, ncount);
+    }
     let then_blk: i64 = ast_child1(if_node);
     let else_blk: i64 = ast_child2(if_node);
     let tn: i64 = ast_aux(then_blk) - 1;
@@ -7392,8 +7647,17 @@ pub fn emit_if_expr_any_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i6
 // expression flattens + emits its tree (result = root vid); a NESTED if-EXPRESSION value
 // (else-if chains) emits ONE recursive OP_IF (result = its dst). In both cases the value
 // occupies vids [base .. result], so the caller's next vid is result+1. okcell<-0 wall.
+// A value if-expression of EITHER form: leading-lets blocks (emit_if_expr_block_lv) OR
+// mixed blocks (emit_if_expr_mixedblock_lv). Both lower to ONE OP_IF value via emit_if_expr_any_lv.
+pub fn is_any_value_if_expr(node: i64) -> i64 {
+    if is_value_if_expr(node) == 1 {
+        return 1;
+    }
+    is_mixed_value_if_expr(node)
+}
+
 pub fn emit_branch_value_lv(s: EmitState, expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, rcell: i64, okcell: i64) -> EmitState {
-    if is_value_if_expr(expr) == 1 {
+    if is_any_value_if_expr(expr) == 1 {
         let ic: i64 = __mind_alloc(8);
         __mind_store_i64(ic, 0 - 1);
         let sx: EmitState = emit_if_expr_any_lv(s, expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base, ic, lvenv, nlv, strbuf, offs, ncount);
@@ -7419,7 +7683,7 @@ pub fn emit_branch_value_lv(s: EmitState, expr: i64, buf: i64, params_addr: i64,
 // Instr count a branch value contributes to a block length: 1 for a nested if-expr
 // (one OP_IF), else its non-param node count.
 pub fn branch_val_instrs(expr: i64, buf: i64, params_addr: i64, n_params: i64, lvenv: i64, nlv: i64) -> i64 {
-    if is_value_if_expr(expr) == 1 {
+    if is_any_value_if_expr(expr) == 1 {
         return 1;
     }
     count_nonparam_nodes_lv(expr, buf, params_addr, n_params, lvenv, nlv)
@@ -7430,7 +7694,7 @@ pub fn branch_val_instrs(expr: i64, buf: i64, params_addr: i64, n_params: i64, l
 // delta (dst - base + 1), learned by probing emit_if_expr_any_lv into throwaway scratch.
 // Returns -1 on a wall.
 pub fn branch_val_span(expr: i64, buf: i64, params_addr: i64, n_params: i64, base: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64) -> i64 {
-    if is_value_if_expr(expr) == 1 {
+    if is_any_value_if_expr(expr) == 1 {
         let pn: i64 = __mind_alloc(256 * 32);
         let pc: i64 = __mind_alloc(8);
         let pv: i64 = __mind_alloc(256 * 8);
@@ -9091,7 +9355,7 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                 // a nested else-if chain trailing value (the narrow path above only takes
                 // single param/const/binop branches). Gate on is_value_if_expr (NOT ok_cell,
                 // which the narrow path leaves seeded when its branch_single_expr guards skip).
-                if is_value_if_expr(expr) == 1 {
+                if is_any_value_if_expr(expr) == 1 {
                     let sany: EmitState = emit_mic3_module_fndef_ifany(s, src, fn_node, nidx, pstr, n_params, expr, nodes, cursor, vidbuf, strbuf, offs, ncount, ok_cell);
                     if __mind_load_i64(ok_cell) == 1 {
                         return sany;
