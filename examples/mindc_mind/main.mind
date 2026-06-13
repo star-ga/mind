@@ -6251,7 +6251,10 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     // leading-let bindings via bindout so THIS level's caller re-merges them.
     if nlets_then >= 1 {
         let cn_segs: i64 = then_sl - nlets_then;
-        if cn_segs >= 1 {
+        // cn_segs == 0 is a FALL-THROUGH guard `if C { let* }` (lets-only, no return/
+        // segment) — route to the same type-4 emitter (handles n_segs==0), exposing the
+        // leading-let merge bindings via bindout for this level's caller to re-merge.
+        if cn_segs >= 0 {
             if seq_then_all_ifs(then_sa + nlets_then * 8, cn_segs, 0) == 1 {
                 let d_lvbuf: i64 = __mind_alloc((nlv + nlets_then + 4) * 24);
                 let d_cell: i64 = __mind_alloc(8);
@@ -6630,7 +6633,11 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
-    if n_segs < 1 {
+    // n_segs == 0 is a FALL-THROUGH guard if `if C { let* }` (side-effect lets, no
+    // return/segment) — the lets merge with their values and the block falls through.
+    // emit_if_seq_segments_lv with 0 segments returns last_dst = the last let's vid, so
+    // the merge tail below is identical; no special-casing needed.
+    if n_segs < 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
     }
@@ -7298,6 +7305,37 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         // emitter once (base0=0) to learn the vid delta, store it + the stmt node.
         let then_sa: i64 = ast_child0(then_blk);
         let then_sl: i64 = ast_aux(then_blk);
+        // (type 4, n_segs==0) FALL-THROUGH guard if `if C { let* }` — the then-block is
+        // ALL lets (side-effect, no return/segment); the block falls through and the
+        // lets merge with their values. Covers single-let `if c { let re = call(); }`
+        // (then_sl==1) which the >=2 type-4 path below skips. Routed through the same
+        // type-4 emitter (plan type 4) which now handles n_segs==0.
+        if then_sl >= 1 {
+            let g_nlets: i64 = count_leading_lets(then_sa, then_sl, 0);
+            if g_nlets == then_sl {
+                let g_nodes: i64 = __mind_alloc(256 * 32);
+                let g_cursor: i64 = __mind_alloc(8);
+                let g_vidbuf: i64 = __mind_alloc(256 * 8);
+                let g_cell: i64 = __mind_alloc(8);
+                __mind_store_i64(g_cell, 0 - 1);
+                let g_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
+                let _glv: i64 = seq_env_to_lvenv(env, nlets, 0, g_lvenv, 0, 0);
+                let g_lvbuf: i64 = __mind_alloc((nlets + g_nlets + 8) * 24);
+                let g_bo: i64 = __mind_alloc(64 * 24);
+                let g_nb: i64 = __mind_alloc(8);
+                let gp: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, g_nodes, g_cursor, g_vidbuf, 0, g_cell, g_lvenv, nlets, g_lvbuf, 0, 0, 0, g_bo, g_nb);
+                let g_dst: i64 = __mind_load_i64(g_cell);
+                if g_dst >= 0 {
+                    __mind_store_i64(plan + p * 64 + 0, 4);
+                    __mind_store_i64(plan + p * 64 + 8, stmt);
+                    __mind_store_i64(plan + p * 64 + 16, g_dst + 1);
+                    __mind_store_i64(plan + p * 64 + 24, params_addr);
+                    __mind_store_i64(plan + p * 64 + 32, n_params);
+                    __mind_store_i64(nplan_cell, p + 1);
+                    return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+                }
+            }
+        }
         // (type 4) if-with-LET-then-block: the then-block is leading `let` bindings
         // then >=1 if-segment(s), carrying a merge tail. Probe the let-aware emitter
         // (base0=0, empty outer lv-env) to learn the vid delta. Takes priority over
@@ -8672,6 +8710,48 @@ pub fn selftest_nfn_fail_span(src_addr: i64, src_len: i64, strbuf: i64, offs: i6
     let _sall: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
     let ncount: i64 = __mind_load_i64(ccell);
     nfn_first_fail_loop(src_addr, items_addr, items_len, strbuf, offs, ncount, 0)
+}
+
+// Emit ONLY the `target`-th fn_def (0-indexed among fn_defs). Returns 1=byte-emit ok,
+// 0=fail-closed, -2=out of range. Used fork-isolated from Python so a fn whose emit
+// CRASHES (segfault) is pinpointed without killing the whole survey.
+pub fn nfn_emit_nth_loop(src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, item_i: i64, target: i64, seen: i64) -> i64 {
+    if item_i >= items_len {
+        return 0 - 2;
+    }
+    let item: i64 = __mind_load_i64(items_addr + item_i * 8);
+    if ast_kind(item) != ast_fn_def() {
+        return nfn_emit_nth_loop(src, items_addr, items_len, strbuf, offs, ncount, item_i + 1, target, seen);
+    }
+    if seen == target {
+        let ok: i64 = __mind_alloc(8);
+        __mind_store_i64(ok, 1);
+        let _s: EmitState = emit_mic3_module_fndef(es_new(), src, item, strbuf, offs, ncount, ok);
+        return __mind_load_i64(ok);
+    }
+    nfn_emit_nth_loop(src, items_addr, items_len, strbuf, offs, ncount, item_i + 1, target, seen + 1)
+}
+
+pub fn selftest_nfn_emit_nth(src_addr: i64, src_len: i64, strbuf: i64, offs: i64, ccell: i64, n: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let srt: i64 = srt_build(src_addr, src_len);
+    let slit_acell: i64 = __mind_alloc(16);
+    let slit_scell: i64 = __mind_alloc(16);
+    if find_alloc_name_span(src_addr, src_len, 0, slit_acell) == 1 {
+        if find_store_name_span(src_addr, src_len, 0, slit_scell) == 1 {
+            let _sl: i64 = slit_desugar_module(src_addr, src_len, items_addr, items_len, srt, __mind_load_i64(slit_acell + 0), __mind_load_i64(slit_acell + 8), __mind_load_i64(slit_scell + 0), __mind_load_i64(slit_scell + 8), 0);
+        }
+    }
+    let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let _sall: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
+    let ncount: i64 = __mind_load_i64(ccell);
+    nfn_emit_nth_loop(src_addr, items_addr, items_len, strbuf, offs, ncount, 0, n, 0)
 }
 
 // Count how many fn_defs fail-closed (the cutover progress metric: 0 == full self-host).
