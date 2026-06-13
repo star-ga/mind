@@ -6245,6 +6245,24 @@ pub fn emit_if_chain_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr:
     let then_sa: i64 = ast_child0(then_blk);
     let then_sl: i64 = ast_aux(then_blk);
     let nlets_then: i64 = count_leading_lets(then_sa, then_sl, 0);
+    // (type 4 inside a chain) leading lets + >=1 if-SEGMENT (fall-through) — e.g.
+    // `if A { if B { let prev_ok=..; if prev_ok==1 {return} } }`. Delegate to the
+    // type-4 emitter (it emits cond + then[lets+segments] + merge tail) and expose its
+    // leading-let bindings via bindout so THIS level's caller re-merges them.
+    if nlets_then >= 1 {
+        let cn_segs: i64 = then_sl - nlets_then;
+        if cn_segs >= 1 {
+            if seq_then_all_ifs(then_sa + nlets_then * 8, cn_segs, 0) == 1 {
+                let d_lvbuf: i64 = __mind_alloc((nlv + nlets_then + 4) * 24);
+                let d_cell: i64 = __mind_alloc(8);
+                __mind_store_i64(d_cell, 0 - 1);
+                let sd: EmitState = emit_if_let_seq_then_instr_lv(s, if_node, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, d_cell, lvenv, nlv, d_lvbuf, strbuf, offs, ncount, bindout, nbind_cell);
+                let d_dst: i64 = __mind_load_i64(d_cell);
+                __mind_store_i64(okcell, d_dst);
+                return sd;
+            }
+        }
+    }
     if then_sl - nlets_then != 1 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -6581,7 +6599,21 @@ pub fn emit_merge_triples(s: EmitState, lvbuf: i64, nlv0: i64, nlets: i64, else_
 // Generalises emit_if_seq_then_instr_lv (no-let) to lets-in-then. base0 = the vid
 // base for the cond. okcell <- dst on success, -1 on any wall. lvbuf is a private
 // scratch (>= (nlv0+nlets)*24 bytes); strbuf/offs/ncount resolve binding names.
-pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv0: i64, nlv0: i64, lvbuf: i64, strbuf: i64, offs: i64, ncount: i64) -> EmitState {
+// Expose the type-4 leading-let bindings (name_lo, name_hi, merge_id) into a 24-byte
+// bindout so an enclosing chain if can re-merge them (bubble up). merge_id =
+// else_synth+2+2*i (matches emit_merge_bindings).
+pub fn t4_binds_to_bindout(lvbuf: i64, nlv0: i64, nlets: i64, else_synth: i64, bindout: i64, i: i64) -> i64 {
+    if i >= nlets {
+        return nlets;
+    }
+    __mind_store_i64(bindout + i * 24 + 0, __mind_load_i64(lvbuf + (nlv0 + i) * 24 + 0));
+    __mind_store_i64(bindout + i * 24 + 8, __mind_load_i64(lvbuf + (nlv0 + i) * 24 + 8));
+    __mind_store_i64(bindout + i * 24 + 16, else_synth + 2 + 2 * i);
+    t4_binds_to_bindout(lvbuf, nlv0, nlets, else_synth, bindout, i + 1)
+}
+
+pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64, lvenv0: i64, nlv0: i64, lvbuf: i64, strbuf: i64, offs: i64, ncount: i64, bindout: i64, nbind_cell: i64) -> EmitState {
+    __mind_store_i64(nbind_cell, 0);
     if ast_child2(if_node) != 0 {
         __mind_store_i64(okcell, 0 - 1);
         return s;
@@ -6667,6 +6699,9 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     let s16: EmitState = emit_merge_bindings(s15, lvbuf, nlv0, nlets, else_synth, strbuf, offs, ncount, buf, 0);
     let s17: EmitState = emit_uleb128(s16, nlets);
     let s18: EmitState = emit_merge_triples(s17, lvbuf, nlv0, nlets, else_synth, 0);
+    // Expose the leading-let bindings so an enclosing chain if re-merges them.
+    let _bo: i64 = t4_binds_to_bindout(lvbuf, nlv0, nlets, else_synth, bindout, 0);
+    __mind_store_i64(nbind_cell, nlets);
     __mind_store_i64(okcell, dst);
     s18
 }
@@ -7283,7 +7318,9 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
                         let p4_lvenv: i64 = __mind_alloc((nlets + 1) * 24);
                         let _p4lv: i64 = seq_env_to_lvenv(env, nlets, 0, p4_lvenv, 0, 0);
                         let p4_lvbuf: i64 = __mind_alloc((nlets + t4_nlets + 8) * 24);
-                        let p4: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p4_nodes, p4_cursor, p4_vidbuf, 0, p4_cell, p4_lvenv, nlets, p4_lvbuf, 0, 0, 0);
+                        let p4_bo: i64 = __mind_alloc(64 * 24);
+                        let p4_nb: i64 = __mind_alloc(8);
+                        let p4: EmitState = emit_if_let_seq_then_instr_lv(es_new(), stmt, src, params_addr, n_params, p4_nodes, p4_cursor, p4_vidbuf, 0, p4_cell, p4_lvenv, nlets, p4_lvbuf, 0, 0, 0, p4_bo, p4_nb);
                         let p4_dst: i64 = __mind_load_i64(p4_cell);
                         if p4_dst >= 0 {
                             __mind_store_i64(plan + p * 64 + 0, 4);
@@ -7644,7 +7681,9 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e4_then_blk: i64 = ast_child1(if_node4);
         let e4_nlets: i64 = count_leading_lets(ast_child0(e4_then_blk), ast_aux(e4_then_blk), 0);
         let e4_lvbuf: i64 = __mind_alloc((seq_nlv + e4_nlets + 8) * 24);
-        let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount);
+        let e4_bo: i64 = __mind_alloc(64 * 24);
+        let e4_nb: i64 = __mind_alloc(8);
+        let s4i: EmitState = emit_if_let_seq_then_instr_lv(s, if_node4, src, pa4, np4, e4_nodes, e4_cursor, e4_vidbuf, base, e4_cell, seq_lvbuf, seq_nlv, e4_lvbuf, strbuf, offs, ncount, e4_bo, e4_nb);
         return emit_stmt_seq(s4i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta4, i + 1, seq_lvbuf, seq_nlv);
     }
     if ty == 5 {
