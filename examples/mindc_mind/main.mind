@@ -12137,9 +12137,13 @@ pub fn count_nonparam_args_lv(args_addr: i64, args_len: i64, idx: i64, buf: i64,
 //
 // The let-environment is a scratch buffer of 24-byte records [name_lo, name_hi,
 // slot]; `nlets`-cell holds the count. Lookup compares the reference span to each
-// recorded name span (both in `src`, via span_bytes_equal2), latest-first is not
-// required — let names within one body are distinct (the Rust checker rejects
-// shadowing in this subset), so first-match is unambiguous.
+// recorded name span (both in `src`, via span_bytes_equal2). Source-level let names
+// within one body are distinct (the Rust checker rejects shadowing in this subset),
+// but the struct-lit STATEMENT desugar (slit_emit_ctor) synthesises multiple
+// alloc-lets ALL named with the `__mind_alloc` source span — so two struct-lit ctors
+// in one body produce two identically-named `__sl` bindings. Resolve to the INNERMOST
+// (highest-index, most-recent) match so each ctor's stores reference ITS OWN alloc
+// handle, not the first ctor's; mirrors lvenv_lookup's last-match rule.
 
 // Resolve an ident span against the let-environment. Returns the bound descriptor
 // slot, or -1 if the name is not a let-bound variable.
@@ -12147,12 +12151,18 @@ pub fn letenv_lookup(src: i64, lo: i64, hi: i64, env: i64, nlets: i64, i: i64) -
     if i >= nlets {
         return 0 - 1;
     }
+    // Recurse to the deepest (latest) binding first and prefer it; fall back to this
+    // index only when none is later (a later same-named synthetic `__sl` shadows).
+    let later: i64 = letenv_lookup(src, lo, hi, env, nlets, i + 1);
+    if later >= 0 {
+        return later;
+    }
     let nlo: i64 = __mind_load_i64(env + i * 24 + 0);
     let nhi: i64 = __mind_load_i64(env + i * 24 + 8);
     if span_bytes_equal2(src, lo, hi, src, nlo, nhi) == 1 {
         return __mind_load_i64(env + i * 24 + 16);
     }
-    letenv_lookup(src, lo, hi, env, nlets, i + 1)
+    0 - 1
 }
 
 // Flatten ONE expression tree into the shared descriptor, resolving idents against
