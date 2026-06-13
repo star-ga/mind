@@ -6729,7 +6729,7 @@ pub fn emit_if_seq_segments_lv(s: EmitState, stmts_addr: i64, stmts_len: i64, bu
     // Each segment's escaping bindings live in its OWN OP_IF tail (emitted there) AND
     // are appended to the caller's accumulator (acc_bind/acc_cell, 24B name/merge_id
     // records) so an enclosing OP_IF can re-merge them (lower.rs upward threading).
-    let seg_bindout: i64 = __mind_alloc(64 * 24);
+    let seg_bindout: i64 = __mind_alloc(256 * 24);
     let seg_nbind: i64 = __mind_alloc(8);
     let s1: EmitState = emit_if_chain_instr_lv(s, stmt, buf, params_addr, n_params, nodes, cursor, vidbuf, base0, seg_cell, lvenv, nlv, strbuf, offs, ncount, seg_bindout, seg_nbind);
     let seg_dst: i64 = __mind_load_i64(seg_cell);
@@ -6828,7 +6828,7 @@ pub fn emit_if_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, params_ad
     let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
     let seq_cell: i64 = __mind_alloc(8);
     __mind_store_i64(seq_cell, 0 - 1);
-    let t3_acc: i64 = __mind_alloc(64 * 24);
+    let t3_acc: i64 = __mind_alloc(256 * 24);
     let t3_acc_cell: i64 = __mind_alloc(8);
     __mind_store_i64(t3_acc_cell, 0);
     // Growable env COPY for the segment walk: a segment's escapes append here so a later
@@ -7072,7 +7072,7 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     let seg_base: i64 = __mind_load_i64(base_cell);
     let seq_cell: i64 = __mind_alloc(8);
     __mind_store_i64(seq_cell, 0 - 1);
-    let t4_acc: i64 = __mind_alloc(64 * 24);
+    let t4_acc: i64 = __mind_alloc(256 * 24);
     let t4_acc_cell: i64 = __mind_alloc(8);
     __mind_store_i64(t4_acc_cell, 0);
     let s8: EmitState = emit_if_seq_segments_lv(s7, segs_addr, n_segs, buf, params_addr, n_params, nodes, cursor, vidbuf, seg_base, seg_base - 1, seq_cell, 0, lvbuf, nlv_total, strbuf, offs, ncount, t4_acc, t4_acc_cell);
