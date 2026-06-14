@@ -310,6 +310,18 @@ pub struct MlirModule {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ValueKind {
     ScalarI64,
+    /// A scalar `f64` SSA value (RFC 0012 §5.1 deterministic float). Produced by
+    /// `Instr::ConstF64` and by an f64-typed `Instr::Param` / `Instr::BinOp`.
+    /// Lowers to strict IEEE `arith.*f` on `f64` — NO fastmath / reassoc /
+    /// contract flags — so scalar `+ − × ÷` is byte-identical across substrates.
+    /// Gated; the default + keystone artifacts (no scalar float) never construct
+    /// this variant, so existing trace_hashes are unchanged.
+    #[cfg(feature = "std-surface")]
+    ScalarF64,
+    /// A scalar `f32` SSA value (same determinism contract as `ScalarF64`, at
+    /// f32 width). Gated.
+    #[cfg(feature = "std-surface")]
+    ScalarF32,
     Tensor {
         dtype: DType,
         shape: Vec<ShapeDim>,
@@ -492,6 +504,22 @@ impl LoweringContext {
                 self.emit_line(&format!("    %{} = arith.constant {} : i64", id.0, value));
                 self.values.insert(*id, ValueKind::ScalarI64);
             }
+            // RFC 0012 §5.1 — a scalar `f64` literal. Emit `arith.constant <v> : f64`
+            // with a DETERMINISTIC, shortest-round-trip decimal (`format_number`):
+            // the same `f64` always prints identical bytes, and the decimal
+            // round-trips to the exact IEEE bits through LLVM's APFloat parser.
+            // NO fastmath; this is the deterministic-float producer for constants.
+            // Gated; ConstF64 never appears in the keystone source, so the
+            // keystone artifact stays byte-identical.
+            #[cfg(feature = "std-surface")]
+            Instr::ConstF64(id, value) => {
+                self.emit_line(&format!(
+                    "    %{} = arith.constant {} : f64",
+                    id.0,
+                    format_number(*value)
+                ));
+                self.values.insert(*id, ValueKind::ScalarF64);
+            }
             Instr::ConstTensor(id, dtype, shape, fill) => {
                 let dtype_str = dtype.as_str();
                 let tensor_ty = tensor_type(shape, dtype_str);
@@ -635,6 +663,46 @@ impl LoweringContext {
                                     shape: result_shape,
                                 },
                             );
+                        }
+                    }
+                    // RFC 0012 §5.1 — scalar `f64`/`f32` arithmetic. Both operands
+                    // must share the same float kind. Emit STRICT IEEE `arith.*f`
+                    // / `arith.cmpf` with ORDERED predicates (olt/ole/…/one) at the
+                    // operand width — NO fastmath / reassoc / contract / nnan / ninf
+                    // flags, and NO FMA contraction (`a*b+c` lowers to a separate
+                    // `mulf` then `addf`, never `fmuladd`). This sequential strict
+                    // form is what makes scalar `+ − × ÷` byte-identical across the
+                    // avx2 and neon substrates. Gated; never fires on the i64-only
+                    // keystone source so existing trace_hashes are unchanged.
+                    #[cfg(feature = "std-surface")]
+                    (ValueKind::ScalarF64, ValueKind::ScalarF64)
+                    | (ValueKind::ScalarF32, ValueKind::ScalarF32) => {
+                        let (fty, dtype, out_kind) =
+                            if matches!(lhs_kind, ValueKind::ScalarF32) {
+                                ("f32", DType::F32, ValueKind::ScalarF32)
+                            } else {
+                                ("f64", DType::F64, ValueKind::ScalarF64)
+                            };
+                        // Reuse the tensor float-op selector — `arith.addf`/`subf`/
+                        // `mulf`/`divf` and ordered `arith.cmpf` — for scalars.
+                        let mlir_op = select_arith_op(*op, &dtype);
+                        let is_cmp = matches!(
+                            op,
+                            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
+                        );
+                        // `arith.cmpf` operates on the float operands but yields i1;
+                        // the operand annotation is the float type either way.
+                        self.emit_line(&format!(
+                            "    %{} = {} %{}, %{} : {}",
+                            dst.0, mlir_op, lhs.0, rhs.0, fty
+                        ));
+                        if is_cmp {
+                            // Comparison result is i1; tag it so return sites widen
+                            // it for the i64 ABI slot (same path as cmpi).
+                            self.values.insert(*dst, ValueKind::ScalarI64);
+                            self.i1_values.insert(*dst);
+                        } else {
+                            self.values.insert(*dst, out_kind);
                         }
                     }
                     _ => {
@@ -7647,6 +7715,10 @@ struct TensorInfo {
 fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
     match kind {
         ValueKind::ScalarI64 => Ok("i64".to_string()),
+        #[cfg(feature = "std-surface")]
+        ValueKind::ScalarF64 => Ok("f64".to_string()),
+        #[cfg(feature = "std-surface")]
+        ValueKind::ScalarF32 => Ok("f32".to_string()),
         ValueKind::Tensor { dtype, shape } => Ok(tensor_type(shape, dtype.as_str())),
         #[cfg(feature = "std-surface")]
         ValueKind::VectorF32 { lanes } => Ok(format!("vector<{lanes}xf32>")),
