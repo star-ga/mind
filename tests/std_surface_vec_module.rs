@@ -7,21 +7,21 @@
 //!
 //! For each `pub fn` in `std/vec.mind`, asserts:
 //!
-//! - `vec_new`         emits one `__mind_alloc` + three `__mind_store_i64`
-//!                     (the StructLit `Vec { addr: 0, len: 0, cap: 0 }`).
+//! - `vec_new` emits one `__mind_alloc` + three `__mind_store_i64`
+//!   (the StructLit `Vec { addr: 0, len: 0, cap: 0 }`).
 //! - `vec_len/cap/addr` emit one `__mind_load_i64` each (the FieldAccess
-//!                     read of the struct-typed parameter — P0f Step 2
-//!                     case (3) seeds the side-table from Param.ty).
-//! - `vec_get/set`     emit one `__mind_load_i64` / `__mind_store_i64`
-//!                     for the explicit intrinsic call PLUS one
-//!                     `__mind_load_i64` for `v.addr`. Total per fn:
-//!                     2 loads + 1 store for `vec_set`; 2 loads for
-//!                     `vec_get`.
-//! - `vec_push`        is the integration smoke — its body alone uses
-//!                     every primitive `std.vec` needs: StructLit
-//!                     allocation, FieldAccess reads on a struct-typed
-//!                     parameter, conditional code, explicit intrinsic
-//!                     calls, and a returned StructLit.
+//!   read of the struct-typed parameter — P0f Step 2
+//!   case (3) seeds the side-table from Param.ty).
+//! - `vec_get/set` emit one `__mind_load_i64` / `__mind_store_i64`
+//!   for the explicit intrinsic call PLUS one
+//!   `__mind_load_i64` for `v.addr`. Total per fn:
+//!   2 loads + 1 store for `vec_set`; 2 loads for
+//!   `vec_get`.
+//! - `vec_push` is the integration smoke — its body alone uses
+//!   every primitive `std.vec` needs: StructLit
+//!   allocation, FieldAccess reads on a struct-typed
+//!   parameter, conditional code, explicit intrinsic
+//!   calls, and a returned StructLit.
 //!
 //! Gated: `cargo test --features std-surface --test std_surface_vec_module`.
 

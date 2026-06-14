@@ -13,13 +13,13 @@
 //! - `map_new`        1 __mind_alloc + 4 __mind_store_i64.
 //! - `map_len/cap`    1 __mind_load_i64 each (FieldAccess on Map param).
 //! - `map_keys_addr / map_vals_addr` same — pure field readers.
-//! - `map_key_at / map_value_at`  2 loads (one for the field-load on
-//!                                `m.keys_addr` or `m.vals_addr`, one
-//!                                for the explicit element load).
-//! - `map_insert`     ≥4 loads (m.len/cap/keys_addr/vals_addr), ≥2
-//!                    __mind_alloc (one per backing array on grow),
-//!                    ≥6 __mind_store_i64 (key + value + 4-field
-//!                    StructLit at tail).
+//! - `map_key_at / map_value_at` 2 loads (one for the field-load on
+//!   `m.keys_addr` or `m.vals_addr`, one
+//!   for the explicit element load).
+//! - `map_insert` ≥4 loads (m.len/cap/keys_addr/vals_addr), ≥2
+//!   __mind_alloc (one per backing array on grow),
+//!   ≥6 __mind_store_i64 (key + value + 4-field
+//!   StructLit at tail).
 //!
 //! Gated: `cargo test --features std-surface --test std_surface_map_module`.
 

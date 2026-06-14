@@ -81,6 +81,7 @@ fn diff_lines(expected: &str, got: &str) -> String {
 ///   1. It uses `while` loops, which require `std-surface` for the formatter.
 ///   2. The formatter canonicalises whitespace/trailing-space, so the raw
 ///      source differs from formatter output (alignment spaces in one-liner fns).
+///
 /// Idempotence for toml.mind is separately enforced by `idempotence_stdlib_toml`
 /// in `fmt_idempotence.rs` (runs under `std-surface`).
 const STABILITY_SKIP_LIST: &[(&str, &str)] = &[
