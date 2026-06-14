@@ -808,8 +808,23 @@ fn build_cdylib_from_entry(
     #[cfg(feature = "cross-module-imports")]
     crate::type_checker::cm_set_project_table(None);
 
-    let products = compile_result
-        .map_err(|e| anyhow!("cdylib compile failed for {}: {e}", entry_path.display()))?;
+    let products = compile_result.map_err(|e| {
+        // Render the real parser/type diagnostics (file:line:col + message + source
+        // context) instead of the bare Display ("parse error"), so `build` reports the
+        // same precise errors `check` does — never an opaque failure.
+        let src_name = entry_path.to_string_lossy().into_owned();
+        let diags = e.into_diagnostics(Some(&src_name));
+        let rendered = diags
+            .iter()
+            .map(|d| crate::diagnostics::render(&source_code, d))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if rendered.trim().is_empty() {
+            anyhow!("cdylib compile failed for {}", entry_path.display())
+        } else {
+            anyhow!("cdylib compile failed for {}:\n{}", entry_path.display(), rendered)
+        }
+    })?;
 
     // Backend compile waterfall (feature `compile-timings`, `MIND_TIMINGS=1`).
     // The frontend phases already printed via `compile_source_with_name`; this
