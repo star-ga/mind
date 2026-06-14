@@ -1,0 +1,31 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# The first NON-INTEGER cross-substrate canary. The kernel evaluates the fixed
+# scalar IEEE-754 f64 chain `a + b - c * d / a` over four exact-representable
+# constants; the result is 2.708333333333333 (IEEE bits 0x4005aaaaaaaaaaaa). The
+# canonical output is that bit pattern as an i64, serialised little-endian, then
+# sha256 (manifest `output_encoding = "f64_bits_i64_le"`).
+#
+# Scalar IEEE `+ − × ÷` are round-to-nearest-even with a single, fully-specified
+# result — no accumulation order, no contraction, no reassociation — so unlike a
+# float REDUCTION the value is architecture-independent: avx2 == neon by IEEE
+# construction (RFC 0015 §3.1). The chosen division c*d/a = 0.5*3.125/1.5 is a
+# non-terminating binary fraction, so this canary pins the ROUNDING of `÷`, not
+# merely exact arithmetic; any divergence is a real lowering bug (e.g. an FMA
+# contraction or a fastmath flag) and a release-blocker.
+#
+# Provenance:
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04):
+#          lowers to strict scalar vaddsd / vmulsd / vdivsd / vsubsd, no FMA.
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10: the gate recomputes
+#          this hash on real ARM hardware every run from the aarch64 scalar IEEE
+#          instructions, so a lowering divergence fails CI and blocks the release
+#          tag.
+#
+# Re-bless only on an intentional lowering change (RFC 0020 §13): run the gate
+# with MIND_BENCH_BLESS=1 and commit the new hash.
+
+avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
+neon = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"

@@ -92,11 +92,25 @@ pub fn gemmq(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
 pub fn gemmi8(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
     __mind_blas_matmul_mm_i8_v(a, b, c, m, k, n)
 }
+// RFC 0012 §5.1 — deterministic scalar IEEE-754 f64 elementwise chain. A fixed
+// sequence of scalar `+ − × ÷` over four f64 inputs supplied by the harness.
+// Lowers to strict IEEE `arith.addf/subf/mulf/divf` (vaddsd/vmulsd/vdivsd/vsubsd
+// on avx2; the aarch64 equivalents on neon) — NO FMA fusion (`c * d` stays a
+// separate mulf, never contracted into the add), NO fastmath/reassoc flags. The
+// operation order is fully fixed by source precedence: `a + b - (c * d / a)`.
+// Scalar IEEE `+ − × ÷` are round-to-nearest-even with no contraction or
+// reassociation, so unlike a float REDUCTION (order-sensitive) the result is
+// byte-identical across x86 avx2 and ARM neon by construction (RFC 0015 §3.1).
+pub fn scalar_f64_chain(a: f64, b: f64, c: f64, d: f64) -> f64 {
+    a + b - c * d / a
+}
 "#;
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
+/// The scalar-f64 chain: four f64 args in, one f64 result out (System V xmm ABI).
+type ScalarF64Fn = unsafe extern "C" fn(f64, f64, f64, f64) -> f64;
 
 fn mindc_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -817,6 +831,97 @@ fn gemv_i16_reproducibility_gate() {
         None => panic!(
             "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
              bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- scalar-f64 workload (deterministic scalar IEEE-754 float) --------------
+// The first NON-INTEGER cross-substrate canary: a fixed scalar `+ − × ÷` chain
+// over f64, proving MIND's byte-identity wedge extends from Q16.16 / pure-int to
+// strict IEEE-754 scalar float. The kernel `scalar_f64_chain(a,b,c,d)` computes
+// `a + b - c * d / a`, lowered to `arith.addf/subf/mulf/divf` on f64 with NO FMA
+// fusion and NO fastmath/reassoc flags (verified vaddsd/vmulsd/vdivsd/vsubsd).
+//
+// Why avx2 == neon here, UNLIKE a float reduction: scalar IEEE `+ − × ÷` are
+// individually round-to-nearest-even with a single, fully-specified result —
+// there is no accumulation order, no contraction, no reassociation to differ
+// across substrates. The source precedence pins one fixed op order, so both x86
+// and ARM evaluate the identical IEEE operations on the identical bits and
+// produce the identical result (RFC 0015 §3.1). This is scoped to scalar
+// elementwise `+ − × ÷` ONLY — float REDUCTIONS remain order-sensitive and are
+// deliberately out of this canary's scope.
+//
+// The inputs are four exact-representable f64 constants supplied by the harness
+// (the manifest `[input]` documents them); they are chosen so the division
+// `c * d / a = 0.5 * 3.125 / 1.5` is a non-terminating binary fraction, making
+// the result `2.708333333333333` (bits 0x4005aaaaaaaaaaaa) — so the canary
+// proves the ROUNDING of `÷` is byte-identical, not merely that exact arithmetic
+// agrees. The canonical encoding is the result's IEEE-754 bit pattern as an i64,
+// then 8 little-endian bytes → sha256 (the same `canonical_hash` the scalar
+// dot-q16 gate uses, applied to `f64::to_bits`).
+
+/// The four deterministic scalar-f64 inputs (manifest `[input]`). Exact-
+/// representable f64; `c*d/a` is intentionally a non-terminating binary fraction.
+const SCALAR_F64_INPUTS: (f64, f64, f64, f64) = (1.5, 2.25, 0.5, 3.125);
+
+/// Independent in-process oracle: the identical IEEE chain evaluated in Rust f64.
+/// Because scalar `+ − × ÷` are strict IEEE with the same fixed op order, this is
+/// bit-exact to the kernel within a run (the cross-check), and — being IEEE — the
+/// same on every substrate (the cross-substrate claim).
+fn ref_scalar_f64_chain(a: f64, b: f64, c: f64, d: f64) -> f64 {
+    a + b - c * d / a
+}
+
+#[test]
+fn scalar_float_f64_reproducibility_gate() {
+    let id = "scalar-float-f64";
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let chain: Symbol<ScalarF64Fn> = unsafe {
+        lib.get(b"scalar_f64_chain")
+            .expect("scalar_f64_chain symbol")
+    };
+
+    let (a, b, c, d) = SCALAR_F64_INPUTS;
+    let result = unsafe { chain(a, b, c, d) };
+
+    // 1. Within-run exactness vs the IEEE oracle: the kernel's strict-IEEE chain
+    //    must reproduce the identical bit pattern as the Rust f64 chain.
+    let oracle = ref_scalar_f64_chain(a, b, c, d);
+    assert_eq!(
+        result.to_bits(),
+        oracle.to_bits(),
+        "{id}: scalar-f64 kernel diverged from the IEEE oracle within a single run \
+         (kernel={result} bits={:#018x}, oracle={oracle} bits={:#018x})",
+        result.to_bits(),
+        oracle.to_bits()
+    );
+
+    // 2. Canonical hash of the result's IEEE-754 bit pattern (as i64 LE bytes),
+    //    pinned to the committed per-substrate reference. avx2 == neon by IEEE
+    //    construction (RFC 0015 §3.1).
+    let computed = canonical_hash(result.to_bits() as i64);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed,
+            expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n result_bits={:#018x}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13).",
+            result.to_bits()
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed} \
+             (result_bits={:#018x}); bless with MIND_BENCH_BLESS=1 if this host is canonical.",
+            result.to_bits()
         ),
     }
 }
