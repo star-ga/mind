@@ -1,6 +1,6 @@
 [package]
 name = "mind"
-version = "0.8.0"
+version = "0.8.1"
 authors = ["STARGA Inc."]
 license = "Apache-2.0"
 description = "The native language for intelligent systems"

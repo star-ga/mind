@@ -22,7 +22,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Language profiles (`default` / `systems` / `embedded`) | ✅ Complete | v0.2.8 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Match expressions, `&expr`, REAP MoE, sparse tensors | ✅ Complete | v0.2.11 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Pure-MIND standard library RFC 0005 (std.vec/string/map/io) | ✅ Complete | v0.4.0–v0.4.4 | [`docs/rfcs/0005-pure-mind-stdlib.md`](docs/rfcs/) |
-| Self-hosted compiler — **front-end** byte-exact on 64/66 of the gap corpus (not just its own source; 0 wrong-bytes, 2 deterministic safe fail-closed; CI-gated by `gap_corpus_smoke.py`; real-codegen self-host still in progress) | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
+| Self-hosted compiler — **front-end** byte-exact on 66/66 of the gap corpus (not just its own source; 0 wrong-bytes, 0 fail-closed; CI-gated by `gap_corpus_smoke.py` at FLOOR 66; real-codegen self-host still in progress) | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
 | mind-blas (RFC 0006) Track A + Track B inc 1–4 | ✅ Complete | v0.6.3–v0.6.7 | [`docs/rfcs/0006-mind-blas.md`](docs/rfcs/0006-mind-blas.md) |
 | **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ **Fully Shipped** | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
 | **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.7.0** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
