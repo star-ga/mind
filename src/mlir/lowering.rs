@@ -440,6 +440,19 @@ struct LoweringContext {
     /// vs stack is the same computation in a different location — byte-identical.
     #[cfg(feature = "std-surface")]
     needs_malloc: bool,
+    /// RFC 0012 §5.1 — function-ABI signature table, threaded in from
+    /// `IRModule::fn_signatures` at the top of `lower_ir_to_mlir`.
+    ///
+    /// name → `(param_mlir_types, ret_mlir_type)`, each pre-resolved to an MLIR
+    /// type string (`"f64"` / `"f32"` / `"i64"`). The `Instr::FnDef` arm reads
+    /// it to emit each `func.func` parameter and the `-> T` return slot with the
+    /// declared float type instead of the default i64 ABI, and to seed each
+    /// f64/f32 param's `ValueKind` so the scalar BinOp dispatch and the return
+    /// see them as floats. Shared by value into each FnDef sub-context (like
+    /// `extern_c_fns`) so nested definitions resolve too. Empty for i64-only
+    /// modules → byte-identical lowering. Gated.
+    #[cfg(feature = "std-surface")]
+    fn_signatures: std::collections::BTreeMap<String, (Vec<String>, Option<String>)>,
 }
 
 /// One enclosing `while` loop, for break/continue codegen.
@@ -491,6 +504,8 @@ impl LoweringContext {
             needs_pthread: false,
             #[cfg(feature = "std-surface")]
             needs_malloc: false,
+            #[cfg(feature = "std-surface")]
+            fn_signatures: std::collections::BTreeMap::new(),
         }
     }
 
@@ -1242,8 +1257,35 @@ impl LoweringContext {
                 // `llvm.call` emitted inside a user fn body resolves
                 // correctly against the module-level extern declarations.
                 sub.extern_c_fns = self.extern_c_fns.clone();
-                for (_pname, pid) in params {
-                    sub.values.insert(*pid, ValueKind::ScalarI64);
+                // RFC 0012 §5.1: inherit the fn-signature table so the param /
+                // return ABI types resolve here and inside nested definitions.
+                sub.fn_signatures = self.fn_signatures.clone();
+                // RFC 0012 §5.1 — recover this fn's declared param / return ABI
+                // types. Default to all-i64 (legacy ABI) when no signature was
+                // recorded (e.g. an IR built directly, not via `lower_to_ir`),
+                // so existing i64 functions lower byte-identically.
+                let sig = self.fn_signatures.get(name);
+                let param_abi: Vec<&str> = match sig {
+                    Some((p, _)) => params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| p.get(i).map(String::as_str).unwrap_or("i64"))
+                        .collect(),
+                    None => params.iter().map(|_| "i64").collect(),
+                };
+                let ret_abi: &str = sig
+                    .and_then(|(_, r)| r.as_deref())
+                    .unwrap_or("i64");
+                // Seed each parameter's `ValueKind` from its declared ABI type so
+                // the scalar BinOp dispatch and the return treat f64/f32 params as
+                // floats; everything else stays on the i64 ABI.
+                for ((_pname, pid), abi) in params.iter().zip(param_abi.iter()) {
+                    let kind = match *abi {
+                        "f64" => ValueKind::ScalarF64,
+                        "f32" => ValueKind::ScalarF32,
+                        _ => ValueKind::ScalarI64,
+                    };
+                    sub.values.insert(*pid, kind);
                 }
                 for (idx, inner) in body.iter().enumerate() {
                     sub.emit_instr(idx, inner)?;
@@ -1251,13 +1293,15 @@ impl LoweringContext {
 
                 let sig_args: Vec<String> = params
                     .iter()
-                    .map(|(_, pid)| format!("%{}: i64", pid.0))
+                    .zip(param_abi.iter())
+                    .map(|((_, pid), abi)| format!("%{}: {}", pid.0, abi))
                     .collect();
                 let mut fn_text = String::new();
                 fn_text.push_str(&format!(
-                    "  func.func @{}({}) -> i64 {{\n",
+                    "  func.func @{}({}) -> {} {{\n",
                     name,
-                    sig_args.join(", ")
+                    sig_args.join(", "),
+                    ret_abi
                 ));
                 fn_text.push_str(&sub.body);
                 // Every fn returns i64 under the std-surface ABI. If the last
@@ -1285,14 +1329,30 @@ impl LoweringContext {
                     match ret_id {
                         // A fall-off-the-end comparison result is `i1`; widen it
                         // to the i64 ABI return slot (same reason as the explicit
-                        // `Instr::Return` arm).
+                        // `Instr::Return` arm). A `-> bool` fn keeps the i64 ABI,
+                        // so this stays `i64` regardless of `ret_abi`.
                         Some(rid) if sub.i1_values.contains(rid) => fn_text.push_str(&format!(
                             "    %bext{0} = arith.extui %{0} : i1 to i64\n    return %bext{0} : i64\n",
                             rid.0
                         )),
-                        Some(rid) => fn_text.push_str(&format!("    return %{} : i64\n", rid.0)),
-                        None => fn_text
-                            .push_str("    %z = arith.constant 0 : i64\n    return %z : i64\n"),
+                        // RFC 0012 §5.1: return the value at the declared ABI
+                        // width (`f64`/`f32` for a scalar-float return, else i64).
+                        Some(rid) => fn_text
+                            .push_str(&format!("    return %{} : {}\n", rid.0, ret_abi)),
+                        // No trailing value: synthesise a zero at the return ABI
+                        // type so a float-returning fn that falls off the end is
+                        // still well-typed.
+                        None => {
+                            if ret_abi == "f64" || ret_abi == "f32" {
+                                fn_text.push_str(&format!(
+                                    "    %z = arith.constant 0.0 : {ret_abi}\n    return %z : {ret_abi}\n"
+                                ));
+                            } else {
+                                fn_text.push_str(
+                                    "    %z = arith.constant 0 : i64\n    return %z : i64\n",
+                                );
+                            }
+                        }
                     }
                 }
                 fn_text.push_str("  }\n");
@@ -1323,9 +1383,14 @@ impl LoweringContext {
             // P0d: function parameters bind a ValueId to the i64 ABI; the
             // value is named in the enclosing `func.func` signature so we
             // do not emit anything for the Param itself. Gated.
+            //
+            // RFC 0012 §5.1: the FnDef arm pre-seeds each param's `ValueKind`
+            // from its declared ABI type (so an `f64`/`f32` param dispatches to
+            // float arith). Only fall back to the i64 ABI when no kind was
+            // recorded — never clobber a pre-seeded float kind.
             #[cfg(feature = "std-surface")]
             Instr::Param { dst, .. } => {
-                self.values.insert(*dst, ValueKind::ScalarI64);
+                self.values.entry(*dst).or_insert(ValueKind::ScalarI64);
             }
             // P0d: explicit `return %v : i64` inside a user fn body.
             #[cfg(feature = "std-surface")]
@@ -1335,7 +1400,17 @@ impl LoweringContext {
                     self.emit_line(&format!("    %bext{0} = arith.extui %{0} : i1 to i64", v.0));
                     self.emit_line(&format!("    return %bext{} : i64", v.0));
                 }
-                Some(v) => self.emit_line(&format!("    return %{} : i64", v.0)),
+                // RFC 0012 §5.1: return the value at its real ABI width — `f64`/
+                // `f32` for a scalar-float result (param or float BinOp), else the
+                // i64 ABI slot (byte-identical to the legacy path for i64 fns).
+                Some(v) => {
+                    let rty = match self.values.get(v) {
+                        Some(ValueKind::ScalarF64) => "f64",
+                        Some(ValueKind::ScalarF32) => "f32",
+                        _ => "i64",
+                    };
+                    self.emit_line(&format!("    return %{} : {}", v.0, rty));
+                }
                 None => self.emit_line("    return"),
             },
             // RFC 0005 Gap 1: `while cond { body }` — basic-block loop lowering.
@@ -7549,6 +7624,20 @@ impl LoweringContext {
 pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError> {
     let mut ctx = LoweringContext::new();
 
+    // RFC 0012 §5.1 — pre-resolve every fn's ABI signature (declared param /
+    // return types) to MLIR type strings so the `Instr::FnDef` arm can type the
+    // `func.func` slots and seed float param `ValueKind`s. i64-only modules
+    // record all-`i64` here, so their lowered text is byte-identical.
+    #[cfg(feature = "std-surface")]
+    for (name, (param_types, ret_type)) in &module.fn_signatures {
+        let params: Vec<String> = param_types
+            .iter()
+            .map(|t| type_ann_to_abi_mlir(t).to_string())
+            .collect();
+        let ret = ret_type.as_ref().map(|t| type_ann_to_abi_mlir(t).to_string());
+        ctx.fn_signatures.insert(name.clone(), (params, ret));
+    }
+
     for (idx, instr) in module.instrs.iter().enumerate() {
         ctx.emit_instr(idx, instr)?;
     }
@@ -7712,6 +7801,20 @@ struct TensorInfo {
     shape: Vec<ShapeDim>,
 }
 
+/// RFC 0012 §5.1 — map an AST `TypeAnn` to the scalar MLIR ABI type string used
+/// in `func.func` parameter / return slots. A declared scalar `f64`/`f32` keeps
+/// its float width; every other type (integers, bools, structs-by-ptr, …) keeps
+/// the established i64 ABI so non-float functions lower byte-identically. Used
+/// only when building the `LoweringContext::fn_signatures` table.
+#[cfg(feature = "std-surface")]
+fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> &'static str {
+    match ty {
+        crate::ast::TypeAnn::ScalarF64 => "f64",
+        crate::ast::TypeAnn::ScalarF32 => "f32",
+        _ => "i64",
+    }
+}
+
 fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
     match kind {
         ValueKind::ScalarI64 => Ok("i64".to_string()),
@@ -7835,7 +7938,10 @@ fn shape_dim_to_string(dim: &ShapeDim) -> String {
 
 fn select_arith_op(op: BinOp, dtype: &DType) -> &'static str {
     match dtype {
-        DType::F32 | DType::F16 | DType::BF16 => match op {
+        // RFC 0012 §5.1: `F64` selects the floating-point `arith.*f` ops too.
+        // Without it a scalar-`f64` BinOp fell through to the integer `_` arm
+        // and wrongly emitted `arith.addi`/etc. on `f64` operands.
+        DType::F64 | DType::F32 | DType::F16 | DType::BF16 => match op {
             BinOp::Add => "arith.addf",
             BinOp::Sub => "arith.subf",
             BinOp::Mul => "arith.mulf",
