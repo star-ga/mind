@@ -10488,6 +10488,46 @@ pub fn find_store_name_span(src: i64, len: i64, i: i64, cell: i64) -> i64 {
     find_store_name_span(src, len, i + 1, cell)
 }
 
+// Byte-copy src[0..n) into dst.
+pub fn nfn_copy_src_bytes(dst: i64, src: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    __mind_store_i8(dst + i, load_byte(src, i));
+    nfn_copy_src_bytes(dst, src, n, i + 1)
+}
+
+// Write the 12-byte `__mind_alloc` literal at dst[0..12) using alloc_name_byte.
+pub fn nfn_fill_alloc_name(dst: i64, j: i64) -> i64 {
+    if j >= 12 {
+        return 12;
+    }
+    __mind_store_i8(dst + j, alloc_name_byte(j));
+    nfn_fill_alloc_name(dst, j + 1)
+}
+
+// Write the 16-byte `__mind_store_i64` literal at dst[0..16) using store_name_byte.
+pub fn nfn_fill_store_name(dst: i64, j: i64) -> i64 {
+    if j >= 16 {
+        return 16;
+    }
+    __mind_store_i8(dst + j, store_name_byte(j));
+    nfn_fill_store_name(dst, j + 1)
+}
+
+// Build a copy of `src[0..src_len)` with the intrinsic literals `__mind_alloc` (12B) and
+// `__mind_store_i64` (16B) appended at offsets [src_len, src_len+12) and [src_len+12,
+// src_len+28). The lexer scans only [0, src_len), so the tail is invisible to parsing; the
+// struct-lit desugar/annotation interns its synthetic alloc/store names from those appended
+// spans. Only built when the source itself lacks the literals (so main.mind never uses it).
+pub fn build_src_intrinsics(src_addr: i64, src_len: i64) -> i64 {
+    let buf: i64 = __mind_alloc(src_len + 32);
+    let _c: i64 = nfn_copy_src_bytes(buf, src_addr, src_len, 0);
+    let _a: i64 = nfn_fill_alloc_name(buf + src_len, 0);
+    let _s: i64 = nfn_fill_store_name(buf + src_len + 12, 0);
+    buf
+}
+
 // Value node for CANONICAL field `j` of struct `k` (match its declared name span
 // against the source-order triples). Returns the value AST node, or 0 if absent.
 pub fn slit_canon_value(fields_addr: i64, ntriples: i64, src: i64, srt: i64, k: i64, j: i64) -> i64 {
@@ -11321,27 +11361,54 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // absent from source or no fn constructs a struct (fails closed downstream).
     let slit_acell: i64 = __mind_alloc(16);
     let slit_scell: i64 = __mind_alloc(16);
-    if find_alloc_name_span(src_addr, src_len, 0, slit_acell) == 1 {
-        if find_store_name_span(src_addr, src_len, 0, slit_scell) == 1 {
-            let _sl: i64 = slit_desugar_module(src_addr, src_len, items_addr, items_len, srt, __mind_load_i64(slit_acell + 0), __mind_load_i64(slit_acell + 8), __mind_load_i64(slit_scell + 0), __mind_load_i64(slit_scell + 8), 0);
-        }
-    }
+    let alloc_found: i64 = find_alloc_name_span(src_addr, src_len, 0, slit_acell);
+    let store_found: i64 = find_store_name_span(src_addr, src_len, 0, slit_scell);
+    let have_spans: i64 = if alloc_found == 1 {
+        store_found
+    } else {
+        0
+    };
+    // A module that CONSTRUCTS a struct but never spells `__mind_alloc`/`__mind_store_i64`
+    // in source has no span to intern the desugar's synthetic alloc/store callee names from,
+    // so the desugar/annotation was skipped and every struct-lit fell closed. Append the two
+    // literals to a src copy and use appended-offset spans. main.mind itself contains both
+    // literals (have_spans==1), so it keeps src_addr + the real spans BYTE-FOR-BYTE.
+    let src_use: i64 = if have_spans == 1 {
+        src_addr
+    } else {
+        build_src_intrinsics(src_addr, src_len)
+    };
+    let alo: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_acell + 0)
+    } else {
+        src_len
+    };
+    let ahi: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_acell + 8)
+    } else {
+        src_len + 12
+    };
+    let slo: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_scell + 0)
+    } else {
+        src_len + 12
+    };
+    let shi: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_scell + 8)
+    } else {
+        src_len + 28
+    };
+    let _sl: i64 = slit_desugar_module(src_use, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
     // FIELD-READ PRE-RESOLVE: rewrite every resolvable `recv.field` into the
     // equivalent `__mind_load_i64(field_addr)` Call subtree, IN PLACE, BEFORE the
     // strtab pass. Order is load-bearing: the oracle interns "__mind_load_i64" at
     // the field-read's first-seen position, so the strtab must walk the rewritten
     // calls (not ast_field) to match the oracle's first-seen string order.
-    let _pf: i64 = field_prefold_module(src_addr, src_len, items_addr, items_len, 0, srt);
-    let sa_acell: i64 = __mind_alloc(16);
-    let sa_scell: i64 = __mind_alloc(16);
-    if find_alloc_name_span(src_addr, src_len, 0, sa_acell) == 1 {
-        if find_store_name_span(src_addr, src_len, 0, sa_scell) == 1 {
-            let _an: i64 = slit_annotate_module(src_addr, items_addr, items_len, srt, __mind_load_i64(sa_acell + 0), __mind_load_i64(sa_acell + 8), __mind_load_i64(sa_scell + 0), __mind_load_i64(sa_scell + 8), 0);
-        }
-    }
+    let _pf: i64 = field_prefold_module(src_use, src_len, items_addr, items_len, 0, srt);
+    let _an: i64 = slit_annotate_module(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
-    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_addr, items_addr, items_len, 0);
+    let r: i64 = build_module_strtab(strbuf, offs, ccell, src_use, items_addr, items_len, 0);
     // Append every struct's TYPE + FIELD names to the strtab in BTreeMap-sorted
     // (struct-name) order, matching the oracle's collect_struct_def_strings pass
     // (registry strings come AFTER all instruction strings). intern_span dedups, so
@@ -11368,7 +11435,7 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // one ok_cell. The running vid counts both structs and fns (flat module space).
     let ok_cell: i64 = __mind_alloc(8);
     __mind_store_i64(ok_cell, 1);
-    let s6: EmitState = emit_mic3_module_items_loop(s5, src_addr, items_addr, items_len, strbuf, offs, ncount, ok_cell, 0, 0);
+    let s6: EmitState = emit_mic3_module_items_loop(s5, src_use, items_addr, items_len, strbuf, offs, ncount, ok_cell, 0, 0);
     if __mind_load_i64(ok_cell) == 0 {
         return es_new();
     }
