@@ -1,9 +1,15 @@
 # Byte-Store Migration — closing `#306`
 
-> **Status (2026-05-27).** Path-B intrinsics shipped (`__mind_load_i8` /
-> `__mind_store_i8`, commit `0e7dd6c`). The pure-MIND std site migration to
-> consume them — and the bootstrap keystone re-bless that follows — is the
-> remaining work. This doc is the reproducible execution spec.
+> **Status (2026-06-14) — RESOLVED.** Path-B intrinsics shipped
+> (`__mind_load_i8` / `__mind_store_i8`, commit `0e7dd6c`); the pure-MIND std
+> site migration to consume them is COMPLETE across `string` / `sha256` /
+> `toml` / `fs` / `json` / `regex` / `process` / `net` (i64-aligned struct/word
+> stores left unchanged). The bootstrap keystone re-bless is CONFIRMED: with
+> `--features mlir-build` the keystone reproduces `libmindc_mind.so` as a real
+> ELF, byte-identical across two clean builds + the `mindc build` (Mind.toml)
+> vs direct `--emit-shared` path (locally + green CI keystone). The test
+> asserts self-consistency, not a frozen SHA — no hash to bless. `#306` closed;
+> the release gate is clear. This doc remains the reproducible execution spec.
 
 ## Why this exists
 

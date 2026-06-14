@@ -222,22 +222,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/docs/ir`; MAP-protocol-vs-MAP-epilogue disambig banner on `/docs/map`;
   evidence-chain anchor mention on `/docs/runtime`.
 
-### Known issues (release gate)
+### Release gate — `#306` RESOLVED (std byte-store OOB closed + keystone re-bless confirmed)
 
-- **`#306` — std byte-store OOB: source fix LANDED + verified; keystone
-  re-bless remaining.** The byte-width-correct `__mind_store_i8` migration is
-  applied to every genuine single-byte store in `string` / `sha256` / `toml`
-  (the `tui` path had no byte-store sites), closing the write-past-`len`
-  landmine at the source. Behavior preservation is verified (SHA-256 FIPS
-  3/3 + std-surface string/toml suites, against a real `--emit-shared` ELF).
-  Remaining before the next version tag: the bootstrap keystone byte-identity
-  re-bless of `examples/mindc_mind/libmindc_mind.so`. The oracle is a real,
-  post-migration ELF, but the `mindc build --emit=cdylib` reproduction path
-  emits a launcher stub in the open toolchain (the ELF-capable path is
-  `mindc --emit-shared`), so independent byte-identity confirmation of the
-  keystone still needs an ELF-capable cdylib build. See
-  `docs/byte-store-migration.md` for the playbook + the stub-tolerant-test
-  caveat.
+- **The byte-width-correct `__mind_store_i8` migration is applied to every
+  genuine single-byte store across the std library** — `string` / `sha256` /
+  `toml` / `fs` / `json` / `regex` / `process` / `net` (the `tui` path had no
+  byte-store sites) — closing the write-past-`len` landmine at the source. The
+  i64-aligned struct/word stores (`* 8` offsets, struct `+0/+8/+16` ABI fields)
+  are legitimate and unchanged. Behavior preservation verified (SHA-256 FIPS
+  3/3 + std-surface string/toml suites against a real `--emit-shared` ELF).
+- **Keystone byte-identity re-bless: CONFIRMED on a real ELF.** The bootstrap
+  keystone (`phase_g_keystone_bootstrap`, built with `--features mlir-build`)
+  reproduces `examples/mindc_mind/libmindc_mind.so` as a **real ELF (full MLIR
+  path), byte-identical across two clean builds AND the `mindc build` (Mind.toml)
+  vs direct `--emit-shared` path** — confirmed locally and by the green CI
+  keystone job. The keystone asserts self-consistency, not a frozen SHA, so
+  there is no hash to bless; the stub-only build (no MLIR feature) is a
+  build-config limitation, not a determinism failure. Release gate cleared.
 
 ## [0.7.1] - 2026-06-02 — High-level execution surface ships (RFC 0005): the 10 desugaring bricks run on the shipped compiler; `std-surface` promoted to the default build (fail-loud on unfinished constructs); cross-substrate byte-identity preserved
 
