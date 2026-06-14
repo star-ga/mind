@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-06-14 — Self-host gap corpus genuinely 66/66 (remove a needless decline guard; fix the fresh-load measurement harness)
+
+### Fixed
+
+- **The gap corpus is byte-exact on the full 66/66 — `value-ifexpr_5` and `mixed-prefix_12`
+  were never actually a compiler gap.** Those two (a value if-expr branch whose `let` shadows
+  a sequence let, e.g. `let v = x + 10; if c == 0 { let v = x + 1; v } else { v }`) lower
+  byte-exactly and deterministically — verified three ways that agree: a brand-new process per
+  fixture, `fork` + `dlopen`-in-child, and a warm reused handle all return identical bytes. The
+  0.8.0 "64/66, 2 safe fail-closed" was a **single test-harness bug**, not a compiler one: the
+  survey read the **wrong field of the `EmitState` result** — offset `+8` (`next_id`) instead
+  of the buffer handle at offset `+0`. That one mistake produced both symptoms — a false
+  "empty" (read fail-closed) when `next_id` was 0, and a SIGSEGV (read as a crash) when it held
+  non-zero garbage dereferenced as `(addr, len)`. The correct read is `EmitState.buf` (offset
+  0) → `String`(addr@0, len@8). No warm/fresh divergence exists; the lowering was always right.
+- Removed the `ifexpr_shadows_seq` decline guard (and its now-dead helpers `tenv_has_name` /
+  `ifexpr_block_shadows`) added in 0.8.0 to fail-closed that shape — declining a shape that
+  lowers byte-exactly was needless. The `blk_layout` SSA-merge layout (else-side bare ref
+  resolves to the outer vid, no placeholder) was already correct.
+- `gap_corpus_smoke.py`: ratchet FLOOR 64 → 66 so the full corpus can never silently regress;
+  the gate already loads the `.so` fresh *inside the forked child* (the canonical measurement).
+- Whole-module `mic@3` self-host FLIP stays byte-identical; keystone 7/7 byte-identical.
+
 ## [0.8.0] - 2026-06-14 — Self-host front-end byte-exact on 64/66 of the gap corpus (0 wrong-bytes; 2 safe fail-closed) + `mic@3` self-host fixed-point + RFC 0012 tensor-native syntax; release gate `#306` cleared (std byte-store migration + keystone re-bless)
 
 ### Added — self-host fixed-point at the canonical `mic@3` binary IR (byte-identical)

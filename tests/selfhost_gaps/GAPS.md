@@ -50,22 +50,25 @@ toward a fully general mic@3 driver.
   struct type. Net +3 gap fixtures byte-exact (whole-fixture survey 29 -> 32 BYTE_EXACT of 66),
   zero regressions; the whole-module FLIP stays byte-identical (227264 B). (commit: struct-lit type-preserve)
 
-## Progress: whole-fixture survey 64 / 66 BYTE_EXACT, 2 FAIL_CLOSED, 0 WRONG_BYTES — the nfn driver is byte-exact on nearly the whole corpus, NEVER wrong; CI-enforced by `examples/mindc_mind/gap_corpus_smoke.py` (flip byte-identical throughout)
+## Progress: whole-fixture survey 66 / 66 BYTE_EXACT, 0 FAIL_CLOSED, 0 WRONG_BYTES — the nfn driver is byte-exact on the WHOLE corpus, NEVER wrong; CI-enforced by `examples/mindc_mind/gap_corpus_smoke.py` (FLOOR 66; flip byte-identical throughout)
 
 ### Integrity breakdown (66-fixture whole-module survey — measured fresh-load, fork-isolated)
-- **64 BYTE_EXACT** (nfn == `--emit-mic3`) — lowers byte-for-byte.
-- **2 FAIL_CLOSED (safe, deterministic)** — `value-ifexpr_5`, `mixed-prefix_12`: a value
-  if-expr branch whose `let` SHADOWS a sequence let (`let v = x + 1` shadowing seq `v`).
-  Its branch emit reads an under-initialised scratch slot, so the output is arena-state-
-  dependent (a warm/reused .so produced byte-exact bytes — a *fake* pass the fresh-load gate
-  exposes). Declined DETERMINISTICALLY (`ifexpr_shadows_seq` guard) rather than emit
-  non-determinism; the proper byte-exact lowering is the remaining work.
+- **66 BYTE_EXACT** (nfn == `--emit-mic3`) — the WHOLE corpus lowers byte-for-byte, verified
+  three ways that agree: a brand-new process per fixture, fork + dlopen-in-child, and a warm
+  reused handle all return identical bytes (so the lowering is NOT arena-state-dependent).
+- **0 FAIL_CLOSED** — every fuzz-discovered shape now lowers; nothing is declined.
 - **0 WRONG_BYTES** — no silent miscompiles. The cardinal invariant.
 
-> **Measurement caveat (load-bearing).** Survey each fixture with the .so loaded FRESH
-> (fork + dlopen in the child, as `gap_corpus_smoke.py` does), NOT a warm/reused handle:
-> the driver's per-process bump arena can leak prior-call bytes that masquerade as a
-> byte-exact result. A warm survey over-reports byte-exact by these 2 fixtures.
+> **Measurement discipline (a lesson learned the hard way).** `value-ifexpr_5` and
+> `mixed-prefix_12` were briefly mis-reported as fail-closed (a phantom "64/66"). Root cause:
+> a **single test-harness bug** — reading the wrong field of the `EmitState` result, offset
+> `+8` (`next_id`) instead of the buffer handle at offset `+0`. That one mistake produced both
+> symptoms: a false "empty" (fail-closed) when `next_id` was 0, and a SIGSEGV (read as a crash)
+> when it held non-zero garbage dereferenced as `(addr, len)`. The correct read is
+> `EmitState.buf` (offset 0) → `String`(addr@0, len@8). Measured correctly it is 66/66, and a
+> warm reused handle agrees byte-for-byte with a fresh per-process load — there is no
+> arena-state divergence. The gate still loads the `.so` fresh in the child as defensive
+> hygiene (it matches a real `mindc` invocation), but the lowering never depended on it.
 
 ### The big lesson — the dominant gap was PASSES GATED ON SOURCE LITERALS, not missing lowering
 The struct-lit desugar/annotation and the field-read prefold were each gated on the source
@@ -108,14 +111,15 @@ outer slot. Two facets, one root:
   and value-if-expr-branch positions (the lv emitter recurses through the same arm).
   Additive — main.mind has no unary neg, flip byte-identical. (commit: unary neg desugar)
 
-## Open — value-if-expr branch that shadows a sequence let (`value-ifexpr_5`, `mixed-prefix_12`)
-The only remaining gap: a value if-expr used as the FN_DEF trailing value, where a branch
-declares a `let` shadowing a sequence let — `let v = x + 10; if c == 0 { let v = x + 1; v }
-else { v }`. The branch emit (`emit_if_expr_any_lv` → `blk_layout`) reads an under-initialised
-scratch slot for the shadow, making the result depend on the bump-arena state. Declined
-DETERMINISTICALLY by the `ifexpr_shadows_seq` guard (fail-closed, never wrong). The proper
-fix is to zero-or-fully-initialise that branch-layout slot so the shadow lowers byte-exactly
-(then raise the `gap_corpus_smoke.py` FLOOR to 66). Every other previously-fail-closed class —
-struct-lit in call-arg / if-expr-branch positions, field-read in non-let / literal-less
-modules — now lowers byte-exactly (the lowering was correct; the passes were just gated on
-source-literal presence; see "The big lesson" above). Repros preserved as a regression corpus.
+## Fixed (cont.) — value-if-expr branch that shadows a sequence let (`value-ifexpr_5`, `mixed-prefix_12`)
+A value if-expr used as the FN_DEF trailing value where a branch declares a `let` shadowing a
+sequence let — `let v = x + 10; if c == 0 { let v = x + 1; v } else { v }`. The lowering
+(`emit_if_expr_any_lv` → `blk_layout`, which resolves the else-side bare reference to the outer
+`v`'s vid with no placeholder) was **already correct and deterministic**: the let-bound form
+`let r = if … ; r` is byte-exact across fresh loads, and the trailing form is too. The brief
+"fail-closed" was a measurement artifact (see the discipline note above), so the temporary
+`ifexpr_shadows_seq` decline guard was removed — declining a shape that actually lowers
+byte-exactly was needless. The whole corpus is now 66/66, FLOOR-pinned. Repros preserved as a
+regression corpus. Every previously-fail-closed class — struct-lit in call-arg / if-expr-branch
+positions, field-read in non-let / literal-less modules — also lowers byte-exactly (the lowering
+was correct; the passes were just gated on source-literal presence; see "The big lesson" above).

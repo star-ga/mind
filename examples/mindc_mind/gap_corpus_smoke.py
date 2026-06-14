@@ -91,11 +91,13 @@ def _nfn_mic3_raw(src: str):
 
 
 def nfn_mic3(src: str):
-    """Fork-isolate each emit AND load the .so FRESH inside the child (not the parent):
-    the driver's behavior depends on the per-process bump-allocator arena state, so a
-    warm/reused load can read leftover heap as if it were a result (a fake byte-exact),
-    while a fresh load — matching a real `mindc` invocation — is the canonical behavior.
-    A clean child also contains any out-of-subset SIGSEGV. Returns (bytes, "OK"|"CRASH")."""
+    """Fork-isolate each emit and load the .so fresh inside the child. A clean child contains
+    any out-of-subset SIGSEGV so one bad fixture can't take down the whole survey, and a fresh
+    per-process load matches a real `mindc` invocation (defensive: it would surface any
+    arena-state-dependent lowering rather than mask it behind a warm handle — though none
+    exists here). READ THE RESULT CORRECTLY: the output is a `String` at `EmitState.buf`
+    (offset 0) → (addr@0, len@8); reading the wrong EmitState field once faked a 64/66.
+    Returns (bytes, "OK"|"CRASH")."""
     rp, wp = os.pipe()
     pid = os.fork()
     if pid == 0:  # child
@@ -174,11 +176,10 @@ def main():
 
     # Cardinal invariant: the driver NEVER emits wrong bytes (a crash counts as wrong — the
     # driver must fail-closed, never crash). Always hard-fails.
-    # Coverage ratchet: byte-exact must not drop below FLOOR. The two current fail-closed
-    # fixtures (value-ifexpr_5, mixed-prefix_12) share the value-if-expr-branch-shadows-a-
-    # sequence-let determinism gap — declined deterministically pending a proper fix; raise
-    # FLOOR to 66 once that lands so they can never silently regress back to fail-closed.
-    FLOOR = 64
+    # Coverage ratchet: byte-exact must not drop below FLOOR. The whole 66-fixture corpus
+    # lowers byte-exactly under the canonical FRESH-load measurement; the floor pins it so
+    # no fixture can silently regress to fail-closed or wrong.
+    FLOOR = 66
     ok = True
     if wrong:
         print("FAIL: WRONG-BYTES (silent miscompile) — the cardinal invariant is violated:")
