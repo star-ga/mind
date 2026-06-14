@@ -802,6 +802,26 @@ pub struct IRModule {
     /// artifacts are unaffected.
     #[cfg(feature = "std-surface")]
     pub enum_variant_tags: std::collections::BTreeMap<String, i64>,
+    /// RFC 0012 §5.1 — function-ABI signature side-table for deterministic
+    /// scalar float codegen.
+    ///
+    /// Maps a function name to `(param_types, return_type)` taken verbatim from
+    /// the AST `FnDef` (each param's declared `.ty` and the declared return
+    /// `ret_type`). The MLIR FnDef emitter reads this to type each `func.func`
+    /// parameter and the return slot — emitting `f64`/`f32` where the source
+    /// declared a scalar float, instead of the default `i64` ABI. Without it
+    /// the emitter cannot recover the param/return types, because `Instr::FnDef`
+    /// carries only `(name, ValueId)` pairs (no type). Modelled exactly on
+    /// `repr_c_structs`: a pure lowering-only side-table, never serialised into
+    /// mic@3 (like `enum_variant_tags`), so there is no wire-format change and
+    /// the byte-identity oracle is unaffected. `BTreeMap` keeps iteration
+    /// deterministic. Gated; the default + keystone artifacts (no scalar float)
+    /// leave it empty so existing trace_hashes are unchanged.
+    #[cfg(feature = "std-surface")]
+    pub fn_signatures: std::collections::BTreeMap<
+        String,
+        (Vec<crate::ast::TypeAnn>, Option<crate::ast::TypeAnn>),
+    >,
 }
 
 impl IRModule {
@@ -818,6 +838,8 @@ impl IRModule {
             repr_c_structs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             enum_variant_tags: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            fn_signatures: std::collections::BTreeMap::new(),
         }
     }
 
