@@ -938,7 +938,21 @@ fn build_cdylib_from_entry(
                     .find(|(n, _)| *n == modname)
                 {
                     let prod = compile_source_with_name(src, Some(modname), &sub_opts)
-                        .map_err(|e| anyhow!("substrate compile failed for {modname}: {e}"))?;
+                        .map_err(|e| {
+                            // Render the real diagnostics (file:line:col + message) instead of
+                            // the opaque CompileError Display, matching the cdylib build path.
+                            let diags = e.into_diagnostics(Some(modname));
+                            let rendered = diags
+                                .iter()
+                                .map(|d| crate::diagnostics::render(src, d))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if rendered.trim().is_empty() {
+                                anyhow!("substrate compile failed for {modname}")
+                            } else {
+                                anyhow!("substrate compile failed for {modname}:\n{rendered}")
+                            }
+                        })?;
                     #[cfg(feature = "autodiff")]
                     let sub_mlir = lower_to_mlir(&prod.ir, prod.grad.as_ref())
                         .map_err(|e| anyhow!("substrate MLIR lowering for {modname}: {e}"))?;
