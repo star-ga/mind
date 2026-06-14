@@ -20,10 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   alloc-handle resolution (`letenv_lookup` last-match), and an `items_len`-based module
   header. CI-enforced by a new `mic3_flip_smoke.py` gate (hard-fails when `MINDC_SO` is set).
 - **Hardened the self-host driver against a fuzz sweep** (497 programs across construct
-  families): fixed the two dominant silent-miscompile classes (same-name value-if-expr phi;
-  per-ctor struct-lit alloc handle); remaining out-of-subset gaps catalogued in
-  `tests/selfhost_gaps/GAPS.md` (they never fire on `main.mind`, so the flip stays
-  byte-identical).
+  families) until it is never wrong — every one of the 66 catalogued fixtures is now either
+  byte-exact (38) or a safe fail-closed refusal (28), with **zero silent miscompiles**.
+  The final wrong-bytes class, fall-through-shadow (a name bound outside a fall-through `if`
+  and shadowed inside it), is closed: same-name escaping bindings are deduped into one SSA
+  F2 phi (`bind_append_dedup`), and a later read of a shadowed name now resolves to the
+  merge vid via a position-ordered trailing env (`synth_rebind_slots` → Pass-B
+  `seq_set_rebind_vids` → `build_trail_env`). Out-of-subset gaps never fire on `main.mind`,
+  so the whole-module flip stays byte-identical; catalogued in `tests/selfhost_gaps/GAPS.md`.
 
 ### Fixed — dead-code elimination operand coverage (silent prune of call/return operands)
 
