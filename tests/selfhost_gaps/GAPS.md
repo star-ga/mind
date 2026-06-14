@@ -50,28 +50,33 @@ toward a fully general mic@3 driver.
   struct type. Net +3 gap fixtures byte-exact (whole-fixture survey 29 -> 32 BYTE_EXACT of 66),
   zero regressions; the whole-module FLIP stays byte-identical (227264 B). (commit: struct-lit type-preserve)
 
-## Progress: whole-fixture survey 29 -> 32 / 66 BYTE_EXACT (operator-edges fully closed; flip byte-identical throughout)
+## Progress: whole-fixture survey 38 / 66 BYTE_EXACT, 28 FAIL_CLOSED, 0 WRONG_BYTES — the driver is now NEVER wrong (byte-exact or safe-refuse for all 66; flip byte-identical throughout)
 
-### Integrity breakdown (66-fixture whole-module survey, HEAD fc8e582)
-- **32 BYTE_EXACT** (nfn == `--emit-mic3`).
+### Integrity breakdown (66-fixture whole-module survey)
+- **38 BYTE_EXACT** (nfn == `--emit-mic3`).
 - **28 FAIL_CLOSED (safe)** — nfn emits *nothing* for an unsupported out-of-subset construct;
   it NEVER emits wrong bytes. These are coverage gaps (call-arg/nested struct-lit hoisting,
   field-read in non-let positions, value-ifexpr escaped-outer reuse, …), not correctness bugs.
-- **6 TRUE wrong-bytes miscompiles** — ALL of them `fallthrough-shadow_1..6` (one class). This is
-  the only integrity target. It is out-of-subset, so the whole-module FLIP stays byte-identical.
+- **0 WRONG_BYTES** — the entire `fallthrough-shadow` silent-miscompile class is closed (see
+  Fixed below). No latent miscompiles remain in the survey.
 
-So the driver is correct (byte-exact or safe-refuse) for 60/66; the single wrong-bytes class is
-fall-through-shadow, whose proper fix is the Pass-B merge-slot synthesis described below.
-
-## Open — MISMATCH (deep cross-pass; out-of-subset; one focused class)
-1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, all 6 remaining). The merge is
-   byte-exact but the trailing read of a name SHADOWED inside a fall-through if resolves to the
-   OUTER vid, not the merge vid. Cross-pass: the trailing value flattens in Pass A against `env`
-   (which stores let SLOTS); a fall-through merge has no flatten slot, and its vid is only known
-   in Pass C — and `flatten_expr_env`'s let-ident reuses the let's slot, so there is nowhere to
-   inject the merge vid. Proper fix: synthesise a slot per fall-through-merge binding whose
-   vidbuf is set to the merge vid in Pass B, and bind it in `env` before the trailing flatten
-   (or fail-closed on shadow-read until supported). The single deepest remaining class.
+## Fixed (cont.) — fall-through-shadow class (the last wrong-bytes; `fallthrough-shadow_1..6`)
+A name bound outside a fall-through if and SHADOWED inside it (`let y=p; if c { let y=p+5 } y`)
+merges as an SSA F2 phi; a later read of that name must resolve to the MERGE vid, not the pre-if
+outer slot. Two facets, one root:
+1. **Over-emission** (`fallthrough-shadow_3`): a then-block binding a name twice (leading let +
+   same-name bubbled if-segment binding) emitted two escaping merges; deduped via
+   `bind_append_dedup` (first position, last value) before `caseB_layout`.
+2. **Trailing-read resolution** (`fallthrough-shadow_1/2/4/5/6`): the cross-pass slot problem —
+   the trailing value flattens in Pass A against `env` (let SLOTS); a fall-through merge has no
+   flatten slot, vid known only in Pass C. Fix: `seq_fix_deltas` synthesises a placeholder slot
+   per escaping binding (`synth_rebind_slots`) and records (name, slot, base0-merge_id) into the
+   plan (+48/+56); Pass B (`seq_assign_vids`/`seq_set_rebind_vids`) sets vidbuf[slot] =
+   entry_base + merge_id; the driver weaves the slots into a POSITION-ORDERED trailing env
+   (`build_trail_env`) so the FN_DEF result resolves a shadowed name to its latest binding via
+   letenv_lookup last-match (a later seq let shadows an earlier merge — required for `scan`,
+   which re-binds `kind`/`next_toks` at the seq level after an early-return if). Additive: a
+   program with no shadow-then-read keeps the whole-module flip byte-identical (231447 B).
 
 ## Fixed (cont.)
 - **unary `-x`** (`operator-edges_4/5/6`). `-x` desugars to `0 - x` in the general
