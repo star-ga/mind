@@ -414,6 +414,13 @@ jobs:
             python3 examples/mindc_mind/mic3_flip_smoke.py
         working-directory: ${{ github.workspace }}
 
+      - name: Self-host gap-corpus integrity gate (gap_corpus_smoke.py)
+        run: |
+          MINDC_SO=/tmp/libmindc_mind_self_host.so \
+          MINDC=${{ github.workspace }}/target/release/mindc \
+            python3 examples/mindc_mind/gap_corpus_smoke.py
+        working-directory: ${{ github.workspace }}
+
       - name: Run Phase G integration tests
         run: |
           cargo test --release --no-default-features \
