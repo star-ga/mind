@@ -818,10 +818,8 @@ pub struct IRModule {
     /// deterministic. Gated; the default + keystone artifacts (no scalar float)
     /// leave it empty so existing trace_hashes are unchanged.
     #[cfg(feature = "std-surface")]
-    pub fn_signatures: std::collections::BTreeMap<
-        String,
-        (Vec<crate::ast::TypeAnn>, Option<crate::ast::TypeAnn>),
-    >,
+    pub fn_signatures:
+        std::collections::BTreeMap<String, (Vec<crate::ast::TypeAnn>, Option<crate::ast::TypeAnn>)>,
 }
 
 impl IRModule {

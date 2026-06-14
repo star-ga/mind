@@ -692,12 +692,11 @@ impl LoweringContext {
                     #[cfg(feature = "std-surface")]
                     (ValueKind::ScalarF64, ValueKind::ScalarF64)
                     | (ValueKind::ScalarF32, ValueKind::ScalarF32) => {
-                        let (fty, dtype, out_kind) =
-                            if matches!(lhs_kind, ValueKind::ScalarF32) {
-                                ("f32", DType::F32, ValueKind::ScalarF32)
-                            } else {
-                                ("f64", DType::F64, ValueKind::ScalarF64)
-                            };
+                        let (fty, dtype, out_kind) = if matches!(lhs_kind, ValueKind::ScalarF32) {
+                            ("f32", DType::F32, ValueKind::ScalarF32)
+                        } else {
+                            ("f64", DType::F64, ValueKind::ScalarF64)
+                        };
                         // Reuse the tensor float-op selector — `arith.addf`/`subf`/
                         // `mulf`/`divf` and ordered `arith.cmpf` — for scalars.
                         let mlir_op = select_arith_op(*op, &dtype);
@@ -1273,9 +1272,7 @@ impl LoweringContext {
                         .collect(),
                     None => params.iter().map(|_| "i64").collect(),
                 };
-                let ret_abi: &str = sig
-                    .and_then(|(_, r)| r.as_deref())
-                    .unwrap_or("i64");
+                let ret_abi: &str = sig.and_then(|(_, r)| r.as_deref()).unwrap_or("i64");
                 // Seed each parameter's `ValueKind` from its declared ABI type so
                 // the scalar BinOp dispatch and the return treat f64/f32 params as
                 // floats; everything else stays on the i64 ABI.
@@ -7634,7 +7631,9 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
             .iter()
             .map(|t| type_ann_to_abi_mlir(t).to_string())
             .collect();
-        let ret = ret_type.as_ref().map(|t| type_ann_to_abi_mlir(t).to_string());
+        let ret = ret_type
+            .as_ref()
+            .map(|t| type_ann_to_abi_mlir(t).to_string());
         ctx.fn_signatures.insert(name.clone(), (params, ret));
     }
 

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2838 | **Est. tokens:** ~6,898,823
-**Generated:** 2026-06-14 17:51 UTC
+**Files:** 2840 | **Est. tokens:** ~6,901,409
+**Generated:** 2026-06-14 18:06 UTC
 
 ## Token Budget Guide
 
@@ -382,7 +382,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,909 |
-| `src/ir/` | 4 | ~23,886 |
+| `src/ir/` | 4 | ~23,882 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~44,270 |
@@ -402,7 +402,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 176 | ~315,689 |
+| `tests/` | 176 | ~317,041 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -414,6 +414,7 @@
 | `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
+| `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,238 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -3734,7 +3735,7 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~9258 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9254 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3926,7 +3927,11 @@
 - `README.md` (~875 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~8056 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~9408 tok, huge) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/scalar-float-f64/`
+
+- `manifest.toml` (~778 tok, large) — version = "1"
+- `reference_hashes.toml` (~460 tok, medium) — avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
 ### `tests/cross_substrate_identity/`
 
 - `xnode_driver.c` (~2833 tok, huge)
