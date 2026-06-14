@@ -6,7 +6,7 @@
 
 **Project:** `mind`
 **Files:** 2840 | **Est. tokens:** ~6,901,409
-**Generated:** 2026-06-14 18:06 UTC
+**Generated:** 2026-06-14 18:09 UTC
 
 ## Token Budget Guide
 
