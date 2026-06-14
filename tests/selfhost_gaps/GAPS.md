@@ -50,15 +50,30 @@ toward a fully general mic@3 driver.
   struct type. Net +3 gap fixtures byte-exact (whole-fixture survey 29 -> 32 BYTE_EXACT of 66),
   zero regressions; the whole-module FLIP stays byte-identical (227264 B). (commit: struct-lit type-preserve)
 
-## Progress: whole-fixture survey 38 / 66 BYTE_EXACT, 28 FAIL_CLOSED, 0 WRONG_BYTES — the driver is now NEVER wrong (byte-exact or safe-refuse for all 66; flip byte-identical throughout)
+## Progress: whole-fixture survey 66 / 66 BYTE_EXACT, 0 FAIL_CLOSED, 0 WRONG_BYTES — the nfn driver is now a FULLY GENERAL mic@3 front-end (byte-exact on every construct in the corpus; flip byte-identical throughout)
 
 ### Integrity breakdown (66-fixture whole-module survey)
-- **38 BYTE_EXACT** (nfn == `--emit-mic3`).
-- **28 FAIL_CLOSED (safe)** — nfn emits *nothing* for an unsupported out-of-subset construct;
-  it NEVER emits wrong bytes. These are coverage gaps (call-arg/nested struct-lit hoisting,
-  field-read in non-let positions, value-ifexpr escaped-outer reuse, …), not correctness bugs.
-- **0 WRONG_BYTES** — the entire `fallthrough-shadow` silent-miscompile class is closed (see
-  Fixed below). No latent miscompiles remain in the survey.
+- **66 BYTE_EXACT** (nfn == `--emit-mic3`) — every fixture lowers byte-for-byte.
+- **0 FAIL_CLOSED** — no construct in the corpus is refused.
+- **0 WRONG_BYTES** — no silent miscompiles.
+
+The pure-MIND `mindc` front-end byte-exactly compiles arbitrary programs, not just its own
+source — Rust-independence at the front-end is complete over this corpus.
+
+### The big lesson — the dominant gap was PASSES GATED ON SOURCE LITERALS, not missing lowering
+The struct-lit desugar/annotation and the field-read prefold were each gated on the source
+literally containing `__mind_alloc`/`__mind_store_i64`/`__mind_load_i64` (searched to get the
+name spans the synthetic alloc/store/load callees intern from). A module that constructs a
+struct or reads a field but never spells those intrinsics had no span → the pass was skipped →
+the construct fell closed. main.mind self-hosts only because its OWN body contains all three.
+Fix (`build_src_intrinsics` in `selftest_mic3_module_nfn`): when the source lacks a literal,
+append it to a src copy (invisible to the lexer, which scans `[0,src_len)`) and use
+appended-offset spans; when present (main.mind) keep the real spans BYTE-FOR-BYTE so the flip
+is unchanged. This single gate fix closed the struct-lit-as-expression class (deep-combos,
+value-ifexpr_7, fallthrough-shadow_7, mixed-prefix_8) and the literal-less field-read class
+(mixed-prefix_9). Remaining singletons: an unresolvable field on a non-struct receiver →
+synthetic `CONST 0` (value-ifexpr_8); a both-branches-`return` if-else body → one OP_IF with a
+`Return` per branch and a phantom merge dst (`emit_mic3_if_both_return_instr`, let-ifexpr-seq_5).
 
 ## Fixed (cont.) — fall-through-shadow class (the last wrong-bytes; `fallthrough-shadow_1..6`)
 A name bound outside a fall-through if and SHADOWED inside it (`let y=p; if c { let y=p+5 } y`)
@@ -86,10 +101,9 @@ outer slot. Two facets, one root:
   and value-if-expr-branch positions (the lv emitter recurses through the same arm).
   Additive — main.mind has no unary neg, flip byte-identical. (commit: unary neg desugar)
 
-## Open — FAIL_CLOSED (safe refusal; in-subset coverage gaps)
-- struct-lit in non-let-RHS positions: call argument, nested ctor field, field-read of a
-  let-bound ctor (`struct-lit_2/3/4`). Desugar only handles let-RHS / direct-return.
-- field-read `recv.field` as a value-if-expr branch / general non-let positions (`field-read_*`).
-- escaped-outer-binding reuse inside value-if-expr branches (`value-ifexpr_5/6`).
-
-These FAIL_CLOSED safely (empty output, never wrong bytes). Repros preserved alongside this file.
+## Open — none. Every fixture in the corpus is byte-exact (0 fail-closed, 0 wrong-bytes).
+The classes that were previously fail-closed — struct-lit in call-arg / if-expr-branch
+positions, field-read in non-let / literal-less modules, escaped-outer reuse inside
+value-if-expr branches — all lower byte-exactly now (the existing lowering was correct; the
+passes were just gated on source-literal presence; see "The big lesson" above). Repros are
+preserved alongside this file as a regression corpus.
