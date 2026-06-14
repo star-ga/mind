@@ -1076,6 +1076,7 @@ fn lower_expr(
             name,
             type_params,
             params,
+            ret_type,
             body,
             reap_threshold,
             ..
@@ -1090,6 +1091,24 @@ fn lower_expr(
                 ir.instrs.push(Instr::ConstI64(id, 0));
                 return id;
             }
+            // RFC 0012 §5.1 — record this fn's ABI signature (param `.ty`s +
+            // declared return type) in the IRModule side-table so the MLIR
+            // FnDef emitter can type each `func.func` param / return as
+            // `f64`/`f32` where the source declared a scalar float, rather than
+            // defaulting to the i64 ABI. Pure metadata; an i64-only fn records
+            // all-`ScalarI64` here and lowers byte-identically as before.
+            #[cfg(feature = "std-surface")]
+            {
+                let param_types: Vec<crate::ast::TypeAnn> =
+                    params.iter().map(|p| p.ty.clone()).collect();
+                ir.fn_signatures
+                    .insert(name.clone(), (param_types, ret_type.clone()));
+            }
+            // `ret_type` only feeds the std-surface signature table above; touch
+            // it in the default build so the destructured binding isn't flagged
+            // unused.
+            #[cfg(not(feature = "std-surface"))]
+            let _ = ret_type;
             // Lower function definition
             let mut fn_ir = IRModule::new();
             // RFC 0005 P0f Step 1 — the FieldAccess read-path resolves
