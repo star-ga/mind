@@ -50,15 +50,22 @@ toward a fully general mic@3 driver.
   struct type. Net +3 gap fixtures byte-exact (whole-fixture survey 29 -> 32 BYTE_EXACT of 66),
   zero regressions; the whole-module FLIP stays byte-identical (227264 B). (commit: struct-lit type-preserve)
 
-## Progress: whole-fixture survey 66 / 66 BYTE_EXACT, 0 FAIL_CLOSED, 0 WRONG_BYTES — the nfn driver is now a FULLY GENERAL mic@3 front-end (byte-exact on every construct in the corpus; flip byte-identical throughout)
+## Progress: whole-fixture survey 64 / 66 BYTE_EXACT, 2 FAIL_CLOSED, 0 WRONG_BYTES — the nfn driver is byte-exact on nearly the whole corpus, NEVER wrong; CI-enforced by `examples/mindc_mind/gap_corpus_smoke.py` (flip byte-identical throughout)
 
-### Integrity breakdown (66-fixture whole-module survey)
-- **66 BYTE_EXACT** (nfn == `--emit-mic3`) — every fixture lowers byte-for-byte.
-- **0 FAIL_CLOSED** — no construct in the corpus is refused.
-- **0 WRONG_BYTES** — no silent miscompiles.
+### Integrity breakdown (66-fixture whole-module survey — measured fresh-load, fork-isolated)
+- **64 BYTE_EXACT** (nfn == `--emit-mic3`) — lowers byte-for-byte.
+- **2 FAIL_CLOSED (safe, deterministic)** — `value-ifexpr_5`, `mixed-prefix_12`: a value
+  if-expr branch whose `let` SHADOWS a sequence let (`let v = x + 1` shadowing seq `v`).
+  Its branch emit reads an under-initialised scratch slot, so the output is arena-state-
+  dependent (a warm/reused .so produced byte-exact bytes — a *fake* pass the fresh-load gate
+  exposes). Declined DETERMINISTICALLY (`ifexpr_shadows_seq` guard) rather than emit
+  non-determinism; the proper byte-exact lowering is the remaining work.
+- **0 WRONG_BYTES** — no silent miscompiles. The cardinal invariant.
 
-The pure-MIND `mindc` front-end byte-exactly compiles arbitrary programs, not just its own
-source — Rust-independence at the front-end is complete over this corpus.
+> **Measurement caveat (load-bearing).** Survey each fixture with the .so loaded FRESH
+> (fork + dlopen in the child, as `gap_corpus_smoke.py` does), NOT a warm/reused handle:
+> the driver's per-process bump arena can leak prior-call bytes that masquerade as a
+> byte-exact result. A warm survey over-reports byte-exact by these 2 fixtures.
 
 ### The big lesson — the dominant gap was PASSES GATED ON SOURCE LITERALS, not missing lowering
 The struct-lit desugar/annotation and the field-read prefold were each gated on the source
@@ -101,9 +108,14 @@ outer slot. Two facets, one root:
   and value-if-expr-branch positions (the lv emitter recurses through the same arm).
   Additive — main.mind has no unary neg, flip byte-identical. (commit: unary neg desugar)
 
-## Open — none. Every fixture in the corpus is byte-exact (0 fail-closed, 0 wrong-bytes).
-The classes that were previously fail-closed — struct-lit in call-arg / if-expr-branch
-positions, field-read in non-let / literal-less modules, escaped-outer reuse inside
-value-if-expr branches — all lower byte-exactly now (the existing lowering was correct; the
-passes were just gated on source-literal presence; see "The big lesson" above). Repros are
-preserved alongside this file as a regression corpus.
+## Open — value-if-expr branch that shadows a sequence let (`value-ifexpr_5`, `mixed-prefix_12`)
+The only remaining gap: a value if-expr used as the FN_DEF trailing value, where a branch
+declares a `let` shadowing a sequence let — `let v = x + 10; if c == 0 { let v = x + 1; v }
+else { v }`. The branch emit (`emit_if_expr_any_lv` → `blk_layout`) reads an under-initialised
+scratch slot for the shadow, making the result depend on the bump-arena state. Declined
+DETERMINISTICALLY by the `ifexpr_shadows_seq` guard (fail-closed, never wrong). The proper
+fix is to zero-or-fully-initialise that branch-layout slot so the shadow lowers byte-exactly
+(then raise the `gap_corpus_smoke.py` FLOOR to 66). Every other previously-fail-closed class —
+struct-lit in call-arg / if-expr-branch positions, field-read in non-let / literal-less
+modules — now lowers byte-exactly (the lowering was correct; the passes were just gated on
+source-literal presence; see "The big lesson" above). Repros preserved as a regression corpus.

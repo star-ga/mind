@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,893,061
-**Generated:** 2026-06-14 12:26 UTC
+**Files:** 2837 | **Est. tokens:** ~6,895,312
+**Generated:** 2026-06-14 13:10 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~26,298 |
+| `./` | 34 | ~26,301 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -51,7 +51,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 23 | ~55,532 |
+| `examples/mindc_mind/` | 24 | ~57,393 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~13,400 |
@@ -59,7 +59,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~8,610 |
+| `.github/workflows/` | 8 | ~8,689 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~12,865 |
 | `scripts/` | 7 | ~9,074 |
@@ -428,7 +428,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 67 | ~4,877 |
+| `tests/selfhost_gaps/` | 67 | ~5,185 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~3,423 |
@@ -475,7 +475,7 @@
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3510 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3513 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -729,6 +729,7 @@
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
 - `full_strtab_smoke.py` (~1663 tok, huge)
+- `gap_corpus_smoke.py` (~1861 tok, huge)
 - `.gitignore` (~5 tok, tiny) — __pycache__/
 - `match_struct_smoke.py` (~1311 tok, large)
 - `method_callee_smoke.py` (~1350 tok, large)
@@ -808,7 +809,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~4156 tok, huge) — name: CI
+- `ci.yml` (~4235 tok, huge) — name: CI
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
@@ -4165,7 +4166,7 @@
 - `field-read_3.mind` (~27 tok, tiny)
 - `field-read_4.mind` (~29 tok, tiny)
 - `field-read_5.mind` (~61 tok, small)
-- `GAPS.md` (~2005 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~2313 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `let-ifexpr-seq_1.mind` (~23 tok, tiny)
 - `let-ifexpr-seq_2.mind` (~34 tok, tiny)
 - `let-ifexpr-seq_3.mind` (~23 tok, tiny)

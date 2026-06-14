@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-06-14 — Fully general self-host front-end (66/66 byte-exact, 0 fail-closed, 0 wrong-bytes) + `mic@3` self-host fixed-point + RFC 0012 tensor-native syntax; release gate `#306` cleared (std byte-store migration + keystone re-bless)
+## [0.8.0] - 2026-06-14 — Self-host front-end byte-exact on 64/66 of the gap corpus (0 wrong-bytes; 2 safe fail-closed) + `mic@3` self-host fixed-point + RFC 0012 tensor-native syntax; release gate `#306` cleared (std byte-store migration + keystone re-bless)
 
 ### Added — self-host fixed-point at the canonical `mic@3` binary IR (byte-identical)
 
@@ -21,11 +21,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bubbling, a same-name two-branch phi unification in `blk_layout`, per-ctor struct-lit
   alloc-handle resolution (`letenv_lookup` last-match), and an `items_len`-based module
   header. CI-enforced by a new `mic3_flip_smoke.py` gate (hard-fails when `MINDC_SO` is set).
-- **The pure-MIND front-end is now a FULLY GENERAL `mic@3` compiler** — byte-exact on all
-  66 catalogued fixtures (a fuzz sweep of 497 programs across construct families): **0
-  fail-closed, 0 wrong-bytes**. It byte-exactly compiles arbitrary programs, not just its own
-  source, so Rust-independence at the front-end holds beyond self-compilation. Progress
-  32→66 byte-exact. The dominant gap was not missing lowering but **passes gated on the
+- **The pure-MIND front-end byte-exactly compiles 64/66 of the gap corpus** (a fuzz sweep
+  of 497 programs across construct families), with **0 wrong-bytes** (the cardinal integrity
+  invariant — never a silent miscompile) and **2 deterministic safe fail-closed**. Progress
+  32→64 byte-exact; it byte-exactly compiles arbitrary programs, not just its own source, so
+  Rust-independence at the front-end holds well beyond self-compilation. A new CI gate,
+  `gap_corpus_smoke.py`, enforces the corpus (hard-fails on any wrong-bytes; ratchets the
+  byte-exact floor; loads the `.so` fresh per fixture so a warm-arena artifact can't fake a
+  pass). The 2 fail-closed (`value-ifexpr_5`, `mixed-prefix_12`) share one shape — a value
+  if-expr branch whose `let` shadows a sequence let — declined deterministically pending a
+  proper lowering (its emit reads an under-initialised scratch slot, making the result
+  arena-state-dependent; refusing is the honest, integrity-preserving behavior). The dominant gap was not missing lowering but **passes gated on the
   source literally containing the intrinsics** `__mind_alloc` / `__mind_store_i64` /
   `__mind_load_i64` (searched to get the spans the synthetic alloc/store/load callees intern
   from): a module that constructs a struct or reads a field but never spells those literals
