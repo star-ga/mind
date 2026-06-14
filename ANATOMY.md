@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,890,769
-**Generated:** 2026-06-14 02:09 UTC
+**Files:** 2836 | **Est. tokens:** ~6,890,966
+**Generated:** 2026-06-14 02:20 UTC
 
 ## Token Budget Guide
 
@@ -428,7 +428,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 67 | ~4,253 |
+| `tests/selfhost_gaps/` | 67 | ~4,450 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~3,423 |
@@ -4165,7 +4165,7 @@
 - `field-read_3.mind` (~27 tok, tiny)
 - `field-read_4.mind` (~29 tok, tiny)
 - `field-read_5.mind` (~61 tok, small)
-- `GAPS.md` (~1381 tok, large) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~1578 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `let-ifexpr-seq_1.mind` (~23 tok, tiny)
 - `let-ifexpr-seq_2.mind` (~34 tok, tiny)
 - `let-ifexpr-seq_3.mind` (~23 tok, tiny)

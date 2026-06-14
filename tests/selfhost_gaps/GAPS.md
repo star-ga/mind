@@ -52,6 +52,17 @@ toward a fully general mic@3 driver.
 
 ## Progress: whole-fixture survey 29 -> 32 / 66 BYTE_EXACT (operator-edges fully closed; flip byte-identical throughout)
 
+### Integrity breakdown (66-fixture whole-module survey, HEAD fc8e582)
+- **32 BYTE_EXACT** (nfn == `--emit-mic3`).
+- **28 FAIL_CLOSED (safe)** — nfn emits *nothing* for an unsupported out-of-subset construct;
+  it NEVER emits wrong bytes. These are coverage gaps (call-arg/nested struct-lit hoisting,
+  field-read in non-let positions, value-ifexpr escaped-outer reuse, …), not correctness bugs.
+- **6 TRUE wrong-bytes miscompiles** — ALL of them `fallthrough-shadow_1..6` (one class). This is
+  the only integrity target. It is out-of-subset, so the whole-module FLIP stays byte-identical.
+
+So the driver is correct (byte-exact or safe-refuse) for 60/66; the single wrong-bytes class is
+fall-through-shadow, whose proper fix is the Pass-B merge-slot synthesis described below.
+
 ## Open — MISMATCH (deep cross-pass; out-of-subset; one focused class)
 1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, all 6 remaining). The merge is
    byte-exact but the trailing read of a name SHADOWED inside a fall-through if resolves to the
