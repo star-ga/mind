@@ -93,17 +93,6 @@ fn ir_load_rejects_invalid_utf8() {
 /// Regression: `tensor.relu` must survive the mic@1 text round-trip. The text
 /// is the canonical `trace_hash` source (RFC 0016) — a dropped relu would
 /// attest IR missing the activation. (Found by audit on the relu lowering work.)
-const RELU_PROGRAM: &str = r#"
-fn main() {
-    let a = tensor.rand(4, 8);
-    let r = tensor.relu(a);
-    return r;
-}
-"#;
-
-/// Regression: `tensor.relu` must survive the mic@1 text round-trip. The text
-/// is the canonical `trace_hash` source (RFC 0016) — a dropped relu would
-/// attest IR missing the activation. (Found by audit on the relu lowering work.)
 #[test]
 fn ir_save_load_round_trips_relu() {
     let opts = CompileOptions::default();

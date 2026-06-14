@@ -9,13 +9,13 @@
 //!
 //! Per-fn shape:
 //! - `stdin/stdout/stderr` — 1 __mind_alloc + 1 __mind_store_i64
-//!                           (single-field StructLit), 0 loads.
-//! - `file_fd`             — 1 __mind_load_i64 (FieldAccess on the
-//!                           `f: File` parameter), 0 alloc, 0 store.
-//! - `file_read`           — 1 __mind_load_i64 for `f.fd`, 1 call to
-//!                           `__mind_read`, 0 stores.
-//! - `file_write`          — 1 __mind_load_i64 for `f.fd`, 1 call to
-//!                           `__mind_write`, 0 stores.
+//!   (single-field StructLit), 0 loads.
+//! - `file_fd` — 1 __mind_load_i64 (FieldAccess on the
+//!   `f: File` parameter), 0 alloc, 0 store.
+//! - `file_read` — 1 __mind_load_i64 for `f.fd`, 1 call to
+//!   `__mind_read`, 0 stores.
+//! - `file_write` — 1 __mind_load_i64 for `f.fd`, 1 call to
+//!   `__mind_write`, 0 stores.
 //! - `print_bytes / eprint_bytes / read_stdin_bytes` — no struct
 //!   accesses, just 1 call to the i64 intrinsic.
 //!

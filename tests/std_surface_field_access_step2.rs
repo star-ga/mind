@@ -6,19 +6,19 @@
 //! aren't a plain `Ident` bound directly to a `StructLit`:
 //!
 //! - (1) **Chained access** — `a.b.c`. Receiver is itself a
-//!       `FieldAccess`. (Practically: requires Step-3-class nested
-//!       struct fields; today every field is i64-shaped so this case
-//!       can only fire when a future StructDef has a struct-typed
-//!       field. Out of Step-2 fast-path scope; we verify the
-//!       infrastructure is present.)
+//!   `FieldAccess`. (Practically: requires Step-3-class nested
+//!   struct fields; today every field is i64-shaped so this case
+//!   can only fire when a future StructDef has a struct-typed
+//!   field. Out of Step-2 fast-path scope; we verify the
+//!   infrastructure is present.)
 //! - (2) **Function-return receiver** — `foo().x`. Receiver is a
-//!       `Call` whose declared return type is a `StructDef`. The
-//!       `build_field_access_types` pre-pass collects fn-return
-//!       struct names and records them in the side-table.
+//!   `Call` whose declared return type is a `StructDef`. The
+//!   `build_field_access_types` pre-pass collects fn-return
+//!   struct names and records them in the side-table.
 //! - (3) **Struct-typed parameter** — `fn read(c: Cfg) { c.max }`.
-//!       Receiver is an `Ident` in fn-body scope whose binding came
-//!       from the fn's parameter list (not from a `StructLit`-bound
-//!       `Let`). The resolver seeds fn-body bindings from `Param.ty`.
+//!   Receiver is an `Ident` in fn-body scope whose binding came
+//!   from the fn's parameter list (not from a `StructLit`-bound
+//!   `Let`). The resolver seeds fn-body bindings from `Param.ty`.
 //!
 //! Each test asserts that the side-table makes the FieldAccess lower
 //! into a real `__mind_load_i64` rather than a placeholder, AND that
