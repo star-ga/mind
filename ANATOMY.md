@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,891,142
-**Generated:** 2026-06-14 05:07 UTC
+**Files:** 2836 | **Est. tokens:** ~6,892,274
+**Generated:** 2026-06-14 05:34 UTC
 
 ## Token Budget Guide
 
@@ -46,7 +46,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 15 | ~32,006 |
+| `examples/` | 15 | ~32,623 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -54,7 +54,7 @@
 | `examples/mindc_mind/` | 23 | ~55,532 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
-| `examples/zoo/` | 6 | ~12,885 |
+| `examples/zoo/` | 6 | ~13,400 |
 | `experiments/global-vs-local/` | 7 | ~6,492 |
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
@@ -758,12 +758,12 @@
 
 - `policy.mind` (~1221 tok, large) — policy.mind — v0.1 Execution Boundary Kernel
 - `README.md` (~2066 tok, huge) — MIND Examples
-- `remizov_benchmark.mind` (~6297 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `remizov_feynman.mind` (~2792 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `remizov_gpu.mind` (~2559 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `remizov_inverse.mind` (~2511 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `remizov_solver.mind` (~3699 tok, huge) — Copyright 2025-2026 STARGA Inc.
-- `remizov_verify.mind` (~3618 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `remizov_benchmark.mind` (~6400 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `remizov_feynman.mind` (~2894 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `remizov_gpu.mind` (~2662 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `remizov_inverse.mind` (~2614 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `remizov_solver.mind` (~3802 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `remizov_verify.mind` (~3721 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `tiny_edge_model.mind` (~1876 tok, huge) — Tiny Edge Model Example
 ### `examples/typecheck/`
 
@@ -774,12 +774,12 @@
 - `README.md` (~2612 tok, huge) — RFC 0005 Phase 6.3 — Self-Host Type-Checker Seed
 ### `examples/zoo/`
 
-- `conv_classifier.mind` (~2518 tok, huge) — CNN Classifier — MIND Model Zoo
-- `linear_regression.mind` (~1320 tok, large) — Linear Regression — MIND Model Zoo
-- `logistic_classifier.mind` (~1521 tok, huge) — Logistic Classifier — MIND Model Zoo
-- `mlp_mnist.mind` (~2368 tok, huge) — MLP MNIST Classifier — MIND Model Zoo
+- `conv_classifier.mind` (~2621 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `linear_regression.mind` (~1423 tok, large) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `logistic_classifier.mind` (~1624 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+- `mlp_mnist.mind` (~2471 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 - `README.md` (~1191 tok, large) — MIND Model Zoo
-- `transformer_block.mind` (~3967 tok, huge) — Transformer Block — MIND Model Zoo
+- `transformer_block.mind` (~4070 tok, huge) — ASPIRATIONAL DEMO — not yet buildable with the open mindc.
 ### `experiments/global-vs-local/`
 
 - `chern.py` (~1250 tok, large)

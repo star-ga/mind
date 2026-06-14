@@ -1,3 +1,9 @@
+// ASPIRATIONAL DEMO — not yet buildable with the open mindc.
+// Uses surface syntax pending in the strict build/lowering parser (roadmap Phase 10.6):
+// tuple-destructuring `let (a, b) = f()`, `as` casts, tensor indexing, `for i in 0..n`.
+// `mindc check` parses it (recovery parser); `mindc build` reports the exact unimplemented
+// construct + line until those land. Tracking: docs/roadmap.md Phase 10.6.
+
 // Transformer Block — MIND Model Zoo
 // Single-head self-attention + feed-forward network with layer normalization
 //
