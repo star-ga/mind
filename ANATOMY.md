@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,892,942
-**Generated:** 2026-06-14 11:52 UTC
+**Files:** 2836 | **Est. tokens:** ~6,893,061
+**Generated:** 2026-06-14 12:24 UTC
 
 ## Token Budget Guide
 
@@ -38,7 +38,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 27 | ~49,077 |
+| `docs/` | 27 | ~49,196 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -606,7 +606,7 @@
 - `RESULTS-mind-vs-rust-2026-06-09.md` (~2174 tok, huge) — MIND vs Rust — integer-GEMM, apples-to-apples (2026-06-09)
 ### `docs/`
 
-- `byte-store-migration.md` (~3238 tok, huge) — Byte-Store Migration — closing `#306`
+- `byte-store-migration.md` (~3357 tok, huge) — Byte-Store Migration — closing `#306`
 - `cli.md` (~627 tok, large) — MIND CLI Reference
 ### `docs/design/`
 
