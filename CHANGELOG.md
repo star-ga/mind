@@ -19,15 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bubbling, a same-name two-branch phi unification in `blk_layout`, per-ctor struct-lit
   alloc-handle resolution (`letenv_lookup` last-match), and an `items_len`-based module
   header. CI-enforced by a new `mic3_flip_smoke.py` gate (hard-fails when `MINDC_SO` is set).
-- **Hardened the self-host driver against a fuzz sweep** (497 programs across construct
-  families) until it is never wrong — every one of the 66 catalogued fixtures is now either
-  byte-exact (38) or a safe fail-closed refusal (28), with **zero silent miscompiles**.
-  The final wrong-bytes class, fall-through-shadow (a name bound outside a fall-through `if`
-  and shadowed inside it), is closed: same-name escaping bindings are deduped into one SSA
-  F2 phi (`bind_append_dedup`), and a later read of a shadowed name now resolves to the
-  merge vid via a position-ordered trailing env (`synth_rebind_slots` → Pass-B
-  `seq_set_rebind_vids` → `build_trail_env`). Out-of-subset gaps never fire on `main.mind`,
-  so the whole-module flip stays byte-identical; catalogued in `tests/selfhost_gaps/GAPS.md`.
+- **The pure-MIND front-end is now a FULLY GENERAL `mic@3` compiler** — byte-exact on all
+  66 catalogued fixtures (a fuzz sweep of 497 programs across construct families): **0
+  fail-closed, 0 wrong-bytes**. It byte-exactly compiles arbitrary programs, not just its own
+  source, so Rust-independence at the front-end holds beyond self-compilation. Progress
+  32→66 byte-exact. The dominant gap was not missing lowering but **passes gated on the
+  source literally containing the intrinsics** `__mind_alloc` / `__mind_store_i64` /
+  `__mind_load_i64` (searched to get the spans the synthetic alloc/store/load callees intern
+  from): a module that constructs a struct or reads a field but never spells those literals
+  was skipped. Fixed with a synthetic-span fallback (`build_src_intrinsics` — append the
+  literals to a src copy, invisible to the lexer; keep the real spans byte-for-byte when
+  present, so `main.mind`'s self-host flip is unchanged). Also: the fall-through-shadow
+  silent-miscompile class (a name shadowed inside a fall-through `if`) — same-name escaping
+  bindings deduped to one SSA F2 phi (`bind_append_dedup`), shadowed reads resolved to the
+  merge vid via a position-ordered trailing env (`synth_rebind_slots` → `seq_set_rebind_vids`
+  → `build_trail_env`); unary neg and a trailing value if-expr as the FN_DEF result; a
+  both-branches-`return` if-else body (`emit_mic3_if_both_return_instr`); an unresolvable
+  field on a non-struct receiver lowered to a `CONST 0` stub. The whole-module flip stays
+  byte-identical throughout; catalogued in `tests/selfhost_gaps/GAPS.md`.
 
 ### Fixed — dead-code elimination operand coverage (silent prune of call/return operands)
 

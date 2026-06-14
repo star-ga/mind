@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2836 | **Est. tokens:** ~6,892,618
-**Generated:** 2026-06-14 11:43 UTC
+**Files:** 2836 | **Est. tokens:** ~6,892,942
+**Generated:** 2026-06-14 11:52 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~26,275 |
+| `./` | 34 | ~26,298 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -428,7 +428,7 @@
 | `tests/mindcraft/lint/unused_import/` | 2 | ~99 |
 | `tests/mindfuzz_cross_substrate/staged/` | 15 | ~2,832 |
 | `tests/runtime/` | 2 | ~135 |
-| `tests/selfhost_gaps/` | 67 | ~4,576 |
+| `tests/selfhost_gaps/` | 67 | ~4,877 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
 | `tools/` | 3 | ~3,423 |
@@ -475,7 +475,7 @@
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3487 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3510 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -4165,7 +4165,7 @@
 - `field-read_3.mind` (~27 tok, tiny)
 - `field-read_4.mind` (~29 tok, tiny)
 - `field-read_5.mind` (~61 tok, small)
-- `GAPS.md` (~1704 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
+- `GAPS.md` (~2005 tok, huge) — Self-host nfn driver — gap inventory (fuzz-discovered)
 - `let-ifexpr-seq_1.mind` (~23 tok, tiny)
 - `let-ifexpr-seq_2.mind` (~34 tok, tiny)
 - `let-ifexpr-seq_3.mind` (~23 tok, tiny)
