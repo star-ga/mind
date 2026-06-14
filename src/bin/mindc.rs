@@ -1178,15 +1178,15 @@ fn print_ops(command: &Option<Command>) {
 fn print_version() {
     println!("mind {}", env!("CARGO_PKG_VERSION"));
 
+    // Advertise ONLY the components actually compiled into this binary — a build
+    // without the `autodiff` / `mlir-lowering` features must not claim them, since
+    // `--autodiff` / `--emit-mlir` feature-error there (release-readiness: no false
+    // capability advertisement to installed users).
+    let mut components = vec!["core-ir=1.0"];
+    #[cfg(feature = "autodiff")]
+    components.push("core-autodiff=1.0");
     #[cfg(feature = "mlir-lowering")]
-    let components = {
-        let mut components = ["core-ir=1.0", "core-autodiff=1.0"].to_vec();
-        components.push("mlir-lowering=0.1");
-        components
-    };
-
-    #[cfg(not(feature = "mlir-lowering"))]
-    let components = ["core-ir=1.0", "core-autodiff=1.0"];
+    components.push("mlir-lowering=0.1");
 
     println!("{}", components.join("  "));
 }
