@@ -23,16 +23,16 @@
 //!      `EmitState.buf` string.
 //!
 //! Each fixture is classified as one of:
-//!   * `MATCH`            — byte-identical (Rust and pure-MIND agree).
-//!   * `DIVERGE`          — both produced output but they differ (real bug).
+//!   * `MATCH` — byte-identical (Rust and pure-MIND agree).
+//!   * `DIVERGE` — both produced output but they differ (real bug).
 //!   * `MIND_UNSUPPORTED` — fixture uses language features beyond the
-//!                          pure-MIND self-host subset (extern "C" blocks,
-//!                          `import`, `module NAME {}`, `enum`, bare
-//!                          top-level expressions without any `fn`).
-//!                          This is the expected "not yet ported" set.
-//!   * `RUST_ONLY`        — only the Rust path succeeds (Rust exit != 0
-//!                          means the fixture itself is invalid for some
-//!                          language feature the Rust path also lacks).
+//!     pure-MIND self-host subset (extern "C" blocks,
+//!     `import`, `module NAME {}`, `enum`, bare
+//!     top-level expressions without any `fn`).
+//!     This is the expected "not yet ported" set.
+//!   * `RUST_ONLY` — only the Rust path succeeds (Rust exit != 0
+//!     means the fixture itself is invalid for some
+//!     language feature the Rust path also lacks).
 //!
 //! Gate: the test **passes iff DIVERGE == 0**.  MIND_UNSUPPORTED is
 //! expected and does not fail the test.  RUST_ONLY means the Rust path
@@ -268,14 +268,10 @@ fn call_on_large_stack(lib: &Library, src_bytes: &[u8]) -> Option<Vec<u8>> {
     // Keep the src box alive past the thread join.
     drop(src_bytes_box);
 
-    match result {
-        Ok(v) => v,
-        Err(_) => {
-            // Thread panicked (e.g. stack-overflow caught by the OS, pure-MIND
-            // compiler hit an internal assertion).  Treat as unsupported.
-            None
-        }
-    }
+    // A panicked worker thread (e.g. stack-overflow caught by the OS, or the
+    // pure-MIND compiler hitting an internal assertion) is treated as
+    // unsupported — `Err(_)` collapses to the `None` default.
+    result.unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------

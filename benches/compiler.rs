@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
@@ -157,7 +157,7 @@ fn e2e_available() -> Option<&'static PathBuf> {
 
 /// Compile one source to a fresh `.so` via `mindc --emit-shared`, end to end.
 /// Returns the exit status' success flag so the timed loop can assert it.
-fn emit_shared_once(mindc: &PathBuf, src_path: &PathBuf, so_path: &PathBuf) -> bool {
+fn emit_shared_once(mindc: &Path, src_path: &Path, so_path: &Path) -> bool {
     Command::new(mindc)
         .args([
             src_path.to_str().unwrap(),

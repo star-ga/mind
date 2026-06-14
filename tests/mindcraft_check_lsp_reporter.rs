@@ -16,7 +16,7 @@
 //! - stdout is valid JSON (a JSON array).
 //! - Each element matches the LSP Diagnostic shape:
 //!   { uri, range: { start: { line, character }, end: { line, character } },
-//!     severity, message, source, code }
+//!   severity, message, source, code }
 //! - `uri` begins with "file://".
 //! - `range.start.line` and `range.start.character` are non-negative integers.
 //! - `severity` is 1 (Error), 2 (Warning), or 3 (Information).
