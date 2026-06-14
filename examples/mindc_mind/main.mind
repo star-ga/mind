@@ -10423,7 +10423,10 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
     let sl_ref: i64 = ast_new_leaf(ast_ident(), alo, ahi);
     let kind: i64 = ast_kind(orig_stmt);
     let final: i64 = if kind == ast_let() {
-        ast_new_let(0, 0, ast_child0(orig_stmt), 0, sl_ref)
+        // Preserve the original let's TYPE annotation so a later field-read
+        // prefold (`s.a` where `let s: S = T{..}`) can resolve the receiver's
+        // struct type. The init becomes the alloc handle ref; type is unchanged.
+        ast_new_let(0, 0, ast_child0(orig_stmt), ast_child1(orig_stmt), sl_ref)
     } else {
         if kind == ast_return() {
             ast_new_return(0, 0, sl_ref)

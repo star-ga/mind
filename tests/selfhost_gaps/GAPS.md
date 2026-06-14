@@ -43,7 +43,14 @@ toward a fully general mic@3 driver.
   value escapes (union order [lets, init-escapes, value-escapes]); the value real-append shifts
   past them. blk_layout/blk_fill_own then re-merge them uniformly. (commit: block_init_escape)
 
-## Progress: fuzz mismatch set 26 -> 6 (77% cleared byte-exact, flip preserved throughout)
+## Fixed (cont.)
+- **struct-lit desugar preserves the let TYPE annotation** (`slit_emit_ctor`). The desugared
+  `let __sl = __mind_alloc(..)` now carries the original let's `ast_child1` type instead of `0`,
+  so a later field-read prefold (`s.a` where `let s: S = T{..}`) can resolve the receiver's
+  struct type. Net +3 gap fixtures byte-exact (whole-fixture survey 29 -> 32 BYTE_EXACT of 66),
+  zero regressions; the whole-module FLIP stays byte-identical (227264 B). (commit: struct-lit type-preserve)
+
+## Progress: whole-fixture survey 29 -> 32 / 66 BYTE_EXACT (operator-edges fully closed; flip byte-identical throughout)
 
 ## Open — MISMATCH (deep cross-pass; out-of-subset; one focused class)
 1. **fall-through-shadow trailing-read** (`fallthrough-shadow_1..6`, all 6 remaining). The merge is
