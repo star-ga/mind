@@ -7089,10 +7089,20 @@ pub fn emit_if_let_seq_then_instr_lv(s: EmitState, if_node: i64, buf: i64, param
     // reuses that vid on the else side, no placeholder). Previously the bubbled bindings were
     // dropped, so an enclosing block lost the inner if-segment's escaping names.
     let t4_nb: i64 = __mind_load_i64(t4_acc_cell);
-    let nb: i64 = nlets + t4_nb;
-    let cacc: i64 = __mind_alloc((nb + 1) * 24);
-    let _c1: i64 = acc_copy_lvbuf(cacc, lvbuf, nlv0, nlets, 0);
-    let _c2: i64 = acc_copy_acc(cacc, nlets, t4_acc, t4_nb, 0);
+    let raw_nb: i64 = nlets + t4_nb;
+    let raw: i64 = __mind_alloc((raw_nb + 1) * 24);
+    let _c1: i64 = acc_copy_lvbuf(raw, lvbuf, nlv0, nlets, 0);
+    let _c2: i64 = acc_copy_acc(raw, nlets, t4_acc, t4_nb, 0);
+    // Dedup same-name escaping bindings (a leading let shadowed by a same-name bubbled
+    // if-segment binding, e.g. `let x=..; if c { let x=.. }`) into ONE merge per name:
+    // first-seen position, LAST value wins (SSA F2 — the name's value after the block is
+    // its last write). Additive: a block with no duplicate escaping names re-appends every
+    // entry unchanged, so the merge tail stays byte-identical.
+    let cacc: i64 = __mind_alloc((raw_nb + 1) * 24);
+    let cacc_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(cacc_cell, 0);
+    let _cd: i64 = bind_append_dedup(cacc, cacc_cell, buf, raw, raw_nb, 0);
+    let nb: i64 = __mind_load_i64(cacc_cell);
     let else_synth: i64 = last_dst + 1;
     let lay: i64 = __mind_alloc((nb + 1) * 48);
     let dst: i64 = caseB_layout(lay, cacc, nb, buf, lvbuf, nlv0, 0, else_synth + 1);
