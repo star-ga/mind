@@ -55,11 +55,18 @@ toward a fully general mic@3 driver.
    vidbuf is set to the merge vid in Pass B, and bind it in `env` before the trailing flatten
    (or fail-closed on shadow-read until supported). The single deepest remaining class.
 
+## Fixed (cont.)
+- **unary `-x`** (`operator-edges_4/5/6`). `-x` desugars to `0 - x` in the general
+  tree flattener: `flatten_ast`/`count_nonparam_nodes` gained an `ast_neg()` arm that
+  flattens the operand, then a synthetic const-0 leaf, then a `sub` binop LAST
+  (post-order CONST then BINOP, byte-exact vs --emit-mic3). Covers top-level, call-arg,
+  and value-if-expr-branch positions (the lv emitter recurses through the same arm).
+  Additive — main.mind has no unary neg, flip byte-identical. (commit: unary neg desugar)
+
 ## Open — FAIL_CLOSED (safe refusal; in-subset coverage gaps)
 - struct-lit in non-let-RHS positions: call argument, nested ctor field, field-read of a
   let-bound ctor (`struct-lit_2/3/4`). Desugar only handles let-RHS / direct-return.
 - field-read `recv.field` as a value-if-expr branch / general non-let positions (`field-read_*`).
 - escaped-outer-binding reuse inside value-if-expr branches (`value-ifexpr_5/6`).
-- unary `-x` at top level.
 
 These FAIL_CLOSED safely (empty output, never wrong bytes). Repros preserved alongside this file.
