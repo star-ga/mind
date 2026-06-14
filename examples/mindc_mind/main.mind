@@ -11103,8 +11103,10 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
         // (h) GENERAL statement sequence: >1 stmts mixing `let NAME = INIT` and
         // `if COND { return E; }` in arbitrary order, then a trailing value expr.
         // Strict superset of (f)+(g); reached only when those narrow shapes miss.
-        // Byte-exact vs --emit-mic3 (additive; canary untouched).
-        if stmts_len >= 2 {
+        // Byte-exact vs --emit-mic3 (additive; canary untouched). stmts_len >= 1 so a
+        // single trailing `return E` / value if-expr body reaches the seq path too (the
+        // narrow stmts_len==1 cases above already return before here when they match).
+        if stmts_len >= 1 {
             let hnodes: i64 = __mind_alloc(4096 * 32);
             let hcursor: i64 = __mind_alloc(8);
             let hvidbuf: i64 = __mind_alloc(4096 * 8);
