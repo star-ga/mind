@@ -10194,7 +10194,9 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
         }
         let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(bare), ast_span_hi(bare), ast_child1(node), ast_child2(node));
         if fidx < 0 {
-            return node;
+            // Unresolvable field (e.g. `.a` on a non-struct i64 receiver): the oracle lowers
+            // it to a CONST 0 placeholder, not a load. Match that with a synthetic int-lit 0.
+            return mk_syn_intlit(0);
         }
         return field_build_load_call(bare, fidx, load_lo, load_hi);
     }
@@ -10515,16 +10517,27 @@ pub fn nfn_fill_store_name(dst: i64, j: i64) -> i64 {
     nfn_fill_store_name(dst, j + 1)
 }
 
-// Build a copy of `src[0..src_len)` with the intrinsic literals `__mind_alloc` (12B) and
-// `__mind_store_i64` (16B) appended at offsets [src_len, src_len+12) and [src_len+12,
-// src_len+28). The lexer scans only [0, src_len), so the tail is invisible to parsing; the
-// struct-lit desugar/annotation interns its synthetic alloc/store names from those appended
-// spans. Only built when the source itself lacks the literals (so main.mind never uses it).
+// Write the 15-byte `__mind_load_i64` literal at dst[0..15) using load_i64_name_byte.
+pub fn nfn_fill_load_name(dst: i64, j: i64) -> i64 {
+    if j >= 15 {
+        return 15;
+    }
+    __mind_store_i8(dst + j, load_i64_name_byte(j));
+    nfn_fill_load_name(dst, j + 1)
+}
+
+// Build a copy of `src[0..src_len)` with the intrinsic literals appended: `__mind_alloc`
+// (12B) at [src_len, src_len+12), `__mind_store_i64` (16B) at [+12, +28), and
+// `__mind_load_i64` (15B) at [+28, +43). The lexer scans only [0, src_len), so the tail is
+// invisible to parsing; the struct-lit desugar/annotation and the field-read prefold intern
+// their synthetic alloc/store/load names from those appended spans. Only built when the
+// source itself lacks the literals (so main.mind never uses it).
 pub fn build_src_intrinsics(src_addr: i64, src_len: i64) -> i64 {
-    let buf: i64 = __mind_alloc(src_len + 32);
+    let buf: i64 = __mind_alloc(src_len + 48);
     let _c: i64 = nfn_copy_src_bytes(buf, src_addr, src_len, 0);
     let _a: i64 = nfn_fill_alloc_name(buf + src_len, 0);
     let _s: i64 = nfn_fill_store_name(buf + src_len + 12, 0);
+    let _l: i64 = nfn_fill_load_name(buf + src_len + 28, 0);
     buf
 }
 
@@ -11404,7 +11417,15 @@ pub fn selftest_mic3_module_nfn(src_addr: i64, src_len: i64, strbuf: i64, offs: 
     // strtab pass. Order is load-bearing: the oracle interns "__mind_load_i64" at
     // the field-read's first-seen position, so the strtab must walk the rewritten
     // calls (not ast_field) to match the oracle's first-seen string order.
-    let _pf: i64 = field_prefold_module(src_use, src_len, items_addr, items_len, 0, srt);
+    // field_prefold's guard searches for `__mind_load_i64`; when it was appended to src_use,
+    // extend the search length past src_len so the guard finds it (an unresolvable field-read
+    // then lowers to a CONST 0 stub, a resolvable one to a load — both matching the oracle).
+    let prefold_len: i64 = if have_spans == 1 {
+        src_len
+    } else {
+        src_len + 43
+    };
+    let _pf: i64 = field_prefold_module(src_use, prefold_len, items_addr, items_len, 0, srt);
     let _an: i64 = slit_annotate_module(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
     __mind_store_i64(ccell, 0);
     __mind_store_i64(offs + 0, 0);
