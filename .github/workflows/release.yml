@@ -76,13 +76,20 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
 
+      # Ship a REAL compiler, not a check/parse-only binary: enable the MLIR
+      # codegen + autodiff + bundled-stdlib features. These are pure-Rust additions
+      # (the codegen emits MLIR text and shells out to mlir-opt/mlir-translate/clang
+      # at RUNTIME), so no extra build-time toolchain is needed on the release
+      # runners. `--emit-mlir`/`--emit-ir`/`check` work standalone; `--emit-shared`/
+      # `--emit-obj` require the LLVM/MLIR tools on the user's PATH (documented in
+      # docs/install.md) and fail with a clear "tool not found" error if absent.
       - name: Build (native)
         if: "!matrix.cross"
-        run: cargo build --release --target ${{ matrix.target }} --bin mindc
+        run: cargo build --release --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff"
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} --bin mindc
+        run: cross build --release --target ${{ matrix.target }} --bin mindc --features "mlir-lowering mlir-build cross-module-imports autodiff"
 
       - name: Package (Unix)
         if: runner.os != 'Windows'

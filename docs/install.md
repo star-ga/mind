@@ -20,7 +20,7 @@ The script:
 To pin a specific version:
 
 ```sh
-MINDC_VERSION=v0.7.1 curl -sSL https://mindlang.dev/install.sh | sh
+MINDC_VERSION=v0.8.1 curl -sSL https://mindlang.dev/install.sh | sh
 ```
 
 To preview what the script would do without writing any files:
@@ -28,6 +28,22 @@ To preview what the script would do without writing any files:
 ```sh
 curl -sSL https://mindlang.dev/install.sh | sh -s -- --dry-run
 ```
+
+## Native codegen toolchain (for `--emit-shared` / `--emit-obj`)
+
+The released `mindc` parses, type-checks, and emits IR and MLIR **standalone** —
+`mindc check`, `--emit-ir`, and `--emit-mlir` need nothing beyond the binary.
+
+Producing a **native object or shared library** (`--emit-obj`, `--emit-shared`,
+`mindc build`) lowers the emitted MLIR through the LLVM/MLIR tools, which must be
+on your `PATH`:
+
+- `mlir-opt`, `mlir-translate` (LLVM/MLIR)
+- `clang`
+
+If they are absent, codegen fails with a clear `tool not found` error rather than
+silently degrading. On Debian/Ubuntu: `apt install mlir-<ver>-tools clang`; on
+macOS: `brew install llvm` (and add its `bin` to `PATH`).
 
 Note: `https://mindlang.dev/install.sh` is a redirect to the canonical
 `scripts/install.sh` in this repository. The redirect is configured separately
