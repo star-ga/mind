@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-14 — Fully general self-host front-end (66/66 byte-exact, 0 fail-closed, 0 wrong-bytes) + `mic@3` self-host fixed-point + RFC 0012 tensor-native syntax; release gate `#306` cleared (std byte-store migration + keystone re-bless)
+
 ### Added — self-host fixed-point at the canonical `mic@3` binary IR (byte-identical)
 
 - **The pure-MIND bootstrap compiler now reproduces the canonical `mic@3` binary IR
