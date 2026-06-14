@@ -10618,18 +10618,32 @@ pub fn slit_stmt_snode(stmt: i64) -> i64 {
 // (resolvable type, all fields present) -> nfields + 2 (alloc-let + stores + final), else 1.
 pub fn slit_stmt_outn(stmt: i64, src: i64, srt: i64) -> i64 {
     let snode: i64 = slit_stmt_snode(stmt);
-    if snode == 0 {
-        return 1;
+    if snode != 0 {
+        let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
+        if k < 0 {
+            return 1;
+        }
+        let nfields: i64 = srt_field_count(srt, k);
+        if ast_aux(snode) != nfields {
+            return 1;
+        }
+        return 2 * nfields + 2;
     }
-    let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
-    if k < 0 {
-        return 1;
+    // HOIST: a struct-lit passed as a call-arg expands to [alloc + stores] (2*nf+1) plus
+    // the using statement (1), with the struct-lit replaced by an __mind_alloc ident.
+    let hnode: i64 = slit_stmt_hoist_snode(stmt);
+    if hnode != 0 {
+        let hk: i64 = srt_find_by_name(srt, src, ast_child0(hnode), ast_child2(hnode), 0);
+        if hk < 0 {
+            return 1;
+        }
+        let hnf: i64 = srt_field_count(srt, hk);
+        if ast_aux(hnode) != hnf {
+            return 1;
+        }
+        return 2 * hnf + 2;
     }
-    let nfields: i64 = srt_field_count(srt, k);
-    if ast_aux(snode) != nfields {
-        return 1;
-    }
-    2 * nfields + 2
+    1
 }
 
 // Sum of expanded lengths over a statement list (used to size the new array).
@@ -10691,6 +10705,83 @@ pub fn slit_emit_ctor(new_stmts: i64, out: i64, orig_stmt: i64, snode: i64, src:
     1
 }
 
+// The expression that carries a statement's value (let init / return value / trailing).
+pub fn slit_hoist_expr_of(stmt: i64) -> i64 {
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        return ast_child2(stmt);
+    }
+    if k == ast_return() {
+        return ast_child0(stmt);
+    }
+    stmt
+}
+
+// Find the FIRST struct-lit among a call's args (non-mutating). Returns the node or 0.
+pub fn slit_find_slit_arg(args: i64, nargs: i64, i: i64) -> i64 {
+    if i >= nargs {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args + i * 8);
+    if ast_kind(arg) == ast_struct_lit() {
+        return arg;
+    }
+    slit_find_slit_arg(args, nargs, i + 1)
+}
+
+// Detect (non-mutating) a HOISTABLE nested struct-lit: a `T{..}` passed as a direct call
+// argument in the statement's value expr (`g(S{..})`, `let x = mk(S{..})`, `return f(S{..})`).
+// Returns the struct-lit node or 0. (A struct-lit that is itself the value expr is the DIRECT
+// case handled by slit_stmt_snode.)
+pub fn slit_stmt_hoist_snode(stmt: i64) -> i64 {
+    let expr: i64 = slit_hoist_expr_of(stmt);
+    if ast_kind(expr) != ast_call() {
+        return 0;
+    }
+    slit_find_slit_arg(ast_child1(expr), ast_aux(expr), 0)
+}
+
+// Replace the FIRST struct-lit call-arg with a fresh `__mind_alloc` ident leaf (so the call
+// resolves the hoisted alloc handle via letenv_lookup last-match); return the struct-lit.
+pub fn slit_hoist_replace_arg(args: i64, nargs: i64, i: i64, alo: i64, ahi: i64) -> i64 {
+    if i >= nargs {
+        return 0;
+    }
+    let arg: i64 = __mind_load_i64(args + i * 8);
+    if ast_kind(arg) == ast_struct_lit() {
+        __mind_store_i64(args + i * 8, ast_new_leaf(ast_ident(), alo, ahi));
+        return arg;
+    }
+    slit_hoist_replace_arg(args, nargs, i + 1, alo, ahi)
+}
+
+// Mutate: hoist the statement's nested struct-lit call-arg, returning the struct-lit node.
+pub fn slit_hoist_replace(stmt: i64, alo: i64, ahi: i64) -> i64 {
+    let expr: i64 = slit_hoist_expr_of(stmt);
+    if ast_kind(expr) != ast_call() {
+        return 0;
+    }
+    slit_hoist_replace_arg(ast_child1(expr), ast_aux(expr), 0, alo, ahi)
+}
+
+// Emit ONLY the alloc-let + per-field value/store-lets for a hoisted struct-lit (NO final
+// statement — the using statement, with the struct-lit replaced by an __mind_alloc ident,
+// follows). Returns the count emitted (2*nfields + 1). The __mind_alloc-named handle is
+// resolved by the following statement via letenv_lookup last-match, byte-exact vs the
+// oracle's anonymous alloc/store SSA values.
+pub fn slit_emit_ctor_hoist(new_stmts: i64, out: i64, snode: i64, src: i64, srt: i64, k: i64, nfields: i64, alo: i64, ahi: i64, slo: i64, shi: i64) -> i64 {
+    let size: i64 = ast_new_binop(0, 0, mk_syn_intlit(8), mk_syn_intlit(nfields), op_mul());
+    let acallee: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let aargs: i64 = __mind_alloc(8);
+    __mind_store_i64(aargs + 0, size);
+    let acall: i64 = ast_new_call(0, 0, acallee, aargs, 1);
+    let aname: i64 = ast_new_leaf(ast_ident(), alo, ahi);
+    let alet: i64 = ast_new_let(0, 0, aname, 0, acall);
+    __mind_store_i64(new_stmts + out * 8, alet);
+    let _f: i64 = slit_fill_stores_at(new_stmts, out + 1, ast_child1(snode), ast_aux(snode), src, srt, k, nfields, alo, ahi, slo, shi, 0);
+    2 * nfields + 1
+}
+
 // Fill the new (expanded) statement array, copying non-struct-lit statements and
 // expanding struct-lit statements via slit_emit_ctor. `out_cell` threads the running
 // output index.
@@ -10706,10 +10797,21 @@ pub fn slit_seq_fill(new_stmts: i64, out_cell: i64, stmts_addr: i64, stmts_len: 
         __mind_store_i64(out_cell, out + 1)
     } else {
         let snode: i64 = slit_stmt_snode(stmt);
-        let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
-        let nfields: i64 = srt_field_count(srt, k);
-        let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
-        __mind_store_i64(out_cell, out + 2 * nfields + 2)
+        if snode != 0 {
+            let k: i64 = srt_find_by_name(srt, src, ast_child0(snode), ast_child2(snode), 0);
+            let nfields: i64 = srt_field_count(srt, k);
+            let _e: i64 = slit_emit_ctor(new_stmts, out, stmt, snode, src, srt, k, nfields, alo, ahi, slo, shi);
+            __mind_store_i64(out_cell, out + 2 * nfields + 2)
+        } else {
+            // HOIST: mutate the statement (struct-lit arg -> __mind_alloc ident), emit the
+            // alloc+stores, then the rewritten statement.
+            let hnode: i64 = slit_hoist_replace(stmt, alo, ahi);
+            let hk: i64 = srt_find_by_name(srt, src, ast_child0(hnode), ast_child2(hnode), 0);
+            let hnf: i64 = srt_field_count(srt, hk);
+            let hc: i64 = slit_emit_ctor_hoist(new_stmts, out, hnode, src, srt, hk, hnf, alo, ahi, slo, shi);
+            __mind_store_i64(new_stmts + (out + hc) * 8, stmt);
+            __mind_store_i64(out_cell, out + hc + 1)
+        }
     }
     slit_seq_fill(new_stmts, out_cell, stmts_addr, stmts_len, src, srt, alo, ahi, slo, shi, i + 1)
 }
