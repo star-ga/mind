@@ -1,0 +1,54 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The first NON-INTEGER cross-substrate canary: a deterministic scalar IEEE-754
+# f64 elementwise chain, proving MIND's byte-identity wedge extends beyond the
+# Q16.16 / pure-integer tiers to strict scalar float `+ − × ÷`. The kernel
+# `scalar_f64_chain(a, b, c, d)` computes `a + b - c * d / a`, lowered to
+# `arith.addf / arith.subf / arith.mulf / arith.divf` on f64 — NO FMA fusion
+# (`c * d` stays a separate mulf, never contracted into the surrounding add/sub),
+# NO fastmath / reassoc / contract flags. On avx2 it emits the strict scalar
+# instructions vaddsd / vmulsd / vdivsd / vsubsd; on neon the aarch64 scalar
+# equivalents.
+#
+# Why avx2 == neon here, UNLIKE a float reduction: scalar IEEE `+ − × ÷` are
+# individually round-to-nearest-even with a single, fully-specified result —
+# there is no accumulation order, no contraction and no reassociation that could
+# differ across substrates. Source precedence pins one fixed op order, so x86 and
+# ARM evaluate the identical IEEE operations on the identical bits and produce
+# the identical result (RFC 0015 §3.1). Scope is scalar elementwise `+ − × ÷`
+# ONLY — float REDUCTIONS are order-sensitive and are deliberately out of scope.
+
+version = "1"
+name = "scalar-float-f64"
+description = "Deterministic scalar IEEE-754 f64 chain a + b - c*d/a (RFC 0012 strict-IEEE scalar codegen); round-to-nearest-even, no FMA, no fastmath — the first non-integer cross-substrate byte-identity primitive."
+weight = 1.0
+
+# Substrates this workload is defined for. Per RFC 0015 §3.1 every listed
+# substrate MUST share the same content hash — that shared hash IS the
+# cross-substrate bit-identity claim, made inspectable. Scalar IEEE float is
+# round-to-nearest-even with no reordering, so the result is architecture-
+# independent by construction.
+substrates = ["avx2", "neon"]
+
+# Deterministic input spec. Unlike the LCG-seeded vector workloads, the scalar
+# canary takes four fixed exact-representable f64 constants supplied directly by
+# the harness (no array, no reduction). They are chosen so the division
+# c * d / a = 0.5 * 3.125 / 1.5 = 1.5625 / 1.5 is a NON-TERMINATING binary
+# fraction, so the canary proves the ROUNDING of `÷` is byte-identical across
+# substrates, not merely that exact arithmetic agrees.
+[input]
+generator = "fixed"        # four literal f64 args, supplied by the harness
+a = 1.5                    # exact-representable f64
+b = 2.25                   # exact-representable f64
+c = 0.5                    # exact-representable f64
+d = 3.125                  # exact-representable f64
+dtype = "f64"
+
+# Kernel under test (mindc native scalar-float lowering, no C shim).
+# Result for the inputs above: 2.708333333333333 (IEEE bits 0x4005aaaaaaaaaaaa).
+[kernel]
+symbol = "scalar_f64_chain"
+op_order = "a + b - c * d / a"   # fixed source precedence; no contraction
+returns = "f64"                  # the IEEE result
+output_encoding = "f64_bits_i64_le"  # f64::to_bits() as i64, 8 LE bytes, then sha256
