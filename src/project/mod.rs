@@ -822,7 +822,11 @@ fn build_cdylib_from_entry(
         if rendered.trim().is_empty() {
             anyhow!("cdylib compile failed for {}", entry_path.display())
         } else {
-            anyhow!("cdylib compile failed for {}:\n{}", entry_path.display(), rendered)
+            anyhow!(
+                "cdylib compile failed for {}:\n{}",
+                entry_path.display(),
+                rendered
+            )
         }
     })?;
 
@@ -937,8 +941,8 @@ fn build_cdylib_from_entry(
                     .iter()
                     .find(|(n, _)| *n == modname)
                 {
-                    let prod = compile_source_with_name(src, Some(modname), &sub_opts)
-                        .map_err(|e| {
+                    let prod =
+                        compile_source_with_name(src, Some(modname), &sub_opts).map_err(|e| {
                             // Render the real diagnostics (file:line:col + message) instead of
                             // the opaque CompileError Display, matching the cdylib build path.
                             let diags = e.into_diagnostics(Some(modname));
