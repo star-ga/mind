@@ -11695,6 +11695,30 @@ pub fn flatten_ast(node: i64, buf: i64, params_addr: i64, n_params: i64, nodes: 
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_neg() {
+        // Unary `-x` desugars to `0 - x` (CONST 0, then `sub`) — exactly how the
+        // Rust front-end lowers it (verified vs --emit-mic3: CONST %k=0 then
+        // BINOP %k+1 = %k sub %operand). Post-order: flatten the operand first, then
+        // a synthetic const-0 leaf, then the `sub` binop LAST. Additive — main.mind
+        // has no unary neg, so the flip stays byte-identical.
+        let oslot: i64 = flatten_ast(ast_child0(node), buf, params_addr, n_params, nodes, cursor);
+        if oslot < 0 {
+            return 0 - 1;
+        }
+        let zslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + zslot * 32 + 0, 2);
+        __mind_store_i64(nodes + zslot * 32 + 8, 0);
+        __mind_store_i64(nodes + zslot * 32 + 16, 0);
+        __mind_store_i64(nodes + zslot * 32 + 24, 0);
+        __mind_store_i64(cursor, zslot + 1);
+        let slot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + slot * 32 + 0, 1);
+        __mind_store_i64(nodes + slot * 32 + 8, binop_to_byte(op_sub()));
+        __mind_store_i64(nodes + slot * 32 + 16, zslot);
+        __mind_store_i64(nodes + slot * 32 + 24, oslot);
+        __mind_store_i64(cursor, slot + 1);
+        return slot;
+    }
     if k == ast_struct_lit() {
         // PARSE-ONLY frontier: struct-literal CONSTRUCTION is parsed but not yet
         // lowered. Fail closed (no bytes) — the desugar/emit half lands later.
@@ -12052,6 +12076,14 @@ pub fn count_nonparam_nodes(node: i64, buf: i64, params_addr: i64, n_params: i64
             return 0 - 1;
         }
         return 1 + a;
+    }
+    if k == ast_neg() {
+        // `-x` -> CONST 0 (1 instr) + `sub` binop (1 instr) + the operand's own instrs.
+        let o: i64 = count_nonparam_nodes(ast_child0(node), buf, params_addr, n_params);
+        if o < 0 {
+            return 0 - 1;
+        }
+        return 2 + o;
     }
     0 - 1
 }
