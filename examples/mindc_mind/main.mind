@@ -12733,6 +12733,46 @@ pub fn flatten_expr_env(node: i64, src: i64, params_addr: i64, n_params: i64, no
         __mind_store_i64(cursor, slot + 1);
         return slot;
     }
+    if k == ast_neg() {
+        let neg_operand: i64 = ast_child0(node);
+        // `-<int literal>` constant-folds to a single negative CONST (the oracle folds it;
+        // a `0 - 10` desugar would over-emit). Only a non-literal `-x` desugars to `0 - x`.
+        if ast_kind(neg_operand) == ast_int_lit() {
+            let nlit: i64 = if ast_child1(neg_operand) == 1 {
+                ast_child0(neg_operand)
+            } else {
+                parse_int_span(src, ast_span_lo(neg_operand), ast_span_hi(neg_operand), 0)
+            };
+            let cslot: i64 = __mind_load_i64(cursor);
+            __mind_store_i64(nodes + cslot * 32 + 0, 2);
+            __mind_store_i64(nodes + cslot * 32 + 8, 0 - nlit);
+            __mind_store_i64(nodes + cslot * 32 + 16, 0);
+            __mind_store_i64(nodes + cslot * 32 + 24, 0);
+            __mind_store_i64(cursor, cslot + 1);
+            return cslot;
+        }
+        // `-x` -> `0 - x`: operand first, then a synthetic const-0 leaf, then a `sub` binop
+        // (op byte 1) LAST with lhs=const0, rhs=operand. Mirrors flatten_ast's ast_neg arm so
+        // a seq-let init `let u = -p` lowers byte-exactly. Additive (no unary neg in main.mind's
+        // seq positions).
+        let oslot: i64 = flatten_expr_env(neg_operand, src, params_addr, n_params, nodes, cursor, env, nlets);
+        if oslot < 0 {
+            return 0 - 1;
+        }
+        let zslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + zslot * 32 + 0, 2);
+        __mind_store_i64(nodes + zslot * 32 + 8, 0);
+        __mind_store_i64(nodes + zslot * 32 + 16, 0);
+        __mind_store_i64(nodes + zslot * 32 + 24, 0);
+        __mind_store_i64(cursor, zslot + 1);
+        let nslot: i64 = __mind_load_i64(cursor);
+        __mind_store_i64(nodes + nslot * 32 + 0, 1);
+        __mind_store_i64(nodes + nslot * 32 + 8, 1);
+        __mind_store_i64(nodes + nslot * 32 + 16, zslot);
+        __mind_store_i64(nodes + nslot * 32 + 24, oslot);
+        __mind_store_i64(cursor, nslot + 1);
+        return nslot;
+    }
     if k == ast_binop() {
         let lslot: i64 = flatten_expr_env(ast_child0(node), src, params_addr, n_params, nodes, cursor, env, nlets);
         if lslot < 0 {
