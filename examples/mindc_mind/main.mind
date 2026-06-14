@@ -10171,6 +10171,14 @@ pub fn field_build_load_call(recv_node: i64, fidx: i64, load_lo: i64, load_hi: i
 // ast_field with an ast_ident receiver that resolves -> the load call; otherwise
 // the node is returned unchanged (fail-closed). Recurses through paren / binop /
 // neg / not / call args, storing rewritten children back into their slots.
+// Unwrap nested parentheses around an expression, returning the bare inner node.
+pub fn strip_parens(node: i64) -> i64 {
+    if ast_kind(node) == ast_paren() {
+        return strip_parens(ast_child0(node));
+    }
+    node
+}
+
 pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: i64, load_hi: i64) -> i64 {
     if node == 0 {
         return 0;
@@ -10179,14 +10187,34 @@ pub fn field_rewrite_expr(node: i64, src: i64, srt: i64, fn_node: i64, load_lo: 
     if k == ast_field() {
         let recv: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
         __mind_store_i64(node + 24, recv);
-        if ast_kind(recv) != ast_ident() {
+        // Strip parens around the receiver so `(s).a` resolves like `s.a`.
+        let bare: i64 = strip_parens(recv);
+        if ast_kind(bare) != ast_ident() {
             return node;
         }
-        let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(recv), ast_span_hi(recv), ast_child1(node), ast_child2(node));
+        let fidx: i64 = field_recv_field_idx(fn_node, src, srt, ast_span_lo(bare), ast_span_hi(bare), ast_child1(node), ast_child2(node));
         if fidx < 0 {
             return node;
         }
-        return field_build_load_call(recv, fidx, load_lo, load_hi);
+        return field_build_load_call(bare, fidx, load_lo, load_hi);
+    }
+    if k == ast_if() {
+        // A value if-EXPR (`if c { s.a } else { s.b }`) in expr position: descend into the
+        // cond and both branch blocks so field-reads inside the branches fold too. Mirrors
+        // field_rewrite_stmts' ast_if arm.
+        let ic: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
+        __mind_store_i64(node + 24, ic);
+        let then_blk: i64 = ast_child1(node);
+        if ast_kind(then_blk) == ast_block() {
+            let _t: i64 = field_rewrite_stmts(ast_child0(then_blk), ast_aux(then_blk), 0, src, srt, fn_node, load_lo, load_hi);
+        }
+        let else_blk: i64 = ast_child2(node);
+        if else_blk != 0 {
+            if ast_kind(else_blk) == ast_block() {
+                let _e: i64 = field_rewrite_stmts(ast_child0(else_blk), ast_aux(else_blk), 0, src, srt, fn_node, load_lo, load_hi);
+            }
+        }
+        return node;
     }
     if k == ast_paren() {
         let inner: i64 = field_rewrite_expr(ast_child0(node), src, srt, fn_node, load_lo, load_hi);
