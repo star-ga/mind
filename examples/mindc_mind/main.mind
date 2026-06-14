@@ -9576,6 +9576,21 @@ pub fn build_trail_env(plan: i64, nplan: i64, env: i64, tenv: i64, env_k: i64, t
     build_trail_env(plan, nplan, env, tenv, env_k, tk, i + 1)
 }
 
+// Resolve the position-ordered trailing env `tenv` (name_lo, name_hi, descriptor-slot)
+// into a (name_lo, name_hi, VID) lv-env by reading each slot's Pass-B vid from `vidbuf`.
+// Used to give a trailing value if-expr the same resolved seq lv-env emit_stmt_seq builds
+// in `live`, so its branch refs to sequence lets resolve byte-exactly. Returns tk.
+pub fn resolve_tenv_lvenv(tenv: i64, tk: i64, vidbuf: i64, out: i64, i: i64) -> i64 {
+    if i >= tk {
+        return tk;
+    }
+    let slot: i64 = __mind_load_i64(tenv + i * 24 + 16);
+    __mind_store_i64(out + i * 24 + 0, __mind_load_i64(tenv + i * 24 + 0));
+    __mind_store_i64(out + i * 24 + 8, __mind_load_i64(tenv + i * 24 + 8));
+    __mind_store_i64(out + i * 24 + 16, __mind_load_i64(vidbuf + slot * 8));
+    resolve_tenv_lvenv(tenv, tk, vidbuf, out, i + 1)
+}
+
 // Does plan type `ty` carry a rebind overlay (escaping fall-through merge bindings)?
 pub fn seq_ty_escapes(ty: i64) -> i64 {
     if ty == 4 {
@@ -9901,20 +9916,63 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     } else {
         final_stmt
     };
-    let trail_root: i64 = flatten_expr_env(final_expr, src, params_addr, n_params, nodes, cursor, tenv, tk);
-    if trail_root < 0 {
-        __mind_store_i64(ok_cell, 0);
-        return s;
+    // A trailing VALUE if-expr (`...; if C {A} else {B}`) is the FN_DEF result: emit it as
+    // ONE OP_IF (the last body instr) via emit_if_expr_any_lv, NOT a flattened tree. Its
+    // branches resolve sequence lets against the resolved trailing lv-env (resolve_tenv_lvenv).
+    let trail_is_if: i64 = if is_trail_ret == 1 {
+        0
+    } else {
+        is_any_value_if_expr(final_expr)
+    };
+    let trail_root: i64 = if trail_is_if == 1 {
+        0
+    } else {
+        flatten_expr_env(final_expr, src, params_addr, n_params, nodes, cursor, tenv, tk)
+    };
+    if trail_is_if == 0 {
+        if trail_root < 0 {
+            __mind_store_i64(ok_cell, 0);
+            return s;
+        }
     }
     let trail_end: i64 = __mind_load_i64(cursor);
     // Pass B — assign vids across statement segments (lets + OP_IF blocks).
     let trail_base: i64 = seq_assign_vids(nodes, vidbuf, plan, nplan, n_params, 0);
-    // Trailing segment resolves last, from trail_base.
-    seq_resolve_range(nodes, trail_start, trail_end, vidbuf, trail_base);
-    let ret_vid: i64 = __mind_load_i64(vidbuf + trail_root * 8);
+    // Resolved trailing lv-env (name -> Pass-B vid) for a trailing if-expr's branch refs.
+    let trail_lv: i64 = __mind_alloc((tk + 1) * 24);
+    let _tlv: i64 = resolve_tenv_lvenv(tenv, tk, vidbuf, trail_lv, 0);
+    // ret_vid: for a trailing if-expr, probe its OP_IF dst (base0=0) and rebase to trail_base;
+    // otherwise the trailing tree's root vid. body_len: an if-expr is 1 top-level OP_IF instr.
+    let ie_probe_dst: i64 = if trail_is_if == 1 {
+        let ip_nodes: i64 = __mind_alloc(256 * 32);
+        let ip_cursor: i64 = __mind_alloc(8);
+        let ip_vidbuf: i64 = __mind_alloc(256 * 8);
+        let ip_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(ip_cell, 0 - 1);
+        let _ip: EmitState = emit_if_expr_any_lv(es_new(), final_expr, src, params_addr, n_params, ip_nodes, ip_cursor, ip_vidbuf, 0, ip_cell, trail_lv, tk, 0, 0, 0, 0, 0);
+        __mind_load_i64(ip_cell)
+    } else {
+        0 - 1
+    };
+    if trail_is_if == 1 {
+        if ie_probe_dst < 0 {
+            __mind_store_i64(ok_cell, 0);
+            return s;
+        }
+    }
+    let ret_vid: i64 = if trail_is_if == 1 {
+        trail_base + ie_probe_dst
+    } else {
+        let _rr: i64 = seq_resolve_range(nodes, trail_start, trail_end, vidbuf, trail_base);
+        __mind_load_i64(vidbuf + trail_root * 8)
+    };
     // body_len = n_params PARAMs + per-segment non-param body instrs + 1 per OP_IF.
     let seg_instrs: i64 = seq_body_len(nodes, plan, nplan, 0);
-    let trail_instrs: i64 = count_descriptor_nonparam_range(nodes, trail_start, trail_end);
+    let trail_instrs: i64 = if trail_is_if == 1 {
+        1
+    } else {
+        count_descriptor_nonparam_range(nodes, trail_start, trail_end)
+    };
     let body_len: i64 = n_params + seg_instrs + trail_instrs + is_trail_ret;
     // Build the RESOLVED seq lv-env (sequence-level lets -> their vids), then emit with
     // a POSITION-AWARE live env: `live` starts empty and grows as emit_stmt_seq walks the
@@ -9932,7 +9990,16 @@ pub fn emit_mic3_module_fndef_seq(s: EmitState, src: i64, fn_node: i64, nidx: i6
     let s6: EmitState = emit_uleb128(s5, body_len);
     let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
     let s8: EmitState = emit_stmt_seq(s7, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, n_params, 0, live, 0, seqr, 0);
-    let s9: EmitState = emit_mic3_tree_body(s8, nodes, trail_end, vidbuf, src, strbuf, offs, ncount, trail_start);
+    let s9: EmitState = if trail_is_if == 1 {
+        let ie_nodes: i64 = __mind_alloc(256 * 32);
+        let ie_cursor: i64 = __mind_alloc(8);
+        let ie_vidbuf: i64 = __mind_alloc(256 * 8);
+        let ie_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(ie_cell, 0 - 1);
+        emit_if_expr_any_lv(s8, final_expr, src, params_addr, n_params, ie_nodes, ie_cursor, ie_vidbuf, trail_base, ie_cell, trail_lv, tk, strbuf, offs, ncount, 0, 0)
+    } else {
+        emit_mic3_tree_body(s8, nodes, trail_end, vidbuf, src, strbuf, offs, ncount, trail_start)
+    };
     // Body-terminal `return E`: append the explicit RETURN <ret_vid>.
     let s10: EmitState = if is_trail_ret == 1 {
         emit_mic3_return(s9, 1, ret_vid)
