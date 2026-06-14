@@ -11175,6 +11175,26 @@ pub fn emit_mic3_module_fndef(s: EmitState, src: i64, fn_node: i64, strbuf: i64,
                     let cond_expr: i64 = ast_child0(expr);
                     let then_expr: i64 = branch_single_expr(ast_child1(expr));
                     let else_expr: i64 = branch_single_expr(else_blk);
+                    // (e2) BOTH branches diverge: `if C { return A } else { return B }` -> ONE
+                    // OP_IF (synth + value + Return per branch, phantom merge dst = the ret vid).
+                    // No-call branches only (narrow emitter has no strtab); else fall through.
+                    if then_expr >= 0 {
+                        if else_expr >= 0 {
+                            if ast_kind(then_expr) == ast_return() {
+                                if ast_kind(else_expr) == ast_return() {
+                                    let then_rv: i64 = ast_child0(then_expr);
+                                    let else_rv: i64 = ast_child0(else_expr);
+                                    let br_call: i64 = node_has_call(cond_expr) + node_has_call(then_rv) + node_has_call(else_rv);
+                                    if br_call == 0 {
+                                        let sbr: EmitState = emit_mic3_module_fndef_if_both_return(s, src, fn_node, nidx, pstr, n_params, cond_expr, then_rv, else_rv, nodes, cursor, vidbuf, ok_cell);
+                                        if __mind_load_i64(ok_cell) == 1 {
+                                            return sbr;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     if then_expr >= 0 {
                         if else_expr >= 0 {
                             // The narrow path (emit_mic3_if_instr) emits branch/cond trees with
@@ -13293,6 +13313,84 @@ pub fn branch_single_expr(blk: i64) -> i64 {
 // the oracle. Returns the post-OP_IF EmitState; the if's result vid is `dst`
 // (the caller uses it as the FN_DEF ret_vid). On a wall returns the seed `s`
 // unchanged and writes -1 to `okcell` so the caller fails closed.
+// Like emit_mic3_if_instr but each branch DIVERGES: `if C { return A } else { return B }`.
+// Each branch block = synth ConstI64 + the return-value tree + Return(value), so the THEN/ELSE
+// length is value_nonparam + 2 (the extra Return; Return consumes no vid). then_result/
+// else_result = the returned value vid. The trailing merge dst is still allocated (a phantom
+// the oracle emits even though both branches diverge); empty bindings/merges. Byte-exact.
+pub fn emit_mic3_if_both_return_instr(s: EmitState, cond_expr: i64, then_val: i64, else_val: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
+    let cond_id: i64 = flatten_branch(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let cond_n: i64 = __mind_load_i64(cursor);
+    let cond_nonparam: i64 = count_nonparam_nodes(cond_expr, buf, params_addr, n_params);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_nonparam);
+    let s4: EmitState = emit_mic3_tree_body(s3, nodes, cond_n, vidbuf, 0, 0, 0, 0, 0);
+    let after_cond: i64 = base0 + cond_nonparam;
+    let then_synth: i64 = after_cond;
+    let then_root: i64 = flatten_branch(then_val, buf, params_addr, n_params, nodes, cursor, vidbuf, after_cond + 1);
+    if then_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let then_n: i64 = __mind_load_i64(cursor);
+    let then_nonparam: i64 = count_nonparam_nodes(then_val, buf, params_addr, n_params);
+    let s5: EmitState = emit_uleb128(s4, then_nonparam + 2);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let s7: EmitState = emit_mic3_tree_body(s6, nodes, then_n, vidbuf, 0, 0, 0, 0, 0);
+    let s7r: EmitState = emit_mic3_return(s7, 1, then_root);
+    let s8: EmitState = emit_uleb128(s7r, then_root);
+    let after_then: i64 = after_cond + 1 + then_nonparam;
+    let else_synth: i64 = after_then;
+    let else_root: i64 = flatten_branch(else_val, buf, params_addr, n_params, nodes, cursor, vidbuf, after_then + 1);
+    if else_root < 0 {
+        __mind_store_i64(okcell, 0 - 1);
+        return s;
+    }
+    let else_n: i64 = __mind_load_i64(cursor);
+    let else_nonparam: i64 = count_nonparam_nodes(else_val, buf, params_addr, n_params);
+    let s9: EmitState = emit_uleb128(s8, else_nonparam + 2);
+    let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
+    let s11: EmitState = emit_mic3_tree_body(s10, nodes, else_n, vidbuf, 0, 0, 0, 0, 0);
+    let s11r: EmitState = emit_mic3_return(s11, 1, else_root);
+    let s12: EmitState = emit_uleb128(s11r, else_root);
+    let after_else: i64 = after_then + 1 + else_nonparam;
+    let dst: i64 = after_else;
+    let s13: EmitState = emit_uleb128(s12, dst);
+    let s14: EmitState = emit_uleb128(s13, 0);
+    let s15: EmitState = emit_uleb128(s14, 0);
+    __mind_store_i64(okcell, dst);
+    s15
+}
+
+// FN_DEF whose body is a single `if C { return A } else { return B }`. Probe for dst (= the
+// phantom merge = the ret vid), then emit FN_DEF (ret=dst, body_len = n_params + 1 OP_IF).
+pub fn emit_mic3_module_fndef_if_both_return(s: EmitState, src: i64, fn_node: i64, nidx: i64, pstr: i64, n_params: i64, cond_expr: i64, then_val: i64, else_val: i64, nodes: i64, cursor: i64, vidbuf: i64, ok_cell: i64) -> EmitState {
+    let params_addr: i64 = ast_child1(fn_node);
+    let dst_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(dst_cell, 0 - 1);
+    let probe: EmitState = emit_mic3_if_both_return_instr(es_new(), cond_expr, then_val, else_val, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell);
+    let dst: i64 = __mind_load_i64(dst_cell);
+    if dst < 0 {
+        __mind_store_i64(ok_cell, 0);
+        return s;
+    }
+    let s1: EmitState = es_push(s, 21);
+    let s2: EmitState = emit_uleb128(s1, nidx);
+    let s3: EmitState = emit_mic3_param_pairs_mod(s2, pstr, n_params);
+    let s4: EmitState = emit_mic3_opt_vid(s3, 1, dst);
+    let s5: EmitState = es_push(s4, 0);
+    let s6: EmitState = emit_uleb128(s5, n_params + 1);
+    let s7: EmitState = emit_mic3_params_mod(s6, pstr, n_params, 0);
+    let s8: EmitState = emit_mic3_if_both_return_instr(s7, cond_expr, then_val, else_val, src, params_addr, n_params, nodes, cursor, vidbuf, n_params, dst_cell);
+    __mind_store_i64(ok_cell, 1);
+    s8
+}
+
 pub fn emit_mic3_if_instr(s: EmitState, cond_expr: i64, then_expr: i64, else_expr: i64, buf: i64, params_addr: i64, n_params: i64, nodes: i64, cursor: i64, vidbuf: i64, base0: i64, okcell: i64) -> EmitState {
     // --- cond ---
     let cond_id: i64 = flatten_branch(cond_expr, buf, params_addr, n_params, nodes, cursor, vidbuf, base0);
