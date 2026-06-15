@@ -15,17 +15,17 @@
 
 pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
     // --- bit-reversal permutation ---
+    // Incremental reversed-counter (strength reduction): instead of recomputing
+    // the full reversed index `j` with a `logn`-iteration inner loop for every i,
+    // carry `j` forward — adding 1 to the MSB end of `j` with carries propagating
+    // toward the LSB. j(i+1) = j(i) "+1 from the top". The carry loop runs only
+    // over trailing set bits (amortized ~2 iters across the whole sweep) rather
+    // than logn unconditional iterations per element. j is identical for every i,
+    // so the `j > i` test and every swap are byte-for-byte unchanged.
+    let half_n: i64 = n >> 1;
     let mut i: i64 = 0;
+    let mut j: i64 = 0;
     while i < n {
-        // reverse the low `logn` bits of i
-        let mut x: i64 = i;
-        let mut j: i64 = 0;
-        let mut b: i64 = 0;
-        while b < logn {
-            j = (j << 1) | (x & 1);
-            x = x >> 1;
-            b = b + 1;
-        }
         if j > i {
             let ai: i64 = re + i * 8;
             let aj: i64 = re + j * 8;
@@ -38,6 +38,13 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
             __mind_store_i64(bi, __mind_load_i64(bj));
             __mind_store_i64(bj, ti)
         }
+        // advance j to the bit-reversal of i+1
+        let mut bit: i64 = half_n;
+        while (j & bit) != 0 {
+            j = j ^ bit;
+            bit = bit >> 1;
+        }
+        j = j ^ bit;
         i = i + 1;
     }
 

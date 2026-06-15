@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2855 | **Est. tokens:** ~6,922,364
-**Generated:** 2026-06-15 10:25 UTC
+**Files:** 2855 | **Est. tokens:** ~6,922,507
+**Generated:** 2026-06-15 10:37 UTC
 
 ## Token Budget Guide
 
@@ -47,7 +47,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 16 | ~34,119 |
+| `examples/` | 16 | ~34,262 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -724,7 +724,7 @@
 - `README.md` (~2214 tok, huge) — RFC 0005 Phase 6.4 — Self-Host MLIR Text Emitter
 ### `examples/`
 
-- `fft_q16.mind` (~1496 tok, large) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
+- `fft_q16.mind` (~1639 tok, huge) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
