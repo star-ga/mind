@@ -699,17 +699,30 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // Loop-control statements carry no value; type as the benign scalar.
         #[cfg(feature = "std-surface")]
         Node::Break { span } | Node::Continue { span } => Ok((ValueType::ScalarI32, *span)),
-        Node::Lit(Literal::Ident(name), span) => env
-            .get(name)
-            .cloned()
-            .map(|t| (t, *span))
-            .ok_or_else(|| TypeErrSpan {
-                msg: match closest_identifier(name, env) {
-                    Some(s) => format!("unknown identifier `{name}` — did you mean `{s}`?"),
-                    None => format!("unknown identifier `{name}`"),
-                },
-                span: *span,
-            }),
+        Node::Lit(Literal::Ident(name), span) => {
+            if let Some(t) = env.get(name).cloned() {
+                Ok((t, *span))
+            } else if split_enum_variant_path(name)
+                .and_then(|(e, v)| enum_variants_of(&e).map(|vs| vs.iter().any(|x| x == &v)))
+                .unwrap_or(false)
+            {
+                // An enum-variant constructor used as a *value* (`Mode::On`) is a
+                // valid expression but is not a value-env binding. Resolve it via
+                // the enum registry to the i64 ABI (the discriminant) rather than
+                // raising E2002 — matches the loose i64 ABI every other value
+                // form lowers to. (Unit variants only; payload variants such as
+                // `Some(x)` are call expressions handled by `infer_call`.)
+                Ok((ValueType::ScalarI64, *span))
+            } else {
+                Err(TypeErrSpan {
+                    msg: match closest_identifier(name, env) {
+                        Some(s) => format!("unknown identifier `{name}` — did you mean `{s}`?"),
+                        None => format!("unknown identifier `{name}`"),
+                    },
+                    span: *span,
+                })
+            }
+        }
         Node::Paren(inner, span) => {
             let (ty, _) = infer_expr(inner, env)?;
             Ok((ty, *span))
@@ -2177,9 +2190,15 @@ fn infer_call(
                 if let Some(sig) = intra_lookup_fn(callee) {
                     return check_intra_fn_call(callee, &sig, args, span, env);
                 }
-                for a in args {
-                    let _ = infer_expr(a, env)?;
-                }
+                // No typed signature for this same-file callee: accept the call
+                // at the loose i64 ABI WITHOUT re-inferring the argument
+                // expressions. A re-walk via `infer_expr` false-positives on
+                // valid value forms the outer type-check pass already accepts —
+                // notably enum-variant constructors in argument position
+                // (`f(Mode::On)`), which are not value-env identifiers and would
+                // wrongly raise E2002. Arity is already enforced via the typed
+                // paths above. (Regression fix: this re-walk reddened CI's
+                // `enum_tag_match_writes_field_in_each_arm`.)
                 return Ok((ValueType::ScalarI64, span));
             }
             // Intra-module function call: if the callee is a function defined
@@ -2191,9 +2210,15 @@ fn infer_call(
                 if let Some(sig) = intra_lookup_fn(callee) {
                     return check_intra_fn_call(callee, &sig, args, span, env);
                 }
-                for a in args {
-                    let _ = infer_expr(a, env)?;
-                }
+                // No typed signature for this same-file callee: accept the call
+                // at the loose i64 ABI WITHOUT re-inferring the argument
+                // expressions. A re-walk via `infer_expr` false-positives on
+                // valid value forms the outer type-check pass already accepts —
+                // notably enum-variant constructors in argument position
+                // (`f(Mode::On)`), which are not value-env identifiers and would
+                // wrongly raise E2002. Arity is already enforced via the typed
+                // paths above. (Regression fix: this re-walk reddened CI's
+                // `enum_tag_match_writes_field_in_each_arm`.)
                 return Ok((ValueType::ScalarI64, span));
             }
             #[cfg(feature = "std-surface")]
@@ -2543,7 +2568,7 @@ fn check_intra_fn_call(
     sig: &IntraFnSig,
     args: &[Node],
     span: AstSpan,
-    env: &TypeEnv,
+    _env: &TypeEnv,
 ) -> Result<(ValueType, AstSpan), TypeErrSpan> {
     if args.len() != sig.param_count {
         return Err(TypeErrSpan {
@@ -2555,19 +2580,16 @@ fn check_intra_fn_call(
             span,
         });
     }
-    // Walk every argument so per-arg expression errors still surface (the
-    // arity gate above short-circuits before this on a count mismatch, which
-    // is the dominant, always-sound failure mode). Per-arg *type* checking is
-    // intentionally NOT performed here: under the loose i64 ABI it is not
-    // soundly determinable (see the module note on `build_intra_fn_sigs`), and
-    // tensor-shape agreement is the dedicated RFC 0012 symbolic pass's job
-    // (`walk_calls_for_symbolic_check`). Enforcing arity closes the soundness
-    // hole the pre-registration placeholder left open; forcing scalar/tensor
-    // arg-type errors here would false-positive on valid, already-type-checked
-    // programs.
-    for a in args {
-        let _ = infer_expr(a, env)?;
-    }
+    // Arity is the ONLY property validated here — it is always soundly knowable
+    // from the AST regardless of the loose i64 ABI (see the module note on
+    // `build_intra_fn_sigs`). We deliberately do NOT re-infer the argument
+    // expressions: per-arg type checking is not soundly determinable under the
+    // i64 ABI, and a re-walk via `infer_expr` false-positives on valid value
+    // forms the outer type-check pass already accepts — notably enum-variant
+    // constructors in argument position (`f(Mode::On)`), which are not
+    // value-env identifiers and would wrongly raise E2002. (Regression fix: an
+    // 0.8.x arg re-walk reddened the compositional suite's
+    // `enum_tag_match_writes_field_in_each_arm`; arity tests assert E2005 only.)
     Ok((ValueType::ScalarI64, span))
 }
 

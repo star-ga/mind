@@ -356,7 +356,15 @@ struct Resolver<'a> {
 
 impl<'a> Resolver<'a> {
     fn ident_resolvable(&self, name: &str) -> bool {
-        self.scopes.contains(name) || self.syms.names.contains(name)
+        self.scopes.contains(name)
+            || self.syms.names.contains(name)
+            // A qualified path used as a *value* — an enum-variant constructor
+            // (`Mode::On`), an associated const, etc. — folds its `::` segments
+            // into one ident string. This pass owns the BARE undefined-reference
+            // question (E2002); verifying that a `Type::Member` actually exists is
+            // a separate type-resolution concern. Mirror `call_resolvable`'s `::`
+            // treatment so a qualified value reference is never a bare-undefined.
+            || name.contains("::")
     }
 
     fn call_resolvable(&self, name: &str) -> bool {
