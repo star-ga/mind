@@ -17,6 +17,14 @@ fn generic_fn_call_lowers_and_is_deterministic() {
     let b = compile_source(src, &CompileOptions::default())
         .expect("a generic function call should compile through lowering");
 
+    // The monomorphization drain must emit a REAL instance body, not the
+    // pre-drain body-less decl that failed to link (`undefined symbol: id$i64`).
+    // The mangled instance name is interned in the emitted mic@3 string table.
+    assert!(
+        emit_mic3(&a.ir).windows(6).any(|w| w == b"id$i64"),
+        "the monomorphized generic instance `id$i64` must be emitted with a body"
+    );
+
     // Determinism (the wedge): the same source produces byte-identical mic@3.
     assert_eq!(
         emit_mic3(&a.ir),
