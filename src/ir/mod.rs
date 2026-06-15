@@ -820,6 +820,17 @@ pub struct IRModule {
     #[cfg(feature = "std-surface")]
     pub fn_signatures:
         std::collections::BTreeMap<String, (Vec<crate::ast::TypeAnn>, Option<crate::ast::TypeAnn>)>,
+    /// Per-struct declared field types, in declaration order, for EVERY struct
+    /// (not only `#[repr(C)]`). The width-aware struct ABI lowering reads this to
+    /// compute the canonical per-field offset table (8/4/2/1-byte widths) and to
+    /// select the typed `__mind_store_i{64,32,16,8}` / load helper. Modelled on
+    /// `fn_signatures` / `enum_variant_tags`: a pure lowering-only side-table,
+    /// NEVER serialised into mic@3 (it is written by neither `emit.rs` nor read
+    /// by `parse.rs`), so the wire format and the byte-identity oracle are
+    /// unaffected — an all-i64 struct lowers exactly as before. `BTreeMap` keeps
+    /// iteration deterministic.
+    #[cfg(feature = "std-surface")]
+    pub struct_field_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
 }
 
 impl IRModule {
@@ -838,6 +849,8 @@ impl IRModule {
             enum_variant_tags: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_signatures: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            struct_field_types: std::collections::BTreeMap::new(),
         }
     }
 

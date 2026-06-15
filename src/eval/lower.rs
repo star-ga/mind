@@ -424,6 +424,13 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             } => {
                 let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
                 ir.struct_defs.insert(name.clone(), field_names);
+                // Record EVERY struct's declared field types (declaration order)
+                // for the width-aware struct ABI lowering. Serialization-exempt
+                // (see `struct_field_types` in ir/mod.rs); unused until the
+                // lowering arms consume it, so an all-i64 struct is unchanged.
+                let all_field_types: Vec<crate::ast::TypeAnn> =
+                    fields.iter().map(|f| f.ty.clone()).collect();
+                ir.struct_field_types.insert(name.clone(), all_field_types);
                 // RFC 0010 Phase B: if the struct carries `#[repr(C)]`, register
                 // its field types in `repr_c_structs` so extern_type_to_mlir can
                 // classify Named types that appear in `extern "C"` signatures.

@@ -1013,6 +1013,11 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         // path leaves it empty (no wire-format change, no version bump).
         #[cfg(feature = "std-surface")]
         fn_signatures: std::collections::BTreeMap::new(),
+        // The struct-field-type table is a lowering-only side-table; like
+        // `fn_signatures` / `enum_variant_tags` it is never serialised into
+        // mic@3, so the parse path leaves it empty (no wire-format change).
+        #[cfg(feature = "std-surface")]
+        struct_field_types: std::collections::BTreeMap::new(),
     };
 
     // std-surface registries
