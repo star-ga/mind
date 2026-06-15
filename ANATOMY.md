@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2855 | **Est. tokens:** ~6,922,507
-**Generated:** 2026-06-15 10:37 UTC
+**Files:** 2855 | **Est. tokens:** ~6,923,140
+**Generated:** 2026-06-15 10:42 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 36 | ~26,664 |
+| `./` | 36 | ~26,743 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -47,7 +47,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 16 | ~34,262 |
+| `examples/` | 16 | ~34,816 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -474,7 +474,7 @@
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~5147 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
-- `results.tsv` (~164 tok, small) — commit	val_bpb	memory_gb	status	description
+- `results.tsv` (~243 tok, medium) — commit	val_bpb	memory_gb	status	description
 - `run.log` (~133 tok, small) — === [1/3] BUILD mindc + fft_test.so + harnesses ===
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -724,7 +724,7 @@
 - `README.md` (~2214 tok, huge) — RFC 0005 Phase 6.4 — Self-Host MLIR Text Emitter
 ### `examples/`
 
-- `fft_q16.mind` (~1639 tok, huge) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
+- `fft_q16.mind` (~2193 tok, huge) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the

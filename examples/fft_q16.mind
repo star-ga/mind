@@ -75,13 +75,60 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
         aimS2 = aimS2 + 16;
     }
 
-    // Stages length>=4: twiddles vary, so the Q16.16 complex multiply stays.
+    // Stage length==4 is peeled too: its two twiddles are both multiply-free
+    // algebraic identities, so the whole stage is pure add/sub/negate.
+    //   jj==0: tw[0]      == (65536, 0)   -> identity (handled like length==2)
+    //   jj==1: tw[step*1] == tw[64]       == (cos(-pi/2), sin(-pi/2)) == (0,-65536)
+    // For W == (0, -65536):  (0*x)>>16 == 0 and (-65536*x)>>16 == -x exactly
+    // (the low 16 bits of -(x<<16) are zero, so the arithmetic shift is exact),
+    // hence trr == xbi and tii == -xbr — a swap+negate, NO multiply and NO
+    // `>>16`. Same algebraic-identity reasoning that peels length==2 and the
+    // jj==0 column; every output byte is unchanged. length==4 has half==2, so
+    // its inner loop was a single fixed jj==1 iteration anyway — peeling it
+    // removes 4 i64-multiplies + 4 shifts + the twiddle loads from all 64
+    // length==4 butterfly groups and drops the stage's loop overhead entirely.
+    let mut areS4: i64 = re;
+    let mut aimS4: i64 = im;
+    while areS4 < reEnd2 {
+        // jj==0 column: identity butterfly on elements (0,2) of the group.
+        let a0r: i64 = areS4;
+        let a0i: i64 = aimS4;
+        let b0r: i64 = areS4 + 16;
+        let b0i: i64 = aimS4 + 16;
+        let x0r: i64 = __mind_load_i64(b0r);
+        let x0i: i64 = __mind_load_i64(b0i);
+        let u0r: i64 = __mind_load_i64(a0r);
+        let u0i: i64 = __mind_load_i64(a0i);
+        __mind_store_i64(a0r, u0r + x0r);
+        __mind_store_i64(a0i, u0i + x0i);
+        __mind_store_i64(b0r, u0r - x0r);
+        __mind_store_i64(b0i, u0i - x0i);
+
+        // jj==1 column: W == (0,-65536) -> trr == xbi, tii == -xbr (swap+negate).
+        let a1r: i64 = areS4 + 8;
+        let a1i: i64 = aimS4 + 8;
+        let b1r: i64 = areS4 + 24;
+        let b1i: i64 = aimS4 + 24;
+        let x1r: i64 = __mind_load_i64(b1r);
+        let x1i: i64 = __mind_load_i64(b1i);
+        let u1r: i64 = __mind_load_i64(a1r);
+        let u1i: i64 = __mind_load_i64(a1i);
+        __mind_store_i64(a1r, u1r + x1i);
+        __mind_store_i64(a1i, u1i - x1r);
+        __mind_store_i64(b1r, u1r - x1i);
+        __mind_store_i64(b1i, u1i + x1r);
+
+        areS4 = areS4 + 32;
+        aimS4 = aimS4 + 32;
+    }
+
+    // Stages length>=8: twiddles vary, so the Q16.16 complex multiply stays.
     // Loop-invariant hoisting + incremental pointer advance: twp/are/aim/bre/bim
     // are bumped by a constant stride each iteration instead of recomputed from
     // k/jj, so the backend keeps one base pointer per stream and indexes the
     // partner element off it. Pure address arithmetic — the per-product `>> 16`
     // is unchanged, so the output stays bit-identical.
-    let mut length: i64 = 4;
+    let mut length: i64 = 8;
     while length <= n {
         let half: i64 = length >> 1;
         let step: i64 = n / length;
