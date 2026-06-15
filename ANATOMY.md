@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2853 | **Est. tokens:** ~6,921,819
-**Generated:** 2026-06-15 10:17 UTC
+**Files:** 2861 | **Est. tokens:** ~6,928,759
+**Generated:** 2026-06-15 11:34 UTC
 
 ## Token Budget Guide
 
@@ -22,14 +22,14 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~26,367 |
+| `./` | 38 | ~28,910 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 1 | ~693 |
 | `benches/` | 14 | ~35,873 |
-| `bench/fft/` | 8 | ~8,060 |
+| `bench/fft/` | 10 | ~10,437 |
 | `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
@@ -47,7 +47,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 16 | ~33,871 |
+| `examples/` | 16 | ~35,128 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -411,6 +411,7 @@
 | `tests/cross_substrate_identity/` | 2 | ~3,708 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~305 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~755 |
+| `tests/cross_substrate_identity/fft-q16-256/` | 2 | ~763 |
 | `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~649 |
 | `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
@@ -462,6 +463,8 @@
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
 - `CONTRIBUTING.md` (~1348 tok, large) — Contributing to MIND
+- `critique_rejections.md` (~249 tok, medium) — Critique Rejection Log
+- `dead_ends.md` (~772 tok, large) — Dead-End Registry
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
@@ -474,6 +477,8 @@
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~5147 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
+- `results.tsv` (~1327 tok, large) — commit	val_bpb	memory_gb	status	description
+- `run.log` (~195 tok, small) — === [1/3] BUILD mindc + fft_test.so + harnesses ===
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
@@ -523,6 +528,8 @@
 - `harness.c` (~1485 tok, large) — Self-contained benchmark harness for the deterministic Q16.16 N=256 FFT.
 - `README.md` (~1677 tok, huge) — Deterministic Q16.16 N=256 FFT — MIND vs gcc / clang / nvcc
 - `RESULTS-fft-2026-06-15.md` (~1307 tok, large) — RESULTS — Deterministic Q16.16 N=256 FFT (MIND vs gcc / clang / nvcc)
+- `rig_sweep.py` (~2190 tok, huge) — # rig_sweep.py — the "better-than-his-rig" FFT benchmark orchestrator.
+- `rig_sweep_results.json` (~187 tok, small) — Keys: harness, rows, cross_substrate
 ### `benchmarks/autograd_comparison/`
 
 - `autograd_results.json` (~424 tok, medium) — Keys: system_info, benchmarks
@@ -722,7 +729,7 @@
 - `README.md` (~2214 tok, huge) — RFC 0005 Phase 6.4 — Self-Host MLIR Text Emitter
 ### `examples/`
 
-- `fft_q16.mind` (~1248 tok, large) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
+- `fft_q16.mind` (~2505 tok, huge) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the
@@ -3920,6 +3927,10 @@
 
 - `manifest.toml` (~436 tok, medium) — version = "1"
 - `reference_hashes.toml` (~319 tok, medium) — avx2 = "1d7f272b85e5f0fd7cf473086fb1da558a723134ff02ef30a4323eb757209823"
+### `tests/cross_substrate_identity/fft-q16-256/`
+
+- `manifest.toml` (~444 tok, medium) — version = "1"
+- `reference_hashes.toml` (~319 tok, medium) — avx2 = "PENDING_BLESS_x86_64_sha256_i64_le_pair"
 ### `tests/cross_substrate_identity/gemm-i8-64x64x64/`
 
 - `manifest.toml` (~437 tok, medium) — version = "1"
