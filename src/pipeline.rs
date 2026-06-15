@@ -91,6 +91,13 @@ pub struct CompileProducts {
     /// Gradient IR when autodiff is enabled.
     #[cfg(feature = "autodiff")]
     pub grad: Option<autodiff::GradientResult>,
+    /// Constructs that parse + type-check but cannot lower to a *correct*
+    /// runnable artifact in the shipped i64-scalar ABI (release-readiness
+    /// P1.1). Empty for an all-i64 program. The runnable-artifact emit paths
+    /// (`--emit-obj` / `--emit-shared`) fail loud on these; the inspection
+    /// paths (`--emit-ir` / `--emit-mlir` / `mindc check`) ignore them because
+    /// the constructs are valid *types*, just not yet lowerable.
+    pub runnable_blockers: Vec<Diagnostic>,
 }
 
 /// Errors surfaced by the high-level compilation pipeline.
@@ -313,10 +320,19 @@ pub fn compile_source_with_name(
         return Err(CompileError::AutodiffDisabled);
     }
 
+    // P1.1 runnable-artifact ABI gate: record constructs that parse + type-check
+    // but cannot lower to a correct runnable artifact in the shipped i64 ABI.
+    // Pure read-only walk; empty for an all-i64 program, so the mic@3 self-host
+    // fixed point and the keystone stay byte-identical. Enforced only by the
+    // `--emit-obj` / `--emit-shared` paths; inspection surfaces ignore it.
+    let runnable_blockers =
+        crate::eval::abi_gate::check_runnable_lowerable(&module, source, source_name);
+
     Ok(CompileProducts {
         ir,
         #[cfg(feature = "autodiff")]
         grad,
+        runnable_blockers,
     })
 }
 

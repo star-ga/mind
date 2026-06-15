@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Loud-fail ABI gate for runnable artifacts (release-readiness P1.1).** `mindc --emit-obj`
+  and `mindc --emit-shared` now refuse to emit a *runnable artifact* for a construct the
+  shipped i64-scalar backend would silently miscompile — they emit `error[lower][lower::…]`
+  with the `file:line` span and a non-zero exit code instead of a confidently-wrong `.so`/`.o`
+  (the worst failure mode for a deterministic, evidence-signing compiler: a valid signature
+  over incorrect code). The gated constructs are the verified *silent* sub-i64-ABI miscompiles:
+  a struct field declared at a sub-i64 width (`i32`/`u32`/`bool`/`i8`/`u8`/`i16`/`u16`), a
+  `tensor`/`diff tensor` function parameter or return (which erases to the i64 ABI), and a
+  sub-i64-integer function parameter or return. `extern "C"` declarations are exempt — the
+  C-ABI boundary legitimately declares narrow ints. The inspection surfaces (`mindc check`,
+  `--emit-ir`, `--emit-mlir`) are intentionally unaffected, because there an `i32`/`tensor`
+  annotation is a valid *type*; it is simply not yet lowerable to a runnable artifact. The
+  check is a pure read-only pre-pass (`src/eval/abi_gate.rs`) that never mutates the IR and
+  produces zero diagnostics for an all-i64 program, so the mic@3 self-host fixed point, the
+  66/66 gap corpus, the keystone (7/7), and the cross-substrate canaries are all byte-identical.
+  This converts the dominant silent-miscompile class (the struct / tensor / narrow-int RUNS
+  families) into honest, anchored diagnostics ahead of the real deterministic codegen that
+  will make them lower.
+
 ## [0.8.1] - 2026-06-14 — Self-host gap corpus genuinely 66/66 (remove a needless decline guard; fix the fresh-load measurement harness)
 
 ### Fixed
