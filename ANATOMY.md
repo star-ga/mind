@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2843 | **Est. tokens:** ~6,907,048
-**Generated:** 2026-06-15 08:21 UTC
+**Files:** 2843 | **Est. tokens:** ~6,907,148
+**Generated:** 2026-06-15 08:48 UTC
 
 ## Token Budget Guide
 
@@ -402,7 +402,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 178 | ~319,588 |
+| `tests/` | 178 | ~319,688 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3964,7 +3964,7 @@
 - `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6574 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
-- `generics_lowering.rs` (~270 tok, medium) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
+- `generics_lowering.rs` (~370 tok, medium) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.

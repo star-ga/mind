@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Generic monomorphization in codegen (RUNS Phase 3).** A generic function called
+  at a concrete type (`id(5)`) previously emitted a body-less private declaration, so
+  the resulting `.so` failed to link (`undefined symbol: id$i64`). `lower_to_ir` now
+  drains the monomorphization worklist after lowering the module body: each requested
+  instance is synthesized by `instantiate_template` and lowered through the ordinary
+  `FnDef` path, emitting a real body. Instances drain in `BTreeMap` mangled-name
+  (lexicographic) order — deterministic, no hash/clock/rng — so generic-using modules
+  are byte-identical and `avx2 == neon`. A non-generic module registers zero templates,
+  hence zero requests, so the drain is a no-op and the mic@3 self-host fixed point, the
+  66/66 gap corpus, the keystone, and the cross-substrate canaries stay byte-identical
+  (verified). An instance whose body still names the type parameter in a type position is
+  refused (left body-less → loud link error) rather than emitting a silent mis-ABI body.
+
 - **Loud-fail ABI gate for runnable artifacts (release-readiness P1.1).** `mindc --emit-obj`
   and `mindc --emit-shared` now refuse to emit a *runnable artifact* for a construct the
   shipped i64-scalar backend would silently miscompile — they emit `error[lower][lower::…]`

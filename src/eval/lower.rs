@@ -53,10 +53,10 @@ use crate::types::ShapeDim;
 /// One pending monomorphization: the generic fn name plus the concrete type
 /// substituted for its single type parameter, both already reflected in the
 /// mangled instance name used as the map key.
-// `generic_name` / `concrete` are retained for the multi-param / nested-generics
-// slices; the registry currently keys on the mangled name only.
+// `generic_name` resolves the template and `concrete` re-derives the instance
+// signature in the monomorphization drain (`lower_to_ir`); the registry keys on
+// the mangled name.
 #[derive(Clone)]
-#[allow(dead_code)]
 struct MonoRequest {
     /// Source-level generic fn name (e.g. `id`).
     generic_name: String,
@@ -144,9 +144,8 @@ fn try_register_mono_instance(callee: &str, args: &[ast::Node]) -> Option<String
 /// Synthesize the concrete (non-generic) `FnDef` AST for one instance:
 /// clone the template, rename it to `mangled`, drop `type_params`, and rewrite
 /// every parameter typed by the (single) type parameter to the concrete type.
-// Used by the next monomorphization slice (call-site instantiation); kept so
-// that slice does not have to re-derive the template-rewrite logic.
-#[allow(dead_code)]
+// Called by the monomorphization drain in `lower_to_ir` to synthesize each
+// requested concrete instance before lowering it through the FnDef path.
 fn instantiate_template(
     template: &ast::Node,
     mangled: &str,
@@ -203,6 +202,90 @@ fn instantiate_template(
         })
     } else {
         None
+    }
+}
+
+/// True if a type annotation references the type-parameter name `tp` — checks
+/// `Named(tp)` and the element/target of slice/array/ref wrappers.
+fn type_ann_mentions(ty: &TypeAnn, tp: &str) -> bool {
+    match ty {
+        TypeAnn::Named(n) => n == tp,
+        TypeAnn::Slice { element, .. } | TypeAnn::Array { element, .. } => {
+            type_ann_mentions(element, tp)
+        }
+        TypeAnn::Ref { target, .. } => type_ann_mentions(target, tp),
+        _ => false,
+    }
+}
+
+/// True if any type annotation in `node` (recursively) names the type parameter
+/// `tp`. The monomorphization drain uses this to refuse an instance whose body
+/// still carries the type parameter in a type position (`let r: T = ...`) — the
+/// signature-only rewrite leaves such a binding to default silently to the i64
+/// ABI. Covers the type-annotation-bearing nodes (`let` / `const` / `as`) and
+/// the statement / expression containers a function body is built from.
+fn node_mentions_type_name(node: &ast::Node, tp: &str) -> bool {
+    use ast::Node as N;
+    let ann_hit = |o: &Option<TypeAnn>| o.as_ref().is_some_and(|t| type_ann_mentions(t, tp));
+    let any = |ns: &[ast::Node]| ns.iter().any(|n| node_mentions_type_name(n, tp));
+    match node {
+        N::Let { ann, value, .. } => ann_hit(ann) || node_mentions_type_name(value, tp),
+        N::Const { ty, value, .. } => ann_hit(ty) || node_mentions_type_name(value, tp),
+        N::As { expr, ty, .. } => type_ann_mentions(ty, tp) || node_mentions_type_name(expr, tp),
+        N::Block { stmts, .. } => any(stmts),
+        N::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            node_mentions_type_name(cond, tp)
+                || any(then_branch)
+                || else_branch.as_ref().is_some_and(|e| any(e))
+        }
+        #[cfg(feature = "std-surface")]
+        N::While { cond, body, .. } => node_mentions_type_name(cond, tp) || any(body),
+        N::Match {
+            scrutinee, arms, ..
+        } => {
+            node_mentions_type_name(scrutinee, tp)
+                || arms.iter().any(|a| node_mentions_type_name(&a.body, tp))
+        }
+        N::Return { value, .. } => value
+            .as_ref()
+            .is_some_and(|v| node_mentions_type_name(v, tp)),
+        N::Assign { value, .. } => node_mentions_type_name(value, tp),
+        N::FieldAssign {
+            receiver, value, ..
+        } => node_mentions_type_name(receiver, tp) || node_mentions_type_name(value, tp),
+        N::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
+            node_mentions_type_name(receiver, tp)
+                || node_mentions_type_name(index, tp)
+                || node_mentions_type_name(value, tp)
+        }
+        N::Paren(inner, _) | N::Neg { operand: inner, .. } | N::Ref { inner, .. } => {
+            node_mentions_type_name(inner, tp)
+        }
+        N::Binary { left, right, .. }
+        | N::Logical { left, right, .. }
+        | N::Bitwise { left, right, .. } => {
+            node_mentions_type_name(left, tp) || node_mentions_type_name(right, tp)
+        }
+        N::Call { args, .. } => args.iter().any(|a| node_mentions_type_name(a, tp)),
+        N::MethodCall { receiver, args, .. } => {
+            node_mentions_type_name(receiver, tp)
+                || args.iter().any(|a| node_mentions_type_name(a, tp))
+        }
+        N::FieldAccess { receiver, .. } => node_mentions_type_name(receiver, tp),
+        N::IndexAccess {
+            receiver, index, ..
+        } => node_mentions_type_name(receiver, tp) || node_mentions_type_name(index, tp),
+        _ => false,
     }
 }
 
@@ -401,6 +484,65 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 ir.instrs.push(Instr::Output(id));
             }
         }
+    }
+
+    // ── Monomorphization drain (codegen generics) ──────────────────────────
+    // Emit a concrete `FnDef` body for every generic instance requested during
+    // the body lowering above (via `try_register_mono_instance`). A non-generic
+    // module registers zero templates, hence zero requests, so this loop never
+    // runs and its IR — and therefore the mic@3 fixed point, the keystone, and
+    // the cross-substrate canaries — is byte-identical. Instances drain in
+    // BTreeMap mangled-name (lexicographic) order: deterministic, with no
+    // HashMap iteration / clock / rng / address bits, so avx2 == neon.
+    let (templates, mut pending) = MONO.with(|cell| {
+        let ctx = cell.borrow();
+        (ctx.templates.clone(), ctx.requests.clone())
+    });
+    let mut emitted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    while let Some(mangled) = pending.keys().next().cloned() {
+        let req = pending
+            .remove(&mangled)
+            .expect("key just taken from pending");
+        if !emitted.insert(mangled.clone()) {
+            continue;
+        }
+        let Some(template) = templates.get(&req.generic_name) else {
+            continue;
+        };
+        let Some(instance) = instantiate_template(template, &mangled, &req.concrete) else {
+            continue;
+        };
+        // Body-ABI safety net: `instantiate_template` rewrites only the
+        // signature. If the template body still names the type parameter in a
+        // type position (`let r: T = ...`), the concrete instance would silently
+        // classify that binding at the default i64 ABI — a silent mis-ABI
+        // miscompile. Refuse such an instance: leaving its symbol body-less
+        // surfaces a LOUD undefined-symbol link error instead of a confidently-
+        // wrong body. The current literal-inferred slice never produces such a
+        // body, so this only guards future, out-of-subset shapes.
+        // deferred: full body type-substitution is a later monomorphization slice.
+        if let ast::Node::FnDef { type_params, .. } = template {
+            if let (Some(tp), ast::Node::FnDef { body, .. }) = (type_params.first(), &instance) {
+                if body.iter().any(|n| node_mentions_type_name(n, tp)) {
+                    continue;
+                }
+            }
+        }
+        // Lower the concrete instance through the ordinary FnDef path: it records
+        // the instance signature and pushes an `Instr::FnDef` carrying a real
+        // body (the empty `type_params` skips the template short-circuit).
+        let _ = lower_expr(&instance, &mut ir, &env, &struct_env, receiver_types);
+        // Closure: lowering an instance may itself register further generic
+        // instances (a generic body that calls another generic). Merge any
+        // not-yet-emitted requests; the idempotent `or_insert` on the fixed
+        // mangled key makes the fixed point order-independent.
+        MONO.with(|cell| {
+            for (k, v) in &cell.borrow().requests {
+                if !emitted.contains(k) {
+                    pending.entry(k.clone()).or_insert_with(|| v.clone());
+                }
+            }
+        });
     }
 
     ir
