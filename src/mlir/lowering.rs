@@ -1125,6 +1125,101 @@ impl LoweringContext {
                     self.values.insert(*dst, ValueKind::ScalarI64);
                     return Ok(());
                 }
+                // Native-memory load/store fast path. The `__mind_{load,store}_iN`
+                // intrinsics are pure unaligned-`memcpy` reinterprets in the C
+                // runtime-support bridge (`runtime-support/mind_intrinsics.c`):
+                // each call costs a PLT-indirected `call` per element, which on a
+                // load/store-bound kernel (e.g. the Q16.16 FFT butterfly) is the
+                // dominant cost. Lower them INLINE to `llvm.inttoptr` +
+                // `llvm.load`/`llvm.store` so the inner loop becomes `mov`-based
+                // like a C compiler's, with NO external symbol and NO PLT hop.
+                //
+                // Byte-identity is preserved EXACTLY because each lowering matches
+                // the C semantics op-for-op:
+                //   * `{alignment = 1 : i64}` mirrors the C `memcpy` (unaligned —
+                //     a natural-alignment load would have different defined
+                //     behaviour on a misaligned address);
+                //   * load_i8 / load_i32 `llvm.zext` to i64 (C returns `(int64_t)`
+                //     of an unsigned `uint8_t`/`uint32_t` — zero-extend);
+                //   * load_i64 loads i64 directly (signed reinterpret == the
+                //     in-register bits);
+                //   * store_iN `llvm.trunc`s the i64 value to the store width then
+                //     stores exactly N bytes, and the call's result value is the
+                //     literal `0` the C `__mind_store_*` returns.
+                // The emitted ops convert-to-llvm and reconcile cleanly on the
+                // pinned pass list; no dialect leaks past mlir-opt.
+                #[cfg(feature = "std-surface")]
+                if args.len() == 1
+                    && matches!(
+                        name.as_str(),
+                        "__mind_load_i64" | "__mind_load_i32" | "__mind_load_i8"
+                    )
+                {
+                    let (load_ty, zext): (&str, bool) = match name.as_str() {
+                        "__mind_load_i64" => ("i64", false),
+                        "__mind_load_i32" => ("i32", true),
+                        _ => ("i8", true),
+                    };
+                    self.emit_line(&format!(
+                        "    %ldp{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
+                        dst.0, args[0].0
+                    ));
+                    if zext {
+                        self.emit_line(&format!(
+                            "    %ldv{0} = llvm.load %ldp{0} {{alignment = 1 : i64}} : \
+                             !llvm.ptr -> {1}",
+                            dst.0, load_ty
+                        ));
+                        self.emit_line(&format!(
+                            "    %{0} = llvm.zext %ldv{0} : {1} to i64",
+                            dst.0, load_ty
+                        ));
+                    } else {
+                        self.emit_line(&format!(
+                            "    %{0} = llvm.load %ldp{0} {{alignment = 1 : i64}} : \
+                             !llvm.ptr -> i64",
+                            dst.0
+                        ));
+                    }
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                #[cfg(feature = "std-surface")]
+                if args.len() == 2
+                    && matches!(
+                        name.as_str(),
+                        "__mind_store_i64" | "__mind_store_i32" | "__mind_store_i8"
+                    )
+                {
+                    let store_ty: &str = match name.as_str() {
+                        "__mind_store_i64" => "i64",
+                        "__mind_store_i32" => "i32",
+                        _ => "i8",
+                    };
+                    self.emit_line(&format!(
+                        "    %stp{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
+                        dst.0, args[0].0
+                    ));
+                    let val_ref = if store_ty == "i64" {
+                        format!("%{}", args[1].0)
+                    } else {
+                        self.emit_line(&format!(
+                            "    %stv{0} = llvm.trunc %{1} : i64 to {2}",
+                            dst.0, args[1].0, store_ty
+                        ));
+                        format!("%stv{}", dst.0)
+                    };
+                    self.emit_line(&format!(
+                        "    llvm.store {1}, %stp{0} {{alignment = 1 : i64}} : \
+                         {2}, !llvm.ptr",
+                        dst.0, val_ref, store_ty
+                    ));
+                    // The C `__mind_store_*` returns 0; materialise that so any
+                    // downstream use of the call result stays byte-identical.
+                    self.emit_line(&format!("    %{} = arith.constant 0 : i64", dst.0));
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
                 // RFC 0010 Phase A/B/C: if the callee was declared via an
                 // `extern "C"` block, emit `llvm.call` with the declared
                 // signature; otherwise fall back to the existing `func.call`
