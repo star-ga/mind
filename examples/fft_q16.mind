@@ -128,11 +128,17 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
     // k/jj, so the backend keeps one base pointer per stream and indexes the
     // partner element off it. Pure address arithmetic — the per-product `>> 16`
     // is unchanged, so the output stays bit-identical.
+    // twstep carried across stages instead of recomputed via `n / length`:
+    // twstep == (n/length)*16, and since n and length are powers of two with
+    // length doubling each stage, (n/length) halves exactly each stage, so
+    // twstep halves exactly (twstep >> 1). Seed once for length==8 as (n/8)*16
+    // == n*2, then strength-reduce the per-stage integer division to a single
+    // shift. The twiddle pointers derived from twstep are byte-identical, so
+    // every load address and `>>16` multiply is unchanged.
     let mut length: i64 = 8;
+    let mut twstep: i64 = n << 1;
     while length <= n {
         let half: i64 = length >> 1;
-        let step: i64 = n / length;
-        let twstep: i64 = step * 16;
         let lenbytes: i64 = length * 8;
         let halfbytes: i64 = half * 8;
         let mut areS: i64 = re;
@@ -199,6 +205,7 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
             aimS = aimS + lenbytes;
         }
         length = length << 1;
+        twstep = twstep >> 1;
     }
     0
 }
