@@ -170,10 +170,14 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
             let mut jj: i64 = 1;
             let mut twp: i64 = tw + twstep;
             let mut twq: i64 = tw + twstep + 8;
-            let mut are: i64 = areS + 8;
-            let mut aim: i64 = aimS + 8;
-            let mut bre: i64 = areS + halfbytes + 8;
-            let mut bim: i64 = aimS + halfbytes + 8;
+            // Reuse the partner bases bre0/bim0 (== areS+halfbytes / aimS+halfbytes)
+            // already materialized by the peeled jj==0 column instead of recomputing
+            // areS+halfbytes+8 / aimS+halfbytes+8 — same addresses, one fewer
+            // halfbytes-add per butterfly group, every load/store and `>>16` unchanged.
+            let mut are: i64 = are0 + 8;
+            let mut aim: i64 = aim0 + 8;
+            let mut bre: i64 = bre0 + 8;
+            let mut bim: i64 = bim0 + 8;
             while jj < half {
                 let wr: i64 = __mind_load_i64(twp);
                 let wi: i64 = __mind_load_i64(twq);
