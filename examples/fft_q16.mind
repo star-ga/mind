@@ -159,13 +159,14 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
 
             let mut jj: i64 = 1;
             let mut twp: i64 = tw + twstep;
+            let mut twq: i64 = tw + twstep + 8;
             let mut are: i64 = areS + 8;
             let mut aim: i64 = aimS + 8;
             let mut bre: i64 = areS + halfbytes + 8;
             let mut bim: i64 = aimS + halfbytes + 8;
             while jj < half {
                 let wr: i64 = __mind_load_i64(twp);
-                let wi: i64 = __mind_load_i64(twp + 8);
+                let wi: i64 = __mind_load_i64(twq);
 
                 let xbr: i64 = __mind_load_i64(bre);
                 let xbi: i64 = __mind_load_i64(bim);
@@ -184,6 +185,7 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
 
                 jj = jj + 1;
                 twp = twp + twstep;
+                twq = twq + twstep;
                 are = are + 8;
                 aim = aim + 8;
                 bre = bre + 8;
