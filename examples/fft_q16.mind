@@ -85,12 +85,30 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
         let mut aimS: i64 = im;
         let mut start: i64 = 0;
         while start < n {
-            let mut jj: i64 = 0;
-            let mut twp: i64 = tw;
-            let mut are: i64 = areS;
-            let mut aim: i64 = aimS;
-            let mut bre: i64 = areS + halfbytes;
-            let mut bim: i64 = aimS + halfbytes;
+            // jj==0 peeled: tw[0] == (65536, 0), so the complex multiply is the
+            // identity — trr == xbr, tii == xbi exactly (65536*x >> 16 == x,
+            // 0*x >> 16 == 0). Pure add/sub, no multiply and no twiddle load for
+            // the first column of every butterfly group. Same algebraic identity
+            // that peels length==2; integer result (every byte) is unchanged.
+            let are0: i64 = areS;
+            let aim0: i64 = aimS;
+            let bre0: i64 = areS + halfbytes;
+            let bim0: i64 = aimS + halfbytes;
+            let xbr0: i64 = __mind_load_i64(bre0);
+            let xbi0: i64 = __mind_load_i64(bim0);
+            let uur0: i64 = __mind_load_i64(are0);
+            let uui0: i64 = __mind_load_i64(aim0);
+            __mind_store_i64(are0, uur0 + xbr0);
+            __mind_store_i64(aim0, uui0 + xbi0);
+            __mind_store_i64(bre0, uur0 - xbr0);
+            __mind_store_i64(bim0, uui0 - xbi0);
+
+            let mut jj: i64 = 1;
+            let mut twp: i64 = tw + twstep;
+            let mut are: i64 = areS + 8;
+            let mut aim: i64 = aimS + 8;
+            let mut bre: i64 = areS + halfbytes + 8;
+            let mut bim: i64 = aimS + halfbytes + 8;
             while jj < half {
                 let wr: i64 = __mind_load_i64(twp);
                 let wi: i64 = __mind_load_i64(twp + 8);
