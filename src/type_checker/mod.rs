@@ -58,6 +58,24 @@ type TensorParamSig = (usize, String, Vec<String>, String);
 /// symbolic-dim checks without a second module walk.
 type FnTensorSigs = HashMap<String, Vec<TensorParamSig>>;
 
+/// RFC 0005 Phase B — an intra-module function's call signature, captured
+/// from its `Node::FnDef` so call sites can validate arity.
+///
+/// Only the parameter count is recorded: arity is the one call property that
+/// is *always* soundly knowable from the AST regardless of the loose i64 ABI
+/// (every intra-module call result and most locals collapse to `ScalarI64`,
+/// literals widen freely, struct/aggregate values are i64 heap addresses, and
+/// tensor-shape agreement is the dedicated RFC 0012 symbolic pass's job). It
+/// covers generic functions too — `fn id<T>(x: T)` has a known arity of 1
+/// even though `T` binds to anything at the call site. See `build_intra_fn_sigs`.
+#[derive(Debug, Clone)]
+struct IntraFnSig {
+    param_count: usize,
+}
+
+/// Maps an intra-module function name to its captured call signature.
+type IntraFnSigs = HashMap<String, IntraFnSig>;
+
 const TYPE_ERR_CODE: &str = "E2001";
 const SHAPE_BROADCAST_CODE: &str = "E2101";
 const SHAPE_RANK_CODE: &str = "E2102";
@@ -69,6 +87,20 @@ const SHAPE_INNER_DIM_CODE: &str = "E2103";
 /// dtype). A wider integer flowing into a narrower slot truncates at runtime
 /// (confirmed miscompile: `i64 4294967297` into an `i32` slot yields `1`).
 const NARROWING_CODE: &str = "E2004";
+
+/// Intra-module call arity mismatch: a call to a module-level `fn` passes the
+/// wrong number of arguments. Arity is always knowable from the AST regardless
+/// of the loose i64 ABI, so this is enforced for every intra-module call (RFC
+/// 0005 Phase B — closes the pre-registration signature soundness hole).
+const CALL_ARITY_CODE: &str = "E2005";
+
+/// Non-exhaustive `match` on a sum/enum type: the arms are enum-variant
+/// patterns of a known `enum` that omit at least one variant and provide no
+/// wildcard `_` / binding catch-all arm. A non-exhaustive match silently
+/// returns a value at runtime instead of failing, so this closes that
+/// soundness hole. Scoped to enum matches only — integer/literal matches
+/// cannot be exhaustive without a wildcard and are not flagged.
+const MATCH_NONEXHAUSTIVE_CODE: &str = "match::non_exhaustive";
 
 /// True for the RFC 0012 shape-diagnostic codes. Used to keep the
 /// additive FnDef-body shape pass from contributing non-shape errors
@@ -1702,6 +1734,12 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     Err(e) => return Err(e),
                 }
             }
+            // Exhaustiveness: a `match` on a sum/enum type must cover every
+            // variant or carry a wildcard/binding catch-all. Enforced only for
+            // enum-variant matches of a known enum (integer/literal matches are
+            // never flagged — they legitimately rely on a `_` arm and main.mind
+            // uses 51 such tag-matches). See `check_match_exhaustiveness`.
+            check_match_exhaustiveness(arms)?;
             Ok((result_ty.unwrap_or(ValueType::ScalarI32), *span))
         }
         // Phase 10.7: `&expr` / `&mut expr` reference-taking.
@@ -2131,6 +2169,14 @@ fn infer_call(
                 if let Some(sig) = cm_lookup_fn(callee) {
                     return check_imported_fn_call(&sig, args, span, env);
                 }
+                // RFC 0005 Phase B — a same-file module-level fn (not an
+                // imported one) is checked against the intra-module side-table
+                // for arity. Cross-module imported signatures took precedence
+                // above; this only fires for callees the import table doesn't
+                // resolve.
+                if let Some(sig) = intra_lookup_fn(callee) {
+                    return check_intra_fn_call(callee, &sig, args, span, env);
+                }
                 for a in args {
                     let _ = infer_expr(a, env)?;
                 }
@@ -2138,10 +2184,13 @@ fn infer_call(
             }
             // Intra-module function call: if the callee is a function defined
             // in the same module, the pre-scan in check_module_types_in_file
-            // registers it in env as ScalarI64. Accept the call without full
-            // signature validation (Phase B deliverable) and check argument
-            // expressions for their own errors.
+            // registers it in env as ScalarI64. Validate the call's arity
+            // against the captured signature before accepting it (arity is the
+            // one property always knowable under the loose i64 ABI).
             if env.get(callee).is_some() {
+                if let Some(sig) = intra_lookup_fn(callee) {
+                    return check_intra_fn_call(callee, &sig, args, span, env);
+                }
                 for a in args {
                     let _ = infer_expr(a, env)?;
                 }
@@ -2295,6 +2344,302 @@ fn valuetype_from_ann(ann: &crate::ast::TypeAnn) -> Option<ValueType> {
 /// Walk statements; extend env on let/assign; return pretty diags for any errors.
 pub fn check_module_types(module: &Module, src: &str, env: &TypeEnv) -> Vec<Pretty> {
     check_module_types_in_file(module, src, None, env)
+}
+
+// ── Intra-module call signatures (RFC 0005 Phase B) ───────────────────
+//
+// A side-table of every module-level fn's call signature, threaded via a
+// thread-local set by `check_module_types_in_file` (for the duration of the
+// per-file check) rather than by a new parameter on the shared
+// `check_module_types*` signature — same moat-preserving discipline as the
+// cross-module table below. Built for ALL fns before ANY call is checked, so
+// forward references and recursion are resolved correctly. Cleared at the end
+// of the check (no leakage across files / threads).
+thread_local! {
+    static INTRA_FN_SIGS: std::cell::RefCell<Option<IntraFnSigs>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Look up an intra-module fn's captured signature by name. Returns `None`
+/// when the side-table isn't populated (no module context) or the name isn't
+/// a module-level fn (e.g. an imported symbol or an env placeholder).
+fn intra_lookup_fn(name: &str) -> Option<IntraFnSig> {
+    INTRA_FN_SIGS.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .and_then(|sigs| sigs.get(name).cloned())
+    })
+}
+
+// ── Enum-variant registry (match exhaustiveness) ──────────────────────
+//
+// Maps every module-level `enum` name to its ordered set of variant names so
+// the `Node::Match` arm in `infer_expr` can check exhaustiveness WITHOUT a
+// scrutinee enum-type (the loose model collapses an enum value to a scalar tag,
+// losing its identity). Exhaustiveness is driven entirely by the arm patterns:
+// the enum is identified from the `EnumVariant` arms' `Name::Variant` paths.
+// Threaded via the same set-on-entry / clear-on-exit thread-local discipline as
+// the fn side-table. Built once per `check_module_types_in_file` (and merged
+// into the parent during the FnDef-body recursion, so a body's match still sees
+// the module's enums). Maps `enum name -> Vec<variant name>` (Vec for stable,
+// deterministic ordering of any "missing variants" list).
+type EnumVariantTable = HashMap<String, Vec<String>>;
+
+thread_local! {
+    static ENUM_VARIANTS: std::cell::RefCell<Option<EnumVariantTable>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Look up an enum's full variant-name list by enum name. Returns `None` when
+/// the registry isn't populated or `name` isn't a module-level enum.
+fn enum_variants_of(name: &str) -> Option<Vec<String>> {
+    ENUM_VARIANTS.with(|cell| cell.borrow().as_ref().and_then(|t| t.get(name).cloned()))
+}
+
+/// Build the enum-variant registry from a module's `Node::EnumDef` items.
+fn build_enum_variants(module: &Module) -> EnumVariantTable {
+    let mut table = EnumVariantTable::new();
+    for item in &module.items {
+        if let Node::EnumDef { name, variants, .. } = item {
+            table.insert(
+                name.clone(),
+                variants.iter().map(|v| v.name.clone()).collect(),
+            );
+        }
+    }
+    table
+}
+
+/// Split an `EnumVariant` pattern path into `(enum_name, variant_name)`.
+///
+/// Patterns carry a dotted+`::` path such as `"Mode::On"` or, when the enum
+/// was imported, `"config.Mode::On"`. The enum is the segment immediately
+/// before the final `::Variant`; any leading `module.` qualifier is stripped so
+/// the bare enum name matches the registry (which keys on the declared name).
+/// Returns `None` for a path without a `::` separator (not an enum variant).
+fn split_enum_variant_path(path: &str) -> Option<(String, String)> {
+    let (head, variant) = path.rsplit_once("::")?;
+    // `head` may be `Mode` or `config.Mode`; take the last dotted segment.
+    let enum_name = head.rsplit('.').next().unwrap_or(head);
+    Some((enum_name.to_string(), variant.to_string()))
+}
+
+/// RAII guard that installs the enum-variant registry into the thread-local for
+/// the duration of a `check_module_types_in_file` call, merging onto (not
+/// replacing) any parent registry — exactly like `IntraSigGuard` — so an enum
+/// match inside a fn body (whose recursive sub-module has no `EnumDef`s) still
+/// resolves the module's enums. Restores the previous registry on drop.
+struct EnumVariantsGuard {
+    prev: Option<EnumVariantTable>,
+}
+
+impl EnumVariantsGuard {
+    fn install(table: EnumVariantTable) -> Self {
+        let prev = ENUM_VARIANTS.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let prev = slot.clone();
+            match slot.as_mut() {
+                Some(existing) => existing.extend(table),
+                None => *slot = Some(table),
+            }
+            prev
+        });
+        EnumVariantsGuard { prev }
+    }
+}
+
+impl Drop for EnumVariantsGuard {
+    fn drop(&mut self) {
+        ENUM_VARIANTS.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
+}
+
+/// Check a `match`'s arms for exhaustiveness over a sum/enum type.
+///
+/// Returns `Err` only when the match is provably non-exhaustive on an enum:
+///   * no arm is a catch-all (`_` wildcard or a bare `Ident` binding), AND
+///   * every non-catch-all arm is an `EnumVariant` of a SINGLE known enum, AND
+///   * the covered variants are a strict subset of that enum's full variant set.
+///
+/// Anything outside that shape is accepted (returns `Ok`): integer / float /
+/// bool / string literal matches (which can't be exhaustive without a wildcard
+/// and legitimately rely on a `_` arm — and main.mind's 51 tag-matches are all
+/// of this kind), matches mixing variants of different enums, matches whose
+/// enum isn't in the registry, and matches that already include a catch-all.
+/// This keeps the check sound and false-positive-free on the existing corpus.
+fn check_match_exhaustiveness(arms: &[crate::ast::MatchArm]) -> Result<(), TypeErrSpan> {
+    use crate::ast::Pattern;
+    // A wildcard or bare-ident arm makes any match exhaustive.
+    let has_catch_all = arms
+        .iter()
+        .any(|a| matches!(a.pattern, Pattern::Wildcard | Pattern::Ident(_)));
+    if has_catch_all {
+        return Ok(());
+    }
+    // Collect the enum name + covered variants from the EnumVariant arms. If
+    // any arm is not an EnumVariant (e.g. a literal), this is not a pure-enum
+    // match and exhaustiveness is not enforced here.
+    let mut enum_name: Option<String> = None;
+    let mut covered: BTreeSet<String> = BTreeSet::new();
+    let mut last_span = AstSpan::new(0, 0);
+    for arm in arms {
+        last_span = arm.span;
+        match &arm.pattern {
+            Pattern::EnumVariant { path, .. } => {
+                let Some((e, v)) = split_enum_variant_path(path) else {
+                    return Ok(());
+                };
+                match &enum_name {
+                    None => enum_name = Some(e),
+                    // Variants of two different enums in one match -> not a
+                    // single-enum exhaustiveness question; defer.
+                    Some(existing) if *existing != e => return Ok(()),
+                    _ => {}
+                }
+                covered.insert(v);
+            }
+            // Any non-enum, non-catch-all pattern (a literal) -> not enforced.
+            _ => return Ok(()),
+        }
+    }
+    let Some(enum_name) = enum_name else {
+        // No arms at all, or no enum arms — nothing to check.
+        return Ok(());
+    };
+    // Only enforce when the enum is actually declared (registry hit); an
+    // unknown enum name means we can't know the full variant set, so defer.
+    let Some(all_variants) = enum_variants_of(&enum_name) else {
+        return Ok(());
+    };
+    let missing: Vec<String> = all_variants
+        .iter()
+        .filter(|v| !covered.contains(*v))
+        .cloned()
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(TypeErrSpan {
+        msg: format!(
+            "non-exhaustive `match` on enum `{enum_name}`: missing variant(s) {}; \
+             add the missing arm(s) or a wildcard `_` arm",
+            missing
+                .iter()
+                .map(|v| format!("`{enum_name}::{v}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        span: last_span,
+    })
+}
+
+/// Validate an intra-module call against a captured `IntraFnSig`: enforce
+/// arity (always knowable from the AST). Returns the loose i64-ABI result type
+/// on success (signature-aware return inference is a later slice — the
+/// soundness hole this closes is the *unchecked argument count*, not the return
+/// type). The arg expressions are still walked so their own errors surface.
+fn check_intra_fn_call(
+    callee: &str,
+    sig: &IntraFnSig,
+    args: &[Node],
+    span: AstSpan,
+    env: &TypeEnv,
+) -> Result<(ValueType, AstSpan), TypeErrSpan> {
+    if args.len() != sig.param_count {
+        return Err(TypeErrSpan {
+            msg: format!(
+                "function `{callee}` expects {expected} argument(s); got {got}",
+                expected = sig.param_count,
+                got = args.len(),
+            ),
+            span,
+        });
+    }
+    // Walk every argument so per-arg expression errors still surface (the
+    // arity gate above short-circuits before this on a count mismatch, which
+    // is the dominant, always-sound failure mode). Per-arg *type* checking is
+    // intentionally NOT performed here: under the loose i64 ABI it is not
+    // soundly determinable (see the module note on `build_intra_fn_sigs`), and
+    // tensor-shape agreement is the dedicated RFC 0012 symbolic pass's job
+    // (`walk_calls_for_symbolic_check`). Enforcing arity closes the soundness
+    // hole the pre-registration placeholder left open; forcing scalar/tensor
+    // arg-type errors here would false-positive on valid, already-type-checked
+    // programs.
+    for a in args {
+        let _ = infer_expr(a, env)?;
+    }
+    Ok((ValueType::ScalarI64, span))
+}
+
+/// Build the intra-module call-signature side-table from a module's items.
+/// Captures EVERY module-level `Node::FnDef` (so forward references and
+/// recursion resolve before any call is checked), recording each fn's arity.
+/// A later same-name FnDef shadows an earlier one (the AST already forbids
+/// true duplicates upstream); this just keeps the last seen.
+///
+/// Only arity is captured: it is the one property of a call that is *always*
+/// soundly knowable from the AST regardless of the loose i64 ABI. Per-arg
+/// types are deliberately not recorded — every intra-module call result and
+/// most locals collapse to `ScalarI64`, integer literals come in as
+/// `ScalarI32`, float literals default to `ScalarF64` yet legitimately flow
+/// into `f32` slots, comparisons yield `ScalarI32` even into `bool` params,
+/// and struct/Slice/Array/Ref/Generic values are i64 heap addresses — so no
+/// concrete arg "type" reliably equals the declared parameter type even in
+/// correct code. Recording and checking them produced false positives on the
+/// valid std + examples corpus; arity is the sound, false-positive-free check.
+fn build_intra_fn_sigs(module: &Module) -> IntraFnSigs {
+    let mut sigs = IntraFnSigs::new();
+    for item in &module.items {
+        if let Node::FnDef { name, params, .. } = item {
+            sigs.insert(
+                name.clone(),
+                IntraFnSig {
+                    param_count: params.len(),
+                },
+            );
+        }
+    }
+    sigs
+}
+
+/// RAII guard that installs an intra-module signature table into the
+/// thread-local for the duration of a `check_module_types_in_file` call and
+/// restores the previous value on drop.
+///
+/// Installation MERGES `sigs` onto any table the parent already installed
+/// rather than replacing it. This is load-bearing: the FnDef-body checker
+/// recurses into `check_module_types_in_file` with a sub-module that holds
+/// only the body's statements (NO module-level `FnDef`s), so a plain replace
+/// would wipe the table for the duration of the body check and disable call
+/// validation exactly where most calls live. Merging keeps the outer module's
+/// signatures visible inside bodies while letting any (currently nonexistent)
+/// nested fn shadow. The previous table is restored on drop, so there is no
+/// leakage across files / threads / sibling fns. Mirrors the moat-preserving
+/// thread-local discipline of `CM_TABLE`.
+struct IntraSigGuard {
+    prev: Option<IntraFnSigs>,
+}
+
+impl IntraSigGuard {
+    fn install(sigs: IntraFnSigs) -> Self {
+        let prev = INTRA_FN_SIGS.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let prev = slot.clone();
+            match slot.as_mut() {
+                // Merge onto the parent table (child entries win).
+                Some(existing) => existing.extend(sigs),
+                None => *slot = Some(sigs),
+            }
+            prev
+        });
+        IntraSigGuard { prev }
+    }
+}
+
+impl Drop for IntraSigGuard {
+    fn drop(&mut self) {
+        INTRA_FN_SIGS.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
 }
 
 // ── Cross-module imports (Phase 10.6 item 9 / Phase 15) — D2 ──────────
@@ -2541,6 +2886,18 @@ pub fn check_module_types_in_file(
             tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
         }
     }
+
+    // RFC 0005 Phase B — build the intra-module call-signature side-table for
+    // ALL fns before checking ANY call, then install it in the thread-local
+    // for the duration of this check (the guard restores the previous value on
+    // return). Call sites in `infer_call` consult it to validate call arity —
+    // the property that is always soundly knowable under the loose i64 ABI.
+    let _intra_sig_guard = IntraSigGuard::install(build_intra_fn_sigs(module));
+
+    // Install the enum-variant registry for match-exhaustiveness checking
+    // (same merge-onto-parent discipline, so an enum match inside a fn body
+    // still resolves the module's enums). Restored on return.
+    let _enum_variants_guard = EnumVariantsGuard::install(build_enum_variants(module));
 
     for item in &module.items {
         match item {
@@ -2912,11 +3269,20 @@ pub fn check_module_types_in_file(
                 // on ref/match constructs (it fires only when both the
                 // declared and inferred types are integer scalars of known
                 // width).
-                errs.extend(
-                    body_errs
-                        .into_iter()
-                        .filter(|d| is_shape_diag_code(d.code) || d.code == NARROWING_CODE),
-                );
+                // Also keep the intra-module call arity diagnostic (E2005, RFC
+                // 0005 Phase B) and the non-exhaustive-match diagnostic. Like
+                // narrowing, each fires only on a concrete, sound condition
+                // (wrong argument count; an enum match missing a variant with no
+                // wildcard) — never on the ref/match-binding/struct-arg
+                // constructs that made the generic mismatch path unsafe inside
+                // bodies — so admitting them surfaces these soundness holes
+                // where most calls and matches actually live (fn bodies).
+                errs.extend(body_errs.into_iter().filter(|d| {
+                    is_shape_diag_code(d.code)
+                        || d.code == NARROWING_CODE
+                        || d.code == CALL_ARITY_CODE
+                        || d.code == MATCH_NONEXHAUSTIVE_CODE
+                }));
 
                 // Issue #23 — scoped name resolution for the fn body. Replaces
                 // the dropped unknown-identifier / undefined-call diagnostics
@@ -3998,6 +4364,12 @@ fn classify_error_code(msg: &str) -> &'static str {
         SHAPE_BROADCAST_CODE
     } else if msg.contains("rank mismatch") {
         SHAPE_RANK_CODE
+    } else if msg.starts_with("function `") && msg.contains("argument(s); got") {
+        // Intra-module call arity mismatch (RFC 0005 Phase B).
+        CALL_ARITY_CODE
+    } else if msg.starts_with("non-exhaustive `match`") {
+        // Non-exhaustive enum match.
+        MATCH_NONEXHAUSTIVE_CODE
     } else {
         TYPE_ERR_CODE
     }
