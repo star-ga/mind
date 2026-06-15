@@ -1,0 +1,127 @@
+// Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
+//
+// Pure executable-subset MIND: heap alloc / load / store via the i64 ABID
+// intrinsics, integer multiply-accumulate, arithmetic shift for the Q16.16
+// scale, and `while` loops. NO float, NO `fft()` builtin (that surface name
+// has no codegen) — every butterfly is integer arithmetic, so the output is
+// BIT-IDENTICAL across substrates the way no FP32 FFT (cuFFT / FFTW / nvcc)
+// can be: f32 add is non-associative, Q16.16 multiply-then-`>>16`-then-add is.
+//
+// ABI: fft256(re, im, tw, logn, n) — re/im are N i64 Q16.16 buffers (real /
+// imag, mutated in place), tw is the interleaved twiddle table
+// (wr,wi for k = 0..N/2-1, Q16.16), logn = log2(n) = 8, n = 256.
+//
+// q16 multiply: (a*b) >> 16. Matches the oracle `qmul` exactly.
+
+pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
+    // --- bit-reversal permutation ---
+    let mut i: i64 = 0;
+    while i < n {
+        // reverse the low `logn` bits of i
+        let mut x: i64 = i;
+        let mut j: i64 = 0;
+        let mut b: i64 = 0;
+        while b < logn {
+            j = (j << 1) | (x & 1);
+            x = x >> 1;
+            b = b + 1;
+        }
+        if j > i {
+            let ai: i64 = re + i * 8;
+            let aj: i64 = re + j * 8;
+            let tr: i64 = __mind_load_i64(ai);
+            __mind_store_i64(ai, __mind_load_i64(aj));
+            __mind_store_i64(aj, tr);
+            let bi: i64 = im + i * 8;
+            let bj: i64 = im + j * 8;
+            let ti: i64 = __mind_load_i64(bi);
+            __mind_store_i64(bi, __mind_load_i64(bj));
+            __mind_store_i64(bj, ti)
+        }
+        i = i + 1;
+    }
+
+    // --- iterative DIT stages ---
+    //
+    // Stage length==2 is peeled: its only twiddle is k==0 == (65536, 0), and
+    // (65536 * x) >> 16 == x, (0 * x) >> 16 == 0 exactly, so the butterfly is a
+    // pure add/sub with NO multiply. This is an algebraic identity — the integer
+    // result (and therefore every output byte) is unchanged — that removes the
+    // 4 i64-multiplies from each of the 128 length==2 butterflies (the most
+    // numerous stage).
+    let nbytes: i64 = n * 8;
+    let mut areS2: i64 = re;
+    let mut aimS2: i64 = im;
+    let reEnd2: i64 = re + nbytes;
+    while areS2 < reEnd2 {
+        let bre: i64 = areS2 + 8;
+        let bim: i64 = aimS2 + 8;
+        let xbr: i64 = __mind_load_i64(bre);
+        let xbi: i64 = __mind_load_i64(bim);
+        let uur: i64 = __mind_load_i64(areS2);
+        let uui: i64 = __mind_load_i64(aimS2);
+        __mind_store_i64(areS2, uur + xbr);
+        __mind_store_i64(aimS2, uui + xbi);
+        __mind_store_i64(bre, uur - xbr);
+        __mind_store_i64(bim, uui - xbi);
+        areS2 = areS2 + 16;
+        aimS2 = aimS2 + 16;
+    }
+
+    // Stages length>=4: twiddles vary, so the Q16.16 complex multiply stays.
+    // Loop-invariant hoisting + incremental pointer advance: twp/are/aim/bre/bim
+    // are bumped by a constant stride each iteration instead of recomputed from
+    // k/jj, so the backend keeps one base pointer per stream and indexes the
+    // partner element off it. Pure address arithmetic — the per-product `>> 16`
+    // is unchanged, so the output stays bit-identical.
+    let mut length: i64 = 4;
+    while length <= n {
+        let half: i64 = length >> 1;
+        let step: i64 = n / length;
+        let twstep: i64 = step * 16;
+        let lenbytes: i64 = length * 8;
+        let halfbytes: i64 = half * 8;
+        let mut areS: i64 = re;
+        let mut aimS: i64 = im;
+        let mut start: i64 = 0;
+        while start < n {
+            let mut jj: i64 = 0;
+            let mut twp: i64 = tw;
+            let mut are: i64 = areS;
+            let mut aim: i64 = aimS;
+            let mut bre: i64 = areS + halfbytes;
+            let mut bim: i64 = aimS + halfbytes;
+            while jj < half {
+                let wr: i64 = __mind_load_i64(twp);
+                let wi: i64 = __mind_load_i64(twp + 8);
+
+                let xbr: i64 = __mind_load_i64(bre);
+                let xbi: i64 = __mind_load_i64(bim);
+
+                // t = W * x[b]  (complex multiply, Q16.16)
+                let trr: i64 = ((wr * xbr) >> 16) - ((wi * xbi) >> 16);
+                let tii: i64 = ((wr * xbi) >> 16) + ((wi * xbr) >> 16);
+
+                let uur: i64 = __mind_load_i64(are);
+                let uui: i64 = __mind_load_i64(aim);
+
+                __mind_store_i64(are, uur + trr);
+                __mind_store_i64(aim, uui + tii);
+                __mind_store_i64(bre, uur - trr);
+                __mind_store_i64(bim, uui - tii);
+
+                jj = jj + 1;
+                twp = twp + twstep;
+                are = are + 8;
+                aim = aim + 8;
+                bre = bre + 8;
+                bim = bim + 8;
+            }
+            areS = areS + lenbytes;
+            aimS = aimS + lenbytes;
+            start = start + length;
+        }
+        length = length << 1;
+    }
+    0
+}
