@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2857 | **Est. tokens:** ~6,924,022
-**Generated:** 2026-06-15 11:03 UTC
+**Files:** 2857 | **Est. tokens:** ~6,924,751
+**Generated:** 2026-06-15 11:20 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 38 | ~27,605 |
+| `./` | 38 | ~28,251 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -47,7 +47,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 16 | ~34,836 |
+| `examples/` | 16 | ~34,919 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -463,7 +463,7 @@
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
 - `CONTRIBUTING.md` (~1348 tok, large) — Contributing to MIND
 - `critique_rejections.md` (~249 tok, medium) — Critique Rejection Log
-- `dead_ends.md` (~344 tok, medium) — Dead-End Registry
+- `dead_ends.md` (~547 tok, large) — Dead-End Registry
 - `deny.toml` (~89 tok, small) — [advisories]
 - `.editorconfig` (~51 tok, small) — root = true
 - `.gitattributes` (~130 tok, small) — # Enforce LF line endings for all text so byte-exact tests (fmt idempotence,
@@ -476,8 +476,8 @@
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
 - `README.md` (~5147 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
-- `results.tsv` (~512 tok, large) — commit	val_bpb	memory_gb	status	description
-- `run.log` (~133 tok, small) — === [1/3] BUILD mindc + fft_test.so + harnesses ===
+- `results.tsv` (~894 tok, large) — commit	val_bpb	memory_gb	status	description
+- `run.log` (~194 tok, small) — === [1/3] BUILD mindc + fft_test.so + harnesses ===
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
@@ -726,7 +726,7 @@
 - `README.md` (~2214 tok, huge) — RFC 0005 Phase 6.4 — Self-Host MLIR Text Emitter
 ### `examples/`
 
-- `fft_q16.mind` (~2213 tok, huge) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
+- `fft_q16.mind` (~2296 tok, huge) — Deterministic Q16.16 fixed-point radix-2 DIT FFT, N=256 (complex).
 - `fft_signal.mind` (~533 tok, large) — FFT Signal Processing Example for MIND
 - `hello_stdlib.mind` (~271 tok, medium) — Hello, std.vec — minimal RFC 0005 cookbook example.
 - `hello_tensor.mind` (~141 tok, small) — Hello, MIND — scalar smoke that flows through every stage of the

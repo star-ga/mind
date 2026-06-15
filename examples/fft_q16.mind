@@ -137,8 +137,12 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
         let halfbytes: i64 = half * 8;
         let mut areS: i64 = re;
         let mut aimS: i64 = im;
-        let mut start: i64 = 0;
-        while start < n {
+        // start-loop bound expressed directly on the areS stream pointer: areS
+        // reaches re+nbytes exactly when the old `start` counter reached n
+        // (areS advances by lenbytes = length*8 each group, start by length),
+        // so dropping the redundant `start` induction variable is byte-identical
+        // — same trip count, every load/store address and `>>16` unchanged.
+        while areS < reEnd2 {
             // jj==0 peeled: tw[0] == (65536, 0), so the complex multiply is the
             // identity — trr == xbr, tii == xbi exactly (65536*x >> 16 == x,
             // 0*x >> 16 == 0). Pure add/sub, no multiply and no twiddle load for
@@ -193,7 +197,6 @@ pub fn fft256(re: i64, im: i64, tw: i64, logn: i64, n: i64) -> i64 {
             }
             areS = areS + lenbytes;
             aimS = aimS + lenbytes;
-            start = start + length;
         }
         length = length << 1;
     }
