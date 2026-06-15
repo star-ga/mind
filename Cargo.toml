@@ -92,6 +92,10 @@ name = "mindcraft_fmt"
 harness = false
 
 [[bench]]
+name = "fft_q16"
+harness = false
+
+[[bench]]
 name = "det_matmul_q16"
 harness = false
 
