@@ -640,6 +640,20 @@ fn main() {
     }
 
     emit_mlir_if_requested(&cli.compile, &products);
+
+    // P1.1: a runnable artifact (`--emit-obj` / `--emit-shared`) must never be a
+    // silent miscompile. If the source uses a construct outside the i64-scalar
+    // ABI the backend lowers correctly, fail loud here with file:line + RC!=0.
+    // Inspection emits above (`--emit-ir` / `--emit-mlir`) are intentionally
+    // unaffected — `i32`/`tensor` etc. are valid *types*, just not yet lowerable
+    // to a runnable artifact.
+    if (cli.compile.emit_obj.is_some() || cli.compile.emit_shared.is_some())
+        && !products.runnable_blockers.is_empty()
+    {
+        emitter.emit_all(&products.runnable_blockers, Some(&source));
+        process::exit(1);
+    }
+
     emit_obj_if_requested(&cli.compile, &products);
     emit_shared_if_requested(&cli.compile, &products);
 }
@@ -1182,6 +1196,14 @@ fn print_version() {
     // without the `autodiff` / `mlir-lowering` features must not claim them, since
     // `--autodiff` / `--emit-mlir` feature-error there (release-readiness: no false
     // capability advertisement to installed users).
+    // `mut` is only exercised when a feature below pushes a component; in a
+    // build with neither `autodiff` nor `mlir-lowering` the vec is never mutated,
+    // so scope the `unused_mut` allowance to exactly that configuration (clippy
+    // `-D warnings` runs the no-default-features job).
+    #[cfg_attr(
+        not(any(feature = "autodiff", feature = "mlir-lowering")),
+        allow(unused_mut, clippy::useless_vec)
+    )]
     let mut components = vec!["core-ir=1.0"];
     #[cfg(feature = "autodiff")]
     components.push("core-autodiff=1.0");

@@ -39,6 +39,7 @@ use crate::exec;
 #[cfg(feature = "cpu-buffers")]
 use value::Buffer;
 
+pub mod abi_gate;
 pub mod autodiff;
 pub mod conv2d_grad;
 pub mod ir_interp;
