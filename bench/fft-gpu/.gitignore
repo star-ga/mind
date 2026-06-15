@@ -1,4 +1,0 @@
-harness_gpu_O0
-harness_gpu_O3
-cufft_context
-*.o
