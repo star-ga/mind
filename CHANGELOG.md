@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Width-aware deterministic struct ABI (RUNS Phase 3).** Structs with sub-i64 fields
+  (`i32`/`u32`/`i16`/`u16`/`i8`/`u8`/`bool`) now lower correctly instead of being rejected:
+  a canonical per-field offset table (`struct_layout`) places each field at a self-aligned
+  offset computed purely from the declared field widths (8/4/2/1) — identical on every
+  substrate, with no host `sizeof`/`alignof` and no target-dependent padding. Struct
+  construction allocates the exact total size and stores each field with the typed
+  `__mind_store_i{8,16,32,64}` intrinsic (new `__mind_load/store_i16`); field reads use the
+  typed load and sign-extend a signed narrow field. The all-i64 case takes the identical
+  legacy path, so the self-host records, the mic@3 fixed point (byte-identical), the keystone
+  (7/7), and the cross-substrate canaries are unchanged. The obsolete P1.1 struct-field
+  loud-fail gate is removed (float struct fields stay loud via the downstream non-i64-call
+  check; the function param/return and tensor gates remain). Exec-verified end to end
+  (correct values at 4-byte stride; negative `i32` sign-extends); criterion compile_small
+  within noise.
+
 - **Generic monomorphization in codegen (RUNS Phase 3).** A generic function called
   at a concrete type (`id(5)`) previously emitted a body-less private declaration, so
   the resulting `.so` failed to link (`undefined symbol: id$i64`). `lower_to_ir` now
