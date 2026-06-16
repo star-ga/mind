@@ -638,6 +638,92 @@ fn scalar_int_cast_width(ty: &TypeAnn) -> Option<u32> {
     }
 }
 
+/// The byte width and signedness of a struct field type for the canonical
+/// width-aware struct ABI. Returns `(width_bytes, signed)`:
+///   * `i64`/`u64`/struct-handle (`Named` non-narrow)/pointer  → 8, signed
+///   * `i32`/`u32`                                             → 4
+///   * `i16`/`u16`                                             → 2
+///   * `i8`/`u8`/`bool`                                        → 1
+/// `signed` is true only for the signed integer scalars (`i64`/`i32`/`i16`/`i8`);
+/// `u*`/`bool`/handles are unsigned (zero-extended on load). Any field that is
+/// not a recognised scalar (a nested struct handle, a `Vec`/`String`/`Map`
+/// handle, etc.) is an i64-wide handle.
+#[cfg(feature = "std-surface")]
+fn struct_field_width(ty: &TypeAnn) -> (i64, bool) {
+    match ty {
+        TypeAnn::ScalarI64 => (8, true),
+        TypeAnn::ScalarI32 => (4, true),
+        TypeAnn::ScalarU32 => (4, false),
+        TypeAnn::ScalarBool => (1, false),
+        TypeAnn::Named(n) => match n.as_str() {
+            "i8" => (1, true),
+            "u8" => (1, false),
+            "i16" => (2, true),
+            "u16" => (2, false),
+            "i32" => (4, true),
+            "u32" => (4, false),
+            "i64" => (8, true),
+            // u64 and every other Named type (nested struct / Vec / String /
+            // Map handle, type alias) is an i64-wide value.
+            _ => (8, false),
+        },
+        // Floats are handled by the existing loud lowering error, not here;
+        // anything else is treated as an i64-wide handle (8 bytes).
+        _ => (8, false),
+    }
+}
+
+/// The `__mind_store_i{N}` intrinsic name for a field byte width.
+#[cfg(feature = "std-surface")]
+fn store_helper_for_width(width: i64) -> &'static str {
+    match width {
+        1 => "__mind_store_i8",
+        2 => "__mind_store_i16",
+        4 => "__mind_store_i32",
+        _ => "__mind_store_i64",
+    }
+}
+
+/// The `__mind_load_i{N}` intrinsic name for a field byte width.
+#[cfg(feature = "std-surface")]
+fn load_helper_for_width(width: i64) -> &'static str {
+    match width {
+        1 => "__mind_load_i8",
+        2 => "__mind_load_i16",
+        4 => "__mind_load_i32",
+        _ => "__mind_load_i64",
+    }
+}
+
+/// Canonical per-field layout for a struct: `(offset, width_bytes, signed)` in
+/// declaration order, plus the total allocation size. Offsets are a pure
+/// function of the declared field widths (self-aligned: each field starts at the
+/// next multiple of its own width), so the layout is identical on every
+/// substrate — no host `sizeof`/`alignof`, no target-dependent padding. Returns
+/// `None` when the field-type side-table has no entry for `name` (an unknown /
+/// forward-referenced struct), so callers fall back to the legacy 8-byte-stride
+/// path. `all_i64` is true when every field is 8 bytes wide AND tightly packed
+/// at `8*i` — the case where the legacy `__mind_alloc(8*n)` + `store_i64` IR is
+/// byte-identical and must be preserved verbatim.
+#[cfg(feature = "std-surface")]
+fn struct_layout(ir: &IRModule, name: &str) -> Option<(Vec<(i64, i64, bool)>, i64, bool)> {
+    let field_types = ir.struct_field_types.get(name)?;
+    let mut layout = Vec::with_capacity(field_types.len());
+    let mut running: i64 = 0;
+    let mut all_i64 = true;
+    for ty in field_types {
+        let (w, signed) = struct_field_width(ty);
+        // Self-aligned offset: round `running` up to a multiple of `w`.
+        let offset = (running + (w - 1)) / w * w;
+        if w != 8 || offset != (layout.len() as i64) * 8 {
+            all_i64 = false;
+        }
+        layout.push((offset, w, signed));
+        running = offset + w;
+    }
+    Some((layout, running, all_i64))
+}
+
 fn lower_expr(
     node: &ast::Node,
     ir: &mut IRModule,
@@ -1277,6 +1363,12 @@ fn lower_expr(
                 // a variant referenced inside a fn body (as a value or a match
                 // arm) resolves to its tag rather than the placeholder 0.
                 fn_ir.enum_variant_tags = ir.enum_variant_tags.clone();
+                // Width-aware struct ABI: inherit the per-struct field-type table
+                // so StructLit/FieldAccess/FieldAssign inside a fn body compute
+                // the canonical offset/width (sub-i64 fields), not the legacy
+                // 8-byte stride. Metadata only; an all-i64 struct still takes the
+                // byte-identical fast path.
+                fn_ir.struct_field_types = ir.struct_field_types.clone();
             }
             // Build fn_env from env, but do NOT carry over const-array
             // SSA ids from the outer module — those ids are only valid in
@@ -2223,54 +2315,101 @@ fn lower_expr(
             };
             let n = order.len() as i64;
 
-            // bytes = 8 * n  — emit two consts + a Mul rather than a
-            // precomputed literal so the IR matches what a future
-            // arbitrary-N codegen path will produce.
-            let eight = ir.fresh();
-            ir.instrs.push(Instr::ConstI64(eight, 8));
-            let count = ir.fresh();
-            ir.instrs.push(Instr::ConstI64(count, n));
-            let bytes = ir.fresh();
-            ir.instrs.push(Instr::BinOp {
-                dst: bytes,
-                op: BinOp::Mul,
-                lhs: eight,
-                rhs: count,
-            });
+            // Width-aware canonical layout, when the field-type side-table
+            // knows this struct. `all_i64 == true` (every field 8 bytes, tightly
+            // packed at 8*i) routes to the IDENTICAL legacy IR below so the
+            // self-host records (all i64) stay byte-identical.
+            let layout = struct_layout(ir, name).filter(|(l, _, _)| l.len() == order.len());
+            let all_i64 = layout.as_ref().map(|(_, _, a)| *a).unwrap_or(true);
 
-            // addr = __mind_alloc(bytes)
+            if all_i64 {
+                // bytes = 8 * n  — emit two consts + a Mul rather than a
+                // precomputed literal so the IR matches what a future
+                // arbitrary-N codegen path will produce.
+                let eight = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(eight, 8));
+                let count = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(count, n));
+                let bytes = ir.fresh();
+                ir.instrs.push(Instr::BinOp {
+                    dst: bytes,
+                    op: BinOp::Mul,
+                    lhs: eight,
+                    rhs: count,
+                });
+
+                // addr = __mind_alloc(bytes)
+                let addr = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: addr,
+                    name: "__mind_alloc".to_string(),
+                    args: vec![bytes],
+                });
+
+                // Per-field store at offset 8*i.
+                for (i, f) in order.iter().enumerate() {
+                    let value = lower_expr(&f.value, ir, env, struct_env, receiver_types);
+                    let field_addr = if i == 0 {
+                        addr
+                    } else {
+                        let offset = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                        let sum = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: sum,
+                            op: BinOp::Add,
+                            lhs: addr,
+                            rhs: offset,
+                        });
+                        sum
+                    };
+                    let store_ret = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: store_ret,
+                        name: "__mind_store_i64".to_string(),
+                        args: vec![field_addr, value],
+                    });
+                }
+
+                return addr;
+            }
+
+            // Width-aware path: a struct with at least one sub-i64 field.
+            // bytes = total (a single const — the size is fully determined by
+            // the declared widths, no runtime Mul needed).
+            let (layout, total, _) = layout.expect("non-all_i64 => layout is Some");
+            let bytes = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(bytes, total));
             let addr = ir.fresh();
             ir.instrs.push(Instr::Call {
                 dst: addr,
                 name: "__mind_alloc".to_string(),
                 args: vec![bytes],
             });
-
-            // Per-field store at offset 8*i.
             for (i, f) in order.iter().enumerate() {
                 let value = lower_expr(&f.value, ir, env, struct_env, receiver_types);
-                let field_addr = if i == 0 {
+                let (offset, width, _signed) = layout[i];
+                let field_addr = if offset == 0 {
                     addr
                 } else {
-                    let offset = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                    let off = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(off, offset));
                     let sum = ir.fresh();
                     ir.instrs.push(Instr::BinOp {
                         dst: sum,
                         op: BinOp::Add,
                         lhs: addr,
-                        rhs: offset,
+                        rhs: off,
                     });
                     sum
                 };
                 let store_ret = ir.fresh();
                 ir.instrs.push(Instr::Call {
                     dst: store_ret,
-                    name: "__mind_store_i64".to_string(),
+                    name: store_helper_for_width(width).to_string(),
                     args: vec![field_addr, value],
                 });
             }
-
             addr
         }
         // RFC 0005 P0f — `receiver.field` reads from the heap record
@@ -2309,7 +2448,7 @@ fn lower_expr(
                         ir.struct_defs
                             .get(struct_name)
                             .and_then(|fields| fields.iter().position(|f| f == field))
-                            .map(|idx| (Some(var_name.clone()), idx))
+                            .map(|idx| (Some(var_name.clone()), idx, struct_name.clone()))
                     })
                 }
                 _ => None,
@@ -2321,7 +2460,7 @@ fn lower_expr(
                     ir.struct_defs
                         .get(struct_name)
                         .and_then(|fields| fields.iter().position(|f| f == field))
-                        .map(|idx| (None::<String>, idx))
+                        .map(|idx| (None::<String>, idx, struct_name.clone()))
                 })
             } else {
                 None
@@ -2330,7 +2469,14 @@ fn lower_expr(
             let resolved = step1.or(step2);
 
             match resolved {
-                Some((var_name_opt, idx)) => {
+                Some((var_name_opt, idx, struct_name)) => {
+                    // Width-aware field offset/load. `(offset, width, signed)`;
+                    // an all-i64 struct yields `(idx*8, 8, _)` so the emitted IR
+                    // is byte-identical to the legacy path. Falls back to the
+                    // legacy `idx*8` / i64 when the layout is unknown.
+                    let fld =
+                        struct_layout(ir, &struct_name).and_then(|(l, _, _)| l.get(idx).copied());
+                    let (offset, width, signed) = fld.unwrap_or(((idx as i64) * 8, 8, true));
                     // Step 1 path can take addr from env without re-lowering.
                     // Step 2 path must lower the receiver expression to
                     // get its base address (it may be a Call, FieldAccess,
@@ -2346,27 +2492,52 @@ fn lower_expr(
                         },
                         None => lower_expr(receiver, ir, env, struct_env, receiver_types),
                     };
-                    let field_addr = if idx == 0 {
+                    let field_addr = if offset == 0 {
                         addr
                     } else {
-                        let offset = ir.fresh();
-                        ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                        let off = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(off, offset));
                         let sum = ir.fresh();
                         ir.instrs.push(Instr::BinOp {
                             dst: sum,
                             op: BinOp::Add,
                             lhs: addr,
-                            rhs: offset,
+                            rhs: off,
                         });
                         sum
                     };
-                    let result = ir.fresh();
+                    let loaded = ir.fresh();
                     ir.instrs.push(Instr::Call {
-                        dst: result,
-                        name: "__mind_load_i64".to_string(),
+                        dst: loaded,
+                        name: load_helper_for_width(width).to_string(),
                         args: vec![field_addr],
                     });
-                    result
+                    // The typed load zero-extends; a SIGNED narrow field needs a
+                    // sign-extend (shl then arithmetic shr by 64-bits). i64 and
+                    // unsigned/bool fields use the zero-extended value directly,
+                    // so this is byte-identical for the all-i64 path.
+                    if signed && width < 8 {
+                        let shift = (64 - width * 8) as i64;
+                        let sh = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(sh, shift));
+                        let shl = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: shl,
+                            op: BinOp::Shl,
+                            lhs: loaded,
+                            rhs: sh,
+                        });
+                        let sar = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: sar,
+                            op: BinOp::Shr,
+                            lhs: shl,
+                            rhs: sh,
+                        });
+                        sar
+                    } else {
+                        loaded
+                    }
                 }
                 None => {
                     // Receiver type still unresolvable even after the
@@ -2418,7 +2589,7 @@ fn lower_expr(
                         ir.struct_defs
                             .get(struct_name)
                             .and_then(|fields| fields.iter().position(|f| f == field))
-                            .map(|idx| (Some(var_name.clone()), idx))
+                            .map(|idx| (Some(var_name.clone()), idx, struct_name.clone()))
                     })
                 }
                 _ => None,
@@ -2430,7 +2601,7 @@ fn lower_expr(
                     ir.struct_defs
                         .get(struct_name)
                         .and_then(|fields| fields.iter().position(|f| f == field))
-                        .map(|idx| (None::<String>, idx))
+                        .map(|idx| (None::<String>, idx, struct_name.clone()))
                 })
             } else {
                 None
@@ -2439,7 +2610,12 @@ fn lower_expr(
             let resolved = step1.or(step2);
 
             match resolved {
-                Some((var_name_opt, idx)) => {
+                Some((var_name_opt, idx, struct_name)) => {
+                    // Width-aware field offset/store; all-i64 yields (idx*8, 8)
+                    // so the IR is byte-identical to the legacy path.
+                    let fld =
+                        struct_layout(ir, &struct_name).and_then(|(l, _, _)| l.get(idx).copied());
+                    let (offset, width, _signed) = fld.unwrap_or(((idx as i64) * 8, 8, true));
                     // Step 1 takes the base addr straight from env (no
                     // re-lowering); Step 2 must lower the receiver to get it.
                     let addr = match var_name_opt {
@@ -2453,17 +2629,17 @@ fn lower_expr(
                         },
                         None => lower_expr(receiver, ir, env, struct_env, receiver_types),
                     };
-                    let field_addr = if idx == 0 {
+                    let field_addr = if offset == 0 {
                         addr
                     } else {
-                        let offset = ir.fresh();
-                        ir.instrs.push(Instr::ConstI64(offset, (idx as i64) * 8));
+                        let off = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(off, offset));
                         let sum = ir.fresh();
                         ir.instrs.push(Instr::BinOp {
                             dst: sum,
                             op: BinOp::Add,
                             lhs: addr,
-                            rhs: offset,
+                            rhs: off,
                         });
                         sum
                     };
@@ -2471,7 +2647,7 @@ fn lower_expr(
                     let store_ret = ir.fresh();
                     ir.instrs.push(Instr::Call {
                         dst: store_ret,
-                        name: "__mind_store_i64".to_string(),
+                        name: store_helper_for_width(width).to_string(),
                         args: vec![field_addr, rhs],
                     });
                     // A field assignment is a statement; the store's return
@@ -3262,6 +3438,7 @@ fn sub_ir_from(parent: &IRModule) -> IRModule {
     m.struct_defs = parent.struct_defs.clone();
     m.const_array_defs = parent.const_array_defs.clone();
     m.enum_variant_tags = parent.enum_variant_tags.clone();
+    m.struct_field_types = parent.struct_field_types.clone();
     m
 }
 
@@ -3276,6 +3453,7 @@ fn sub_ir_from_after(prev: &IRModule, meta_src: &IRModule) -> IRModule {
     m.struct_defs = meta_src.struct_defs.clone();
     m.const_array_defs = meta_src.const_array_defs.clone();
     m.enum_variant_tags = meta_src.enum_variant_tags.clone();
+    m.struct_field_types = meta_src.struct_field_types.clone();
     m
 }
 
