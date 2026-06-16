@@ -174,6 +174,22 @@ MIND_EXPORT int64_t __mind_store_i32(int64_t addr, int64_t val) {
     return 0;
 }
 
+// 2-byte load/store — `i16`/`u16` struct fields. Mirrors the i32 helpers: load
+// zero-extends to i64 (unsigned 16-bit; a signed `i16` field applies a shl/ashr
+// sign-extend in the IR), store writes EXACTLY 2 bytes so it never clobbers an
+// adjacent field. memcpy keeps it alignment-safe and cross-substrate byte-identical.
+MIND_EXPORT int64_t __mind_load_i16(int64_t addr) {
+    uint16_t w;
+    memcpy(&w, (void *)(uintptr_t)addr, 2);
+    return (int64_t)w;
+}
+
+MIND_EXPORT int64_t __mind_store_i16(int64_t addr, int64_t val) {
+    uint16_t w = (uint16_t)(val & 0xFFFF);
+    memcpy((void *)(uintptr_t)addr, &w, 2);
+    return 0;
+}
+
 // __mind_read(fd, buf_addr, count, offset) — POSIX read/pread.
 // offset == -1 means "use current stream position" (plain read).
 MIND_EXPORT int64_t __mind_read(int64_t fd, int64_t buf_addr, int64_t count, int64_t offset) {

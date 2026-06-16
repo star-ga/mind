@@ -1152,12 +1152,16 @@ impl LoweringContext {
                 if args.len() == 1
                     && matches!(
                         name.as_str(),
-                        "__mind_load_i64" | "__mind_load_i32" | "__mind_load_i8"
+                        "__mind_load_i64"
+                            | "__mind_load_i32"
+                            | "__mind_load_i16"
+                            | "__mind_load_i8"
                     )
                 {
                     let (load_ty, zext): (&str, bool) = match name.as_str() {
                         "__mind_load_i64" => ("i64", false),
                         "__mind_load_i32" => ("i32", true),
+                        "__mind_load_i16" => ("i16", true),
                         _ => ("i8", true),
                     };
                     self.emit_line(&format!(
@@ -1188,12 +1192,16 @@ impl LoweringContext {
                 if args.len() == 2
                     && matches!(
                         name.as_str(),
-                        "__mind_store_i64" | "__mind_store_i32" | "__mind_store_i8"
+                        "__mind_store_i64"
+                            | "__mind_store_i32"
+                            | "__mind_store_i16"
+                            | "__mind_store_i8"
                     )
                 {
                     let store_ty: &str = match name.as_str() {
                         "__mind_store_i64" => "i64",
                         "__mind_store_i32" => "i32",
+                        "__mind_store_i16" => "i16",
                         _ => "i8",
                     };
                     self.emit_line(&format!(
