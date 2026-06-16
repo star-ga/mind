@@ -22,10 +22,9 @@
 //!
 //! Gate set (the *silent* sub-i64-ABI miscompiles; genuinely loud paths —
 //! e.g. float struct fields, unsupported tensor ops — are left to the existing
-//! lowering errors):
-//!   * a struct field declared at a sub-i64 width (`i32`/`u32`/`i8`/`u8`/
-//!     `i16`/`u16`/`bool`): the heap-record layout uses a fixed 8-byte stride
-//!     and a full-width store, incompatible with the declared width.
+//! lowering errors). Sub-i64 struct *fields* are no longer gated: the
+//! width-aware struct ABI lowers them with a canonical offset table + typed
+//! store/load. The remaining gated constructs:
 //!   * a `tensor` / `diff tensor` function parameter or return: erases to the
 //!     i64 ABI and is silently treated as a scalar integer.
 //!   * a function parameter or return declared at a sub-i64 integer width
@@ -35,7 +34,7 @@
 //! `extern "C"` blocks are EXEMPT — the C-ABI boundary legitimately declares
 //! narrow ints and maps them to the platform contract.
 
-use crate::ast::{Attribute, Module, Node, Span as AstSpan, TypeAnn};
+use crate::ast::{Module, Node, Span as AstSpan, TypeAnn};
 use crate::diagnostics::{Diagnostic, Span};
 
 const PHASE: &str = "lower";
@@ -49,74 +48,48 @@ const HELP: &str = "the shipped backend lowers only the i64-scalar ABI; this con
 /// path beyond the empty `Vec`), and the module is never mutated.
 pub fn check_runnable_lowerable(module: &Module, src: &str, file: Option<&str>) -> Vec<Diagnostic> {
     let mut out = Vec::new();
+    // Only function signatures gate now. Struct declarations no longer gate: the
+    // width-aware struct ABI lowers sub-i64 fields (i32/u32/i16/u16/i8/u8/bool)
+    // with a canonical per-field offset table + typed store/load, and float
+    // fields remain loud via the downstream non-i64-call check. `extern "C"`
+    // declarations and every other item are exempt — no other top-level item
+    // reaches the runnable path with a silently-miscompiled non-i64 signature.
     for item in &module.items {
-        match item {
-            Node::FnDef {
-                name,
-                params,
-                ret_type,
-                span,
-                ..
-            } => {
-                for p in params {
-                    if let Some(reason) = sig_non_i64(&p.ty) {
-                        out.push(mk(
-                            src,
-                            file,
-                            p.span,
-                            "lower::non_i64_param",
-                            format!(
-                                "parameter `{}` of `{name}` is not lowerable to a runnable \
-                                 artifact: {reason}",
-                                p.name
-                            ),
-                        ));
-                    }
-                }
-                if let Some(reason) = ret_type.as_ref().and_then(sig_non_i64) {
-                    out.push(mk(
-                        src,
-                        file,
-                        *span,
-                        "lower::non_i64_return",
-                        format!(
-                            "return type of `{name}` is not lowerable to a runnable artifact: \
-                             {reason}"
-                        ),
-                    ));
-                }
+        let Node::FnDef {
+            name,
+            params,
+            ret_type,
+            span,
+            ..
+        } = item
+        else {
+            continue;
+        };
+        for p in params {
+            if let Some(reason) = sig_non_i64(&p.ty) {
+                out.push(mk(
+                    src,
+                    file,
+                    p.span,
+                    "lower::non_i64_param",
+                    format!(
+                        "parameter `{}` of `{name}` is not lowerable to a runnable artifact: \
+                         {reason}",
+                        p.name
+                    ),
+                ));
             }
-            Node::StructDef {
-                name,
-                fields,
-                attrs,
-                ..
-            } => {
-                // A `#[repr(C)]` struct is a foreign-boundary contract; narrow
-                // fields there are intentional (handled by the extern path).
-                if is_repr_c(attrs) {
-                    continue;
-                }
-                for f in fields {
-                    if let Some(reason) = field_non_i64(&f.ty) {
-                        out.push(mk(
-                            src,
-                            file,
-                            f.span,
-                            "lower::non_i64_struct_field",
-                            format!(
-                                "field `{}` of struct `{name}` is not lowerable: {reason}",
-                                f.name
-                            ),
-                        ));
-                    }
-                }
-            }
-            // `extern "C"` declarations and every other item are exempt: the
-            // foreign boundary legitimately uses narrow ints, and no other
-            // top-level item reaches the runnable lowering path with a
-            // silently-miscompiled non-i64 signature.
-            _ => {}
+        }
+        if let Some(reason) = ret_type.as_ref().and_then(sig_non_i64) {
+            out.push(mk(
+                src,
+                file,
+                *span,
+                "lower::non_i64_return",
+                format!(
+                    "return type of `{name}` is not lowerable to a runnable artifact: {reason}"
+                ),
+            ));
         }
     }
     out
@@ -146,34 +119,11 @@ fn sig_non_i64(ty: &TypeAnn) -> Option<&'static str> {
     }
 }
 
-/// Reason a struct field `TypeAnn` cannot lower (a sub-i64 width breaks the
-/// fixed 8-byte-stride heap-record layout). Floats are left to the existing
-/// loud lowering error; `i64` and struct-handle (`Named`) fields lower
-/// correctly and are the records the self-host stack relies on.
-fn field_non_i64(ty: &TypeAnn) -> Option<&'static str> {
-    match ty {
-        TypeAnn::ScalarI32 | TypeAnn::ScalarU32 | TypeAnn::ScalarBool => Some(
-            "a sub-i64 field uses a fixed 8-byte stride and full-width store, incompatible with \
-             its declared width",
-        ),
-        TypeAnn::Named(n) if is_narrow_int_name(n) => {
-            Some("a sub-i64 field uses a fixed 8-byte stride, incompatible with its declared width")
-        }
-        _ => None,
-    }
-}
-
 /// Narrow integer type names that may reach the AST as `TypeAnn::Named`
 /// (the lexer maps `i32`/`u32` to dedicated scalars; `i8`/`u8`/`i16`/`u16`
 /// can arrive as named scalars). `u64`/`i64` are full-width and lower fine.
 fn is_narrow_int_name(n: &str) -> bool {
     matches!(n, "i8" | "u8" | "i16" | "u16")
-}
-
-fn is_repr_c(attrs: &[Attribute]) -> bool {
-    attrs
-        .iter()
-        .any(|a| a.name == "repr" && a.args.iter().any(|x| x == "C"))
 }
 
 fn mk(src: &str, file: Option<&str>, span: AstSpan, code: &'static str, msg: String) -> Diagnostic {

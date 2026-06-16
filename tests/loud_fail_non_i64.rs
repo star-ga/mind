@@ -36,13 +36,18 @@ fn u32_return_is_blocked() {
 }
 
 #[test]
-fn sub_i64_struct_field_is_blocked() {
-    assert!(blockers("struct P { a: i32, b: i32 }\nfn f() -> i64 { 0 }") >= 1);
+fn sub_i64_struct_field_is_clean() {
+    // The width-aware struct ABI now lowers sub-i64 fields (canonical offset
+    // table + typed store/load), so a struct with i32 fields is no longer gated.
+    assert_eq!(
+        blockers("struct P { a: i32, b: i32 }\nfn f() -> i64 { 0 }"),
+        0
+    );
 }
 
 #[test]
-fn bool_struct_field_is_blocked() {
-    assert!(blockers("struct Flag { on: bool }\nfn f() -> i64 { 0 }") >= 1);
+fn bool_struct_field_is_clean() {
+    assert_eq!(blockers("struct Flag { on: bool }\nfn f() -> i64 { 0 }"), 0);
 }
 
 // ---- NOT blocked: the i64 subset + the scalars that lower correctly ----
