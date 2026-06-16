@@ -1953,11 +1953,13 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     // call sites preserve the `& 255` mask semantics during migration.
     ("__mind_load_i8", 1),
     ("__mind_load_i32", 1),
+    ("__mind_load_i16", 1),
     ("__mind_read", 4),
     ("__mind_realloc", 2),
     ("__mind_store_i64", 2),
     ("__mind_store_i8", 2),
     ("__mind_store_i32", 2),
+    ("__mind_store_i16", 2),
     ("__mind_write", 4),
 ];
 
