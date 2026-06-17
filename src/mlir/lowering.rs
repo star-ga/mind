@@ -940,8 +940,32 @@ impl LoweringContext {
                         let both_narrow_diff =
                             is_narrow(&lhs_kind) && is_narrow(&rhs_kind) && lhs_kind != rhs_kind;
                         let widen_mode = lhs_nonlit_i64 || rhs_nonlit_i64 || both_narrow_diff;
+                        // Signedness of the op in the i64 widen domain. When a
+                        // NON-literal i64 operand drove the widen, the i64 side
+                        // dominates and the contract is the signed default — this
+                        // preserves the byte-identical `rotl`/`i64+i32` lowering
+                        // (those cases always have an i64 operand). When the widen
+                        // was driven PURELY by two different narrow kinds meeting
+                        // (no i64 operand at all — e.g. `u32 + bool`, `i32 < u32`),
+                        // pick unsigned iff BOTH narrow operands are unsigned-domain
+                        // (u32/bool); a single signed `i32` operand forces the
+                        // signed op (usual-arithmetic-conversion rule). The per-
+                        // operand extension stays kind-driven in `legalize` (extsi
+                        // i32 / extui u32,bool), so this flag only selects
+                        // divsi/divui · remsi/remui · shrsi/shrui · slt/ult etc.
+                        // Only the `both_narrow_diff`-without-i64 path changes, and
+                        // no compiling program reaches it today, so canary/keystone/
+                        // corpus bytes stay identical.
+                        let widen_unsigned = if lhs_nonlit_i64 || rhs_nonlit_i64 {
+                            false
+                        } else {
+                            let unsigned_narrow = |k: &ValueKind| {
+                                matches!(k, ValueKind::ScalarU32 | ValueKind::ScalarBool)
+                            };
+                            unsigned_narrow(&lhs_kind) && unsigned_narrow(&rhs_kind)
+                        };
                         let (ity, unsigned, out_kind) = if widen_mode {
-                            ("i64", false, ValueKind::ScalarI64)
+                            ("i64", widen_unsigned, ValueKind::ScalarI64)
                         } else {
                             match &target {
                                 ValueKind::ScalarBool => ("i1", false, ValueKind::ScalarBool),
