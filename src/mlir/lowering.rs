@@ -939,7 +939,13 @@ impl LoweringContext {
                         // matching narrow value, truncate an i64 literal, else
                         // fail closed. In widen mode: pass an i64 through and
                         // sign/zero-extend a narrow operand to i64.
-                        let mut legalize =
+                        // `Fn`, not `FnMut`: the closure mutates nothing it
+                        // captures (it takes `this: &mut Self` as a parameter and
+                        // only reads the captured `dst`/`ity`/`widen_mode`), so the
+                        // binding needs no `mut`. Pure Rust-level annotation — the
+                        // emitted MLIR text is byte-identical either way, so the
+                        // canary/keystone trace_hashes are unaffected.
+                        let legalize =
                             |this: &mut Self,
                              id: ValueId,
                              k: &ValueKind,
