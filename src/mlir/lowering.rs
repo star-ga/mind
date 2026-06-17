@@ -925,7 +925,21 @@ impl LoweringContext {
                             && !self.const_i64_values.contains(lhs);
                         let rhs_nonlit_i64 = matches!(rhs_kind, ValueKind::ScalarI64)
                             && !self.const_i64_values.contains(rhs);
-                        let widen_mode = lhs_nonlit_i64 || rhs_nonlit_i64;
+                        // Two DIFFERENT narrow kinds meeting in one op (e.g.
+                        // `i32 + u32`, `bool + i32`) cannot truncate to a single
+                        // narrow `ity` — they previously failed closed in the
+                        // `legalize` narrow branch (`{k:?} vs {target:?}`). Route
+                        // them through the SAME i64 widen path (extsi i32 / extui
+                        // u32,bool → i64, op in i64, signed default), yielding
+                        // i64; a narrow result is re-truncated at the boundary.
+                        // Purely additive: same-kind narrow pairs keep
+                        // `widen_mode == false` (they match `target` and truncate
+                        // as before), and any program that compiles today never
+                        // reached this error path — so corpus/canary/keystone
+                        // bytes are unchanged.
+                        let both_narrow_diff =
+                            is_narrow(&lhs_kind) && is_narrow(&rhs_kind) && lhs_kind != rhs_kind;
+                        let widen_mode = lhs_nonlit_i64 || rhs_nonlit_i64 || both_narrow_diff;
                         let (ity, unsigned, out_kind) = if widen_mode {
                             ("i64", false, ValueKind::ScalarI64)
                         } else {
