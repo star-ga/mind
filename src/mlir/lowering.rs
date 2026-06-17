@@ -492,6 +492,19 @@ struct LoweringContext {
     /// narrow-int / bool params → byte-identical lowering. Gated.
     #[cfg(feature = "std-surface")]
     fn_param_kinds: std::collections::BTreeMap<String, Vec<ValueKind>>,
+    /// NARROW-INT ABI — the declared MLIR return type of the `func.func`
+    /// currently being lowered (`"i32"`/`"i64"`/`"f64"`/…), set by the
+    /// `Instr::FnDef` arm on each body sub-context before it walks the body.
+    /// The explicit `Instr::Return` arm reads it to reconcile a returned
+    /// value's real SSA width with the declared result slot: an i64-wide
+    /// value flowing into an `-> i32` result is `arith.trunci`-narrowed (two's
+    /// -complement low-32 — exactly `as i32`), and a narrow value flowing into
+    /// an `-> i64` result is sign/zero-extended, so `return` never type-
+    /// mismatches the signature. `None` at module scope. Empty/`"i64"` for
+    /// i64-only modules → the reconcile is a no-op and lowering stays
+    /// byte-identical. Gated.
+    #[cfg(feature = "std-surface")]
+    fn_ret_abi: Option<String>,
 }
 
 /// One enclosing `while` loop, for break/continue codegen.
@@ -549,6 +562,8 @@ impl LoweringContext {
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_param_kinds: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            fn_ret_abi: None,
         }
     }
 
@@ -1702,6 +1717,12 @@ impl LoweringContext {
                     None => params.iter().map(|_| "i64").collect(),
                 };
                 let ret_abi: &str = sig.and_then(|(_, r)| r.as_deref()).unwrap_or("i64");
+                // NARROW-INT ABI: record the declared return slot so the
+                // explicit `Instr::Return` arm can reconcile a returned value's
+                // real SSA width with it (trunci an i64 into an `-> i32` result,
+                // extsi/extui a narrow value into an `-> i64` result). No-op for
+                // i64-only fns (`ret_abi == "i64"`), so lowering stays identical.
+                sub.fn_ret_abi = Some(ret_abi.to_string());
                 // Seed each parameter's `ValueKind`. Prefer the signedness-
                 // preserving `fn_param_kinds` table (so `u32` seeds `ScalarU32`,
                 // distinct from `i32`/`ScalarI32`, and `bool` seeds `ScalarBool`);
@@ -1769,10 +1790,47 @@ impl LoweringContext {
                             "    %bext{0} = arith.extui %{0} : i1 to i64\n    return %bext{0} : i64\n",
                             rid.0
                         )),
-                        // RFC 0012 §5.1: return the value at the declared ABI
-                        // width (`f64`/`f32` for a scalar-float return, else i64).
-                        Some(rid) => fn_text
-                            .push_str(&format!("    return %{} : {}\n", rid.0, ret_abi)),
+                        // RFC 0012 §5.1 + NARROW-INT ABI: return the value, first
+                        // reconciling its real SSA width with the declared result
+                        // slot. An i64-wide value falling into an `-> i32` result
+                        // is `arith.trunci`-narrowed (two's-complement low-32 —
+                        // exactly `as i32`); a narrow value falling into an
+                        // `-> i64` result is `extsi`/`extui`-widened (signedness
+                        // from the value kind). Otherwise the value already
+                        // matches the declared ABI (`f64`/`f32`/`i64`/`i32`) and
+                        // is returned as-is — byte-identical for i64-only fns.
+                        Some(rid) => {
+                            let val_ty = match sub.values.get(rid) {
+                                Some(ValueKind::ScalarF64) => "f64",
+                                Some(ValueKind::ScalarF32) => "f32",
+                                Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
+                                _ => "i64",
+                            };
+                            if ret_abi == "i32" && val_ty == "i64" {
+                                fn_text.push_str(&format!(
+                                    "    %nret{0} = arith.trunci %{0} : i64 to i32\n    return %nret{0} : i32\n",
+                                    rid.0
+                                ));
+                            } else if ret_abi == "i64" && val_ty == "i32" {
+                                let ext = if matches!(
+                                    sub.values.get(rid),
+                                    Some(ValueKind::ScalarU32)
+                                ) {
+                                    "extui"
+                                } else {
+                                    "extsi"
+                                };
+                                fn_text.push_str(&format!(
+                                    "    %nret{0} = arith.{1} %{0} : i32 to i64\n    return %nret{0} : i64\n",
+                                    rid.0, ext
+                                ));
+                            } else {
+                                fn_text.push_str(&format!(
+                                    "    return %{} : {}\n",
+                                    rid.0, ret_abi
+                                ));
+                            }
+                        }
                         // No trailing value: synthesise a zero at the return ABI
                         // type so a float-returning fn that falls off the end is
                         // still well-typed.
@@ -1834,16 +1892,43 @@ impl LoweringContext {
                     self.emit_line(&format!("    %bext{0} = arith.extui %{0} : i1 to i64", v.0));
                     self.emit_line(&format!("    return %bext{} : i64", v.0));
                 }
-                // RFC 0012 §5.1: return the value at its real ABI width — `f64`/
-                // `f32` for a scalar-float result (param or float BinOp), else the
-                // i64 ABI slot (byte-identical to the legacy path for i64 fns).
+                // RFC 0012 §5.1 + NARROW-INT ABI: return the value at its real
+                // ABI width — `f64`/`f32` for a scalar-float result, `i32` for a
+                // narrow result, else the i64 ABI slot — then reconcile against
+                // the function's declared return slot (`fn_ret_abi`): an i64-wide
+                // value flowing into an `-> i32` result is `arith.trunci`-narrowed
+                // (two's-complement low-32 — exactly `as i32`), and a narrow value
+                // flowing into an `-> i64` result is `extsi`/`extui`-widened.
+                // Byte-identical to the legacy path for i64 fns (no narrow values,
+                // `fn_ret_abi` == `"i64"`, so the reconcile collapses to a no-op).
                 Some(v) => {
-                    let rty = match self.values.get(v) {
+                    let val_ty = match self.values.get(v) {
                         Some(ValueKind::ScalarF64) => "f64",
                         Some(ValueKind::ScalarF32) => "f32",
+                        Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
                         _ => "i64",
                     };
-                    self.emit_line(&format!("    return %{} : {}", v.0, rty));
+                    let ret = self.fn_ret_abi.as_deref().unwrap_or(val_ty);
+                    if ret == "i32" && val_ty == "i64" {
+                        self.emit_line(&format!(
+                            "    %nret{0} = arith.trunci %{0} : i64 to i32",
+                            v.0
+                        ));
+                        self.emit_line(&format!("    return %nret{} : i32", v.0));
+                    } else if ret == "i64" && val_ty == "i32" {
+                        let ext = if matches!(self.values.get(v), Some(ValueKind::ScalarU32)) {
+                            "extui"
+                        } else {
+                            "extsi"
+                        };
+                        self.emit_line(&format!(
+                            "    %nret{0} = arith.{1} %{0} : i32 to i64",
+                            v.0, ext
+                        ));
+                        self.emit_line(&format!("    return %nret{} : i64", v.0));
+                    } else {
+                        self.emit_line(&format!("    return %{} : {}", v.0, val_ty));
+                    }
                 }
                 None => self.emit_line("    return"),
             },
