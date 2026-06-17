@@ -1054,6 +1054,19 @@ impl LoweringContext {
                             self.values.insert(*dst, ValueKind::ScalarI64);
                             self.i1_values.insert(*dst);
                         } else {
+                            // NARROW-INT i1-SSA tracking: a `ScalarBool` result of a
+                            // bitwise bool op is held in a physical `i1` register
+                            // (`ity == "i1"`). Record it in `i1_values` so the
+                            // branch-condition / return-widening paths treat it as
+                            // already-i1 — keeping `i1_values` the SINGLE source of
+                            // truth for "this SSA value is physically i1" (a bool
+                            // *param* is `ScalarBool` but i64-backed, so kind alone
+                            // is ambiguous). Inert for i64-only programs: this narrow
+                            // arm never fires without a narrow operand, so the
+                            // keystone/canary bytes are unchanged.
+                            if matches!(out_kind, ValueKind::ScalarBool) {
+                                self.i1_values.insert(*dst);
+                            }
                             self.values.insert(*dst, out_kind);
                         }
                     }
@@ -2106,14 +2119,16 @@ impl LoweringContext {
                 // Determine whether condition is already i1 (so we must NOT emit
                 // a spurious `arith.trunci i64 to i1` on it — that is invalid
                 // MLIR). Value-based: the cond SSA value is i1 if it is recorded
-                // in `i1_values` (a comparison result, possibly let-bound) or its
-                // kind is `ScalarBool` (a narrow-int / bool-typed value). The
+                // in `i1_values` (a comparison result, possibly let-bound, or a
+                // bitwise bool op — both tagged into `i1_values`). NOTE: kind
+                // `ScalarBool` is NOT sufficient — a `bool` *param* is `ScalarBool`
+                // yet i64-backed at the ABI boundary, so it must take the trunci
+                // path; `i1_values` is the authoritative "physically i1" set. The
                 // instruction-shape probe (last cond instr is a comparison) is
                 // kept as a fallback for the bare-comparison case. Additive: an
                 // i64-only program whose while-cond is a non-let comparison still
                 // takes the instruction-shape branch byte-identically.
                 let cond_already_i1 = self.i1_values.contains(cond_id)
-                    || matches!(self.values.get(cond_id), Some(ValueKind::ScalarBool))
                     || cond_instrs
                         .last()
                         .map(|last| {
@@ -2587,13 +2602,15 @@ impl LoweringContext {
                 // Determine whether the condition value is already i1 (so we must
                 // NOT emit a spurious `arith.trunci i64 to i1` on it — invalid
                 // MLIR). Value-based: i1 if recorded in `i1_values` (a comparison
-                // result, possibly let-bound) or its kind is `ScalarBool`. The
-                // instruction-shape probe (last cond instr is a comparison) is the
-                // fallback for the bare-comparison case. Additive: an i64-only
-                // program with an inline-comparison if-cond still takes the
-                // instruction-shape branch byte-identically.
+                // result, possibly let-bound, or a bitwise bool op — both tagged
+                // into `i1_values`). NOTE: kind `ScalarBool` is NOT sufficient — a
+                // `bool` *param* is `ScalarBool` yet i64-backed at the ABI boundary,
+                // so it must take the trunci path; `i1_values` is the authoritative
+                // "physically i1" set. The instruction-shape probe (last cond instr
+                // is a comparison) is the fallback for the bare-comparison case.
+                // Additive: an i64-only program with an inline-comparison if-cond
+                // still takes the instruction-shape branch byte-identically.
                 let cond_already_i1 = self.i1_values.contains(cond_id)
-                    || matches!(self.values.get(cond_id), Some(ValueKind::ScalarBool))
                     || cond_instrs
                         .last()
                         .map(|last| {
