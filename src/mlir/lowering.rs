@@ -556,6 +556,97 @@ impl LoweringContext {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
     }
 
+    /// NARROW-INT control-flow merge typing. Given the two branch yields of a
+    /// single merge column (then-edge / else-edge), return the merge's MLIR
+    /// `ValueKind` plus the (possibly rewritten) value strings each `cf.br`
+    /// edge should pass.
+    ///
+    /// Rules:
+    ///   * identical MLIR type on both arms → that kind; values unchanged; NO
+    ///     extension emitted. (unify(i64,i64)=i64 is this path — byte-identical
+    ///     to the legacy hardcoded-i64 output.)
+    ///   * different integer widths → widen the narrower arm to `i64` with
+    ///     `arith.extsi` (signed: i32/i64) or `arith.extui` (unsigned/bool:
+    ///     u32/i1) emitted INSIDE that arm's body buffer just before its
+    ///     `cf.br`; the merge kind is then `ScalarI64`.
+    ///
+    /// `t_buf`/`e_buf` are the then/else branch body buffers (extensions are
+    /// appended there). `lbl`/`col` form the fresh widened-value SSA name so it
+    /// never collides with a numeric id.
+    #[allow(clippy::too_many_arguments)]
+    fn unify_merge_kind(
+        &self,
+        then_kind: &ValueKind,
+        else_kind: &ValueKind,
+        then_val: &str,
+        else_val: &str,
+        t_buf: &mut String,
+        e_buf: &mut String,
+        lbl: usize,
+        col: usize,
+    ) -> Result<(ValueKind, String, String), MlirLowerError> {
+        // Bit width of a scalar integer kind (for the merge-width decision);
+        // None for non-integer kinds, which we never widen here.
+        fn int_width(k: &ValueKind) -> Option<u32> {
+            match k {
+                ValueKind::ScalarI64 => Some(64),
+                #[cfg(feature = "std-surface")]
+                ValueKind::ScalarI32 | ValueKind::ScalarU32 => Some(32),
+                #[cfg(feature = "std-surface")]
+                ValueKind::ScalarBool => Some(1),
+                _ => None,
+            }
+        }
+        // `extui` for unsigned/bool, `extsi` for signed.
+        #[cfg(feature = "std-surface")]
+        fn is_unsigned(k: &ValueKind) -> bool {
+            matches!(k, ValueKind::ScalarU32 | ValueKind::ScalarBool)
+        }
+        #[cfg(not(feature = "std-surface"))]
+        fn is_unsigned(_k: &ValueKind) -> bool {
+            false
+        }
+
+        // Same MLIR type on both arms → no widening, byte-identical path.
+        if mlir_type(then_kind)? == mlir_type(else_kind)? {
+            return Ok((then_kind.clone(), then_val.to_string(), else_val.to_string()));
+        }
+
+        match (int_width(then_kind), int_width(else_kind)) {
+            (Some(tw), Some(ew)) if tw != ew => {
+                // Widen the narrower arm to i64.
+                let mut tv = then_val.to_string();
+                let mut ev = else_val.to_string();
+                let src_ty_t = mlir_type(then_kind)?;
+                let src_ty_e = mlir_type(else_kind)?;
+                if tw < ew {
+                    let op = if is_unsigned(then_kind) { "extui" } else { "extsi" };
+                    let name = format!("%mwide_{lbl}_{col}_t");
+                    writeln!(
+                        t_buf,
+                        "    {name} = arith.{op} {then_val} : {src_ty_t} to i64"
+                    )
+                    .expect("write to string cannot fail");
+                    tv = name;
+                } else {
+                    let op = if is_unsigned(else_kind) { "extui" } else { "extsi" };
+                    let name = format!("%mwide_{lbl}_{col}_e");
+                    writeln!(
+                        e_buf,
+                        "    {name} = arith.{op} {else_val} : {src_ty_e} to i64"
+                    )
+                    .expect("write to string cannot fail");
+                    ev = name;
+                }
+                Ok((ValueKind::ScalarI64, tv, ev))
+            }
+            // Mismatched non-integer / unhandled mix (should not occur for the
+            // type-checked narrow-int surface) → fall back to i64 merge kind
+            // without rewriting, preserving prior behavior shape.
+            _ => Ok((ValueKind::ScalarI64, then_val.to_string(), else_val.to_string())),
+        }
+    }
+
     fn emit_instr(&mut self, instr_index: usize, instr: &Instr) -> Result<(), MlirLowerError> {
         match instr {
             Instr::ConstI64(id, value) => {
@@ -2397,8 +2488,22 @@ impl LoweringContext {
                     ));
                 }
 
-                // Then block.
-                self.emit_line(&format!("  ^if_then_{lbl}:"));
+                // NARROW-INT control flow: both branch sub-contexts are lowered
+                // into their OWN body buffers FIRST (then_sub.body / else_sub.body),
+                // before any `cf.br` is emitted. This lets us look up the REAL
+                // ValueKind of each branch yield (then-edge vs else-edge of every
+                // merge column) and choose the merge's MLIR type, instead of the
+                // old hardcoded `i64` (which type-errored for i32/u32/bool ifs).
+                //
+                // Restructure note: the legacy code interleaved
+                // `emit_line(^if_then) → lower then → emit then cf.br → emit_line
+                // (^if_else) → lower else → emit else cf.br → join`. We now lower
+                // then THEN else (both into local buffers, values merged into
+                // `self.values`), THEN assemble the text in the same order. Output
+                // is byte-identical for the all-i64 case (unify(i64,i64)==i64, no
+                // extension emitted, identical `i64` literals).
+
+                // --- Lower the THEN branch into its own buffer. ---
                 let mut then_sub = LoweringContext::new();
                 // Inherit extern "C" signatures so calls to them inside this
                 // nested construct emit `llvm.call` consistently (not
@@ -2421,7 +2526,7 @@ impl LoweringContext {
                     then_sub.emit_instr(idx, ti)?;
                 }
                 self.while_label = then_sub.while_label;
-                self.body.push_str(&then_sub.body);
+                let mut then_body = std::mem::take(&mut then_sub.body);
                 for (vid, kind) in then_sub.values {
                     self.values.insert(vid, kind);
                 }
@@ -2429,31 +2534,12 @@ impl LoweringContext {
                 for ec in then_sub.extern_calls {
                     self.extern_calls.insert(ec);
                 }
-                // If the last instruction in the then-block was already a
-                // `return`, do NOT emit a `cf.br` — the block is already
-                // properly terminated.  Otherwise forward then_result to the
-                // join block via a block-argument branch.
                 let then_ends_with_return = then_instrs
                     .last()
                     .map(instr_is_block_terminator)
                     .unwrap_or(false);
-                if !then_ends_with_return {
-                    // F2: pass the if-value (then_result) plus every merge phi's
-                    // then-edge value. Each then_val dominates this `cf.br`
-                    // because lower.rs computed it from the then-branch exit env
-                    // (incoming, top-level branch value, or nested region exit).
-                    let mut vals: Vec<String> = vec![format!("%{}", then_result.0)];
-                    for (_merge_id, then_val, _else_val) in merges.iter() {
-                        vals.push(format!("%{}", then_val.0));
-                    }
-                    self.emit_line(&format!(
-                        "    cf.br ^if_after_{lbl}{}",
-                        fmt_block_args(&vals)
-                    ));
-                }
 
-                // Else block.
-                self.emit_line(&format!("  ^if_else_{lbl}:"));
+                // --- Lower the ELSE branch into its own buffer. ---
                 let mut else_sub = LoweringContext::new();
                 // Inherit extern "C" signatures so calls to them inside this
                 // nested construct emit `llvm.call` consistently (not
@@ -2474,7 +2560,7 @@ impl LoweringContext {
                     else_sub.emit_instr(idx, ei)?;
                 }
                 self.while_label = else_sub.while_label;
-                self.body.push_str(&else_sub.body);
+                let mut else_body = std::mem::take(&mut else_sub.body);
                 for (vid, kind) in else_sub.values {
                     self.values.insert(vid, kind);
                 }
@@ -2486,36 +2572,137 @@ impl LoweringContext {
                     .last()
                     .map(instr_is_block_terminator)
                     .unwrap_or(false);
-                if !else_ends_with_return {
-                    let mut vals: Vec<String> = vec![format!("%{}", else_result.0)];
-                    for (_merge_id, _then_val, else_val) in merges.iter() {
-                        vals.push(format!("%{}", else_val.0));
-                    }
+
+                // --- Resolve the merge type of every column. ---
+                // Column 0 is the if-value (then_result / else_result → dst).
+                // Columns 1.. are the F2 merge phis (then_val / else_val →
+                // merge_id). For each column compute the unified ValueKind:
+                //   * same MLIR type on both arms      → that type, no widening;
+                //   * different integer widths         → widen the narrower arm
+                //     to i64 (extsi for signed, extui for unsigned/bool) inside
+                //     that arm's buffer, then the merge type is i64.
+                // The all-i64 case is unify(i64,i64)=i64 with NO extension — the
+                // emitted text is byte-for-byte the legacy output.
+
+                // Per-column resolved (then_value_str, else_value_str, merge_kind).
+                let mut col_then: Vec<String> = vec![format!("%{}", then_result.0)];
+                let mut col_else: Vec<String> = vec![format!("%{}", else_result.0)];
+                let mut col_kind: Vec<ValueKind> = Vec::new();
+                let mut merge_targets: Vec<ValueId> = vec![*dst];
+                for (merge_id, then_val, else_val) in merges.iter() {
+                    col_then.push(format!("%{}", then_val.0));
+                    col_else.push(format!("%{}", else_val.0));
+                    merge_targets.push(*merge_id);
+                }
+                // Resolve kind for the if-value column.
+                {
+                    let tk = self
+                        .values
+                        .get(then_result)
+                        .cloned()
+                        .unwrap_or(ValueKind::ScalarI64);
+                    let ek = self
+                        .values
+                        .get(else_result)
+                        .cloned()
+                        .unwrap_or(ValueKind::ScalarI64);
+                    let (mk, tnew, enew) = self.unify_merge_kind(
+                        &tk,
+                        &ek,
+                        &col_then[0],
+                        &col_else[0],
+                        &mut then_body,
+                        &mut else_body,
+                        lbl,
+                        0,
+                    )?;
+                    col_then[0] = tnew;
+                    col_else[0] = enew;
+                    col_kind.push(mk);
+                }
+                // Resolve kind for each merge-phi column.
+                for (ci, (_merge_id, then_val, else_val)) in merges.iter().enumerate() {
+                    let tk = self
+                        .values
+                        .get(then_val)
+                        .cloned()
+                        .unwrap_or(ValueKind::ScalarI64);
+                    let ek = self
+                        .values
+                        .get(else_val)
+                        .cloned()
+                        .unwrap_or(ValueKind::ScalarI64);
+                    let idx = ci + 1;
+                    let (mk, tnew, enew) = self.unify_merge_kind(
+                        &tk,
+                        &ek,
+                        &col_then[idx],
+                        &col_else[idx],
+                        &mut then_body,
+                        &mut else_body,
+                        lbl,
+                        idx,
+                    )?;
+                    col_then[idx] = tnew;
+                    col_else[idx] = enew;
+                    col_kind.push(mk);
+                }
+
+                // --- Emit the THEN block. ---
+                self.emit_line(&format!("  ^if_then_{lbl}:"));
+                self.body.push_str(&then_body);
+                // If the last instruction in the then-block was already a
+                // `return`, do NOT emit a `cf.br` — the block is already
+                // properly terminated. Otherwise forward then_result + each
+                // merge phi's then-edge value with their resolved types.
+                if !then_ends_with_return {
+                    let items: Vec<(String, String)> = col_then
+                        .iter()
+                        .zip(col_kind.iter())
+                        .map(|(v, k)| Ok((v.clone(), mlir_type(k)?)))
+                        .collect::<Result<_, MlirLowerError>>()?;
                     self.emit_line(&format!(
                         "    cf.br ^if_after_{lbl}{}",
-                        fmt_block_args(&vals)
+                        fmt_block_args_typed(&items)
                     ));
                 }
 
-                // Join block: declare the block arguments carrying the if-value
-                // (`%dst`) plus one F2 merge phi per outer variable assigned in
-                // either branch (`%merge_id`). Both `cf.br` edges supply a
-                // matching i64 tuple; each merge id dominates all post-if code
-                // (lower.rs rebound those variables to the merge ids).
+                // --- Emit the ELSE block. ---
+                self.emit_line(&format!("  ^if_else_{lbl}:"));
+                self.body.push_str(&else_body);
+                if !else_ends_with_return {
+                    let items: Vec<(String, String)> = col_else
+                        .iter()
+                        .zip(col_kind.iter())
+                        .map(|(v, k)| Ok((v.clone(), mlir_type(k)?)))
+                        .collect::<Result<_, MlirLowerError>>()?;
+                    self.emit_line(&format!(
+                        "    cf.br ^if_after_{lbl}{}",
+                        fmt_block_args_typed(&items)
+                    ));
+                }
+
+                // --- Join block: declare the block arguments carrying the
+                // if-value (`%dst`) plus one F2 merge phi per outer variable
+                // assigned in either branch (`%merge_id`), each with its
+                // resolved merge type. Both `cf.br` edges supply a matching
+                // typed tuple. ---
                 {
-                    let mut decls: Vec<String> = vec![format!("%{} : i64", dst.0)];
-                    for (merge_id, _t, _e) in merges.iter() {
-                        decls.push(format!("%{} : i64", merge_id.0));
-                    }
+                    let decls: Vec<String> = merge_targets
+                        .iter()
+                        .zip(col_kind.iter())
+                        .map(|(id, k)| Ok(format!("%{} : {}", id.0, mlir_type(k)?)))
+                        .collect::<Result<_, MlirLowerError>>()?;
                     self.emit_line(&format!("  ^if_after_{lbl}({}):", decls.join(", ")));
                 }
-                // Register then_result/else_result, dst, and every merge id as
-                // known scalar i64 values for downstream type lookups.
-                self.values.insert(*then_result, ValueKind::ScalarI64);
-                self.values.insert(*else_result, ValueKind::ScalarI64);
-                self.values.insert(*dst, ValueKind::ScalarI64);
-                for (merge_id, _t, _e) in merges.iter() {
-                    self.values.insert(*merge_id, ValueKind::ScalarI64);
+                // Register then_result/else_result, dst, and every merge id with
+                // their REAL resolved kind for downstream type lookups (the old
+                // code force-registered ScalarI64, discarding i32/u32/bool).
+                self.values.insert(*then_result, col_kind[0].clone());
+                self.values.insert(*else_result, col_kind[0].clone());
+                self.values.insert(*dst, col_kind[0].clone());
+                for (ci, (merge_id, _t, _e)) in merges.iter().enumerate() {
+                    self.values.insert(*merge_id, col_kind[ci + 1].clone());
                 }
             }
             // RFC 0010 Phase A: register an extern "C" declaration so that
@@ -8468,6 +8655,37 @@ fn fmt_block_args(values: &[String]) -> String {
         _ => {
             let vals = values.join(", ");
             let types = vec!["i64"; values.len()].join(", ");
+            format!("({vals} : {types})")
+        }
+    }
+}
+
+/// Typed variant of [`fmt_block_args`]: formats a `cf.br` / `cf.cond_br`
+/// block-argument pass list where each operand carries its own MLIR type.
+///
+/// NARROW-INT control flow: value-if and while-loop merges carry the REAL
+/// branch type (`i32`/`i1`/`i64`) instead of a hardcoded `i64`, so the join /
+/// header / body block-arg declarations match the operand types and mlir-opt
+/// accepts the edge.
+///
+/// BYTE-IDENTITY INVARIANT: for an all-`i64` list this is byte-for-byte
+/// identical to [`fmt_block_args`] — len 1 → `(%x : i64)`, len > 1 →
+/// `(%a, %b : i64, i64)`. An i64-only program therefore lowers unchanged.
+fn fmt_block_args_typed(items: &[(String, String)]) -> String {
+    match items.len() {
+        0 => String::new(),
+        1 => format!("({} : {})", items[0].0, items[0].1),
+        _ => {
+            let vals = items
+                .iter()
+                .map(|(v, _)| v.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let types = items
+                .iter()
+                .map(|(_, t)| t.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("({vals} : {types})")
         }
     }
