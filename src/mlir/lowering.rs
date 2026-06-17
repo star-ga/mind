@@ -1007,11 +1007,33 @@ impl LoweringContext {
                                             Ok(format!("%{tmp}{}", dst.0))
                                         }
                                         ValueKind::ScalarBool => {
-                                            this.emit_line(&format!(
-                                                "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
-                                                dst.0, id.0
-                                            ));
-                                            Ok(format!("%{tmp}{}", dst.0))
+                                            // A `bool` operand may be physically i1
+                                            // (in `i1_values`, e.g. a prior compare /
+                                            // bitwise-bool result) OR i64-backed (a
+                                            // bool *param* is `ScalarBool` but carried
+                                            // in an i64 ABI slot — see the i1_values
+                                            // invariant). Only the physically-i1 form
+                                            // needs `arith.extui i1 to i64`; an
+                                            // i64-backed bool is ALREADY a 0/1 i64 in
+                                            // its ABI slot, so widening is a no-op and
+                                            // emitting `extui %v : i1 to i64` on it
+                                            // would consume an i64 SSA value as i1 —
+                                            // invalid MLIR / a miscompile (e.g.
+                                            // `f(a:i64,b:bool)->i64 { a+b }`). Pass it
+                                            // straight through. Purely additive: no
+                                            // current corpus/canary/keystone case
+                                            // widens an i64-backed bool into i64
+                                            // arithmetic, so emitted bytes are
+                                            // unchanged.
+                                            if this.i1_values.contains(&id) {
+                                                this.emit_line(&format!(
+                                                    "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
+                                                    dst.0, id.0
+                                                ));
+                                                Ok(format!("%{tmp}{}", dst.0))
+                                            } else {
+                                                Ok(format!("%{}", id.0))
+                                            }
                                         }
                                         other => Err(MlirLowerError::ShapeError(format!(
                                             "operand kind {other:?} cannot be widened to i64"
