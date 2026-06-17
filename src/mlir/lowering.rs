@@ -1025,6 +1025,30 @@ impl LoweringContext {
                                              are not lowerable; cast explicitly"
                                         )));
                                     }
+                                    // A `bool` operand may be i64-backed (a bool
+                                    // *param* is `ScalarBool` but carried in an i64
+                                    // ABI slot — see the i1_values invariant) rather
+                                    // than physically i1. When `ity == "i1"` (a
+                                    // bool·bool bitwise/compare op) an i64-backed bool
+                                    // must be `arith.trunci`-narrowed to i1 first, or
+                                    // the emitted `: i1` op would consume an i64 SSA
+                                    // value — invalid MLIR / a miscompile. A bool that
+                                    // is ALREADY physically i1 (in `i1_values`, e.g. a
+                                    // prior bitwise-bool result) passes straight
+                                    // through, never double-truncated. Purely
+                                    // additive: no current corpus/canary/keystone case
+                                    // reaches a bool·bool op on an i64-backed bool, so
+                                    // emitted bytes are unchanged.
+                                    if ity == "i1"
+                                        && matches!(k, ValueKind::ScalarBool)
+                                        && !this.i1_values.contains(&id)
+                                    {
+                                        this.emit_line(&format!(
+                                            "    %{tmp}{0} = arith.trunci %{1} : i64 to i1",
+                                            dst.0, id.0
+                                        ));
+                                        return Ok(format!("%{tmp}{}", dst.0));
+                                    }
                                     Ok(format!("%{}", id.0))
                                 } else if matches!(k, ValueKind::ScalarI64)
                                     && this.const_i64_values.contains(&id)
