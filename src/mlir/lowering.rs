@@ -322,6 +322,25 @@ enum ValueKind {
     /// f32 width). Gated.
     #[cfg(feature = "std-surface")]
     ScalarF32,
+    /// A scalar signed `i32` SSA value (NARROW-INT ABI). Lowers to `i32` MLIR;
+    /// signedness lives in the op (`divsi`/`shrsi`/`slt`…). Two's-complement
+    /// wrap at 32-bit width is the deterministic-overflow contract. Gated; the
+    /// default + keystone artifacts are i64-only and never construct this
+    /// variant, so existing trace_hashes are unchanged.
+    #[cfg(feature = "std-surface")]
+    ScalarI32,
+    /// A scalar unsigned `u32` SSA value (NARROW-INT ABI). Lowers to the same
+    /// signless `i32` MLIR type as `ScalarI32`; unsignedness selects the
+    /// `divui`/`shrui`/`ult`… op variants. Gated; never constructed in the
+    /// default/keystone build.
+    #[cfg(feature = "std-surface")]
+    ScalarU32,
+    /// A scalar `bool` SSA value (NARROW-INT ABI). Lowers to `i1` MLIR. Gated;
+    /// never constructed in the default/keystone build. NOTE: the bool *return*
+    /// ABI slot stays `i64` (cmpi+extui+ret-i64) — this variant is for
+    /// let-bound / param boolean values only.
+    #[cfg(feature = "std-surface")]
+    ScalarBool,
     Tensor {
         dtype: DType,
         shape: Vec<ShapeDim>,
@@ -413,6 +432,16 @@ struct LoweringContext {
     /// emitted text, so existing artifacts stay byte-identical.
     #[cfg(feature = "std-surface")]
     i1_values: std::collections::BTreeSet<ValueId>,
+    /// NARROW-INT ABI — value-ids produced by an `Instr::ConstI64` literal.
+    /// Every IR literal tags `ScalarI64` (the IR has no narrow-int constant), so
+    /// a `narrow OP literal` mixed-width binop is legal and the literal is
+    /// trunc'd to the narrow width before dispatch (value-preserving — literals
+    /// are range-checked). This set distinguishes a genuine i64 literal (safe to
+    /// trunc) from a genuine i64-typed value (a mixed-width error). Additive:
+    /// populated for every program but only consulted by the narrow-int arm, so
+    /// i64-only lowering is byte-identical.
+    #[cfg(feature = "std-surface")]
+    const_i64_values: std::collections::BTreeSet<ValueId>,
     /// Stack of enclosing `while` loops (innermost last). Each frame carries the
     /// loop's block label and its loop-carried `(var_name, init_id)` list, so an
     /// `Instr::Break`/`Instr::Continue` in the body can emit a `cf.br` to the
@@ -453,6 +482,16 @@ struct LoweringContext {
     /// modules → byte-identical lowering. Gated.
     #[cfg(feature = "std-surface")]
     fn_signatures: std::collections::BTreeMap<String, (Vec<String>, Option<String>)>,
+    /// NARROW-INT ABI — per-fn parameter `ValueKind`s derived from the ORIGINAL
+    /// `TypeAnn` list (not the ABI string table above, which is signedness-lossy:
+    /// both `i32` and `u32` stringify to `"i32"`). Keyed by fn name, parallel to
+    /// `fn_signatures`. The `Instr::FnDef` arm reads it to seed each param's
+    /// `ValueKind` so the scalar BinOp dispatch picks signed vs unsigned ops
+    /// (`divsi`/`divui`, `shrsi`/`shrui`, `slt`/`ult`…). Shared by value into
+    /// each FnDef sub-context (like `fn_signatures`). Empty for modules with no
+    /// narrow-int / bool params → byte-identical lowering. Gated.
+    #[cfg(feature = "std-surface")]
+    fn_param_kinds: std::collections::BTreeMap<String, Vec<ValueKind>>,
 }
 
 /// One enclosing `while` loop, for break/continue codegen.
@@ -497,6 +536,8 @@ impl LoweringContext {
             #[cfg(feature = "std-surface")]
             i1_values: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
+            const_i64_values: std::collections::BTreeSet::new(),
+            #[cfg(feature = "std-surface")]
             loop_stack: Vec::new(),
             #[cfg(feature = "std-surface")]
             mt_workers: String::new(),
@@ -506,6 +547,8 @@ impl LoweringContext {
             needs_malloc: false,
             #[cfg(feature = "std-surface")]
             fn_signatures: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            fn_param_kinds: std::collections::BTreeMap::new(),
         }
     }
 
@@ -518,6 +561,11 @@ impl LoweringContext {
             Instr::ConstI64(id, value) => {
                 self.emit_line(&format!("    %{} = arith.constant {} : i64", id.0, value));
                 self.values.insert(*id, ValueKind::ScalarI64);
+                // Record that this value is an integer LITERAL, so the narrow-int
+                // BinOp arm may truncate it to a narrow operand width (value-
+                // preserving) instead of failing closed on a width mismatch.
+                #[cfg(feature = "std-surface")]
+                self.const_i64_values.insert(*id);
             }
             // RFC 0012 §5.1 — a scalar `f64` literal. Emit `arith.constant <v> : f64`
             // with a DETERMINISTIC, shortest-round-trip decimal (`format_number`):
@@ -713,6 +761,134 @@ impl LoweringContext {
                         if is_cmp {
                             // Comparison result is i1; tag it so return sites widen
                             // it for the i64 ABI slot (same path as cmpi).
+                            self.values.insert(*dst, ValueKind::ScalarI64);
+                            self.i1_values.insert(*dst);
+                        } else {
+                            self.values.insert(*dst, out_kind);
+                        }
+                    }
+                    // Narrow-int / bool scalar arithmetic (i32/u32/i1). At least
+                    // one operand is a narrow kind; the other must be the SAME
+                    // narrow kind or a `ConstI64` literal (truncated to the narrow
+                    // width — value-preserving, since literals are range-checked).
+                    // A genuine non-literal width mismatch fails closed rather
+                    // than silently miscompiling. Signedness drives the op
+                    // selection (`divui`/`shrui`/`ult` for u32, `divsi`/`shrsi`/
+                    // `slt` for i32); two's-complement wrap at the declared width
+                    // is the deterministic-overflow contract, identical on every
+                    // substrate. Gated; never fires on the i64-only keystone.
+                    #[cfg(feature = "std-surface")]
+                    _ if matches!(
+                        lhs_kind,
+                        ValueKind::ScalarI32 | ValueKind::ScalarU32 | ValueKind::ScalarBool
+                    ) || matches!(
+                        rhs_kind,
+                        ValueKind::ScalarI32 | ValueKind::ScalarU32 | ValueKind::ScalarBool
+                    ) =>
+                    {
+                        fn is_narrow(k: &ValueKind) -> bool {
+                            matches!(
+                                k,
+                                ValueKind::ScalarI32 | ValueKind::ScalarU32 | ValueKind::ScalarBool
+                            )
+                        }
+                        // The operative narrow kind: whichever operand is narrow
+                        // (if both are, LHS — they must match or it fails closed).
+                        let target = if is_narrow(&lhs_kind) {
+                            lhs_kind.clone()
+                        } else {
+                            rhs_kind.clone()
+                        };
+                        let (ity, unsigned, out_kind) = match &target {
+                            ValueKind::ScalarBool => ("i1", false, ValueKind::ScalarBool),
+                            ValueKind::ScalarU32 => ("i32", true, ValueKind::ScalarU32),
+                            _ => ("i32", false, ValueKind::ScalarI32),
+                        };
+                        // Legalize one operand to `ity`: pass through a matching
+                        // narrow value, truncate an i64 literal, else fail closed.
+                        let mut legalize =
+                            |this: &mut Self,
+                             id: ValueId,
+                             k: &ValueKind,
+                             tmp: &str|
+                             -> Result<String, MlirLowerError> {
+                                if is_narrow(k) {
+                                    if *k != target {
+                                        return Err(MlirLowerError::ShapeError(format!(
+                                            "mixed-width integer operands ({k:?} vs {target:?}) \
+                                             are not lowerable; cast explicitly"
+                                        )));
+                                    }
+                                    Ok(format!("%{}", id.0))
+                                } else if matches!(k, ValueKind::ScalarI64)
+                                    && this.const_i64_values.contains(&id)
+                                {
+                                    this.emit_line(&format!(
+                                        "    %{tmp}{0} = arith.trunci %{1} : i64 to {ity}",
+                                        dst.0, id.0
+                                    ));
+                                    Ok(format!("%{tmp}{}", dst.0))
+                                } else {
+                                    Err(MlirLowerError::ShapeError(format!(
+                                        "a non-literal i64 operand mixed with `{ity}` is not \
+                                         lowerable; cast explicitly"
+                                    )))
+                                }
+                            };
+                        let lhs_ref = legalize(self, *lhs, &lhs_kind, "ntl")?;
+                        let rhs_ref = legalize(self, *rhs, &rhs_kind, "ntr")?;
+                        let mlir_op = match op {
+                            BinOp::Add => "arith.addi".to_string(),
+                            BinOp::Sub => "arith.subi".to_string(),
+                            BinOp::Mul => "arith.muli".to_string(),
+                            BinOp::Div => if unsigned {
+                                "arith.divui"
+                            } else {
+                                "arith.divsi"
+                            }
+                            .to_string(),
+                            BinOp::Mod => if unsigned {
+                                "arith.remui"
+                            } else {
+                                "arith.remsi"
+                            }
+                            .to_string(),
+                            BinOp::Lt => {
+                                format!("arith.cmpi \"{}\",", if unsigned { "ult" } else { "slt" })
+                            }
+                            BinOp::Le => {
+                                format!("arith.cmpi \"{}\",", if unsigned { "ule" } else { "sle" })
+                            }
+                            BinOp::Gt => {
+                                format!("arith.cmpi \"{}\",", if unsigned { "ugt" } else { "sgt" })
+                            }
+                            BinOp::Ge => {
+                                format!("arith.cmpi \"{}\",", if unsigned { "uge" } else { "sge" })
+                            }
+                            BinOp::Eq => "arith.cmpi \"eq\",".to_string(),
+                            BinOp::Ne => "arith.cmpi \"ne\",".to_string(),
+                            BinOp::BitAnd => "arith.andi".to_string(),
+                            BinOp::BitOr => "arith.ori".to_string(),
+                            BinOp::BitXor => "arith.xori".to_string(),
+                            BinOp::Shl => "arith.shli".to_string(),
+                            BinOp::Shr => if unsigned {
+                                "arith.shrui"
+                            } else {
+                                "arith.shrsi"
+                            }
+                            .to_string(),
+                        };
+                        let is_cmp = matches!(
+                            op,
+                            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
+                        );
+                        self.emit_line(&format!(
+                            "    %{} = {} {}, {} : {}",
+                            dst.0, mlir_op, lhs_ref, rhs_ref, ity
+                        ));
+                        if is_cmp {
+                            // Comparison yields i1; tag like the i64/float arms so
+                            // a return site widens it for the i64 ABI slot.
                             self.values.insert(*dst, ValueKind::ScalarI64);
                             self.i1_values.insert(*dst);
                         } else {
@@ -1362,6 +1538,9 @@ impl LoweringContext {
                 // RFC 0012 §5.1: inherit the fn-signature table so the param /
                 // return ABI types resolve here and inside nested definitions.
                 sub.fn_signatures = self.fn_signatures.clone();
+                // NARROW-INT ABI: inherit the signedness-preserving param kinds
+                // so nested definitions seed u32/i32/bool params correctly too.
+                sub.fn_param_kinds = self.fn_param_kinds.clone();
                 // RFC 0012 §5.1 — recover this fn's declared param / return ABI
                 // types. Default to all-i64 (legacy ABI) when no signature was
                 // recorded (e.g. an IR built directly, not via `lower_to_ir`),
@@ -1376,14 +1555,22 @@ impl LoweringContext {
                     None => params.iter().map(|_| "i64").collect(),
                 };
                 let ret_abi: &str = sig.and_then(|(_, r)| r.as_deref()).unwrap_or("i64");
-                // Seed each parameter's `ValueKind` from its declared ABI type so
-                // the scalar BinOp dispatch and the return treat f64/f32 params as
-                // floats; everything else stays on the i64 ABI.
-                for ((_pname, pid), abi) in params.iter().zip(param_abi.iter()) {
-                    let kind = match *abi {
-                        "f64" => ValueKind::ScalarF64,
-                        "f32" => ValueKind::ScalarF32,
-                        _ => ValueKind::ScalarI64,
+                // Seed each parameter's `ValueKind`. Prefer the signedness-
+                // preserving `fn_param_kinds` table (so `u32` seeds `ScalarU32`,
+                // distinct from `i32`/`ScalarI32`, and `bool` seeds `ScalarBool`);
+                // fall back to the ABI-string mapping when no kind table entry
+                // exists (e.g. an IR built directly, not via `lower_to_ir`). The
+                // string fallback only knows f64/f32/i64 — identical to before for
+                // those — so an i64-only module seeds byte-identically either way.
+                let param_kinds = self.fn_param_kinds.get(name);
+                for (i, ((_pname, pid), abi)) in params.iter().zip(param_abi.iter()).enumerate() {
+                    let kind = match param_kinds.and_then(|pk| pk.get(i)) {
+                        Some(k) => k.clone(),
+                        None => match *abi {
+                            "f64" => ValueKind::ScalarF64,
+                            "f32" => ValueKind::ScalarF32,
+                            _ => ValueKind::ScalarI64,
+                        },
                     };
                     sub.values.insert(*pid, kind);
                 }
@@ -1676,25 +1863,42 @@ impl LoweringContext {
                 for ec in cond_sub.extern_calls {
                     self.extern_calls.insert(ec);
                 }
+                // NARROW-INT ABI: bubble up i1-ness discovered in the condition
+                // (e.g. a let-bound comparison) so the value-based already-i1
+                // probe below sees it. Additive — only extends the set.
+                #[cfg(feature = "std-surface")]
+                for v in cond_sub.i1_values {
+                    self.i1_values.insert(v);
+                }
 
-                // Determine whether condition is already i1 (comparison op).
-                let cond_already_i1 = cond_instrs
-                    .last()
-                    .map(|last| {
-                        matches!(
-                            last,
-                            Instr::BinOp {
-                                op: BinOp::Lt
-                                    | BinOp::Le
-                                    | BinOp::Gt
-                                    | BinOp::Ge
-                                    | BinOp::Eq
-                                    | BinOp::Ne,
-                                ..
-                            }
-                        )
-                    })
-                    .unwrap_or(false);
+                // Determine whether condition is already i1 (so we must NOT emit
+                // a spurious `arith.trunci i64 to i1` on it — that is invalid
+                // MLIR). Value-based: the cond SSA value is i1 if it is recorded
+                // in `i1_values` (a comparison result, possibly let-bound) or its
+                // kind is `ScalarBool` (a narrow-int / bool-typed value). The
+                // instruction-shape probe (last cond instr is a comparison) is
+                // kept as a fallback for the bare-comparison case. Additive: an
+                // i64-only program whose while-cond is a non-let comparison still
+                // takes the instruction-shape branch byte-identically.
+                let cond_already_i1 = self.i1_values.contains(cond_id)
+                    || matches!(self.values.get(cond_id), Some(ValueKind::ScalarBool))
+                    || cond_instrs
+                        .last()
+                        .map(|last| {
+                            matches!(
+                                last,
+                                Instr::BinOp {
+                                    op: BinOp::Lt
+                                        | BinOp::Le
+                                        | BinOp::Gt
+                                        | BinOp::Ge
+                                        | BinOp::Eq
+                                        | BinOp::Ne,
+                                    ..
+                                }
+                            )
+                        })
+                        .unwrap_or(false);
 
                 // The cond_br passes the HEADER args into the body block AND
                 // the after block.  Both receive the same live-var values so
@@ -2141,31 +2345,40 @@ impl LoweringContext {
                 for ec in cond_sub.extern_calls {
                     self.extern_calls.insert(ec);
                 }
+                // NARROW-INT ABI: bubble up i1-ness discovered in the condition
+                // (e.g. a let-bound comparison `let c = a < b`) so the value-based
+                // already-i1 probe below sees it. Additive — only extends the set.
+                for v in cond_sub.i1_values {
+                    self.i1_values.insert(v);
+                }
 
-                // Determine whether the condition value is already i1 (produced
-                // by a comparison BinOp like `arith.cmpi`) or is a plain i64
-                // that needs truncation.  MLIR's `cf.cond_br` requires an i1.
-                //
-                // We inspect the last instruction in `cond_instrs`: if it is a
-                // comparison BinOp (Lt/Le/Gt/Ge/Eq/Ne), the result is already
-                // i1 and we use it directly.  Otherwise we emit `arith.trunci`.
-                let cond_already_i1 = cond_instrs
-                    .last()
-                    .map(|last| {
-                        matches!(
-                            last,
-                            Instr::BinOp {
-                                op: BinOp::Lt
-                                    | BinOp::Le
-                                    | BinOp::Gt
-                                    | BinOp::Ge
-                                    | BinOp::Eq
-                                    | BinOp::Ne,
-                                ..
-                            }
-                        )
-                    })
-                    .unwrap_or(false);
+                // Determine whether the condition value is already i1 (so we must
+                // NOT emit a spurious `arith.trunci i64 to i1` on it — invalid
+                // MLIR). Value-based: i1 if recorded in `i1_values` (a comparison
+                // result, possibly let-bound) or its kind is `ScalarBool`. The
+                // instruction-shape probe (last cond instr is a comparison) is the
+                // fallback for the bare-comparison case. Additive: an i64-only
+                // program with an inline-comparison if-cond still takes the
+                // instruction-shape branch byte-identically.
+                let cond_already_i1 = self.i1_values.contains(cond_id)
+                    || matches!(self.values.get(cond_id), Some(ValueKind::ScalarBool))
+                    || cond_instrs
+                        .last()
+                        .map(|last| {
+                            matches!(
+                                last,
+                                Instr::BinOp {
+                                    op: BinOp::Lt
+                                        | BinOp::Le
+                                        | BinOp::Gt
+                                        | BinOp::Ge
+                                        | BinOp::Eq
+                                        | BinOp::Ne,
+                                    ..
+                                }
+                            )
+                        })
+                        .unwrap_or(false);
 
                 if cond_already_i1 {
                     // Comparison result is already i1 — use it directly.
@@ -7738,6 +7951,12 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
             .as_ref()
             .map(|t| type_ann_to_abi_mlir(t).to_string());
         ctx.fn_signatures.insert(name.clone(), (params, ret));
+        // NARROW-INT ABI: also record the signedness-preserving param kinds so
+        // the FnDef arm can seed `u32` distinctly from `i32` (the ABI string
+        // table above collapses both to "i32"). i64-only modules record all
+        // `ScalarI64` here → identical seeding to before.
+        let param_kinds: Vec<ValueKind> = param_types.iter().map(type_ann_to_value_kind).collect();
+        ctx.fn_param_kinds.insert(name.clone(), param_kinds);
     }
 
     for (idx, instr) in module.instrs.iter().enumerate() {
@@ -7913,7 +8132,30 @@ fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> &'static str {
     match ty {
         crate::ast::TypeAnn::ScalarF64 => "f64",
         crate::ast::TypeAnn::ScalarF32 => "f32",
+        // NARROW-INT ABI: i32/u32 params + returns lower to real `i32` MLIR
+        // (MLIR ints are signless; signedness is carried by the op). NOTE:
+        // ScalarBool intentionally stays "i64" in the return slot to preserve
+        // the existing cmpi+extui+ret-i64 byte sequence — do NOT change the
+        // bool return ABI here.
+        crate::ast::TypeAnn::ScalarI32 | crate::ast::TypeAnn::ScalarU32 => "i32",
         _ => "i64",
+    }
+}
+
+/// NARROW-INT ABI — map a declared `TypeAnn` to the scalar `ValueKind` used to
+/// seed a parameter's SSA kind. Unlike [`type_ann_to_abi_mlir`] this PRESERVES
+/// signedness (`i32` vs `u32`), which the BinOp dispatch needs to pick signed vs
+/// unsigned ops. Non-scalar / non-narrow annotations fall back to `ScalarI64`,
+/// so an i64-only module seeds exactly the same kinds as before (byte-identical).
+#[cfg(feature = "std-surface")]
+fn type_ann_to_value_kind(ty: &crate::ast::TypeAnn) -> ValueKind {
+    match ty {
+        crate::ast::TypeAnn::ScalarF64 => ValueKind::ScalarF64,
+        crate::ast::TypeAnn::ScalarF32 => ValueKind::ScalarF32,
+        crate::ast::TypeAnn::ScalarI32 => ValueKind::ScalarI32,
+        crate::ast::TypeAnn::ScalarU32 => ValueKind::ScalarU32,
+        crate::ast::TypeAnn::ScalarBool => ValueKind::ScalarBool,
+        _ => ValueKind::ScalarI64,
     }
 }
 
@@ -7924,6 +8166,10 @@ fn mlir_type(kind: &ValueKind) -> Result<String, MlirLowerError> {
         ValueKind::ScalarF64 => Ok("f64".to_string()),
         #[cfg(feature = "std-surface")]
         ValueKind::ScalarF32 => Ok("f32".to_string()),
+        #[cfg(feature = "std-surface")]
+        ValueKind::ScalarI32 | ValueKind::ScalarU32 => Ok("i32".to_string()),
+        #[cfg(feature = "std-surface")]
+        ValueKind::ScalarBool => Ok("i1".to_string()),
         ValueKind::Tensor { dtype, shape } => Ok(tensor_type(shape, dtype.as_str())),
         #[cfg(feature = "std-surface")]
         ValueKind::VectorF32 { lanes } => Ok(format!("vector<{lanes}xf32>")),

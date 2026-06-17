@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Narrow-int (`i32`/`u32`) ABI lowering (RUNS Phase 3).** `i32`/`u32` function parameters
+  and returns now lower to real `i32` MLIR instead of silently widening to `i64`: a per-fn
+  `param_kinds` table threads the declared `TypeAnn` (so `u32` keeps its unsignedness, which
+  the lossy ABI string loses), and a dedicated narrow-int `BinOp` arm selects width- and
+  sign-correct ops — `addi`/`subi`/`muli`, `divsi`/`divui`, `remsi`/`remui`, `shrsi`/`shrui`,
+  `cmpi` with `slt`/`ult`-family predicates — all at `i32`, with two's-complement wrap at the
+  declared width as the deterministic-overflow contract (identical on every substrate). An
+  integer literal (which the IR only carries as `ConstI64`) is `trunci`-legalized to the
+  narrow width when paired with a narrow operand; a genuine non-literal width mismatch fails
+  closed rather than silently miscompiling. Exec-verified: `i32` add wraps correctly and `u32`
+  division/shift are unsigned. The `bool`-return ABI is unchanged (i1→i64 zero-extend). The
+  P1.1 `i32`/`u32` param/return gate is removed (tensor params and `i8`/`u8`/`i16`/`u16` —
+  which lack a dedicated value kind — stay gated). All-i64 programs are byte-identical: mic@3
+  flip byte-identical, keystone 7/7, cross-substrate canaries unchanged; criterion within noise.
+
 - **Width-aware deterministic struct ABI (RUNS Phase 3).** Structs with sub-i64 fields
   (`i32`/`u32`/`i16`/`u16`/`i8`/`u8`/`bool`) now lower correctly instead of being rejected:
   a canonical per-field offset table (`struct_layout`) places each field at a self-aligned

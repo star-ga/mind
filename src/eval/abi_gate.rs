@@ -101,17 +101,16 @@ pub fn check_runnable_lowerable(module: &Module, src: &str, file: Option<&str>) 
 /// already loud).
 fn sig_non_i64(ty: &TypeAnn) -> Option<&'static str> {
     match ty {
-        TypeAnn::ScalarI32 => {
-            Some("`i32` silently widens to `i64`, losing 32-bit width and wraparound")
-        }
-        TypeAnn::ScalarU32 => {
-            Some("`u32` silently lowers to a signed `i64`, losing width and unsigned semantics")
-        }
+        // `i32`/`u32` params & returns now lower correctly (real i32 MLIR with
+        // signed/unsigned op selection + deterministic two's-complement wrap), so
+        // they are no longer gated.
         TypeAnn::Tensor { .. } => Some(
             "a tensor-typed parameter/return erases to the i64 ABI and is treated as a scalar \
              integer",
         ),
         TypeAnn::DiffTensor { .. } => Some("a diff-tensor parameter/return erases to the i64 ABI"),
+        // i8/u8/i16/u16 (as `Named`) still widen to i64 in a signature — they have
+        // no dedicated ValueKind yet, so the i32 ABI does not cover them.
         TypeAnn::Named(n) if is_narrow_int_name(n) => {
             Some("a sub-i64 integer type silently widens to `i64`")
         }

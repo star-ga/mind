@@ -26,13 +26,21 @@ fn blockers(src: &str) -> usize {
 // ---- blocked: the silent sub-i64-ABI miscompiles ----
 
 #[test]
-fn i32_param_is_blocked() {
-    assert!(blockers("fn f(a: i32) -> i64 { 0 }") >= 1);
+fn i32_param_is_clean() {
+    // i32/u32 params & returns now lower to real i32 MLIR (signed/unsigned op
+    // selection + deterministic wrap), so they are no longer gated.
+    assert_eq!(blockers("fn f(a: i32) -> i64 { 0 }"), 0);
 }
 
 #[test]
-fn u32_return_is_blocked() {
-    assert!(blockers("fn f(a: i64) -> u32 { 0 }") >= 1);
+fn u32_return_is_clean() {
+    assert_eq!(blockers("fn f(a: i64) -> u32 { 0 }"), 0);
+}
+
+#[test]
+fn tensor_param_is_blocked() {
+    // tensor params still erase to the i64 ABI — not yet lowerable.
+    assert!(blockers("fn f(a: tensor<f32[4]>) -> i64 { 0 }") >= 1);
 }
 
 #[test]
