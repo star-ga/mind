@@ -890,19 +890,75 @@ impl LoweringContext {
                         } else {
                             rhs_kind.clone()
                         };
-                        let (ity, unsigned, out_kind) = match &target {
-                            ValueKind::ScalarBool => ("i1", false, ValueKind::ScalarBool),
-                            ValueKind::ScalarU32 => ("i32", true, ValueKind::ScalarU32),
-                            _ => ("i32", false, ValueKind::ScalarI32),
+                        // Mixed-width detection: a narrow operand meeting a
+                        // NON-literal i64 (an i64 literal still folds via the
+                        // truncate path below — it is value-preserving). When
+                        // this happens we cannot truncate the wide operand
+                        // safely, so we promote BOTH operands to the i64 common
+                        // width: widen the narrow side with `arith.extsi`
+                        // (signed i32) / `arith.extui` (unsigned u32, bool/i1)
+                        // at the use site, do the op in i64, and yield i64. A
+                        // narrow *result* type (e.g. `-> i32`) is re-truncated
+                        // downstream at the return / cast boundary, not here.
+                        // The i64-domain op selection is the signed default
+                        // (the wider i64 operand's signedness dominates), so a
+                        // shift is `shrsi` and a compare is `slt` — identical to
+                        // the plain-i64 BinOp arm. Gated; an i64-only program
+                        // has no narrow operand so this never fires and the
+                        // keystone/canary bytes are unchanged.
+                        let lhs_nonlit_i64 = matches!(lhs_kind, ValueKind::ScalarI64)
+                            && !self.const_i64_values.contains(lhs);
+                        let rhs_nonlit_i64 = matches!(rhs_kind, ValueKind::ScalarI64)
+                            && !self.const_i64_values.contains(rhs);
+                        let widen_mode = lhs_nonlit_i64 || rhs_nonlit_i64;
+                        let (ity, unsigned, out_kind) = if widen_mode {
+                            ("i64", false, ValueKind::ScalarI64)
+                        } else {
+                            match &target {
+                                ValueKind::ScalarBool => ("i1", false, ValueKind::ScalarBool),
+                                ValueKind::ScalarU32 => ("i32", true, ValueKind::ScalarU32),
+                                _ => ("i32", false, ValueKind::ScalarI32),
+                            }
                         };
-                        // Legalize one operand to `ity`: pass through a matching
-                        // narrow value, truncate an i64 literal, else fail closed.
+                        // Legalize one operand to `ity`. In narrow mode: pass a
+                        // matching narrow value, truncate an i64 literal, else
+                        // fail closed. In widen mode: pass an i64 through and
+                        // sign/zero-extend a narrow operand to i64.
                         let mut legalize =
                             |this: &mut Self,
                              id: ValueId,
                              k: &ValueKind,
                              tmp: &str|
                              -> Result<String, MlirLowerError> {
+                                if widen_mode {
+                                    return match k {
+                                        ValueKind::ScalarI64 => Ok(format!("%{}", id.0)),
+                                        ValueKind::ScalarI32 => {
+                                            this.emit_line(&format!(
+                                                "    %{tmp}{0} = arith.extsi %{1} : i32 to i64",
+                                                dst.0, id.0
+                                            ));
+                                            Ok(format!("%{tmp}{}", dst.0))
+                                        }
+                                        ValueKind::ScalarU32 => {
+                                            this.emit_line(&format!(
+                                                "    %{tmp}{0} = arith.extui %{1} : i32 to i64",
+                                                dst.0, id.0
+                                            ));
+                                            Ok(format!("%{tmp}{}", dst.0))
+                                        }
+                                        ValueKind::ScalarBool => {
+                                            this.emit_line(&format!(
+                                                "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
+                                                dst.0, id.0
+                                            ));
+                                            Ok(format!("%{tmp}{}", dst.0))
+                                        }
+                                        other => Err(MlirLowerError::ShapeError(format!(
+                                            "operand kind {other:?} cannot be widened to i64"
+                                        ))),
+                                    };
+                                }
                                 if is_narrow(k) {
                                     if *k != target {
                                         return Err(MlirLowerError::ShapeError(format!(
