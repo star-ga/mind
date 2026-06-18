@@ -336,6 +336,15 @@ pub fn compile_source_with_name(
         source,
         source_name,
     ));
+    // Fail-closed on a function with a bare-scalar return that returns a payload-
+    // carrying enum constructor (a heap handle) on some path — otherwise it leaks
+    // a raw pointer as the i64 result. Inert (empty) for any module with no `enum`
+    // declaration, so byte-identity holds (the keystone has none).
+    runnable_blockers.extend(crate::eval::abi_gate::check_enum_handle_scalar_return(
+        &module,
+        source,
+        source_name,
+    ));
 
     Ok(CompileProducts {
         ir,
