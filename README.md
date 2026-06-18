@@ -6,7 +6,7 @@
 
 [![CI](https://github.com/star-ga/mind/actions/workflows/ci.yml/badge.svg)](https://github.com/star-ga/mind/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue?style=flat-square)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.7.1-blue?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.9.0-blue?style=flat-square)](CHANGELOG.md)
 [![Cross-substrate](https://img.shields.io/badge/deterministic-byte--identical-brightgreen?style=flat-square)](docs/roadmap.md)
 
 ## Install
