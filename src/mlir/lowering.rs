@@ -506,6 +506,7 @@ struct LoweringContext {
     /// `i64` at the call result (its ABI return slot is i64). i64-only modules
     /// record `ScalarI64` everywhere → call results tracked identically to
     /// before (byte-identical).
+    #[cfg(feature = "std-surface")]
     fn_ret_kind: std::collections::BTreeMap<String, ValueKind>,
     /// NARROW-INT ABI — the declared MLIR return type of the `func.func`
     /// currently being lowered (`"i32"`/`"i64"`/`"f64"`/…), set by the
@@ -578,6 +579,7 @@ impl LoweringContext {
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_param_kinds: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
             fn_ret_kind: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_ret_abi: None,
@@ -1316,7 +1318,15 @@ impl LoweringContext {
                         // is in-range and byte-identical everywhere. In-range counts are
                         // unchanged (mask is a no-op), so the keystone + canary bytes are
                         // untouched; non-shift i64 ops never enter this branch.
-                        let rhs_ref = if matches!(op, BinOp::Shl | BinOp::Shr) {
+                        // `BinOp::Shl`/`Shr` are std-surface-gated variants, so the
+                        // shift predicate is const-false without that feature (this
+                        // `_` arm itself is NOT feature-gated — `mlir-lowering` alone
+                        // compiles it, where the variants do not exist).
+                        #[cfg(feature = "std-surface")]
+                        let is_shift = matches!(op, BinOp::Shl | BinOp::Shr);
+                        #[cfg(not(feature = "std-surface"))]
+                        let is_shift = false;
+                        let rhs_ref = if is_shift {
                             self.emit_line(&format!(
                                 "    %shm{0} = arith.constant 63 : i64",
                                 dst.0
