@@ -278,11 +278,7 @@ fn walk_generic_calls(node: &Node, ctx: &GenCtx, out: &mut Vec<Diagnostic>) {
             arms.iter()
                 .for_each(|a| walk_generic_calls(&a.body, ctx, out));
         }
-        N::Return { value, .. } => {
-            if let Some(v) = value {
-                walk_generic_calls(v, ctx, out);
-            }
-        }
+        N::Return { value: Some(v), .. } => walk_generic_calls(v, ctx, out),
         N::Assign { value, .. } => walk_generic_calls(value, ctx, out),
         N::FieldAssign {
             receiver, value, ..
