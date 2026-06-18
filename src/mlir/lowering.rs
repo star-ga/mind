@@ -623,6 +623,31 @@ impl LoweringContext {
     /// appended there). `lbl`/`col` form the fresh widened-value SSA name so it
     /// never collides with a numeric id.
     #[allow(clippy::too_many_arguments)]
+    /// If `id` is physically `i1` (a comparison result, tracked as `ScalarI64`
+    /// but recorded in `i1_values`) and flows into an i64 merge block argument,
+    /// widen it to i64 with `arith.extui` appended to the branch body, updating
+    /// the value string + kind in place. `unify_merge_kind` inspects the KIND
+    /// (which says i64) and cannot see the i1-ness, so without this a value-`if`
+    /// yielding a bare comparison (`if c { x > 10 } else { y > 100 }`) emits
+    /// `cf.br ^merge(%cmp : i64)` over an i1 value -> `'i64' vs 'i1'` mlir-opt
+    /// error. ADDITIVE: a non-i1 value is left unchanged (no extui, byte-identical
+    /// path), so a value-`if` over ordinary i64 values is untouched.
+    fn widen_i1_merge_branch(
+        &self,
+        id: &ValueId,
+        val: &mut String,
+        kind: &mut ValueKind,
+        buf: &mut String,
+        tag: &str,
+    ) {
+        if self.i1_values.contains(id) {
+            let name = format!("%i1w_{tag}");
+            let _ = writeln!(buf, "    {name} = arith.extui {val} : i1 to i64");
+            *val = name;
+            *kind = ValueKind::ScalarI64;
+        }
+    }
+
     fn unify_merge_kind(
         &self,
         then_kind: &ValueKind,
@@ -3119,6 +3144,14 @@ impl LoweringContext {
                 for (vid, kind) in then_sub.values {
                     self.values.insert(vid, kind);
                 }
+                // Bubble up i1-ness from the then branch so a comparison result
+                // used as the branch VALUE (or a branch-assigned merge phi) is
+                // recognised as physically i1 and widened to i64 at the merge
+                // block-arg. Additive: empty unless a branch yields/assigns a
+                // comparison, so a value-`if` over ordinary i64 is byte-identical.
+                for v in then_sub.i1_values {
+                    self.i1_values.insert(v);
+                }
                 // Bubble up extern_calls from the then sub-context.
                 for ec in then_sub.extern_calls {
                     self.extern_calls.insert(ec);
@@ -3154,6 +3187,10 @@ impl LoweringContext {
                 for (vid, kind) in else_sub.values {
                     self.values.insert(vid, kind);
                 }
+                // Bubble up i1-ness from the else branch (see the then branch).
+                for v in else_sub.i1_values {
+                    self.i1_values.insert(v);
+                }
                 // Bubble up extern_calls from the else sub-context.
                 for ec in else_sub.extern_calls {
                     self.extern_calls.insert(ec);
@@ -3186,16 +3223,32 @@ impl LoweringContext {
                 }
                 // Resolve kind for the if-value column.
                 {
-                    let tk = self
+                    let mut tk = self
                         .values
                         .get(then_result)
                         .cloned()
                         .unwrap_or(ValueKind::ScalarI64);
-                    let ek = self
+                    let mut ek = self
                         .values
                         .get(else_result)
                         .cloned()
                         .unwrap_or(ValueKind::ScalarI64);
+                    // Widen an i1 (comparison) branch result to i64 before the
+                    // merge (the kind reads i64 but the value is physically i1).
+                    self.widen_i1_merge_branch(
+                        then_result,
+                        &mut col_then[0],
+                        &mut tk,
+                        &mut then_body,
+                        &format!("{lbl}_0_t"),
+                    );
+                    self.widen_i1_merge_branch(
+                        else_result,
+                        &mut col_else[0],
+                        &mut ek,
+                        &mut else_body,
+                        &format!("{lbl}_0_e"),
+                    );
                     let (mk, tnew, enew) = self.unify_merge_kind(
                         &tk,
                         &ek,
@@ -3212,17 +3265,33 @@ impl LoweringContext {
                 }
                 // Resolve kind for each merge-phi column.
                 for (ci, (_merge_id, then_val, else_val)) in merges.iter().enumerate() {
-                    let tk = self
+                    let mut tk = self
                         .values
                         .get(then_val)
                         .cloned()
                         .unwrap_or(ValueKind::ScalarI64);
-                    let ek = self
+                    let mut ek = self
                         .values
                         .get(else_val)
                         .cloned()
                         .unwrap_or(ValueKind::ScalarI64);
                     let idx = ci + 1;
+                    // Widen an i1 (comparison) value assigned in a branch to i64
+                    // before the merge phi (same hazard as the if-value column).
+                    self.widen_i1_merge_branch(
+                        then_val,
+                        &mut col_then[idx],
+                        &mut tk,
+                        &mut then_body,
+                        &format!("{lbl}_{idx}_t"),
+                    );
+                    self.widen_i1_merge_branch(
+                        else_val,
+                        &mut col_else[idx],
+                        &mut ek,
+                        &mut else_body,
+                        &format!("{lbl}_{idx}_e"),
+                    );
                     let (mk, tnew, enew) = self.unify_merge_kind(
                         &tk,
                         &ek,
