@@ -1701,6 +1701,8 @@ impl LoweringContext {
                 // width. Exempt them from the blanket i64-arg rejection so a
                 // struct field populated from a narrow (i32/u32) SSA value
                 // (`P { x: a }` for `a: i32`) lowers instead of failing here.
+                // `__mind_f64_to_bits` likewise takes an `f64` arg by design
+                // (it bitcasts an enum payload field into the i64 record slot).
                 let is_narrow_mem = matches!(
                     name.as_str(),
                     "__mind_store_i32"
@@ -1709,6 +1711,7 @@ impl LoweringContext {
                         | "__mind_load_i32"
                         | "__mind_load_i16"
                         | "__mind_load_i8"
+                        | "__mind_f64_to_bits"
                 );
                 if !is_narrow_mem {
                     for a in args {
@@ -2033,6 +2036,30 @@ impl LoweringContext {
                     // downstream use of the call result stays byte-identical.
                     self.emit_line(&format!("    %{} = arith.constant 0 : i64", dst.0));
                     self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                // Enum-payload bit coercion: `__mind_f64_to_bits(f64) -> i64` and
+                // `__mind_bits_to_f64(i64) -> f64` are pure same-width
+                // `arith.bitcast`es synthesised by the enum constructor / match
+                // desugar so an `f64` payload field round-trips through the i64
+                // record slot bit-exactly (deterministic — only a type
+                // reinterpret, never a value change).
+                #[cfg(feature = "std-surface")]
+                if args.len() == 1 && name == "__mind_f64_to_bits" {
+                    self.emit_line(&format!(
+                        "    %{0} = arith.bitcast %{1} : f64 to i64",
+                        dst.0, args[0].0
+                    ));
+                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    return Ok(());
+                }
+                #[cfg(feature = "std-surface")]
+                if args.len() == 1 && name == "__mind_bits_to_f64" {
+                    self.emit_line(&format!(
+                        "    %{0} = arith.bitcast %{1} : i64 to f64",
+                        dst.0, args[0].0
+                    ));
+                    self.values.insert(*dst, ValueKind::ScalarF64);
                     return Ok(());
                 }
                 // RFC 0010 Phase A/B/C: if the callee was declared via an

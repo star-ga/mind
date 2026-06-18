@@ -1015,6 +1015,8 @@ pub fn parse_mic3(data: &[u8]) -> Result<IRModule, Mic3Error> {
         boxed_enums: std::collections::BTreeSet::new(),
         #[cfg(feature = "std-surface")]
         enum_payload_slots: std::collections::BTreeMap::new(),
+        #[cfg(feature = "std-surface")]
+        enum_payload_types: std::collections::BTreeMap::new(),
         // The fn-signature ABI table is a lowering-only side-table; like
         // `enum_variant_tags` it is never serialised into mic@3, so the parse
         // path leaves it empty (no wire-format change, no version bump).

@@ -66,6 +66,24 @@ enum Pick {
     Zero,
 }
 
+// f64 payloads: the field is stored as raw bits in the i64 record slot
+// (__mind_f64_to_bits) and loaded back (__mind_bits_to_f64), bit-exact.
+enum FOpt {
+    Some(f64),
+    None,
+}
+
+enum FRes {
+    Ok(f64),
+    Err(f64),
+}
+
+// A variant mixing an i64 and an f64 field — each coerced independently.
+enum Mix {
+    Pair(i64, f64),
+    Empty,
+}
+
 fn unwrap_or(o: Opt, d: i64) -> i64 {
     match o {
         Opt::Some(v) => v,
@@ -128,6 +146,42 @@ fn second_only(p: Pick) -> i64 {
     }
 }
 
+// f64 payload extraction + f64 arithmetic in the arm.
+fn f_unwrap(o: FOpt) -> f64 {
+    match o {
+        FOpt::Some(v) => v,
+        FOpt::None => 0.0,
+    }
+}
+
+fn f_double(o: FOpt) -> f64 {
+    match o {
+        FOpt::Some(v) => v + v,
+        FOpt::None => 0.0,
+    }
+}
+
+fn f_fold(r: FRes) -> f64 {
+    match r {
+        FRes::Ok(v) => v,
+        FRes::Err(e) => 0.0 - e,
+    }
+}
+
+fn mix_f(m: Mix) -> f64 {
+    match m {
+        Mix::Pair(a, b) => b,
+        Mix::Empty => 0.0,
+    }
+}
+
+fn mix_i(m: Mix) -> i64 {
+    match m {
+        Mix::Pair(a, b) => a,
+        Mix::Empty => 0,
+    }
+}
+
 // Option: payload extraction + fieldless default (the original segfault).
 pub fn t_some() -> i64 { unwrap_or(Opt::Some(42), 7) }
 pub fn t_none() -> i64 { unwrap_or(Opt::None, 7) }
@@ -156,6 +210,15 @@ pub fn t_tri_n() -> i64 { combine(Tri::N) }
 pub fn t_first() -> i64 { first_only(Pick::Two(11, 22)) }
 pub fn t_second() -> i64 { second_only(Pick::Two(11, 22)) }
 pub fn t_pick_zero() -> i64 { first_only(Pick::Zero) }
+
+// f64 payloads.
+pub fn t_fsome() -> f64 { f_unwrap(FOpt::Some(3.5)) }
+pub fn t_fnone() -> f64 { f_unwrap(FOpt::None) }
+pub fn t_fdouble() -> f64 { f_double(FOpt::Some(2.25)) }
+pub fn t_fok() -> f64 { f_fold(FRes::Ok(7.5)) }
+pub fn t_ferr() -> f64 { f_fold(FRes::Err(2.5)) }
+pub fn t_mixf() -> f64 { mix_f(Mix::Pair(9, 3.25)) }
+pub fn t_mixi() -> i64 { mix_i(Mix::Pair(9, 3.25)) }
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -199,7 +262,8 @@ fn boxed_enum_match_runs() {
     let py = format!(
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
-         for _n in ('t_some','t_none','t_ok','t_err','t_neg','t_zero','t_pos','t_e_a','t_e_b','t_e_c','t_is_some','t_is_none','t_tri','t_tri_n','t_first','t_second','t_pick_zero'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         for _n in ('t_some','t_none','t_ok','t_err','t_neg','t_zero','t_pos','t_e_a','t_e_b','t_e_c','t_is_some','t_is_none','t_tri','t_tri_n','t_first','t_second','t_pick_zero','t_mixi'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         for _n in ('t_fsome','t_fnone','t_fdouble','t_fok','t_ferr','t_mixf'): getattr(lib,_n).restype = ctypes.c_double\n\
          r = lib.t_some(); assert r == 42, 't_some=' + str(r)\n\
          r = lib.t_none(); assert r == 7, 't_none=' + str(r)\n\
          r = lib.t_ok(); assert r == 55, 't_ok=' + str(r)\n\
@@ -217,6 +281,13 @@ fn boxed_enum_match_runs() {
          r = lib.t_first(); assert r == 11, 't_first=' + str(r)\n\
          r = lib.t_second(); assert r == 22, 't_second=' + str(r)\n\
          r = lib.t_pick_zero(); assert r == 0, 't_pick_zero=' + str(r)\n\
+         r = lib.t_fsome(); assert r == 3.5, 't_fsome=' + str(r)\n\
+         r = lib.t_fnone(); assert r == 0.0, 't_fnone=' + str(r)\n\
+         r = lib.t_fdouble(); assert r == 4.5, 't_fdouble=' + str(r)\n\
+         r = lib.t_fok(); assert r == 7.5, 't_fok=' + str(r)\n\
+         r = lib.t_ferr(); assert r == -2.5, 't_ferr=' + str(r)\n\
+         r = lib.t_mixf(); assert r == 3.25, 't_mixf=' + str(r)\n\
+         r = lib.t_mixi(); assert r == 9, 't_mixi=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );

@@ -696,6 +696,16 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 if max_arity > 0 {
                     ir.boxed_enums.insert(name.clone());
                     ir.enum_payload_slots.insert(name.clone(), 1 + max_arity);
+                    // Record each variant's declared field types so the ctor and
+                    // match desugar can coerce a non-i64 field across the i64 slot.
+                    for variant in variants {
+                        if !variant.payload.is_empty() {
+                            ir.enum_payload_types.insert(
+                                format!("{name}::{}", variant.name),
+                                variant.payload.clone(),
+                            );
+                        }
+                    }
                 }
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, 0));
@@ -1609,6 +1619,7 @@ fn lower_expr(
                 // dereference as a pointer).
                 fn_ir.boxed_enums = ir.boxed_enums.clone();
                 fn_ir.enum_payload_slots = ir.enum_payload_slots.clone();
+                fn_ir.enum_payload_types = ir.enum_payload_types.clone();
                 // Width-aware struct ABI: inherit the per-struct field-type table
                 // so StructLit/FieldAccess/FieldAssign inside a fn body compute
                 // the canonical offset/width (sub-i64 fields), not the legacy
@@ -2091,6 +2102,39 @@ fn lower_expr(
             // upward threading (`region_exit_rebindings`) pick up the
             // dominating merge value, never a branch-internal id.
             ir.next_id = ir.next_id.max(else_ir.next_id);
+            // If exactly one branch is EMPTY — so its if-value `*_result` is the
+            // bare `ConstI64(0)` placeholder — while the other yields an `f64`,
+            // re-type the empty branch's placeholder to `ConstF64(0.0)` so the
+            // if-VALUE column types `f64` instead of the i64 default (the same
+            // hazard the one-sided merge placeholder had, but on the if-value
+            // column). This propagates through a desugared `match`'s nested-if
+            // chain (the innermost arm's empty else). ADDITIVE: an all-i64 or
+            // both-non-empty `if` is unchanged → byte-identical.
+            let then_empty = then_branch.is_empty();
+            let else_empty = match else_branch {
+                Some(s) => s.is_empty(),
+                None => true,
+            };
+            // Allocate the placeholder id from `ir` (the canonical space, already
+            // synced past both branch IRs above) — NOT from `then_ir`/`else_ir`,
+            // whose sequential id spaces overlap the merge block-arg ids and would
+            // collide (exactly as the merge-phi placeholders below do).
+            if then_empty
+                && !else_empty
+                && branch_value_is_f64(&else_ir.instrs, else_result, &ir.fn_signatures)
+            {
+                let z = ir.fresh();
+                then_ir.instrs.push(Instr::ConstF64(z, 0.0));
+                then_result = z;
+            }
+            if else_empty
+                && !then_empty
+                && branch_value_is_f64(&then_ir.instrs, then_result, &ir.fn_signatures)
+            {
+                let z = ir.fresh();
+                else_ir.instrs.push(Instr::ConstF64(z, 0.0));
+                else_result = z;
+            }
             let mut merged_names: Vec<String> = Vec::new();
             for n in then_writes.iter().chain(else_writes.iter()) {
                 if !merged_names.iter().any(|m| m == n) {
@@ -2229,10 +2273,17 @@ fn lower_expr(
             if !args.is_empty() {
                 if let Some(tag) = ir.enum_variant_tags.get(callee).copied() {
                     // Lower every payload field in declaration order (mirrors the
-                    // StructLit per-field lowering order).
+                    // StructLit per-field lowering order), coercing a non-i64
+                    // field (e.g. `f64`) to its raw bits so the i64 slot holds it.
+                    let field_types = ir.enum_payload_types.get(callee).cloned();
                     let payloads: Vec<ValueId> = args
                         .iter()
-                        .map(|a| lower_expr(a, ir, env, struct_env, receiver_types))
+                        .enumerate()
+                        .map(|(i, a)| {
+                            let ty = field_types.as_ref().and_then(|ts| ts.get(i));
+                            let coerced = coerce_enum_field_to_bits(a.clone(), ty, a.span());
+                            lower_expr(&coerced, ir, env, struct_env, receiver_types)
+                        })
                         .collect();
                     // Record size = the enum's uniform `1 + max arity`; default
                     // to `1 + this variant's arity` if (impossibly) unregistered.
@@ -2275,7 +2326,13 @@ fn lower_expr(
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
-            match desugar_match_to_if(scrutinee, arms, &ir.enum_variant_tags, &ir.boxed_enums) {
+            match desugar_match_to_if(
+                scrutinee,
+                arms,
+                &ir.enum_variant_tags,
+                &ir.boxed_enums,
+                &ir.enum_payload_types,
+            ) {
                 Some(if_node) => lower_expr(&if_node, ir, env, struct_env, receiver_types),
                 None => {
                     // Unsupported pattern kind (enum variant / non-int
@@ -3385,6 +3442,47 @@ fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
     }
 }
 
+/// Wrap a constructor payload `value` in the to-bits coercion when its declared
+/// field type does not natively fit the i64 record slot, so the stored value is
+/// always i64. v1 handles `f64` (a same-width `arith.bitcast` via
+/// `__mind_f64_to_bits`); an i64 field passes through unchanged, and any other
+/// non-i64 field is left unwrapped and fails loud at the i64 store (honest,
+/// no silent miscompile).
+#[cfg(feature = "std-surface")]
+fn coerce_enum_field_to_bits(
+    value: ast::Node,
+    ty: Option<&ast::TypeAnn>,
+    span: ast::Span,
+) -> ast::Node {
+    match ty {
+        Some(ast::TypeAnn::ScalarF64) => ast::Node::Call {
+            callee: "__mind_f64_to_bits".to_string(),
+            args: vec![value],
+            span,
+        },
+        _ => value,
+    }
+}
+
+/// Inverse of [`coerce_enum_field_to_bits`]: wrap the i64 slot `load` in the
+/// from-bits coercion when the field's declared type is non-i64, so a match
+/// binding has the declared type. v1 handles `f64` (`__mind_bits_to_f64`).
+#[cfg(feature = "std-surface")]
+fn coerce_enum_field_from_bits(
+    load: ast::Node,
+    ty: Option<&ast::TypeAnn>,
+    span: ast::Span,
+) -> ast::Node {
+    match ty {
+        Some(ast::TypeAnn::ScalarF64) => ast::Node::Call {
+            callee: "__mind_bits_to_f64".to_string(),
+            args: vec![load],
+            span,
+        },
+        _ => load,
+    }
+}
+
 /// Emit the uniform boxed-enum heap record `[tag @ +0, field0 @ +8, field1 @
 /// +16, …]` (`total_slots` i64 slots) and return its address. Used by BOTH the
 /// payload-carrying constructor (`Opt::Some(v)`, `Pair::P(a, b)`) and the
@@ -3485,6 +3583,7 @@ fn desugar_match_to_if(
     arms: &[ast::MatchArm],
     enum_tags: &std::collections::BTreeMap<String, i64>,
     boxed_enums: &std::collections::BTreeSet<String>,
+    payload_types: &std::collections::BTreeMap<String, Vec<ast::TypeAnn>>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
     // An arm body written with braces (`1 => { x = 100 }`) parses to a single
@@ -3628,13 +3727,14 @@ fn desugar_match_to_if(
         // and `check_match_runnable` turns that into a loud fail-closed error on
         // the emit path (never a silent sequential miscompile).
         let then_branch: Vec<ast::Node> = match &arm.pattern {
-            ast::Pattern::EnumVariant { args, .. } if !args.is_empty() => {
+            ast::Pattern::EnumVariant { path, args } if !args.is_empty() => {
                 if !args
                     .iter()
                     .all(|p| matches!(p, ast::Pattern::Ident(_) | ast::Pattern::Wildcard))
                 {
                     return None;
                 }
+                let field_types = payload_types.get(path);
                 let mut stmts = Vec::new();
                 for (i, sub) in args.iter().enumerate() {
                     if let ast::Pattern::Ident(name) = sub {
@@ -3646,11 +3746,15 @@ fn desugar_match_to_if(
                             right: Box::new(offset),
                             span,
                         };
+                        // Reinterpret the i64 slot back to the field's declared
+                        // type (e.g. `f64`) so the binding has the right type.
+                        let ty = field_types.and_then(|ts| ts.get(i));
+                        let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
                         stmts.push(ast::Node::Let {
                             name: name.clone(),
                             mutable: false,
                             ann: None,
-                            value: Box::new(load_i64(field_addr)),
+                            value: Box::new(value),
                             span,
                         });
                     }
@@ -3805,6 +3909,30 @@ fn branch_value_is_f64(
             Instr::BinOp { dst, lhs, rhs, .. } if *dst == id => {
                 return branch_value_is_f64(instrs, *lhs, fn_signatures)
                     || branch_value_is_f64(instrs, *rhs, fn_signatures);
+            }
+            // A nested value-`if` produces its merge outputs (`dst` + each
+            // `merge_id`) into THIS scope, but their defining values live in the
+            // nested then/else instruction lists. Recurse into the matching
+            // column so an f64 merged up through an inner `if` (a desugared match
+            // arm) is recognised — otherwise a one-sided let whose defined side
+            // is such a merge would mistype as i64.
+            Instr::If {
+                dst,
+                then_result,
+                else_result,
+                merges,
+                then_instrs,
+                else_instrs,
+                ..
+            } => {
+                if *dst == id {
+                    return branch_value_is_f64(then_instrs, *then_result, fn_signatures)
+                        || branch_value_is_f64(else_instrs, *else_result, fn_signatures);
+                }
+                if let Some((_, tv, ev)) = merges.iter().find(|(m, _, _)| *m == id) {
+                    return branch_value_is_f64(then_instrs, *tv, fn_signatures)
+                        || branch_value_is_f64(else_instrs, *ev, fn_signatures);
+                }
             }
             _ => {}
         }
