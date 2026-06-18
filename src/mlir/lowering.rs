@@ -492,6 +492,19 @@ struct LoweringContext {
     /// narrow-int / bool params → byte-identical lowering. Gated.
     #[cfg(feature = "std-surface")]
     fn_param_kinds: std::collections::BTreeMap<String, Vec<ValueKind>>,
+    /// NARROW-INT ABI — the declared MLIR return type of the `func.func`
+    /// currently being lowered (`"i32"`/`"i64"`/`"f64"`/…), set by the
+    /// `Instr::FnDef` arm on each body sub-context before it walks the body.
+    /// The explicit `Instr::Return` arm reads it to reconcile a returned
+    /// value's real SSA width with the declared result slot: an i64-wide
+    /// value flowing into an `-> i32` result is `arith.trunci`-narrowed (two's
+    /// -complement low-32 — exactly `as i32`), and a narrow value flowing into
+    /// an `-> i64` result is sign/zero-extended, so `return` never type-
+    /// mismatches the signature. `None` at module scope. Empty/`"i64"` for
+    /// i64-only modules → the reconcile is a no-op and lowering stays
+    /// byte-identical. Gated.
+    #[cfg(feature = "std-surface")]
+    fn_ret_abi: Option<String>,
 }
 
 /// One enclosing `while` loop, for break/continue codegen.
@@ -549,6 +562,8 @@ impl LoweringContext {
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_param_kinds: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            fn_ret_abi: None,
         }
     }
 
@@ -890,25 +905,171 @@ impl LoweringContext {
                         } else {
                             rhs_kind.clone()
                         };
-                        let (ity, unsigned, out_kind) = match &target {
-                            ValueKind::ScalarBool => ("i1", false, ValueKind::ScalarBool),
-                            ValueKind::ScalarU32 => ("i32", true, ValueKind::ScalarU32),
-                            _ => ("i32", false, ValueKind::ScalarI32),
+                        // Mixed-width detection: a narrow operand meeting a
+                        // NON-literal i64 (an i64 literal still folds via the
+                        // truncate path below — it is value-preserving). When
+                        // this happens we cannot truncate the wide operand
+                        // safely, so we promote BOTH operands to the i64 common
+                        // width: widen the narrow side with `arith.extsi`
+                        // (signed i32) / `arith.extui` (unsigned u32, bool/i1)
+                        // at the use site, do the op in i64, and yield i64. A
+                        // narrow *result* type (e.g. `-> i32`) is re-truncated
+                        // downstream at the return / cast boundary, not here.
+                        // The i64-domain op selection is the signed default
+                        // (the wider i64 operand's signedness dominates), so a
+                        // shift is `shrsi` and a compare is `slt` — identical to
+                        // the plain-i64 BinOp arm. Gated; an i64-only program
+                        // has no narrow operand so this never fires and the
+                        // keystone/canary bytes are unchanged.
+                        let lhs_nonlit_i64 = matches!(lhs_kind, ValueKind::ScalarI64)
+                            && !self.const_i64_values.contains(lhs);
+                        let rhs_nonlit_i64 = matches!(rhs_kind, ValueKind::ScalarI64)
+                            && !self.const_i64_values.contains(rhs);
+                        // Two DIFFERENT narrow kinds meeting in one op (e.g.
+                        // `i32 + u32`, `bool + i32`) cannot truncate to a single
+                        // narrow `ity` — they previously failed closed in the
+                        // `legalize` narrow branch (`{k:?} vs {target:?}`). Route
+                        // them through the SAME i64 widen path (extsi i32 / extui
+                        // u32,bool → i64, op in i64, signed default), yielding
+                        // i64; a narrow result is re-truncated at the boundary.
+                        // Purely additive: same-kind narrow pairs keep
+                        // `widen_mode == false` (they match `target` and truncate
+                        // as before), and any program that compiles today never
+                        // reached this error path — so corpus/canary/keystone
+                        // bytes are unchanged.
+                        let both_narrow_diff =
+                            is_narrow(&lhs_kind) && is_narrow(&rhs_kind) && lhs_kind != rhs_kind;
+                        let widen_mode = lhs_nonlit_i64 || rhs_nonlit_i64 || both_narrow_diff;
+                        // Signedness of the op in the i64 widen domain. When a
+                        // NON-literal i64 operand drove the widen, the i64 side
+                        // dominates and the contract is the signed default — this
+                        // preserves the byte-identical `rotl`/`i64+i32` lowering
+                        // (those cases always have an i64 operand). When the widen
+                        // was driven PURELY by two different narrow kinds meeting
+                        // (no i64 operand at all — e.g. `u32 + bool`, `i32 < u32`),
+                        // pick unsigned iff BOTH narrow operands are unsigned-domain
+                        // (u32/bool); a single signed `i32` operand forces the
+                        // signed op (usual-arithmetic-conversion rule). The per-
+                        // operand extension stays kind-driven in `legalize` (extsi
+                        // i32 / extui u32,bool), so this flag only selects
+                        // divsi/divui · remsi/remui · shrsi/shrui · slt/ult etc.
+                        // Only the `both_narrow_diff`-without-i64 path changes, and
+                        // no compiling program reaches it today, so canary/keystone/
+                        // corpus bytes stay identical.
+                        let widen_unsigned = if lhs_nonlit_i64 || rhs_nonlit_i64 {
+                            false
+                        } else {
+                            let unsigned_narrow = |k: &ValueKind| {
+                                matches!(k, ValueKind::ScalarU32 | ValueKind::ScalarBool)
+                            };
+                            unsigned_narrow(&lhs_kind) && unsigned_narrow(&rhs_kind)
                         };
-                        // Legalize one operand to `ity`: pass through a matching
-                        // narrow value, truncate an i64 literal, else fail closed.
-                        let mut legalize =
+                        let (ity, unsigned, out_kind) = if widen_mode {
+                            ("i64", widen_unsigned, ValueKind::ScalarI64)
+                        } else {
+                            match &target {
+                                ValueKind::ScalarBool => ("i1", false, ValueKind::ScalarBool),
+                                ValueKind::ScalarU32 => ("i32", true, ValueKind::ScalarU32),
+                                _ => ("i32", false, ValueKind::ScalarI32),
+                            }
+                        };
+                        // Legalize one operand to `ity`. In narrow mode: pass a
+                        // matching narrow value, truncate an i64 literal, else
+                        // fail closed. In widen mode: pass an i64 through and
+                        // sign/zero-extend a narrow operand to i64.
+                        // `Fn`, not `FnMut`: the closure mutates nothing it
+                        // captures (it takes `this: &mut Self` as a parameter and
+                        // only reads the captured `dst`/`ity`/`widen_mode`), so the
+                        // binding needs no `mut`. Pure Rust-level annotation — the
+                        // emitted MLIR text is byte-identical either way, so the
+                        // canary/keystone trace_hashes are unaffected.
+                        let legalize =
                             |this: &mut Self,
                              id: ValueId,
                              k: &ValueKind,
                              tmp: &str|
                              -> Result<String, MlirLowerError> {
+                                if widen_mode {
+                                    return match k {
+                                        ValueKind::ScalarI64 => Ok(format!("%{}", id.0)),
+                                        ValueKind::ScalarI32 => {
+                                            this.emit_line(&format!(
+                                                "    %{tmp}{0} = arith.extsi %{1} : i32 to i64",
+                                                dst.0, id.0
+                                            ));
+                                            Ok(format!("%{tmp}{}", dst.0))
+                                        }
+                                        ValueKind::ScalarU32 => {
+                                            this.emit_line(&format!(
+                                                "    %{tmp}{0} = arith.extui %{1} : i32 to i64",
+                                                dst.0, id.0
+                                            ));
+                                            Ok(format!("%{tmp}{}", dst.0))
+                                        }
+                                        ValueKind::ScalarBool => {
+                                            // A `bool` operand may be physically i1
+                                            // (in `i1_values`, e.g. a prior compare /
+                                            // bitwise-bool result) OR i64-backed (a
+                                            // bool *param* is `ScalarBool` but carried
+                                            // in an i64 ABI slot — see the i1_values
+                                            // invariant). Only the physically-i1 form
+                                            // needs `arith.extui i1 to i64`; an
+                                            // i64-backed bool is ALREADY a 0/1 i64 in
+                                            // its ABI slot, so widening is a no-op and
+                                            // emitting `extui %v : i1 to i64` on it
+                                            // would consume an i64 SSA value as i1 —
+                                            // invalid MLIR / a miscompile (e.g.
+                                            // `f(a:i64,b:bool)->i64 { a+b }`). Pass it
+                                            // straight through. Purely additive: no
+                                            // current corpus/canary/keystone case
+                                            // widens an i64-backed bool into i64
+                                            // arithmetic, so emitted bytes are
+                                            // unchanged.
+                                            if this.i1_values.contains(&id) {
+                                                this.emit_line(&format!(
+                                                    "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
+                                                    dst.0, id.0
+                                                ));
+                                                Ok(format!("%{tmp}{}", dst.0))
+                                            } else {
+                                                Ok(format!("%{}", id.0))
+                                            }
+                                        }
+                                        other => Err(MlirLowerError::ShapeError(format!(
+                                            "operand kind {other:?} cannot be widened to i64"
+                                        ))),
+                                    };
+                                }
                                 if is_narrow(k) {
                                     if *k != target {
                                         return Err(MlirLowerError::ShapeError(format!(
                                             "mixed-width integer operands ({k:?} vs {target:?}) \
                                              are not lowerable; cast explicitly"
                                         )));
+                                    }
+                                    // A `bool` operand may be i64-backed (a bool
+                                    // *param* is `ScalarBool` but carried in an i64
+                                    // ABI slot — see the i1_values invariant) rather
+                                    // than physically i1. When `ity == "i1"` (a
+                                    // bool·bool bitwise/compare op) an i64-backed bool
+                                    // must be `arith.trunci`-narrowed to i1 first, or
+                                    // the emitted `: i1` op would consume an i64 SSA
+                                    // value — invalid MLIR / a miscompile. A bool that
+                                    // is ALREADY physically i1 (in `i1_values`, e.g. a
+                                    // prior bitwise-bool result) passes straight
+                                    // through, never double-truncated. Purely
+                                    // additive: no current corpus/canary/keystone case
+                                    // reaches a bool·bool op on an i64-backed bool, so
+                                    // emitted bytes are unchanged.
+                                    if ity == "i1"
+                                        && matches!(k, ValueKind::ScalarBool)
+                                        && !this.i1_values.contains(&id)
+                                    {
+                                        this.emit_line(&format!(
+                                            "    %{tmp}{0} = arith.trunci %{1} : i64 to i1",
+                                            dst.0, id.0
+                                        ));
+                                        return Ok(format!("%{tmp}{}", dst.0));
                                     }
                                     Ok(format!("%{}", id.0))
                                 } else if matches!(k, ValueKind::ScalarI64)
@@ -983,6 +1144,19 @@ impl LoweringContext {
                             self.values.insert(*dst, ValueKind::ScalarI64);
                             self.i1_values.insert(*dst);
                         } else {
+                            // NARROW-INT i1-SSA tracking: a `ScalarBool` result of a
+                            // bitwise bool op is held in a physical `i1` register
+                            // (`ity == "i1"`). Record it in `i1_values` so the
+                            // branch-condition / return-widening paths treat it as
+                            // already-i1 — keeping `i1_values` the SINGLE source of
+                            // truth for "this SSA value is physically i1" (a bool
+                            // *param* is `ScalarBool` but i64-backed, so kind alone
+                            // is ambiguous). Inert for i64-only programs: this narrow
+                            // arm never fires without a narrow operand, so the
+                            // keystone/canary bytes are unchanged.
+                            if matches!(out_kind, ValueKind::ScalarBool) {
+                                self.i1_values.insert(*dst);
+                            }
                             self.values.insert(*dst, out_kind);
                         }
                     }
@@ -1646,6 +1820,12 @@ impl LoweringContext {
                     None => params.iter().map(|_| "i64").collect(),
                 };
                 let ret_abi: &str = sig.and_then(|(_, r)| r.as_deref()).unwrap_or("i64");
+                // NARROW-INT ABI: record the declared return slot so the
+                // explicit `Instr::Return` arm can reconcile a returned value's
+                // real SSA width with it (trunci an i64 into an `-> i32` result,
+                // extsi/extui a narrow value into an `-> i64` result). No-op for
+                // i64-only fns (`ret_abi == "i64"`), so lowering stays identical.
+                sub.fn_ret_abi = Some(ret_abi.to_string());
                 // Seed each parameter's `ValueKind`. Prefer the signedness-
                 // preserving `fn_param_kinds` table (so `u32` seeds `ScalarU32`,
                 // distinct from `i32`/`ScalarI32`, and `bool` seeds `ScalarBool`);
@@ -1713,10 +1893,47 @@ impl LoweringContext {
                             "    %bext{0} = arith.extui %{0} : i1 to i64\n    return %bext{0} : i64\n",
                             rid.0
                         )),
-                        // RFC 0012 §5.1: return the value at the declared ABI
-                        // width (`f64`/`f32` for a scalar-float return, else i64).
-                        Some(rid) => fn_text
-                            .push_str(&format!("    return %{} : {}\n", rid.0, ret_abi)),
+                        // RFC 0012 §5.1 + NARROW-INT ABI: return the value, first
+                        // reconciling its real SSA width with the declared result
+                        // slot. An i64-wide value falling into an `-> i32` result
+                        // is `arith.trunci`-narrowed (two's-complement low-32 —
+                        // exactly `as i32`); a narrow value falling into an
+                        // `-> i64` result is `extsi`/`extui`-widened (signedness
+                        // from the value kind). Otherwise the value already
+                        // matches the declared ABI (`f64`/`f32`/`i64`/`i32`) and
+                        // is returned as-is — byte-identical for i64-only fns.
+                        Some(rid) => {
+                            let val_ty = match sub.values.get(rid) {
+                                Some(ValueKind::ScalarF64) => "f64",
+                                Some(ValueKind::ScalarF32) => "f32",
+                                Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
+                                _ => "i64",
+                            };
+                            if ret_abi == "i32" && val_ty == "i64" {
+                                fn_text.push_str(&format!(
+                                    "    %nret{0} = arith.trunci %{0} : i64 to i32\n    return %nret{0} : i32\n",
+                                    rid.0
+                                ));
+                            } else if ret_abi == "i64" && val_ty == "i32" {
+                                let ext = if matches!(
+                                    sub.values.get(rid),
+                                    Some(ValueKind::ScalarU32)
+                                ) {
+                                    "extui"
+                                } else {
+                                    "extsi"
+                                };
+                                fn_text.push_str(&format!(
+                                    "    %nret{0} = arith.{1} %{0} : i32 to i64\n    return %nret{0} : i64\n",
+                                    rid.0, ext
+                                ));
+                            } else {
+                                fn_text.push_str(&format!(
+                                    "    return %{} : {}\n",
+                                    rid.0, ret_abi
+                                ));
+                            }
+                        }
                         // No trailing value: synthesise a zero at the return ABI
                         // type so a float-returning fn that falls off the end is
                         // still well-typed.
@@ -1778,16 +1995,43 @@ impl LoweringContext {
                     self.emit_line(&format!("    %bext{0} = arith.extui %{0} : i1 to i64", v.0));
                     self.emit_line(&format!("    return %bext{} : i64", v.0));
                 }
-                // RFC 0012 §5.1: return the value at its real ABI width — `f64`/
-                // `f32` for a scalar-float result (param or float BinOp), else the
-                // i64 ABI slot (byte-identical to the legacy path for i64 fns).
+                // RFC 0012 §5.1 + NARROW-INT ABI: return the value at its real
+                // ABI width — `f64`/`f32` for a scalar-float result, `i32` for a
+                // narrow result, else the i64 ABI slot — then reconcile against
+                // the function's declared return slot (`fn_ret_abi`): an i64-wide
+                // value flowing into an `-> i32` result is `arith.trunci`-narrowed
+                // (two's-complement low-32 — exactly `as i32`), and a narrow value
+                // flowing into an `-> i64` result is `extsi`/`extui`-widened.
+                // Byte-identical to the legacy path for i64 fns (no narrow values,
+                // `fn_ret_abi` == `"i64"`, so the reconcile collapses to a no-op).
                 Some(v) => {
-                    let rty = match self.values.get(v) {
+                    let val_ty = match self.values.get(v) {
                         Some(ValueKind::ScalarF64) => "f64",
                         Some(ValueKind::ScalarF32) => "f32",
+                        Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
                         _ => "i64",
                     };
-                    self.emit_line(&format!("    return %{} : {}", v.0, rty));
+                    let ret = self.fn_ret_abi.as_deref().unwrap_or(val_ty);
+                    if ret == "i32" && val_ty == "i64" {
+                        self.emit_line(&format!(
+                            "    %nret{0} = arith.trunci %{0} : i64 to i32",
+                            v.0
+                        ));
+                        self.emit_line(&format!("    return %nret{} : i32", v.0));
+                    } else if ret == "i64" && val_ty == "i32" {
+                        let ext = if matches!(self.values.get(v), Some(ValueKind::ScalarU32)) {
+                            "extui"
+                        } else {
+                            "extsi"
+                        };
+                        self.emit_line(&format!(
+                            "    %nret{0} = arith.{1} %{0} : i32 to i64",
+                            v.0, ext
+                        ));
+                        self.emit_line(&format!("    return %nret{} : i64", v.0));
+                    } else {
+                        self.emit_line(&format!("    return %{} : {}", v.0, val_ty));
+                    }
                 }
                 None => self.emit_line("    return"),
             },
@@ -1965,14 +2209,16 @@ impl LoweringContext {
                 // Determine whether condition is already i1 (so we must NOT emit
                 // a spurious `arith.trunci i64 to i1` on it — that is invalid
                 // MLIR). Value-based: the cond SSA value is i1 if it is recorded
-                // in `i1_values` (a comparison result, possibly let-bound) or its
-                // kind is `ScalarBool` (a narrow-int / bool-typed value). The
+                // in `i1_values` (a comparison result, possibly let-bound, or a
+                // bitwise bool op — both tagged into `i1_values`). NOTE: kind
+                // `ScalarBool` is NOT sufficient — a `bool` *param* is `ScalarBool`
+                // yet i64-backed at the ABI boundary, so it must take the trunci
+                // path; `i1_values` is the authoritative "physically i1" set. The
                 // instruction-shape probe (last cond instr is a comparison) is
                 // kept as a fallback for the bare-comparison case. Additive: an
                 // i64-only program whose while-cond is a non-let comparison still
                 // takes the instruction-shape branch byte-identically.
                 let cond_already_i1 = self.i1_values.contains(cond_id)
-                    || matches!(self.values.get(cond_id), Some(ValueKind::ScalarBool))
                     || cond_instrs
                         .last()
                         .map(|last| {
@@ -2446,13 +2692,15 @@ impl LoweringContext {
                 // Determine whether the condition value is already i1 (so we must
                 // NOT emit a spurious `arith.trunci i64 to i1` on it — invalid
                 // MLIR). Value-based: i1 if recorded in `i1_values` (a comparison
-                // result, possibly let-bound) or its kind is `ScalarBool`. The
-                // instruction-shape probe (last cond instr is a comparison) is the
-                // fallback for the bare-comparison case. Additive: an i64-only
-                // program with an inline-comparison if-cond still takes the
-                // instruction-shape branch byte-identically.
+                // result, possibly let-bound, or a bitwise bool op — both tagged
+                // into `i1_values`). NOTE: kind `ScalarBool` is NOT sufficient — a
+                // `bool` *param* is `ScalarBool` yet i64-backed at the ABI boundary,
+                // so it must take the trunci path; `i1_values` is the authoritative
+                // "physically i1" set. The instruction-shape probe (last cond instr
+                // is a comparison) is the fallback for the bare-comparison case.
+                // Additive: an i64-only program with an inline-comparison if-cond
+                // still takes the instruction-shape branch byte-identically.
                 let cond_already_i1 = self.i1_values.contains(cond_id)
-                    || matches!(self.values.get(cond_id), Some(ValueKind::ScalarBool))
                     || cond_instrs
                         .last()
                         .map(|last| {
