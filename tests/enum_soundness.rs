@@ -60,6 +60,53 @@ fn enum_handle_in_scalar_return_is_gated() {
 }
 
 #[test]
+fn multi_field_enum_construct_and_match_fail_closed() {
+    // A multi-field constructor silently dropped the extra fields, and a
+    // multi-field match arm silently fell back to a sequential evaluation that
+    // returned the wrong arm. Both are now loud fail-closed blockers.
+    let p = compile_source_with_name(
+        "enum Pair { P(i64, i64), Q }\npub fn sum(p: Pair) -> i64 { match p { Pair::P(a, b) => a + b, Pair::Q => 0 } }\npub fn mk() -> i64 { sum(Pair::P(10, 20)) }",
+        None,
+        &CompileOptions::default(),
+    )
+    .expect("should parse + type-check");
+    assert!(
+        p.runnable_blockers
+            .iter()
+            .any(|d| d.code == "lower::enum_match_unsupported_payload"),
+        "multi-field match arm must be gated, got: {:?}",
+        p.runnable_blockers
+    );
+    assert!(
+        p.runnable_blockers
+            .iter()
+            .any(|d| d.code == "lower::enum_multi_field_construct"),
+        "multi-field constructor must be gated, got: {:?}",
+        p.runnable_blockers
+    );
+}
+
+#[test]
+fn single_field_and_wildcard_payload_not_gated() {
+    // The supported shapes — single bind `Some(v)` and wildcard `Some(_)` — must
+    // NOT be flagged by the multi-field/nested gate (false-positive guard).
+    let p = compile_source_with_name(
+        "enum Opt { Some(i64), None }\npub fn uw(o: Opt, d: i64) -> i64 { match o { Opt::Some(v) => v, Opt::None => d } }\npub fn iss(o: Opt) -> i64 { match o { Opt::Some(_) => 1, Opt::None => 0 } }",
+        None,
+        &CompileOptions::default(),
+    )
+    .expect("should parse + type-check");
+    assert!(
+        !p.runnable_blockers
+            .iter()
+            .any(|d| d.code == "lower::enum_match_unsupported_payload"
+                || d.code == "lower::enum_multi_field_construct"),
+        "single-field/wildcard payload must NOT be gated, got: {:?}",
+        p.runnable_blockers
+    );
+}
+
+#[test]
 fn legitimate_enum_programs_still_compile() {
     // Fieldless match -> i64 (bare ordinal tags, not handles).
     accepts(
