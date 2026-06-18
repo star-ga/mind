@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2853 | **Est. tokens:** ~6,921,935
-**Generated:** 2026-06-18 06:31 UTC
+**Files:** 2854 | **Est. tokens:** ~6,923,122
+**Generated:** 2026-06-18 07:27 UTC
 
 ## Token Budget Guide
 
@@ -403,7 +403,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 178 | ~319,815 |
+| `tests/` | 179 | ~321,002 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3983,6 +3983,7 @@
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
+- `int_determinism.rs` (~1187 tok, large) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~1929 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_core.rs` (~1265 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
 - `ir_load_save.rs` (~1257 tok, large) — Copyright 2025 STARGA Inc.
