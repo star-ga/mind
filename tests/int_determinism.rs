@@ -106,6 +106,8 @@ fn int_min_div_and_oversized_shift_are_deterministic() {
          # division-by-zero: deterministic 0 on every substrate (else x86 SIGFPE)\n\
          assert lib.idiv(7, 0) == 0, lib.idiv(7, 0)\n\
          assert lib.imod(7, 0) == 0, lib.imod(7, 0)\n\
+         assert lib.idiv32(7, 0) == 0, lib.idiv32(7, 0)\n\
+         assert lib.imod32(7, 0) == 0, lib.imod32(7, 0)\n\
          # oversized shift counts masked mod-width identically everywhere\n\
          assert lib.ishl(1, 64) == 1, lib.ishl(1, 64)\n\
          assert lib.ishl(1, 65) == 2, lib.ishl(1, 65)\n\

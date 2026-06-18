@@ -1221,6 +1221,9 @@ impl LoweringContext {
                         // byte-identical on every substrate. In-range counts are
                         // unchanged (the mask is a no-op), so results + keystone +
                         // canary bytes are unaffected for them.
+                        // Set by the narrow signed-div guard to the "divisor == 0"
+                        // flag; the common emit then forces the result to 0.
+                        let mut div_zero_guard: Option<String> = None;
                         let rhs_ref = if matches!(op, BinOp::Shl | BinOp::Shr) {
                             let wm = match ity {
                                 "i64" => 63,
@@ -1241,13 +1244,20 @@ impl LoweringContext {
                         } else if !unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != -1)
+                            && !self
+                                .const_i64_map
+                                .get(rhs)
+                                .is_some_and(|&v| v != -1 && v != 0)
                         {
-                            // INT_MIN / -1 overflow determinism at narrow width (same
-                            // hazard as the i64 arm: x86 #DE vs AArch64 INT_MIN).
-                            // Substitute divisor 1 on the overflow case for the wrapping
-                            // result on every substrate; INT_MIN(ity) built as 1<<(w-1).
-                            // Unsigned narrow div has no such case, so it is skipped.
+                            // Signed narrow div/rem determinism — INT_MIN/-1 AND
+                            // divisor-0, the same two x86-#DE-vs-AArch64 divergences
+                            // closed for i64. Substitute divisor 1 on either case
+                            // (never traps); the common emit forces the result to 0
+                            // when the divisor was 0 (`x/0 == 0`, `x%0 == 0`).
+                            // Elided for a constant divisor that is neither -1 nor 0.
+                            // INT_MIN(ity) built as 1<<(w-1). Unsigned narrow div has
+                            // no INT_MIN/-1 case but is NOT routed here (this arm is
+                            // signed-only) — its div-by-zero is a separate path.
                             let wb = match ity {
                                 "i64" => 63,
                                 _ => 31,
@@ -1269,6 +1279,10 @@ impl LoweringContext {
                                 dst.0
                             ));
                             self.emit_line(&format!(
+                                "    %dzc{0} = arith.constant 0 : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
                                 "    %dism{0} = arith.cmpi \"eq\", {lhs_ref}, %dmin{0} : {ity}",
                                 dst.0
                             ));
@@ -1281,17 +1295,41 @@ impl LoweringContext {
                                 dst.0
                             ));
                             self.emit_line(&format!(
-                                "    %dsf{0} = arith.select %dovf{0}, %done{0}, {rhs_ref} : {ity}",
+                                "    %disz{0} = arith.cmpi \"eq\", {rhs_ref}, %dzc{0} : {ity}",
                                 dst.0
                             ));
+                            self.emit_line(&format!(
+                                "    %dsub{0} = arith.ori %dovf{0}, %disz{0} : i1",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dsf{0} = arith.select %dsub{0}, %done{0}, {rhs_ref} : {ity}",
+                                dst.0
+                            ));
+                            div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else {
                             rhs_ref
                         };
-                        self.emit_line(&format!(
-                            "    %{} = {} {}, {} : {}",
-                            dst.0, mlir_op, lhs_ref, rhs_ref, ity
-                        ));
+                        if let Some(disz) = &div_zero_guard {
+                            self.emit_line(&format!(
+                                "    %ddt{0} = {1} {2}, {3} : {4}",
+                                dst.0, mlir_op, lhs_ref, rhs_ref, ity
+                            ));
+                            self.emit_line(&format!(
+                                "    %ddz{0} = arith.constant 0 : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %{0} = arith.select {1}, %ddz{0}, %ddt{0} : {ity}",
+                                dst.0, disz
+                            ));
+                        } else {
+                            self.emit_line(&format!(
+                                "    %{} = {} {}, {} : {}",
+                                dst.0, mlir_op, lhs_ref, rhs_ref, ity
+                            ));
+                        }
                         if is_cmp {
                             // Comparison yields i1; tag like the i64/float arms so
                             // a return site widens it for the i64 ABI slot.
