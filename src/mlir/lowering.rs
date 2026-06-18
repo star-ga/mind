@@ -1899,10 +1899,7 @@ impl LoweringContext {
                         let op = if bits(store_ty) < bits(val_phys) {
                             "llvm.trunc"
                         } else if val_phys == "i1"
-                            || matches!(
-                                self.values.get(&args[1]),
-                                Some(ValueKind::ScalarU32)
-                            )
+                            || matches!(self.values.get(&args[1]), Some(ValueKind::ScalarU32))
                         {
                             "llvm.zext"
                         } else {
