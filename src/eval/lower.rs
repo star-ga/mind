@@ -300,7 +300,8 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // bytes (and cross-substrate identity) are byte-for-byte unchanged. The
     // estimate is O(1) (each top-level item expands to a handful of instrs);
     // any underestimate simply falls back to the existing growth path.
-    ir.instrs.reserve(module.items.len().saturating_mul(8).max(16));
+    ir.instrs
+        .reserve(module.items.len().saturating_mul(8).max(16));
     // Codegen monomorphization pre-pass — collect generic fn TEMPLATES (those
     // with a non-empty `type_params`) so call sites can route to a concrete
     // instance. The thread-local is reset at entry so a prior `lower_to_ir`
@@ -355,16 +356,15 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // would have returned — so emitted mic@1/mic@3 bytes and cross-substrate
     // identity are byte-for-byte unchanged.
     #[cfg(feature = "std-surface")]
-    let receiver_types_owned: HashMap<crate::ast::Span, String> =
-        if module
-            .items
-            .iter()
-            .any(|it| matches!(it, ast::Node::StructDef { .. }))
-        {
-            crate::eval::struct_resolver::build_field_access_types(module)
-        } else {
-            HashMap::new()
-        };
+    let receiver_types_owned: HashMap<crate::ast::Span, String> = if module
+        .items
+        .iter()
+        .any(|it| matches!(it, ast::Node::StructDef { .. }))
+    {
+        crate::eval::struct_resolver::build_field_access_types(module)
+    } else {
+        HashMap::new()
+    };
     #[cfg(not(feature = "std-surface"))]
     let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
     let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
