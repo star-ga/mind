@@ -76,6 +76,48 @@ struct MonoCtx {
 
 thread_local! {
     static MONO: std::cell::RefCell<MonoCtx> = std::cell::RefCell::new(MonoCtx::default());
+    /// Part 1 (generics): the ENCLOSING fn's `param name -> declared TypeAnn`,
+    /// so a generic call `id(n)` with `n` a scalar parameter monomorphizes to
+    /// `id$i64` instead of leaving a bare `@id` reference — which was a SILENT
+    /// MISCOMPILE (an EXIT=0 `.so` with an undefined symbol). Seeded by the
+    /// FnDef-lowering arm ONLY when the module declares generic templates, so a
+    /// non-generic module never touches it and its IR bytes stay byte-identical.
+    /// Restored on scope exit via `ParamTypesGuard` so it never leaks across fns.
+    static PARAM_TYPES: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// RAII guard restoring the previous `PARAM_TYPES` map when a fn's lowering
+/// scope ends. `None` => seeding was skipped (non-generic module) — a pure
+/// no-op, so the byte-identity hot path is untouched.
+struct ParamTypesGuard(Option<std::collections::HashMap<String, TypeAnn>>);
+impl Drop for ParamTypesGuard {
+    fn drop(&mut self) {
+        if let Some(prev) = self.0.take() {
+            PARAM_TYPES.with(|p| *p.borrow_mut() = prev);
+        }
+    }
+}
+
+/// Seed `PARAM_TYPES` with this fn's parameters for generic-arg inference, ONLY
+/// when the module has generic templates (otherwise a no-op guard). The returned
+/// guard restores the prior map on drop.
+fn seed_param_types(params: &[ast::Param]) -> ParamTypesGuard {
+    let has_templates = MONO.with(|c| !c.borrow().templates.is_empty());
+    if !has_templates {
+        return ParamTypesGuard(None);
+    }
+    PARAM_TYPES.with(|p| {
+        let prev = p.borrow().clone();
+        {
+            let mut m = p.borrow_mut();
+            m.clear();
+            for prm in params {
+                m.insert(prm.name.clone(), prm.ty.clone());
+            }
+        }
+        ParamTypesGuard(Some(prev))
+    })
 }
 
 /// Short, deterministic mangle suffix for a concrete scalar type.
@@ -92,13 +134,30 @@ fn mangle_suffix(ty: &TypeAnn) -> Option<&'static str> {
     }
 }
 
-/// Infer the concrete scalar type of a call argument from its literal form.
-/// Bounded slice: only literal `Int`/`Float` operands are recognised; anything
-/// else returns `None` so the call falls back to the ordinary path.
-fn infer_concrete_arg_type(arg: &ast::Node) -> Option<TypeAnn> {
+/// Infer the concrete scalar type of a call argument. Recognises literal
+/// `Int`/`Float` operands and a bare variable bound to an enclosing-fn scalar
+/// PARAMETER (via `param_types`); anything else returns `None` so the call falls
+/// back to the ordinary path. `pub(crate)` so the abi_gate fail-closed check can
+/// share this exact predicate (no drift between "the gate accepts" and "the
+/// lowering emits a body").
+pub(crate) fn infer_concrete_arg_type(
+    arg: &ast::Node,
+    param_types: &std::collections::HashMap<String, TypeAnn>,
+) -> Option<TypeAnn> {
     match arg {
         ast::Node::Lit(Literal::Int(_), _) => Some(TypeAnn::ScalarI64),
         ast::Node::Lit(Literal::Float(_), _) => Some(TypeAnn::ScalarF64),
+        // Part 1: a bare variable bound to an enclosing-fn PARAMETER resolves to
+        // that param's declared scalar type, so `id(n)` for `n: i64` mono's to
+        // `id$i64`. Filtered by `mangle_suffix` so a Named/Tensor param yields
+        // None (the call then flows the ordinary path — no false instance).
+        // deferred: only enclosing-fn params resolve here; Let-bound locals and
+        // nested-call arg types fall to the abi_gate fail-closed net — upgrade
+        // path: track Let RHS types as they lower / resolve callee return types.
+        ast::Node::Lit(Literal::Ident(name), _) => param_types
+            .get(name)
+            .cloned()
+            .filter(|t| mangle_suffix(t).is_some()),
         ast::Node::Neg { operand, .. } => match operand.as_ref() {
             ast::Node::Lit(Literal::Int(_), _) => Some(TypeAnn::ScalarI64),
             ast::Node::Lit(Literal::Float(_), _) => Some(TypeAnn::ScalarF64),
@@ -106,6 +165,18 @@ fn infer_concrete_arg_type(arg: &ast::Node) -> Option<TypeAnn> {
         },
         _ => None,
     }
+}
+
+/// Whether a call's argument shape can be monomorphized in the bounded slice
+/// (exactly one arg whose concrete scalar type is inferable). THE single source
+/// of truth shared by the lowering (`try_register_mono_instance`) and the
+/// abi_gate fail-closed gate, so the gate flags exactly the calls the lowering
+/// would leave as a dangling bare-template reference — they cannot drift.
+pub(crate) fn is_monomorphizable(
+    args: &[ast::Node],
+    param_types: &std::collections::HashMap<String, TypeAnn>,
+) -> bool {
+    args.len() == 1 && infer_concrete_arg_type(&args[0], param_types).is_some()
 }
 
 /// If `callee` names a registered generic and the call's single argument has an
@@ -124,11 +195,14 @@ fn try_register_mono_instance(callee: &str, args: &[ast::Node]) -> Option<String
         if !ctx.templates.contains_key(callee) {
             return None;
         }
-        // Bounded slice: exactly one argument bound to the single type param.
+        // Bounded slice: exactly one argument whose concrete scalar type is
+        // inferable — a literal, or an enclosing-fn scalar parameter resolved via
+        // the PARAM_TYPES map the FnDef arm seeded (shared with the abi_gate
+        // fail-closed gate through `infer_concrete_arg_type`).
         if args.len() != 1 {
             return None;
         }
-        let concrete = infer_concrete_arg_type(&args[0])?;
+        let concrete = PARAM_TYPES.with(|p| infer_concrete_arg_type(&args[0], &p.borrow()))?;
         let suffix = mangle_suffix(&concrete)?;
         let mangled = format!("{callee}${suffix}");
         ctx.requests
@@ -1443,6 +1517,12 @@ fn lower_expr(
                 fn_env.insert(param.name.clone(), param_id);
                 param_pairs.push((param.name.clone(), param_id));
             }
+
+            // Part 1 (generics): expose this fn's params as inferable concrete
+            // types so a generic call `id(p)` over a scalar param monomorphizes.
+            // No-op (no allocation) unless the module declares templates; the
+            // guard restores the prior map when this fn's body finishes lowering.
+            let _param_types_guard = seed_param_types(params);
 
             // Lower function body.
             //

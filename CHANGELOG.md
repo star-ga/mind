@@ -20,6 +20,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Generic call with a non-literal argument no longer writes a broken artifact
+  (silent miscompile — P1.1).** `id(n)` for a variable `n` returned EXIT=0 from
+  `--emit-shared` but produced a `.so` with an UNDEFINED symbol (`nm -D` → `U id`;
+  dlopen → "undefined symbol: id"): the monomorphizer inferred a concrete type
+  only from int/float LITERALS, so a variable arg left a dangling bare-template
+  reference and the `id$T` body was never emitted. Two-part fix:
+  - **Part 1 (correct):** the monomorphizer now resolves a variable argument
+    bound to an enclosing-fn scalar parameter (a `PARAM_TYPES` map seeded during
+    FnDef lowering, gated behind the templates-present fast path so a non-generic
+    module is byte-identical), so `id(n)` for `n: i64` instantiates `id$i64` and
+    runs (`use_it(7) == 7`).
+  - **Part 2 (fail-closed net):** any generic call whose argument still cannot be
+    monomorphized (e.g. a Let-bound local) is now a LOUD `--emit-shared` error
+    with a file:line span (`lower::unresolved_generic`, RC≠0, no `.so` written)
+    instead of a broken artifact. The gate (`abi_gate::check_generic_resolvable`)
+    keys on the declared-generic-template set — EMPTY for every non-generic /
+    intrinsic / extern-C program — so it has ZERO false positives by construction,
+    and shares the one `is_monomorphizable` predicate with the lowering (gate and
+    codegen cannot drift). Keystone 7/7 + canaries 8/8 byte-identical (0 templates
+    → inert); the full no-default-features test matrix (autodiff / mlir-lowering /
+    cpu-buffers / std-surface) passes. New `tests/generics_lowering.rs` cases gate
+    both the variable-arg success and the fail-closed path.
+
 - **Struct field populated from a narrow (i32/u32) SSA value now lowers.** The
   natural `P { x: a }` for `a: i32` failed in v0.9.0: the generic `Instr::Call`
   arm rejected the non-i64 argument to `__mind_store_i32` *before* its handler
