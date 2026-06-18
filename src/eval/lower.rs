@@ -847,6 +847,7 @@ fn scalar_int_cast_width(ty: &TypeAnn) -> Option<u32> {
 ///   * `i32`/`u32`                                             → 4
 ///   * `i16`/`u16`                                             → 2
 ///   * `i8`/`u8`/`bool`                                        → 1
+///
 /// `signed` is true only for the signed integer scalars (`i64`/`i32`/`i16`/`i8`);
 /// `u*`/`bool`/handles are unsigned (zero-extended on load). Any field that is
 /// not a recognised scalar (a nested struct handle, a `Vec`/`String`/`Map`
@@ -908,8 +909,21 @@ fn load_helper_for_width(width: i64) -> &'static str {
 /// path. `all_i64` is true when every field is 8 bytes wide AND tightly packed
 /// at `8*i` — the case where the legacy `__mind_alloc(8*n)` + `store_i64` IR is
 /// byte-identical and must be preserved verbatim.
+/// One field's resolved placement within a struct: `(byte_offset, width_bytes,
+/// signed)`. Offsets are self-aligned and substrate-independent (see
+/// `struct_layout`).
 #[cfg(feature = "std-surface")]
-fn struct_layout(ir: &IRModule, name: &str) -> Option<(Vec<(i64, i64, bool)>, i64, bool)> {
+type FieldPlacement = (i64, i64, bool);
+
+/// A struct's fully-resolved layout: each field's placement in declaration
+/// order, the total allocation size in bytes, and `all_i64` (every field is an
+/// 8-byte tightly-packed slot — the legacy byte-identical `__mind_alloc(8*n)`
+/// path).
+#[cfg(feature = "std-surface")]
+type StructLayout = (Vec<FieldPlacement>, i64, bool);
+
+#[cfg(feature = "std-surface")]
+fn struct_layout(ir: &IRModule, name: &str) -> Option<StructLayout> {
     let field_types = ir.struct_field_types.get(name)?;
     let mut layout = Vec::with_capacity(field_types.len());
     let mut running: i64 = 0;
@@ -2742,7 +2756,7 @@ fn lower_expr(
                     // unsigned/bool fields use the zero-extended value directly,
                     // so this is byte-identical for the all-i64 path.
                     if signed && width < 8 {
-                        let shift = (64 - width * 8) as i64;
+                        let shift = 64 - width * 8;
                         let sh = ir.fresh();
                         ir.instrs.push(Instr::ConstI64(sh, shift));
                         let shl = ir.fresh();

@@ -537,6 +537,9 @@ struct LoopFrame {
 /// std-surface — `break`/`continue` (each lowers to a `cf.br`). The If lowering
 /// uses this so it never appends a second terminator after a self-terminated
 /// branch (mlir-opt rejects an op with successors that is not block-final).
+/// Gated on `std-surface`: only the enhanced value-`if` lowering path (itself
+/// std-surface) consults it; the base if/else lowering does not.
+#[cfg(feature = "std-surface")]
 fn instr_is_block_terminator(i: &Instr) -> bool {
     match i {
         Instr::Return { .. } => true,
@@ -651,6 +654,12 @@ impl LoweringContext {
         }
     }
 
+    // Gated on `std-surface`: its only callers are the std-surface value-`if`
+    // merge column + phi loop (which also reference `i1_values`), so without the
+    // surface this helper is dead. The wide arg list is the merge context
+    // (two kinds, two values, two branch buffers, label, column) threaded in.
+    #[cfg(feature = "std-surface")]
+    #[allow(clippy::too_many_arguments)]
     fn unify_merge_kind(
         &self,
         then_kind: &ValueKind,
@@ -9420,6 +9429,9 @@ fn fmt_block_args(values: &[String]) -> String {
 /// BYTE-IDENTITY INVARIANT: for an all-`i64` list this is byte-for-byte
 /// identical to [`fmt_block_args`] — len 1 → `(%x : i64)`, len > 1 →
 /// `(%a, %b : i64, i64)`. An i64-only program therefore lowers unchanged.
+/// Gated on `std-surface`: only the narrow-int value-`if` merge path emits
+/// typed (non-i64) block args; the base lowering uses [`fmt_block_args`].
+#[cfg(feature = "std-surface")]
 fn fmt_block_args_typed(items: &[(String, String)]) -> String {
     match items.len() {
         0 => String::new(),
@@ -9478,6 +9490,9 @@ fn substitute_single_id(id: usize, args: &[(usize, String, usize)]) -> String {
 /// Replace all boundary-safe occurrences of `%{id}` in `text` with
 /// `%{replacement}`.  A match is boundary-safe when the character
 /// immediately following the digit run is not an ASCII digit.
+/// Gated on `std-surface`: its only caller is the std-surface let-init
+/// inlining used by the value-`if` branch rewriter.
+#[cfg(feature = "std-surface")]
 fn substitute_one(text: &str, id: usize, replacement: &str) -> String {
     let needle = format!("%{id}");
     let mut out = String::with_capacity(text.len());
