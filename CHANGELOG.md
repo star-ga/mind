@@ -20,6 +20,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`match` on an Option/Result-shaped enum no longer SEGFAULTS — fieldless and
+  payload variants now share one heap layout.** A payload constructor
+  (`Opt::Some(42)`) lowered to a 2-field heap record `[tag @ +0, payload @ +8]`,
+  but a fieldless sibling (`Opt::None`) lowered to the BARE ordinal `1`. The
+  match reads the tag with `__mind_load_i64(scrutinee + 0)`, so a `None`
+  scrutinee dereferenced the ordinal `1` AS AN ADDRESS → segfault. Every
+  Option/Result-shaped enum (a payload variant + a fieldless variant — the most
+  common case) crashed at runtime; it shipped because the only enum test checked
+  the program COMPILES, never RAN it. Fix: an enum with ≥1 payload variant is
+  "boxed" (new `IRModule::boxed_enums` lowering-only side-table), and EVERY
+  constructor of a boxed enum — including its fieldless variants — lowers to the
+  uniform `[tag, payload]` record (fieldless → payload `0`) via a shared
+  `emit_boxed_enum_record` helper; a `match` on a boxed enum always reads the tag
+  from the record (even when it names only fieldless variants, so it no longer
+  compares the record POINTER against an ordinal). A purely fieldless (C-like)
+  enum is NOT boxed and keeps the bare-ordinal lowering, so fieldless matches are
+  byte-identical. The side-table is never serialised into mic@3 and the keystone
+  has no enums, so keystone 7/7 + cross-substrate 8/8 stay byte-identical. New
+  `tests/enum_match_run.rs` compiles a multi-enum program to a `.so` and
+  dlopen-runs it (Option, Result, a fieldless-middle 3-variant enum, and a
+  fieldless-only match) — the runtime gate the soundness test lacked.
+
 - **A `match` arm now binds its payload at the declared variant type, and sibling
   arms must agree on scalar CLASS.** A payload sub-pattern (`E::A(x) => …`) was
   bound at the SCRUTINEE (enum) type, not `x`'s declared payload type, so an arm
