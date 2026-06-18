@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Value-`if` whose branches yield a comparison now lowers.** `let b: bool =
+  if c { x > 10 } else { y > 100 }` produced an i1 (`cmpi`) in each branch but the
+  merge block argument is typed i64, so the branch `cf.br ^merge(%cmp : i64)`
+  mismatched (`'i64' vs 'i1'`) and `mlir-opt` failed. The branch sub-contexts now
+  bubble their `i1_values` up, so the merge recognises the value is physically i1
+  and `extui`-widens it to i64 before the block argument (covering both the
+  if-value and any branch-assigned merge phi). Additive — a value-`if` over
+  ordinary i64 values never takes this path, so keystone 7/7 + cross-substrate
+  canaries 8/8 stay byte-identical. New `tests/value_if_comparison.rs`.
+
 - **`if`/`while` on an integer condition branches on non-zero, not the low bit.**
   A non-`i1` condition was `arith.trunci`'d to i1 (testing only the LOW BIT), so an
   even non-zero value branched FALSE — `if 2 { … }` ran the `else`, and a `while c`
