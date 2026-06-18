@@ -171,9 +171,10 @@ pub fn check_generic_resolvable(module: &Module, src: &str, file: Option<&str>) 
     // map, no body walk. The gate is then structurally inert (and byte-identity
     // safe) for every non-generic / intrinsic / extern-C program, so the compile
     // hot path is untouched.
-    let has_templates = module.items.iter().any(|item| {
-        matches!(item, Node::FnDef { type_params, .. } if !type_params.is_empty())
-    });
+    let has_templates = module
+        .items
+        .iter()
+        .any(|item| matches!(item, Node::FnDef { type_params, .. } if !type_params.is_empty()));
     if !has_templates {
         return Vec::new();
     }
