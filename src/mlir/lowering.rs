@@ -1134,6 +1134,33 @@ impl LoweringContext {
                             op,
                             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
                         );
+                        // Shift-count determinism: a shift amount >= the operand
+                        // bit-width is poison in MLIR/LLVM and lowers divergently
+                        // across substrates (x86 masks mod-width, AArch64 differs).
+                        // Mask the amount to width-1 so every count is in-range and
+                        // byte-identical on every substrate. In-range counts are
+                        // unchanged (the mask is a no-op), so results + keystone +
+                        // canary bytes are unaffected for them.
+                        let rhs_ref = if matches!(op, BinOp::Shl | BinOp::Shr) {
+                            let wm = match ity {
+                                "i64" => 63,
+                                "i1" => 0,
+                                _ => 31,
+                            };
+                            // Letter-led SSA names: MLIR rejects a digit-led name
+                            // with non-digit chars (`%2_shm`); `%shm2` is valid.
+                            self.emit_line(&format!(
+                                "    %shm{0} = arith.constant {wm} : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %sha{0} = arith.andi {rhs_ref}, %shm{0} : {ity}",
+                                dst.0
+                            ));
+                            format!("%sha{}", dst.0)
+                        } else {
+                            rhs_ref
+                        };
                         self.emit_line(&format!(
                             "    %{} = {} {}, {} : {}",
                             dst.0, mlir_op, lhs_ref, rhs_ref, ity
