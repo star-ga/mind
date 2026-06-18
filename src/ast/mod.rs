@@ -709,7 +709,10 @@ pub struct MatchArm {
 /// - `Ident`       — bare binding `x` (always matches, binds the name).
 /// - `Wildcard`    — `_` (always matches, binds nothing).
 ///
-/// Exhaustiveness checking is advisory only in v1.
+/// Exhaustiveness is ENFORCED (a blocking type error) for a `match` on a known
+/// enum type: the arms must cover every variant or include a `_`/binding
+/// catch-all. Integer-tag and literal matches cannot be proven exhaustive
+/// without a wildcard and are not flagged. See `check_match_exhaustiveness`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     /// Qualified enum variant, e.g. `Mode::On` or `Result::Ok(x)`.
