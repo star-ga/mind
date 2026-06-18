@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2861 | **Est. tokens:** ~6,940,746
-**Generated:** 2026-06-18 16:04 UTC
+**Files:** 2862 | **Est. tokens:** ~6,941,932
+**Generated:** 2026-06-18 22:42 UTC
 
 ## Token Budget Guide
 
@@ -403,7 +403,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 186 | ~331,174 |
+| `tests/` | 187 | ~332,360 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4320,6 +4320,7 @@
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~852 tok, large) — Copyright 2025 STARGA Inc.
+- `value_if_f64_let.rs` (~1186 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 - `verify_cli.rs` (~2444 tok, huge) — Copyright 2025 STARGA Inc.
