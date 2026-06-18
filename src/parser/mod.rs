@@ -69,6 +69,18 @@ enum PrattOp {
     TensorElem(TensorElemOp),
 }
 
+/// A compound-assignment operator (`+= -= *= /= %= &= |= ^= <<= >>=`). These
+/// are NOT infix binary operators: `peek_binop` refuses to bind an `OP=` shape
+/// so the Pratt parse stops at the LHS, and `parse_stmt` desugars
+/// `lhs OP= rhs` -> `lhs = lhs OP rhs` (zero new IR — mirrors how match and the
+/// tensor operators desugar at parse time). Arithmetic ops build a
+/// `Node::Binary`, bitwise ops a `Node::Bitwise`.
+#[derive(Debug, Clone, Copy)]
+enum CompoundOp {
+    Arith(BinOp),
+    Bit(crate::ast::BitOp),
+}
+
 impl<'a> P<'a> {
     fn new(src: &'a str) -> Self {
         Self {
@@ -971,6 +983,83 @@ impl<'a> P<'a> {
         let start = self.pos;
         let expr = self.parse_expr()?;
         self.skip_ws();
+        // Compound assignment: `lhs OP= rhs` desugars to `lhs = lhs OP rhs`.
+        // The Pratt parse stopped at the LHS (peek_binop refused the `OP=`
+        // shape), so the cursor is on the operator. Same three LHS shapes as
+        // plain `=`; the LHS expression is cloned to become the binop's left
+        // operand. Zero new IR — the desugared node lowers like any assignment.
+        if let Some((cop, width)) = self.compound_assign_op(self.pos) {
+            self.pos += width;
+            self.skip_ws_and_newlines();
+            let rhs = self.parse_expr()?;
+            let span = Span::new(start, self.pos);
+            let combine = |cop: CompoundOp, left: Node, right: Node| -> Node {
+                match cop {
+                    CompoundOp::Arith(op) => Node::Binary {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        span,
+                    },
+                    CompoundOp::Bit(op) => Node::Bitwise {
+                        op,
+                        left: Box::new(left),
+                        right: Box::new(right),
+                        span,
+                    },
+                }
+            };
+            match expr {
+                Node::Lit(Literal::Ident(name), lspan) => {
+                    let left = Node::Lit(Literal::Ident(name.clone()), lspan);
+                    return Ok(Node::Assign {
+                        name,
+                        value: Box::new(combine(cop, left, rhs)),
+                        span,
+                    });
+                }
+                Node::IndexAccess {
+                    receiver,
+                    index,
+                    span: lspan,
+                } => {
+                    let left = Node::IndexAccess {
+                        receiver: receiver.clone(),
+                        index: index.clone(),
+                        span: lspan,
+                    };
+                    return Ok(Node::IndexAssign {
+                        receiver,
+                        index,
+                        value: Box::new(combine(cop, left, rhs)),
+                        span,
+                    });
+                }
+                Node::FieldAccess {
+                    receiver,
+                    field,
+                    span: lspan,
+                } => {
+                    let left = Node::FieldAccess {
+                        receiver: receiver.clone(),
+                        field: field.clone(),
+                        span: lspan,
+                    };
+                    return Ok(Node::FieldAssign {
+                        receiver,
+                        field,
+                        value: Box::new(combine(cop, left, rhs)),
+                        span,
+                    });
+                }
+                _ => {
+                    return Err(self.err(
+                        "invalid compound-assignment target (expected a variable, index, or field)"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
         // Check for assignment. Three LHS shapes accepted:
         //   1) bare ident:  `x = expr`           -> Node::Assign
         //   2) indexed:     `xs[i] = expr`       -> Node::IndexAssign
@@ -2265,9 +2354,49 @@ impl<'a> P<'a> {
     /// `(op, left_bp, right_bp, byte_advance)` or `None` if the next token
     /// is not a recognised binary operator.
     #[inline]
+    /// Detect a compound-assignment operator at byte offset `p`. Returns the
+    /// underlying binary op and the operator's byte width. Excludes the
+    /// comparison/logical/shift shapes (`== != <= >= && || << >>`): only a
+    /// single-char arith/bit op (or `<<`/`>>`) immediately followed by `=`
+    /// qualifies. Shared by `peek_binop` (returns None so the Pratt parse stops
+    /// at the LHS) and `parse_stmt` (desugars `lhs OP= rhs`).
+    fn compound_assign_op(&self, p: usize) -> Option<(CompoundOp, usize)> {
+        let b0 = *self.b.get(p)?;
+        let b1 = self.b.get(p + 1).copied().unwrap_or(0);
+        let b2 = self.b.get(p + 2).copied().unwrap_or(0);
+        // Three-char shift-assign (checked before the `<<`/`>>` infix shapes).
+        match (b0, b1, b2) {
+            (b'<', b'<', b'=') => return Some((CompoundOp::Bit(crate::ast::BitOp::Shl), 3)),
+            (b'>', b'>', b'=') => return Some((CompoundOp::Bit(crate::ast::BitOp::Shr), 3)),
+            _ => {}
+        }
+        if b1 != b'=' {
+            return None;
+        }
+        // `<=`/`>=` are comparisons (b0 not in this set), so they never match.
+        let op = match b0 {
+            b'+' => CompoundOp::Arith(BinOp::Add),
+            b'-' => CompoundOp::Arith(BinOp::Sub),
+            b'*' => CompoundOp::Arith(BinOp::Mul),
+            b'/' => CompoundOp::Arith(BinOp::Div),
+            b'%' => CompoundOp::Arith(BinOp::Mod),
+            b'&' => CompoundOp::Bit(crate::ast::BitOp::And),
+            b'|' => CompoundOp::Bit(crate::ast::BitOp::Or),
+            b'^' => CompoundOp::Bit(crate::ast::BitOp::Xor),
+            _ => return None,
+        };
+        Some((op, 2))
+    }
+
     fn peek_binop(&self) -> Option<(PrattOp, u8, u8, usize)> {
         let p = self.pos;
         if p >= self.b.len() {
+            return None;
+        }
+        // A compound-assignment operator (`+= <<= ...`) is not an infix binary
+        // operator — stop the Pratt parse at the LHS so `parse_stmt` can desugar
+        // it. Without this `i += 1` parses `i +` then errors on `=`.
+        if self.compound_assign_op(p).is_some() {
             return None;
         }
         let b0 = self.b[p];
