@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Narrow (i32/u32/bool) inter-function call ABI — narrow params/returns now
+  lower across a call boundary.** The generic `func.call` arm hardcoded
+  `(i64..) -> i64`, so any narrow-typed param or return on a function that was
+  *called* by another made the whole module fail `mlir-opt` (type mismatch, no
+  artifact) — the v0.9.0 "narrow lowers in EVERY context" claim held only for
+  leaf functions. Calls are now typed against the callee's recorded signature
+  (`fn_signatures`): each argument is coerced (`trunci`/`extsi`/`extui`) from its
+  physical SSA width to the callee's param width, and the result is tracked at
+  the callee's return kind (new `fn_ret_kind` table) so it re-widens correctly at
+  its use site (`u32` zero-extends, `i32` sign-extends). Relatedly, a narrow
+  early `return` inside an if/else/while body emitted `return %x : i64` against an
+  `-> i32` result because `fn_ret_abi` was never propagated into the branch
+  sub-context; the enclosing function's ABI context (signatures, param/return
+  kinds, return slot) is now inherited by every branch/loop sub-context. i64-only
+  callees make every coercion a no-op → keystone 7/7 and cross-substrate canaries
+  8/8 byte-identical. New `tests/narrow_call_abi.rs` compiles a composed narrow
+  program (caller+callee, early returns in if/else/while, bool + u32 returns) to a
+  `.so` and value-checks it through `ctypes` — the `mlir-opt`-level coverage whose
+  absence let this ship CI-green.
+
 - **Cross-substrate integer determinism — `INT_MIN / -1` div/rem and oversized
   shift on the pure-`i64` path.** Two latent divergences that broke bit-identity
   for any program reaching them are now pinned in the IR→MLIR lowering
