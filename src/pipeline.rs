@@ -345,10 +345,11 @@ pub fn compile_source_with_name(
         source,
         source_name,
     ));
-    // Fail-closed on an enum construct/match shape v1 cannot lower: a multi-field
-    // constructor (the ctor drops the extra fields) or a multi-field/nested match
-    // arm (the desugar bails to a sequential fallback that returns the wrong arm).
-    // Both were SILENT miscompiles. Inert for a module with no payload enum.
+    // Fail-closed on an enum match sub-pattern v1 cannot lower: a nested or
+    // literal payload sub-pattern (`Some(0)`, `Some(Some(x))`) bails the desugar
+    // to a sequential fallback that returns the wrong arm — a SILENT miscompile.
+    // Field bindings and wildcards (incl. multi-field) DO lower. Inert for a
+    // module with no payload enum.
     runnable_blockers.extend(crate::eval::abi_gate::check_match_runnable(
         &module,
         source,
