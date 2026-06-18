@@ -817,6 +817,15 @@ pub struct IRModule {
     /// byte-identity oracle are unaffected (the keystone has no enums).
     #[cfg(feature = "std-surface")]
     pub boxed_enums: std::collections::BTreeSet<String>,
+    /// Per-boxed-enum heap-record slot count = `1 + max payload arity` across the
+    /// enum's variants (tag slot + one i64 slot per payload field of the widest
+    /// variant). EVERY variant of the enum allocates this SAME size, so a `match`
+    /// arm's field-load `__mind_load_i64(scrutinee + 8*(i+1))` always addresses
+    /// valid memory regardless of which (possibly narrower) variant the scrutinee
+    /// holds. Keyed by enum name; built in the `EnumDef` lowering alongside
+    /// `boxed_enums`. Lowering-only side-table (never serialised into mic@3).
+    #[cfg(feature = "std-surface")]
+    pub enum_payload_slots: std::collections::BTreeMap<String, usize>,
     /// RFC 0012 §5.1 — function-ABI signature side-table for deterministic
     /// scalar float codegen.
     ///
@@ -864,6 +873,8 @@ impl IRModule {
             enum_variant_tags: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             boxed_enums: std::collections::BTreeSet::new(),
+            #[cfg(feature = "std-surface")]
+            enum_payload_slots: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]

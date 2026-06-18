@@ -687,10 +687,15 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 }
                 // A "boxed" enum carries a payload on ≥1 variant. Record it so
                 // EVERY constructor of this enum (including its fieldless
-                // variants) lowers to the uniform 2-field heap record, keeping
-                // the match's `__mind_load_i64(scrutinee + 0)` tag-read valid.
-                if variants.iter().any(|v| !v.payload.is_empty()) {
+                // variants) lowers to the uniform heap record, keeping the
+                // match's `__mind_load_i64(scrutinee + 0)` tag-read valid. The
+                // record is `1 + max payload arity` i64 slots (tag + the widest
+                // variant's fields), used for every variant so any arm's
+                // field-load addresses valid memory.
+                let max_arity = variants.iter().map(|v| v.payload.len()).max().unwrap_or(0);
+                if max_arity > 0 {
                     ir.boxed_enums.insert(name.clone());
+                    ir.enum_payload_slots.insert(name.clone(), 1 + max_arity);
                 }
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, 0));
@@ -1172,10 +1177,9 @@ fn lower_expr(
                 // record instead of a bare ordinal (`*1` → SEGFAULT). A purely
                 // fieldless (C-like) enum is not boxed and keeps the bare tag.
                 let enum_name = name.rsplit_once("::").map(|(e, _)| e);
-                if enum_name.is_some_and(|e| ir.boxed_enums.contains(e)) {
-                    let zero = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(zero, 0));
-                    return emit_boxed_enum_record(ir, tag, zero);
+                if let Some(&total_slots) = enum_name.and_then(|e| ir.enum_payload_slots.get(e)) {
+                    // Fieldless variant: no payload fields, slots zero-filled.
+                    return emit_boxed_enum_record(ir, tag, &[], total_slots);
                 }
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, tag));
@@ -1604,6 +1608,7 @@ fn lower_expr(
                 // the uniform heap record (not a bare ordinal the match would
                 // dereference as a pointer).
                 fn_ir.boxed_enums = ir.boxed_enums.clone();
+                fn_ir.enum_payload_slots = ir.enum_payload_slots.clone();
                 // Width-aware struct ABI: inherit the per-struct field-type table
                 // so StructLit/FieldAccess/FieldAssign inside a fn body compute
                 // the canonical offset/width (sub-i64 fields), not the legacy
@@ -2199,14 +2204,19 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             if !args.is_empty() {
                 if let Some(tag) = ir.enum_variant_tags.get(callee).copied() {
-                    // Lower the single payload argument first (mirrors the
-                    // StructLit per-field lowering order). v1 tuple variants
-                    // carry exactly one payload slot; additional args are a
-                    // type error elsewhere and ignored here.
-                    let payload = lower_expr(&args[0], ir, env, struct_env, receiver_types);
-                    // Build the uniform 2-field record `[tag, payload]` (shared
-                    // with the fieldless boxed-enum constructor below).
-                    return emit_boxed_enum_record(ir, tag, payload);
+                    // Lower every payload field in declaration order (mirrors the
+                    // StructLit per-field lowering order).
+                    let payloads: Vec<ValueId> = args
+                        .iter()
+                        .map(|a| lower_expr(a, ir, env, struct_env, receiver_types))
+                        .collect();
+                    // Record size = the enum's uniform `1 + max arity`; default
+                    // to `1 + this variant's arity` if (impossibly) unregistered.
+                    let enum_name = callee.rsplit_once("::").map(|(e, _)| e);
+                    let total_slots = enum_name
+                        .and_then(|e| ir.enum_payload_slots.get(e).copied())
+                        .unwrap_or(1 + payloads.len());
+                    return emit_boxed_enum_record(ir, tag, &payloads, total_slots);
                 }
             }
             let arg_ids: Vec<ValueId> = args
@@ -3351,21 +3361,28 @@ fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
     }
 }
 
-/// Emit the uniform boxed-enum heap record `[tag @ +0, payload @ +8]` (two i64
-/// slots) and return its address. Used by BOTH the payload-carrying constructor
-/// (`Opt::Some(v)`) and the fieldless constructor of a boxed enum (`Opt::None`,
-/// payload slot = `0`), so every variant of a boxed enum has the IDENTICAL
-/// record shape and a `match` can always read the tag with
-/// `__mind_load_i64(addr + 0)`. The instruction sequence (`const 8`, `const 2`,
-/// `mul`, `__mind_alloc`, `store tag`, `add 8`, `store payload`) mirrors the
-/// StructLit heap-record build — no new `Instr`/intrinsic/ABI.
+/// Emit the uniform boxed-enum heap record `[tag @ +0, field0 @ +8, field1 @
+/// +16, …]` (`total_slots` i64 slots) and return its address. Used by BOTH the
+/// payload-carrying constructor (`Opt::Some(v)`, `Pair::P(a, b)`) and the
+/// fieldless constructor of a boxed enum (`Opt::None`, no fields), so every
+/// variant of a boxed enum has the IDENTICAL record SIZE (`total_slots` = the
+/// enum's `1 + max payload arity`) and a `match` can always read the tag from
+/// `+0` and any of the widest variant's fields from `+8*(i+1)`. Slots past the
+/// supplied payloads are zero-filled (a narrower variant's unused fields), so
+/// the record is fully initialised. The `__mind_alloc` + `__mind_store_i64`
+/// sequence mirrors the StructLit heap-record build — no new `Instr`/intrinsic.
 #[cfg(feature = "std-surface")]
-fn emit_boxed_enum_record(ir: &mut IRModule, tag: i64, payload: ValueId) -> ValueId {
-    // bytes = 8 * 2 — two i64 slots (tag + payload).
+fn emit_boxed_enum_record(
+    ir: &mut IRModule,
+    tag: i64,
+    payloads: &[ValueId],
+    total_slots: usize,
+) -> ValueId {
+    // bytes = 8 * total_slots.
     let eight = ir.fresh();
     ir.instrs.push(Instr::ConstI64(eight, 8));
     let count = ir.fresh();
-    ir.instrs.push(Instr::ConstI64(count, 2));
+    ir.instrs.push(Instr::ConstI64(count, total_slots as i64));
     let bytes = ir.fresh();
     ir.instrs.push(Instr::BinOp {
         dst: bytes,
@@ -3389,23 +3406,32 @@ fn emit_boxed_enum_record(ir: &mut IRModule, tag: i64, payload: ValueId) -> Valu
         name: "__mind_store_i64".to_string(),
         args: vec![addr, tag_id],
     });
-    // payload_addr = addr + 8
-    let offset = ir.fresh();
-    ir.instrs.push(Instr::ConstI64(offset, 8));
-    let payload_addr = ir.fresh();
-    ir.instrs.push(Instr::BinOp {
-        dst: payload_addr,
-        op: BinOp::Add,
-        lhs: addr,
-        rhs: offset,
-    });
-    // __mind_store_i64(payload_addr, payload)
-    let store_payload = ir.fresh();
-    ir.instrs.push(Instr::Call {
-        dst: store_payload,
-        name: "__mind_store_i64".to_string(),
-        args: vec![payload_addr, payload],
-    });
+    // Store each field at `addr + 8*(i+1)`, then zero-fill the remaining slots
+    // (so a narrower variant's unused fields are deterministically 0).
+    for slot in 1..total_slots {
+        let value = if slot - 1 < payloads.len() {
+            payloads[slot - 1]
+        } else {
+            let z = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(z, 0));
+            z
+        };
+        let offset = ir.fresh();
+        ir.instrs.push(Instr::ConstI64(offset, (slot * 8) as i64));
+        let field_addr = ir.fresh();
+        ir.instrs.push(Instr::BinOp {
+            dst: field_addr,
+            op: BinOp::Add,
+            lhs: addr,
+            rhs: offset,
+        });
+        let store = ir.fresh();
+        ir.instrs.push(Instr::Call {
+            dst: store,
+            name: "__mind_store_i64".to_string(),
+            args: vec![field_addr, value],
+        });
+    }
     addr
 }
 
@@ -3568,43 +3594,45 @@ fn desugar_match_to_if(
             right: Box::new(rhs.clone()),
             span,
         };
-        // Step 5: for a payload-binding arm, the synthetic payload binding is
-        // prepended to the arm body. A single-`Ident` sub-pattern (`Some(v)`)
-        // PREPENDS `let v = __mind_load_i64(scrutinee + 8)` so the name resolves
-        // to the record's payload slot; a single-`Wildcard` (`Some(_)`) needs
-        // NO binding (the tag comparison already discriminates) and just runs
-        // the body. v1 tuple variants carry one payload slot — a multi-field or
-        // nested sub-pattern bails the whole match to `None`, and the
-        // `check_match_runnable` abi-gate turns that into a loud fail-closed
-        // error on the emit path (never a silent sequential miscompile).
+        // Step 5: for a payload-binding arm, PREPEND a synthetic
+        // `let <name> = __mind_load_i64(scrutinee + 8*(i+1))` for each `Ident`
+        // sub-pattern (so `Pair::P(a, b)` binds `a` from `+8` and `b` from
+        // `+16`); a `Wildcard` sub-pattern binds nothing (the tag comparison
+        // already discriminates). Field offsets are POSITIONAL — `i` is the
+        // sub-pattern's index — so a `_` does not shift later fields. A nested /
+        // literal sub-pattern is unsupported: it bails the whole match to `None`
+        // and `check_match_runnable` turns that into a loud fail-closed error on
+        // the emit path (never a silent sequential miscompile).
         let then_branch: Vec<ast::Node> = match &arm.pattern {
             ast::Pattern::EnumVariant { args, .. } if !args.is_empty() => {
-                match args.as_slice() {
-                    [ast::Pattern::Ident(name)] => {
-                        // payload_addr = scrutinee + 8
-                        let offset = ast::Node::Lit(Literal::Int(8), span);
-                        let payload_addr = ast::Node::Binary {
+                if !args
+                    .iter()
+                    .all(|p| matches!(p, ast::Pattern::Ident(_) | ast::Pattern::Wildcard))
+                {
+                    return None;
+                }
+                let mut stmts = Vec::new();
+                for (i, sub) in args.iter().enumerate() {
+                    if let ast::Pattern::Ident(name) = sub {
+                        // field_addr = scrutinee + 8*(i+1)
+                        let offset = ast::Node::Lit(Literal::Int(((i + 1) * 8) as i64), span);
+                        let field_addr = ast::Node::Binary {
                             op: ast::BinOp::Add,
                             left: Box::new(scrutinee.clone()),
                             right: Box::new(offset),
                             span,
                         };
-                        let bind = ast::Node::Let {
+                        stmts.push(ast::Node::Let {
                             name: name.clone(),
                             mutable: false,
                             ann: None,
-                            value: Box::new(load_i64(payload_addr)),
+                            value: Box::new(load_i64(field_addr)),
                             span,
-                        };
-                        let mut stmts = vec![bind];
-                        stmts.extend(flatten_body(arm.body.clone()));
-                        stmts
+                        });
                     }
-                    // `Some(_)` — discriminate by tag, bind nothing.
-                    [ast::Pattern::Wildcard] => flatten_body(arm.body.clone()),
-                    // multi-field / nested payload: unsupported in v1.
-                    _ => return None,
                 }
+                stmts.extend(flatten_body(arm.body.clone()));
+                stmts
             }
             _ => flatten_body(arm.body.clone()),
         };

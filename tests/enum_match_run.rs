@@ -54,6 +54,18 @@ enum E {
     C,
 }
 
+// Multi-field payload variants — every field is stored into its own record slot
+// and bound positionally; a `_` skips a field without shifting later offsets.
+enum Tri {
+    T(i64, i64, i64),
+    N,
+}
+
+enum Pick {
+    Two(i64, i64),
+    Zero,
+}
+
 fn unwrap_or(o: Opt, d: i64) -> i64 {
     match o {
         Opt::Some(v) => v,
@@ -93,6 +105,29 @@ fn is_some(o: Opt) -> i64 {
     }
 }
 
+// Three-field payload bound positionally.
+fn combine(t: Tri) -> i64 {
+    match t {
+        Tri::T(a, b, c) => a + b * 10 + c * 100,
+        Tri::N => 0 - 1,
+    }
+}
+
+// Mixed binding/wildcard — `_` must not shift the other field's offset.
+fn first_only(p: Pick) -> i64 {
+    match p {
+        Pick::Two(a, _) => a,
+        Pick::Zero => 0,
+    }
+}
+
+fn second_only(p: Pick) -> i64 {
+    match p {
+        Pick::Two(_, b) => b,
+        Pick::Zero => 0,
+    }
+}
+
 // Option: payload extraction + fieldless default (the original segfault).
 pub fn t_some() -> i64 { unwrap_or(Opt::Some(42), 7) }
 pub fn t_none() -> i64 { unwrap_or(Opt::None, 7) }
@@ -114,6 +149,13 @@ pub fn t_e_c() -> i64 { name(E::C) }
 // Wildcard payload match.
 pub fn t_is_some() -> i64 { is_some(Opt::Some(99)) }
 pub fn t_is_none() -> i64 { is_some(Opt::None) }
+
+// Multi-field payloads.
+pub fn t_tri() -> i64 { combine(Tri::T(7, 8, 9)) }
+pub fn t_tri_n() -> i64 { combine(Tri::N) }
+pub fn t_first() -> i64 { first_only(Pick::Two(11, 22)) }
+pub fn t_second() -> i64 { second_only(Pick::Two(11, 22)) }
+pub fn t_pick_zero() -> i64 { first_only(Pick::Zero) }
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -157,7 +199,7 @@ fn boxed_enum_match_runs() {
     let py = format!(
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
-         for _n in ('t_some','t_none','t_ok','t_err','t_neg','t_zero','t_pos','t_e_a','t_e_b','t_e_c','t_is_some','t_is_none'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         for _n in ('t_some','t_none','t_ok','t_err','t_neg','t_zero','t_pos','t_e_a','t_e_b','t_e_c','t_is_some','t_is_none','t_tri','t_tri_n','t_first','t_second','t_pick_zero'): getattr(lib,_n).restype = ctypes.c_int64\n\
          r = lib.t_some(); assert r == 42, 't_some=' + str(r)\n\
          r = lib.t_none(); assert r == 7, 't_none=' + str(r)\n\
          r = lib.t_ok(); assert r == 55, 't_ok=' + str(r)\n\
@@ -170,6 +212,11 @@ fn boxed_enum_match_runs() {
          r = lib.t_e_c(); assert r == 33, 't_e_c=' + str(r)\n\
          r = lib.t_is_some(); assert r == 1, 't_is_some=' + str(r)\n\
          r = lib.t_is_none(); assert r == 0, 't_is_none=' + str(r)\n\
+         r = lib.t_tri(); assert r == 987, 't_tri=' + str(r)\n\
+         r = lib.t_tri_n(); assert r == -1, 't_tri_n=' + str(r)\n\
+         r = lib.t_first(); assert r == 11, 't_first=' + str(r)\n\
+         r = lib.t_second(); assert r == 22, 't_second=' + str(r)\n\
+         r = lib.t_pick_zero(); assert r == 0, 't_pick_zero=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );

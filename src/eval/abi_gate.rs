@@ -550,36 +550,33 @@ fn flag_enum_return(
     }
 }
 
-// ── Fail-closed gate: enum construct/match shape the runnable path miscompiles ──
+// ── Fail-closed gate: enum match sub-pattern the runnable path miscompiles ─────
 //
-// v1 enum lowering supports ONLY single-field payload variants, matched with a
-// single binding (`Some(v)`) or wildcard (`Some(_)`). Two shapes outside that
-// were SILENT MISCOMPILES (no error, no crash, wrong value):
-//   * a multi-field constructor `Pair::P(10, 20)`: the ctor stores only the
-//     FIRST argument into the record's single payload slot and DROPS the rest,
-//     so `sum(Pair::P(10, 20))` returned 0 instead of 30.
-//   * a match arm with a multi-field / nested sub-pattern (`Pair::P(a, b)`):
-//     `desugar_match_to_if` bails to `None`, and the `Node::Match` lowering's
-//     fallback then evaluates every arm sequentially and returns the LAST one's
-//     value — so `match p { Pair::P(a,b) => a+b, Pair::Q => 0 }` returned 0.
+// v1 enum match lowers a payload sub-pattern only when each field is an `Ident`
+// (bound from its record slot) or a `Wildcard` (skipped). A NESTED or LITERAL
+// sub-pattern (`Some(Some(x))`, `Some(0)`) bails `desugar_match_to_if` to `None`,
+// and the `Node::Match` lowering's fallback then evaluates every arm sequentially
+// and returns the LAST one's value — a SILENT MISCOMPILE (no error, no crash,
+// wrong value). Multi-field tuple variants DO lower now (each field is stored
+// into its own record slot), so they are no longer gated.
 //
-// This gate flags both on the runnable path so they fail LOUD with a span
-// instead of silently miscompiling. Inert (empty, byte-identity-safe) for any
-// program with no payload-carrying enum — the keystone has none.
+// This gate flags the unsupported sub-patterns on the runnable path so they fail
+// LOUD with a span instead of silently miscompiling. Inert (empty,
+// byte-identity-safe) for any program with no payload-carrying enum.
 
-const MATCH_RUNNABLE_HELP: &str = "v1 enum construct/match supports only single-field payload variants, matched with a single \
-     binding (`Some(v)`) or wildcard (`Some(_)`). A multi-field tuple variant or a nested sub-pattern \
-     is not yet lowerable: the constructor would drop the extra fields and the match would fall back \
-     to a sequential evaluation that returns the wrong arm. Use single-field variants, or run it with \
-     the `mind` interpreter.";
+const MATCH_RUNNABLE_HELP: &str = "v1 enum match lowers a payload sub-pattern only when each field is a binding (`Ident`) or a \
+     wildcard (`_`) — e.g. `Some(v)`, `Pair::P(a, b)`, `Pair::P(a, _)`. A nested or literal \
+     sub-pattern (`Some(Some(x))`, `Some(0)`) is not yet lowerable: the match would fall back to a \
+     sequential evaluation that returns the wrong arm. Match the field with a binding and test it in \
+     the arm body, or run it with the `mind` interpreter.";
 
-/// `true` when a match arm's payload sub-pattern list is one the v1 desugar
-/// lowers correctly: empty (fieldless), a single `Ident` bind, or a single
-/// `Wildcard`. Anything else (multi-field, or a single nested/literal
-/// sub-pattern) bails `desugar_match_to_if` to the silent sequential fallback.
+/// `true` when a match arm's payload sub-patterns are all ones the v1 desugar
+/// lowers correctly: each field is an `Ident` (bind it from its slot) or a
+/// `Wildcard` (skip it). A NESTED or LITERAL sub-pattern (`Some(Some(x))`,
+/// `Some(0)`) bails `desugar_match_to_if` to the silent sequential fallback.
 fn payload_subpattern_supported(args: &[crate::ast::Pattern]) -> bool {
     use crate::ast::Pattern as P;
-    matches!(args, [] | [P::Ident(_)] | [P::Wildcard])
+    args.iter().all(|p| matches!(p, P::Ident(_) | P::Wildcard))
 }
 
 /// Flag enum construct/match shapes the runnable lowering would SILENTLY
@@ -599,13 +596,15 @@ pub fn check_match_runnable(module: &Module, src: &str, file: Option<&str>) -> V
         }
     }
     let mut out = Vec::new();
+    // Inert (and byte-identity-safe) for a program with no payload-carrying enum:
+    // a nested/literal payload sub-pattern can only occur on such an enum.
     if payload_ctors.is_empty() {
         return out;
     }
     for item in &module.items {
         if let Node::FnDef { body, .. } = item {
             for stmt in body {
-                walk_match_runnable(stmt, &payload_ctors, src, file, &mut out);
+                walk_match_runnable(stmt, src, file, &mut out);
             }
         }
     }
@@ -614,43 +613,21 @@ pub fn check_match_runnable(module: &Module, src: &str, file: Option<&str>) -> V
 
 /// Full-expression walk flagging unsupported enum construct/match shapes. Mirrors
 /// `walk_generic_calls`'s variant coverage so every nested position is visited.
-fn walk_match_runnable(
-    node: &Node,
-    ctors: &std::collections::HashSet<String>,
-    src: &str,
-    file: Option<&str>,
-    out: &mut Vec<Diagnostic>,
-) {
+fn walk_match_runnable(node: &Node, src: &str, file: Option<&str>, out: &mut Vec<Diagnostic>) {
     use Node as N;
     match node {
-        N::Call {
-            callee, args, span, ..
-        } => {
-            // A payload constructor called with >1 argument: only the first is
-            // stored, the rest are silently dropped.
-            if ctors.contains(callee) && args.len() > 1 {
-                out.push(
-                    Diagnostic::error(
-                        PHASE,
-                        "lower::enum_multi_field_construct",
-                        format!(
-                            "enum constructor `{callee}` is called with {} fields, but v1 lowers only \
-                             a single payload slot — the extra fields would be silently dropped",
-                            args.len()
-                        ),
-                    )
-                    .with_span(Span::from_offsets(src, span.start(), span.end(), file))
-                    .with_help(MATCH_RUNNABLE_HELP),
-                );
-            }
+        N::Call { args, .. } => {
+            // Multi-field constructors now lower (every field is stored into its
+            // own record slot), so a ctor call no longer gates. Recurse into the
+            // arguments in case one nests an unsupported match.
             for a in args {
-                walk_match_runnable(a, ctors, src, file, out);
+                walk_match_runnable(a, src, file, out);
             }
         }
         N::Match {
             scrutinee, arms, ..
         } => {
-            walk_match_runnable(scrutinee, ctors, src, file, out);
+            walk_match_runnable(scrutinee, src, file, out);
             for a in arms {
                 if let crate::ast::Pattern::EnumVariant { path, args } = &a.pattern
                     && !payload_subpattern_supported(args)
@@ -660,52 +637,53 @@ fn walk_match_runnable(
                             PHASE,
                             "lower::enum_match_unsupported_payload",
                             format!(
-                                "match arm `{path}` binds a multi-field or nested payload, which v1 \
-                                 does not lower — the match would silently fall back to a sequential \
-                                 evaluation and return the wrong arm"
+                                "match arm `{path}` binds a nested or literal payload sub-pattern, \
+                                 which v1 does not lower — only field bindings (`Ident`) and \
+                                 wildcards (`_`) are supported; the match would otherwise silently \
+                                 fall back to a sequential evaluation and return the wrong arm"
                             ),
                         )
                         .with_span(Span::from_offsets(src, a.span.start(), a.span.end(), file))
                         .with_help(MATCH_RUNNABLE_HELP),
                     );
                 }
-                walk_match_runnable(&a.body, ctors, src, file, out);
+                walk_match_runnable(&a.body, src, file, out);
             }
         }
-        N::Let { value, .. } => walk_match_runnable(value, ctors, src, file, out),
-        N::Const { value, .. } => walk_match_runnable(value, ctors, src, file, out),
-        N::As { expr, .. } => walk_match_runnable(expr, ctors, src, file, out),
+        N::Let { value, .. } => walk_match_runnable(value, src, file, out),
+        N::Const { value, .. } => walk_match_runnable(value, src, file, out),
+        N::As { expr, .. } => walk_match_runnable(expr, src, file, out),
         N::Block { stmts, .. } => stmts
             .iter()
-            .for_each(|s| walk_match_runnable(s, ctors, src, file, out)),
+            .for_each(|s| walk_match_runnable(s, src, file, out)),
         N::If {
             cond,
             then_branch,
             else_branch,
             ..
         } => {
-            walk_match_runnable(cond, ctors, src, file, out);
+            walk_match_runnable(cond, src, file, out);
             then_branch
                 .iter()
-                .for_each(|s| walk_match_runnable(s, ctors, src, file, out));
+                .for_each(|s| walk_match_runnable(s, src, file, out));
             if let Some(e) = else_branch {
                 e.iter()
-                    .for_each(|s| walk_match_runnable(s, ctors, src, file, out));
+                    .for_each(|s| walk_match_runnable(s, src, file, out));
             }
         }
         #[cfg(feature = "std-surface")]
         N::While { cond, body, .. } => {
-            walk_match_runnable(cond, ctors, src, file, out);
+            walk_match_runnable(cond, src, file, out);
             body.iter()
-                .for_each(|s| walk_match_runnable(s, ctors, src, file, out));
+                .for_each(|s| walk_match_runnable(s, src, file, out));
         }
-        N::Return { value: Some(v), .. } => walk_match_runnable(v, ctors, src, file, out),
-        N::Assign { value, .. } => walk_match_runnable(value, ctors, src, file, out),
+        N::Return { value: Some(v), .. } => walk_match_runnable(v, src, file, out),
+        N::Assign { value, .. } => walk_match_runnable(value, src, file, out),
         N::FieldAssign {
             receiver, value, ..
         } => {
-            walk_match_runnable(receiver, ctors, src, file, out);
-            walk_match_runnable(value, ctors, src, file, out);
+            walk_match_runnable(receiver, src, file, out);
+            walk_match_runnable(value, src, file, out);
         }
         N::IndexAssign {
             receiver,
@@ -713,30 +691,30 @@ fn walk_match_runnable(
             value,
             ..
         } => {
-            walk_match_runnable(receiver, ctors, src, file, out);
-            walk_match_runnable(index, ctors, src, file, out);
-            walk_match_runnable(value, ctors, src, file, out);
+            walk_match_runnable(receiver, src, file, out);
+            walk_match_runnable(index, src, file, out);
+            walk_match_runnable(value, src, file, out);
         }
         N::Paren(inner, _) | N::Neg { operand: inner, .. } | N::Ref { inner, .. } => {
-            walk_match_runnable(inner, ctors, src, file, out)
+            walk_match_runnable(inner, src, file, out)
         }
         N::Binary { left, right, .. }
         | N::Logical { left, right, .. }
         | N::Bitwise { left, right, .. } => {
-            walk_match_runnable(left, ctors, src, file, out);
-            walk_match_runnable(right, ctors, src, file, out);
+            walk_match_runnable(left, src, file, out);
+            walk_match_runnable(right, src, file, out);
         }
         N::MethodCall { receiver, args, .. } => {
-            walk_match_runnable(receiver, ctors, src, file, out);
+            walk_match_runnable(receiver, src, file, out);
             args.iter()
-                .for_each(|a| walk_match_runnable(a, ctors, src, file, out));
+                .for_each(|a| walk_match_runnable(a, src, file, out));
         }
-        N::FieldAccess { receiver, .. } => walk_match_runnable(receiver, ctors, src, file, out),
+        N::FieldAccess { receiver, .. } => walk_match_runnable(receiver, src, file, out),
         N::IndexAccess {
             receiver, index, ..
         } => {
-            walk_match_runnable(receiver, ctors, src, file, out);
-            walk_match_runnable(index, ctors, src, file, out);
+            walk_match_runnable(receiver, src, file, out);
+            walk_match_runnable(index, src, file, out);
         }
         _ => {}
     }
