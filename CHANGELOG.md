@@ -20,6 +20,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Returning an enum handle where a bare scalar is declared is now a loud error,
+  not a leaked pointer.** A fn declared `-> i64` that returned a payload-carrying
+  enum constructor on some path (`if b == 0 { return Res::Err(0) }`) silently
+  miscompiled: an enum value is a heap-record HANDLE, so `divide(5, 0)` leaked a
+  raw pointer (e.g. `369049072`) as the i64 result — the type-checker has no
+  declared-return-vs-body unification. A new `abi_gate` fail-closed gate
+  (`check_enum_handle_scalar_return`) flags it on the emit path with a file:line
+  span (`lower::enum_handle_in_scalar_return`), walking every return position
+  (explicit `return`s nested in if/while/match/block + tail expressions). ZERO
+  false positives: a no-`enum` fast path (keystone byte-identical), it fires only
+  on a BARE-scalar return (a `-> Enum` return is correct and never flagged) and
+  only on a PAYLOAD ctor (fieldless variants are bare tags; an arg-position ctor
+  is not a return). New `tests/enum_soundness.rs`.
+
 - **Value-`if` whose branches yield a comparison now lowers.** `let b: bool =
   if c { x > 10 } else { y > 100 }` produced an i1 (`cmpi`) in each branch but the
   merge block argument is typed i64, so the branch `cf.br ^merge(%cmp : i64)`

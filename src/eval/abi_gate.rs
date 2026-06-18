@@ -363,3 +363,189 @@ fn walk_generic_calls(node: &Node, ctx: &GenCtx, out: &mut Vec<Diagnostic>) {
         _ => {}
     }
 }
+
+// ── Fail-closed gate: enum handle returned where a bare scalar is declared ─────
+//
+// A function declared `-> i64` (or any bare scalar) that returns a payload-
+// carrying enum constructor on some path was a SILENT MISCOMPILE: the enum value
+// is a heap-record HANDLE (an i64 address), so `divide(5,0)` returning
+// `Res::Err(0)` leaked a raw pointer (e.g. `369049072`) as the result. The
+// type-checker has no declared-return-vs-body unification, so this compiled.
+//
+// This gate flags exactly that shape so the runnable path fails LOUD with a span
+// instead of leaking a pointer. ZERO false positives by construction: it has a
+// no-enum fast path (empty for every program without an `enum` decl — the
+// keystone has none, so it stays byte-identical), only fires when the declared
+// return is a BARE SCALAR (a `-> Enum` return is the correct shape and is never
+// flagged), and only on a PAYLOAD constructor in RETURN POSITION (a fieldless
+// variant lowers to a bare ordinal tag, not a handle, and an enum ctor in
+// argument position is not in return position — neither is flagged).
+
+const ENUM_RETURN_HELP: &str = "a function returning a bare scalar must not return an enum value on \
+     any path — an enum value is a heap-record handle (an i64 address), so returning it where a \
+     scalar is declared leaks a pointer. Declare the return type as the enum, or `match` the enum \
+     to a scalar before returning.";
+
+/// `true` for a declared return type that is a bare scalar (mixing an enum
+/// handle into it is the unsound shape). A `Named` (struct/enum) return, tensor,
+/// slice, etc. are NOT bare scalars and are never flagged.
+fn is_bare_scalar_ann(ty: &TypeAnn) -> bool {
+    matches!(
+        ty,
+        TypeAnn::ScalarI64
+            | TypeAnn::ScalarI32
+            | TypeAnn::ScalarU32
+            | TypeAnn::ScalarF64
+            | TypeAnn::ScalarF32
+            | TypeAnn::ScalarBool
+    )
+}
+
+/// Flag a function with a bare-scalar declared return that returns a payload-
+/// carrying enum constructor on any return path (`Node::Return` value, or the
+/// tail expression of the body / an if-branch / a match arm / a block).
+pub fn check_enum_handle_scalar_return(
+    module: &Module,
+    src: &str,
+    file: Option<&str>,
+) -> Vec<Diagnostic> {
+    // Payload-carrying enum constructors `Enum::Variant`, keyed exactly as the
+    // ctor `Node::Call` callee. Empty for any program with no `enum` decl (a
+    // pure no-allocation iterator scan) -> the gate is inert + byte-identity-safe.
+    let mut payload_ctors: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for item in &module.items {
+        if let Node::EnumDef { name, variants, .. } = item {
+            for v in variants {
+                if !v.payload.is_empty() {
+                    payload_ctors.insert(format!("{name}::{}", v.name));
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if payload_ctors.is_empty() {
+        return out;
+    }
+    for item in &module.items {
+        if let Node::FnDef { ret_type, body, .. } = item {
+            if !ret_type.as_ref().is_some_and(is_bare_scalar_ann) {
+                continue;
+            }
+            for (i, stmt) in body.iter().enumerate() {
+                // Every explicit `return E`, including those nested inside an
+                // if/while/match/block (`if b == 0 { return Res::Err(0) }`).
+                find_returns(stmt, &payload_ctors, src, file, &mut out);
+                // The body's tail expression is an implicit return (skip if it is
+                // itself a `return`, already covered by find_returns).
+                if i + 1 == body.len() && !matches!(stmt, Node::Return { .. }) {
+                    flag_enum_return(stmt, &payload_ctors, src, file, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Recurse through control-flow STATEMENT lists to find every explicit
+/// `return E` (incl. nested in an if/while/match/block) and flag `E` if it is —
+/// or yields, in tail position — a payload-ctor handle. Does NOT descend into
+/// expression operands / call args / let values (those are not return
+/// positions), so an enum ctor in argument position is never flagged.
+fn find_returns(
+    node: &Node,
+    ctors: &std::collections::HashSet<String>,
+    src: &str,
+    file: Option<&str>,
+    out: &mut Vec<Diagnostic>,
+) {
+    use Node as N;
+    match node {
+        N::Return { value: Some(v), .. } => flag_enum_return(v, ctors, src, file, out),
+        N::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            for s in then_branch {
+                find_returns(s, ctors, src, file, out);
+            }
+            if let Some(e) = else_branch {
+                for s in e {
+                    find_returns(s, ctors, src, file, out);
+                }
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        N::While { body, .. } => {
+            for s in body {
+                find_returns(s, ctors, src, file, out);
+            }
+        }
+        N::Match { arms, .. } => {
+            for a in arms {
+                find_returns(&a.body, ctors, src, file, out);
+            }
+        }
+        N::Block { stmts, .. } => {
+            for s in stmts {
+                find_returns(s, ctors, src, file, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk only the RETURN POSITIONS reachable from `node` (NOT a full-body walk —
+/// an enum ctor in argument or let-value position is legitimate), flagging a
+/// payload-ctor `Call`.
+fn flag_enum_return(
+    node: &Node,
+    ctors: &std::collections::HashSet<String>,
+    src: &str,
+    file: Option<&str>,
+    out: &mut Vec<Diagnostic>,
+) {
+    use Node as N;
+    match node {
+        N::Call { callee, span, .. } if ctors.contains(callee) => {
+            out.push(
+                Diagnostic::error(
+                    PHASE,
+                    "lower::enum_handle_in_scalar_return",
+                    format!(
+                        "function with a bare-scalar return returns the enum constructor `{callee}` \
+                         (a heap-record handle) on this path — returning it as a scalar leaks a \
+                         pointer; declare the return type as the enum or match it to a scalar first"
+                    ),
+                )
+                .with_span(Span::from_offsets(src, span.start(), span.end(), file))
+                .with_help(ENUM_RETURN_HELP),
+            );
+        }
+        N::Return { value: Some(v), .. } => flag_enum_return(v, ctors, src, file, out),
+        N::Paren(inner, _) => flag_enum_return(inner, ctors, src, file, out),
+        N::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            if let Some(t) = then_branch.last() {
+                flag_enum_return(t, ctors, src, file, out);
+            }
+            if let Some(e) = else_branch.as_ref().and_then(|b| b.last()) {
+                flag_enum_return(e, ctors, src, file, out);
+            }
+        }
+        N::Match { arms, .. } => {
+            for a in arms {
+                flag_enum_return(&a.body, ctors, src, file, out);
+            }
+        }
+        N::Block { stmts, .. } => {
+            if let Some(t) = stmts.last() {
+                flag_enum_return(t, ctors, src, file, out);
+            }
+        }
+        _ => {}
+    }
+}
