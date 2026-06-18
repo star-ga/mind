@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Multi-field enum payload variants now construct, match, and run.** A boxed
+  enum's heap record is sized to `1 + max payload arity` (tag + the widest
+  variant's fields) and EVERY variant allocates that size, so a `match` arm's
+  field-load addresses valid memory regardless of which variant the scrutinee
+  holds. The constructor stores each field into its own slot (`Tri::T(a, b, c)`
+  → `[tag, a, b, c]`, zero-filling a narrower variant's unused slots) and a match
+  arm binds each `Ident` sub-pattern positionally from `+8*(i+1)` (a `_` skips a
+  field without shifting later offsets — `Pair::P(a, _)` binds the first,
+  `Pair::P(_, b)` the second). Previously a multi-field constructor silently
+  dropped all but the first field and a multi-field match arm fell back to a
+  wrong-arm evaluation; both were fail-closed in the prior release and now lower
+  correctly. Still i64-payload only (a non-i64 field is a loud `__mind_store_i64`
+  error); a nested/literal sub-pattern remains fail-closed
+  (`lower::enum_match_unsupported_payload`). Keystone 7/7 + cross-substrate 8/8
+  byte-identical (no payload enum in either). New runtime cases (3-field +
+  mixed bind/wildcard) in `tests/enum_match_run.rs`.
+
 - **Compound-assignment operators (`+= -= *= /= %= &= |= ^= <<= >>=`).** Desugared
   at parse time to `lhs = lhs OP rhs` (zero new IR — mirrors how `match` and the
   tensor operators desugar) for all three assignment targets (variable, index,
