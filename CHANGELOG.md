@@ -122,8 +122,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Both fixes are no-ops for in-range inputs: keystone 7/7 and cross-substrate
   canaries 8/8 stay byte-identical, criterion within the one-sided 10% gate. New
   `tests/int_determinism.rs` gate compiles + runs the cases through `mlir-opt`.
-  Integer division-by-zero (x86 `#DE` vs AArch64 `0`) remains a separate,
-  explicitly-deferred hole pending a trap-vs-saturate semantic decision.
+
+- **Integer division-by-zero is now deterministic (`x / 0 == 0`, `x % 0 == 0`).**
+  x86 `idiv` by 0 raises `#DE` (SIGFPE) while AArch64 `sdiv` returns 0 — a hard
+  cross-substrate divergence (the last integer-determinism hole). The signed-div
+  guard now substitutes divisor 1 on divisor-`0` as well as `INT_MIN/-1` (avoiding
+  the trap) and forces the RESULT to 0 when the divisor was 0, so both substrates
+  agree. Provisional total semantics (`0`, the conventional non-crashing choice;
+  revisitable to a deterministic trap via the spec). Elided when the divisor is a
+  proven constant that is neither `-1` nor `0`, so constant divisions keep their
+  single-op lowering — keystone 7/7 + canaries 8/8 byte-identical, criterion
+  within the gate. Covered by `tests/int_determinism.rs`.
 
 ## [0.9.0] - 2026-06-17 — i32/u32/bool lower in EVERY context (narrow-int corpus 3→11) + cross-substrate shift determinism + ~10% faster compile
 
