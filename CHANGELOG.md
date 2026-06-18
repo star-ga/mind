@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Cross-substrate integer determinism — `INT_MIN / -1` div/rem and oversized
+  shift on the pure-`i64` path.** Two latent divergences that broke bit-identity
+  for any program reaching them are now pinned in the IR→MLIR lowering
+  (`src/mlir/lowering.rs`):
+  - `INT_MIN / -1` and `INT_MIN % -1` at signed `i64`, the narrow `i32` arm, and
+    the mixed-width widen path: the true quotient is unrepresentable, so x86
+    `idiv` raises `#DE` (SIGFPE) while AArch64 `sdiv` returns `INT_MIN` — a hard
+    crash-vs-value substrate divergence. The lowering substitutes divisor `1` on
+    the overflow case, yielding the wrapping result on every substrate
+    (`INT_MIN/1 == INT_MIN`, `INT_MIN%1 == 0`) and never trapping. The guard is
+    **elided** when the divisor is a proven constant `!= -1` (overflow then
+    statically impossible — e.g. `x / 2`), so constant divisions keep their tight
+    single-op lowering and the compile-speed benches stay byte-identical.
+  - A pure-`i64` shift count `>= 64` was emitted unmasked (only the narrow/mixed
+    arm masked in 0.9.0); LLVM treats an over-width shift as poison (`opt -O2`
+    folds `1 << 65` to `poison`), so an optimizer is free to diverge across
+    substrates. It now masks the count to `& 63`, matching the narrow path.
+  Both fixes are no-ops for in-range inputs: keystone 7/7 and cross-substrate
+  canaries 8/8 stay byte-identical, criterion within the one-sided 10% gate. New
+  `tests/int_determinism.rs` gate compiles + runs the cases through `mlir-opt`.
+  Integer division-by-zero (x86 `#DE` vs AArch64 `0`) remains a separate,
+  explicitly-deferred hole pending a trap-vs-saturate semantic decision.
+
 ## [0.9.0] - 2026-06-17 — i32/u32/bool lower in EVERY context (narrow-int corpus 3→11) + cross-substrate shift determinism + ~10% faster compile
 
 ### Added
