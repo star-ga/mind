@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-17 — i32/u32/bool lower in EVERY context (narrow-int corpus 3→11) + cross-substrate shift determinism + ~10% faster compile
+
 ### Added
+
+- **Narrow-int control flow, mixed-width arithmetic, narrow returns, bool branches
+  (RUNS Phase 3 — completes i32/u32/bool).** Building on the i32/u32 ABI below,
+  narrow integers now lower in EVERY context, not just isolated signatures.
+  Value-`if` and `while` merge blocks carry the real narrow type (was hardcoded
+  `i64`, which produced an `'i64' vs 'i32'` mlir-opt error); a narrow operand mixed
+  with a non-literal `i64` is promoted to `i64` via `arith.extsi`/`extui` and
+  computed there; a narrow result is `trunci`'d at the return boundary; a `bool`
+  param (i64-backed at the ABI boundary) is `trunci`'d to `i1` before `cf.cond_br`.
+  The internal narrow-int corpus goes 3→11 (every case returns the correct value:
+  `min`/`abs`(i32), `max`(u32), `rotl`, `i64`+`i32`, `while`-i32, `(a+b) as i32`,
+  bool-`if`). All-i64 programs are byte-identical — the narrow paths never fire:
+  cross-substrate canaries 8/8, mic@3 flip byte-identical, keystone unchanged,
+  criterion within the one-sided 10% gate.
+
+- **Cross-substrate shift-count determinism.** A narrow/mixed-width shift masks its
+  count to width-1 (`arith.andi N-1`) before `shli`/`shrsi`/`shrui`. An
+  out-of-range shift count is poison in MLIR/LLVM and lowers divergently across
+  substrates (x86 masks mod-width, AArch64 differs) — the mask makes every count
+  in-range and byte-identical on every substrate. In-range counts are unchanged
+  (no-op), so corpus + canaries + keystone are unaffected.
 
 - **Narrow-int (`i32`/`u32`) ABI lowering (RUNS Phase 3).** `i32`/`u32` function parameters
   and returns now lower to real `i32` MLIR instead of silently widening to `i64`: a per-fn
@@ -70,6 +93,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This converts the dominant silent-miscompile class (the struct / tensor / narrow-int RUNS
   families) into honest, anchored diagnostics ahead of the real deterministic codegen that
   will make them lower.
+
+### Performance
+
+- **~10% faster compilation.** Pre-reserve the `ir.instrs` Vec capacity at the top of
+  `lower_to_ir`, eliminating the realloc+memmove chain (`RawVec::finish_grow`) that
+  dominated the AST→IR hot path. Capacity-only — the emitted mic@1/mic@3 bytes (and
+  cross-substrate identity) are unchanged. `compile_small/scalar_math` 3.07µs → 2.76µs.
 
 ## [0.8.1] - 2026-06-14 — Self-host gap corpus genuinely 66/66 (remove a needless decline guard; fix the fresh-load measurement harness)
 
