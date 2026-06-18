@@ -442,6 +442,13 @@ struct LoweringContext {
     /// i64-only lowering is byte-identical.
     #[cfg(feature = "std-surface")]
     const_i64_values: std::collections::BTreeSet<ValueId>,
+    /// Compile-time VALUES of `ConstI64` literals, keyed by value-id. Lets the
+    /// signed-div `INT_MIN / -1` overflow guard be ELIDED when the divisor is a
+    /// proven constant `!= -1` (overflow is then statically impossible) — the
+    /// guard's ~8 extra ops would otherwise churn the lowering hot path on
+    /// constant divisions like `x / 2`. Additive: populated for every program,
+    /// only consulted by the div/rem guard, so i64-only lowering is unchanged.
+    const_i64_map: std::collections::BTreeMap<ValueId, i64>,
     /// Stack of enclosing `while` loops (innermost last). Each frame carries the
     /// loop's block label and its loop-carried `(var_name, init_id)` list, so an
     /// `Instr::Break`/`Instr::Continue` in the body can emit a `cf.br` to the
@@ -550,6 +557,7 @@ impl LoweringContext {
             i1_values: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             const_i64_values: std::collections::BTreeSet::new(),
+            const_i64_map: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             loop_stack: Vec::new(),
             #[cfg(feature = "std-surface")]
@@ -688,6 +696,9 @@ impl LoweringContext {
                 // preserving) instead of failing closed on a width mismatch.
                 #[cfg(feature = "std-surface")]
                 self.const_i64_values.insert(*id);
+                // Value map (ungated): consulted by the signed-div overflow guard
+                // to elide itself when the divisor is a proven constant != -1.
+                self.const_i64_map.insert(*id, *value);
             }
             // RFC 0012 §5.1 — a scalar `f64` literal. Emit `arith.constant <v> : f64`
             // with a DETERMINISTIC, shortest-round-trip decimal (`format_number`):
@@ -1173,6 +1184,53 @@ impl LoweringContext {
                                 dst.0
                             ));
                             format!("%sha{}", dst.0)
+                        } else if !unsigned
+                            && matches!(op, BinOp::Div | BinOp::Mod)
+                            && ity != "i1"
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != -1)
+                        {
+                            // INT_MIN / -1 overflow determinism at narrow width (same
+                            // hazard as the i64 arm: x86 #DE vs AArch64 INT_MIN).
+                            // Substitute divisor 1 on the overflow case for the wrapping
+                            // result on every substrate; INT_MIN(ity) built as 1<<(w-1).
+                            // Unsigned narrow div has no such case, so it is skipped.
+                            let wb = match ity {
+                                "i64" => 63,
+                                _ => 31,
+                            };
+                            self.emit_line(&format!(
+                                "    %done{0} = arith.constant 1 : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dsix{0} = arith.constant {wb} : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dmin{0} = arith.shli %done{0}, %dsix{0} : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dn1{0} = arith.constant -1 : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dism{0} = arith.cmpi \"eq\", {lhs_ref}, %dmin{0} : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %disn{0} = arith.cmpi \"eq\", {rhs_ref}, %dn1{0} : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dovf{0} = arith.andi %dism{0}, %disn{0} : i1",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dsf{0} = arith.select %dovf{0}, %done{0}, {rhs_ref} : {ity}",
+                                dst.0
+                            ));
+                            format!("%dsf{}", dst.0)
                         } else {
                             rhs_ref
                         };
@@ -1228,9 +1286,80 @@ impl LoweringContext {
                             #[cfg(feature = "std-surface")]
                             BinOp::Shr => "arith.shrsi",
                         };
+                        // Shift-count determinism (pure-i64 arm): a count >= 64 is
+                        // poison in MLIR/LLVM and lowers divergently across substrates
+                        // (x86 masks mod-64, AArch64 zeroes). Mask to 63 so every count
+                        // is in-range and byte-identical everywhere. In-range counts are
+                        // unchanged (mask is a no-op), so the keystone + canary bytes are
+                        // untouched; non-shift i64 ops never enter this branch.
+                        let rhs_ref = if matches!(op, BinOp::Shl | BinOp::Shr) {
+                            self.emit_line(&format!(
+                                "    %shm{0} = arith.constant 63 : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %sha{0} = arith.andi %{1}, %shm{0} : i64",
+                                dst.0, rhs.0
+                            ));
+                            format!("%sha{}", dst.0)
+                        } else if matches!(op, BinOp::Div | BinOp::Mod)
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != -1)
+                        {
+                            // INT_MIN / -1 overflow determinism (signed i64 div/rem).
+                            // Elided when the divisor is a proven constant != -1
+                            // (overflow then statically impossible — e.g. `x / 2`),
+                            // so constant divisions keep their tight single-op lowering.
+                            // the true quotient INT_MAX+1 is unrepresentable, so x86
+                            // `idiv` raises #DE (SIGFPE) while AArch64 `sdiv` returns
+                            // INT_MIN — a hard cross-substrate divergence. Substitute
+                            // divisor 1 on the overflow case, which yields the wrapping
+                            // result on EVERY substrate (INT_MIN/1 == INT_MIN, the
+                            // wrapping_div value; INT_MIN%1 == 0, the wrapping_rem
+                            // value) and never traps. INT_MIN built as 1<<63 to dodge
+                            // any most-negative-literal parse edge. Inert for the gates
+                            // (no canary/keystone path divides). NOTE: division-by-zero
+                            // is a SEPARATE determinism hole (x86 #DE vs AArch64 → 0)
+                            // not closed here — deferred: needs a semantic decision
+                            // (trap-deterministically vs saturate) before it is wired.
+                            self.emit_line(&format!(
+                                "    %done{0} = arith.constant 1 : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dsix{0} = arith.constant 63 : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dmin{0} = arith.shli %done{0}, %dsix{0} : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dn1{0} = arith.constant -1 : i64",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dism{0} = arith.cmpi \"eq\", %{1}, %dmin{0} : i64",
+                                dst.0, lhs.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %disn{0} = arith.cmpi \"eq\", %{1}, %dn1{0} : i64",
+                                dst.0, rhs.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dovf{0} = arith.andi %dism{0}, %disn{0} : i1",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dsf{0} = arith.select %dovf{0}, %done{0}, %{1} : i64",
+                                dst.0, rhs.0
+                            ));
+                            format!("%dsf{}", dst.0)
+                        } else {
+                            format!("%{}", rhs.0)
+                        };
                         self.emit_line(&format!(
-                            "    %{} = {} %{}, %{} : i64",
-                            dst.0, mlir_op, lhs.0, rhs.0
+                            "    %{} = {} %{}, {} : i64",
+                            dst.0, mlir_op, lhs.0, rhs_ref
                         ));
                         self.values.insert(*dst, ValueKind::ScalarI64);
                         // A comparison op lowers to `arith.cmpi`, whose result
