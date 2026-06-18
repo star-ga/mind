@@ -624,7 +624,11 @@ impl LoweringContext {
 
         // Same MLIR type on both arms → no widening, byte-identical path.
         if mlir_type(then_kind)? == mlir_type(else_kind)? {
-            return Ok((then_kind.clone(), then_val.to_string(), else_val.to_string()));
+            return Ok((
+                then_kind.clone(),
+                then_val.to_string(),
+                else_val.to_string(),
+            ));
         }
 
         match (int_width(then_kind), int_width(else_kind)) {
@@ -635,7 +639,11 @@ impl LoweringContext {
                 let src_ty_t = mlir_type(then_kind)?;
                 let src_ty_e = mlir_type(else_kind)?;
                 if tw < ew {
-                    let op = if is_unsigned(then_kind) { "extui" } else { "extsi" };
+                    let op = if is_unsigned(then_kind) {
+                        "extui"
+                    } else {
+                        "extsi"
+                    };
                     let name = format!("%mwide_{lbl}_{col}_t");
                     writeln!(
                         t_buf,
@@ -644,7 +652,11 @@ impl LoweringContext {
                     .expect("write to string cannot fail");
                     tv = name;
                 } else {
-                    let op = if is_unsigned(else_kind) { "extui" } else { "extsi" };
+                    let op = if is_unsigned(else_kind) {
+                        "extui"
+                    } else {
+                        "extsi"
+                    };
                     let name = format!("%mwide_{lbl}_{col}_e");
                     writeln!(
                         e_buf,
@@ -658,7 +670,11 @@ impl LoweringContext {
             // Mismatched non-integer / unhandled mix (should not occur for the
             // type-checked narrow-int surface) → fall back to i64 merge kind
             // without rewriting, preserving prior behavior shape.
-            _ => Ok((ValueKind::ScalarI64, then_val.to_string(), else_val.to_string())),
+            _ => Ok((
+                ValueKind::ScalarI64,
+                then_val.to_string(),
+                else_val.to_string(),
+            )),
         }
     }
 
@@ -983,110 +999,109 @@ impl LoweringContext {
                         // binding needs no `mut`. Pure Rust-level annotation — the
                         // emitted MLIR text is byte-identical either way, so the
                         // canary/keystone trace_hashes are unaffected.
-                        let legalize =
-                            |this: &mut Self,
-                             id: ValueId,
-                             k: &ValueKind,
-                             tmp: &str|
-                             -> Result<String, MlirLowerError> {
-                                if widen_mode {
-                                    return match k {
-                                        ValueKind::ScalarI64 => Ok(format!("%{}", id.0)),
-                                        ValueKind::ScalarI32 => {
-                                            this.emit_line(&format!(
-                                                "    %{tmp}{0} = arith.extsi %{1} : i32 to i64",
-                                                dst.0, id.0
-                                            ));
-                                            Ok(format!("%{tmp}{}", dst.0))
-                                        }
-                                        ValueKind::ScalarU32 => {
-                                            this.emit_line(&format!(
-                                                "    %{tmp}{0} = arith.extui %{1} : i32 to i64",
-                                                dst.0, id.0
-                                            ));
-                                            Ok(format!("%{tmp}{}", dst.0))
-                                        }
-                                        ValueKind::ScalarBool => {
-                                            // A `bool` operand may be physically i1
-                                            // (in `i1_values`, e.g. a prior compare /
-                                            // bitwise-bool result) OR i64-backed (a
-                                            // bool *param* is `ScalarBool` but carried
-                                            // in an i64 ABI slot — see the i1_values
-                                            // invariant). Only the physically-i1 form
-                                            // needs `arith.extui i1 to i64`; an
-                                            // i64-backed bool is ALREADY a 0/1 i64 in
-                                            // its ABI slot, so widening is a no-op and
-                                            // emitting `extui %v : i1 to i64` on it
-                                            // would consume an i64 SSA value as i1 —
-                                            // invalid MLIR / a miscompile (e.g.
-                                            // `f(a:i64,b:bool)->i64 { a+b }`). Pass it
-                                            // straight through. Purely additive: no
-                                            // current corpus/canary/keystone case
-                                            // widens an i64-backed bool into i64
-                                            // arithmetic, so emitted bytes are
-                                            // unchanged.
-                                            if this.i1_values.contains(&id) {
-                                                this.emit_line(&format!(
-                                                    "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
-                                                    dst.0, id.0
-                                                ));
-                                                Ok(format!("%{tmp}{}", dst.0))
-                                            } else {
-                                                Ok(format!("%{}", id.0))
-                                            }
-                                        }
-                                        other => Err(MlirLowerError::ShapeError(format!(
-                                            "operand kind {other:?} cannot be widened to i64"
-                                        ))),
-                                    };
-                                }
-                                if is_narrow(k) {
-                                    if *k != target {
-                                        return Err(MlirLowerError::ShapeError(format!(
-                                            "mixed-width integer operands ({k:?} vs {target:?}) \
-                                             are not lowerable; cast explicitly"
-                                        )));
-                                    }
-                                    // A `bool` operand may be i64-backed (a bool
-                                    // *param* is `ScalarBool` but carried in an i64
-                                    // ABI slot — see the i1_values invariant) rather
-                                    // than physically i1. When `ity == "i1"` (a
-                                    // bool·bool bitwise/compare op) an i64-backed bool
-                                    // must be `arith.trunci`-narrowed to i1 first, or
-                                    // the emitted `: i1` op would consume an i64 SSA
-                                    // value — invalid MLIR / a miscompile. A bool that
-                                    // is ALREADY physically i1 (in `i1_values`, e.g. a
-                                    // prior bitwise-bool result) passes straight
-                                    // through, never double-truncated. Purely
-                                    // additive: no current corpus/canary/keystone case
-                                    // reaches a bool·bool op on an i64-backed bool, so
-                                    // emitted bytes are unchanged.
-                                    if ity == "i1"
-                                        && matches!(k, ValueKind::ScalarBool)
-                                        && !this.i1_values.contains(&id)
-                                    {
+                        let legalize = |this: &mut Self,
+                                        id: ValueId,
+                                        k: &ValueKind,
+                                        tmp: &str|
+                         -> Result<String, MlirLowerError> {
+                            if widen_mode {
+                                return match k {
+                                    ValueKind::ScalarI64 => Ok(format!("%{}", id.0)),
+                                    ValueKind::ScalarI32 => {
                                         this.emit_line(&format!(
-                                            "    %{tmp}{0} = arith.trunci %{1} : i64 to i1",
+                                            "    %{tmp}{0} = arith.extsi %{1} : i32 to i64",
                                             dst.0, id.0
                                         ));
-                                        return Ok(format!("%{tmp}{}", dst.0));
+                                        Ok(format!("%{tmp}{}", dst.0))
                                     }
-                                    Ok(format!("%{}", id.0))
-                                } else if matches!(k, ValueKind::ScalarI64)
-                                    && this.const_i64_values.contains(&id)
+                                    ValueKind::ScalarU32 => {
+                                        this.emit_line(&format!(
+                                            "    %{tmp}{0} = arith.extui %{1} : i32 to i64",
+                                            dst.0, id.0
+                                        ));
+                                        Ok(format!("%{tmp}{}", dst.0))
+                                    }
+                                    ValueKind::ScalarBool => {
+                                        // A `bool` operand may be physically i1
+                                        // (in `i1_values`, e.g. a prior compare /
+                                        // bitwise-bool result) OR i64-backed (a
+                                        // bool *param* is `ScalarBool` but carried
+                                        // in an i64 ABI slot — see the i1_values
+                                        // invariant). Only the physically-i1 form
+                                        // needs `arith.extui i1 to i64`; an
+                                        // i64-backed bool is ALREADY a 0/1 i64 in
+                                        // its ABI slot, so widening is a no-op and
+                                        // emitting `extui %v : i1 to i64` on it
+                                        // would consume an i64 SSA value as i1 —
+                                        // invalid MLIR / a miscompile (e.g.
+                                        // `f(a:i64,b:bool)->i64 { a+b }`). Pass it
+                                        // straight through. Purely additive: no
+                                        // current corpus/canary/keystone case
+                                        // widens an i64-backed bool into i64
+                                        // arithmetic, so emitted bytes are
+                                        // unchanged.
+                                        if this.i1_values.contains(&id) {
+                                            this.emit_line(&format!(
+                                                "    %{tmp}{0} = arith.extui %{1} : i1 to i64",
+                                                dst.0, id.0
+                                            ));
+                                            Ok(format!("%{tmp}{}", dst.0))
+                                        } else {
+                                            Ok(format!("%{}", id.0))
+                                        }
+                                    }
+                                    other => Err(MlirLowerError::ShapeError(format!(
+                                        "operand kind {other:?} cannot be widened to i64"
+                                    ))),
+                                };
+                            }
+                            if is_narrow(k) {
+                                if *k != target {
+                                    return Err(MlirLowerError::ShapeError(format!(
+                                        "mixed-width integer operands ({k:?} vs {target:?}) \
+                                             are not lowerable; cast explicitly"
+                                    )));
+                                }
+                                // A `bool` operand may be i64-backed (a bool
+                                // *param* is `ScalarBool` but carried in an i64
+                                // ABI slot — see the i1_values invariant) rather
+                                // than physically i1. When `ity == "i1"` (a
+                                // bool·bool bitwise/compare op) an i64-backed bool
+                                // must be `arith.trunci`-narrowed to i1 first, or
+                                // the emitted `: i1` op would consume an i64 SSA
+                                // value — invalid MLIR / a miscompile. A bool that
+                                // is ALREADY physically i1 (in `i1_values`, e.g. a
+                                // prior bitwise-bool result) passes straight
+                                // through, never double-truncated. Purely
+                                // additive: no current corpus/canary/keystone case
+                                // reaches a bool·bool op on an i64-backed bool, so
+                                // emitted bytes are unchanged.
+                                if ity == "i1"
+                                    && matches!(k, ValueKind::ScalarBool)
+                                    && !this.i1_values.contains(&id)
                                 {
                                     this.emit_line(&format!(
-                                        "    %{tmp}{0} = arith.trunci %{1} : i64 to {ity}",
+                                        "    %{tmp}{0} = arith.trunci %{1} : i64 to i1",
                                         dst.0, id.0
                                     ));
-                                    Ok(format!("%{tmp}{}", dst.0))
-                                } else {
-                                    Err(MlirLowerError::ShapeError(format!(
-                                        "a non-literal i64 operand mixed with `{ity}` is not \
-                                         lowerable; cast explicitly"
-                                    )))
+                                    return Ok(format!("%{tmp}{}", dst.0));
                                 }
-                            };
+                                Ok(format!("%{}", id.0))
+                            } else if matches!(k, ValueKind::ScalarI64)
+                                && this.const_i64_values.contains(&id)
+                            {
+                                this.emit_line(&format!(
+                                    "    %{tmp}{0} = arith.trunci %{1} : i64 to {ity}",
+                                    dst.0, id.0
+                                ));
+                                Ok(format!("%{tmp}{}", dst.0))
+                            } else {
+                                Err(MlirLowerError::ShapeError(format!(
+                                    "a non-literal i64 operand mixed with `{ity}` is not \
+                                         lowerable; cast explicitly"
+                                )))
+                            }
+                        };
                         let lhs_ref = legalize(self, *lhs, &lhs_kind, "ntl")?;
                         let rhs_ref = legalize(self, *rhs, &rhs_kind, "ntr")?;
                         let mlir_op = match op {
