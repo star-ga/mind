@@ -84,6 +84,15 @@ fn name(e: E) -> i64 {
     }
 }
 
+// Wildcard payload `Some(_)` — discriminate by tag, bind nothing. Previously
+// bailed the desugar and SILENTLY returned the wrong arm (0 for both).
+fn is_some(o: Opt) -> i64 {
+    match o {
+        Opt::Some(_) => 1,
+        Opt::None => 0,
+    }
+}
+
 // Option: payload extraction + fieldless default (the original segfault).
 pub fn t_some() -> i64 { unwrap_or(Opt::Some(42), 7) }
 pub fn t_none() -> i64 { unwrap_or(Opt::None, 7) }
@@ -101,6 +110,10 @@ pub fn t_pos() -> i64 { classify(Sign::Pos(7)) }
 pub fn t_e_a() -> i64 { name(E::A(5)) }
 pub fn t_e_b() -> i64 { name(E::B) }
 pub fn t_e_c() -> i64 { name(E::C) }
+
+// Wildcard payload match.
+pub fn t_is_some() -> i64 { is_some(Opt::Some(99)) }
+pub fn t_is_none() -> i64 { is_some(Opt::None) }
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -144,7 +157,7 @@ fn boxed_enum_match_runs() {
     let py = format!(
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
-         for _n in ('t_some','t_none','t_ok','t_err','t_neg','t_zero','t_pos','t_e_a','t_e_b','t_e_c'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         for _n in ('t_some','t_none','t_ok','t_err','t_neg','t_zero','t_pos','t_e_a','t_e_b','t_e_c','t_is_some','t_is_none'): getattr(lib,_n).restype = ctypes.c_int64\n\
          r = lib.t_some(); assert r == 42, 't_some=' + str(r)\n\
          r = lib.t_none(); assert r == 7, 't_none=' + str(r)\n\
          r = lib.t_ok(); assert r == 55, 't_ok=' + str(r)\n\
@@ -155,6 +168,8 @@ fn boxed_enum_match_runs() {
          r = lib.t_e_a(); assert r == 0, 't_e_a=' + str(r)\n\
          r = lib.t_e_b(); assert r == 22, 't_e_b=' + str(r)\n\
          r = lib.t_e_c(); assert r == 33, 't_e_c=' + str(r)\n\
+         r = lib.t_is_some(); assert r == 1, 't_is_some=' + str(r)\n\
+         r = lib.t_is_none(); assert r == 0, 't_is_none=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );

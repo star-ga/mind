@@ -3568,35 +3568,43 @@ fn desugar_match_to_if(
             right: Box::new(rhs.clone()),
             span,
         };
-        // Step 5: for a payload-binding arm (`Some(v) => …`), PREPEND a
-        // synthetic `let v = __mind_load_i64(scrutinee + 8)` to the arm body
-        // so the bound identifier resolves to the record's payload slot. Only
-        // a single-`Ident` sub-pattern is supported (v1 tuple variants carry
-        // one payload); anything else bails the whole match to the fallback.
+        // Step 5: for a payload-binding arm, the synthetic payload binding is
+        // prepended to the arm body. A single-`Ident` sub-pattern (`Some(v)`)
+        // PREPENDS `let v = __mind_load_i64(scrutinee + 8)` so the name resolves
+        // to the record's payload slot; a single-`Wildcard` (`Some(_)`) needs
+        // NO binding (the tag comparison already discriminates) and just runs
+        // the body. v1 tuple variants carry one payload slot — a multi-field or
+        // nested sub-pattern bails the whole match to `None`, and the
+        // `check_match_runnable` abi-gate turns that into a loud fail-closed
+        // error on the emit path (never a silent sequential miscompile).
         let then_branch: Vec<ast::Node> = match &arm.pattern {
             ast::Pattern::EnumVariant { args, .. } if !args.is_empty() => {
-                let bound = match args.as_slice() {
-                    [ast::Pattern::Ident(name)] => name.clone(),
+                match args.as_slice() {
+                    [ast::Pattern::Ident(name)] => {
+                        // payload_addr = scrutinee + 8
+                        let offset = ast::Node::Lit(Literal::Int(8), span);
+                        let payload_addr = ast::Node::Binary {
+                            op: ast::BinOp::Add,
+                            left: Box::new(scrutinee.clone()),
+                            right: Box::new(offset),
+                            span,
+                        };
+                        let bind = ast::Node::Let {
+                            name: name.clone(),
+                            mutable: false,
+                            ann: None,
+                            value: Box::new(load_i64(payload_addr)),
+                            span,
+                        };
+                        let mut stmts = vec![bind];
+                        stmts.extend(flatten_body(arm.body.clone()));
+                        stmts
+                    }
+                    // `Some(_)` — discriminate by tag, bind nothing.
+                    [ast::Pattern::Wildcard] => flatten_body(arm.body.clone()),
+                    // multi-field / nested payload: unsupported in v1.
                     _ => return None,
-                };
-                // payload_addr = scrutinee + 8
-                let offset = ast::Node::Lit(Literal::Int(8), span);
-                let payload_addr = ast::Node::Binary {
-                    op: ast::BinOp::Add,
-                    left: Box::new(scrutinee.clone()),
-                    right: Box::new(offset),
-                    span,
-                };
-                let bind = ast::Node::Let {
-                    name: bound,
-                    mutable: false,
-                    ann: None,
-                    value: Box::new(load_i64(payload_addr)),
-                    span,
-                };
-                let mut stmts = vec![bind];
-                stmts.extend(flatten_body(arm.body.clone()));
-                stmts
+                }
             }
             _ => flatten_body(arm.body.clone()),
         };
