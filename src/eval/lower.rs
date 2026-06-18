@@ -2105,33 +2105,57 @@ fn lower_expr(
             let mut branch_bindings: Vec<(String, ValueId)> = Vec::new();
             let mut merges: Vec<(ValueId, ValueId, ValueId)> = Vec::new();
             for name in &merged_names {
+                let then_has = then_env.get(name).copied();
+                let else_has = else_env.get(name).copied();
+                // Type the synthesized absent-side ZERO placeholder by the side
+                // that DEFINES the binding (a one-sided let/assign): an f64
+                // binding gets an f64 placeholder so the merge phi types f64
+                // rather than clashing with the i64 default. i64 stays
+                // `ConstI64(0)` → every all-i64 program is byte-identical.
+                let placeholder_f64 = match (then_has, else_has) {
+                    (Some(tid), None) => {
+                        branch_value_is_f64(&then_ir.instrs, tid, &ir.fn_signatures)
+                    }
+                    (None, Some(eid)) => {
+                        branch_value_is_f64(&else_ir.instrs, eid, &ir.fn_signatures)
+                    }
+                    _ => false,
+                };
                 // then-edge value (only meaningful if then falls through).
                 let then_val = if then_falls_through {
-                    match then_env.get(name) {
-                        Some(&id) => id,
+                    match then_has {
+                        Some(id) => id,
                         None => {
                             let z = ir.fresh();
-                            then_ir.instrs.push(Instr::ConstI64(z, 0));
+                            then_ir.instrs.push(if placeholder_f64 {
+                                Instr::ConstF64(z, 0.0)
+                            } else {
+                                Instr::ConstI64(z, 0)
+                            });
                             z
                         }
                     }
                 } else {
                     // No then-edge; reuse the else value as the placeholder so
                     // the tuple is well-formed (the then `cf.br` is not emitted).
-                    *else_env.get(name).unwrap_or(&ValueId(usize::MAX))
+                    else_has.unwrap_or(ValueId(usize::MAX))
                 };
                 // else-edge value (only meaningful if else falls through).
                 let else_val = if else_falls_through {
-                    match else_env.get(name) {
-                        Some(&id) => id,
+                    match else_has {
+                        Some(id) => id,
                         None => {
                             let z = ir.fresh();
-                            else_ir.instrs.push(Instr::ConstI64(z, 0));
+                            else_ir.instrs.push(if placeholder_f64 {
+                                Instr::ConstF64(z, 0.0)
+                            } else {
+                                Instr::ConstI64(z, 0)
+                            });
                             z
                         }
                     }
                 } else {
-                    *then_env.get(name).unwrap_or(&ValueId(usize::MAX))
+                    then_has.unwrap_or(ValueId(usize::MAX))
                 };
                 let merge_id = ir.fresh();
                 merges.push((merge_id, then_val, else_val));
@@ -3749,6 +3773,45 @@ fn extract_array_lit_values(node: &ast::Node) -> Vec<i64> {
 ///
 /// Used by `Instr::If` lowering and any future control-flow arms that lower
 /// branches into separate scratch IRModules.
+///
+/// Best-effort: does SSA value `id`, defined within branch `instrs`, carry an
+/// `f64`? Consulted ONLY to TYPE the absent-branch zero placeholder of a
+/// one-sided merge (a `let`/assign present in one branch, absent in the other),
+/// so an `f64` one-sided binding gets an `f64` placeholder and the merge phi
+/// types `f64` instead of clashing with the i64 default. ADDITIVE: an i64 value
+/// returns `false` → the placeholder stays `ConstI64(0)` exactly as before, so
+/// every all-i64 program is byte-identical. A conservative `false` is always
+/// SSA-safe for an i64 value; the only value it can mistype is a genuinely-f64
+/// one-sided binding, which is already broken (the bug this fixes).
+#[cfg(feature = "std-surface")]
+fn branch_value_is_f64(
+    instrs: &[Instr],
+    id: ValueId,
+    fn_signatures: &std::collections::BTreeMap<String, (Vec<ast::TypeAnn>, Option<ast::TypeAnn>)>,
+) -> bool {
+    for instr in instrs.iter().rev() {
+        match instr {
+            Instr::ConstF64(d, _) if *d == id => return true,
+            Instr::ConstI64(d, _) if *d == id => return false,
+            Instr::Call { dst, name, .. } if *dst == id => {
+                if name == "__mind_bits_to_f64" {
+                    return true;
+                }
+                return matches!(
+                    fn_signatures.get(name).and_then(|(_, r)| r.as_ref()),
+                    Some(ast::TypeAnn::ScalarF64) | Some(ast::TypeAnn::ScalarF32)
+                );
+            }
+            Instr::BinOp { dst, lhs, rhs, .. } if *dst == id => {
+                return branch_value_is_f64(instrs, *lhs, fn_signatures)
+                    || branch_value_is_f64(instrs, *rhs, fn_signatures);
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 #[cfg(feature = "std-surface")]
 fn sub_ir_from(parent: &IRModule) -> IRModule {
     let mut m = IRModule::new();

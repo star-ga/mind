@@ -37,6 +37,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A value-`if` whose branch declares a non-i64 (`f64`) `let` no longer
+  miscompiles.** A `let` inside a value-`if` branch is recorded as a branch
+  "write", so it becomes a one-sided merge phi (defined in one branch, absent in
+  the other). The synthesized absent-branch placeholder was hardcoded
+  `ConstI64(0)` — i64 — so for an `f64` `let` the phi typed `i64` while the
+  fall-through edge supplied the `f64` value: `cf.br ^merge(%v : i64)` over an
+  f64 `%v` → `mlir-opt: 'i64' vs 'f64'`. `if c { 1.5 } else { 2.5 }` (no branch
+  `let`) lowered fine; only a branch `let` triggered it. The placeholder is now
+  typed by the side that DEFINES the binding (a `branch_value_is_f64` walk of the
+  defining instruction): an `f64` `let` gets a `ConstF64(0.0)` placeholder so the
+  phi types `f64`; an i64 `let` keeps `ConstI64(0)` — so every all-i64 program is
+  byte-identical (keystone 7/7 + cross-substrate 8/8) and compile speed is
+  unchanged (criterion within noise). This is the value-`if` merge fix that
+  unblocks `f64` enum payloads. New `tests/value_if_f64_let.rs`.
+
 - **A wildcard payload `match` arm (`Some(_)`) now lowers; multi-field / nested
   enum shapes fail loud instead of silently miscompiling.** Two more enum-match
   silent miscompiles (no error, no crash, wrong value): `match o { Opt::Some(_)
