@@ -1583,17 +1583,33 @@ impl LoweringContext {
             // exactly as before — byte-identical, moat held.
             #[cfg(feature = "std-surface")]
             Instr::Call { dst, name, args } => {
-                for a in args {
-                    match self.values.get(a) {
-                        Some(ValueKind::ScalarI64) => {}
-                        _ => {
-                            return Err(MlirLowerError::UnsupportedOp {
-                                instr_index,
-                                op: format!(
-                                    "non-i64 argument to call `{name}` \
-                                     (RFC 0005 phase 2+ covers aggregate call ABI)"
-                                ),
-                            });
+                // The narrow store/load intrinsics accept a narrow VALUE arg by
+                // design — their handlers below coerce it to/from the access
+                // width. Exempt them from the blanket i64-arg rejection so a
+                // struct field populated from a narrow (i32/u32) SSA value
+                // (`P { x: a }` for `a: i32`) lowers instead of failing here.
+                let is_narrow_mem = matches!(
+                    name.as_str(),
+                    "__mind_store_i32"
+                        | "__mind_store_i16"
+                        | "__mind_store_i8"
+                        | "__mind_load_i32"
+                        | "__mind_load_i16"
+                        | "__mind_load_i8"
+                );
+                if !is_narrow_mem {
+                    for a in args {
+                        match self.values.get(a) {
+                            Some(ValueKind::ScalarI64) => {}
+                            _ => {
+                                return Err(MlirLowerError::UnsupportedOp {
+                                    instr_index,
+                                    op: format!(
+                                        "non-i64 argument to call `{name}` \
+                                         (RFC 0005 phase 2+ covers aggregate call ABI)"
+                                    ),
+                                });
+                            }
                         }
                     }
                 }
@@ -1854,12 +1870,47 @@ impl LoweringContext {
                         "    %stp{0} = llvm.inttoptr %{1} : i64 to !llvm.ptr",
                         dst.0, args[0].0
                     ));
-                    let val_ref = if store_ty == "i64" {
+                    // Coerce the value from its physical SSA width to the store
+                    // width. The legacy path assumed an i64 value and always
+                    // `llvm.trunc`'d it; that emits invalid MLIR (`trunc i32 to
+                    // i32` against a non-i64 operand) when the field value is a
+                    // narrow SSA value (e.g. `P { x: a }` for `a: i32`). Pick the
+                    // op from the actual physical width: equal → direct, wider
+                    // store → sext/zext, narrower store → trunc. An i64 literal/
+                    // value stays a `trunc` exactly as before → byte-identical.
+                    let val_phys = if self.i1_values.contains(&args[1]) {
+                        "i1"
+                    } else {
+                        match self.values.get(&args[1]) {
+                            Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
+                            _ => "i64",
+                        }
+                    };
+                    let bits = |t: &str| match t {
+                        "i64" => 64,
+                        "i32" => 32,
+                        "i16" => 16,
+                        "i8" => 8,
+                        _ => 1,
+                    };
+                    let val_ref = if store_ty == val_phys {
                         format!("%{}", args[1].0)
                     } else {
+                        let op = if bits(store_ty) < bits(val_phys) {
+                            "llvm.trunc"
+                        } else if val_phys == "i1"
+                            || matches!(
+                                self.values.get(&args[1]),
+                                Some(ValueKind::ScalarU32)
+                            )
+                        {
+                            "llvm.zext"
+                        } else {
+                            "llvm.sext"
+                        };
                         self.emit_line(&format!(
-                            "    %stv{0} = llvm.trunc %{1} : i64 to {2}",
-                            dst.0, args[1].0, store_ty
+                            "    %stv{0} = {3} %{1} : {4} to {2}",
+                            dst.0, args[1].0, store_ty, op, val_phys
                         ));
                         format!("%stv{}", dst.0)
                     };
