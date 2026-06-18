@@ -291,6 +291,16 @@ fn node_mentions_type_name(node: &ast::Node, tp: &str) -> bool {
 
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let mut ir = IRModule::new();
+    // Pre-size the instruction buffer. `IRModule::new()` starts `instrs` at
+    // capacity 0, so the AST→IR builder below grows it 0→4→8→16…, and the
+    // profiler attributes the resulting `RawVec::finish_grow` realloc +
+    // `memmove` chain to this hot path. Reserving once caps the realloc count
+    // for small/medium modules. This is a CAPACITY hint only — it never
+    // changes the instruction content or ordering, so emitted mic@1/mic@3
+    // bytes (and cross-substrate identity) are byte-for-byte unchanged. The
+    // estimate is O(1) (each top-level item expands to a handful of instrs);
+    // any underestimate simply falls back to the existing growth path.
+    ir.instrs.reserve(module.items.len().saturating_mul(8).max(16));
     // Codegen monomorphization pre-pass — collect generic fn TEMPLATES (those
     // with a non-empty `type_params`) so call sites can route to a concrete
     // instance. The thread-local is reset at entry so a prior `lower_to_ir`
@@ -332,9 +342,29 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // over a post-lowering IR rewrite. The builder lives in
     // src/eval/struct_resolver.rs; in non-feature builds the table is
     // empty and never queried.
+    //
+    // PROFILED HOT PATH: `build_field_access_types` walks the ENTIRE module AST
+    // on every compile, yet every one of its `types.insert` sites is gated by
+    // `struct_defs.iter().any(...)`, and `struct_defs` is collected EXCLUSIVELY
+    // from top-level `Node::StructDef` items (struct_resolver.rs). A module with
+    // no `StructDef` therefore PROVABLY yields an empty map. Guard the call on a
+    // cheap O(items) shallow scan so struct-free modules (scalar_math, the
+    // keystone, every canary) skip the whole-AST walk entirely. When skipped the
+    // FieldAccess / MethodCall / FieldAssign arms simply query an empty table and
+    // resolve to `None` exactly as they would against the empty map the walk
+    // would have returned — so emitted mic@1/mic@3 bytes and cross-substrate
+    // identity are byte-for-byte unchanged.
     #[cfg(feature = "std-surface")]
     let receiver_types_owned: HashMap<crate::ast::Span, String> =
-        crate::eval::struct_resolver::build_field_access_types(module);
+        if module
+            .items
+            .iter()
+            .any(|it| matches!(it, ast::Node::StructDef { .. }))
+        {
+            crate::eval::struct_resolver::build_field_access_types(module)
+        } else {
+            HashMap::new()
+        };
     #[cfg(not(feature = "std-surface"))]
     let receiver_types_owned: HashMap<crate::ast::Span, String> = HashMap::new();
     let receiver_types: &HashMap<crate::ast::Span, String> = &receiver_types_owned;
