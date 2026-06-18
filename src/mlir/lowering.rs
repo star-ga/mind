@@ -499,6 +499,14 @@ struct LoweringContext {
     /// narrow-int / bool params → byte-identical lowering. Gated.
     #[cfg(feature = "std-surface")]
     fn_param_kinds: std::collections::BTreeMap<String, Vec<ValueKind>>,
+    /// NARROW-INT CALL ABI — each user fn's declared RETURN `ValueKind`
+    /// (signedness-preserving, from its return `TypeAnn`), so a `func.call`
+    /// site can type its result at the callee's real return width and track
+    /// the result kind for re-widening at the use site. `bool` collapses to
+    /// `i64` at the call result (its ABI return slot is i64). i64-only modules
+    /// record `ScalarI64` everywhere → call results tracked identically to
+    /// before (byte-identical).
+    fn_ret_kind: std::collections::BTreeMap<String, ValueKind>,
     /// NARROW-INT ABI — the declared MLIR return type of the `func.func`
     /// currently being lowered (`"i32"`/`"i64"`/`"f64"`/…), set by the
     /// `Instr::FnDef` arm on each body sub-context before it walks the body.
@@ -570,6 +578,7 @@ impl LoweringContext {
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_param_kinds: std::collections::BTreeMap::new(),
+            fn_ret_kind: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_ret_abi: None,
         }
@@ -577,6 +586,21 @@ impl LoweringContext {
 
     fn emit_line(&mut self, line: &str) {
         writeln!(&mut self.body, "{line}").expect("write to string cannot fail");
+    }
+
+    /// Propagate the ENCLOSING function's ABI context (callee signatures,
+    /// param/return kinds, declared return slot) into a freshly-created
+    /// branch/loop sub-context. Without this a narrow early `return` inside the
+    /// branch emits `return %x : i64` against an `-> i32` fn, and a user-fn call
+    /// inside the branch defaults to the all-i64 call ABI — both mlir-opt type
+    /// mismatches. i64-only fns carry all-`i64`/`ScalarI64` here, so the
+    /// propagation is byte-identical for them.
+    #[cfg(feature = "std-surface")]
+    fn inherit_fn_abi(&self, sub: &mut LoweringContext) {
+        sub.fn_signatures = self.fn_signatures.clone();
+        sub.fn_param_kinds = self.fn_param_kinds.clone();
+        sub.fn_ret_kind = self.fn_ret_kind.clone();
+        sub.fn_ret_abi = self.fn_ret_abi.clone();
     }
 
     /// NARROW-INT control-flow merge typing. Given the two branch yields of a
@@ -1940,16 +1964,90 @@ impl LoweringContext {
                     }
                     self.values.insert(*dst, ValueKind::ScalarI64);
                 } else {
-                    let arg_refs: Vec<String> = args.iter().map(|a| format!("%{}", a.0)).collect();
-                    let arg_tys: Vec<&str> = args.iter().map(|_| "i64").collect();
+                    // NARROW-INT CALL ABI: type the call against the callee's
+                    // declared signature (`fn_signatures`) instead of a hardcoded
+                    // all-i64 shape, so a narrow param/return on a CALLED user fn
+                    // lowers to valid MLIR (was: `(i64..)->i64` vs an `-> i32`
+                    // callee → mlir-opt type mismatch, no artifact). Each arg is
+                    // coerced (trunci/extsi/extui) from its physical SSA width to
+                    // the callee's param width; the result is tracked at the
+                    // callee's return kind so its use site re-widens it. A callee
+                    // with no recorded signature (runtime bridge / IR built
+                    // directly) defaults to the all-i64 ABI, and an i64-only
+                    // callee makes every coercion a no-op → byte-identical to the
+                    // legacy path.
+                    let callee_sig = self.fn_signatures.get(name).cloned();
+                    let param_tys: Vec<String> = match &callee_sig {
+                        Some((p, _)) => (0..args.len())
+                            .map(|i| p.get(i).cloned().unwrap_or_else(|| "i64".to_string()))
+                            .collect(),
+                        None => vec!["i64".to_string(); args.len()],
+                    };
+                    let ret_ty = callee_sig
+                        .as_ref()
+                        .and_then(|(_, r)| r.clone())
+                        .unwrap_or_else(|| "i64".to_string());
+                    let mut arg_refs: Vec<String> = Vec::with_capacity(args.len());
+                    for (i, a) in args.iter().enumerate() {
+                        let target = param_tys[i].as_str();
+                        let phys = if self.i1_values.contains(a) {
+                            "i1"
+                        } else {
+                            match self.values.get(a) {
+                                Some(ValueKind::ScalarF64) => "f64",
+                                Some(ValueKind::ScalarF32) => "f32",
+                                Some(ValueKind::ScalarI32) | Some(ValueKind::ScalarU32) => "i32",
+                                _ => "i64",
+                            }
+                        };
+                        if phys == target {
+                            arg_refs.push(format!("%{}", a.0));
+                            continue;
+                        }
+                        let unsigned = matches!(self.values.get(a), Some(ValueKind::ScalarU32));
+                        let op: &str = match (phys, target) {
+                            ("i64", "i32") | ("i64", "i1") | ("i32", "i1") => "arith.trunci",
+                            ("i32", "i64") => {
+                                if unsigned {
+                                    "arith.extui"
+                                } else {
+                                    "arith.extsi"
+                                }
+                            }
+                            ("i1", _) => "arith.extui",
+                            // float<->int or unexpected pairing: a type error the
+                            // checker should already reject; pass through so the
+                            // failure stays loud at mlir-opt rather than masked.
+                            _ => "",
+                        };
+                        if op.is_empty() {
+                            arg_refs.push(format!("%{}", a.0));
+                        } else {
+                            self.emit_line(&format!(
+                                "    %ca{0}_{1} = {2} %{3} : {4} to {5}",
+                                dst.0, i, op, a.0, phys, target
+                            ));
+                            arg_refs.push(format!("%ca{}_{}", dst.0, i));
+                        }
+                    }
                     self.emit_line(&format!(
-                        "    %{} = func.call @{}({}) : ({}) -> i64",
+                        "    %{} = func.call @{}({}) : ({}) -> {}",
                         dst.0,
                         name,
                         arg_refs.join(", "),
-                        arg_tys.join(", ")
+                        param_tys.join(", "),
+                        ret_ty
                     ));
-                    self.values.insert(*dst, ValueKind::ScalarI64);
+                    // Track the result at the callee's declared return kind so a
+                    // narrow result is sign/zero-extended at its use site (the
+                    // Return / merge reconcile logic reads `values`). Defaults to
+                    // ScalarI64 for unsignatured callees — identical to before.
+                    let ret_kind = self
+                        .fn_ret_kind
+                        .get(name)
+                        .cloned()
+                        .unwrap_or(ValueKind::ScalarI64);
+                    self.values.insert(*dst, ret_kind);
                     self.extern_calls.insert((name.clone(), args.len()));
                 }
             }
@@ -1977,6 +2075,9 @@ impl LoweringContext {
                 // NARROW-INT ABI: inherit the signedness-preserving param kinds
                 // so nested definitions seed u32/i32/bool params correctly too.
                 sub.fn_param_kinds = self.fn_param_kinds.clone();
+                // NARROW-INT CALL ABI: inherit callee return kinds so a
+                // `func.call` inside this body types its result correctly.
+                sub.fn_ret_kind = self.fn_ret_kind.clone();
                 // RFC 0012 §5.1 — recover this fn's declared param / return ABI
                 // types. Default to all-i64 (legacy ABI) when no signature was
                 // recorded (e.g. an IR built directly, not via `lower_to_ir`),
@@ -2349,6 +2450,7 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
+                self.inherit_fn_abi(&mut cond_sub);
                 // Thread the function-global while-label counter so any nested
                 // loop in the condition gets a unique label, and pull the
                 // advanced value back afterward.
@@ -2458,6 +2560,7 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
+                self.inherit_fn_abi(&mut body_sub);
                 // Thread the function-global while-label counter into the body
                 // so nested loops get unique labels; pull it back afterward.
                 body_sub.while_label = self.while_label;
@@ -2835,6 +2938,7 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 cond_sub.extern_c_fns = self.extern_c_fns.clone();
+                self.inherit_fn_abi(&mut cond_sub);
                 // Thread the function-global while-label counter so any nested
                 // loop in the if-condition gets a unique label.
                 cond_sub.while_label = self.while_label;
@@ -2929,6 +3033,7 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 then_sub.extern_c_fns = self.extern_c_fns.clone();
+                self.inherit_fn_abi(&mut then_sub);
                 // Thread the function-global while-label counter into the
                 // then-branch so nested loops get unique labels.
                 then_sub.while_label = self.while_label;
@@ -2965,6 +3070,7 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 else_sub.extern_c_fns = self.extern_c_fns.clone();
+                self.inherit_fn_abi(&mut else_sub);
                 // Thread the function-global while-label counter into the
                 // else-branch so nested loops get unique labels.
                 else_sub.while_label = self.while_label;
@@ -3195,6 +3301,7 @@ impl LoweringContext {
                 // `func.call`), avoiding a dual `llvm.func`/`func.func`
                 // declaration of the same symbol (RFC 0010).
                 body_sub.extern_c_fns = self.extern_c_fns.clone();
+                self.inherit_fn_abi(&mut body_sub);
                 // Thread the function-global while-label counter into the
                 // region body so nested loops get unique labels.
                 body_sub.while_label = self.while_label;
@@ -8563,6 +8670,16 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
         // `ScalarI64` here → identical seeding to before.
         let param_kinds: Vec<ValueKind> = param_types.iter().map(type_ann_to_value_kind).collect();
         ctx.fn_param_kinds.insert(name.clone(), param_kinds);
+        // NARROW-INT CALL ABI: the callee's signedness-preserving RETURN kind.
+        // `bool` (and a unit/no return) collapse to `ScalarI64` because the ABI
+        // return slot is i64 (see `type_ann_to_abi_mlir`), so the call result is
+        // physically i64. i32/u32 keep their distinct kind for correct
+        // sign/zero-extension at the result's use site.
+        let ret_kind = match ret_type.as_ref().map(type_ann_to_value_kind) {
+            Some(ValueKind::ScalarBool) | None => ValueKind::ScalarI64,
+            Some(k) => k,
+        };
+        ctx.fn_ret_kind.insert(name.clone(), ret_kind);
     }
 
     for (idx, instr) in module.instrs.iter().enumerate() {
