@@ -632,6 +632,9 @@ impl LoweringContext {
     /// `cf.br ^merge(%cmp : i64)` over an i1 value -> `'i64' vs 'i1'` mlir-opt
     /// error. ADDITIVE: a non-i1 value is left unchanged (no extui, byte-identical
     /// path), so a value-`if` over ordinary i64 values is untouched.
+    /// Gated on `std-surface` (its only caller is the std-surface value-`if` arm,
+    /// and `i1_values` is itself std-surface-gated).
+    #[cfg(feature = "std-surface")]
     fn widen_i1_merge_branch(
         &self,
         id: &ValueId,
@@ -1351,6 +1354,10 @@ impl LoweringContext {
                         let is_shift = matches!(op, BinOp::Shl | BinOp::Shr);
                         #[cfg(not(feature = "std-surface"))]
                         let is_shift = false;
+                        // Set by the signed-div guard to the i1 "divisor == 0"
+                        // flag; the common emit then forces the RESULT to 0 so
+                        // `x / 0 == 0` (and `x % 0 == 0`) deterministically.
+                        let mut div_zero_guard: Option<String> = None;
                         let rhs_ref = if is_shift {
                             self.emit_line(&format!(
                                 "    %shm{0} = arith.constant 63 : i64",
@@ -1362,24 +1369,32 @@ impl LoweringContext {
                             ));
                             format!("%sha{}", dst.0)
                         } else if matches!(op, BinOp::Div | BinOp::Mod)
-                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != -1)
+                            && !self
+                                .const_i64_map
+                                .get(rhs)
+                                .is_some_and(|&v| v != -1 && v != 0)
                         {
-                            // INT_MIN / -1 overflow determinism (signed i64 div/rem).
-                            // Elided when the divisor is a proven constant != -1
-                            // (overflow then statically impossible — e.g. `x / 2`),
-                            // so constant divisions keep their tight single-op lowering.
-                            // the true quotient INT_MAX+1 is unrepresentable, so x86
-                            // `idiv` raises #DE (SIGFPE) while AArch64 `sdiv` returns
-                            // INT_MIN — a hard cross-substrate divergence. Substitute
-                            // divisor 1 on the overflow case, which yields the wrapping
-                            // result on EVERY substrate (INT_MIN/1 == INT_MIN, the
-                            // wrapping_div value; INT_MIN%1 == 0, the wrapping_rem
-                            // value) and never traps. INT_MIN built as 1<<63 to dodge
-                            // any most-negative-literal parse edge. Inert for the gates
-                            // (no canary/keystone path divides). NOTE: division-by-zero
-                            // is a SEPARATE determinism hole (x86 #DE vs AArch64 → 0)
-                            // not closed here — deferred: needs a semantic decision
-                            // (trap-deterministically vs saturate) before it is wired.
+                            // Signed i64 div/rem determinism — two cross-substrate
+                            // divergences, both closed here, both elided when the
+                            // divisor is a proven constant that is neither -1 nor 0
+                            // (`x / 2` keeps its tight single-op lowering):
+                            //   * INT_MIN / -1: the true quotient INT_MAX+1 is
+                            //     unrepresentable, so x86 `idiv` raises #DE (SIGFPE)
+                            //     while AArch64 `sdiv` returns INT_MIN.
+                            //   * divisor == 0: x86 `idiv` raises #DE while AArch64
+                            //     `sdiv` returns 0.
+                            // Substitute divisor 1 on EITHER case (never traps): the
+                            // overflow case then yields the wrapping result on every
+                            // substrate (INT_MIN/1 == INT_MIN; INT_MIN%1 == 0). For
+                            // the zero case the divisor-1 substitution alone gives
+                            // `x/1 == x`, so the common emit additionally forces the
+                            // RESULT to 0 via `div_zero_guard`, making `x/0 == 0` and
+                            // `x%0 == 0` deterministically. (Provisional total
+                            // semantics — could be revisited to a deterministic trap
+                            // via the spec; 0 is the conventional, non-crashing
+                            // choice.) INT_MIN built as 1<<63 to dodge any
+                            // most-negative-literal parse edge. Inert for the gates
+                            // (no canary/keystone path divides).
                             self.emit_line(&format!(
                                 "    %done{0} = arith.constant 1 : i64",
                                 dst.0
@@ -1396,6 +1411,7 @@ impl LoweringContext {
                                 "    %dn1{0} = arith.constant -1 : i64",
                                 dst.0
                             ));
+                            self.emit_line(&format!("    %dzc{0} = arith.constant 0 : i64", dst.0));
                             self.emit_line(&format!(
                                 "    %dism{0} = arith.cmpi \"eq\", %{1}, %dmin{0} : i64",
                                 dst.0, lhs.0
@@ -1409,17 +1425,42 @@ impl LoweringContext {
                                 dst.0
                             ));
                             self.emit_line(&format!(
-                                "    %dsf{0} = arith.select %dovf{0}, %done{0}, %{1} : i64",
+                                "    %disz{0} = arith.cmpi \"eq\", %{1}, %dzc{0} : i64",
                                 dst.0, rhs.0
                             ));
+                            self.emit_line(&format!(
+                                "    %dsub{0} = arith.ori %dovf{0}, %disz{0} : i1",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %dsf{0} = arith.select %dsub{0}, %done{0}, %{1} : i64",
+                                dst.0, rhs.0
+                            ));
+                            div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
                         } else {
                             format!("%{}", rhs.0)
                         };
-                        self.emit_line(&format!(
-                            "    %{} = {} %{}, {} : i64",
-                            dst.0, mlir_op, lhs.0, rhs_ref
-                        ));
+                        if let Some(disz) = &div_zero_guard {
+                            // Force the result to 0 when the original divisor was 0
+                            // (the divisor was substituted to 1 above to avoid the
+                            // trap, which would otherwise give x/1 == x). Net:
+                            // `x / 0 == 0`, `x % 0 == 0`, deterministic everywhere.
+                            self.emit_line(&format!(
+                                "    %ddt{0} = {1} %{2}, {3} : i64",
+                                dst.0, mlir_op, lhs.0, rhs_ref
+                            ));
+                            self.emit_line(&format!("    %ddz{0} = arith.constant 0 : i64", dst.0));
+                            self.emit_line(&format!(
+                                "    %{0} = arith.select {1}, %ddz{0}, %ddt{0} : i64",
+                                dst.0, disz
+                            ));
+                        } else {
+                            self.emit_line(&format!(
+                                "    %{} = {} %{}, {} : i64",
+                                dst.0, mlir_op, lhs.0, rhs_ref
+                            ));
+                        }
                         self.values.insert(*dst, ValueKind::ScalarI64);
                         // A comparison op lowers to `arith.cmpi`, whose result
                         // is `i1` (not the `: i64` operand type above). Record
