@@ -130,3 +130,195 @@ fn mk(src: &str, file: Option<&str>, span: AstSpan, code: &'static str, msg: Str
         .with_span(Span::from_offsets(src, span.start(), span.end(), file))
         .with_help(HELP)
 }
+
+// ── Fail-closed gate: unresolved generic calls (CRITICAL #2) ──────────────────
+//
+// A generic call `id(x)` whose argument's concrete type cannot be inferred in
+// the bounded monomorphization slice was a SILENT MISCOMPILE: the lowering left
+// a bare `@id` reference (the `id$T` body was never emitted), so `--emit-shared`
+// wrote an EXIT=0 `.so` with an UNDEFINED symbol (`nm -D` => `U id`; dlopen =>
+// "undefined symbol: id"). This gate flags exactly those calls so the runnable
+// path fails LOUD with a file:line span instead of shipping a broken artifact.
+//
+// ZERO false positives BY CONSTRUCTION: it can only fire on a call whose callee
+// is in the declared-generic-template set (a `FnDef` with a non-empty
+// `type_params`), which is EMPTY for every non-generic / intrinsic / extern-C /
+// BLAS program — so a `__mind_*` runtime intrinsic, an `extern "C"` symbol, a
+// monomorphized `id$i64`, or any ordinary user fn can NEVER be flagged. The
+// accept/reject decision shares the SAME `is_monomorphizable` predicate the
+// lowering uses (`crate::eval::lower`), so the gate flags exactly the calls the
+// lowering would leave dangling — they cannot drift. Empty `Vec` for a
+// non-generic module => keystone / canaries byte-identical.
+
+const GENERIC_HELP: &str = "a generic call monomorphizes only when its argument's concrete type is \
+     inferable in the shipped slice: an int/float literal, or an enclosing-fn parameter of scalar \
+     type. Bind the argument to a typed parameter, or run it with the `mind` interpreter.";
+
+struct GenCtx<'a> {
+    templates: &'a std::collections::HashSet<&'a str>,
+    param_types: &'a std::collections::HashMap<String, TypeAnn>,
+    src: &'a str,
+    file: Option<&'a str>,
+}
+
+/// Flag every call to a generic template whose argument cannot be monomorphized
+/// — the calls the lowering would otherwise leave as a dangling bare-template
+/// reference (an undefined symbol in the runnable artifact). Enforced ONLY on
+/// the emit path (wired into `runnable_blockers` in `pipeline.rs`).
+pub fn check_generic_resolvable(module: &Module, src: &str, file: Option<&str>) -> Vec<Diagnostic> {
+    // Fast path (the overwhelmingly common case): no generic templates at all.
+    // A pure iterator scan with ZERO allocation — no `HashSet`, no per-fn param
+    // map, no body walk. The gate is then structurally inert (and byte-identity
+    // safe) for every non-generic / intrinsic / extern-C program, so the compile
+    // hot path is untouched.
+    let has_templates = module.items.iter().any(|item| {
+        matches!(item, Node::FnDef { type_params, .. } if !type_params.is_empty())
+    });
+    if !has_templates {
+        return Vec::new();
+    }
+    // Declared-generic-template set: IDENTICAL to the set the lowering registers
+    // (src/eval/lower.rs — `FnDef` with non-empty `type_params`).
+    let mut templates: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for item in &module.items {
+        if let Node::FnDef {
+            name, type_params, ..
+        } = item
+        {
+            if !type_params.is_empty() {
+                templates.insert(name.as_str());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for item in &module.items {
+        if let Node::FnDef { params, body, .. } = item {
+            // The enclosing fn's `param -> declared type` map — the SAME map
+            // Part-1's lowering seeds, so the gate's resolvability decision
+            // matches the lowering's monomorphization decision exactly.
+            let mut param_types: std::collections::HashMap<String, TypeAnn> =
+                std::collections::HashMap::new();
+            for p in params {
+                param_types.insert(p.name.clone(), p.ty.clone());
+            }
+            let ctx = GenCtx {
+                templates: &templates,
+                param_types: &param_types,
+                src,
+                file,
+            };
+            for stmt in body {
+                walk_generic_calls(stmt, &ctx, &mut out);
+            }
+        }
+    }
+    out
+}
+
+/// Recursive walk mirroring `lower::node_mentions_type_name`'s variant coverage,
+/// flagging each `Call` to a generic template that is not monomorphizable.
+fn walk_generic_calls(node: &Node, ctx: &GenCtx, out: &mut Vec<Diagnostic>) {
+    use Node as N;
+    match node {
+        N::Call { callee, args, span } => {
+            if ctx.templates.contains(callee.as_str())
+                && !crate::eval::lower::is_monomorphizable(args, ctx.param_types)
+            {
+                out.push(
+                    Diagnostic::error(
+                        PHASE,
+                        "lower::unresolved_generic",
+                        format!(
+                            "call to generic `{callee}` cannot be monomorphized: its argument's \
+                             concrete type is not inferable here, so the lowering would emit a \
+                             dangling `@{callee}` reference (an undefined symbol in the artifact)"
+                        ),
+                    )
+                    .with_span(Span::from_offsets(
+                        ctx.src,
+                        span.start(),
+                        span.end(),
+                        ctx.file,
+                    ))
+                    .with_help(GENERIC_HELP),
+                );
+            }
+            for a in args {
+                walk_generic_calls(a, ctx, out);
+            }
+        }
+        N::Let { value, .. } => walk_generic_calls(value, ctx, out),
+        N::Const { value, .. } => walk_generic_calls(value, ctx, out),
+        N::As { expr, .. } => walk_generic_calls(expr, ctx, out),
+        N::Block { stmts, .. } => stmts.iter().for_each(|s| walk_generic_calls(s, ctx, out)),
+        N::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            walk_generic_calls(cond, ctx, out);
+            then_branch
+                .iter()
+                .for_each(|s| walk_generic_calls(s, ctx, out));
+            if let Some(e) = else_branch {
+                e.iter().for_each(|s| walk_generic_calls(s, ctx, out));
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        N::While { cond, body, .. } => {
+            walk_generic_calls(cond, ctx, out);
+            body.iter().for_each(|s| walk_generic_calls(s, ctx, out));
+        }
+        N::Match {
+            scrutinee, arms, ..
+        } => {
+            walk_generic_calls(scrutinee, ctx, out);
+            arms.iter()
+                .for_each(|a| walk_generic_calls(&a.body, ctx, out));
+        }
+        N::Return { value, .. } => {
+            if let Some(v) = value {
+                walk_generic_calls(v, ctx, out);
+            }
+        }
+        N::Assign { value, .. } => walk_generic_calls(value, ctx, out),
+        N::FieldAssign {
+            receiver, value, ..
+        } => {
+            walk_generic_calls(receiver, ctx, out);
+            walk_generic_calls(value, ctx, out);
+        }
+        N::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
+            walk_generic_calls(receiver, ctx, out);
+            walk_generic_calls(index, ctx, out);
+            walk_generic_calls(value, ctx, out);
+        }
+        N::Paren(inner, _) | N::Neg { operand: inner, .. } | N::Ref { inner, .. } => {
+            walk_generic_calls(inner, ctx, out)
+        }
+        N::Binary { left, right, .. }
+        | N::Logical { left, right, .. }
+        | N::Bitwise { left, right, .. } => {
+            walk_generic_calls(left, ctx, out);
+            walk_generic_calls(right, ctx, out);
+        }
+        N::MethodCall { receiver, args, .. } => {
+            walk_generic_calls(receiver, ctx, out);
+            args.iter().for_each(|a| walk_generic_calls(a, ctx, out));
+        }
+        N::FieldAccess { receiver, .. } => walk_generic_calls(receiver, ctx, out),
+        N::IndexAccess {
+            receiver, index, ..
+        } => {
+            walk_generic_calls(receiver, ctx, out);
+            walk_generic_calls(index, ctx, out);
+        }
+        _ => {}
+    }
+}

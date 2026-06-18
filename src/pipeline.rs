@@ -325,8 +325,17 @@ pub fn compile_source_with_name(
     // Pure read-only walk; empty for an all-i64 program, so the mic@3 self-host
     // fixed point and the keystone stay byte-identical. Enforced only by the
     // `--emit-obj` / `--emit-shared` paths; inspection surfaces ignore it.
-    let runnable_blockers =
+    let mut runnable_blockers =
         crate::eval::abi_gate::check_runnable_lowerable(&module, source, source_name);
+    // Fail-closed on a generic call whose argument cannot be monomorphized — the
+    // lowering would otherwise leave a dangling bare-template reference, writing
+    // an EXIT=0 `.so` with an undefined symbol (a silent miscompile). Inert
+    // (empty) for any module with no generic templates, so byte-identity holds.
+    runnable_blockers.extend(crate::eval::abi_gate::check_generic_resolvable(
+        &module,
+        source,
+        source_name,
+    ));
 
     Ok(CompileProducts {
         ir,
