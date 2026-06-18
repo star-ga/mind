@@ -156,7 +156,11 @@ const GENERIC_HELP: &str = "a generic call monomorphizes only when its argument'
 
 struct GenCtx<'a> {
     templates: &'a std::collections::HashSet<&'a str>,
-    param_types: &'a std::collections::HashMap<String, TypeAnn>,
+    /// Enclosing-fn `param/let name -> declared/inferred scalar type`. Grows as
+    /// the forward body walk records each top-level Let (lockstep with lowering).
+    bindings: &'a std::collections::HashMap<String, TypeAnn>,
+    /// Every non-generic fn's declared scalar return type (`id(g(3))` resolution).
+    fn_returns: &'a std::collections::HashMap<String, TypeAnn>,
     src: &'a str,
     file: Option<&'a str>,
 }
@@ -167,7 +171,7 @@ struct GenCtx<'a> {
 /// the emit path (wired into `runnable_blockers` in `pipeline.rs`).
 pub fn check_generic_resolvable(module: &Module, src: &str, file: Option<&str>) -> Vec<Diagnostic> {
     // Fast path (the overwhelmingly common case): no generic templates at all.
-    // A pure iterator scan with ZERO allocation — no `HashSet`, no per-fn param
+    // A pure iterator scan with ZERO allocation — no `HashSet`, no per-fn binding
     // map, no body walk. The gate is then structurally inert (and byte-identity
     // safe) for every non-generic / intrinsic / extern-C program, so the compile
     // hot path is untouched.
@@ -181,35 +185,75 @@ pub fn check_generic_resolvable(module: &Module, src: &str, file: Option<&str>) 
     // Declared-generic-template set: IDENTICAL to the set the lowering registers
     // (src/eval/lower.rs — `FnDef` with non-empty `type_params`).
     let mut templates: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // `fn_returns`: each NON-generic fn's declared scalar return type — built by
+    // the SAME forward pass + filter the lowering's FN_RETURNS uses (same AST,
+    // same `mangle_suffix` scalar filter), so a nested-call arg resolves
+    // identically in the gate and the lowering (lockstep).
+    let mut fn_returns: std::collections::HashMap<String, TypeAnn> =
+        std::collections::HashMap::new();
     for item in &module.items {
         if let Node::FnDef {
-            name, type_params, ..
+            name,
+            type_params,
+            ret_type,
+            ..
         } = item
         {
             if !type_params.is_empty() {
                 templates.insert(name.as_str());
+            } else if let Some(rt) = ret_type
+                && crate::eval::lower::mangle_suffix(rt).is_some()
+            {
+                fn_returns.insert(name.clone(), rt.clone());
             }
         }
     }
     let mut out = Vec::new();
     for item in &module.items {
-        if let Node::FnDef { params, body, .. } = item {
-            // The enclosing fn's `param -> declared type` map — the SAME map
-            // Part-1's lowering seeds, so the gate's resolvability decision
-            // matches the lowering's monomorphization decision exactly.
-            let mut param_types: std::collections::HashMap<String, TypeAnn> =
+        if let Node::FnDef {
+            params,
+            body,
+            type_params,
+            ..
+        } = item
+        {
+            // A generic TEMPLATE is never lowered directly — only its concrete
+            // instances are (synthesized post-typecheck, lowered via the FnDef
+            // path where the type-params are concrete and the same Part-1
+            // resolution applies). So there is no directly-emitted body to check
+            // here; skip it. Checking a template body's `id(y)` over a type-param
+            // `y` would be a FALSE POSITIVE (it resolves at instantiation).
+            // deferred: an instance whose own inner generic call is unresolvable
+            // (e.g. a non-scalar local inside the instantiated body) is not caught
+            // by this module-level gate — rare (scalar instances' inner calls
+            // resolve); upgrade path: a lowering-time check in the mono drain.
+            if !type_params.is_empty() {
+                continue;
+            }
+            // `bindings`: the enclosing fn's params first (mirrors the lowering's
+            // seed), then grown by each top-level Let via the SHARED `bind_let`
+            // in the SAME forward order — so the gate's resolvability decision at
+            // every call site matches the lowering's monomorphization decision.
+            let mut bindings: std::collections::HashMap<String, TypeAnn> =
                 std::collections::HashMap::new();
             for p in params {
-                param_types.insert(p.name.clone(), p.ty.clone());
+                bindings.insert(p.name.clone(), p.ty.clone());
             }
-            let ctx = GenCtx {
-                templates: &templates,
-                param_types: &param_types,
-                src,
-                file,
-            };
             for stmt in body {
-                walk_generic_calls(stmt, &ctx, &mut out);
+                {
+                    let ctx = GenCtx {
+                        templates: &templates,
+                        bindings: &bindings,
+                        fn_returns: &fn_returns,
+                        src,
+                        file,
+                    };
+                    walk_generic_calls(stmt, &ctx, &mut out);
+                }
+                // Record a top-level Let's type AFTER walking its calls and
+                // BEFORE the next statement — identical helper + order to the
+                // lowering (lockstep). A no-op for non-Let statements.
+                crate::eval::lower::bind_let(&mut bindings, stmt, &fn_returns);
             }
         }
     }
@@ -223,7 +267,7 @@ fn walk_generic_calls(node: &Node, ctx: &GenCtx, out: &mut Vec<Diagnostic>) {
     match node {
         N::Call { callee, args, span } => {
             if ctx.templates.contains(callee.as_str())
-                && !crate::eval::lower::is_monomorphizable(args, ctx.param_types)
+                && !crate::eval::lower::is_monomorphizable(args, ctx.bindings, ctx.fn_returns)
             {
                 out.push(
                     Diagnostic::error(

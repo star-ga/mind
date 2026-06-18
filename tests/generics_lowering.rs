@@ -34,47 +34,98 @@ fn generic_fn_call_lowers_and_is_deterministic() {
     );
 }
 
-#[test]
-fn generic_call_with_variable_arg_monomorphizes() {
-    // CRITICAL #2 fix (Part 1): a generic called with a VARIABLE argument bound
-    // to a scalar parameter must monomorphize. Before, `id(n)` kept the bare
-    // `@id` name and the `.so` shipped an undefined symbol (EXIT=0 silent
-    // miscompile); now the enclosing fn's param type resolves the instance.
-    let src = "fn id<T>(x: T) -> T { x }\nfn use_it(n: i64) -> i64 { id(n) }";
+/// A generic call over `src` must MONOMORPHIZE: emit the `id$<suffix>` instance
+/// body AND record no `lower::unresolved_generic` blocker (0 fail-closed).
+// The 0-fail-closed shapes exercise fn-body `let` / `struct` / `as` which are
+// std-surface constructs, so these tests + helpers are gated on that feature
+// (the no-default-features lanes compile them out).
+#[cfg(feature = "std-surface")]
+fn resolves(src: &str, suffix: &str) {
+    let needle = format!("id${suffix}");
     let a = compile_source(src, &CompileOptions::default())
-        .expect("a generic call over a scalar parameter should compile");
+        .unwrap_or_else(|e| panic!("should compile: {e:?}\nsrc:\n{src}"));
     assert!(
-        emit_mic3(&a.ir).windows(6).any(|w| w == b"id$i64"),
-        "id(n) for n: i64 must monomorphize to a real `id$i64` body"
+        emit_mic3(&a.ir)
+            .windows(needle.len())
+            .any(|w| w == needle.as_bytes()),
+        "expected `{needle}` instance body emitted for:\n{src}"
     );
-    // The now-resolvable call must NOT be recorded as a runnable blocker.
     let p = compile_source_with_name(src, None, &CompileOptions::default())
         .expect("source parses + type-checks");
     assert!(
         !p.runnable_blockers
             .iter()
             .any(|d| d.code == "lower::unresolved_generic"),
-        "a resolvable generic call must not be gated: {:?}",
+        "a resolvable generic call must NOT be gated: {:?}\nsrc:\n{src}",
         p.runnable_blockers
     );
 }
 
-#[test]
-fn generic_call_unresolvable_fails_closed() {
-    // CRITICAL #2 fail-closed net (Part 2): a generic call whose argument type
-    // is NOT inferable in the bounded slice (here a Let-bound local) must be
-    // recorded as a runnable blocker — a loud file:line error on
-    // `--emit-shared` — instead of writing a broken `.so` with an undefined
-    // symbol. The source parses + type-checks (it is a valid program); only the
-    // RUNNABLE artifact is refused.
-    let src = "fn id<T>(x: T) -> T { x }\nfn use_it() -> i64 {\n  let z: i64 = 5\n  id(z)\n}";
+/// A genuinely-unresolvable generic call must FAIL-CLOSED: a `lower::unresolved_generic`
+/// runnable blocker (loud `--emit-shared` error), never a broken artifact.
+#[cfg(feature = "std-surface")]
+fn fails_closed(src: &str) {
     let p = compile_source_with_name(src, None, &CompileOptions::default())
         .expect("source parses + type-checks");
     assert!(
         p.runnable_blockers
             .iter()
             .any(|d| d.code == "lower::unresolved_generic"),
-        "an unresolvable generic call must be gated as a runnable blocker, got: {:?}",
+        "expected a fail-closed blocker, got: {:?}\nsrc:\n{src}",
         p.runnable_blockers
+    );
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn generic_call_resolves_every_well_typed_scalar_arg_shape() {
+    // CRITICAL #2 follow-up — 0 fail-closed for well-typed scalar programs. Every
+    // arg shape whose concrete scalar type is statically inferable must
+    // monomorphize (was: only literals + params; the rest silently dangled then,
+    // after the fail-closed net, errored loud — now they all resolve).
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn f(n: i64) -> i64 { id(n) }",
+        "i64",
+    ); // param
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn f() -> i64 { let z: i64 = 5\n id(z) }",
+        "i64",
+    ); // annotated let
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn f() -> i64 { let z = 5\n id(z) }",
+        "i64",
+    ); // inferred let
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn g(n: i64) -> i64 { n }\nfn f() -> i64 { id(g(3)) }",
+        "i64",
+    ); // nested call
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn f(a: i64, b: i64) -> i64 { id(a + b) }",
+        "i64",
+    ); // arithmetic
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn f(x: i64) -> i64 { id(x as i64) }",
+        "i64",
+    ); // cast
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn f(x: f64) -> f64 { id(x) }",
+        "f64",
+    ); // f64 param
+    // A generic that calls another generic, used at a concrete type, must NOT be
+    // falsely flagged (the template body is resolved at instantiation).
+    resolves(
+        "fn id<T>(x: T) -> T { x }\nfn wrap<U>(y: U) -> U { id(y) }\nfn f() -> i64 { wrap(5) }",
+        "i64",
+    );
+}
+
+#[cfg(feature = "std-surface")]
+#[test]
+fn generic_call_genuinely_unresolvable_fails_closed() {
+    // The fail-closed net still fires (correctly) when the argument's concrete
+    // scalar type genuinely cannot be inferred — a non-scalar (struct) local —
+    // so a broken `.so` is never written. Loud blocker, not a silent miscompile.
+    fails_closed(
+        "struct P { x: i64 }\nfn id<T>(x: T) -> T { x }\nfn f() -> i64 { let p = P { x: 1 }\n let q = id(p)\n 0 }",
     );
 }

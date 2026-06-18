@@ -85,6 +85,14 @@ thread_local! {
     /// Restored on scope exit via `ParamTypesGuard` so it never leaks across fns.
     static PARAM_TYPES: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
+    /// Generic-arg inference (0-fail-closed): every module fn's declared scalar
+    /// RETURN TypeAnn (`name -> ret`), so a generic call over a NESTED call
+    /// `id(g(3))` resolves to `g`'s return type. Populated once up-front in
+    /// `lower_to_ir` ONLY when the module declares generic templates (cleared +
+    /// left empty otherwise, so a non-generic module never reads/builds it and
+    /// its IR bytes stay byte-identical).
+    static FN_RETURNS: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// RAII guard restoring the previous `PARAM_TYPES` map when a fn's lowering
@@ -123,7 +131,9 @@ fn seed_param_types(params: &[ast::Param]) -> ParamTypesGuard {
 /// Short, deterministic mangle suffix for a concrete scalar type.
 /// Returns `None` for shapes outside the bounded slice (the call then lowers
 /// through the ordinary, non-monomorphized path — no behavior change).
-fn mangle_suffix(ty: &TypeAnn) -> Option<&'static str> {
+/// `pub(crate)` so the abi_gate fail-closed gate builds its `fn_returns` map with
+/// the IDENTICAL scalar filter the lowering uses (lockstep).
+pub(crate) fn mangle_suffix(ty: &TypeAnn) -> Option<&'static str> {
     match ty {
         TypeAnn::ScalarI64 => Some("i64"),
         TypeAnn::ScalarI32 => Some("i32"),
@@ -134,35 +144,68 @@ fn mangle_suffix(ty: &TypeAnn) -> Option<&'static str> {
     }
 }
 
-/// Infer the concrete scalar type of a call argument. Recognises literal
-/// `Int`/`Float` operands and a bare variable bound to an enclosing-fn scalar
-/// PARAMETER (via `param_types`); anything else returns `None` so the call falls
-/// back to the ordinary path. `pub(crate)` so the abi_gate fail-closed check can
-/// share this exact predicate (no drift between "the gate accepts" and "the
-/// lowering emits a body").
+/// Infer the concrete scalar type of a call argument so a generic call
+/// monomorphizes (`id(arg)` -> `id$<suffix>`). Recognises: literals; a bare
+/// variable bound to an enclosing-fn scalar PARAMETER or a top-level Let-local
+/// (via `bindings`); an explicit `as` cast (the target type); a nested call (the
+/// callee's declared return type, via `fn_returns`); arithmetic/bitwise over two
+/// same-typed operands; parenthesised/negated inner expressions. Anything else
+/// returns `None` so the call fail-closes rather than emitting a dangling
+/// reference. `pub(crate)` so the abi_gate fail-closed check shares this exact
+/// predicate — gate and lowering cannot drift.
 pub(crate) fn infer_concrete_arg_type(
     arg: &ast::Node,
-    param_types: &std::collections::HashMap<String, TypeAnn>,
+    bindings: &std::collections::HashMap<String, TypeAnn>,
+    fn_returns: &std::collections::HashMap<String, TypeAnn>,
 ) -> Option<TypeAnn> {
+    let scalar = |t: TypeAnn| -> Option<TypeAnn> { Some(t).filter(|t| mangle_suffix(t).is_some()) };
     match arg {
         ast::Node::Lit(Literal::Int(_), _) => Some(TypeAnn::ScalarI64),
         ast::Node::Lit(Literal::Float(_), _) => Some(TypeAnn::ScalarF64),
-        // Part 1: a bare variable bound to an enclosing-fn PARAMETER resolves to
-        // that param's declared scalar type, so `id(n)` for `n: i64` mono's to
-        // `id$i64`. Filtered by `mangle_suffix` so a Named/Tensor param yields
-        // None (the call then flows the ordinary path — no false instance).
-        // deferred: only enclosing-fn params resolve here; Let-bound locals and
-        // nested-call arg types fall to the abi_gate fail-closed net — upgrade
-        // path: track Let RHS types as they lower / resolve callee return types.
-        ast::Node::Lit(Literal::Ident(name), _) => param_types
+        // A bare variable bound to an enclosing-fn parameter OR a top-level
+        // Let-local resolves to its declared/inferred scalar type.
+        ast::Node::Lit(Literal::Ident(name), _) => bindings
             .get(name)
             .cloned()
             .filter(|t| mangle_suffix(t).is_some()),
-        ast::Node::Neg { operand, .. } => match operand.as_ref() {
-            ast::Node::Lit(Literal::Int(_), _) => Some(TypeAnn::ScalarI64),
-            ast::Node::Lit(Literal::Float(_), _) => Some(TypeAnn::ScalarF64),
-            _ => None,
-        },
+        // An explicit cast: the target type IS the concrete type (`id(x as i64)`).
+        ast::Node::As { ty, .. } => scalar(ty.clone()),
+        // A nested call: the callee's declared scalar return type (`id(g(3))`).
+        ast::Node::Call { callee, .. } => fn_returns
+            .get(callee)
+            .cloned()
+            .filter(|t| mangle_suffix(t).is_some()),
+        // Parenthesised / negated: the inner expression's type.
+        ast::Node::Paren(inner, _) | ast::Node::Neg { operand: inner, .. } => {
+            infer_concrete_arg_type(inner, bindings, fn_returns)
+        }
+        // Arithmetic / comparison over two same-typed operands. A comparison op
+        // yields `bool`; an arithmetic op yields the (shared) operand type. Mixed
+        // operand types are ambiguous to mangle -> None (fail-closed).
+        ast::Node::Binary {
+            op, left, right, ..
+        } => {
+            let l = infer_concrete_arg_type(left, bindings, fn_returns)?;
+            let r = infer_concrete_arg_type(right, bindings, fn_returns)?;
+            if l != r {
+                return None;
+            }
+            match op {
+                crate::ast::BinOp::Lt
+                | crate::ast::BinOp::Le
+                | crate::ast::BinOp::Gt
+                | crate::ast::BinOp::Ge
+                | crate::ast::BinOp::Eq
+                | crate::ast::BinOp::Ne => Some(TypeAnn::ScalarBool),
+                _ => Some(l),
+            }
+        }
+        // Bitwise (`& | ^ << >>`) yields the (shared) operand type.
+        ast::Node::Bitwise { left, right, .. } => {
+            let l = infer_concrete_arg_type(left, bindings, fn_returns)?;
+            let r = infer_concrete_arg_type(right, bindings, fn_returns)?;
+            if l == r { Some(l) } else { None }
+        }
         _ => None,
     }
 }
@@ -174,9 +217,36 @@ pub(crate) fn infer_concrete_arg_type(
 /// would leave as a dangling bare-template reference — they cannot drift.
 pub(crate) fn is_monomorphizable(
     args: &[ast::Node],
-    param_types: &std::collections::HashMap<String, TypeAnn>,
+    bindings: &std::collections::HashMap<String, TypeAnn>,
+    fn_returns: &std::collections::HashMap<String, TypeAnn>,
 ) -> bool {
-    args.len() == 1 && infer_concrete_arg_type(&args[0], param_types).is_some()
+    args.len() == 1 && infer_concrete_arg_type(&args[0], bindings, fn_returns).is_some()
+}
+
+/// Resolve and record a top-level `Let`'s binding type into `bindings` for
+/// generic-arg inference: the explicit annotation (when scalar) else the inferred
+/// type of the value expression. Non-scalar lets are not recorded (a generic call
+/// over them then fail-closes, in lockstep). THE single Let-handling
+/// implementation, called by BOTH the lowering and the abi_gate gate so they
+/// never drift. The RHS is resolved against the bindings BEFORE this insert, so a
+/// `let z = z` cannot see its own binding (matches SSA lowering order).
+pub(crate) fn bind_let(
+    bindings: &mut std::collections::HashMap<String, TypeAnn>,
+    let_node: &ast::Node,
+    fn_returns: &std::collections::HashMap<String, TypeAnn>,
+) {
+    if let ast::Node::Let {
+        name, ann, value, ..
+    } = let_node
+    {
+        let ty = match ann {
+            Some(a) if mangle_suffix(a).is_some() => Some(a.clone()),
+            _ => infer_concrete_arg_type(value, bindings, fn_returns),
+        };
+        if let Some(t) = ty {
+            bindings.insert(name.clone(), t);
+        }
+    }
 }
 
 /// If `callee` names a registered generic and the call's single argument has an
@@ -202,7 +272,9 @@ fn try_register_mono_instance(callee: &str, args: &[ast::Node]) -> Option<String
         if args.len() != 1 {
             return None;
         }
-        let concrete = PARAM_TYPES.with(|p| infer_concrete_arg_type(&args[0], &p.borrow()))?;
+        let concrete = PARAM_TYPES.with(|p| {
+            FN_RETURNS.with(|fr| infer_concrete_arg_type(&args[0], &p.borrow(), &fr.borrow()))
+        })?;
         let suffix = mangle_suffix(&concrete)?;
         let mangled = format!("{callee}${suffix}");
         ctx.requests
@@ -392,6 +464,33 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             {
                 if !type_params.is_empty() {
                     ctx.templates.insert(name.clone(), item.clone());
+                }
+            }
+        }
+    });
+    // Generic-arg inference pre-pass (0-fail-closed): record each NON-generic
+    // fn's declared scalar return type so a generic call over a NESTED call
+    // (`id(g(3))`) resolves to `g`'s return type. Reset each call (like MONO).
+    // Gated behind templates-present so a non-generic module never builds it —
+    // the byte-identity hot path executes zero extra work.
+    FN_RETURNS.with(|fr| {
+        let mut m = fr.borrow_mut();
+        m.clear();
+        if MONO.with(|c| !c.borrow().templates.is_empty()) {
+            for item in &module.items {
+                if let ast::Node::FnDef {
+                    name,
+                    ret_type,
+                    type_params,
+                    ..
+                } = item
+                {
+                    if type_params.is_empty()
+                        && let Some(rt) = ret_type
+                        && mangle_suffix(rt).is_some()
+                    {
+                        m.insert(name.clone(), rt.clone());
+                    }
                 }
             }
         }
@@ -1523,6 +1622,10 @@ fn lower_expr(
             // No-op (no allocation) unless the module declares templates; the
             // guard restores the prior map when this fn's body finishes lowering.
             let _param_types_guard = seed_param_types(params);
+            // Whether the module declares generic templates (computed once):
+            // gates the per-Let binding-type recording below so a non-generic
+            // module records nothing on its byte-identity hot path.
+            let gen_active = MONO.with(|c| !c.borrow().templates.is_empty());
 
             // Lower function body.
             //
@@ -1571,6 +1674,18 @@ fn lower_expr(
                             ),
                         };
                         fn_env.insert(name.clone(), id);
+                        // Generic-arg inference: record this top-level Let's
+                        // scalar type so a later `id(z)` over `z` monomorphizes.
+                        // Resolved AFTER the value lowers (the RHS cannot see its
+                        // own binding) and ONLY when templates are present —
+                        // exactly mirroring the abi_gate gate's forward walk
+                        // (lockstep). No-op for a non-generic module.
+                        if gen_active {
+                            PARAM_TYPES.with(|p| {
+                                FN_RETURNS
+                                    .with(|fr| bind_let(&mut p.borrow_mut(), stmt, &fr.borrow()))
+                            });
+                        }
                         // P0f Step 1: track fn-scoped var→struct binding for
                         // FieldAccess inside this fn body.
                         #[cfg(feature = "std-surface")]

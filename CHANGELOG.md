@@ -26,22 +26,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dlopen → "undefined symbol: id"): the monomorphizer inferred a concrete type
   only from int/float LITERALS, so a variable arg left a dangling bare-template
   reference and the `id$T` body was never emitted. Two-part fix:
-  - **Part 1 (correct):** the monomorphizer now resolves a variable argument
-    bound to an enclosing-fn scalar parameter (a `PARAM_TYPES` map seeded during
-    FnDef lowering, gated behind the templates-present fast path so a non-generic
-    module is byte-identical), so `id(n)` for `n: i64` instantiates `id$i64` and
-    runs (`use_it(7) == 7`).
-  - **Part 2 (fail-closed net):** any generic call whose argument still cannot be
-    monomorphized (e.g. a Let-bound local) is now a LOUD `--emit-shared` error
-    with a file:line span (`lower::unresolved_generic`, RC≠0, no `.so` written)
-    instead of a broken artifact. The gate (`abi_gate::check_generic_resolvable`)
-    keys on the declared-generic-template set — EMPTY for every non-generic /
-    intrinsic / extern-C program — so it has ZERO false positives by construction,
-    and shares the one `is_monomorphizable` predicate with the lowering (gate and
-    codegen cannot drift). Keystone 7/7 + canaries 8/8 byte-identical (0 templates
-    → inert); the full no-default-features test matrix (autodiff / mlir-lowering /
-    cpu-buffers / std-surface) passes. New `tests/generics_lowering.rs` cases gate
-    both the variable-arg success and the fail-closed path.
+  - **Part 1 (correct) — 0 fail-closed for well-typed scalar programs:** the
+    monomorphizer resolves a generic argument from EVERY statically-inferable
+    scalar shape, not just literals/params — an enclosing-fn parameter, a
+    top-level Let-local (annotated or inferred), a nested call's declared return
+    type (`id(g(3))`), an arithmetic/bitwise expression (`id(a + b)`), and an
+    `as` cast (`id(x as i64)`). A `BINDINGS` map (params seeded at FnDef lowering,
+    grown per top-level Let via the shared `bind_let`) plus an `FN_RETURNS`
+    pre-pass feed the one `infer_concrete_arg_type` predicate. All gated behind
+    the templates-present fast path, so a non-generic module is byte-identical.
+    A well-typed scalar generic call therefore NEVER reaches the fail-closed net.
+  - **Part 2 (fail-closed net):** a generic call whose argument genuinely cannot
+    be monomorphized (a NON-scalar local — struct/tensor/array) is a LOUD
+    `--emit-shared` error with a file:line span (`lower::unresolved_generic`,
+    RC≠0, no `.so` written) instead of a broken artifact. The gate
+    (`abi_gate::check_generic_resolvable`) keys on the declared-generic-template
+    set — EMPTY for every non-generic / intrinsic / extern-C program — so it has
+    ZERO false positives by construction; it skips generic-TEMPLATE bodies (only
+    their concrete instances are lowered, where type-params resolve), and rebuilds
+    the IDENTICAL `bindings`/`fn_returns` maps from the same AST in the same
+    forward order, sharing the one `is_monomorphizable`/`bind_let` predicate with
+    the lowering (gate and codegen cannot drift). Keystone 7/7 + canaries 8/8
+    byte-identical (0 templates → inert); the full no-default-features matrix
+    passes. `tests/generics_lowering.rs` gates every resolvable shape + the
+    genuinely-unresolvable fail-closed case.
 
 - **Struct field populated from a narrow (i32/u32) SSA value now lowers.** The
   natural `P { x: a }` for `a: i32` failed in v0.9.0: the generic `Instr::Call`
