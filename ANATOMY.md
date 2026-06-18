@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2860 | **Est. tokens:** ~6,935,691
-**Generated:** 2026-06-18 14:57 UTC
+**Files:** 2861 | **Est. tokens:** ~6,937,503
+**Generated:** 2026-06-18 15:16 UTC
 
 ## Token Budget Guide
 
@@ -383,10 +383,10 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~17,909 |
-| `src/ir/` | 4 | ~24,112 |
+| `src/ir/` | 4 | ~24,415 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~44,353 |
+| `src/ir/compact/v3/` | 4 | ~44,432 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,197 |
 | `src/mlir/` | 3 | ~5,415 |
@@ -403,7 +403,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 185 | ~328,770 |
+| `tests/` | 186 | ~330,200 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3745,11 +3745,11 @@
 - `emit.rs` (~10545 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~13622 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~9330 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~9409 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~9484 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~9787 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3957,6 +3957,7 @@
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `emit_ir_for_loop.rs` (~308 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
+- `enum_match_run.rs` (~1430 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~924 tok, large) — Copyright 2025 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.

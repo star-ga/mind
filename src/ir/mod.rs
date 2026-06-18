@@ -802,6 +802,21 @@ pub struct IRModule {
     /// artifacts are unaffected.
     #[cfg(feature = "std-surface")]
     pub enum_variant_tags: std::collections::BTreeMap<String, i64>,
+    /// Names of enums that carry a payload on at least one variant ("boxed"
+    /// enums, e.g. `Option`/`Result`). For a boxed enum EVERY constructor —
+    /// including its FIELDLESS variants — lowers to the uniform 2-field heap
+    /// record `[tag @ +0, payload @ +8]` (a fieldless variant stores `0` in the
+    /// payload slot), so a `match` can always read the tag with
+    /// `__mind_load_i64(scrutinee + 0)`. Without this uniformity a fieldless
+    /// variant lowered to a BARE ordinal while a payload sibling lowered to a
+    /// heap pointer, and the match's tag-load dereferenced the bare ordinal as
+    /// an address (`Opt::None` → load `*1`) → SEGFAULT. A purely fieldless
+    /// (C-like) enum is NOT in this set and keeps the bare-ordinal lowering, so
+    /// fieldless matches are byte-identical. Pure lowering-only side-table like
+    /// `enum_variant_tags`: never serialised into mic@3, so the wire format and
+    /// byte-identity oracle are unaffected (the keystone has no enums).
+    #[cfg(feature = "std-surface")]
+    pub boxed_enums: std::collections::BTreeSet<String>,
     /// RFC 0012 §5.1 — function-ABI signature side-table for deterministic
     /// scalar float codegen.
     ///
@@ -847,6 +862,8 @@ impl IRModule {
             repr_c_structs: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             enum_variant_tags: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            boxed_enums: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]

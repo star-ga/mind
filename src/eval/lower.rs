@@ -685,6 +685,13 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                     let path = format!("{name}::{}", variant.name);
                     ir.enum_variant_tags.insert(path, ordinal as i64);
                 }
+                // A "boxed" enum carries a payload on ≥1 variant. Record it so
+                // EVERY constructor of this enum (including its fieldless
+                // variants) lowers to the uniform 2-field heap record, keeping
+                // the match's `__mind_load_i64(scrutinee + 0)` tag-read valid.
+                if variants.iter().any(|v| !v.payload.is_empty()) {
+                    ir.boxed_enums.insert(name.clone());
+                }
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, 0));
                 ir.instrs.push(Instr::Output(id));
@@ -1158,6 +1165,18 @@ fn lower_expr(
             // the `EnumDef` was lowered.
             #[cfg(feature = "std-surface")]
             if let Some(tag) = ir.enum_variant_tags.get(name).copied() {
+                // A FIELDLESS variant of a BOXED enum (one with a payload
+                // sibling, e.g. `Opt::None`) must lower to the SAME 2-field heap
+                // record `[tag, 0]` its payload siblings use, so the match's
+                // `__mind_load_i64(scrutinee + 0)` tag-read dereferences a valid
+                // record instead of a bare ordinal (`*1` → SEGFAULT). A purely
+                // fieldless (C-like) enum is not boxed and keeps the bare tag.
+                let enum_name = name.rsplit_once("::").map(|(e, _)| e);
+                if enum_name.is_some_and(|e| ir.boxed_enums.contains(e)) {
+                    let zero = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(zero, 0));
+                    return emit_boxed_enum_record(ir, tag, zero);
+                }
                 let id = ir.fresh();
                 ir.instrs.push(Instr::ConstI64(id, tag));
                 return id;
@@ -1580,6 +1599,11 @@ fn lower_expr(
                 // a variant referenced inside a fn body (as a value or a match
                 // arm) resolves to its tag rather than the placeholder 0.
                 fn_ir.enum_variant_tags = ir.enum_variant_tags.clone();
+                // Inherit the boxed-enum set so a fieldless variant of a
+                // payload-carrying enum constructed inside a fn body lowers to
+                // the uniform heap record (not a bare ordinal the match would
+                // dereference as a pointer).
+                fn_ir.boxed_enums = ir.boxed_enums.clone();
                 // Width-aware struct ABI: inherit the per-struct field-type table
                 // so StructLit/FieldAccess/FieldAssign inside a fn body compute
                 // the canonical offset/width (sub-i64 fields), not the legacy
@@ -2180,59 +2204,9 @@ fn lower_expr(
                     // carry exactly one payload slot; additional args are a
                     // type error elsewhere and ignored here.
                     let payload = lower_expr(&args[0], ir, env, struct_env, receiver_types);
-
-                    // bytes = 8 * 2 — two i64 slots: tag + payload. Emit
-                    // const*const*Mul to mirror StructLit's heap-record build.
-                    let eight = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(eight, 8));
-                    let count = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(count, 2));
-                    let bytes = ir.fresh();
-                    ir.instrs.push(Instr::BinOp {
-                        dst: bytes,
-                        op: BinOp::Mul,
-                        lhs: eight,
-                        rhs: count,
-                    });
-
-                    // addr = __mind_alloc(bytes)
-                    let addr = ir.fresh();
-                    ir.instrs.push(Instr::Call {
-                        dst: addr,
-                        name: "__mind_alloc".to_string(),
-                        args: vec![bytes],
-                    });
-
-                    // __mind_store_i64(addr + 0, tag)
-                    let tag_id = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(tag_id, tag));
-                    let store_tag = ir.fresh();
-                    ir.instrs.push(Instr::Call {
-                        dst: store_tag,
-                        name: "__mind_store_i64".to_string(),
-                        args: vec![addr, tag_id],
-                    });
-
-                    // payload_addr = addr + 8
-                    let offset = ir.fresh();
-                    ir.instrs.push(Instr::ConstI64(offset, 8));
-                    let payload_addr = ir.fresh();
-                    ir.instrs.push(Instr::BinOp {
-                        dst: payload_addr,
-                        op: BinOp::Add,
-                        lhs: addr,
-                        rhs: offset,
-                    });
-
-                    // __mind_store_i64(payload_addr, payload)
-                    let store_payload = ir.fresh();
-                    ir.instrs.push(Instr::Call {
-                        dst: store_payload,
-                        name: "__mind_store_i64".to_string(),
-                        args: vec![payload_addr, payload],
-                    });
-
-                    return addr;
+                    // Build the uniform 2-field record `[tag, payload]` (shared
+                    // with the fieldless boxed-enum constructor below).
+                    return emit_boxed_enum_record(ir, tag, payload);
                 }
             }
             let arg_ids: Vec<ValueId> = args
@@ -2267,7 +2241,7 @@ fn lower_expr(
         ast::Node::Match {
             scrutinee, arms, ..
         } => {
-            match desugar_match_to_if(scrutinee, arms, &ir.enum_variant_tags) {
+            match desugar_match_to_if(scrutinee, arms, &ir.enum_variant_tags, &ir.boxed_enums) {
                 Some(if_node) => lower_expr(&if_node, ir, env, struct_env, receiver_types),
                 None => {
                     // Unsupported pattern kind (enum variant / non-int
@@ -3377,6 +3351,64 @@ fn collect_alloc_ids(instrs: &[Instr], out: &mut Vec<crate::ir::ValueId>) {
     }
 }
 
+/// Emit the uniform boxed-enum heap record `[tag @ +0, payload @ +8]` (two i64
+/// slots) and return its address. Used by BOTH the payload-carrying constructor
+/// (`Opt::Some(v)`) and the fieldless constructor of a boxed enum (`Opt::None`,
+/// payload slot = `0`), so every variant of a boxed enum has the IDENTICAL
+/// record shape and a `match` can always read the tag with
+/// `__mind_load_i64(addr + 0)`. The instruction sequence (`const 8`, `const 2`,
+/// `mul`, `__mind_alloc`, `store tag`, `add 8`, `store payload`) mirrors the
+/// StructLit heap-record build — no new `Instr`/intrinsic/ABI.
+#[cfg(feature = "std-surface")]
+fn emit_boxed_enum_record(ir: &mut IRModule, tag: i64, payload: ValueId) -> ValueId {
+    // bytes = 8 * 2 — two i64 slots (tag + payload).
+    let eight = ir.fresh();
+    ir.instrs.push(Instr::ConstI64(eight, 8));
+    let count = ir.fresh();
+    ir.instrs.push(Instr::ConstI64(count, 2));
+    let bytes = ir.fresh();
+    ir.instrs.push(Instr::BinOp {
+        dst: bytes,
+        op: BinOp::Mul,
+        lhs: eight,
+        rhs: count,
+    });
+    // addr = __mind_alloc(bytes)
+    let addr = ir.fresh();
+    ir.instrs.push(Instr::Call {
+        dst: addr,
+        name: "__mind_alloc".to_string(),
+        args: vec![bytes],
+    });
+    // __mind_store_i64(addr + 0, tag)
+    let tag_id = ir.fresh();
+    ir.instrs.push(Instr::ConstI64(tag_id, tag));
+    let store_tag = ir.fresh();
+    ir.instrs.push(Instr::Call {
+        dst: store_tag,
+        name: "__mind_store_i64".to_string(),
+        args: vec![addr, tag_id],
+    });
+    // payload_addr = addr + 8
+    let offset = ir.fresh();
+    ir.instrs.push(Instr::ConstI64(offset, 8));
+    let payload_addr = ir.fresh();
+    ir.instrs.push(Instr::BinOp {
+        dst: payload_addr,
+        op: BinOp::Add,
+        lhs: addr,
+        rhs: offset,
+    });
+    // __mind_store_i64(payload_addr, payload)
+    let store_payload = ir.fresh();
+    ir.instrs.push(Instr::Call {
+        dst: store_payload,
+        name: "__mind_store_i64".to_string(),
+        args: vec![payload_addr, payload],
+    });
+    addr
+}
+
 /// "finish MIND" Step 1/2: desugar a `match` expression into a right-nested
 /// chain of `ast::Node::If` so the existing branching `If` lowering executes
 /// the match (instead of evaluating every arm unconditionally).
@@ -3402,6 +3434,7 @@ fn desugar_match_to_if(
     scrutinee: &ast::Node,
     arms: &[ast::MatchArm],
     enum_tags: &std::collections::BTreeMap<String, i64>,
+    boxed_enums: &std::collections::BTreeSet<String>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
     // An arm body written with braces (`1 => { x = 100 }`) parses to a single
@@ -3460,9 +3493,19 @@ fn desugar_match_to_if(
     // exactly the synthetic-let shape the terminal `Ident` catch-all above
     // already uses. Pure fieldless (C-like) enums keep comparing the bare
     // scrutinee value, so this never perturbs Step-2 fieldless matches.
-    let scrutinee_carries_payload = arms
-        .iter()
-        .any(|a| matches!(&a.pattern, ast::Pattern::EnumVariant { args, .. } if !args.is_empty()));
+    // The scrutinee is a boxed heap record when EITHER an arm binds a payload
+    // (`Some(v)`) OR the matched enum is in `boxed_enums` (so even a match that
+    // names ONLY fieldless variants of a boxed enum — e.g. `Res::Err`/`Res::Ok`
+    // with no binding — loads the tag from the record rather than comparing the
+    // record POINTER against an ordinal, which would never match). A purely
+    // fieldless enum is not boxed, so its match still compares the bare value.
+    let scrutinee_carries_payload = arms.iter().any(|a| match &a.pattern {
+        ast::Pattern::EnumVariant { args, .. } if !args.is_empty() => true,
+        ast::Pattern::EnumVariant { path, .. } => path
+            .rsplit_once("::")
+            .is_some_and(|(e, _)| boxed_enums.contains(e)),
+        _ => false,
+    });
 
     // Build the comparison LHS node: for a payload-carrying scrutinee this is
     // `__mind_load_i64(scrutinee + 0)` (mirrors the FieldAccess +0 fast path,
