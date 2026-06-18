@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`if`/`while` on an integer condition branches on non-zero, not the low bit.**
+  A non-`i1` condition was `arith.trunci`'d to i1 (testing only the LOW BIT), so an
+  even non-zero value branched FALSE — `if 2 { … }` ran the `else`, and a `while c`
+  countdown skipped even iterations (`pick(2, 10, 20)` returned `20` instead of
+  `10`). It now compares `arith.cmpi "ne" %cond, 0`. An already-`i1` comparison
+  result is unaffected (it never took the `trunci` path), so keystone 7/7 +
+  cross-substrate canaries 8/8 stay byte-identical. New `tests/cond_truthiness.rs`.
+
 - **Generic call with a non-literal argument no longer writes a broken artifact
   (silent miscompile — P1.1).** `id(n)` for a variable `n` returned EXIT=0 from
   `--emit-shared` but produced a `.so` with an UNDEFINED symbol (`nm -D` → `U id`;
