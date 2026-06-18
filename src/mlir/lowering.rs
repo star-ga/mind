@@ -2589,8 +2589,12 @@ impl LoweringContext {
                     ));
                 } else {
                     let cond_name = substitute_single_id(cond_id.0, &head_args);
+                    // A non-i1 condition is TRUE iff non-zero — compare against 0
+                    // (NOT `trunci` to i1, which tests only the LOW BIT, so an even
+                    // non-zero value like `2`/`4` would wrongly branch false).
+                    self.emit_line(&format!("    %cond_zero_{lbl} = arith.constant 0 : i64"));
                     self.emit_line(&format!(
-                        "    %cond_bool_{lbl} = arith.trunci {cond_name} : i64 to i1"
+                        "    %cond_bool_{lbl} = arith.cmpi \"ne\", {cond_name}, %cond_zero_{lbl} : i64"
                     ));
                     self.emit_line(&format!(
                         "    cf.cond_br %cond_bool_{lbl}, ^while_body_{lbl}{body_arg_pass}, ^while_after_{lbl}{after_arg_pass}"
@@ -3059,9 +3063,12 @@ impl LoweringContext {
                         cond_id.0
                     ));
                 } else {
-                    // Plain i64 → truncate to i1 first.
+                    // Plain i64 → TRUE iff non-zero. Compare against 0, NOT
+                    // `trunci` to i1 (which tests only the low bit, so an even
+                    // non-zero value like `2`/`4` would wrongly branch false).
+                    self.emit_line(&format!("    %cond_zero_{lbl} = arith.constant 0 : i64"));
                     self.emit_line(&format!(
-                        "    %cond_i1_{lbl} = arith.trunci %{} : i64 to i1",
+                        "    %cond_i1_{lbl} = arith.cmpi \"ne\", %{}, %cond_zero_{lbl} : i64",
                         cond_id.0
                     ));
                     self.emit_line(&format!(
