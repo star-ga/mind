@@ -20,6 +20,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A wildcard payload `match` arm (`Some(_)`) now lowers; multi-field / nested
+  enum shapes fail loud instead of silently miscompiling.** Two more enum-match
+  silent miscompiles (no error, no crash, wrong value): `match o { Opt::Some(_)
+  => 1, Opt::None => 0 }` returned `0` for BOTH (the wildcard payload bailed the
+  desugar to a sequential fallback that returns the last arm), and a multi-field
+  variant dropped/ignored fields — `Pair::P(10, 20)` constructed `[tag, 10]`
+  (second field lost) and `match p { Pair::P(a, b) => a + b, … }` returned the
+  wrong arm. Fix: the match desugar now handles a single `Wildcard` payload
+  sub-pattern (discriminate by tag, bind nothing), so `Some(_)` RUNS; and a new
+  fail-closed `abi_gate` (`check_match_runnable`) flags a multi-field constructor
+  (`lower::enum_multi_field_construct`) and a multi-field/nested match arm
+  (`lower::enum_match_unsupported_payload`) on the emit path, so v1's
+  single-field-payload limit is a loud file:line error rather than a wrong `.so`.
+  Inert for any module with no payload enum (keystone 7/7 + cross-substrate 8/8
+  byte-identical). New runtime + gate cases in `tests/enum_match_run.rs` and
+  `tests/enum_soundness.rs`.
+
 - **`match` on an Option/Result-shaped enum no longer SEGFAULTS — fieldless and
   payload variants now share one heap layout.** A payload constructor
   (`Opt::Some(42)`) lowered to a 2-field heap record `[tag @ +0, payload @ +8]`,
