@@ -20,6 +20,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Struct field populated from a narrow (i32/u32) SSA value now lowers.** The
+  natural `P { x: a }` for `a: i32` failed in v0.9.0: the generic `Instr::Call`
+  arm rejected the non-i64 argument to `__mind_store_i32` *before* its handler
+  ran, and the handler then blind-`trunc`'d the value assuming i64 (invalid MLIR
+  for an already-narrow value). The narrow mem-intrinsics are now exempt from the
+  blanket i64-arg rejection, and the stored value is coerced from its real
+  physical width (`trunc`/`sext`/`zext` as needed; an i64 value still `trunc`s, so
+  the existing i32-intrinsic path is byte-identical). This also closes the
+  ABI-gate inconsistency the audit flagged — a gate-clean struct-lit now genuinely
+  lowers instead of hard-erroring late in MLIR with no span. New
+  `tests/struct_narrow_field.rs` gate (i32 field + u32 zero-extended field);
+  keystone 7/7 and cross-substrate canaries 8/8 byte-identical.
+
 - **Narrow (i32/u32/bool) inter-function call ABI — narrow params/returns now
   lower across a call boundary.** The generic `func.call` arm hardcoded
   `(i64..) -> i64`, so any narrow-typed param or return on a function that was
