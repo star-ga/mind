@@ -126,9 +126,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Integer division-by-zero is now deterministic (`x / 0 == 0`, `x % 0 == 0`).**
   x86 `idiv` by 0 raises `#DE` (SIGFPE) while AArch64 `sdiv` returns 0 — a hard
   cross-substrate divergence (the last integer-determinism hole). The signed-div
-  guard now substitutes divisor 1 on divisor-`0` as well as `INT_MIN/-1` (avoiding
-  the trap) and forces the RESULT to 0 when the divisor was 0, so both substrates
-  agree. Provisional total semantics (`0`, the conventional non-crashing choice;
+  guard (both the i64 arm and the narrow `i32` arm) now substitutes divisor 1 on
+  divisor-`0` as well as `INT_MIN/-1` (avoiding the trap) and forces the RESULT to
+  0 when the divisor was 0, so both substrates agree. Provisional total semantics (`0`, the conventional non-crashing choice;
   revisitable to a deterministic trap via the spec). Elided when the divisor is a
   proven constant that is neither `-1` nor `0`, so constant divisions keep their
   single-op lowering — keystone 7/7 + canaries 8/8 byte-identical, criterion
