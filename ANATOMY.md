@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2857 | **Est. tokens:** ~6,926,531
-**Generated:** 2026-06-18 08:41 UTC
+**Files:** 2857 | **Est. tokens:** ~6,929,231
+**Generated:** 2026-06-18 11:25 UTC
 
 ## Token Budget Guide
 
@@ -367,7 +367,7 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~17,092 |
+| `src/` | 7 | ~17,209 |
 | `src/ast/` | 1 | ~6,611 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 2 | ~25,052 |
@@ -378,7 +378,7 @@
 | `src/diagnostics/` | 1 | ~2,230 |
 | `src/distributed/` | 6 | ~7,433 |
 | `src/doc/` | 3 | ~10,474 |
-| `src/eval/` | 12 | ~49,977 |
+| `src/eval/` | 12 | ~52,023 |
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
@@ -403,7 +403,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 182 | ~324,347 |
+| `tests/` | 182 | ~324,884 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3692,7 +3692,7 @@
 - `mod.rs` (~6874 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/eval/`
 
-- `abi_gate.rs` (~1543 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
+- `abi_gate.rs` (~3589 tok, huge) — Runnable-artifact ABI gate (release-readiness P1.1).
 - `autodiff.rs` (~14268 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~2397 tok, huge) — Copyright 2025 STARGA Inc.
 - `ir_interp.rs` (~3818 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3796,7 +3796,7 @@
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `pipeline.rs` (~4120 tok, huge) — Copyright 2025 STARGA Inc.
+- `pipeline.rs` (~4237 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
 - `mod.rs` (~18439 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3978,7 +3978,7 @@
 - `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6574 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
-- `generics_lowering.rs` (~370 tok, medium) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
+- `generics_lowering.rs` (~907 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
