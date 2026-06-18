@@ -307,3 +307,107 @@ fn classify(x: i64) -> i64 {
         check_codes(src)
     );
 }
+
+// ── HOLE 3: match arm scalar-class soundness (audit Finding 19) ───────────────
+//
+// A match arm bound its payload sub-pattern at the SCRUTINEE (enum) type, not
+// the declared variant payload type, so an arm using the payload and a
+// differently-classed sibling arm compiled — e.g. `E::A(x) => x` (i64) next to
+// `E::B => 1.5` (f64). Payload sub-patterns now bind at their declared type and
+// sibling arms must agree on scalar CLASS (int vs float), emitting
+// `match::arm_mismatch` on a cross-class mix. Width differences inside one class
+// (i32 literal vs i64 payload) stay compatible — both are i64-backed — so the
+// `Opt::Some(v) => v, Opt::None => 0` shape must NOT be flagged.
+
+#[test]
+fn match_arm_class_mismatch_int_vs_float_errors() {
+    // x binds at the declared i64 payload; the sibling arm is a float literal.
+    let src = r#"
+enum E {
+    A(i64),
+    B,
+}
+
+fn pick(e: E) -> i64 {
+    match e {
+        E::A(x) => x,
+        E::B => 1.5,
+    }
+}
+"#;
+    assert!(
+        has_code(src, "match::arm_mismatch"),
+        "an int payload arm vs a float arm must emit match::arm_mismatch; got {:?}",
+        check_codes(src)
+    );
+}
+
+#[test]
+fn match_arm_class_mismatch_float_payload_vs_int_errors() {
+    // v binds at the declared f64 payload; the sibling arm is an int literal.
+    let src = r#"
+enum F {
+    X(f64),
+    Y,
+}
+
+fn pick(f: F) -> f64 {
+    match f {
+        F::X(v) => v,
+        F::Y => 0,
+    }
+}
+"#;
+    assert!(
+        has_code(src, "match::arm_mismatch"),
+        "a float payload arm vs an int arm must emit match::arm_mismatch; got {:?}",
+        check_codes(src)
+    );
+}
+
+#[test]
+fn match_arm_same_class_int_payload_and_int_literal_passes() {
+    // THE false-positive guard: v binds at i64, the None arm is an i32 literal
+    // `0`. Both are the integer class (both i64-backed) — must NOT be flagged.
+    let src = r#"
+enum Opt {
+    Some(i64),
+    None,
+}
+
+fn probe(o: Opt) -> i64 {
+    match o {
+        Opt::Some(v) => v,
+        Opt::None => 0,
+    }
+}
+"#;
+    assert!(
+        !has_code(src, "match::arm_mismatch"),
+        "an int payload + int literal match must not be flagged; got {:?}",
+        check_codes(src)
+    );
+}
+
+#[test]
+fn match_arm_same_class_float_payload_and_float_literal_passes() {
+    // Both arms are the float class (f64 payload + float literal) — accepted.
+    let src = r#"
+enum F {
+    X(f64),
+    Y,
+}
+
+fn pick(f: F) -> f64 {
+    match f {
+        F::X(v) => v,
+        F::Y => 1.5,
+    }
+}
+"#;
+    assert!(
+        !has_code(src, "match::arm_mismatch"),
+        "a float payload + float literal match must not be flagged; got {:?}",
+        check_codes(src)
+    );
+}

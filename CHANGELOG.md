@@ -20,6 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `match` arm now binds its payload at the declared variant type, and sibling
+  arms must agree on scalar CLASS.** A payload sub-pattern (`E::A(x) => …`) was
+  bound at the SCRUTINEE (enum) type, not `x`'s declared payload type, so an arm
+  using the payload and a differently-classed sibling arm type-checked — e.g.
+  `match e { E::A(x) => x, E::B => 1.5 }` mixed an `i64` payload with an `f64`
+  literal and compiled (an unsound int/float join). Match arms now bind each
+  positional payload sub-pattern at its declared `TypeAnn` (via a per-module
+  `Enum::Variant → [TypeAnn]` registry installed alongside the exhaustiveness
+  registry) and compare sibling arms by scalar class (int `{i32,i64,bool}` vs
+  float `{f32,f64}` vs tensor vs gradmap) instead of exact `ValueType`. A
+  cross-class mix is a hard `match::arm_mismatch` error surfaced from function
+  bodies; intra-class width differences (an `i64` payload next to an `i32` literal
+  `0`, both i64-backed) stay compatible, so the legitimate `Opt::Some(v) => v,
+  Opt::None => 0` shape is never flagged. Falls back to the scrutinee type when
+  the enum/variant/payload is unresolvable (imported enum, `Named` payload), the
+  same defer discipline as the exhaustiveness check. Keystone has zero enums, so
+  the `EnumVariant` binding path never fires there — 7/7 + cross-substrate 8/8
+  stay byte-identical. New cases in `tests/intra_module_call_arity.rs`.
+
 - **Returning an enum handle where a bare scalar is declared is now a loud error,
   not a leaked pointer.** A fn declared `-> i64` that returned a payload-carrying
   enum constructor on some path (`if b == 0 { return Res::Err(0) }`) silently

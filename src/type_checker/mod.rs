@@ -102,6 +102,14 @@ const CALL_ARITY_CODE: &str = "E2005";
 /// cannot be exhaustive without a wildcard and are not flagged.
 const MATCH_NONEXHAUSTIVE_CODE: &str = "match::non_exhaustive";
 
+/// Match arm SCALAR-CLASS mismatch (Finding 19): two arms of one `match`
+/// resolve to different scalar classes (e.g. an integer tag arm and a float
+/// payload arm) once payload sub-patterns bind at their declared variant type.
+/// This is a real type error surfaced from function bodies, distinct from the
+/// demoted exact-width `E2001` mismatch (which i32-vs-i64 siblings trigger and
+/// which is intentionally tolerated as both are i64-backed).
+const MATCH_ARM_MISMATCH_CODE: &str = "match::arm_mismatch";
+
 /// True for the RFC 0012 shape-diagnostic codes. Used to keep the
 /// additive FnDef-body shape pass from contributing non-shape errors
 /// (see the FnDef arm in `check_module_types_in_file`).
@@ -1723,10 +1731,24 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 if let crate::ast::Pattern::Ident(bind_name) = &arm.pattern {
                     arm_env.insert(bind_name.clone(), scrutinee_ty.clone());
                 }
-                if let crate::ast::Pattern::EnumVariant { args, .. } = &arm.pattern {
-                    for sub in args {
+                if let crate::ast::Pattern::EnumVariant { path, args } = &arm.pattern {
+                    // Finding 19: bind each payload sub-pattern at its DECLARED
+                    // payload type (not the scrutinee/enum type), so an arm body
+                    // using the payload is checked at the right type and a
+                    // cross-arm class mismatch surfaces. Fall back to the scrutinee
+                    // type when the enum/variant/payload is unresolvable (imported
+                    // enum, Named payload, arity mismatch) — same defer discipline
+                    // as `check_match_exhaustiveness`.
+                    let payloads =
+                        split_enum_variant_path(path).and_then(|(e, v)| variant_payload_of(&e, &v));
+                    for (i, sub) in args.iter().enumerate() {
                         if let crate::ast::Pattern::Ident(sub_name) = sub {
-                            arm_env.insert(sub_name.clone(), scrutinee_ty.clone());
+                            let bind_ty = payloads
+                                .as_ref()
+                                .and_then(|p| p.get(i))
+                                .and_then(valuetype_from_ann)
+                                .unwrap_or_else(|| scrutinee_ty.clone());
+                            arm_env.insert(sub_name.clone(), bind_ty);
                         }
                     }
                 }
@@ -1734,10 +1756,18 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     Ok((arm_ty, _)) => match &result_ty {
                         None => result_ty = Some(arm_ty),
                         Some(existing) => {
-                            if *existing != arm_ty {
+                            // Finding 19: compare arms by SCALAR CLASS, not exact
+                            // ValueType. Sibling arms differing only in int width
+                            // (i32 vs i64) are both i64-backed and legitimately
+                            // unify; what is unsound is mixing classes — an int
+                            // tag arm vs a float arm, now that payload sub-patterns
+                            // bind at their declared type. A class mismatch is a
+                            // hard type error (its own code, surfaced from fn
+                            // bodies unlike the demoted exact-width mismatch).
+                            if !same_scalar_class(existing, &arm_ty) {
                                 return Err(TypeErrSpan {
                                     msg: format!(
-                                        "match arm type mismatch: expected {} but found {}",
+                                        "match arm type class mismatch: expected {} but found {}",
                                         describe_value_type(existing),
                                         describe_value_type(&arm_ty)
                                     ),
@@ -2414,9 +2444,52 @@ fn intra_lookup_fn(name: &str) -> Option<IntraFnSig> {
 // deterministic ordering of any "missing variants" list).
 type EnumVariantTable = HashMap<String, Vec<String>>;
 
+/// Finding-19 soundness: each variant's declared PAYLOAD types, keyed by the
+/// bare `"Enum::Variant"` path (matching `split_enum_variant_path` output). Lets
+/// a match arm bind a payload sub-pattern at its declared type instead of the
+/// scrutinee/enum type, so `E::A(x) => x` checks at the payload type.
+type EnumPayloadTable = HashMap<String, Vec<crate::ast::TypeAnn>>;
+
 thread_local! {
     static ENUM_VARIANTS: std::cell::RefCell<Option<EnumVariantTable>> =
         const { std::cell::RefCell::new(None) };
+    static ENUM_PAYLOADS: std::cell::RefCell<Option<EnumPayloadTable>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Look up a variant's declared payload `TypeAnn`s by bare `"Enum::Variant"`.
+fn variant_payload_of(enum_name: &str, variant: &str) -> Option<Vec<crate::ast::TypeAnn>> {
+    let key = format!("{enum_name}::{variant}");
+    ENUM_PAYLOADS.with(|cell| cell.borrow().as_ref().and_then(|t| t.get(&key).cloned()))
+}
+
+/// Build the payload registry from a module's `Node::EnumDef` items.
+fn build_enum_payloads(module: &Module) -> EnumPayloadTable {
+    let mut table = EnumPayloadTable::new();
+    for item in &module.items {
+        if let Node::EnumDef { name, variants, .. } = item {
+            for v in variants {
+                table.insert(format!("{name}::{}", v.name), v.payload.clone());
+            }
+        }
+    }
+    table
+}
+
+/// Whether two scalar `ValueType`s belong to the same broad CLASS (int family
+/// {i32,i64,bool} vs float family {f32,f64} vs tensor vs gradmap). Match arms
+/// must agree on class; exact width is deliberately NOT required so an i64
+/// payload value and an i32-typed literal `0` in sibling arms stay compatible.
+fn same_scalar_class(a: &ValueType, b: &ValueType) -> bool {
+    fn class(v: &ValueType) -> u8 {
+        match v {
+            ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarBool => 0,
+            ValueType::ScalarF32 | ValueType::ScalarF64 => 1,
+            ValueType::Tensor(_) => 2,
+            ValueType::GradMap(_) => 3,
+        }
+    }
+    class(a) == class(b)
 }
 
 /// Look up an enum's full variant-name list by enum name. Returns `None` when
@@ -2460,10 +2533,11 @@ fn split_enum_variant_path(path: &str) -> Option<(String, String)> {
 /// resolves the module's enums. Restores the previous registry on drop.
 struct EnumVariantsGuard {
     prev: Option<EnumVariantTable>,
+    prev_payloads: Option<EnumPayloadTable>,
 }
 
 impl EnumVariantsGuard {
-    fn install(table: EnumVariantTable) -> Self {
+    fn install(table: EnumVariantTable, payloads: EnumPayloadTable) -> Self {
         let prev = ENUM_VARIANTS.with(|cell| {
             let mut slot = cell.borrow_mut();
             let prev = slot.clone();
@@ -2473,13 +2547,28 @@ impl EnumVariantsGuard {
             }
             prev
         });
-        EnumVariantsGuard { prev }
+        // Merge-onto-parent + restore the payload registry in lockstep, so a
+        // match inside a fn body still resolves the module's variant payloads.
+        let prev_payloads = ENUM_PAYLOADS.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let prev = slot.clone();
+            match slot.as_mut() {
+                Some(existing) => existing.extend(payloads),
+                None => *slot = Some(payloads),
+            }
+            prev
+        });
+        EnumVariantsGuard {
+            prev,
+            prev_payloads,
+        }
     }
 }
 
 impl Drop for EnumVariantsGuard {
     fn drop(&mut self) {
         ENUM_VARIANTS.with(|cell| *cell.borrow_mut() = self.prev.take());
+        ENUM_PAYLOADS.with(|cell| *cell.borrow_mut() = self.prev_payloads.take());
     }
 }
 
@@ -2923,7 +3012,8 @@ pub fn check_module_types_in_file(
     // Install the enum-variant registry for match-exhaustiveness checking
     // (same merge-onto-parent discipline, so an enum match inside a fn body
     // still resolves the module's enums). Restored on return.
-    let _enum_variants_guard = EnumVariantsGuard::install(build_enum_variants(module));
+    let _enum_variants_guard =
+        EnumVariantsGuard::install(build_enum_variants(module), build_enum_payloads(module));
 
     for item in &module.items {
         match item {
@@ -3308,6 +3398,7 @@ pub fn check_module_types_in_file(
                         || d.code == NARROWING_CODE
                         || d.code == CALL_ARITY_CODE
                         || d.code == MATCH_NONEXHAUSTIVE_CODE
+                        || d.code == MATCH_ARM_MISMATCH_CODE
                 }));
 
                 // Issue #23 — scoped name resolution for the fn body. Replaces
@@ -4396,6 +4487,9 @@ fn classify_error_code(msg: &str) -> &'static str {
     } else if msg.starts_with("non-exhaustive `match`") {
         // Non-exhaustive enum match.
         MATCH_NONEXHAUSTIVE_CODE
+    } else if msg.starts_with("match arm type class mismatch") {
+        // Finding 19: cross-class arm mismatch (int tag vs float payload).
+        MATCH_ARM_MISMATCH_CODE
     } else {
         TYPE_ERR_CODE
     }
