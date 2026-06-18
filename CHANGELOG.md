@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`f64` enum payload fields now construct, match, and run** (`Option<f64>`,
+  `Result<f64>`, mixed `(i64, f64)` variants). An `f64` field is stored into the
+  i64 record slot as its raw bits via a synthesized `__mind_f64_to_bits`
+  (`arith.bitcast f64→i64`) and loaded back with `__mind_bits_to_f64`
+  (`i64→f64`), so the record stays uniformly i64-slotted while the value
+  round-trips BIT-EXACTLY (deterministic — only a type reinterpret). The
+  constructor and the `match` desugar consult a new `IRModule::enum_payload_types`
+  side-table to coerce each field by its declared type (an i64 field is
+  untouched; a still-unsupported non-i64/f64 field fails loud at the i64 store).
+  Verified RUNNING end-to-end: `Some(3.5)→3.5`, `Err(2.5)→-2.5`, `Pair(9, 3.25)`
+  binds `a=9` (i64) and `b=3.25` (f64). Builds on the value-`if` merge fix
+  (a one-sided merge / empty-branch placeholder is now typed by the defined side,
+  recursing through nested-`if` merge outputs). Keystone 7/7 + cross-substrate
+  8/8 byte-identical (no enum/float in either). New f64 cases in
+  `tests/enum_match_run.rs`.
+
 - **Multi-field enum payload variants now construct, match, and run.** A boxed
   enum's heap record is sized to `1 + max payload arity` (tag + the widest
   variant's fields) and EVERY variant allocates that size, so a `match` arm's

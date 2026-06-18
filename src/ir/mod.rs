@@ -826,6 +826,15 @@ pub struct IRModule {
     /// `boxed_enums`. Lowering-only side-table (never serialised into mic@3).
     #[cfg(feature = "std-surface")]
     pub enum_payload_slots: std::collections::BTreeMap<String, usize>,
+    /// Per-variant declared payload field types, keyed by the bare
+    /// `"Enum::Variant"` path. Lets the constructor and the `match` desugar
+    /// coerce a non-i64 field (e.g. `f64`) across the i64 record slot: an `f64`
+    /// field is stored as its raw bits (`__mind_f64_to_bits`) and loaded back
+    /// with `__mind_bits_to_f64`, so the slot stays a uniform i64 while the
+    /// value round-trips bit-exactly (deterministic). An i64 field needs no
+    /// coercion. Lowering-only side-table (never serialised into mic@3).
+    #[cfg(feature = "std-surface")]
+    pub enum_payload_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
     /// RFC 0012 §5.1 — function-ABI signature side-table for deterministic
     /// scalar float codegen.
     ///
@@ -875,6 +884,8 @@ impl IRModule {
             boxed_enums: std::collections::BTreeSet::new(),
             #[cfg(feature = "std-surface")]
             enum_payload_slots: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            enum_payload_types: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
