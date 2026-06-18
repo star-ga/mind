@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Compound-assignment operators (`+= -= *= /= %= &= |= ^= <<= >>=`).** Desugared
+  at parse time to `lhs = lhs OP rhs` (zero new IR — mirrors how `match` and the
+  tensor operators desugar) for all three assignment targets (variable, index,
+  field); the Pratt infix lookup refuses an `OP=` shape so the parse stops at the
+  LHS. Previously every compound operator was a hard `expected expression` parse
+  error (the `examples/policy.mind` showcase used `+=` and failed to build — it
+  now parses past those sites). New `tests/compound_assign.rs` compiles + runs
+  each operator through `mlir-opt`.
+
 ### Fixed
 
 - **Narrow (i32/u32/bool) inter-function call ABI — narrow params/returns now
