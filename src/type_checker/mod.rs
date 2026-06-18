@@ -1685,7 +1685,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         //
         // The result type is unified across all arms. Pattern type
         // compatibility is checked conservatively (literal patterns vs.
-        // scrutinee scalar class). Exhaustiveness is advisory only in v1.
+        // scrutinee scalar class). Exhaustiveness is ENFORCED as a blocking
+        // error for a match on a known enum type (see check_match_exhaustiveness
+        // below); integer-tag / literal matches are not flagged.
         Node::Match {
             scrutinee,
             arms,
