@@ -192,3 +192,25 @@ pub fn matmul_rmajor_q16_v(w_addr: i64, x_addr: i64, y_addr: i64, rows: i64, col
     let row_bytes: i64 = cols * 8;
     matmul_rmajor_q16_v_row(w_addr, x_addr, y_addr, cols, row_bytes, rows, 0)
 }
+
+// matmul_mm_i64 — "det.igemm" tier: exact integer i64×i64 → i64 GEMM.
+// A is M×K row-major i64, B is K×N row-major i64 (un-transposed), C is M×N
+// row-major i64 (caller-allocated); arity 6 (a, b, c, m, k, n), i64 ABI,
+// returns 0. Computes the exact two's-complement
+// `C[i,j] = Σ_k A[i,k]·B[k,j]  (mod 2^64)` — the low-64-bit exact-accumulation
+// rung of the integer-GEMM ladder (i8 → i16 → i64). No `>> 16` shift (i64 is
+// integer, not fixed-point) and no narrowing: both product and running sum are
+// full i64 and wrap mod 2^64, exactly matching numpy's int64 matmul.
+//
+// The `Instr::Call` for `__mind_blas_matmul_mm_i64_v` is intercepted in
+// `src/mlir/lowering.rs` and lowered to a native fused outer-product band
+// kernel (`emit_mm_i64_row_band`): an NR-wide `vector<NRxi64>` accumulator over
+// output columns, fed by a broadcast i64 A scalar and a `vector<NRxi64>` B-row
+// slice, with a plain `arith.muli : vector<NRxi64>` product (no shift) and an
+// associative `arith.addi` accumulation. Byte-identical across substrate:
+// i64 add is associative + commutative, and the packed 64-bit multiply
+// legalises to the AVX2 `vpmuludq` limb idiom (or AVX-512DQ `vpmullq`), both
+// computing `a·b mod 2^64`.
+pub fn matmul_mm_i64(a_addr: i64, b_addr: i64, c_addr: i64, m: i64, k: i64, n: i64) -> i64 {
+    __mind_blas_matmul_mm_i64_v(a_addr, b_addr, c_addr, m, k, n)
+}
