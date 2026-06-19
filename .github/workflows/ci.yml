@@ -191,14 +191,21 @@ jobs:
           cargo test --verbose --no-default-features --features autodiff
           cargo test --verbose --no-default-features --features mlir-lowering
           cargo test --verbose --no-default-features --features cpu-buffers
+          # Experimental native backend (src/native/). Compiles on every OS; the
+          # ELF exec test inside it is cfg'd to Linux/x86_64 and is a no-op
+          # elsewhere — so this keeps the module from rotting without needing a
+          # dedicated runner.
+          cargo test --verbose --no-default-features --features native-backend native::
 
       - name: Clippy
         shell: bash
         run: |
           if [ -f Cargo.lock ]; then
             cargo clippy --no-default-features --locked -- -D warnings
+            cargo clippy --no-default-features --features native-backend --locked -- -D warnings
           else
             cargo clippy --no-default-features -- -D warnings
+            cargo clippy --no-default-features --features native-backend -- -D warnings
           fi
 
   cross_substrate_identity:
