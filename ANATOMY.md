@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2866 | **Est. tokens:** ~6,954,985
-**Generated:** 2026-06-19 17:09 UTC
+**Files:** 2866 | **Est. tokens:** ~6,954,997
+**Generated:** 2026-06-19 17:12 UTC
 
 ## Token Budget Guide
 
@@ -53,7 +53,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 24 | ~57,397 |
-| `examples/native/` | 2 | ~59 |
+| `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~13,400 |
@@ -767,8 +767,8 @@
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
 ### `examples/native/`
 
-- `fib.mind` (~27 tok, tiny) — fn fib(n: i64) -> i64 {
-- `loop.mind` (~32 tok, tiny) — fn main() -> i64 {
+- `fib.mind` (~34 tok, tiny) — fn fib(n: i64) -> i64 {
+- `loop.mind` (~37 tok, tiny) — fn main() -> i64 {
 ### `examples/parser/`
 
 - `bootstrap_smoke.py` (~5544 tok, huge)
