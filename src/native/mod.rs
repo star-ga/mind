@@ -26,7 +26,8 @@
 //! ## Scope (honest) — the scalar-i64 vertical slice
 //!
 //! Supports `FnDef` / `Param` / `ConstI64` / `Call` / `Return`, arithmetic
-//! `BinOp{Add,Sub,Mul,Div,Mod}` (Div/Mod via `cqo`+signed `idiv`), bitwise/shift
+//! `BinOp{Add,Sub,Mul,Div,Mod}` (Div/Mod via `cqo`+signed `idiv`, with MIND's
+//! defined edge cases `x/0=0`/`x%0=0`/`INT_MIN/-1` handled branchlessly), bitwise/shift
 //! `BinOp{BitAnd,BitOr,BitXor,Shl,Shr}` (Shr = arithmetic `sar`; shift count in
 //! `cl`), signed comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
 //! (`cmp`+`setcc`+`movzx` → 0/1), `If` (if-expressions: `cmp`/`je`/`jmp` with
@@ -39,8 +40,7 @@
 //! PC-relative displacement). The entry point is the `FnDef` named `main`; its
 //! `Return` becomes an `exit` syscall.
 //!
-//! deferred: Div/Mod edge-case guards (raw idiv traps on /0 and INT_MIN/-1 —
-//!   MIND's path defines them), register allocation
+//! deferred: register allocation
 //!   (currently
 //!   every SSA value is a frame slot), true ELF relocations + sections + symbols
 //!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
@@ -148,6 +148,46 @@ fn cmp_rax_mem(code: &mut Vec<u8>, setcc: u8, rhs_disp: i32) {
     code.extend_from_slice(&rhs_disp.to_le_bytes());
     code.extend_from_slice(&[0x0F, setcc, 0xC0]); // setcc al
     code.extend_from_slice(&[0x0F, 0xB6, 0xC0]); // movzx eax, al (zero-extends rax)
+}
+
+/// Signed Div/Mod with MIND's DEFINED edge cases, branchlessly (cmov, no jumps —
+/// stays deterministic). `rax` holds the dividend on entry. Mirrors the MLIR
+/// path: substitute divisor 1 when `rhs==0` OR (`lhs==INT_MIN && rhs==-1`) so
+/// `idiv` never traps, then force the result to 0 when `rhs==0`. Net:
+/// `x/0=0`, `x%0=0`, `INT_MIN/-1=INT_MIN`, `INT_MIN%-1=0`, else the usual idiv.
+/// Clobbers rcx/rdx/r8/r9/r10/r11 — all dead between instrs in the slot model.
+fn emit_div_mod_guarded(code: &mut Vec<u8>, is_mod: bool, rhs_disp: i32) {
+    code.extend_from_slice(&[0x48, 0x8B, 0x8D]); // mov rcx, [rbp+rhs] (divisor)
+    code.extend_from_slice(&rhs_disp.to_le_bytes());
+    // r8 = (rhs == 0)
+    code.extend_from_slice(&[0x4D, 0x31, 0xC0]); // xor r8, r8
+    code.extend_from_slice(&[0x48, 0x85, 0xC9]); // test rcx, rcx
+    code.extend_from_slice(&[0x41, 0x0F, 0x94, 0xC0]); // sete r8b
+    // r9 = (rax == INT_MIN)
+    code.extend_from_slice(&[0x49, 0xBA]); // movabs r10, INT_MIN
+    code.extend_from_slice(&i64::MIN.to_le_bytes());
+    code.extend_from_slice(&[0x4D, 0x31, 0xC9]); // xor r9, r9
+    code.extend_from_slice(&[0x4C, 0x39, 0xD0]); // cmp rax, r10
+    code.extend_from_slice(&[0x41, 0x0F, 0x94, 0xC1]); // sete r9b
+    // r11 = (rcx == -1); r9 = overflow = (rax==INT_MIN) & (rcx==-1)
+    code.extend_from_slice(&[0x4D, 0x31, 0xDB]); // xor r11, r11
+    code.extend_from_slice(&[0x48, 0x83, 0xF9, 0xFF]); // cmp rcx, -1
+    code.extend_from_slice(&[0x41, 0x0F, 0x94, 0xC3]); // sete r11b
+    code.extend_from_slice(&[0x4D, 0x21, 0xD9]); // and r9, r11
+    code.extend_from_slice(&[0x4D, 0x09, 0xC1]); // or  r9, r8   (substitute = ovf | rhs0)
+    // dsf: rcx = substitute ? 1 : rcx
+    code.extend_from_slice(&[0x49, 0xC7, 0xC2, 0x01, 0x00, 0x00, 0x00]); // mov r10, 1
+    code.extend_from_slice(&[0x4D, 0x85, 0xC9]); // test r9, r9
+    code.extend_from_slice(&[0x49, 0x0F, 0x45, 0xCA]); // cmovnz rcx, r10
+    code.extend_from_slice(&[0x48, 0x99]); // cqo
+    code.extend_from_slice(&[0x48, 0xF7, 0xF9]); // idiv rcx
+    if is_mod {
+        code.extend_from_slice(&[0x48, 0x89, 0xD0]); // mov rax, rdx (remainder)
+    }
+    // result = (rhs == 0) ? 0 : result
+    code.extend_from_slice(&[0x4D, 0x31, 0xD2]); // xor r10, r10
+    code.extend_from_slice(&[0x4D, 0x85, 0xC0]); // test r8, r8
+    code.extend_from_slice(&[0x49, 0x0F, 0x45, 0xC2]); // cmovnz rax, r10
 }
 
 /// `mov <argreg>, [rbp+disp32]` — marshal a slot value into a System-V arg reg.
@@ -325,17 +365,8 @@ fn emit_seq(
                 load_rax(code, disp(lhs)?);
                 match op {
                     BinOp::Div | BinOp::Mod => {
-                        // deferred: raw signed idiv — traps (#DE / SIGFPE) on
-                        // divide-by-zero and on INT_MIN / -1. MIND's MLIR path
-                        // gives these DEFINED results (div-by-zero decision +
-                        // INT_MIN/-1 guard); upgrade path: emit the same guarded
-                        // sequence (cmp rhs,0 + cmp pair) before the idiv.
-                        code.extend_from_slice(&[0x48, 0x99]); // cqo (sign-extend rax -> rdx:rax)
-                        code.extend_from_slice(&[0x48, 0xF7, 0xBD]); // idiv qword [rbp+disp32]
-                        code.extend_from_slice(&disp(rhs)?.to_le_bytes());
-                        if matches!(op, BinOp::Mod) {
-                            code.extend_from_slice(&[0x48, 0x89, 0xD0]); // mov rax, rdx (remainder)
-                        }
+                        // MIND-defined edge cases (x/0=0, INT_MIN/-1) — branchless.
+                        emit_div_mod_guarded(code, matches!(op, BinOp::Mod), disp(rhs)?);
                     }
                     #[cfg(feature = "std-surface")]
                     BinOp::Shl | BinOp::Shr => {
@@ -906,6 +937,8 @@ mod tests {
             (BinOp::Div, 127, 3, 42), // 127/3 = 42 (trunc)
             (BinOp::Mod, 142, 50, 42),
             (BinOp::Mod, 85, 43, 42),
+            (BinOp::Div, 7, 0, 0), // MIND-defined: x/0 = 0 (would SIGFPE without the guard)
+            (BinOp::Mod, 7, 0, 0), // MIND-defined: x%0 = 0
         ];
         for (op, a, b, expected) in cases {
             let m = binop_module(op, a, b);
