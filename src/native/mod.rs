@@ -21,7 +21,9 @@
 //! instruction encoder and a fixed `ValueId → frame-slot` mapping** makes it
 //! *structural*: the emitted image is a pure function of the IR, so it
 //! **cannot** differ across hosts/toolchain versions. "Better than LLVM" here is
-//! not `-O3`; it is *determinism guaranteed by the codegen's shape*.
+//! not `-O3`; it is *determinism guaranteed by the codegen's shape*. The emitted
+//! ELF embeds the IR's `trace_hash` as a PT_NOTE (`readelf -n` shows the `MIND`
+//! note) — the wedge's "signed evidence chain in the artifact", native-side.
 //!
 //! ## Scope (honest) — the scalar-i64 vertical slice
 //!
@@ -589,37 +591,69 @@ fn link(funcs: &[Func]) -> Result<(Vec<u8>, u64), NativeError> {
 }
 
 /// Wrap raw code in a minimal, deterministic static ELF64 executable.
-fn write_elf(code: &[u8], entry_off: u64) -> Vec<u8> {
-    const LOAD_ADDR: u64 = 0x40_0000;
-    const HDRS: u64 = 64 + 56; // ehdr + one phdr
-    let entry = LOAD_ADDR + HDRS + entry_off;
-    let filesz = HDRS + code.len() as u64;
+/// The ELF note carrying the deterministic `trace_hash` — the artifact's embedded
+/// provenance (MIND's evidence-chain wedge, native-side). Standard `Elf64_Nhdr`:
+/// name "MIND\0" (padded to 4), desc = the 32-byte hash.
+fn build_note(trace_hash: &[u8; 32]) -> Vec<u8> {
+    let mut n = Vec::with_capacity(52);
+    n.extend_from_slice(&5u32.to_le_bytes()); // n_namesz ("MIND\0")
+    n.extend_from_slice(&32u32.to_le_bytes()); // n_descsz
+    n.extend_from_slice(&1u32.to_le_bytes()); // n_type
+    n.extend_from_slice(b"MIND\0\0\0\0"); // name, 4-byte-aligned
+    n.extend_from_slice(trace_hash); // desc = trace hash
+    n
+}
 
-    let mut e = Vec::with_capacity(filesz as usize);
+/// Minimal deterministic static ELF64: a PT_LOAD (R+X over ehdr+phdrs+code) plus
+/// a PT_NOTE carrying the trace-hash provenance. Every byte is a pure function of
+/// `(code, entry_off, note)`. The note sits just past the loaded range — present
+/// in the file (readable via `readelf -n`) but not mapped, so it never affects
+/// execution while making the artifact self-describing.
+fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
+    const LOAD_ADDR: u64 = 0x40_0000;
+    const HDRS: u64 = 64 + 2 * 56; // ehdr + two phdrs
+    let entry = LOAD_ADDR + HDRS + entry_off;
+    let load_sz = HDRS + code.len() as u64; // PT_LOAD covers headers + code
+    let note_off = HDRS + code.len() as u64;
+
+    let mut e = Vec::with_capacity((note_off + note.len() as u64) as usize);
+    // --- Elf64_Ehdr ---
     e.extend_from_slice(&[0x7F, b'E', b'L', b'F', 2, 1, 1, 0]);
     e.extend_from_slice(&[0u8; 8]);
     e.extend_from_slice(&2u16.to_le_bytes()); // ET_EXEC
     e.extend_from_slice(&62u16.to_le_bytes()); // EM_X86_64
-    e.extend_from_slice(&1u32.to_le_bytes());
-    e.extend_from_slice(&entry.to_le_bytes());
+    e.extend_from_slice(&1u32.to_le_bytes()); // e_version
+    e.extend_from_slice(&entry.to_le_bytes()); // e_entry
     e.extend_from_slice(&64u64.to_le_bytes()); // e_phoff
-    e.extend_from_slice(&0u64.to_le_bytes());
-    e.extend_from_slice(&0u32.to_le_bytes());
+    e.extend_from_slice(&0u64.to_le_bytes()); // e_shoff
+    e.extend_from_slice(&0u32.to_le_bytes()); // e_flags
     e.extend_from_slice(&64u16.to_le_bytes()); // e_ehsize
     e.extend_from_slice(&56u16.to_le_bytes()); // e_phentsize
-    e.extend_from_slice(&1u16.to_le_bytes());
-    e.extend_from_slice(&0u16.to_le_bytes());
-    e.extend_from_slice(&0u16.to_le_bytes());
-    e.extend_from_slice(&0u16.to_le_bytes());
+    e.extend_from_slice(&2u16.to_le_bytes()); // e_phnum = 2
+    e.extend_from_slice(&0u16.to_le_bytes()); // e_shentsize
+    e.extend_from_slice(&0u16.to_le_bytes()); // e_shnum
+    e.extend_from_slice(&0u16.to_le_bytes()); // e_shstrndx
+    // --- phdr 1: PT_LOAD (R+X) over headers + code ---
     e.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
     e.extend_from_slice(&5u32.to_le_bytes()); // R+X
-    e.extend_from_slice(&0u64.to_le_bytes());
-    e.extend_from_slice(&LOAD_ADDR.to_le_bytes());
-    e.extend_from_slice(&LOAD_ADDR.to_le_bytes());
-    e.extend_from_slice(&filesz.to_le_bytes());
-    e.extend_from_slice(&filesz.to_le_bytes());
-    e.extend_from_slice(&0x1000u64.to_le_bytes());
+    e.extend_from_slice(&0u64.to_le_bytes()); // p_offset
+    e.extend_from_slice(&LOAD_ADDR.to_le_bytes()); // p_vaddr
+    e.extend_from_slice(&LOAD_ADDR.to_le_bytes()); // p_paddr
+    e.extend_from_slice(&load_sz.to_le_bytes()); // p_filesz
+    e.extend_from_slice(&load_sz.to_le_bytes()); // p_memsz
+    e.extend_from_slice(&0x1000u64.to_le_bytes()); // p_align
+    // --- phdr 2: PT_NOTE (trace-hash provenance) ---
+    e.extend_from_slice(&4u32.to_le_bytes()); // PT_NOTE
+    e.extend_from_slice(&4u32.to_le_bytes()); // R
+    e.extend_from_slice(&note_off.to_le_bytes()); // p_offset
+    e.extend_from_slice(&(LOAD_ADDR + note_off).to_le_bytes()); // p_vaddr
+    e.extend_from_slice(&(LOAD_ADDR + note_off).to_le_bytes()); // p_paddr
+    e.extend_from_slice(&(note.len() as u64).to_le_bytes()); // p_filesz
+    e.extend_from_slice(&(note.len() as u64).to_le_bytes()); // p_memsz
+    e.extend_from_slice(&4u64.to_le_bytes()); // p_align
+    // --- code, then the (unmapped) note ---
     e.extend_from_slice(code);
+    e.extend_from_slice(note);
     e
 }
 
@@ -655,7 +689,10 @@ pub fn compile_to_elf(ir: &IRModule) -> Result<Vec<u8>, NativeError> {
     }
 
     let (code, entry_off) = link(&funcs)?;
-    Ok(write_elf(&code, entry_off))
+    // Embed the deterministic trace hash as an ELF note — the artifact's own
+    // provenance, the same hash the mic@3 evidence chain anchors on.
+    let note = build_note(&crate::ir::ir_trace_hash(ir));
+    Ok(write_elf(&code, entry_off, &note))
 }
 
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
@@ -758,6 +795,24 @@ mod tests {
             body: vec![Instr::Return { value: None }],
         }];
         assert_eq!(compile_to_elf(&m), Err(NativeError::NoEntry));
+    }
+
+    #[test]
+    fn elf_embeds_a_deterministic_trace_hash_note() {
+        let m = sample_module();
+        let a = compile_to_elf(&m).expect("lowers");
+        // The MIND provenance note name + the 32-byte trace hash are both present.
+        assert!(
+            a.windows(4).any(|w| w == b"MIND"),
+            "ELF must carry the MIND note"
+        );
+        let hash = crate::ir::ir_trace_hash(&m);
+        assert!(
+            a.windows(32).any(|w| w == hash),
+            "ELF must embed the IR's trace_hash as provenance"
+        );
+        // Same IR -> same hash -> byte-identical ELF (determinism survives the note).
+        assert_eq!(a, compile_to_elf(&m).expect("lowers"));
     }
 
     /// Write the ELF to a unique temp path, exec it, return its exit code.
