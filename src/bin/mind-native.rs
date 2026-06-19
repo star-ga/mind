@@ -15,7 +15,6 @@
 //! mind-native examples/fib.mind /tmp/fib && /tmp/fib ; echo $?   # 55
 //! ```
 
-use std::os::unix::fs::PermissionsExt;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -55,7 +54,12 @@ fn main() -> ExitCode {
         eprintln!("mind-native: cannot write {output}: {e}");
         return ExitCode::FAILURE;
     }
+    // The output is a Linux x86-64 ELF; mark it executable on unix hosts. (The
+    // tool still cross-emits on macOS/Windows — the artifact just won't run there,
+    // and there is no unix permission bit to set.)
+    #[cfg(unix)]
     if let Ok(meta) = std::fs::metadata(output) {
+        use std::os::unix::fs::PermissionsExt;
         let mut perms = meta.permissions();
         perms.set_mode(0o755);
         let _ = std::fs::set_permissions(output, perms);
