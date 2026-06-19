@@ -34,10 +34,14 @@ pub fn canonicalize_module(module: &mut IRModule) {
         prune_dead_experts(module);
     }
 
-    let mut instrs = prune_dead(&module.instrs);
+    // Own the stream (no clone) and run every pass in place — prune_dead used to
+    // clone the whole instruction stream into a fresh Vec twice; that was ~25% of
+    // a small compile (perf: __memmove + prune_dead malloc).
+    let mut instrs = std::mem::take(&mut module.instrs);
+    prune_dead(&mut instrs);
     reorder_commutative_ops(&mut instrs);
     constant_fold(&mut instrs);
-    instrs = prune_dead(&instrs);
+    prune_dead(&mut instrs);
 
     module.instrs = instrs;
     module.next_id = next_sequential_id(module);
@@ -144,7 +148,7 @@ fn prune_dead_experts(module: &mut IRModule) {
     }
 }
 
-fn prune_dead(instrs: &[Instr]) -> Vec<Instr> {
+fn prune_dead(instrs: &mut Vec<Instr>) {
     let mut used: BTreeSet<ValueId> = BTreeSet::new();
     for instr in instrs.iter().rev() {
         match instr {
@@ -156,24 +160,18 @@ fn prune_dead(instrs: &[Instr]) -> Vec<Instr> {
                 // Keep instructions whose destination is either unused (None) or present
                 // in the `used` set. Clippy prefers `is_none_or` over `map_or(true, ...)`.
                 if dst.is_none_or(|id| used.contains(&id)) {
-                    for operand in instruction_operands(other) {
+                    for_each_operand(other, |operand| {
                         used.insert(operand);
-                    }
+                    });
                 }
             }
         }
     }
 
-    let mut pruned = Vec::with_capacity(instrs.len());
-    for instr in instrs {
-        if let Some(dst) = instruction_dst(instr) {
-            if !used.contains(&dst) {
-                continue;
-            }
-        }
-        pruned.push(instr.clone());
-    }
-    pruned
+    // Retain in place — the predicate keeps exactly the same instructions, in the
+    // same order, as the old clone-into-a-new-Vec loop, so canonical output stays
+    // byte-identical while avoiding the per-instruction clone + the second Vec.
+    instrs.retain(|instr| instruction_dst(instr).is_none_or(|dst| used.contains(&dst)));
 }
 
 fn reorder_commutative_ops(instrs: &mut [Instr]) {
@@ -280,12 +278,17 @@ fn next_sequential_id(module: &IRModule) -> usize {
 /// the `then_val`/`else_val` of `If::merges`, which may forward an enclosing
 /// value for a var unassigned on one branch). The sub-body result/exit/merge
 /// ids are produced by the region, not consumed from the enclosing scope.
-pub(crate) fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
+/// Invoke `f` once per SSA operand `instr` READS from the enclosing scope —
+/// allocation-free. This is the hot primitive (`prune_dead`'s used-set pass);
+/// `instruction_operands` is the collect-into-Vec form for callers that need one.
+/// The two MUST visit the exact same operand set (DCE correctness + determinism).
+pub(crate) fn for_each_operand(instr: &Instr, mut f: impl FnMut(ValueId)) {
     match instr {
-        Instr::ConstI64(_, _) | Instr::ConstF64(_, _) | Instr::ConstTensor(_, _, _, _) => {
-            Vec::new()
+        Instr::ConstI64(_, _) | Instr::ConstF64(_, _) | Instr::ConstTensor(_, _, _, _) => {}
+        Instr::BinOp { lhs, rhs, .. } => {
+            f(*lhs);
+            f(*rhs);
         }
-        Instr::BinOp { lhs, rhs, .. } => vec![*lhs, *rhs],
         Instr::Sum { src, .. }
         | Instr::Mean { src, .. }
         | Instr::Relu { src, .. }
@@ -295,64 +298,107 @@ pub(crate) fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
         | Instr::Transpose { src, .. }
         | Instr::Index { src, .. }
         | Instr::Slice { src, .. }
-        | Instr::SparseAttr { src, .. } => vec![*src],
-        Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => vec![*a, *b],
-        Instr::Conv2d { input, filter, .. } => vec![*input, *filter],
-        Instr::Conv2dGradInput { dy, filter, .. } => vec![*dy, *filter],
-        Instr::Conv2dGradFilter { input, dy, .. } => vec![*input, *dy],
-        Instr::ReluGrad { grad, src, .. } => vec![*grad, *src],
-        Instr::Gather { src, indices, .. } => vec![*src, *indices],
-        Instr::Output(id) => vec![*id],
-        Instr::Call { args, .. } => args.clone(),
-        Instr::Return { value } => value.iter().copied().collect(),
-        // A parameter defines a value; it reads no SSA operands.
-        Instr::Param { .. } => Vec::new(),
-        // A function definition reads no top-level operands; its body
-        // instructions live in a separate stream and are pruned in their own
-        // right when the body is lowered into its own module.
-        Instr::FnDef { .. } => Vec::new(),
+        | Instr::SparseAttr { src, .. } => f(*src),
+        Instr::Dot { a, b, .. } | Instr::MatMul { a, b, .. } => {
+            f(*a);
+            f(*b);
+        }
+        Instr::Conv2d { input, filter, .. } => {
+            f(*input);
+            f(*filter);
+        }
+        Instr::Conv2dGradInput { dy, filter, .. } => {
+            f(*dy);
+            f(*filter);
+        }
+        Instr::Conv2dGradFilter { input, dy, .. } => {
+            f(*input);
+            f(*dy);
+        }
+        Instr::ReluGrad { grad, src, .. } => {
+            f(*grad);
+            f(*src);
+        }
+        Instr::Gather { src, indices, .. } => {
+            f(*src);
+            f(*indices);
+        }
+        Instr::Output(id) => f(*id),
+        Instr::Call { args, .. } => {
+            for &a in args {
+                f(a);
+            }
+        }
+        Instr::Return { value } => {
+            for &v in value {
+                f(v);
+            }
+        }
+        // A parameter / function definition / pure declaration reads no operands.
+        Instr::Param { .. } | Instr::FnDef { .. } => {}
         #[cfg(feature = "std-surface")]
-        Instr::ConstArray { .. } => Vec::new(),
+        Instr::ConstArray { .. } => {}
         #[cfg(feature = "std-surface")]
-        Instr::ArrayLoad { base, index, .. } => vec![*base, *index],
+        Instr::ArrayLoad { base, index, .. } => {
+            f(*base);
+            f(*index);
+        }
         // `init_ids` are the pre-loop (enclosing-scope) values threaded into the
-        // header; `cond_id`/`live_vars`/`exit_ids`/body live in the loop's own
-        // SSA namespace.
+        // header; cond/live_vars/exit_ids/body live in the loop's own namespace.
         #[cfg(feature = "std-surface")]
-        Instr::While { init_ids, .. } => init_ids.clone(),
-        // `then_val`/`else_val` of each merge may forward an enclosing-scope
-        // value for a var left unassigned on one branch (F2 exit env); cond and
-        // branch results live in the branches' own SSA namespaces.
+        Instr::While { init_ids, .. } => {
+            for &v in init_ids {
+                f(v);
+            }
+        }
+        // `then_val`/`else_val` of each merge may forward an enclosing-scope value.
         #[cfg(feature = "std-surface")]
-        Instr::If { merges, .. } => merges
-            .iter()
-            .flat_map(|(_merge, then_val, else_val)| [*then_val, *else_val])
-            .collect(),
+        Instr::If { merges, .. } => {
+            for (_merge, then_val, else_val) in merges {
+                f(*then_val);
+                f(*else_val);
+            }
+        }
         #[cfg(feature = "std-surface")]
         Instr::VecLoad { base, offset, .. } | Instr::VecLoadI32 { base, offset, .. } => {
-            vec![*base, *offset]
+            f(*base);
+            f(*offset);
         }
         #[cfg(feature = "std-surface")]
         Instr::VecFma { a, b, acc, .. } | Instr::VecMulAddQ16 { a, b, acc, .. } => {
-            vec![*a, *b, *acc]
+            f(*a);
+            f(*b);
+            f(*acc);
         }
         #[cfg(feature = "std-surface")]
-        Instr::VecReduceAdd { src, .. } | Instr::VecReduceAddI64 { src, .. } => vec![*src],
+        Instr::VecReduceAdd { src, .. } | Instr::VecReduceAddI64 { src, .. } => f(*src),
         #[cfg(feature = "std-surface")]
         Instr::VecStore {
             src, base, offset, ..
-        } => vec![*src, *base, *offset],
-        // A pure declaration — no SSA operands.
+        } => {
+            f(*src);
+            f(*base);
+            f(*offset);
+        }
         #[cfg(feature = "std-surface")]
-        Instr::ExternFnDecl { .. } => Vec::new(),
-        // `result`/`enter_id`/`exit_id`/`alloc_ids` are all produced inside the
-        // region body's own SSA namespace; nothing is read from the enclosing
-        // scope at this node.
+        Instr::ExternFnDecl { .. } => {}
+        // result/enter/exit/alloc ids are produced inside the region body's own
+        // SSA namespace; nothing is read from the enclosing scope.
         #[cfg(feature = "std-surface")]
-        Instr::Region { .. } => Vec::new(),
+        Instr::Region { .. } => {}
         // break/continue READ their `live` snapshot values (forwarded as loop
         // block-args), so they are genuine operands — DCE must keep them alive.
         #[cfg(feature = "std-surface")]
-        Instr::Break { live } | Instr::Continue { live } => live.iter().map(|(_, v)| *v).collect(),
+        Instr::Break { live } | Instr::Continue { live } => {
+            for (_, v) in live {
+                f(*v);
+            }
+        }
     }
+}
+
+pub(crate) fn instruction_operands(instr: &Instr) -> Vec<ValueId> {
+    let mut ops = Vec::new();
+    for_each_operand(instr, |op| ops.push(op));
+    ops
 }
