@@ -1,0 +1,6 @@
+fn main() -> i64 {
+    let mut s: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 7 { s = s + 6; i = i + 1; }
+    return s;
+}
