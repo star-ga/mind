@@ -52,6 +52,13 @@ path = "src/main.rs"
 name = "mindc"
 path = "src/bin/mindc.rs"
 
+# Experimental zero-LLVM native compiler driver. Built only with
+# `--features native-backend`; never part of a default build.
+[[bin]]
+name = "mind-native"
+path = "src/bin/mind-native.rs"
+required-features = ["native-backend"]
+
 [[bench]]
 name = "compiler"
 harness = false

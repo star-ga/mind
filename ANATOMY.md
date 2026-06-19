@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2863 | **Est. tokens:** ~6,952,624
-**Generated:** 2026-06-19 16:48 UTC
+**Files:** 2866 | **Est. tokens:** ~6,953,302
+**Generated:** 2026-06-19 16:51 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~26,534 |
+| `./` | 34 | ~26,591 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -53,6 +53,7 @@
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
 | `examples/mindc_mind/` | 24 | ~57,397 |
+| `examples/native/` | 2 | ~59 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
 | `examples/zoo/` | 6 | ~13,400 |
@@ -370,7 +371,7 @@
 | `src/` | 7 | ~17,517 |
 | `src/ast/` | 1 | ~6,611 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 2 | ~25,052 |
+| `src/bin/` | 3 | ~25,614 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
@@ -458,7 +459,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1629 tok, huge) — [package]
+- `Cargo.toml` (~1686 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -764,6 +765,10 @@
 ### `examples/`
 
 - `mlir_pipeline_demo.sh` (~1647 tok, huge) — MLIR/LLVM Pipeline Demonstration
+### `examples/native/`
+
+- `fib.mind` (~27 tok, tiny) — fn fib(n: i64) -> i64 {
+- `loop.mind` (~32 tok, tiny) — fn main() -> i64 {
 ### `examples/parser/`
 
 - `bootstrap_smoke.py` (~5544 tok, huge)
@@ -3654,6 +3659,7 @@
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc.rs` (~15247 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind-native.rs` (~562 tok, large) — Copyright 2026 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
