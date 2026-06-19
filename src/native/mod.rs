@@ -26,8 +26,9 @@
 //! ## Scope (honest) — the scalar-i64 vertical slice
 //!
 //! Supports `FnDef` / `Param` / `ConstI64` / `Call` / `Return`, arithmetic
-//! `BinOp{Add,Sub,Mul,Div,Mod}` (Div/Mod via `cqo`+signed `idiv`) and signed
-//! comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
+//! `BinOp{Add,Sub,Mul,Div,Mod}` (Div/Mod via `cqo`+signed `idiv`), bitwise/shift
+//! `BinOp{BitAnd,BitOr,BitXor,Shl,Shr}` (Shr = arithmetic `sar`; shift count in
+//! `cl`), signed comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
 //! (`cmp`+`setcc`+`movzx` → 0/1), and `If` (if-expressions: `cmp`/`je`/`jmp`
 //! with intra-function forward-jump patching and mem-to-mem phi resolution via
 //! the merge list), ≤6 integer args (System-V registers), a regalloc-free
@@ -37,7 +38,7 @@
 //!
 //! deferred: `While`/loops (back-edge + loop-carried phi), Div/Mod edge-case
 //!   guards (raw idiv traps on /0 and INT_MIN/-1 — MIND's path defines them),
-//!   bitwise/shift BinOps, >6 args (stack-passed), register allocation (currently
+//!   >6 args (stack-passed), register allocation (currently
 //!   every SSA value is a frame slot), true ELF relocations + sections + symbols
 //!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
 //!   upgrade path: extend `emit_seq`'s match arm-by-arm; add a deterministic
@@ -109,6 +110,12 @@ fn arith_rax_mem(code: &mut Vec<u8>, op: &BinOp, disp: i32) -> Result<(), Native
         BinOp::Add => &[0x48, 0x03, 0x85],       // add  rax, [rbp+disp32]
         BinOp::Sub => &[0x48, 0x2B, 0x85],       // sub  rax, [rbp+disp32]
         BinOp::Mul => &[0x48, 0x0F, 0xAF, 0x85], // imul rax, [rbp+disp32]
+        #[cfg(feature = "std-surface")]
+        BinOp::BitAnd => &[0x48, 0x23, 0x85], // and rax, [rbp+disp32]
+        #[cfg(feature = "std-surface")]
+        BinOp::BitOr => &[0x48, 0x0B, 0x85], // or  rax, [rbp+disp32]
+        #[cfg(feature = "std-surface")]
+        BinOp::BitXor => &[0x48, 0x33, 0x85], // xor rax, [rbp+disp32]
         other => return Err(NativeError::Unsupported(format!("BinOp {other:?}"))),
     };
     code.extend_from_slice(opbytes);
@@ -268,6 +275,15 @@ fn emit_seq(
                         if matches!(op, BinOp::Mod) {
                             code.extend_from_slice(&[0x48, 0x89, 0xD0]); // mov rax, rdx (remainder)
                         }
+                    }
+                    #[cfg(feature = "std-surface")]
+                    BinOp::Shl | BinOp::Shr => {
+                        // x86 variable shift takes the count in cl.
+                        code.extend_from_slice(&[0x48, 0x8B, 0x8D]); // mov rcx, [rbp+disp32]
+                        code.extend_from_slice(&disp(rhs)?.to_le_bytes());
+                        // shl rax,cl (D3 /4 = 0xE0) ; Shr is arithmetic: sar rax,cl (/7 = 0xF8).
+                        let modrm = if matches!(op, BinOp::Shl) { 0xE0 } else { 0xF8 };
+                        code.extend_from_slice(&[0x48, 0xD3, modrm]);
                     }
                     _ if setcc_opcode(op).is_some() => {
                         cmp_rax_mem(code, setcc_opcode(op).unwrap(), disp(rhs)?); // -> 0/1
@@ -756,6 +772,28 @@ mod tests {
             assert_eq!(elf, compile_to_elf(&m).expect("lowers"), "deterministic");
             assert_eq!(
                 run(&elf, "mind_native_divmod_exe"),
+                Some(expected),
+                "{op:?}({a},{b})"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_bitwise_and_shift() {
+        let cases = [
+            (BinOp::BitAnd, 46, 26, 10), // 0b101110 & 0b011010 = 0b001010
+            (BinOp::BitOr, 40, 2, 42),
+            (BinOp::BitXor, 63, 21, 42), // 0b111111 ^ 0b010101 = 0b101010
+            (BinOp::Shl, 21, 1, 42),
+            (BinOp::Shr, 84, 1, 42), // arithmetic sar
+        ];
+        for (op, a, b, expected) in cases {
+            let m = binop_module(op, a, b);
+            let elf = compile_to_elf(&m).expect("lowers");
+            assert_eq!(elf, compile_to_elf(&m).expect("lowers"), "deterministic");
+            assert_eq!(
+                run(&elf, "mind_native_bitshift_exe"),
                 Some(expected),
                 "{op:?}({a},{b})"
             );
