@@ -31,15 +31,16 @@
 //! `cl`), signed comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
 //! (`cmp`+`setcc`+`movzx` → 0/1), `If` (if-expressions: `cmp`/`je`/`jmp` with
 //! intra-function forward-jump patching and mem-to-mem phi resolution via the
-//! merge list), and `While` loops (header re-test + back-edge `jmp`; loop-carried
-//! vars alias to one slot so no phi forwarding is needed), ≤6 integer args
+//! merge list), and `While` loops with `break`/`continue` (header re-test +
+//! back-edge `jmp`; loop-carried vars alias to one slot so no phi forwarding is
+//! needed; break/continue jump via a loop-frame stack), ≤6 integer args
 //! (System-V registers), a regalloc-free mem-to-mem frame model, and intra-module
 //! calls (computed PC-relative displacement). The entry point is the `FnDef`
 //! named `main`; its `Return` becomes an `exit` syscall.
 //!
-//! deferred: `break`/`continue` (need a loop-context patch list), Div/Mod
-//!   edge-case guards (raw idiv traps on /0 and INT_MIN/-1 — MIND's path defines
-//!   them), >6 args (stack-passed), register allocation (currently
+//! deferred: Div/Mod edge-case guards (raw idiv traps on /0 and INT_MIN/-1 —
+//!   MIND's path defines them), >6 args (stack-passed), register allocation
+//!   (currently
 //!   every SSA value is a frame slot), true ELF relocations + sections + symbols
 //!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
 //!   upgrade path: extend `emit_seq`'s match arm-by-arm; add a deterministic
@@ -281,12 +282,20 @@ fn patch_rel32(code: &mut [u8], site: usize, target: usize) {
 
 /// Emit one instruction sequence into `code`, recursing through `If` branches.
 /// `is_entry` makes a `Return` lower to an `exit` syscall instead of `ret`.
+/// An enclosing `while` loop's jump targets: `header` (for `continue`, backward)
+/// and the forward `break` jump sites to patch to the loop's exit.
+struct LoopFrame {
+    header: usize,
+    breaks: Vec<usize>,
+}
+
 fn emit_seq(
     code: &mut Vec<u8>,
     calls: &mut Vec<(usize, String)>,
     body: &[Instr],
     slot: &HashMap<ValueId, usize>,
     is_entry: bool,
+    loops: &mut Vec<LoopFrame>,
 ) -> Result<(), NativeError> {
     let disp = |id: &ValueId| -> Result<i32, NativeError> {
         slot.get(id)
@@ -356,11 +365,11 @@ fn emit_seq(
                 ..
             } => {
                 // Evaluate the condition; branch to the else-block when it is 0.
-                emit_seq(code, calls, cond_instrs, slot, is_entry)?;
+                emit_seq(code, calls, cond_instrs, slot, is_entry, loops)?;
                 let je = emit_cmp_je_zero(code, disp(cond_id)?);
 
                 // then-block: body, phi(then side), dst = then_result, jump to end.
-                emit_seq(code, calls, then_instrs, slot, is_entry)?;
+                emit_seq(code, calls, then_instrs, slot, is_entry, loops)?;
                 for (m, then_val, _) in merges {
                     load_rax(code, disp(then_val)?);
                     store_rax(code, disp(m)?);
@@ -372,7 +381,7 @@ fn emit_seq(
                 // else-block: body, phi(else side), dst = else_result.
                 let else_at = code.len();
                 patch_rel32(code, je, else_at);
-                emit_seq(code, calls, else_instrs, slot, is_entry)?;
+                emit_seq(code, calls, else_instrs, slot, is_entry, loops)?;
                 for (m, _, else_val) in merges {
                     load_rax(code, disp(else_val)?);
                     store_rax(code, disp(m)?);
@@ -385,8 +394,8 @@ fn emit_seq(
             }
             // `while cond { body }` — re-test the condition each iteration; the
             // loop-carried vars live in their (aliased) slots so no phi forwarding
-            // is needed. (Bounded: `break`/`continue` fail-closed for now — they
-            // need a loop-context patch list; a body Return still works.)
+            // is needed. A LoopFrame on `loops` lets `break`/`continue` in the body
+            // target this loop's exit / header.
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_id,
@@ -395,13 +404,41 @@ fn emit_seq(
                 ..
             } => {
                 let header = code.len();
-                emit_seq(code, calls, cond_instrs, slot, is_entry)?;
+                emit_seq(code, calls, cond_instrs, slot, is_entry, loops)?;
                 let je = emit_cmp_je_zero(code, disp(cond_id)?); // exit when cond == 0
-                emit_seq(code, calls, loop_body, slot, is_entry)?;
+                loops.push(LoopFrame {
+                    header,
+                    breaks: Vec::new(),
+                });
+                emit_seq(code, calls, loop_body, slot, is_entry, loops)?;
+                let frame = loops.pop().expect("loop frame pushed above");
                 let back = emit_jmp(code);
                 patch_rel32(code, back, header); // back-edge to the header
                 let end = code.len();
                 patch_rel32(code, je, end);
+                for site in frame.breaks {
+                    patch_rel32(code, site, end); // each `break` jumps past the loop
+                }
+            }
+            // `continue` — jump back to the innermost loop's header (re-test).
+            #[cfg(feature = "std-surface")]
+            Instr::Continue { .. } => {
+                let header = loops
+                    .last()
+                    .ok_or_else(|| NativeError::Unsupported("continue outside a loop".into()))?
+                    .header;
+                let jmp = emit_jmp(code);
+                patch_rel32(code, jmp, header);
+            }
+            // `break` — jump past the innermost loop; patched once its end is known.
+            #[cfg(feature = "std-surface")]
+            Instr::Break { .. } => {
+                let jmp = emit_jmp(code);
+                loops
+                    .last_mut()
+                    .ok_or_else(|| NativeError::Unsupported("break outside a loop".into()))?
+                    .breaks
+                    .push(jmp);
             }
             Instr::Return { value } => {
                 if let Some(v) = value {
@@ -431,7 +468,8 @@ fn lower_fn(
     code.extend_from_slice(&frame.to_le_bytes());
 
     let mut calls = Vec::new();
-    emit_seq(&mut code, &mut calls, body, &slot, is_entry)?;
+    let mut loops: Vec<LoopFrame> = Vec::new();
+    emit_seq(&mut code, &mut calls, body, &slot, is_entry, &mut loops)?;
 
     // If the body falls off the end without an explicit `Return` (a trailing
     // value-expression whose result is the FnDef's `ret_id` — e.g. a value-`if`
@@ -869,6 +907,25 @@ mod tests {
             run(&elf, "mind_native_while_exe"),
             Some(42),
             "6 * 7 iterations = 42"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_while_with_break_and_continue() {
+        // i runs 1.., `continue` skips adding i==3, `break` stops once i>9:
+        // s = 1+2+4+5+6+7+8+9 = 42.
+        let src = "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; \
+                   while i < 100 { i = i + 1; if i == 3 { continue; } \
+                   if i > 9 { break; } s = s + i; } return s; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers break/continue");
+        assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+        assert_eq!(
+            run(&elf, "mind_native_brk_exe"),
+            Some(42),
+            "skip 3 + break at 10 = 42"
         );
     }
 
