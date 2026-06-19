@@ -26,7 +26,8 @@
 //! ## Scope (honest) — the scalar-i64 vertical slice
 //!
 //! Supports `FnDef` / `Param` / `ConstI64` / `Call` / `Return`, arithmetic
-//! `BinOp{Add,Sub,Mul}` and signed comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
+//! `BinOp{Add,Sub,Mul,Div,Mod}` (Div/Mod via `cqo`+signed `idiv`) and signed
+//! comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
 //! (`cmp`+`setcc`+`movzx` → 0/1), and `If` (if-expressions: `cmp`/`je`/`jmp`
 //! with intra-function forward-jump patching and mem-to-mem phi resolution via
 //! the merge list), ≤6 integer args (System-V registers), a regalloc-free
@@ -34,7 +35,8 @@
 //! displacement). The entry point is the `FnDef` named `main`; its `Return`
 //! becomes an `exit` syscall.
 //!
-//! deferred: `While`/loops (back-edge + loop-carried phi), Div/Mod (cqo/idiv),
+//! deferred: `While`/loops (back-edge + loop-carried phi), Div/Mod edge-case
+//!   guards (raw idiv traps on /0 and INT_MIN/-1 — MIND's path defines them),
 //!   bitwise/shift BinOps, >6 args (stack-passed), register allocation (currently
 //!   every SSA value is a frame slot), true ELF relocations + sections + symbols
 //!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
@@ -253,10 +255,24 @@ fn emit_seq(
             }
             Instr::BinOp { dst, op, lhs, rhs } => {
                 load_rax(code, disp(lhs)?);
-                if let Some(setcc) = setcc_opcode(op) {
-                    cmp_rax_mem(code, setcc, disp(rhs)?); // comparison -> 0/1 in rax
-                } else {
-                    arith_rax_mem(code, op, disp(rhs)?)?; // Add/Sub/Mul
+                match op {
+                    BinOp::Div | BinOp::Mod => {
+                        // deferred: raw signed idiv — traps (#DE / SIGFPE) on
+                        // divide-by-zero and on INT_MIN / -1. MIND's MLIR path
+                        // gives these DEFINED results (div-by-zero decision +
+                        // INT_MIN/-1 guard); upgrade path: emit the same guarded
+                        // sequence (cmp rhs,0 + cmp pair) before the idiv.
+                        code.extend_from_slice(&[0x48, 0x99]); // cqo (sign-extend rax -> rdx:rax)
+                        code.extend_from_slice(&[0x48, 0xF7, 0xBD]); // idiv qword [rbp+disp32]
+                        code.extend_from_slice(&disp(rhs)?.to_le_bytes());
+                        if matches!(op, BinOp::Mod) {
+                            code.extend_from_slice(&[0x48, 0x89, 0xD0]); // mov rax, rdx (remainder)
+                        }
+                    }
+                    _ if setcc_opcode(op).is_some() => {
+                        cmp_rax_mem(code, setcc_opcode(op).unwrap(), disp(rhs)?); // -> 0/1
+                    }
+                    _ => arith_rax_mem(code, op, disp(rhs)?)?, // Add/Sub/Mul
                 }
                 store_rax(code, disp(dst)?);
             }
@@ -696,6 +712,52 @@ mod tests {
                 Some(expected),
                 "{op:?}({a}, {b}) should take the {}-branch",
                 if expected == 42 { "then" } else { "else" }
+            );
+        }
+    }
+
+    /// `fn main() -> i64 { a <op> b }` for a binary op over two constants.
+    fn binop_module(op: BinOp, a: i64, b: i64) -> IRModule {
+        let v = ValueId;
+        let main = Instr::FnDef {
+            name: "main".into(),
+            params: vec![],
+            ret_id: Some(v(2)),
+            reap_threshold: None,
+            body: vec![
+                Instr::ConstI64(v(0), a),
+                Instr::ConstI64(v(1), b),
+                Instr::BinOp {
+                    dst: v(2),
+                    op,
+                    lhs: v(0),
+                    rhs: v(1),
+                },
+                Instr::Return { value: Some(v(2)) },
+            ],
+        };
+        let mut m = IRModule::new();
+        m.instrs = vec![main];
+        m
+    }
+
+    #[test]
+    fn lowers_signed_div_and_mod() {
+        // Div = truncated-toward-zero signed quotient; Mod = signed remainder.
+        let cases = [
+            (BinOp::Div, 84, 2, 42),
+            (BinOp::Div, 127, 3, 42), // 127/3 = 42 (trunc)
+            (BinOp::Mod, 142, 50, 42),
+            (BinOp::Mod, 85, 43, 42),
+        ];
+        for (op, a, b, expected) in cases {
+            let m = binop_module(op, a, b);
+            let elf = compile_to_elf(&m).expect("lowers");
+            assert_eq!(elf, compile_to_elf(&m).expect("lowers"), "deterministic");
+            assert_eq!(
+                run(&elf, "mind_native_divmod_exe"),
+                Some(expected),
+                "{op:?}({a},{b})"
             );
         }
     }
