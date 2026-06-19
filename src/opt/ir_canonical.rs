@@ -330,8 +330,8 @@ pub(crate) fn for_each_operand(instr: &Instr, mut f: impl FnMut(ValueId)) {
             }
         }
         Instr::Return { value } => {
-            for &v in value {
-                f(v);
+            if let Some(v) = value {
+                f(*v);
             }
         }
         // A parameter / function definition / pure declaration reads no operands.
