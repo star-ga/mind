@@ -7973,7 +7973,16 @@ impl LoweringContext {
         // single-step tail. These integer ops are loop-invariant (LLVM LICM
         // hoists them out of the i0/j0 nest), defined here to keep the edit
         // inside the i64-unique block; %{p}_cu is reused by the main loop step.
-        const UNROLL: usize = 4;
+        // UNROLL=8: the 8 long-lived MR-row accumulators (8 YMM, loop-carried
+        // iter_args) are fixed regardless of UNROLL, so deepening 4→8 only widens
+        // the independent vpmuludq-limb multiply window (8×MR=64 in-flight) and
+        // halves the scf.for index_cast/branch overhead again WITHOUT touching the
+        // accumulator register footprint — the per-substep B-load + A-broadcasts
+        // are short-lived and scheduled by LLVM. For the dominant 512³ region
+        // K=512 divides by 8 exactly (64 clean iterations, empty [kmain,K) tail).
+        // Byte-identity is untouched: per lane the sum is still 0 + a·b(0) + … in
+        // ascending k, the SAME associative i64 order — UNROLL only widens ILP.
+        const UNROLL: usize = 8;
         line(&format!("        %{p}_cu = arith.constant {UNROLL} : index"));
         line(&format!("        %{p}_kmb = arith.divui %{ki}, %{p}_cu : index"));
         line(&format!("        %{p}_kmain = arith.muli %{p}_kmb, %{p}_cu : index"));
