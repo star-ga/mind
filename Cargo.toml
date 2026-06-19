@@ -163,9 +163,11 @@ mlir-build = ["mlir-subprocess"]
 # ELF64 with ZERO LLVM/MLIR/clang/linker. OFF by default and fully cfg-gated, so
 # the shipping `mic@3 -> MLIR -> ELF` path, the keystone byte-identity, and the
 # default/no-default build surfaces are all untouched. Determinism-by-
-# construction (fixed encoder + fixed ValueId->slot map). Scope today: the
-# scalar-i64 vertical slice; see src/native/mod.rs for the deferred roadmap.
-native-backend = []
+# construction (fixed encoder + fixed ValueId->slot map). Pulls in `std-surface`
+# because it targets the real language IR — control flow (`Instr::If`) and the
+# other high-level constructs are std-surface-gated. Scope today: the scalar-i64
+# slice + if-expressions; see src/native/mod.rs for the deferred roadmap.
+native-backend = ["std-surface"]
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
 # `cross-module-imports` bundles the real std/*.mind sources (see

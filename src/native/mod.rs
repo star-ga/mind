@@ -5,8 +5,10 @@
 //! Experimental **MIND-native backend**: `IRModule → x86-64 → static ELF64`, with
 //! **zero LLVM / MLIR / clang / assembler / external linker**.
 //!
-//! This is the production-shaped home of the codegen proven by the three
-//! `tests/native_backend_*_poc.rs` proofs-of-concept. It is **opt-in**
+//! This is the production-shaped home of the native codegen. The path was
+//! de-risked incrementally — a single-function stack machine, then
+//! multi-function + System-V calls + a minimal linker, then consuming the real
+//! IR, then if-expression control flow — and consolidated here. It is **opt-in**
 //! (`--features native-backend`) and is **not** wired into the default compile
 //! pipeline — the shipping path is still `mic@3 → MLIR → ELF`. It exists so the
 //! native-backend track has a real, linted, tested module to grow inside of.
@@ -24,16 +26,18 @@
 //! ## Scope (honest) — the scalar-i64 vertical slice
 //!
 //! Supports `FnDef` / `Param` / `ConstI64` / `BinOp{Add,Sub,Mul}` / `Call` /
-//! `Return`, ≤6 integer args (System-V registers), a regalloc-free mem-to-mem
-//! frame model, and intra-module calls (computed PC-relative displacement). The
-//! entry point is the `FnDef` named `main`; its `Return` becomes an `exit`
-//! syscall.
+//! `Return` / `If` (if-expressions: `cmp`/`je`/`jmp` with intra-function
+//! forward-jump patching and mem-to-mem phi resolution via the merge list), ≤6
+//! integer args (System-V registers), a regalloc-free mem-to-mem frame model,
+//! and intra-module calls (computed PC-relative displacement). The entry point
+//! is the `FnDef` named `main`; its `Return` becomes an `exit` syscall.
 //!
-//! deferred: control flow (If/While → cmp/jcc with intra-fn label patching),
-//!   Div/Mod (cqo/idiv), >6 args (stack-passed), register allocation (currently
-//!   every SSA value is a frame slot), true ELF relocations + sections + symbols
-//!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
-//!   upgrade path: extend `lower_fn`'s match arm-by-arm; add a deterministic
+//! deferred: comparison BinOps (Lt/Gt/Eq/… → cmp+setcc; today `If` branches on a
+//!   value's truthiness), `While`/loops (back-edge + loop-carried phi), Div/Mod
+//!   (cqo/idiv), >6 args (stack-passed), register allocation (currently every SSA
+//!   value is a frame slot), true ELF relocations + sections + symbols (for
+//!   separate compilation / libc linking), float + tensor + SIMD kernels.
+//!   upgrade path: extend `emit_seq`'s match arm-by-arm; add a deterministic
 //!   linear-scan allocator as a pre-pass over the slot map; emit a `.o` with a
 //!   symbol table + `R_X86_64_PC32` records for the external-link milestone.
 
@@ -133,68 +137,153 @@ fn store_argreg(code: &mut Vec<u8>, arg_index: usize, disp: i32) -> Result<(), N
     Ok(())
 }
 
-/// Assign every value defined in `body` a frame slot, in first-appearance order.
+/// Assign every value defined in `body` a frame slot, in first-appearance order,
+/// recursing through `If` branches. A pure function of the IR.
 fn assign_slots(body: &[Instr]) -> HashMap<ValueId, usize> {
-    let mut slot = HashMap::new();
-    for ins in body {
-        let dst = match ins {
-            Instr::Param { dst, .. } => Some(*dst),
-            Instr::ConstI64(dst, _) => Some(*dst),
-            Instr::BinOp { dst, .. } => Some(*dst),
-            Instr::Call { dst, .. } => Some(*dst),
-            _ => None,
-        };
-        if let Some(d) = dst {
-            let n = slot.len();
-            slot.entry(d).or_insert(n);
+    fn define(slot: &mut HashMap<ValueId, usize>, id: ValueId) {
+        let n = slot.len();
+        slot.entry(id).or_insert(n);
+    }
+    fn walk(body: &[Instr], slot: &mut HashMap<ValueId, usize>) {
+        for ins in body {
+            match ins {
+                Instr::Param { dst, .. }
+                | Instr::ConstI64(dst, _)
+                | Instr::BinOp { dst, .. }
+                | Instr::Call { dst, .. } => define(slot, *dst),
+                Instr::If {
+                    cond_instrs,
+                    then_instrs,
+                    else_instrs,
+                    dst,
+                    merges,
+                    ..
+                } => {
+                    walk(cond_instrs, slot);
+                    walk(then_instrs, slot);
+                    walk(else_instrs, slot);
+                    define(slot, *dst);
+                    for (m, _, _) in merges {
+                        define(slot, *m);
+                    }
+                }
+                _ => {}
+            }
         }
     }
+    let mut slot = HashMap::new();
+    walk(body, &mut slot);
     slot
 }
 
-/// Lower one function body to machine code. `is_entry` swaps the final `Return`
-/// for an `exit` syscall (the program's `_start`).
-fn lower_fn(name: &str, body: &[Instr], is_entry: bool) -> Result<Func, NativeError> {
-    let slot = assign_slots(body);
+/// `cmp qword [rbp+disp], 0 ; je rel32` — returns the offset of the `je`'s rel32
+/// field, to be patched once the else-target is known.
+fn emit_cmp_je_zero(code: &mut Vec<u8>, cond_disp: i32) -> usize {
+    code.extend_from_slice(&[0x48, 0x83, 0xBD]); // cmp qword [rbp+disp32], imm8
+    code.extend_from_slice(&cond_disp.to_le_bytes());
+    code.push(0x00);
+    code.extend_from_slice(&[0x0F, 0x84]); // je rel32
+    let site = code.len();
+    code.extend_from_slice(&[0, 0, 0, 0]);
+    site
+}
+
+/// `jmp rel32` — returns the offset of the rel32 field, patched at the end-target.
+fn emit_jmp(code: &mut Vec<u8>) -> usize {
+    code.push(0xE9);
+    let site = code.len();
+    code.extend_from_slice(&[0, 0, 0, 0]);
+    site
+}
+
+/// Patch a forward jump's rel32 (relative to the instruction *after* the field).
+/// Intra-function and so position-independent: the value is invariant under the
+/// linker relocating the whole function, since site and target move together.
+fn patch_rel32(code: &mut [u8], site: usize, target: usize) {
+    let rel = target as i64 - (site as i64 + 4);
+    code[site..site + 4].copy_from_slice(&(rel as i32).to_le_bytes());
+}
+
+/// Emit one instruction sequence into `code`, recursing through `If` branches.
+/// `is_entry` makes a `Return` lower to an `exit` syscall instead of `ret`.
+fn emit_seq(
+    code: &mut Vec<u8>,
+    calls: &mut Vec<(usize, String)>,
+    body: &[Instr],
+    slot: &HashMap<ValueId, usize>,
+    is_entry: bool,
+) -> Result<(), NativeError> {
     let disp = |id: &ValueId| -> Result<i32, NativeError> {
         slot.get(id)
             .map(|&i| slot_disp(i))
             .ok_or_else(|| NativeError::Unsupported(format!("use of undefined value {id}")))
     };
-    let frame = (8 * slot.len()).next_multiple_of(16) as i32; // keep rsp 16-aligned
-
-    // Prologue: push rbp ; mov rbp, rsp ; sub rsp, frame
-    let mut code = vec![0x55, 0x48, 0x89, 0xE5, 0x48, 0x81, 0xEC];
-    code.extend_from_slice(&frame.to_le_bytes());
-
-    let mut calls = Vec::new();
     for ins in body {
         match ins {
-            Instr::Param { dst, index, .. } => store_argreg(&mut code, *index, disp(dst)?)?,
+            Instr::Param { dst, index, .. } => store_argreg(code, *index, disp(dst)?)?,
             Instr::ConstI64(dst, v) => {
                 code.extend_from_slice(&[0x48, 0xB8]); // movabs rax, imm64
                 code.extend_from_slice(&v.to_le_bytes());
-                store_rax(&mut code, disp(dst)?);
+                store_rax(code, disp(dst)?);
             }
             Instr::BinOp { dst, op, lhs, rhs } => {
-                load_rax(&mut code, disp(lhs)?);
-                arith_rax_mem(&mut code, op, disp(rhs)?)?;
-                store_rax(&mut code, disp(dst)?);
+                load_rax(code, disp(lhs)?);
+                arith_rax_mem(code, op, disp(rhs)?)?;
+                store_rax(code, disp(dst)?);
             }
             Instr::Call {
                 dst, name, args, ..
             } => {
                 for (i, a) in args.iter().enumerate() {
-                    load_argreg(&mut code, i, disp(a)?)?;
+                    load_argreg(code, i, disp(a)?)?;
                 }
                 code.push(0xE8); // call rel32 (placeholder; linker-patched)
                 calls.push((code.len(), name.clone()));
                 code.extend_from_slice(&[0, 0, 0, 0]);
-                store_rax(&mut code, disp(dst)?); // result rax -> slot
+                store_rax(code, disp(dst)?); // result rax -> slot
+            }
+            Instr::If {
+                cond_id,
+                cond_instrs,
+                then_instrs,
+                then_result,
+                else_instrs,
+                else_result,
+                dst,
+                merges,
+                ..
+            } => {
+                // Evaluate the condition; branch to the else-block when it is 0.
+                emit_seq(code, calls, cond_instrs, slot, is_entry)?;
+                let je = emit_cmp_je_zero(code, disp(cond_id)?);
+
+                // then-block: body, phi(then side), dst = then_result, jump to end.
+                emit_seq(code, calls, then_instrs, slot, is_entry)?;
+                for (m, then_val, _) in merges {
+                    load_rax(code, disp(then_val)?);
+                    store_rax(code, disp(m)?);
+                }
+                load_rax(code, disp(then_result)?);
+                store_rax(code, disp(dst)?);
+                let jmp = emit_jmp(code);
+
+                // else-block: body, phi(else side), dst = else_result.
+                let else_at = code.len();
+                patch_rel32(code, je, else_at);
+                emit_seq(code, calls, else_instrs, slot, is_entry)?;
+                for (m, _, else_val) in merges {
+                    load_rax(code, disp(else_val)?);
+                    store_rax(code, disp(m)?);
+                }
+                load_rax(code, disp(else_result)?);
+                store_rax(code, disp(dst)?);
+
+                let end_at = code.len();
+                patch_rel32(code, jmp, end_at);
             }
             Instr::Return { value } => {
                 if let Some(v) = value {
-                    load_rax(&mut code, disp(v)?);
+                    load_rax(code, disp(v)?);
                 }
                 if is_entry {
                     // exit(rax): mov rdi, rax ; mov rax, 60 ; syscall
@@ -209,6 +298,21 @@ fn lower_fn(name: &str, body: &[Instr], is_entry: bool) -> Result<Func, NativeEr
             other => return Err(NativeError::Unsupported(instr_kind(other).to_string())),
         }
     }
+    Ok(())
+}
+
+/// Lower one function body to machine code. `is_entry` swaps the final `Return`
+/// for an `exit` syscall (the program's `_start`).
+fn lower_fn(name: &str, body: &[Instr], is_entry: bool) -> Result<Func, NativeError> {
+    let slot = assign_slots(body);
+    let frame = (8 * slot.len()).next_multiple_of(16) as i32; // keep rsp 16-aligned
+
+    // Prologue: push rbp ; mov rbp, rsp ; sub rsp, frame
+    let mut code = vec![0x55, 0x48, 0x89, 0xE5, 0x48, 0x81, 0xEC];
+    code.extend_from_slice(&frame.to_le_bytes());
+
+    let mut calls = Vec::new();
+    emit_seq(&mut code, &mut calls, body, &slot, is_entry)?;
 
     Ok(Func {
         name: name.to_string(),
@@ -403,20 +507,11 @@ mod tests {
         assert_eq!(a, b, "native lowering must be byte-identical (the wedge)");
 
         // Runnable: exec it, assert f(40,1,1) = 42.
-        let path = std::env::temp_dir().join("mind_native_module_exe");
-        let mut fh = std::fs::File::create(&path).expect("create");
-        fh.write_all(&a).expect("write");
-        let mut perms = fh.metadata().unwrap().permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).expect("chmod");
-        drop(fh);
-        let status = Command::new(&path).status().expect("exec");
         assert_eq!(
-            status.code(),
+            run(&a, "mind_native_module_exe"),
             Some(42),
             "must compute f(40,1,1) and exit(42)"
         );
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
@@ -430,5 +525,87 @@ mod tests {
             body: vec![Instr::Return { value: None }],
         }];
         assert_eq!(compile_to_elf(&m), Err(NativeError::NoEntry));
+    }
+
+    /// Write the ELF to a unique temp path, exec it, return its exit code.
+    ///
+    /// The path is unique per call (pid + atomic counter) so parallel tests never
+    /// collide, and the write handle is closed (inner scope) before the exec. The
+    /// exec is retried on ETXTBSY (errno 26): a just-written-and-chmod'd file can
+    /// briefly read as "text file busy" until the kernel drops the write
+    /// reference — a real race under parallel-test load, not a logic error.
+    fn run(elf: &[u8], name: &str) -> Option<i32> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let uniq = CTR.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{name}.{}.{uniq}", std::process::id()));
+        {
+            let mut fh = std::fs::File::create(&path).expect("create");
+            fh.write_all(elf).expect("write");
+            let mut perms = fh.metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).expect("chmod");
+        } // handle dropped here, before exec
+        let mut code = None;
+        for _ in 0..100 {
+            match Command::new(&path).status() {
+                Ok(s) => {
+                    code = s.code();
+                    break;
+                }
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => panic!("exec failed: {e}"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        code
+    }
+
+    /// `fn main() { let x = cond; if x { 42 } else { 7 } }` as a real IRModule —
+    /// exercises the native `If` arm (branch + forward-jump patching + phi).
+    fn if_module(cond: i64) -> IRModule {
+        let v = ValueId;
+        let main = Instr::FnDef {
+            name: "main".into(),
+            params: vec![],
+            ret_id: Some(v(3)),
+            reap_threshold: None,
+            body: vec![
+                Instr::ConstI64(v(0), cond),
+                Instr::If {
+                    cond_id: v(0),
+                    cond_instrs: vec![],
+                    then_instrs: vec![Instr::ConstI64(v(1), 42)],
+                    then_result: v(1),
+                    else_instrs: vec![Instr::ConstI64(v(2), 7)],
+                    else_result: v(2),
+                    dst: v(3),
+                    branch_bindings: vec![],
+                    merges: vec![],
+                },
+                Instr::Return { value: Some(v(3)) },
+            ],
+        };
+        let mut m = IRModule::new();
+        m.instrs = vec![main];
+        m
+    }
+
+    #[test]
+    fn lowers_if_expression_both_branches_run_deterministically() {
+        // Truthy condition takes the then-branch (42); zero takes the else (7) —
+        // proving both the fall-through and the `je`-taken paths.
+        for (cond, expected) in [(40i64, 42), (0, 7)] {
+            let m = if_module(cond);
+            let a = compile_to_elf(&m).expect("lowers");
+            assert_eq!(a, compile_to_elf(&m).expect("lowers"), "deterministic");
+            assert_eq!(
+                run(&a, "mind_native_if_exe"),
+                Some(expected),
+                "if({cond}) must exit({expected})"
+            );
+        }
     }
 }
