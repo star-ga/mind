@@ -7902,18 +7902,25 @@ impl LoweringContext {
     ) {
         use std::fmt::Write;
         let p = prefix;
-        // Register tile: MR=8 rows × NR=4-wide i64 column vector. The i64 limb
-        // multiply (`arith.muli : vector<NRxi64>` → 3×`vpmuludq` + shift/mask/add
-        // on AVX2, ~6 transient YMM temps) makes the WIDE vector<8xi64> form
-        // (4×8 tile, ~18 YMM peak: 8 long-lived acc + B + broadcast + temps)
-        // spill the 16-YMM file; the NARROW vector<4xi64> form (1 YMM/acc) keeps
-        // the same 32 MACs/k-step (so the k-loop overhead stays amortized — the
-        // discarded MR=2 lost that by halving to 16) at ~13 YMM peak, no spill,
-        // with 8 independent accumulator chains and one B-load YMM per k-step.
-        // Byte-identity is untouched: this is pure lane regrouping over an
-        // associative + commutative i64 reduction (same exact `a·b mod 2^64`).
+        // Register tile: MR=4 rows × NR=4-wide i64 column vector, DEFERRED-SHIFT
+        // limb microkernel. The exact low-64-bit product a·b mod 2^64 needs the
+        // limb identity al·bl + ((al·bh + ah·bl) mod 2^32)·2^32. `arith.muli :
+        // vector<4xi64>` lowers that to 3×vpmuludq PLUS 2 limb shifts AND a
+        // per-multiply `vpsllq $32` cross-shift — and vpmuludq/vpsllq all contend
+        // for AVX2 port 0, which is the bottleneck (B re-streaming is < 1 GB/s,
+        // nowhere near memory-bound). Here we split the running sum into two
+        // accumulators per row, acc_lo = Σ al·bl and acc_hi = Σ (al·bh + ah·bl),
+        // and combine them with ONE `arith.shli $32` + add per OUTPUT element in
+        // the epilogue instead of one per k-step. Because (x+y)<<32 ≡ (x<<32) +
+        // (y<<32) (mod 2^64) and i64 add is associative, this hoists ~K cross
+        // shifts out of the inner loop while staying BYTE-IDENTICAL to the prior
+        // per-term `a·b mod 2^64` reduction. Limbs come from explicit
+        // `arith.andi <mask>` / `arith.shrui $32`, so each limb multiply is a
+        // single vpmuludq (LLVM proves the masked high32 is zero). MR=4 (8 live
+        // acc: lo+hi per row) keeps the YMM file from spilling on the doubled
+        // accumulator set.
         const NR: usize = 4;
-        const MR: usize = 8;
+        const MR: usize = 4;
         let elem_bytes = std::mem::size_of::<i64>() as i64;
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
@@ -7928,6 +7935,13 @@ impl LoweringContext {
         line(&format!("    %{p}_z0 = arith.constant 0 : i64"));
         line(&format!(
             "    %{p}_zv = arith.constant dense<0> : vector<{NR}xi64>"
+        ));
+        // 32-bit limb mask and the shared shift-by-32 splat (both vector<NRxi64>).
+        line(&format!(
+            "    %{p}_mask = arith.constant dense<4294967295> : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "    %{p}_c32v = arith.constant dense<32> : vector<{NR}xi64>"
         ));
 
         // ── column bounds (N-derived, row-band-invariant) ────────────────────
@@ -7945,8 +7959,21 @@ impl LoweringContext {
         ));
 
         // ════════════════════════════════════════════════════════════════════
-        //  Region A — vector tile: MR rows × NR columns, k-reduced.
+        //  Region A — MR×NR tile, k-reduced into split lo/hi accumulators.
+        //  Per row t: lo{t} = Σ al·bl, hi{t} = Σ (al·bh + ah·bl); the `<<32` that
+        //  places hi is applied ONCE in the epilogue, not per k-step. Limbs are
+        //  explicit andi/shrui so every limb multiply is a single vpmuludq.
         // ════════════════════════════════════════════════════════════════════
+        // 2*MR accumulators, interleaved [lo0,hi0,lo1,hi1,…] → result #(2t)=lo,
+        // #(2t+1)=hi for row t.
+        let acc_init = (0..MR)
+            .map(|t| format!("%{p}_lo{t} = %{p}_zv, %{p}_hi{t} = %{p}_zv"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let acc_ty = (0..(2 * MR))
+            .map(|_| format!("vector<{NR}xi64>"))
+            .collect::<Vec<_>>()
+            .join(", ");
         line(&format!(
             "    scf.for %{p}_j0 = %{p}_c0 to %{p}_nmain step %{p}_nr {{"
         ));
@@ -7959,44 +7986,16 @@ impl LoweringContext {
         line(&format!(
             "        %{p}_i0i = arith.index_cast %{p}_i0 : index to i64"
         ));
-        let acc_init = (0..MR)
-            .map(|t| format!("%{p}_acc{t} = %{p}_zv"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let acc_ty = (0..MR)
-            .map(|_| format!("vector<{NR}xi64>"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        // Unroll-by-UNROLL k bound: kmain = floor(K/UNROLL)*UNROLL — the main
-        // loop reduces UNROLL k-substeps per iteration into the same MR
-        // accumulators; the [kmain, K) remainder (0..UNROLL-1 steps) runs in the
-        // single-step tail. These integer ops are loop-invariant (LLVM LICM
-        // hoists them out of the i0/j0 nest), defined here to keep the edit
-        // inside the i64-unique block; %{p}_cu is reused by the main loop step.
-        // UNROLL=8: the 8 long-lived MR-row accumulators (8 YMM, loop-carried
-        // iter_args) are fixed regardless of UNROLL, so deepening 4→8 only widens
-        // the independent vpmuludq-limb multiply window (8×MR=64 in-flight) and
-        // halves the scf.for index_cast/branch overhead again WITHOUT touching the
-        // accumulator register footprint — the per-substep B-load + A-broadcasts
-        // are short-lived and scheduled by LLVM. For the dominant 512³ region
-        // K=512 divides by 8 exactly (64 clean iterations, empty [kmain,K) tail).
-        // Byte-identity is untouched: per lane the sum is still 0 + a·b(0) + … in
-        // ascending k, the SAME associative i64 order — UNROLL only widens ILP.
+        // UNROLL k-substeps per main iteration; [kmain,K) handled by single-step
+        // tail. K=512 divides by 8 exactly → empty tail in the dominant region.
         const UNROLL: usize = 8;
         line(&format!("        %{p}_cu = arith.constant {UNROLL} : index"));
         line(&format!("        %{p}_kmb = arith.divui %{ki}, %{p}_cu : index"));
         line(&format!("        %{p}_kmain = arith.muli %{p}_kmb, %{p}_cu : index"));
-        // ── main: UNROLL independent k-substeps per iteration ─────────────────
-        // Exposes UNROLL×MR independent vpmuludq-limb multiplies (substeps k..k+3
-        // load distinct B vectors and broadcast distinct A scalars) to the AVX2
-        // ports — a deeper in-flight chain to hide the ~5-cycle vpmuludq latency
-        // and a further 4× cut to the scf.for index_cast/branch overhead in the
-        // dominant 512³ region. Byte-identity is untouched: per lane the sum is
-        // still 0 + a·b(0) + a·b(1) + … in ascending k, the SAME associative i64
-        // order as the single-step loop — UNROLL only widens the ILP window.
         line(&format!(
-            "        %{p}_va:{MR} = scf.for %{p}_k = %{p}_c0 to %{p}_kmain \
-             step %{p}_cu iter_args({acc_init}) -> ({acc_ty}) {{"
+            "        %{p}_va:{} = scf.for %{p}_k = %{p}_c0 to %{p}_kmain \
+             step %{p}_cu iter_args({acc_init}) -> ({acc_ty}) {{",
+            2 * MR
         ));
         for s in 0..UNROLL {
             // k index for this substep: s=0 is %{p}_k, s>0 is %{p}_k + s.
@@ -8028,6 +8027,13 @@ impl LoweringContext {
                 "          %{p}_bw{s} = llvm.load %{p}_bptr{s} {{alignment = 8 : i64}} : \
                  !llvm.ptr -> vector<{NR}xi64>"
             ));
+            // B limbs, shared across the MR rows.
+            line(&format!(
+                "          %{p}_bl{s} = arith.andi %{p}_bw{s}, %{p}_mask : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_bh{s} = arith.shrui %{p}_bw{s}, %{p}_c32v : vector<{NR}xi64>"
+            ));
             for t in 0..MR {
                 line(&format!("          %{p}_rt{s}_{t} = arith.constant {t} : i64"));
                 line(&format!(
@@ -8053,32 +8059,62 @@ impl LoweringContext {
                     "          %{p}_ab{s}_{t} = vector.broadcast %{p}_aw{s}_{t} : i64 to vector<{NR}xi64>"
                 ));
                 line(&format!(
-                    "          %{p}_pp{s}_{t} = arith.muli %{p}_ab{s}_{t}, %{p}_bw{s} : vector<{NR}xi64>"
+                    "          %{p}_al{s}_{t} = arith.andi %{p}_ab{s}_{t}, %{p}_mask : vector<{NR}xi64>"
                 ));
-                let prev = if s == 0 {
-                    format!("%{p}_acc{t}")
+                line(&format!(
+                    "          %{p}_ah{s}_{t} = arith.shrui %{p}_ab{s}_{t}, %{p}_c32v : vector<{NR}xi64>"
+                ));
+                line(&format!(
+                    "          %{p}_lop{s}_{t} = arith.muli %{p}_al{s}_{t}, %{p}_bl{s} : vector<{NR}xi64>"
+                ));
+                line(&format!(
+                    "          %{p}_cap{s}_{t} = arith.muli %{p}_al{s}_{t}, %{p}_bh{s} : vector<{NR}xi64>"
+                ));
+                line(&format!(
+                    "          %{p}_cbp{s}_{t} = arith.muli %{p}_ah{s}_{t}, %{p}_bl{s} : vector<{NR}xi64>"
+                ));
+                line(&format!(
+                    "          %{p}_crs{s}_{t} = arith.addi %{p}_cap{s}_{t}, %{p}_cbp{s}_{t} : vector<{NR}xi64>"
+                ));
+                let plo = if s == 0 {
+                    format!("%{p}_lo{t}")
                 } else {
-                    format!("%{p}_ac{}_{t}", s - 1)
+                    format!("%{p}_nlo{}_{t}", s - 1)
+                };
+                let phi = if s == 0 {
+                    format!("%{p}_hi{t}")
+                } else {
+                    format!("%{p}_nhi{}_{t}", s - 1)
                 };
                 line(&format!(
-                    "          %{p}_ac{s}_{t} = arith.addi {prev}, %{p}_pp{s}_{t} : vector<{NR}xi64>"
+                    "          %{p}_nlo{s}_{t} = arith.addi {plo}, %{p}_lop{s}_{t} : vector<{NR}xi64>"
+                ));
+                line(&format!(
+                    "          %{p}_nhi{s}_{t} = arith.addi {phi}, %{p}_crs{s}_{t} : vector<{NR}xi64>"
                 ));
             }
         }
         let yields = (0..MR)
-            .map(|t| format!("%{p}_ac{}_{t}", UNROLL - 1))
+            .map(|t| format!("%{p}_nlo{}_{t}, %{p}_nhi{}_{t}", UNROLL - 1, UNROLL - 1))
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!("          scf.yield {yields} : {acc_ty}"));
         line("        }");
         // ── tail: remaining [kmain, K) single k-steps (0 or 1 iterations) ─────
         let tacc_init = (0..MR)
-            .map(|t| format!("%{p}_tacc{t} = %{p}_va#{t}"))
+            .map(|t| {
+                format!(
+                    "%{p}_tlo{t} = %{p}_va#{}, %{p}_thi{t} = %{p}_va#{}",
+                    2 * t,
+                    2 * t + 1
+                )
+            })
             .collect::<Vec<_>>()
             .join(", ");
         line(&format!(
-            "        %{p}_vt:{MR} = scf.for %{p}_kt = %{p}_kmain to %{ki} \
-             step %{p}_c1 iter_args({tacc_init}) -> ({acc_ty}) {{"
+            "        %{p}_vt:{} = scf.for %{p}_kt = %{p}_kmain to %{ki} \
+             step %{p}_c1 iter_args({tacc_init}) -> ({acc_ty}) {{",
+            2 * MR
         ));
         line(&format!(
             "          %{p}_tki = arith.index_cast %{p}_kt : index to i64"
@@ -8094,7 +8130,13 @@ impl LoweringContext {
             "          %{p}_tbw = llvm.load %{p}_tbptr {{alignment = 8 : i64}} : \
              !llvm.ptr -> vector<{NR}xi64>"
         ));
-        let mut tyields = Vec::with_capacity(MR);
+        line(&format!(
+            "          %{p}_tbl = arith.andi %{p}_tbw, %{p}_mask : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}_tbh = arith.shrui %{p}_tbw, %{p}_c32v : vector<{NR}xi64>"
+        ));
+        let mut tyields = Vec::with_capacity(2 * MR);
         for t in 0..MR {
             line(&format!("          %{p}_trt{t} = arith.constant {t} : i64"));
             line(&format!(
@@ -8120,16 +8162,43 @@ impl LoweringContext {
                 "          %{p}_tab{t} = vector.broadcast %{p}_taw{t} : i64 to vector<{NR}xi64>"
             ));
             line(&format!(
-                "          %{p}_tpp{t} = arith.muli %{p}_tab{t}, %{p}_tbw : vector<{NR}xi64>"
+                "          %{p}_tal{t} = arith.andi %{p}_tab{t}, %{p}_mask : vector<{NR}xi64>"
             ));
             line(&format!(
-                "          %{p}_tna{t} = arith.addi %{p}_tacc{t}, %{p}_tpp{t} : vector<{NR}xi64>"
+                "          %{p}_tah{t} = arith.shrui %{p}_tab{t}, %{p}_c32v : vector<{NR}xi64>"
             ));
-            tyields.push(format!("%{p}_tna{t}"));
+            line(&format!(
+                "          %{p}_tlop{t} = arith.muli %{p}_tal{t}, %{p}_tbl : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tcap{t} = arith.muli %{p}_tal{t}, %{p}_tbh : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tcbp{t} = arith.muli %{p}_tah{t}, %{p}_tbl : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tcrs{t} = arith.addi %{p}_tcap{t}, %{p}_tcbp{t} : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tnlo{t} = arith.addi %{p}_tlo{t}, %{p}_tlop{t} : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tnhi{t} = arith.addi %{p}_thi{t}, %{p}_tcrs{t} : vector<{NR}xi64>"
+            ));
+            tyields.push(format!("%{p}_tnlo{t}, %{p}_tnhi{t}"));
         }
         line(&format!("          scf.yield {} : {acc_ty}", tyields.join(", ")));
         line("        }");
+        // ── epilogue: res = lo + (hi << 32), then store the NR-lane row slice ──
         for t in 0..MR {
+            line(&format!(
+                "        %{p}_hsh{t} = arith.shli %{p}_vt#{}, %{p}_c32v : vector<{NR}xi64>",
+                2 * t + 1
+            ));
+            line(&format!(
+                "        %{p}_res{t} = arith.addi %{p}_vt#{}, %{p}_hsh{t} : vector<{NR}xi64>",
+                2 * t
+            ));
             line(&format!("        %{p}_strt{t} = arith.constant {t} : i64"));
             line(&format!(
                 "        %{p}_sit{t} = arith.addi %{p}_i0i, %{p}_strt{t} : i64"
@@ -8148,7 +8217,7 @@ impl LoweringContext {
                  (!llvm.ptr, i64) -> !llvm.ptr, i8"
             ));
             line(&format!(
-                "        llvm.store %{p}_vt#{t}, %{p}_cptr{t} {{alignment = 8 : i64}} : \
+                "        llvm.store %{p}_res{t}, %{p}_cptr{t} {{alignment = 8 : i64}} : \
                  vector<{NR}xi64>, !llvm.ptr"
             ));
         }
@@ -8157,6 +8226,7 @@ impl LoweringContext {
 
         // ════════════════════════════════════════════════════════════════════
         //  Region B — band M row tail: rows [m_main..row_end), cols [0..n_main).
+        //  Same lo/hi deferred-shift limb math, single row, single accumulator.
         // ════════════════════════════════════════════════════════════════════
         line(&format!(
             "    scf.for %{p}b_j0 = %{p}_c0 to %{p}_nmain step %{p}_nr {{"
@@ -8171,8 +8241,9 @@ impl LoweringContext {
             "        %{p}b_ii = arith.index_cast %{p}b_i : index to i64"
         ));
         line(&format!(
-            "        %{p}b_vacc = scf.for %{p}b_k = %{p}_c0 to %{ki} \
-             step %{p}_c1 iter_args(%{p}b_acc = %{p}_zv) -> (vector<{NR}xi64>) {{"
+            "        %{p}b_vacc:2 = scf.for %{p}b_k = %{p}_c0 to %{ki} \
+             step %{p}_c1 iter_args(%{p}b_alo = %{p}_zv, %{p}b_ahi = %{p}_zv) \
+             -> (vector<{NR}xi64>, vector<{NR}xi64>) {{"
         ));
         line(&format!(
             "          %{p}b_ki64 = arith.index_cast %{p}b_k : index to i64"
@@ -8190,6 +8261,12 @@ impl LoweringContext {
             "          %{p}b_bw = llvm.load %{p}b_bptr {{alignment = 8 : i64}} : \
              !llvm.ptr -> vector<{NR}xi64>"
         ));
+        line(&format!(
+            "          %{p}b_bl = arith.andi %{p}b_bw, %{p}_mask : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_bh = arith.shrui %{p}b_bw, %{p}_c32v : vector<{NR}xi64>"
+        ));
         line(&format!("          %{p}b_ik = arith.muli %{p}b_ii, %{k64} : i64"));
         line(&format!(
             "          %{p}b_aidx = arith.addi %{p}b_ik, %{p}b_ki64 : i64"
@@ -8206,13 +8283,39 @@ impl LoweringContext {
             "          %{p}b_ab = vector.broadcast %{p}b_aw : i64 to vector<{NR}xi64>"
         ));
         line(&format!(
-            "          %{p}b_pp = arith.muli %{p}b_ab, %{p}b_bw : vector<{NR}xi64>"
+            "          %{p}b_al = arith.andi %{p}b_ab, %{p}_mask : vector<{NR}xi64>"
         ));
         line(&format!(
-            "          %{p}b_na = arith.addi %{p}b_acc, %{p}b_pp : vector<{NR}xi64>"
+            "          %{p}b_ah = arith.shrui %{p}b_ab, %{p}_c32v : vector<{NR}xi64>"
         ));
-        line(&format!("          scf.yield %{p}b_na : vector<{NR}xi64>"));
+        line(&format!(
+            "          %{p}b_lop = arith.muli %{p}b_al, %{p}b_bl : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_cap = arith.muli %{p}b_al, %{p}b_bh : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_cbp = arith.muli %{p}b_ah, %{p}b_bl : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_crs = arith.addi %{p}b_cap, %{p}b_cbp : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_nlo = arith.addi %{p}b_alo, %{p}b_lop : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          %{p}b_nhi = arith.addi %{p}b_ahi, %{p}b_crs : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "          scf.yield %{p}b_nlo, %{p}b_nhi : vector<{NR}xi64>, vector<{NR}xi64>"
+        ));
         line("        }");
+        line(&format!(
+            "        %{p}b_hsh = arith.shli %{p}b_vacc#1, %{p}_c32v : vector<{NR}xi64>"
+        ));
+        line(&format!(
+            "        %{p}b_res = arith.addi %{p}b_vacc#0, %{p}b_hsh : vector<{NR}xi64>"
+        ));
         line(&format!("        %{p}b_cin = arith.muli %{p}b_ii, %{n64} : i64"));
         line(&format!(
             "        %{p}b_cidx = arith.addi %{p}b_cin, %{p}b_j0i : i64"
@@ -8223,7 +8326,7 @@ impl LoweringContext {
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         line(&format!(
-            "        llvm.store %{p}b_vacc, %{p}b_cptr {{alignment = 8 : i64}} : \
+            "        llvm.store %{p}b_res, %{p}b_cptr {{alignment = 8 : i64}} : \
              vector<{NR}xi64>, !llvm.ptr"
         ));
         line("      }");
