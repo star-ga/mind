@@ -33,13 +33,14 @@
 //! intra-function forward-jump patching and mem-to-mem phi resolution via the
 //! merge list), and `While` loops with `break`/`continue` (header re-test +
 //! back-edge `jmp`; loop-carried vars alias to one slot so no phi forwarding is
-//! needed; break/continue jump via a loop-frame stack), ≤6 integer args
-//! (System-V registers), a regalloc-free mem-to-mem frame model, and intra-module
-//! calls (computed PC-relative displacement). The entry point is the `FnDef`
-//! named `main`; its `Return` becomes an `exit` syscall.
+//! needed; break/continue jump via a loop-frame stack), integer args (≤6 in
+//! System-V registers, 7th+ stack-passed with 16-byte-aligned call), a
+//! regalloc-free mem-to-mem frame model, and intra-module calls (computed
+//! PC-relative displacement). The entry point is the `FnDef` named `main`; its
+//! `Return` becomes an `exit` syscall.
 //!
 //! deferred: Div/Mod edge-case guards (raw idiv traps on /0 and INT_MIN/-1 —
-//!   MIND's path defines them), >6 args (stack-passed), register allocation
+//!   MIND's path defines them), register allocation
 //!   (currently
 //!   every SSA value is a frame slot), true ELF relocations + sections + symbols
 //!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
@@ -304,7 +305,17 @@ fn emit_seq(
     };
     for ins in body {
         match ins {
-            Instr::Param { dst, index, .. } => store_argreg(code, *index, disp(dst)?)?,
+            Instr::Param { dst, index, .. } => {
+                if *index < 6 {
+                    store_argreg(code, *index, disp(dst)?)?;
+                } else {
+                    // 7th+ arg arrives on the stack at [rbp + 16 + 8*(index-6)]
+                    // (above the saved rbp and return address).
+                    let off = 16 + 8 * (*index as i32 - 6);
+                    load_rax(code, off);
+                    store_rax(code, disp(dst)?);
+                }
+            }
             Instr::ConstI64(dst, v) => {
                 code.extend_from_slice(&[0x48, 0xB8]); // movabs rax, imm64
                 code.extend_from_slice(&v.to_le_bytes());
@@ -345,12 +356,29 @@ fn emit_seq(
             Instr::Call {
                 dst, name, args, ..
             } => {
-                for (i, a) in args.iter().enumerate() {
+                // Args 0..6 go in registers; 7th+ are pushed (right-to-left so
+                // [rsp]=arg6 at the call). Keep rsp 16-aligned at the call: pad by
+                // 8 when an odd number of stack args would misalign it.
+                let n_stack = args.len().saturating_sub(6);
+                let pad = (n_stack % 2) * 8;
+                if pad > 0 {
+                    code.extend_from_slice(&[0x48, 0x83, 0xEC, 0x08]); // sub rsp, 8
+                }
+                for a in args.iter().skip(6).rev() {
+                    load_rax(code, disp(a)?); // mov rax, [slot]
+                    code.push(0x50); // push rax
+                }
+                for (i, a) in args.iter().take(6).enumerate() {
                     load_argreg(code, i, disp(a)?)?;
                 }
                 code.push(0xE8); // call rel32 (placeholder; linker-patched)
                 calls.push((code.len(), name.clone()));
                 code.extend_from_slice(&[0, 0, 0, 0]);
+                let cleanup = (8 * n_stack + pad) as i32;
+                if cleanup > 0 {
+                    code.extend_from_slice(&[0x48, 0x81, 0xC4]); // add rsp, imm32
+                    code.extend_from_slice(&cleanup.to_le_bytes());
+                }
                 store_rax(code, disp(dst)?); // result rax -> slot
             }
             Instr::If {
@@ -907,6 +935,24 @@ mod tests {
             run(&elf, "mind_native_while_exe"),
             Some(42),
             "6 * 7 iterations = 42"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_more_than_six_args_stack_passed() {
+        // 8 args: a..f in registers, g/h pushed on the stack (with alignment).
+        let src = "fn s8(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64) -> i64 \
+                   { a + b + c + d + e + f + g + h } \
+                   fn main() -> i64 { s8(1, 2, 3, 4, 5, 6, 7, 14) }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers >6 args");
+        assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+        assert_eq!(
+            run(&elf, "mind_native_args8_exe"),
+            Some(42),
+            "8-arg sum = 42"
         );
     }
 
