@@ -7902,8 +7902,18 @@ impl LoweringContext {
     ) {
         use std::fmt::Write;
         let p = prefix;
-        const NR: usize = 8;
-        const MR: usize = 4;
+        // Register tile: MR=8 rows × NR=4-wide i64 column vector. The i64 limb
+        // multiply (`arith.muli : vector<NRxi64>` → 3×`vpmuludq` + shift/mask/add
+        // on AVX2, ~6 transient YMM temps) makes the WIDE vector<8xi64> form
+        // (4×8 tile, ~18 YMM peak: 8 long-lived acc + B + broadcast + temps)
+        // spill the 16-YMM file; the NARROW vector<4xi64> form (1 YMM/acc) keeps
+        // the same 32 MACs/k-step (so the k-loop overhead stays amortized — the
+        // discarded MR=2 lost that by halving to 16) at ~13 YMM peak, no spill,
+        // with 8 independent accumulator chains and one B-load YMM per k-step.
+        // Byte-identity is untouched: this is pure lane regrouping over an
+        // associative + commutative i64 reduction (same exact `a·b mod 2^64`).
+        const NR: usize = 4;
+        const MR: usize = 8;
         let elem_bytes = std::mem::size_of::<i64>() as i64;
         let mut line = |s: &str| {
             writeln!(buf, "{s}").expect("write to string cannot fail");
@@ -7957,58 +7967,178 @@ impl LoweringContext {
             .map(|_| format!("vector<{NR}xi64>"))
             .collect::<Vec<_>>()
             .join(", ");
+        // Unroll-by-2 k bound: kmain = floor(K/2)*2 — the even-K prefix the main
+        // loop reduces two k-steps per iteration; the [kmain, K) remainder runs in
+        // the single-step tail. These three integer ops are loop-invariant (LLVM
+        // LICM hoists them out of the i0/j0 nest), defined here to keep the edit
+        // inside the i64-unique block; %{p}_c2 is reused by the main loop step.
+        line(&format!("        %{p}_c2 = arith.constant 2 : index"));
+        line(&format!("        %{p}_kmb = arith.divui %{ki}, %{p}_c2 : index"));
+        line(&format!("        %{p}_kmain = arith.muli %{p}_kmb, %{p}_c2 : index"));
+        // ── main: two independent k-substeps per iteration ────────────────────
+        // Exposes 2×MR independent vpmuludq-limb multiplies (k and k+1 use
+        // distinct B vectors) to the AVX2 ports and halves the scf.for
+        // index_cast/branch overhead in the dominant 512³ region. Byte-identity
+        // is untouched: per lane the sum is still 0 + a·b(0) + a·b(1) + … in
+        // ascending k, the SAME associative i64 order as the single-step loop.
         line(&format!(
-            "        %{p}_va:{MR} = scf.for %{p}_k = %{p}_c0 to %{ki} \
-             step %{p}_c1 iter_args({acc_init}) -> ({acc_ty}) {{"
+            "        %{p}_va:{MR} = scf.for %{p}_k = %{p}_c0 to %{p}_kmain \
+             step %{p}_c2 iter_args({acc_init}) -> ({acc_ty}) {{"
         ));
+        // substep 0 : column k
         line(&format!(
-            "          %{p}_ki64 = arith.index_cast %{p}_k : index to i64"
+            "          %{p}_ki0 = arith.index_cast %{p}_k : index to i64"
         ));
-        line(&format!("          %{p}_kn = arith.muli %{p}_ki64, %{n64} : i64"));
-        line(&format!("          %{p}_bidx = arith.addi %{p}_kn, %{p}_j0i : i64"));
-        line(&format!("          %{p}_bbo = arith.muli %{p}_bidx, %{p}_eb : i64"));
+        line(&format!("          %{p}_kn0 = arith.muli %{p}_ki0, %{n64} : i64"));
+        line(&format!("          %{p}_bidx0 = arith.addi %{p}_kn0, %{p}_j0i : i64"));
+        line(&format!("          %{p}_bbo0 = arith.muli %{p}_bidx0, %{p}_eb : i64"));
         line(&format!(
-            "          %{p}_bptr = llvm.getelementptr %{bp}[%{p}_bbo] : \
+            "          %{p}_bptr0 = llvm.getelementptr %{bp}[%{p}_bbo0] : \
              (!llvm.ptr, i64) -> !llvm.ptr, i8"
         ));
         line(&format!(
-            "          %{p}_bw = llvm.load %{p}_bptr {{alignment = 8 : i64}} : \
+            "          %{p}_bw0 = llvm.load %{p}_bptr0 {{alignment = 8 : i64}} : \
+             !llvm.ptr -> vector<{NR}xi64>"
+        ));
+        for t in 0..MR {
+            line(&format!("          %{p}_rt0{t} = arith.constant {t} : i64"));
+            line(&format!(
+                "          %{p}_it0{t} = arith.addi %{p}_i0i, %{p}_rt0{t} : i64"
+            ));
+            line(&format!(
+                "          %{p}_ik0{t} = arith.muli %{p}_it0{t}, %{k64} : i64"
+            ));
+            line(&format!(
+                "          %{p}_aidx0{t} = arith.addi %{p}_ik0{t}, %{p}_ki0 : i64"
+            ));
+            line(&format!(
+                "          %{p}_abo0{t} = arith.muli %{p}_aidx0{t}, %{p}_eb : i64"
+            ));
+            line(&format!(
+                "          %{p}_aptr0{t} = llvm.getelementptr %{ap}[%{p}_abo0{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "          %{p}_aw0{t} = llvm.load %{p}_aptr0{t} : !llvm.ptr -> i64"
+            ));
+            line(&format!(
+                "          %{p}_ab0{t} = vector.broadcast %{p}_aw0{t} : i64 to vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_pp0{t} = arith.muli %{p}_ab0{t}, %{p}_bw0 : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_m0{t} = arith.addi %{p}_acc{t}, %{p}_pp0{t} : vector<{NR}xi64>"
+            ));
+        }
+        // substep 1 : column k+1
+        line(&format!("          %{p}_k1 = arith.addi %{p}_k, %{p}_c1 : index"));
+        line(&format!(
+            "          %{p}_ki1 = arith.index_cast %{p}_k1 : index to i64"
+        ));
+        line(&format!("          %{p}_kn1 = arith.muli %{p}_ki1, %{n64} : i64"));
+        line(&format!("          %{p}_bidx1 = arith.addi %{p}_kn1, %{p}_j0i : i64"));
+        line(&format!("          %{p}_bbo1 = arith.muli %{p}_bidx1, %{p}_eb : i64"));
+        line(&format!(
+            "          %{p}_bptr1 = llvm.getelementptr %{bp}[%{p}_bbo1] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}_bw1 = llvm.load %{p}_bptr1 {{alignment = 8 : i64}} : \
              !llvm.ptr -> vector<{NR}xi64>"
         ));
         let mut yields = Vec::with_capacity(MR);
         for t in 0..MR {
-            line(&format!("          %{p}_rt{t} = arith.constant {t} : i64"));
+            line(&format!("          %{p}_rt1{t} = arith.constant {t} : i64"));
             line(&format!(
-                "          %{p}_it{t} = arith.addi %{p}_i0i, %{p}_rt{t} : i64"
+                "          %{p}_it1{t} = arith.addi %{p}_i0i, %{p}_rt1{t} : i64"
             ));
             line(&format!(
-                "          %{p}_ik{t} = arith.muli %{p}_it{t}, %{k64} : i64"
+                "          %{p}_ik1{t} = arith.muli %{p}_it1{t}, %{k64} : i64"
             ));
             line(&format!(
-                "          %{p}_aidx{t} = arith.addi %{p}_ik{t}, %{p}_ki64 : i64"
+                "          %{p}_aidx1{t} = arith.addi %{p}_ik1{t}, %{p}_ki1 : i64"
             ));
             line(&format!(
-                "          %{p}_abo{t} = arith.muli %{p}_aidx{t}, %{p}_eb : i64"
+                "          %{p}_abo1{t} = arith.muli %{p}_aidx1{t}, %{p}_eb : i64"
             ));
             line(&format!(
-                "          %{p}_aptr{t} = llvm.getelementptr %{ap}[%{p}_abo{t}] : \
+                "          %{p}_aptr1{t} = llvm.getelementptr %{ap}[%{p}_abo1{t}] : \
                  (!llvm.ptr, i64) -> !llvm.ptr, i8"
             ));
             line(&format!(
-                "          %{p}_aw{t} = llvm.load %{p}_aptr{t} : !llvm.ptr -> i64"
+                "          %{p}_aw1{t} = llvm.load %{p}_aptr1{t} : !llvm.ptr -> i64"
             ));
             line(&format!(
-                "          %{p}_ab{t} = vector.broadcast %{p}_aw{t} : i64 to vector<{NR}xi64>"
+                "          %{p}_ab1{t} = vector.broadcast %{p}_aw1{t} : i64 to vector<{NR}xi64>"
             ));
             line(&format!(
-                "          %{p}_pp{t} = arith.muli %{p}_ab{t}, %{p}_bw : vector<{NR}xi64>"
+                "          %{p}_pp1{t} = arith.muli %{p}_ab1{t}, %{p}_bw1 : vector<{NR}xi64>"
             ));
             line(&format!(
-                "          %{p}_na{t} = arith.addi %{p}_acc{t}, %{p}_pp{t} : vector<{NR}xi64>"
+                "          %{p}_na{t} = arith.addi %{p}_m0{t}, %{p}_pp1{t} : vector<{NR}xi64>"
             ));
             yields.push(format!("%{p}_na{t}"));
         }
         line(&format!("          scf.yield {} : {acc_ty}", yields.join(", ")));
+        line("        }");
+        // ── tail: remaining [kmain, K) single k-steps (0 or 1 iterations) ─────
+        let tacc_init = (0..MR)
+            .map(|t| format!("%{p}_tacc{t} = %{p}_va#{t}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(&format!(
+            "        %{p}_vt:{MR} = scf.for %{p}_kt = %{p}_kmain to %{ki} \
+             step %{p}_c1 iter_args({tacc_init}) -> ({acc_ty}) {{"
+        ));
+        line(&format!(
+            "          %{p}_tki = arith.index_cast %{p}_kt : index to i64"
+        ));
+        line(&format!("          %{p}_tkn = arith.muli %{p}_tki, %{n64} : i64"));
+        line(&format!("          %{p}_tbidx = arith.addi %{p}_tkn, %{p}_j0i : i64"));
+        line(&format!("          %{p}_tbbo = arith.muli %{p}_tbidx, %{p}_eb : i64"));
+        line(&format!(
+            "          %{p}_tbptr = llvm.getelementptr %{bp}[%{p}_tbbo] : \
+             (!llvm.ptr, i64) -> !llvm.ptr, i8"
+        ));
+        line(&format!(
+            "          %{p}_tbw = llvm.load %{p}_tbptr {{alignment = 8 : i64}} : \
+             !llvm.ptr -> vector<{NR}xi64>"
+        ));
+        let mut tyields = Vec::with_capacity(MR);
+        for t in 0..MR {
+            line(&format!("          %{p}_trt{t} = arith.constant {t} : i64"));
+            line(&format!(
+                "          %{p}_tit{t} = arith.addi %{p}_i0i, %{p}_trt{t} : i64"
+            ));
+            line(&format!(
+                "          %{p}_tik{t} = arith.muli %{p}_tit{t}, %{k64} : i64"
+            ));
+            line(&format!(
+                "          %{p}_taidx{t} = arith.addi %{p}_tik{t}, %{p}_tki : i64"
+            ));
+            line(&format!(
+                "          %{p}_tabo{t} = arith.muli %{p}_taidx{t}, %{p}_eb : i64"
+            ));
+            line(&format!(
+                "          %{p}_taptr{t} = llvm.getelementptr %{ap}[%{p}_tabo{t}] : \
+                 (!llvm.ptr, i64) -> !llvm.ptr, i8"
+            ));
+            line(&format!(
+                "          %{p}_taw{t} = llvm.load %{p}_taptr{t} : !llvm.ptr -> i64"
+            ));
+            line(&format!(
+                "          %{p}_tab{t} = vector.broadcast %{p}_taw{t} : i64 to vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tpp{t} = arith.muli %{p}_tab{t}, %{p}_tbw : vector<{NR}xi64>"
+            ));
+            line(&format!(
+                "          %{p}_tna{t} = arith.addi %{p}_tacc{t}, %{p}_tpp{t} : vector<{NR}xi64>"
+            ));
+            tyields.push(format!("%{p}_tna{t}"));
+        }
+        line(&format!("          scf.yield {} : {acc_ty}", tyields.join(", ")));
         line("        }");
         for t in 0..MR {
             line(&format!("        %{p}_strt{t} = arith.constant {t} : i64"));
@@ -8029,7 +8159,7 @@ impl LoweringContext {
                  (!llvm.ptr, i64) -> !llvm.ptr, i8"
             ));
             line(&format!(
-                "        llvm.store %{p}_va#{t}, %{p}_cptr{t} {{alignment = 8 : i64}} : \
+                "        llvm.store %{p}_vt#{t}, %{p}_cptr{t} {{alignment = 8 : i64}} : \
                  vector<{NR}xi64>, !llvm.ptr"
             ));
         }
