@@ -159,6 +159,13 @@ mlir-exec = ["mlir-subprocess"]
 mlir-jit = ["libloading"]
 mlir-gpu = []
 mlir-build = ["mlir-subprocess"]
+# Experimental MIND-native backend (src/native/): IRModule -> x86-64 -> static
+# ELF64 with ZERO LLVM/MLIR/clang/linker. OFF by default and fully cfg-gated, so
+# the shipping `mic@3 -> MLIR -> ELF` path, the keystone byte-identity, and the
+# default/no-default build surfaces are all untouched. Determinism-by-
+# construction (fixed encoder + fixed ValueId->slot map). Scope today: the
+# scalar-i64 vertical slice; see src/native/mod.rs for the deferred roadmap.
+native-backend = []
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
 # `cross-module-imports` bundles the real std/*.mind sources (see
