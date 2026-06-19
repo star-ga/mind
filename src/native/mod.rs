@@ -262,6 +262,18 @@ fn emit_jmp(code: &mut Vec<u8>) -> usize {
 /// Patch a forward jump's rel32 (relative to the instruction *after* the field).
 /// Intra-function and so position-independent: the value is invariant under the
 /// linker relocating the whole function, since site and target move together.
+/// Emit a function return, the value already in rax: an `exit` syscall for the
+/// entry function, else the standard epilogue + `ret`.
+fn emit_return(code: &mut Vec<u8>, is_entry: bool) {
+    if is_entry {
+        code.extend_from_slice(&[0x48, 0x89, 0xC7]); // mov rdi, rax
+        code.extend_from_slice(&[0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00]); // mov rax, 60
+        code.extend_from_slice(&[0x0F, 0x05]); // syscall (exit)
+    } else {
+        code.extend_from_slice(&[0x48, 0x89, 0xEC, 0x5D, 0xC3]); // mov rsp,rbp; pop rbp; ret
+    }
+}
+
 fn patch_rel32(code: &mut [u8], site: usize, target: usize) {
     let rel = target as i64 - (site as i64 + 4);
     code[site..site + 4].copy_from_slice(&(rel as i32).to_le_bytes());
@@ -395,15 +407,7 @@ fn emit_seq(
                 if let Some(v) = value {
                     load_rax(code, disp(v)?);
                 }
-                if is_entry {
-                    // exit(rax): mov rdi, rax ; mov rax, 60 ; syscall
-                    code.extend_from_slice(&[0x48, 0x89, 0xC7]);
-                    code.extend_from_slice(&[0x48, 0xC7, 0xC0, 0x3C, 0x00, 0x00, 0x00]);
-                    code.extend_from_slice(&[0x0F, 0x05]);
-                } else {
-                    // epilogue: mov rsp, rbp ; pop rbp ; ret
-                    code.extend_from_slice(&[0x48, 0x89, 0xEC, 0x5D, 0xC3]);
-                }
+                emit_return(code, is_entry);
             }
             other => return Err(NativeError::Unsupported(instr_kind(other).to_string())),
         }
@@ -413,7 +417,12 @@ fn emit_seq(
 
 /// Lower one function body to machine code. `is_entry` swaps the final `Return`
 /// for an `exit` syscall (the program's `_start`).
-fn lower_fn(name: &str, body: &[Instr], is_entry: bool) -> Result<Func, NativeError> {
+fn lower_fn(
+    name: &str,
+    body: &[Instr],
+    is_entry: bool,
+    ret_id: Option<ValueId>,
+) -> Result<Func, NativeError> {
     let slot = assign_slots(body);
     let frame = (8 * slot.len()).next_multiple_of(16) as i32; // keep rsp 16-aligned
 
@@ -423,6 +432,18 @@ fn lower_fn(name: &str, body: &[Instr], is_entry: bool) -> Result<Func, NativeEr
 
     let mut calls = Vec::new();
     emit_seq(&mut code, &mut calls, body, &slot, is_entry)?;
+
+    // If the body falls off the end without an explicit `Return` (a trailing
+    // value-expression whose result is the FnDef's `ret_id` — e.g. a value-`if`
+    // or block body), emit the implicit return so control never falls through.
+    if !matches!(body.last(), Some(Instr::Return { .. })) {
+        if let Some(rid) = ret_id {
+            if let Some(&s) = slot.get(&rid) {
+                load_rax(&mut code, slot_disp(s));
+            }
+        }
+        emit_return(&mut code, is_entry);
+    }
 
     Ok(Func {
         name: name.to_string(),
@@ -512,23 +533,28 @@ fn write_elf(code: &[u8], entry_off: u64) -> Vec<u8> {
 /// Deterministic by construction: identical `ir` ⇒ byte-identical output.
 pub fn compile_to_elf(ir: &IRModule) -> Result<Vec<u8>, NativeError> {
     // Collect (name, body) for every top-level FnDef, entry (`main`) first.
-    let mut entry: Option<(&str, &[Instr])> = None;
-    let mut rest: Vec<(&str, &[Instr])> = Vec::new();
+    type FnSig<'a> = (&'a str, &'a [Instr], Option<ValueId>);
+    let mut entry: Option<FnSig> = None;
+    let mut rest: Vec<FnSig> = Vec::new();
     for ins in &ir.instrs {
-        if let Instr::FnDef { name, body, .. } = ins {
+        if let Instr::FnDef {
+            name, body, ret_id, ..
+        } = ins
+        {
+            let sig: FnSig = (name.as_str(), body.as_slice(), *ret_id);
             if name == "main" {
-                entry = Some((name, body));
+                entry = Some(sig);
             } else {
-                rest.push((name, body));
+                rest.push(sig);
             }
         }
     }
-    let (entry_name, entry_body) = entry.ok_or(NativeError::NoEntry)?;
+    let (entry_name, entry_body, entry_ret) = entry.ok_or(NativeError::NoEntry)?;
 
     let mut funcs = Vec::with_capacity(rest.len() + 1);
-    funcs.push(lower_fn(entry_name, entry_body, true)?);
-    for (name, body) in rest {
-        funcs.push(lower_fn(name, body, false)?);
+    funcs.push(lower_fn(entry_name, entry_body, true, entry_ret)?);
+    for (name, body, ret_id) in rest {
+        funcs.push(lower_fn(name, body, false, ret_id)?);
     }
 
     let (code, entry_off) = link(&funcs)?;
@@ -844,6 +870,20 @@ mod tests {
             Some(42),
             "6 * 7 iterations = 42"
         );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_recursive_fibonacci() {
+        // Recursion exercises calls + value-`if` + arithmetic composing through the
+        // native backend on a real front-end-lowered multi-function program.
+        let src = "fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } } \
+                   fn main() -> i64 { fib(10) }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers recursive fib");
+        assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+        assert_eq!(run(&elf, "mind_native_fib_exe"), Some(55), "fib(10) = 55");
     }
 
     #[test]
