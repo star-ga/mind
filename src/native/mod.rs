@@ -25,18 +25,19 @@
 //!
 //! ## Scope (honest) — the scalar-i64 vertical slice
 //!
-//! Supports `FnDef` / `Param` / `ConstI64` / `BinOp{Add,Sub,Mul}` / `Call` /
-//! `Return` / `If` (if-expressions: `cmp`/`je`/`jmp` with intra-function
-//! forward-jump patching and mem-to-mem phi resolution via the merge list), ≤6
-//! integer args (System-V registers), a regalloc-free mem-to-mem frame model,
-//! and intra-module calls (computed PC-relative displacement). The entry point
-//! is the `FnDef` named `main`; its `Return` becomes an `exit` syscall.
+//! Supports `FnDef` / `Param` / `ConstI64` / `Call` / `Return`, arithmetic
+//! `BinOp{Add,Sub,Mul}` and signed comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
+//! (`cmp`+`setcc`+`movzx` → 0/1), and `If` (if-expressions: `cmp`/`je`/`jmp`
+//! with intra-function forward-jump patching and mem-to-mem phi resolution via
+//! the merge list), ≤6 integer args (System-V registers), a regalloc-free
+//! mem-to-mem frame model, and intra-module calls (computed PC-relative
+//! displacement). The entry point is the `FnDef` named `main`; its `Return`
+//! becomes an `exit` syscall.
 //!
-//! deferred: comparison BinOps (Lt/Gt/Eq/… → cmp+setcc; today `If` branches on a
-//!   value's truthiness), `While`/loops (back-edge + loop-carried phi), Div/Mod
-//!   (cqo/idiv), >6 args (stack-passed), register allocation (currently every SSA
-//!   value is a frame slot), true ELF relocations + sections + symbols (for
-//!   separate compilation / libc linking), float + tensor + SIMD kernels.
+//! deferred: `While`/loops (back-edge + loop-carried phi), Div/Mod (cqo/idiv),
+//!   bitwise/shift BinOps, >6 args (stack-passed), register allocation (currently
+//!   every SSA value is a frame slot), true ELF relocations + sections + symbols
+//!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
 //!   upgrade path: extend `emit_seq`'s match arm-by-arm; add a deterministic
 //!   linear-scan allocator as a pre-pass over the slot map; emit a `.o` with a
 //!   symbol table + `R_X86_64_PC32` records for the external-link milestone.
@@ -111,6 +112,30 @@ fn arith_rax_mem(code: &mut Vec<u8>, op: &BinOp, disp: i32) -> Result<(), Native
     code.extend_from_slice(opbytes);
     code.extend_from_slice(&disp.to_le_bytes());
     Ok(())
+}
+
+/// The `setcc` second opcode byte for a comparison `BinOp`, or `None` for a
+/// non-comparison op. Signed forms (setl/setle/setg/setge) — MIND `i64` is
+/// signed; `sete`/`setne` are sign-agnostic.
+fn setcc_opcode(op: &BinOp) -> Option<u8> {
+    Some(match op {
+        BinOp::Lt => 0x9C, // setl
+        BinOp::Le => 0x9E, // setle
+        BinOp::Gt => 0x9F, // setg
+        BinOp::Ge => 0x9D, // setge
+        BinOp::Eq => 0x94, // sete
+        BinOp::Ne => 0x95, // setne
+        _ => return None,
+    })
+}
+
+/// Emit a comparison `BinOp` whose `lhs` is already in rax: `cmp rax, [rhs] ;
+/// setcc al ; movzx eax, al` — leaves the boolean result (0/1) in rax.
+fn cmp_rax_mem(code: &mut Vec<u8>, setcc: u8, rhs_disp: i32) {
+    code.extend_from_slice(&[0x48, 0x3B, 0x85]); // cmp rax, [rbp+disp32]
+    code.extend_from_slice(&rhs_disp.to_le_bytes());
+    code.extend_from_slice(&[0x0F, setcc, 0xC0]); // setcc al
+    code.extend_from_slice(&[0x0F, 0xB6, 0xC0]); // movzx eax, al (zero-extends rax)
 }
 
 /// `mov <argreg>, [rbp+disp32]` — marshal a slot value into a System-V arg reg.
@@ -228,7 +253,11 @@ fn emit_seq(
             }
             Instr::BinOp { dst, op, lhs, rhs } => {
                 load_rax(code, disp(lhs)?);
-                arith_rax_mem(code, op, disp(rhs)?)?;
+                if let Some(setcc) = setcc_opcode(op) {
+                    cmp_rax_mem(code, setcc, disp(rhs)?); // comparison -> 0/1 in rax
+                } else {
+                    arith_rax_mem(code, op, disp(rhs)?)?; // Add/Sub/Mul
+                }
                 store_rax(code, disp(dst)?);
             }
             Instr::Call {
@@ -605,6 +634,68 @@ mod tests {
                 run(&a, "mind_native_if_exe"),
                 Some(expected),
                 "if({cond}) must exit({expected})"
+            );
+        }
+    }
+
+    /// `fn main() { if (a <op> b) { 42 } else { 7 } }` — a comparison BinOp feeds
+    /// the `If` condition (cmp+setcc producing the 0/1 the branch tests).
+    fn cmp_if_module(op: BinOp, a: i64, b: i64) -> IRModule {
+        let v = ValueId;
+        let main = Instr::FnDef {
+            name: "main".into(),
+            params: vec![],
+            ret_id: Some(v(5)),
+            reap_threshold: None,
+            body: vec![
+                Instr::ConstI64(v(0), a),
+                Instr::ConstI64(v(1), b),
+                Instr::If {
+                    cond_id: v(2),
+                    cond_instrs: vec![Instr::BinOp {
+                        dst: v(2),
+                        op,
+                        lhs: v(0),
+                        rhs: v(1),
+                    }],
+                    then_instrs: vec![Instr::ConstI64(v(3), 42)],
+                    then_result: v(3),
+                    else_instrs: vec![Instr::ConstI64(v(4), 7)],
+                    else_result: v(4),
+                    dst: v(5),
+                    branch_bindings: vec![],
+                    merges: vec![],
+                },
+                Instr::Return { value: Some(v(5)) },
+            ],
+        };
+        let mut m = IRModule::new();
+        m.instrs = vec![main];
+        m
+    }
+
+    #[test]
+    fn lowers_comparison_conditions_with_correct_signed_semantics() {
+        // (op, a, b) -> taken? 42 if the comparison holds, else 7.
+        let cases = [
+            (BinOp::Gt, 40, 2, 42),
+            (BinOp::Gt, 2, 40, 7),
+            (BinOp::Lt, -5, 1, 42), // signed: -5 < 1
+            (BinOp::Lt, 1, -5, 7),
+            (BinOp::Eq, 9, 9, 42),
+            (BinOp::Ne, 9, 9, 7),
+            (BinOp::Ge, 3, 3, 42),
+            (BinOp::Le, 4, 3, 7),
+        ];
+        for (op, a, b, expected) in cases {
+            let m = cmp_if_module(op, a, b);
+            let elf = compile_to_elf(&m).expect("lowers");
+            assert_eq!(elf, compile_to_elf(&m).expect("lowers"), "deterministic");
+            assert_eq!(
+                run(&elf, "mind_native_cmp_exe"),
+                Some(expected),
+                "{op:?}({a}, {b}) should take the {}-branch",
+                if expected == 42 { "then" } else { "else" }
             );
         }
     }
