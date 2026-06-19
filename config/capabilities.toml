@@ -52,6 +52,12 @@ high_assurance = "commercial"
 ir          = ["anchored on mic@1 trace hash", "mic@2 (Current)", "MIC-B v2 (Binary)"]
 autodiff    = ["autodiff support is experimental", "autodiff is experimental"]
 runtime     = ["Native CPU Execution"]
+# Fixed 2026-06-19 (ecosystem audit): mindlang.dev fabricated a WGSL/webgpu
+# compiler backend (mindc emits Binary|Cdylib|Object only — no WGSL lowering) and
+# an "9.5K LOC" package manager (real surface ~1.1K LOC of path/git deps). The
+# .wgsl kernels are hand-written references, not compiler output.
+gpu         = ["AOT-compiled WGSL", "WGSL output from mindc", "compiled output from mindc"]
+packaging   = ["9.5K LOC"]
 
 # ---------------------------------------------------------------------------
 # Auto-derived counts (OPTIONAL gate, conservative + advisory).
