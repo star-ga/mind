@@ -2,6 +2,24 @@
 
 This roadmap outlines upcoming milestones for the MIND language, runtime, and tooling.
 
+## Shipped (v0.10.0)
+
+- ✅ **Enum tagged-union payloads construct, match, and RUN** (v0.10.0) – an
+  enum with a payload variant is a uniform `[tag, …fields]` heap record;
+  `match` reads the tag and binds each field positionally. Single- and
+  multi-field **i64** payloads (`Tri::T(a, b, c)`) and **f64** payloads
+  (`Option<f64>`, `Result<f64>`, mixed `(i64, f64)`) all lower to running code,
+  verified end-to-end (`.so` + dlopen). f64 fields round-trip through the i64
+  slot as raw bits (`arith.bitcast`), bit-exactly. The boxed layout fixed an
+  Option/Result-shaped-enum **segfault** (fieldless and payload variants now
+  share one layout). Unsupported shapes (non-i64/f64 fields, nested sub-patterns)
+  fail **loud** on the emit path — never a silent miscompile. Keystone 7/7 +
+  cross-substrate 8/8 stay byte-identical throughout.
+- ✅ **Integer-determinism cluster** (v0.10.0) – `INT_MIN / -1`, division by
+  zero (`x / 0 = 0`), oversized shifts, and condition truthiness (`if c` tests
+  non-zero, not the low bit) all lower deterministically; the narrow-int call
+  ABI (i32/u32 across call boundaries) and struct narrow-field ABI are sound.
+
 ## Shipped (v0.7.1)
 
 - ✅ **Cross-substrate Q16.16 bit-identity** – identical Q16.16 source compiles
