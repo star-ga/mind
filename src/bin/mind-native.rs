@@ -61,6 +61,9 @@ fn main() -> ExitCode {
         let _ = std::fs::set_permissions(output, perms);
     }
 
-    eprintln!("mind-native: wrote {output} ({} bytes, zero LLVM)", elf.len());
+    eprintln!(
+        "mind-native: wrote {output} ({} bytes, zero LLVM)",
+        elf.len()
+    );
     ExitCode::SUCCESS
 }
