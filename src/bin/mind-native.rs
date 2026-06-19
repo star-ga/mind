@@ -65,8 +65,12 @@ fn main() -> ExitCode {
         let _ = std::fs::set_permissions(output, perms);
     }
 
+    let trace: String = libmind::ir::ir_trace_hash(&ir)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     eprintln!(
-        "mind-native: wrote {output} ({} bytes, zero LLVM)",
+        "mind-native: wrote {output} ({} bytes, zero LLVM); trace_hash {trace}",
         elf.len()
     );
     ExitCode::SUCCESS
