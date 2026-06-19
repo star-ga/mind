@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2863 | **Est. tokens:** ~6,944,616
-**Generated:** 2026-06-19 11:15 UTC
+**Files:** 2863 | **Est. tokens:** ~6,944,725
+**Generated:** 2026-06-19 11:21 UTC
 
 ## Token Budget Guide
 
@@ -403,7 +403,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,616 |
-| `tests/` | 188 | ~334,534 |
+| `tests/` | 188 | ~334,643 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3956,7 +3956,7 @@
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
-- `emit_ir_for_loop.rs` (~308 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
+- `emit_ir_for_loop.rs` (~369 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `enum_match_run.rs` (~2399 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
@@ -3981,7 +3981,7 @@
 - `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6574 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
-- `generics_lowering.rs` (~1336 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
+- `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.

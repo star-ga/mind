@@ -4,7 +4,12 @@
 // and reuses the existing While lowering. (The MLIR build path lowers For
 // separately and is unaffected.)
 
+// Both imports feed only the std-surface-gated test below; gate them to match so
+// the no-default-features clippy lane stays warning-clean (the file is otherwise
+// empty there).
+#[cfg(feature = "std-surface")]
 use libmind::eval::lower;
+#[cfg(feature = "std-surface")]
 use libmind::parser;
 
 // For→While desugar reuses the `While` lowering arm, which is gated behind

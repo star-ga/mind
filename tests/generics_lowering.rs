@@ -6,6 +6,9 @@
 // monomorphized instances just like everything else.
 
 use libmind::ir::compact::emit_mic3;
+// Only the std-surface-gated `resolves`/`fails_closed` helpers use this; gating
+// the import to match keeps the no-default-features clippy lane warning-clean.
+#[cfg(feature = "std-surface")]
 use libmind::pipeline::compile_source_with_name;
 use libmind::{CompileOptions, compile_source};
 
