@@ -29,16 +29,17 @@
 //! `BinOp{Add,Sub,Mul,Div,Mod}` (Div/Mod via `cqo`+signed `idiv`), bitwise/shift
 //! `BinOp{BitAnd,BitOr,BitXor,Shl,Shr}` (Shr = arithmetic `sar`; shift count in
 //! `cl`), signed comparison `BinOp{Lt,Le,Gt,Ge,Eq,Ne}`
-//! (`cmp`+`setcc`+`movzx` → 0/1), and `If` (if-expressions: `cmp`/`je`/`jmp`
-//! with intra-function forward-jump patching and mem-to-mem phi resolution via
-//! the merge list), ≤6 integer args (System-V registers), a regalloc-free
-//! mem-to-mem frame model, and intra-module calls (computed PC-relative
-//! displacement). The entry point is the `FnDef` named `main`; its `Return`
-//! becomes an `exit` syscall.
+//! (`cmp`+`setcc`+`movzx` → 0/1), `If` (if-expressions: `cmp`/`je`/`jmp` with
+//! intra-function forward-jump patching and mem-to-mem phi resolution via the
+//! merge list), and `While` loops (header re-test + back-edge `jmp`; loop-carried
+//! vars alias to one slot so no phi forwarding is needed), ≤6 integer args
+//! (System-V registers), a regalloc-free mem-to-mem frame model, and intra-module
+//! calls (computed PC-relative displacement). The entry point is the `FnDef`
+//! named `main`; its `Return` becomes an `exit` syscall.
 //!
-//! deferred: `While`/loops (back-edge + loop-carried phi), Div/Mod edge-case
-//!   guards (raw idiv traps on /0 and INT_MIN/-1 — MIND's path defines them),
-//!   >6 args (stack-passed), register allocation (currently
+//! deferred: `break`/`continue` (need a loop-context patch list), Div/Mod
+//!   edge-case guards (raw idiv traps on /0 and INT_MIN/-1 — MIND's path defines
+//!   them), >6 args (stack-passed), register allocation (currently
 //!   every SSA value is a frame slot), true ELF relocations + sections + symbols
 //!   (for separate compilation / libc linking), float + tensor + SIMD kernels.
 //!   upgrade path: extend `emit_seq`'s match arm-by-arm; add a deterministic
@@ -201,6 +202,34 @@ fn assign_slots(body: &[Instr]) -> HashMap<ValueId, usize> {
                         define(slot, *m);
                     }
                 }
+                // A loop-carried variable is ONE memory slot across iterations:
+                // its pre-loop (`init_ids`), post-body (`live_vars`), and post-loop
+                // (`exit_ids`) SSA ids all alias to that slot, so the mem-to-mem
+                // model needs no phi nodes — the slot just holds the live value.
+                #[cfg(feature = "std-surface")]
+                Instr::While {
+                    cond_instrs,
+                    body: loop_body,
+                    live_vars,
+                    init_ids,
+                    exit_ids,
+                    ..
+                } => {
+                    walk(cond_instrs, slot);
+                    walk(loop_body, slot);
+                    for (i, (_, post_id)) in live_vars.iter().enumerate() {
+                        if let Some(&s) = slot.get(post_id) {
+                            if let Some(init_id) = init_ids.get(i) {
+                                if init_id.0 != usize::MAX {
+                                    slot.insert(*init_id, s);
+                                }
+                            }
+                            if let Some(exit_id) = exit_ids.get(i) {
+                                slot.insert(*exit_id, s);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -341,6 +370,26 @@ fn emit_seq(
 
                 let end_at = code.len();
                 patch_rel32(code, jmp, end_at);
+            }
+            // `while cond { body }` — re-test the condition each iteration; the
+            // loop-carried vars live in their (aliased) slots so no phi forwarding
+            // is needed. (Bounded: `break`/`continue` fail-closed for now — they
+            // need a loop-context patch list; a body Return still works.)
+            #[cfg(feature = "std-surface")]
+            Instr::While {
+                cond_id,
+                cond_instrs,
+                body: loop_body,
+                ..
+            } => {
+                let header = code.len();
+                emit_seq(code, calls, cond_instrs, slot, is_entry)?;
+                let je = emit_cmp_je_zero(code, disp(cond_id)?); // exit when cond == 0
+                emit_seq(code, calls, loop_body, slot, is_entry)?;
+                let back = emit_jmp(code);
+                patch_rel32(code, back, header); // back-edge to the header
+                let end = code.len();
+                patch_rel32(code, je, end);
             }
             Instr::Return { value } => {
                 if let Some(v) = value {
@@ -776,6 +825,25 @@ mod tests {
                 "{op:?}({a},{b})"
             );
         }
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_a_real_while_loop() {
+        // Lower a real loop through the front-end, then native-compile + run it —
+        // proves the backend eats the actual While IR (cond sub-module, body,
+        // loop-carried init/post/exit ids), not a hand-built toy.
+        let src = "fn main() -> i64 { let mut s: i64 = 0; let mut i: i64 = 0; \
+                   while i < 7 { s = s + 6; i = i + 1; } return s; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the while loop");
+        assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+        assert_eq!(
+            run(&elf, "mind_native_while_exe"),
+            Some(42),
+            "6 * 7 iterations = 42"
+        );
     }
 
     #[test]
