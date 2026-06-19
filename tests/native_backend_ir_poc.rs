@@ -125,7 +125,7 @@ fn slot_disp(i: usize) -> i32 {
 fn lower_fn(name: &str, body: &[Instr], is_entry: bool) -> Func {
     // Pass 1: assign every defined SSA value a frame slot (first-appearance order).
     let mut slot: HashMap<ValueId, usize> = HashMap::new();
-    let mut define = |id: ValueId, slot: &mut HashMap<ValueId, usize>| {
+    let define = |id: ValueId, slot: &mut HashMap<ValueId, usize>| {
         let n = slot.len();
         slot.entry(id).or_insert(n);
     };
