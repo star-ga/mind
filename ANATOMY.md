@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2862 | **Est. tokens:** ~6,942,634
-**Generated:** 2026-06-19 06:58 UTC
+**Files:** 2862 | **Est. tokens:** ~6,942,924
+**Generated:** 2026-06-19 07:02 UTC
 
 ## Token Budget Guide
 
@@ -39,7 +39,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 28 | ~52,542 |
+| `docs/` | 28 | ~52,832 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -683,7 +683,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~13591 tok, huge) — Roadmap
+- `roadmap.md` (~13881 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3176 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1331 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
