@@ -27,6 +27,11 @@ pub fn backslash() -> i64 { return '\\' }
 pub fn squote() -> i64 { return '\'' }
 // Lexer idiom: digit value of a char.
 pub fn digit_val(c: i64) -> i64 { return c - '0' }
+// `.byte()` — the byte (low 8 bits) of a char/int receiver. Also exercises
+// `int.method()` parsing (a `.` followed by a non-digit is a method call, not a
+// decimal point), which is what makes the post-fmt `48.byte()` form parse.
+pub fn nl_byte() -> i64 { return '\n'.byte() }
+pub fn digit_byte(c: i64) -> i64 { return c - '0'.byte() }
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -69,6 +74,8 @@ fn char_literal_runs() {
          lib = ctypes.CDLL(r'{}')\n\
          for _n in ('newline','tab','zero_digit','letter_a','backslash','squote'): getattr(lib,_n).restype = ctypes.c_int64\n\
          lib.digit_val.restype = ctypes.c_int64; lib.digit_val.argtypes = [ctypes.c_int64]\n\
+         lib.nl_byte.restype = ctypes.c_int64\n\
+         lib.digit_byte.restype = ctypes.c_int64; lib.digit_byte.argtypes = [ctypes.c_int64]\n\
          r = lib.newline(); assert r == 10, 'newline=' + str(r)\n\
          r = lib.tab(); assert r == 9, 'tab=' + str(r)\n\
          r = lib.zero_digit(); assert r == 48, 'zero_digit=' + str(r)\n\
@@ -76,6 +83,8 @@ fn char_literal_runs() {
          r = lib.backslash(); assert r == 92, 'backslash=' + str(r)\n\
          r = lib.squote(); assert r == 39, 'squote=' + str(r)\n\
          r = lib.digit_val(55); assert r == 7, 'digit_val(55)=' + str(r)\n\
+         r = lib.nl_byte(); assert r == 10, 'nl_byte=' + str(r)\n\
+         r = lib.digit_byte(55); assert r == 7, 'digit_byte(55)=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );

@@ -3136,15 +3136,17 @@ impl<'a> P<'a> {
         let d = self
             .digits()
             .ok_or_else(|| self.err("expected number".into()))?;
-        // Check for decimal point → float literal
-        if self.pos < self.b.len() && self.b[self.pos] == b'.' {
-            // Disambiguate: `1.0` is float, `1..10` is range
-            if self.pos + 1 < self.b.len() && self.b[self.pos + 1] == b'.' {
-                // Range syntax `N..M` — return integer
-                let val = self.parse_i64_literal(&d)?;
-                let span = Span::new(start, self.pos);
-                return Ok(Node::Lit(Literal::Int(val), span));
-            }
+        // Check for decimal point → float literal. A `.` is a decimal point ONLY
+        // when a DIGIT follows it (`1.0`). `1..10` (range) and `1.method()` /
+        // `1.field` (a non-digit after `.`, e.g. a method call on an integer
+        // literal) are NOT floats — they fall through to the integer literal so
+        // the range/postfix machinery handles the `.`/`..`. Without the
+        // digit-after-`.` guard, `48.byte()` mis-parsed as the float `48.` + a
+        // dangling `byte`.
+        if self.pos + 1 < self.b.len()
+            && self.b[self.pos] == b'.'
+            && self.b[self.pos + 1].is_ascii_digit()
+        {
             self.pos += 1; // skip '.'
             let frac = self.digits().unwrap_or_default();
             let mut num_str = d;
