@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2866 | **Est. tokens:** ~6,956,278
-**Generated:** 2026-06-20 08:57 UTC
+**Files:** 2868 | **Est. tokens:** ~6,958,955
+**Generated:** 2026-06-20 09:06 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~9,002 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~13,024 |
+| `runtime-support/` | 1 | ~13,403 |
 | `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -404,8 +404,8 @@
 | `src/type_checker/` | 1 | ~7,057 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 22 | ~108,616 |
-| `tests/` | 187 | ~332,951 |
+| `std/` | 22 | ~108,863 |
+| `tests/` | 189 | ~335,002 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -844,7 +844,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~13024 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~13403 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3871,7 +3871,7 @@
 - `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `toml.mind` (~9906 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
-- `vec.mind` (~887 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
+- `vec.mind` (~1134 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -3999,6 +3999,7 @@
 - `index_slice_types.rs` (~248 tok, medium) — Copyright 2025 STARGA Inc.
 - `int_determinism.rs` (~1265 tok, large) — Copyright 2025 STARGA Inc.
 - `intra_module_call_arity.rs` (~2603 tok, huge) — Copyright 2025 STARGA Inc.
+- `int_suffix_literal.rs` (~968 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_core.rs` (~1265 tok, large) — Ensure the unused const is kept alive in the SSA namespace but removed from code.
 - `ir_load_save.rs` (~1257 tok, large) — Copyright 2025 STARGA Inc.
 - `ir_lower.rs` (~1331 tok, large) — Copyright 2025 STARGA Inc.
@@ -4305,6 +4306,7 @@
 - `std_surface_use_import_phase_b.rs` (~2198 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_use_import.rs` (~1753 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_vec_module.rs` (~1805 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_vec_zeroed.rs` (~1083 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_while_statement.rs` (~3201 tok, huge) — Copyright 2025 STARGA Inc.
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
