@@ -38,10 +38,11 @@ pub fn canonicalize_module(module: &mut IRModule) {
     // clone the whole instruction stream into a fresh Vec twice; that was ~25% of
     // a small compile (perf: __memmove + prune_dead malloc).
     let mut instrs = std::mem::take(&mut module.instrs);
-    prune_dead(&mut instrs);
+    let n = module.next_id;
+    prune_dead(&mut instrs, n);
     reorder_commutative_ops(&mut instrs);
     constant_fold(&mut instrs);
-    prune_dead(&mut instrs);
+    prune_dead(&mut instrs, n);
 
     module.instrs = instrs;
     module.next_id = next_sequential_id(module);
@@ -148,20 +149,34 @@ fn prune_dead_experts(module: &mut IRModule) {
     }
 }
 
-fn prune_dead(instrs: &mut Vec<Instr>) {
-    let mut used: BTreeSet<ValueId> = BTreeSet::new();
+fn prune_dead(instrs: &mut Vec<Instr>, n: usize) {
+    // Flat bitset indexed by ValueId.0 — eliminates the BTreeSet red-black malloc
+    // + pointer-chasing for what is a dense integer key space. The lowerer mints
+    // every normal id in 0..n, so for in-range ids the marked set and visit order
+    // are byte-identical to the old BTreeSet. The lone out-of-range id is the REAP
+    // dead-expert tombstone `ValueId(usize::MAX)` (only when a fn carries
+    // `reap_threshold`); it is never read, so the bounds-checked `get`/`get_mut`
+    // treat it as unused — exactly as `BTreeSet::contains` would — instead of
+    // panicking. The checks are perfectly predicted for the common in-range path.
+    let mut used: Vec<bool> = vec![false; n];
+    let is_used = |used: &[bool], id: ValueId| used.get(id.0).copied().unwrap_or(false);
+    let mark = |used: &mut [bool], id: ValueId| {
+        if let Some(slot) = used.get_mut(id.0) {
+            *slot = true;
+        }
+    };
     for instr in instrs.iter().rev() {
         match instr {
             Instr::Output(id) => {
-                used.insert(*id);
+                mark(&mut used, *id);
             }
             other => {
                 let dst = instruction_dst(other);
                 // Keep instructions whose destination is either unused (None) or present
                 // in the `used` set. Clippy prefers `is_none_or` over `map_or(true, ...)`.
-                if dst.is_none_or(|id| used.contains(&id)) {
+                if dst.is_none_or(|id| is_used(&used, id)) {
                     for_each_operand(other, |operand| {
-                        used.insert(operand);
+                        mark(&mut used, operand);
                     });
                 }
             }
@@ -171,7 +186,7 @@ fn prune_dead(instrs: &mut Vec<Instr>) {
     // Retain in place — the predicate keeps exactly the same instructions, in the
     // same order, as the old clone-into-a-new-Vec loop, so canonical output stays
     // byte-identical while avoiding the per-instruction clone + the second Vec.
-    instrs.retain(|instr| instruction_dst(instr).is_none_or(|dst| used.contains(&dst)));
+    instrs.retain(|instr| instruction_dst(instr).is_none_or(|dst| is_used(&used, dst)));
 }
 
 fn reorder_commutative_ops(instrs: &mut [Instr]) {
