@@ -55,6 +55,22 @@ pub fn exprs() -> i64 {
     let (lo, hi) = (helper(4), helper(10))
     return hi - lo
 }
+
+// An all-i64 tuple RETURNED across a fn boundary: the callee returns the heap
+// aggregate's base pointer (i64), and the caller destructures it. This is the
+// pattern that the `safety::tuple_return_unsupported` guard now allows for
+// all-i64 tuples (only float-bearing tuples stay rejected).
+fn make_pair(a: i64, b: i64) -> (i64, i64) {
+    return (a, b)
+}
+pub fn returned() -> i64 {
+    let (x, y) = make_pair(10, 32)
+    return x + y
+}
+pub fn returned_order() -> i64 {
+    let (x, y) = make_pair(3, 70)
+    return y - x
+}
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -95,12 +111,14 @@ fn tuple_destructure_runs() {
     let py = format!(
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
-         for _n in ('direct','via_binding','order','chained','exprs'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         for _n in ('direct','via_binding','order','chained','exprs','returned','returned_order'): getattr(lib,_n).restype = ctypes.c_int64\n\
          r = lib.direct(); assert r == 321, 'direct=' + str(r)\n\
          r = lib.via_binding(); assert r == 79, 'via_binding=' + str(r)\n\
          r = lib.order(); assert r == -2, 'order=' + str(r)\n\
          r = lib.chained(); assert r == 9975, 'chained=' + str(r)\n\
          r = lib.exprs(); assert r == 12, 'exprs=' + str(r)\n\
+         r = lib.returned(); assert r == 42, 'returned=' + str(r)\n\
+         r = lib.returned_order(); assert r == 67, 'returned_order=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );
