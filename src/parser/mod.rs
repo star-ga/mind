@@ -204,6 +204,14 @@ impl<'a> P<'a> {
     /// path exactly — no new IR is introduced, so suffix-free sources (e.g. the
     /// keystone) are byte-identical.
     fn int_type_suffix(&mut self) -> Option<TypeAnn> {
+        // Fast path: an integer type suffix can only begin with `u` or `i`. For
+        // the overwhelmingly common UNSUFFIXED literal the next byte is
+        // whitespace, an operator, `)`, `,`, `;`, … — bail before the 8-way
+        // compare so unsuffixed literals (incl. the entire keystone) pay ~one
+        // byte check, keeping compile_small at the nanosecond floor.
+        if self.pos >= self.b.len() || !matches!(self.b[self.pos], b'u' | b'i') {
+            return None;
+        }
         // Each candidate suffix and the `TypeAnn` it maps to. `u32`/`i32`/`i64`
         // have dedicated scalar variants; the remaining widths ride through the
         // `Named` path (same as writing `as u64`).
