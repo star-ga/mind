@@ -1126,6 +1126,36 @@ fn compile_sources(
     Ok(objects)
 }
 
+/// Emit a visible warning when a project module cannot be compiled natively and
+/// falls back to the embedded-source (runtime-JIT) path. Without this, a module
+/// that fails to parse or type-check is silently dropped to the fallback and the
+/// overall `mindc build` still exits 0 — making "builds clean" hide a degraded
+/// module. The one-line warning always prints; `--verbose` adds the rendered
+/// first diagnostic (file:line:col + message + source context).
+fn warn_embedded_fallback(
+    source: &Path,
+    source_code: &str,
+    diags: &[crate::diagnostics::Diagnostic],
+    verbose: bool,
+) {
+    let first = diags
+        .first()
+        .map(|d| crate::diagnostics::render(source_code, d))
+        .unwrap_or_default();
+    let summary = first
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("not natively compilable")
+        .trim();
+    eprintln!(
+        "[WARN] {}: not natively compiled — embedded as runtime-JIT fallback ({summary})",
+        source.display()
+    );
+    if verbose && !first.trim().is_empty() {
+        eprintln!("{}", first.trim_end());
+    }
+}
+
 /// Compile a single source file to native object code
 #[allow(clippy::needless_return)]
 fn compile_single_source(
@@ -1174,8 +1204,14 @@ fn compile_single_source(
         &compile_opts,
     ) {
         Ok(p) => p,
-        Err(_) => {
-            // Fall back to embedding source for runtime JIT
+        Err(e) => {
+            // Fall back to embedding source for runtime JIT. This is NOT silent:
+            // an embedded module is not natively compiled, so it sits outside the
+            // byte-identity guarantee — surfacing the real diagnostic keeps a
+            // "build succeeded" from masking a degraded/unparseable module.
+            let src_name = source.to_string_lossy().into_owned();
+            let diags = e.into_diagnostics(Some(&src_name));
+            warn_embedded_fallback(source, &source_code, &diags, opts.verbose);
             return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
         }
     };
@@ -1184,6 +1220,7 @@ fn compile_single_source(
     let module = match parser::parse_with_diagnostics(&source_code) {
         Ok(m) => m,
         Err(_) => {
+            warn_embedded_fallback(source, &source_code, &[], opts.verbose);
             return compile_embedded_source(source, &source_code, output, backend, opts, is_entry);
         }
     };
@@ -1488,10 +1525,30 @@ fn link_binary(
         return Ok(());
     }
 
-    // Fallback to wrapper script if native linking fails
-    if opts.verbose {
-        println!("  Native linking failed, creating launcher script");
-    }
+    // Fallback to a launcher shell script when native linking fails. This is the
+    // executable-path analogue of the cdylib false-green guarded by #306: the
+    // emitted artifact is a `#!/bin/bash` launcher that defers to the installed
+    // MIND runtime, NOT a natively-linked binary. Reporting "Finished" with a
+    // launcher in place of a real binary — silently — is exactly the kind of
+    // false-green that must never happen. Surface it: name the artifact for what
+    // it is and show why the native link failed, so a degraded build cannot pass
+    // for a clean one.
+    let link_err = link_result
+        .err()
+        .map(|e| {
+            e.to_string()
+                .lines()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("native link failed")
+                .trim()
+                .to_string()
+        })
+        .unwrap_or_else(|| "native link failed".to_string());
+    eprintln!(
+        "[WARN] {}: native link failed — emitting a launcher script that requires the \
+         installed MIND runtime, not a native binary ({link_err})",
+        output.display()
+    );
 
     let project_root = find_project_root()?;
     let manifest = load_manifest(&project_root)?;
