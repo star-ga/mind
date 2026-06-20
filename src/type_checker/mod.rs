@@ -1583,6 +1583,10 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         }
         Node::Print { span, .. } => Ok((ValueType::ScalarI32, *span)),
         Node::Neg { operand, .. } => infer_expr(operand, env),
+        // `!expr` yields a 0/1 boolean. Validate the operand infers, then type
+        // the result as the operand's scalar type (mirrors `Neg`; the result is
+        // truthy/falsy and feeds `if`/`while` conditions — enum_match #9).
+        Node::Not { operand, .. } => infer_expr(operand, env),
         Node::MethodCall { receiver, span, .. } => {
             let (recv_ty, _) = infer_expr(receiver, env)?;
             Ok((recv_ty, *span))

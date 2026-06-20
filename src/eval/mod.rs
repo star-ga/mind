@@ -807,6 +807,17 @@ fn match_enum_payload(
                 }
                 _ => return false,
             },
+            // Tuple sub-pattern `(a, b)` destructures a tuple value of equal
+            // arity, recursing each element (enum_match #9, e.g.
+            // `Ok((p1, decorators))`).
+            crate::ast::Pattern::Tuple(elems) => match value {
+                Value::Tuple(items) if items.len() == elems.len() => {
+                    if !match_enum_payload(elems, items, out) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            },
         }
     }
     true
@@ -1404,6 +1415,16 @@ pub(crate) fn eval_value_expr_mode(
                 other
             ))),
         },
+        // Unary logical NOT `!expr`: truthy/falsy on i64 — `1` when the operand
+        // is `0`, else `0` (enum_match #9). Mirrors the `operand == 0` desugar
+        // the lowerer uses, keeping interpreter and codegen consistent.
+        Node::Not { operand, .. } => match eval_value_expr_mode(operand, env, tensor_env, mode)? {
+            Value::Int(n) => Ok(Value::Int((n == 0) as i64)),
+            other => Err(EvalError::UnsupportedMsg(format!(
+                "cannot apply `!` to {:?}",
+                other
+            ))),
+        },
         Node::MethodCall {
             receiver,
             method,
@@ -1567,6 +1588,14 @@ pub(crate) fn eval_value_expr_mode(
                             if variant == path && payload.len() == args.len() =>
                         {
                             match_enum_payload(args, payload, &mut bindings)
+                        }
+                        _ => false,
+                    },
+                    // Tuple pattern `(a, b)`: matches a tuple scrutinee of equal
+                    // arity, binding each element (enum_match #9).
+                    crate::ast::Pattern::Tuple(elems) => match &val {
+                        Value::Tuple(items) if items.len() == elems.len() => {
+                            match_enum_payload(elems, items, &mut bindings)
                         }
                         _ => false,
                     },

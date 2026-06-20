@@ -148,7 +148,7 @@ fn check_node(node: &Node, ctx: &LintCtx<'_>, out: &mut Vec<Diagnostic>) {
         Node::Paren(inner, _) => {
             check_node(inner, ctx, out);
         }
-        Node::Neg { operand, .. } => {
+        Node::Neg { operand, .. } | Node::Not { operand, .. } => {
             check_node(operand, ctx, out);
         }
         Node::As { expr, .. } => {

@@ -258,7 +258,7 @@ fn walk_expr(
             walk_expr(left, vars, fn_returns, struct_defs, field_types, types);
             walk_expr(right, vars, fn_returns, struct_defs, field_types, types);
         }
-        Node::Neg { operand, .. } => {
+        Node::Neg { operand, .. } | Node::Not { operand, .. } => {
             walk_expr(operand, vars, fn_returns, struct_defs, field_types, types)
         }
         Node::Paren(inner, _) => {

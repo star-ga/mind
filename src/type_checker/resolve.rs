@@ -433,6 +433,11 @@ impl<'a> Resolver<'a> {
                     self.bind_pattern(a);
                 }
             }
+            Pattern::Tuple(elems) => {
+                for e in elems {
+                    self.bind_pattern(e);
+                }
+            }
             Pattern::Literal(_) | Pattern::Wildcard => {}
         }
     }
@@ -563,7 +568,10 @@ impl<'a> Resolver<'a> {
                 self.walk(left);
                 self.walk(right);
             }
-            Node::Paren(inner, _) | Node::Neg { operand: inner, .. } | Node::Ref { inner, .. } => {
+            Node::Paren(inner, _)
+            | Node::Neg { operand: inner, .. }
+            | Node::Not { operand: inner, .. }
+            | Node::Ref { inner, .. } => {
                 self.walk(inner);
             }
             Node::As { expr, .. } => self.walk(expr),

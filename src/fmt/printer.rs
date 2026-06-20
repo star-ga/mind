@@ -1113,6 +1113,10 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             p.push("-");
             emit_expr(p, operand);
         }
+        Node::Not { operand, .. } => {
+            p.push("!");
+            emit_expr(p, operand);
+        }
         Node::Call { callee, args, .. } => emit_call(p, callee, args),
         Node::MethodCall {
             receiver,
@@ -1790,6 +1794,16 @@ fn emit_pattern(p: &mut Printer, pat: &Pattern) {
                 }
                 p.push(")");
             }
+        }
+        Pattern::Tuple(elems) => {
+            p.push("(");
+            for (i, e) in elems.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                emit_pattern(p, e);
+            }
+            p.push(")");
         }
     }
 }

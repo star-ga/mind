@@ -2688,6 +2688,21 @@ impl<'a> P<'a> {
                 span,
             });
         }
+        // Unary logical NOT `!expr`. Disambiguated from the `!=` binary operator,
+        // which is only recognised in infix position by `peek_binop` after a left
+        // operand is already parsed; here in prefix position a `!` not followed by
+        // `=` is unambiguously logical-not (enum_match #9, `if !parser_at(..)`).
+        if self.at(b'!') && self.b.get(self.pos + 1) != Some(&b'=') {
+            let start = self.pos;
+            self.advance();
+            self.skip_ws();
+            let operand = self.parse_atom()?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Not {
+                operand: Box::new(operand),
+                span,
+            });
+        }
         // Phase 10.7: `&expr` and `&mut expr` reference-taking prefix.
         //
         // Disambiguation: `&` is also the infix bitwise-AND operator.
@@ -3802,6 +3817,28 @@ impl<'a> P<'a> {
             }
             let v = self.parse_i64_pattern(&d)?;
             return Ok(Pattern::Literal(Literal::Int(v)));
+        }
+        // A leading `(` with no preceding name is a tuple pattern:
+        // `(a, b)`, or nested inside a variant payload `Ok((p1, decorators))`
+        // (enum_match #9). A single `(p)` collapses to its inner pattern
+        // (grouping parens), matching how a 1-element tuple is just the value.
+        if self.at(b'(') {
+            self.pos += 1;
+            let mut elems = Vec::new();
+            self.skip_ws_and_newlines();
+            while !self.at(b')') && !self.at_end() {
+                elems.push(self.parse_pattern()?);
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+            }
+            self.expect(b')')?;
+            if elems.len() == 1 {
+                return Ok(elems.into_iter().next().unwrap());
+            }
+            return Ok(Pattern::Tuple(elems));
         }
         let name = self
             .dotted_ident()

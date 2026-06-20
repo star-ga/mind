@@ -1027,6 +1027,30 @@ fn lower_expr(
                 dst
             }
         },
+        // Unary logical NOT `!expr`. Desugars to `operand == 0` so it produces
+        // the exact same IR as the binary `==` source form already does — 1 when
+        // the operand is falsy (0), else 0 — reusing the keystone-stable
+        // comparison lowering and its i1→bool widening verbatim (enum_match #9).
+        ast::Node::Not { operand, .. } => match operand.as_ref() {
+            ast::Node::Lit(Literal::Int(n), _) => {
+                let id = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(id, (*n == 0) as i64));
+                id
+            }
+            _ => {
+                let lhs = lower_expr(operand, ir, env, struct_env, receiver_types);
+                let zero = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(zero, 0));
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::BinOp {
+                    dst,
+                    op: BinOp::Eq,
+                    lhs,
+                    rhs: zero,
+                });
+                dst
+            }
+        },
         #[cfg(feature = "std-surface")]
         ast::Node::Lit(Literal::Str(s), _) => {
             // Materialize the literal into a real `String { addr, len, cap }`
