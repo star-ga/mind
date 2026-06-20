@@ -3793,8 +3793,14 @@ fn extract_is_test(attrs: &[crate::ast::Attribute]) -> bool {
 }
 
 pub fn parse(input: &str) -> Result<Module, Vec<ParseError>> {
-    let (stripped, _) = strip_comments_with_trivia(input, &mut None);
-    let mut p = P::new(&stripped);
+    let stripped_owned: String;
+    let src: &str = if input.contains("//") {
+        stripped_owned = strip_comments_with_trivia(input, &mut None).0;
+        &stripped_owned
+    } else {
+        input
+    };
+    let mut p = P::new(src);
     match p.parse_module() {
         Ok(m) => Ok(m),
         Err(e) => Err(vec![e]),
@@ -3810,8 +3816,14 @@ pub fn parse_with_diagnostics_in_file(
     input: &str,
     file: Option<&str>,
 ) -> Result<Module, Vec<PrettyDiagnostic>> {
-    let (stripped, _) = strip_comments_with_trivia(input, &mut None);
-    let mut p = P::new(&stripped);
+    let stripped_owned: String;
+    let src: &str = if input.contains("//") {
+        stripped_owned = strip_comments_with_trivia(input, &mut None).0;
+        &stripped_owned
+    } else {
+        input
+    };
+    let mut p = P::new(src);
     match p.parse_module() {
         Ok(m) => Ok(m),
         Err(e) => {
@@ -3821,7 +3833,7 @@ pub fn parse_with_diagnostics_in_file(
                 severity: crate::diagnostics::Severity::Error,
                 message: e.message,
                 span: Some(DiagnosticSpan::from_offsets(
-                    &stripped,
+                    src,
                     e.offset,
                     e.offset + 1,
                     file,
