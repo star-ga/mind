@@ -818,6 +818,20 @@ fn match_enum_payload(
                 }
                 _ => return false,
             },
+            // Struct-variant sub-pattern `E.V { f, g }`. The interpreter is the
+            // const-eval path (mind-flow uses the RUNS path), and lacks the enum
+            // decl's field_names here, so it binds each named field's sub-pattern
+            // positionally in source order against the enum payload.
+            crate::ast::Pattern::EnumStruct { fields, .. } => match value {
+                Value::Enum { payload, .. } if payload.len() >= fields.len() => {
+                    let subs: Vec<crate::ast::Pattern> =
+                        fields.iter().map(|(_, p)| p.clone()).collect();
+                    if !match_enum_payload(&subs, payload, out) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            },
         }
     }
     true
@@ -1596,6 +1610,17 @@ pub(crate) fn eval_value_expr_mode(
                     crate::ast::Pattern::Tuple(elems) => match &val {
                         Value::Tuple(items) if items.len() == elems.len() => {
                             match_enum_payload(elems, items, &mut bindings)
+                        }
+                        _ => false,
+                    },
+                    // Struct-variant pattern `E.V { f, g }` — const-eval best
+                    // effort: bind the named fields' sub-patterns positionally in
+                    // source order against the enum payload (enum_match #9).
+                    crate::ast::Pattern::EnumStruct { fields, .. } => match &val {
+                        Value::Enum { payload, .. } if payload.len() >= fields.len() => {
+                            let subs: Vec<crate::ast::Pattern> =
+                                fields.iter().map(|(_, p)| p.clone()).collect();
+                            match_enum_payload(&subs, payload, &mut bindings)
                         }
                         _ => false,
                     },
