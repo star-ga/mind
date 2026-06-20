@@ -88,6 +88,29 @@ pub fn vec_push(v: Vec, value: i64) -> Vec {
     Vec { addr: new_addr, len: new_len, cap: new_cap }
 }
 
+// vec_zeroed — allocate a backing store of `n` zeroed i64 elements and
+// return its opaque i64 base address (RFC 0005 P0a — never a `ptr`).
+//
+// This is the zeroed-allocation primitive (issue #204): `__mind_alloc`
+// hands back uninitialised memory, so callers that need a zero-filled
+// scratch buffer (counting sorts, histograms, bitsets) previously had
+// to open-code the clearing loop.  The fill is a deterministic forward
+// pass of `__mind_store_i64`, so the allocation/store trace is identical
+// across runs and substrates (the cross-substrate wedge).
+//
+// `n <= 0` allocates nothing and returns 0 (the __mind_alloc contract),
+// matching the never-pushed Vec's addr-0 convention.  Read elements back
+// with `__mind_load_i64(base + i * 8)` or wrap the base in a Vec value.
+pub fn vec_zeroed(n: i64) -> i64 {
+    let base: i64 = __mind_alloc(n * 8);
+    let mut i: i64 = 0;
+    while i < n {
+        __mind_store_i64(base + i * 8, 0);
+        i = i + 1;
+    }
+    base
+}
+
 // vec_free — release the heap backing store via __mind_free.
 //
 // A Vec value is itself a 3×i64 struct (passed/returned by value); the

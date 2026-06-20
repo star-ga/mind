@@ -109,6 +109,22 @@ static ssize_t mind_pwrite_emu(int fd, const void *buf, size_t count, mind_off_t
 // Seven RFC 0005 intrinsics
 // ---------------------------------------------------------------------------
 
+// __mind_assert_fail(msg_len) — deterministic conditional-trap target for the
+// `assert cond, "msg"` statement (#203). `mindc` lowers `assert` to
+// `if cond { } else { __mind_assert_fail(<msg-len>); }`, so this is reached
+// ONLY when the asserted condition is false. It aborts the process via the
+// same `abort()` path the region / GenRef runtime already uses on its own
+// unrecoverable invariants — a single deterministic SIGABRT, identical across
+// CPU/ARM (no pointer bits, no float, no clock). The i64 argument is the
+// message byte length, carried for diagnostics; control flow does not depend
+// on it. Declared `(i64) -> i64` to match the auto-generated extern signature
+// (`func.func private @__mind_assert_fail(i64) -> i64`); it never returns.
+MIND_EXPORT int64_t __mind_assert_fail(int64_t msg_len) {
+    (void)msg_len;
+    abort();
+    return 0; /* unreachable — abort() does not return */
+}
+
 MIND_EXPORT int64_t __mind_alloc(int64_t bytes) {
     if (bytes <= 0) return 0;
     void *p = malloc((size_t)bytes);
@@ -317,6 +333,20 @@ MIND_EXPORT int64_t vec_push(int64_t v, int64_t value) {
     __mind_store_i64(base + len * 8, value);
     __mind_store_i64(v + 8, len + 1);
     return v;
+}
+
+// vec_zeroed — allocate a backing store of `n` zeroed i64 elements and
+// return its i64 base address (issue #204). Mirrors std/vec.mind's pure-MIND
+// definition: `__mind_alloc` hands back uninitialised memory, so this clears
+// it with a deterministic forward fill. A non-positive `n` allocates nothing
+// and returns 0 (the __mind_alloc contract). Read back with
+// __mind_load_i64(base + i * 8).
+MIND_EXPORT int64_t vec_zeroed(int64_t n) {
+    int64_t base = __mind_alloc(n * 8);
+    for (int64_t i = 0; i < n; i++) {
+        __mind_store_i64(base + i * 8, 0);
+    }
+    return base;
 }
 
 // ---------------------------------------------------------------------------

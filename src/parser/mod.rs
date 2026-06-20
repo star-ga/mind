@@ -192,6 +192,41 @@ impl<'a> P<'a> {
         Some(std::str::from_utf8(&self.b[start..self.pos]).unwrap())
     }
 
+    /// Issue #205: at the current position (immediately after an integer
+    /// literal's digits), try to consume a trailing integer-type suffix
+    /// (`u8`/`u16`/`u32`/`u64`/`i8`/`i16`/`i32`/`i64`) so `2u32`, `-1i32`,
+    /// `0xFFu8` and friends parse in any expression position. The suffix must
+    /// end at a word boundary (no trailing ident-cont byte) so `2u32x` is not
+    /// silently split. On a match the position is advanced past the suffix and
+    /// the corresponding `TypeAnn` is returned; otherwise the position is left
+    /// untouched and `None` is returned. The literal is desugared by the caller
+    /// into `Node::As`, reusing the existing `expr as type` typecheck/codegen
+    /// path exactly — no new IR is introduced, so suffix-free sources (e.g. the
+    /// keystone) are byte-identical.
+    fn int_type_suffix(&mut self) -> Option<TypeAnn> {
+        // Each candidate suffix and the `TypeAnn` it maps to. `u32`/`i32`/`i64`
+        // have dedicated scalar variants; the remaining widths ride through the
+        // `Named` path (same as writing `as u64`).
+        const SUFFIXES: &[&str] = &["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64"];
+        for lit in SUFFIXES {
+            let bytes = lit.as_bytes();
+            let end = self.pos + bytes.len();
+            if end <= self.b.len()
+                && &self.b[self.pos..end] == bytes
+                && (end >= self.b.len() || !Self::is_ident_cont(self.b[end]))
+            {
+                self.pos = end;
+                return Some(match *lit {
+                    "u32" => TypeAnn::ScalarU32,
+                    "i32" => TypeAnn::ScalarI32,
+                    "i64" => TypeAnn::ScalarI64,
+                    other => TypeAnn::Named(other.to_string()),
+                });
+            }
+        }
+        None
+    }
+
     /// Read a dotted identifier like `tensor.matmul` or `foo.bar.baz`.
     fn dotted_ident(&mut self) -> Option<String> {
         let first = self.word()?;
@@ -2910,6 +2945,18 @@ impl<'a> P<'a> {
             return Ok(Node::Lit(Literal::Float(val), span));
         }
         let val = self.parse_i64_literal(&d)?;
+        // Issue #205: integer-type suffix (`2u32`, `-1i32`, ...). Desugar to an
+        // `as`-cast so the typed literal flows through the existing cast path.
+        let pre_suffix = self.pos;
+        if let Some(ty) = self.int_type_suffix() {
+            let span = Span::new(start, self.pos);
+            let lit_span = Span::new(start, pre_suffix);
+            return Ok(Node::As {
+                expr: Box::new(Node::Lit(Literal::Int(val), lit_span)),
+                ty,
+                span,
+            });
+        }
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Int(val), span))
     }
