@@ -102,13 +102,7 @@ pub fn vec_push(v: Vec, value: i64) -> Vec {
 // matching the never-pushed Vec's addr-0 convention.  Read elements back
 // with `__mind_load_i64(base + i * 8)` or wrap the base in a Vec value.
 pub fn vec_zeroed(n: i64) -> i64 {
-    let base: i64 = __mind_alloc(n * 8);
-    let mut i: i64 = 0;
-    while i < n {
-        __mind_store_i64(base + i * 8, 0);
-        i = i + 1;
-    }
-    base
+    __mind_vec_zeroed(n)
 }
 
 // vec_free — release the heap backing store via __mind_free.
