@@ -759,6 +759,26 @@ fn emit_stmt(p: &mut Printer, node: &Node) {
         } => {
             emit_let_inline(p, name, *mutable, ann, value);
         }
+        Node::LetTuple {
+            names,
+            mutable,
+            value,
+            ..
+        } => {
+            p.push("let ");
+            if *mutable {
+                p.push("mut ");
+            }
+            p.push("(");
+            for (i, nm) in names.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                p.push(nm);
+            }
+            p.push(") = ");
+            emit_expr(p, value);
+        }
         Node::Assign { name, value, .. } => {
             p.push(name);
             p.push(" = ");
@@ -1108,6 +1128,28 @@ fn emit_expr(p: &mut Printer, node: &Node) {
                 emit_expr(p, e);
             }
             p.push(")");
+        }
+        Node::LetTuple {
+            names,
+            mutable,
+            value,
+            ..
+        } => {
+            // A destructuring `let` is a statement; if it ever reaches expression
+            // position it still round-trips faithfully.
+            p.push("let ");
+            if *mutable {
+                p.push("mut ");
+            }
+            p.push("(");
+            for (i, nm) in names.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                p.push(nm);
+            }
+            p.push(") = ");
+            emit_expr(p, value);
         }
         Node::Neg { operand, .. } => {
             p.push("-");

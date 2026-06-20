@@ -406,6 +406,15 @@ pub enum Node {
         value: Box<Node>,
         span: Span,
     },
+    /// Tuple-destructuring binding: `let (a, b, ...) = expr`. Binds each name to
+    /// the corresponding tuple element of `value`. A single-name `(a)` is parsed
+    /// as a plain `Let` (the parser collapses 1-tuples), so `names.len() >= 2`.
+    LetTuple {
+        names: Vec<String>,
+        mutable: bool,
+        value: Box<Node>,
+        span: Span,
+    },
     Assign {
         name: String,
         value: Box<Node>,
@@ -805,6 +814,7 @@ impl Node {
             | Node::CallTensorConv2d { span, .. }
             | Node::Let { span, .. }
             | Node::Assign { span, .. }
+            | Node::LetTuple { span, .. }
             | Node::FnDef { span, .. }
             | Node::Return { span, .. }
             | Node::Block { span, .. }

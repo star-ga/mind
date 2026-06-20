@@ -1523,7 +1523,9 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 }),
             }
         }
-        Node::Let { value, .. } | Node::Assign { value, .. } => infer_expr(value, env),
+        Node::Let { value, .. } | Node::Assign { value, .. } | Node::LetTuple { value, .. } => {
+            infer_expr(value, env)
+        }
         // Function definitions don't have a value type in expression context
         Node::FnDef { span, .. } => Ok((ValueType::ScalarI32, *span)), // Placeholder
         Node::Return { value, span } => {
