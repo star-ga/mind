@@ -3286,6 +3286,45 @@ fn lower_expr(
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
         }
+        // `assert cond, "msg"` (#203) — a STATEMENT-form runtime check that
+        // lowers to a deterministic conditional trap. The frontend reaches it
+        // through the module/block statement loop (which routes every statement
+        // through `lower_expr`); without this arm it fell into the value-position
+        // fail-closed panic below. It produces no meaningful value (it is a
+        // statement), so the discarded merge id returned here is correct.
+        //
+        // Desugar to `if cond { } else { __mind_assert_fail(<msg-len>); }` and
+        // reuse the existing, battle-tested `If` region-SSA lowering verbatim:
+        //   * cond true  → empty then-branch, falls through (unit 0);
+        //   * cond false → else-branch calls the runtime trap intrinsic, which
+        //     `abort()`s deterministically (the same `abort()` path the region/
+        //     genref runtime already relies on — see `runtime-support/
+        //     mind_intrinsics.c`). `__mind_assert_fail` is auto-declared as a
+        //     `func.func private @__mind_assert_fail(i64) -> i64` extern via the
+        //     standard `extern_calls` collection, so no new IR variant, MLIR arm,
+        //     or wire-format change is introduced — keystone bytes are untouched
+        //     (no program in the bootstrap uses `assert`).
+        //
+        // The message is diagnostic-only; we pass its byte length as a single
+        // deterministic i64 argument (no pointer bits, no float, identical across
+        // substrates). The trap is unconditional once reached, so the exact
+        // argument value does not affect control flow.
+        #[cfg(feature = "std-surface")]
+        ast::Node::Assert { cond, msg, span } => {
+            let msg_len = msg.as_ref().map_or(0, |m| m.len()) as i64;
+            let trap_call = ast::Node::Call {
+                callee: "__mind_assert_fail".to_string(),
+                args: vec![ast::Node::Lit(Literal::Int(msg_len), *span)],
+                span: *span,
+            };
+            let if_node = ast::Node::If {
+                cond: cond.clone(),
+                then_branch: Vec::new(),
+                else_branch: Some(vec![trap_call]),
+                span: *span,
+            };
+            lower_expr(&if_node, ir, env, struct_env, receiver_types)
+        }
         // A `struct`/`enum` type definition carries no runtime value — it is a
         // compile-time declaration collected in an earlier pass (see the
         // struct/enum item-collection arms above). When a top-level type def is
