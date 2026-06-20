@@ -2922,6 +2922,56 @@ impl<'a> P<'a> {
 
     fn parse_number_lit(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
+        // Radix-prefixed integer literals: `0x..` (hex), `0o..` (octal),
+        // `0b..` (binary). Always integers — never floats — and accept the same
+        // `u8`..`i64` suffix as decimal literals, desugared through the existing
+        // `as`-cast path. `_` digit separators are permitted and ignored. The
+        // keystone source uses no radix literals, so this branch never fires for
+        // it and its emit stays byte-identical.
+        if self.b.get(self.pos) == Some(&b'0')
+            && matches!(
+                self.b.get(self.pos + 1),
+                Some(b'x' | b'X' | b'o' | b'O' | b'b' | b'B')
+            )
+        {
+            let radix: u32 = match self.b[self.pos + 1].to_ascii_lowercase() {
+                b'x' => 16,
+                b'o' => 8,
+                _ => 2,
+            };
+            self.pos += 2; // consume the `0x` / `0o` / `0b` prefix
+            let digit_start = self.pos;
+            while self.pos < self.b.len()
+                && (self.b[self.pos] == b'_' || (self.b[self.pos] as char).is_digit(radix))
+            {
+                self.pos += 1;
+            }
+            if self.pos == digit_start {
+                return Err(self.err("expected digits after integer radix prefix".into()));
+            }
+            let raw: String = std::str::from_utf8(&self.b[digit_start..self.pos])
+                .unwrap()
+                .chars()
+                .filter(|c| *c != '_')
+                .collect();
+            // Accept the full unsigned range, reinterpreting as two's-complement
+            // i64 exactly like `parse_i64_literal` does for large decimals.
+            let val = i64::from_str_radix(&raw, radix)
+                .or_else(|_| u64::from_str_radix(&raw, radix).map(|u| u as i64))
+                .map_err(|_| self.err("integer overflow".into()))?;
+            let pre_suffix = self.pos;
+            if let Some(ty) = self.int_type_suffix() {
+                let span = Span::new(start, self.pos);
+                let lit_span = Span::new(start, pre_suffix);
+                return Ok(Node::As {
+                    expr: Box::new(Node::Lit(Literal::Int(val), lit_span)),
+                    ty,
+                    span,
+                });
+            }
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Lit(Literal::Int(val), span));
+        }
         let d = self
             .digits()
             .ok_or_else(|| self.err("expected number".into()))?;
