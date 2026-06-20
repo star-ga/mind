@@ -76,6 +76,26 @@ pub fn rest_pattern() -> i64 {
         Tagged.B { .. } => 0,
     }
 }
+
+enum Wide {
+    Narrow { x: i64 },
+    Big { x: i64, y: i64, z: i64 }
+}
+
+// Construct a WIDER sibling variant inside a control-flow body — the boxed
+// record must be sized for the enum's max arity (1+3 slots), and the construction
+// inside the `if` must still be recognised as a variant (carry the tag). A bug
+// where the control-flow sub-IR dropped the enum metadata made this match fail.
+pub fn ctor_in_branch(flag: i64) -> i64 {
+    let mut w = Wide.Narrow { x: 1 }
+    if flag > 0 {
+        w = Wide.Big { x: 10, y: 20, z: 30 }
+    }
+    match w {
+        Wide.Narrow { x } => x,
+        Wide.Big { x, y, z } => x + y + z,
+    }
+}
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -117,11 +137,14 @@ fn enum_struct_variant_runs() {
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
          for _n in ('area_rect','circle_radius','ctor_reorder','match_reorder','rest_pattern'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         lib.ctor_in_branch.restype = ctypes.c_int64; lib.ctor_in_branch.argtypes = [ctypes.c_int64]\n\
          r = lib.area_rect(); assert r == 42, 'area_rect=' + str(r)\n\
          r = lib.circle_radius(); assert r == 42, 'circle_radius=' + str(r)\n\
          r = lib.ctor_reorder(); assert r == 607, 'ctor_reorder=' + str(r)\n\
          r = lib.match_reorder(); assert r == 607, 'match_reorder=' + str(r)\n\
          r = lib.rest_pattern(); assert r == 9, 'rest_pattern=' + str(r)\n\
+         r = lib.ctor_in_branch(1); assert r == 60, 'ctor_in_branch(1)=' + str(r)\n\
+         r = lib.ctor_in_branch(0); assert r == 1, 'ctor_in_branch(0)=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );
