@@ -1391,7 +1391,18 @@ impl<'a> P<'a> {
             .to_string();
         self.skip_ws_and_newlines();
         if !self.eat(b'{') {
-            return Err(self.err("expected `{` after module name".into()));
+            // File-level `module NAME` header (no block). The build path accepts
+            // this — the file IS the module, the name implicit from the filename —
+            // so the single-file parser (`mindc check`, `mindc test` discovery)
+            // must too, or it falsely rejects files that `mindc build` compiles
+            // fine. Treat it as a no-op transparent marker. (The keystone uses no
+            // file-level module decls, so this branch never fires there → the
+            // bootstrap fixed point is byte-identical.)
+            let span = Span::new(start, self.pos);
+            return Ok(Node::Block {
+                stmts: Vec::new(),
+                span,
+            });
         }
         let mut stmts = Vec::new();
         self.skip_ws_and_newlines();
