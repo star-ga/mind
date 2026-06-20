@@ -2686,36 +2686,6 @@ fn check_intra_fn_call(
     Ok((ValueType::ScalarI64, span))
 }
 
-/// Build the intra-module call-signature side-table from a module's items.
-/// Captures EVERY module-level `Node::FnDef` (so forward references and
-/// recursion resolve before any call is checked), recording each fn's arity.
-/// A later same-name FnDef shadows an earlier one (the AST already forbids
-/// true duplicates upstream); this just keeps the last seen.
-///
-/// Only arity is captured: it is the one property of a call that is *always*
-/// soundly knowable from the AST regardless of the loose i64 ABI. Per-arg
-/// types are deliberately not recorded — every intra-module call result and
-/// most locals collapse to `ScalarI64`, integer literals come in as
-/// `ScalarI32`, float literals default to `ScalarF64` yet legitimately flow
-/// into `f32` slots, comparisons yield `ScalarI32` even into `bool` params,
-/// and struct/Slice/Array/Ref/Generic values are i64 heap addresses — so no
-/// concrete arg "type" reliably equals the declared parameter type even in
-/// correct code. Recording and checking them produced false positives on the
-/// valid std + examples corpus; arity is the sound, false-positive-free check.
-fn build_intra_fn_sigs(module: &Module) -> IntraFnSigs {
-    let mut sigs = IntraFnSigs::new();
-    for item in &module.items {
-        if let Node::FnDef { name, params, .. } = item {
-            sigs.insert(
-                name.clone(),
-                IntraFnSig {
-                    param_count: params.len(),
-                },
-            );
-        }
-    }
-    sigs
-}
 
 /// RAII guard that installs an intra-module signature table into the
 /// thread-local for the duration of a `check_module_types_in_file` call and
@@ -2940,35 +2910,33 @@ pub fn check_module_types_in_file(
     let mut errs = Vec::new();
     let mut tenv = env.clone();
 
-    // RFC 0010 Phase B audit fix F-06: collect all #[repr(C)] struct names before
-    // validating extern "C" signatures so the type-checker can distinguish known
-    // repr(C) structs from unrelated Named types.
-    let repr_c_struct_names: std::collections::BTreeSet<String> = module
-        .items
-        .iter()
-        .filter_map(|item| {
-            if let Node::StructDef { name, attrs, .. } = item {
+    // Single prologue pass: classify + collect all per-category data in one
+    // walk instead of four separate passes (repr_c_struct_names, fn_tensor_sigs,
+    // has_fn any(), has_enum any()) plus a conditional FnDef pre-register walk.
+    // For modules with none of these item types (e.g. scalar_math), only one
+    // iterator traversal runs instead of four — each with its own setup/teardown
+    // overhead even on a one-item list. Insertion order within each container is
+    // identical to the original (module.items order) → byte-identical output.
+    let mut repr_c_struct_names = std::collections::BTreeSet::<String>::new();
+    let mut fn_tensor_sigs: FnTensorSigs = FnTensorSigs::new();
+    let mut intra_fn_sigs: IntraFnSigs = IntraFnSigs::new();
+    let mut has_fn = false;
+    let mut has_enum = false;
+
+    for item in &module.items {
+        match item {
+            Node::StructDef { name, attrs, .. }
                 if attrs
                     .iter()
-                    .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C"))
-                {
-                    return Some(name.clone());
-                }
+                    .any(|a| a.name == "repr" && a.args.iter().any(|arg| arg == "C")) =>
+            {
+                repr_c_struct_names.insert(name.clone());
             }
-            None
-        })
-        .collect();
-
-    // RFC 0012 Phase A — pre-scan: collect FnDef tensor-param signatures so
-    // call-site symbolic-dim checks can look them up without a second module walk.
-    // Maps function name → list of (arg_position, param_name, dims, dtype).
-    // `arg_position` is the 0-based index in the full param list so we can
-    // correctly correlate call arguments (some of which may be non-tensor).
-    let fn_tensor_sigs: FnTensorSigs = module
-        .items
-        .iter()
-        .filter_map(|item| {
-            if let Node::FnDef { name, params, .. } = item {
+            Node::FnDef { name, params, .. } => {
+                has_fn = true;
+                // Pre-register name for intra-module call resolution.
+                tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
+                // Collect tensor-param signatures for RFC 0012 Phase A call-site checks.
                 let tensor_params: Vec<TensorParamSig> = params
                     .iter()
                     .enumerate()
@@ -2979,41 +2947,28 @@ pub fn check_module_types_in_file(
                         _ => None,
                     })
                     .collect();
-                if tensor_params.is_empty() {
-                    None
-                } else {
-                    Some((name.clone(), tensor_params))
+                if !tensor_params.is_empty() {
+                    fn_tensor_sigs.insert(name.clone(), tensor_params);
                 }
-            } else {
-                None
+                // Collect arity for RFC 0005 Phase B call-site arity checks.
+                intra_fn_sigs.insert(name.clone(), IntraFnSig { param_count: params.len() });
             }
-        })
-        .collect();
-
-    // Pre-register all module-level FnDef names so that intra-module function
-    // calls type-check without "unsupported call" errors. The placeholder type
-    // ScalarI64 is consistent with the loose i64-ABI assumption used elsewhere
-    // for unresolved symbols; full signature inference is a Phase B deliverable.
-    // Only names not already in the incoming `env` are registered so that
-    // cross-module-imports-resolved signatures take precedence.
-    for item in &module.items {
-        if let Node::FnDef { name, .. } = item {
-            tenv.entry(name.clone()).or_insert(ValueType::ScalarI64);
+            Node::EnumDef { .. } => {
+                has_enum = true;
+            }
+            _ => {}
         }
     }
 
-    // RFC 0005 Phase B — build the intra-module call-signature side-table for
-    // ALL fns before checking ANY call, then install it in the thread-local
-    // for the duration of this check (the guard restores the previous value on
-    // return). Call sites in `infer_call` consult it to validate call arity —
-    // the property that is always soundly knowable under the loose i64 ABI.
-    let _intra_sig_guard = IntraSigGuard::install(build_intra_fn_sigs(module));
+    // Install the intra-fn signature side-table (built above, not a separate walk).
+    let _intra_sig_guard = has_fn.then(|| IntraSigGuard::install(intra_fn_sigs));
 
     // Install the enum-variant registry for match-exhaustiveness checking
     // (same merge-onto-parent discipline, so an enum match inside a fn body
     // still resolves the module's enums). Restored on return.
-    let _enum_variants_guard =
-        EnumVariantsGuard::install(build_enum_variants(module), build_enum_payloads(module));
+    let _enum_variants_guard = has_enum.then(|| {
+        EnumVariantsGuard::install(build_enum_variants(module), build_enum_payloads(module))
+    });
 
     for item in &module.items {
         match item {
