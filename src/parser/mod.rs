@@ -3715,6 +3715,13 @@ impl<'a> P<'a> {
                     stmts,
                     span: blk_span,
                 }
+            } else if self.at_keyword(b"return") {
+                // `=> return <expr>` — an early-return statement as the arm body
+                // (idiomatic for guard/error arms like `Err(e) => return Err(e)`).
+                // parse_expr does not handle the `return` keyword, so without this
+                // it consumed only `return` and the loop mis-read the rest as a
+                // new arm.
+                self.parse_return()?
             } else {
                 self.parse_expr()?
             };
@@ -3804,26 +3811,38 @@ impl<'a> P<'a> {
             "false" => return Ok(Pattern::Literal(Literal::Int(0))),
             _ => {}
         }
-        if name.contains("::") {
-            self.skip_ws();
-            let args = if self.at(b'(') {
-                self.pos += 1;
-                let mut sub = Vec::new();
+        // A payload list `(...)` makes this a variant pattern regardless of
+        // qualification: `Ok(x)`, `Err(e)`, `Some(v)` (unqualified) AND
+        // `Result::Ok(x)`, `Mode::On(p)` (qualified). The sub-patterns bind the
+        // variant payload (enum_match #9). Previously only `::`-qualified names
+        // got this, so unqualified `Err(e)` left the `(e)` unconsumed and the
+        // arm parser then saw `(` instead of `=>`.
+        self.skip_ws();
+        if self.at(b'(') {
+            self.pos += 1;
+            let mut sub = Vec::new();
+            self.skip_ws_and_newlines();
+            while !self.at(b')') && !self.at_end() {
+                sub.push(self.parse_pattern()?);
                 self.skip_ws_and_newlines();
-                while !self.at(b')') && !self.at_end() {
-                    sub.push(self.parse_pattern()?);
-                    self.skip_ws_and_newlines();
-                    if !self.eat(b',') {
-                        break;
-                    }
-                    self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
                 }
-                self.expect(b')')?;
-                sub
-            } else {
-                Vec::new()
-            };
-            return Ok(Pattern::EnumVariant { path: name, args });
+                self.skip_ws_and_newlines();
+            }
+            self.expect(b')')?;
+            return Ok(Pattern::EnumVariant {
+                path: name,
+                args: sub,
+            });
+        }
+        // No payload: a `::`-qualified name is a unit variant (`Mode::On`); a
+        // bare lowercase-or-any name binds the whole scrutinee (`x`).
+        if name.contains("::") {
+            return Ok(Pattern::EnumVariant {
+                path: name,
+                args: Vec::new(),
+            });
         }
         Ok(Pattern::Ident(name))
     }
