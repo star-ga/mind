@@ -152,6 +152,7 @@ pub fn run_tests(opts: &TestOptions) -> Result<TestRunSummary, TestError> {
     //    that have syntax errors (they might be test fixtures for parser
     //    error-case tests, or simply broken files that are not test sources).
     let mut entries: Vec<TestEntry> = Vec::new();
+    let mut parse_failures: Vec<(PathBuf, String)> = Vec::new();
     for path in &source_files {
         let text = match fs::read_to_string(path) {
             Ok(t) => t,
@@ -162,11 +163,22 @@ pub fn run_tests(opts: &TestOptions) -> Result<TestRunSummary, TestError> {
         };
         match discover_tests_in_source(path, &text) {
             Ok(discovered) => entries.extend(discovered),
-            Err(_) => {
-                // File has parse errors — no tests discoverable; skip silently.
-                // This is the same behavior as cargo test when a source file
-                // has a compile error: other test files still run.
-            }
+            // A file that fails to parse yields no tests — but skipping it
+            // SILENTLY turns a real breakage into a misleading green "running 0
+            // tests" (exactly what masked a parse error in a downstream repo's
+            // test suite). Collect the error and surface it below so the user
+            // sees WHY a file produced no tests, while other files still run.
+            Err(msg) => parse_failures.push((path.clone(), msg)),
+        }
+    }
+    if !parse_failures.is_empty() {
+        eprintln!(
+            "warning[test]: {} test file(s) skipped — they do not parse, so no \
+             tests were discovered in them:",
+            parse_failures.len()
+        );
+        for (path, msg) in &parse_failures {
+            eprintln!("  {}: {msg}", path.display());
         }
     }
 
