@@ -52,6 +52,8 @@ Cargo.lock
 # arch-mind transient state (Tranche 5). Includes last_summary.json,
 # key.local, and store.lock because they embed absolute repo paths.
 .arch-mind/store/
+.arch-mind/store.pre-rotation-*/
+.arch-mind/keys.json
 .arch-mind/_log_*
 .arch-mind/scan_before.json
 .arch-mind/last_summary.json
