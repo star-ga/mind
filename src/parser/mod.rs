@@ -998,6 +998,13 @@ impl<'a> P<'a> {
         if self.at_keyword(b"while") {
             return self.parse_while();
         }
+        // `loop { body }` — unconditional loop, desugared to `while 1 { body }`
+        // so it reuses the while machinery (break/continue, region-scoped exit
+        // SSA) verbatim. Gated to std-surface like `while`.
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"loop") {
+            return self.parse_loop();
+        }
         // RFC 0010 Phase J-A: `region { }` block — gated to std-surface so
         // the default-build hot path stays byte-identical.
         #[cfg(feature = "std-surface")]
@@ -2320,6 +2327,27 @@ impl<'a> P<'a> {
         let span = Span::new(start, self.pos);
         Ok(Node::While {
             cond: Box::new(cond),
+            body,
+            span,
+        })
+    }
+
+    /// Parse `loop { <stmts> }` — an unconditional loop. Desugared to
+    /// `while 1 { <stmts> }`, so the body must `break`/`return` to terminate;
+    /// the `while` lowering owns iteration semantics (and the compile-time-eval
+    /// iteration cap that makes a genuinely-infinite loop fail loudly).
+    #[cfg(feature = "std-surface")]
+    fn parse_loop(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 4; // consume "loop"
+        self.skip_ws_and_newlines();
+        self.expect(b'{')?;
+        let body = self.parse_fn_body_stmts()?;
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::While {
+            cond: Box::new(Node::Lit(Literal::Int(1), span)),
             body,
             span,
         })
@@ -4025,6 +4053,13 @@ impl<'a> P<'a> {
                 if self.at(b'.') && self.b.get(self.pos + 1) == Some(&b'.') {
                     self.pos += 2;
                     self.skip_ws_and_newlines();
+                    // `..` must be the LAST element; otherwise the `expect('}')`
+                    // below would fail with a confusing "found ','" message.
+                    if !self.at(b'}') {
+                        return Err(self.err(
+                            "`..` rest pattern must be last in a struct-variant pattern".into(),
+                        ));
+                    }
                     break;
                 }
                 let fname = self
