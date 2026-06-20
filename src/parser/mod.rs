@@ -2612,6 +2612,49 @@ impl<'a> P<'a> {
         }
     }
 
+    /// Parse a character literal `'c'` / `'\n'` into an integer constant equal
+    /// to the character's Unicode scalar value (for ASCII this is the byte). The
+    /// usual escapes are recognised (`\n \t \r \0 \\ \' \"`); any other `\x` is
+    /// the literal `x`. A char literal lowers exactly like the equivalent integer
+    /// literal — no new IR — so it is fully deterministic and RUNS.
+    fn parse_char_lit(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += 1; // consume opening `'`
+        let val: i64 = if self.at(b'\\') {
+            self.pos += 1;
+            let c = self
+                .peek()
+                .ok_or_else(|| self.err("unterminated character escape".into()))?;
+            self.pos += 1;
+            match c {
+                b'n' => 10,
+                b't' => 9,
+                b'r' => 13,
+                b'0' => 0,
+                b'\\' => 92,
+                b'\'' => 39,
+                b'"' => 34,
+                other => other as i64,
+            }
+        } else {
+            // Decode one UTF-8 scalar from the source so a non-ASCII char literal
+            // carries its full codepoint (ASCII is the single-byte fast path).
+            let rest = std::str::from_utf8(&self.b[self.pos..])
+                .map_err(|_| self.err("invalid UTF-8 in character literal".into()))?;
+            let ch = rest
+                .chars()
+                .next()
+                .ok_or_else(|| self.err("empty character literal".into()))?;
+            self.pos += ch.len_utf8();
+            ch as i64
+        };
+        if !self.eat(b'\'') {
+            return Err(self.err("expected `'` to close character literal".into()));
+        }
+        let span = Span::new(start, self.pos);
+        Ok(Node::Lit(Literal::Int(val), span))
+    }
+
     fn parse_string_lit(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.expect(b'"')?;
@@ -2779,6 +2822,9 @@ impl<'a> P<'a> {
         }
         if self.at(b'"') {
             return self.parse_string_lit();
+        }
+        if self.at(b'\'') {
+            return self.parse_char_lit();
         }
         if self.at(b'-') {
             let start = self.pos;
