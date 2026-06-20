@@ -449,19 +449,29 @@ fn parses_multiline_arithmetic() {
     assert!(parses(src), "multi-line `+` continuation must parse");
 }
 
-// Step 8l — tuple return types `-> (T, U)` (Phase 10.6).
-// They PARSE, but a by-value tuple return has NO multi-slot return ABI and
-// previously collapsed SILENTLY to i64 (a miscompile). Stage-0a promotion makes
-// the type-checker reject it fail-loud (safety::tuple_return_unsupported); it is
-// accepted only under `--features std-surface-experimental`. Before the
-// `default = ["std-surface"]` flip this file did not run on the default build, so
-// the old `must parse` assertion masked the silent-collapse bug.
+// Step 8l — tuple return types `-> (T, U)` (Phase 10.6 + real tuple aggregates).
+// Once tuples became real heap aggregates, an ALL-I64 tuple return is legal: the
+// callee returns the `__mind_alloc` base pointer (i64) — exactly like a struct
+// return — and the caller takes it apart with `let (a, b) = …`. A FLOAT element
+// still cannot ride the all-i64 ABI (its bits would be reinterpreted), so a
+// float-bearing tuple return stays rejected fail-loud
+// (safety::tuple_return_unsupported), accepted only under
+// `--features std-surface-experimental`.
 #[test]
-fn tuple_return_type_fails_loud() {
-    let src = "module m { fn pair() -> (i32, u32) { 0 } }\n";
+fn all_i64_tuple_return_is_legal() {
+    let src = "module m { fn pair() -> (i32, u32) { (0, 0) } }\n";
+    assert!(
+        compiles(src),
+        "`-> (i32, u32)` all-i64 tuple return must be accepted (heap aggregate, base-pointer ABI)"
+    );
+}
+
+#[test]
+fn float_tuple_return_fails_loud() {
+    let src = "module m { fn pair() -> (f64, i32) { (0.0, 0) } }\n";
     assert!(
         !compiles(src),
-        "`-> (T, U)` tuple return must be rejected fail-loud (no aggregate-return ABI)"
+        "`-> (f64, i32)` float-bearing tuple return must be rejected fail-loud"
     );
 }
 
