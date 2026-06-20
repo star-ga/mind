@@ -519,6 +519,13 @@ pub enum Node {
         operand: Box<Node>,
         span: Span,
     },
+    /// Unary logical NOT: `!expr`. Truthy/falsy on i64 — `!x` is `1` when the
+    /// operand is `0`, else `0`. Kept as a faithful AST node (like `Logical`)
+    /// and desugared to a compare-with-zero at lower time.
+    Not {
+        operand: Box<Node>,
+        span: Span,
+    },
     /// Method call
     MethodCall {
         receiver: Box<Node>,
@@ -722,6 +729,10 @@ pub enum Pattern {
         /// Payload sub-patterns inside `( ... )`, if present.
         args: Vec<Pattern>,
     },
+    /// Tuple pattern `(a, b, ...)` — destructures a tuple, binding each element
+    /// to its sub-pattern. Also nests inside a variant payload, e.g.
+    /// `Ok((p1, decorators))` (enum_match #9).
+    Tuple(Vec<Pattern>),
     /// Literal constant: integer, float, bool, or string.
     Literal(Literal),
     /// Bare identifier binding — matches anything, binds the name.
@@ -803,6 +814,7 @@ impl Node {
             | Node::For { span, .. }
             | Node::Print { span, .. }
             | Node::Neg { span, .. }
+            | Node::Not { span, .. }
             | Node::MethodCall { span, .. }
             | Node::FieldAccess { span, .. }
             | Node::Const { span, .. }
