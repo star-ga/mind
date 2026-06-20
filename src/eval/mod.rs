@@ -1273,7 +1273,7 @@ pub(crate) fn eval_value_expr_mode(
             let rv = eval_value_expr_mode(right, env, tensor_env, mode.clone())?;
             apply_binary(*op, lv, rv, mode.clone())
         }
-        Node::Let { value, .. } | Node::Assign { value, .. } => {
+        Node::Let { value, .. } | Node::Assign { value, .. } | Node::LetTuple { value, .. } => {
             eval_value_expr_mode(value, env, tensor_env, mode.clone())
         }
         // Function definitions and control flow - placeholder implementation

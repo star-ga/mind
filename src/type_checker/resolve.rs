@@ -496,6 +496,14 @@ impl<'a> Resolver<'a> {
                 self.walk(value);
                 self.scopes.bind(name);
             }
+            Node::LetTuple { names, value, .. } => {
+                // RHS (the tuple) is evaluated before any name is in scope; then
+                // every destructured name binds.
+                self.walk(value);
+                for nm in names {
+                    self.scopes.bind(nm);
+                }
+            }
             Node::Assign { name, value, .. } => {
                 // `name` is an l-value; an undefined assign target is a
                 // distinct concern (and the parser/lowerer handles it). We

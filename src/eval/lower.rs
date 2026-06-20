@@ -1571,15 +1571,73 @@ fn lower_expr(
         }
         ast::Node::Paren(inner, _) => lower_expr(inner, ir, env, struct_env, receiver_types),
         ast::Node::Tuple { elements, .. } => {
-            let mut last = None;
-            for element in elements {
-                last = Some(lower_expr(element, ir, env, struct_env, receiver_types));
+            // A tuple is an anonymous all-i64 product type, lowered with the
+            // exact machinery of an all-i64 `StructLit` / multi-payload enum
+            // variant: `addr = __mind_alloc(8*n)`, then store each element at
+            // offset `8*i`, and the tuple VALUE is the base pointer. This lets a
+            // tuple flow through bindings, enum payloads (`Ok((a, b))`) and
+            // returns, and be read back by a destructuring `let (a, b) = …`.
+            // A 0-tuple is unit `0`; a 1-tuple `(x)` is just `x` (grouping),
+            // matching the parser's 1-element collapse — so single values never
+            // pay the alloc and nothing that worked before regresses. The
+            // keystone source contains no tuple literals, so its emit is
+            // byte-identical.
+            let n = elements.len();
+            if n <= 1 {
+                return elements
+                    .first()
+                    .map(|e| lower_expr(e, ir, env, struct_env, receiver_types))
+                    .unwrap_or_else(|| {
+                        let id = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(id, 0));
+                        id
+                    });
             }
-            last.unwrap_or_else(|| {
-                let id = ir.fresh();
-                ir.instrs.push(Instr::ConstI64(id, 0));
-                id
-            })
+            // bytes = 8 * n
+            let eight = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(eight, 8));
+            let count = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(count, n as i64));
+            let bytes = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: bytes,
+                op: BinOp::Mul,
+                lhs: eight,
+                rhs: count,
+            });
+            // addr = __mind_alloc(bytes)
+            let addr = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: addr,
+                name: "__mind_alloc".to_string(),
+                args: vec![bytes],
+            });
+            // Store each element at offset 8*i (lowered in source order, after
+            // the alloc — same left-to-right evaluation as `StructLit`).
+            for (i, element) in elements.iter().enumerate() {
+                let value = lower_expr(element, ir, env, struct_env, receiver_types);
+                let field_addr = if i == 0 {
+                    addr
+                } else {
+                    let offset = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                    let sum = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: sum,
+                        op: BinOp::Add,
+                        lhs: addr,
+                        rhs: offset,
+                    });
+                    sum
+                };
+                let store_ret = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst: store_ret,
+                    name: "__mind_store_i64".to_string(),
+                    args: vec![field_addr, value],
+                });
+            }
+            addr
         }
         ast::Node::FnDef {
             name,
@@ -1774,6 +1832,38 @@ fn lower_expr(
                             fn_struct_env.insert(name.clone(), struct_name.clone());
                         }
                     }
+                    ast::Node::LetTuple { names, value, .. } => {
+                        // Tuple-destructuring `let (a, b) = expr` in a fn body:
+                        // lower the RHS to the tuple base pointer, then bind each
+                        // name to `__mind_load_i64(addr + 8*i)` in `fn_env` — the
+                        // read side of the `Node::Tuple` aggregate. A tuple-free fn
+                        // body never reaches here, so the keystone is byte-identical.
+                        let addr =
+                            lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
+                        for (i, nm) in names.iter().enumerate() {
+                            let elem_addr = if i == 0 {
+                                addr
+                            } else {
+                                let offset = fn_ir.fresh();
+                                fn_ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                                let sum = fn_ir.fresh();
+                                fn_ir.instrs.push(Instr::BinOp {
+                                    dst: sum,
+                                    op: BinOp::Add,
+                                    lhs: addr,
+                                    rhs: offset,
+                                });
+                                sum
+                            };
+                            let loaded = fn_ir.fresh();
+                            fn_ir.instrs.push(Instr::Call {
+                                dst: loaded,
+                                name: "__mind_load_i64".to_string(),
+                                args: vec![elem_addr],
+                            });
+                            fn_env.insert(nm.clone(), loaded);
+                        }
+                    }
                     ast::Node::Assign { name, value, .. } => {
                         let id =
                             lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
@@ -1896,6 +1986,37 @@ fn lower_expr(
                         local_struct_env.insert(name.clone(), struct_name.clone());
                     }
                     last_id = Some(id);
+                } else if let ast::Node::LetTuple { names, value, .. } = stmt {
+                    // Tuple-destructuring `let (a, b) = expr` inside a block: lower
+                    // the RHS to the tuple base pointer, then bind each name to
+                    // `__mind_load_i64(addr + 8*i)` in the block-local env — the
+                    // read side of the `Node::Tuple` aggregate. Tuple-free blocks
+                    // never reach here, so the keystone stays byte-identical.
+                    let addr = lower_expr(value, ir, &local_env, &local_struct_env, receiver_types);
+                    for (i, nm) in names.iter().enumerate() {
+                        let elem_addr = if i == 0 {
+                            addr
+                        } else {
+                            let offset = ir.fresh();
+                            ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                            let sum = ir.fresh();
+                            ir.instrs.push(Instr::BinOp {
+                                dst: sum,
+                                op: BinOp::Add,
+                                lhs: addr,
+                                rhs: offset,
+                            });
+                            sum
+                        };
+                        let loaded = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst: loaded,
+                            name: "__mind_load_i64".to_string(),
+                            args: vec![elem_addr],
+                        });
+                        local_env.insert(nm.clone(), loaded);
+                        last_id = Some(loaded);
+                    }
                 } else {
                     last_id = Some(lower_expr(
                         stmt,
@@ -3884,6 +4005,38 @@ fn lower_stmt_seq(
                 };
                 env.insert(name.clone(), id);
                 id
+            }
+            ast::Node::LetTuple { names, value, .. } => {
+                // Lower the RHS to the tuple's base pointer, then bind each name
+                // to `__mind_load_i64(addr + 8*i)` — the read side of the
+                // `Node::Tuple` aggregate above (all-i64 layout, 8-byte slots).
+                let addr = lower_expr(value, ir, env, struct_env, receiver_types);
+                let mut last = addr;
+                for (i, nm) in names.iter().enumerate() {
+                    let elem_addr = if i == 0 {
+                        addr
+                    } else {
+                        let offset = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+                        let sum = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: sum,
+                            op: BinOp::Add,
+                            lhs: addr,
+                            rhs: offset,
+                        });
+                        sum
+                    };
+                    let loaded = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst: loaded,
+                        name: "__mind_load_i64".to_string(),
+                        args: vec![elem_addr],
+                    });
+                    env.insert(nm.clone(), loaded);
+                    last = loaded;
+                }
+                last
             }
             ast::Node::Assign { name, value, .. } => {
                 let id = lower_expr(value, ir, env, struct_env, receiver_types);
