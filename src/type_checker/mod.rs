@@ -2686,7 +2686,6 @@ fn check_intra_fn_call(
     Ok((ValueType::ScalarI64, span))
 }
 
-
 /// RAII guard that installs an intra-module signature table into the
 /// thread-local for the duration of a `check_module_types_in_file` call and
 /// restores the previous value on drop.
@@ -2951,7 +2950,12 @@ pub fn check_module_types_in_file(
                     fn_tensor_sigs.insert(name.clone(), tensor_params);
                 }
                 // Collect arity for RFC 0005 Phase B call-site arity checks.
-                intra_fn_sigs.insert(name.clone(), IntraFnSig { param_count: params.len() });
+                intra_fn_sigs.insert(
+                    name.clone(),
+                    IntraFnSig {
+                        param_count: params.len(),
+                    },
+                );
             }
             Node::EnumDef { .. } => {
                 has_enum = true;
