@@ -438,6 +438,11 @@ impl<'a> Resolver<'a> {
                     self.bind_pattern(e);
                 }
             }
+            Pattern::EnumStruct { fields, .. } => {
+                for (_, sub) in fields {
+                    self.bind_pattern(sub);
+                }
+            }
             Pattern::Literal(_) | Pattern::Wildcard => {}
         }
     }

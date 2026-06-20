@@ -742,6 +742,15 @@ pub enum Pattern {
     /// to its sub-pattern. Also nests inside a variant payload, e.g.
     /// `Ok((p1, decorators))` (enum_match #9).
     Tuple(Vec<Pattern>),
+    /// Struct-variant pattern `E.V { f, g }` / `E.V { f: pat }` — binds the named
+    /// fields of a struct variant. Each `(name, sub-pattern)` resolves to the
+    /// variant's declared positional slot at lower time via the enum's
+    /// `field_names` (enum_match #9 struct variants). Shorthand `{ f }` desugars
+    /// to `("f", Ident("f"))`.
+    EnumStruct {
+        path: String,
+        fields: Vec<(String, Pattern)>,
+    },
     /// Literal constant: integer, float, bool, or string.
     Literal(Literal),
     /// Bare identifier binding — matches anything, binds the name.
@@ -782,7 +791,17 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
+    /// Payload element types, in declaration order. For a tuple variant
+    /// `V(T, U)` these are positional; for a struct variant `V { f: T, g: U }`
+    /// they are still positional (declaration order) and `field_names` carries
+    /// the parallel names. Empty for a unit variant.
     pub payload: Vec<TypeAnn>,
+    /// Field names for a STRUCT variant `V { f: T, g: U }` — parallel to
+    /// `payload`, so `field_names[i]` names `payload[i]`. Empty for unit and
+    /// tuple variants (which bind positionally). A construction `E.V { g: y,
+    /// f: x }` or a match `E.V { f, g }` resolves each name to its declared slot
+    /// via this list (enum_match #9 struct variants).
+    pub field_names: Vec<String>,
     pub span: Span,
 }
 
