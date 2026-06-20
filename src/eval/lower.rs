@@ -3839,9 +3839,9 @@ fn desugar_match_to_if(
     // binding) reuses the tuple-variant machinery verbatim. A field omitted in
     // the pattern binds a `Wildcard` for its slot; the path is normalised
     // dot→`::` to match the tag registry. (enum_match #9 struct variants.)
-    let arms_owned: Vec<ast::MatchArm> = arms
-        .iter()
-        .map(|arm| match &arm.pattern {
+    let mut arms_owned: Vec<ast::MatchArm> = Vec::with_capacity(arms.len());
+    for arm in arms {
+        let converted = match &arm.pattern {
             ast::Pattern::EnumStruct { path, fields } => {
                 let key = match path.rsplit_once('.') {
                     Some((a, b)) => {
@@ -3854,22 +3854,23 @@ fn desugar_match_to_if(
                     }
                     None => path.clone(),
                 };
-                let args: Vec<ast::Pattern> = match struct_field_names.get(&key) {
-                    Some(order) => order
-                        .iter()
-                        .map(|fname| {
-                            fields
-                                .iter()
-                                .find(|(n, _)| n == fname)
-                                .map(|(_, p)| p.clone())
-                                .unwrap_or(ast::Pattern::Wildcard)
-                        })
-                        .collect(),
-                    // Unknown variant: keep the given fields in source order so
-                    // the downstream `enum_tags` lookup fails cleanly to the
-                    // fail-loud fallback rather than silently mis-binding.
-                    None => fields.iter().map(|(_, p)| p.clone()).collect(),
-                };
+                // A named `{ … }` pattern is ONLY valid on a struct variant —
+                // i.e. a variant with declared field_names. If the variant has
+                // none (it is a unit/tuple variant, or the path is unknown),
+                // resolving names to slots is impossible; bail the WHOLE match to
+                // the fail-loud fallback rather than binding by source order,
+                // which would silently mis-map `{ y, x }` (adversarial-review fix).
+                let order = struct_field_names.get(&key)?;
+                let args: Vec<ast::Pattern> = order
+                    .iter()
+                    .map(|fname| {
+                        fields
+                            .iter()
+                            .find(|(n, _)| n == fname)
+                            .map(|(_, p)| p.clone())
+                            .unwrap_or(ast::Pattern::Wildcard)
+                    })
+                    .collect();
                 ast::MatchArm {
                     pattern: ast::Pattern::EnumVariant { path: key, args },
                     body: arm.body.clone(),
@@ -3877,8 +3878,9 @@ fn desugar_match_to_if(
                 }
             }
             _ => arm.clone(),
-        })
-        .collect();
+        };
+        arms_owned.push(converted);
+    }
     let arms = &arms_owned[..];
     // An arm body written with braces (`1 => { x = 100 }`) parses to a single
     // `Node::Block` wrapping the arm's statements, whereas a parsed `if { … }`
@@ -4273,6 +4275,17 @@ fn sub_ir_from(parent: &IRModule) -> IRModule {
     m.struct_defs = parent.struct_defs.clone();
     m.const_array_defs = parent.const_array_defs.clone();
     m.enum_variant_tags = parent.enum_variant_tags.clone();
+    // Boxed-enum metadata MUST be inherited too: a variant constructed inside a
+    // control-flow body (`if cond { e = E.V { .. } }`) needs `boxed_enums` +
+    // `enum_payload_slots` to size the uniform heap record, `enum_payload_types`
+    // for f64-slot coercion, and `enum_struct_field_names` to even RECOGNISE a
+    // struct-variant `StructLit` (without it the ctor falls through to a plain
+    // struct with no tag, and the enclosing match never matches). Found by
+    // adversarial review — happy-path tests only constructed at fn-body top level.
+    m.boxed_enums = parent.boxed_enums.clone();
+    m.enum_payload_slots = parent.enum_payload_slots.clone();
+    m.enum_payload_types = parent.enum_payload_types.clone();
+    m.enum_struct_field_names = parent.enum_struct_field_names.clone();
     m.struct_field_types = parent.struct_field_types.clone();
     m
 }
@@ -4288,6 +4301,12 @@ fn sub_ir_from_after(prev: &IRModule, meta_src: &IRModule) -> IRModule {
     m.struct_defs = meta_src.struct_defs.clone();
     m.const_array_defs = meta_src.const_array_defs.clone();
     m.enum_variant_tags = meta_src.enum_variant_tags.clone();
+    // Inherit the boxed-enum metadata for variants constructed in this scope —
+    // see the note in `sub_ir_from`.
+    m.boxed_enums = meta_src.boxed_enums.clone();
+    m.enum_payload_slots = meta_src.enum_payload_slots.clone();
+    m.enum_payload_types = meta_src.enum_payload_types.clone();
+    m.enum_struct_field_names = meta_src.enum_struct_field_names.clone();
     m.struct_field_types = meta_src.struct_field_types.clone();
     m
 }
