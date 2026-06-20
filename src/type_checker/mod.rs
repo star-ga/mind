@@ -4231,28 +4231,37 @@ fn check_determinism_annotations(
         };
         let a = fn_annot(attrs);
 
-        // Check 0 — by-value tuple return fail-loud. A `fn` whose declared
-        // return type is `TypeAnn::Tuple` has no multi-slot return ABI today:
-        // lowering collapses it to a single `i64`, a silent miscompile. Reject
-        // it with a clear diagnostic unless the experimental std surface is on
-        // (where today's best-effort behavior is retained). Named(struct)
-        // returns use the address path (return the __mind_alloc base as i64)
-        // and stay legal — only `TypeAnn::Tuple` is rejected here.
+        // Check 0 — float-bearing tuple return fail-loud. An all-i64 tuple is a
+        // heap aggregate (`__mind_alloc(8*n)` + per-slot `__mind_store_i64`)
+        // returned by its base pointer (i64) — exactly like a `#[repr(C)]` struct
+        // return — and the caller takes it apart with `let (a, b) = …`, so that
+        // case is legal. But the aggregate stores/loads every slot AS i64, so a
+        // FLOAT element (`f32`/`f64`) would have its bits reinterpreted; reject
+        // that case with a clear diagnostic (it otherwise surfaces as a cryptic
+        // `non-i64 argument to __mind_store_i64` at MLIR build). Nested tuples and
+        // struct elements are themselves heap pointers (i64), so they are safe.
         #[cfg(not(feature = "std-surface-experimental"))]
-        if let Some(TypeAnn::Tuple { .. }) = ret_type {
-            errs.push(diag_from_span(
-                src,
-                file,
-                format!(
-                    "`{name}` returns a by-value tuple, which has no multi-slot \
-                     return ABI and would silently collapse to a single `i64`; \
-                     return a `#[repr(C)]` struct (passed by address) instead, \
-                     or build with the `std-surface-experimental` feature \
-                     (safety::tuple_return_unsupported)"
-                ),
-                *span,
-                "safety::tuple_return_unsupported",
-            ));
+        if let Some(TypeAnn::Tuple { elements }) = ret_type {
+            let has_float = elements.iter().any(|e| {
+                matches!(e, TypeAnn::ScalarF32 | TypeAnn::ScalarF64)
+                    || matches!(e, TypeAnn::Named(n) if n == "f32" || n == "f64")
+            });
+            if has_float {
+                errs.push(diag_from_span(
+                    src,
+                    file,
+                    format!(
+                        "`{name}` returns a tuple containing a float element; the \
+                         all-i64 tuple ABI stores every slot as `i64`, which would \
+                         reinterpret the float's bits. Return a `#[repr(C)]` struct \
+                         (passed by address) instead, or build with the \
+                         `std-surface-experimental` feature \
+                         (safety::tuple_return_unsupported)"
+                    ),
+                    *span,
+                    "safety::tuple_return_unsupported",
+                ));
+            }
         }
 
         // Check 1 — `[target(...)]` / `[q16]` name validity. Local, no call

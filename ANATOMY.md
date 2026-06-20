@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2869 | **Est. tokens:** ~6,961,527
-**Generated:** 2026-06-20 19:36 UTC
+**Files:** 2869 | **Est. tokens:** ~6,961,780
+**Generated:** 2026-06-20 19:49 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,829 |
-| `tests/` | 190 | ~336,026 |
+| `tests/` | 190 | ~336,279 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4152,7 +4152,7 @@
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse_phase10_surface.rs` (~4739 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
+- `parse_phase10_surface.rs` (~4815 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
 - `parser_unsigned_i64_literals.rs` (~1544 tok, huge) — Copyright 2025 STARGA Inc.
 - `phase_g_keystone_bootstrap.rs` (~6309 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4319,7 +4319,7 @@
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.
-- `tuple_destructure_run.rs` (~1024 tok, large) — Copyright 2025 STARGA Inc.
+- `tuple_destructure_run.rs` (~1201 tok, large) — Copyright 2025 STARGA Inc.
 - `type_ann_check.rs` (~330 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_ann_parse.rs` (~584 tok, large) — Copyright 2025 STARGA Inc.
 - `typecheck_binary.rs` (~327 tok, medium) — Copyright 2025 STARGA Inc.
