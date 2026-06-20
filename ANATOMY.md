@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2868 | **Est. tokens:** ~6,960,041
-**Generated:** 2026-06-20 19:10 UTC
+**Files:** 2869 | **Est. tokens:** ~6,961,527
+**Generated:** 2026-06-20 19:36 UTC
 
 ## Token Budget Guide
 
@@ -369,7 +369,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~17,517 |
-| `src/ast/` | 1 | ~6,748 |
+| `src/ast/` | 1 | ~6,850 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 3 | ~25,717 |
 | `src/build/` | 2 | ~11,359 |
@@ -383,7 +383,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~18,005 |
+| `src/fmt/` | 3 | ~18,283 |
 | `src/ir/` | 4 | ~24,803 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,111 |
+| `src/type_checker/` | 1 | ~7,193 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,829 |
-| `tests/` | 189 | ~335,002 |
+| `tests/` | 190 | ~336,026 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3649,7 +3649,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~6748 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~6850 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3731,7 +3731,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~13538 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~13816 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7111 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~7193 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4319,6 +4319,7 @@
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.
+- `tuple_destructure_run.rs` (~1024 tok, large) — Copyright 2025 STARGA Inc.
 - `type_ann_check.rs` (~330 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_ann_parse.rs` (~584 tok, large) — Copyright 2025 STARGA Inc.
 - `typecheck_binary.rs` (~327 tok, medium) — Copyright 2025 STARGA Inc.

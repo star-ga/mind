@@ -2098,6 +2098,48 @@ impl<'a> P<'a> {
         } else {
             false
         };
+        // Tuple-destructuring binding: `let (a, b, ...) = expr`. Each name binds
+        // the corresponding tuple element. A single-name `(a)` collapses to a
+        // plain `Let` on `a` (grouping parens), mirroring the 1-tuple collapse in
+        // expression and pattern position.
+        if self.at(b'(') {
+            self.pos += 1;
+            let mut names = Vec::new();
+            self.skip_ws_and_newlines();
+            while !self.at(b')') && !self.at_end() {
+                let nm = self
+                    .word()
+                    .ok_or_else(|| self.err("expected variable name in tuple binding".into()))?
+                    .to_string();
+                names.push(nm);
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+            }
+            self.expect(b')')?;
+            self.skip_ws_and_newlines();
+            self.expect(b'=')?;
+            self.skip_ws_and_newlines();
+            let value = self.parse_expr()?;
+            let span = Span::new(start, self.pos);
+            if names.len() == 1 {
+                return Ok(Node::Let {
+                    name: names.into_iter().next().unwrap(),
+                    mutable,
+                    ann: None,
+                    value: Box::new(value),
+                    span,
+                });
+            }
+            return Ok(Node::LetTuple {
+                names,
+                mutable,
+                value: Box::new(value),
+                span,
+            });
+        }
         let name = self
             .word()
             .ok_or_else(|| self.err("expected variable name".into()))?
