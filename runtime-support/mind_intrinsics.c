@@ -341,7 +341,7 @@ MIND_EXPORT int64_t vec_push(int64_t v, int64_t value) {
 // it with a deterministic forward fill. A non-positive `n` allocates nothing
 // and returns 0 (the __mind_alloc contract). Read back with
 // __mind_load_i64(base + i * 8).
-MIND_EXPORT int64_t vec_zeroed(int64_t n) {
+MIND_EXPORT int64_t __mind_vec_zeroed(int64_t n) {
     int64_t base = __mind_alloc(n * 8);
     for (int64_t i = 0; i < n; i++) {
         __mind_store_i64(base + i * 8, 0);
