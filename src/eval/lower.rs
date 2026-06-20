@@ -3370,6 +3370,25 @@ fn lower_expr(
             args,
             span,
         } => {
+            // `c.byte()` — the byte (low 8 bits) of a char/int receiver, lowered
+            // as `recv & 0xFF`. A char literal is its codepoint, so this extracts
+            // the byte (identity for ASCII). Intercepted here because the receiver
+            // has no struct type, so the UFCS path below cannot resolve it; the
+            // type-check accepts `byte` as a 1-arg intrinsic. mind-flow lexer idiom.
+            #[cfg(feature = "std-surface")]
+            if method == "byte" && args.is_empty() {
+                let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let mask = ir.fresh();
+                ir.instrs.push(Instr::ConstI64(mask, 0xFF));
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::BinOp {
+                    dst,
+                    op: BinOp::BitAnd,
+                    lhs: recv_id,
+                    rhs: mask,
+                });
+                return dst;
+            }
             // Resolve the receiver's struct type name `T` and, for the cheap
             // Ident path, the bound variable name so we can reuse its SSA id.
             let (struct_name, var_name_opt): (Option<String>, Option<String>) =

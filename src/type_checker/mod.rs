@@ -1999,6 +1999,11 @@ const STD_SURFACE_INTRINSICS: &[(&str, usize)] = &[
     ("__mind_store_i32", 2),
     ("__mind_store_i16", 2),
     ("__mind_write", 4),
+    // `c.byte()` — the byte (low 8 bits) of a char/int receiver. The method-call
+    // type-check validates it as a 1-arg call `byte(recv)`; lowering desugars it
+    // to `recv & 0xFF` (see the MethodCall arm in eval/lower.rs). mind-flow's
+    // lexer relies on it (`'0'.byte()`).
+    ("byte", 1),
 ];
 
 #[cfg(feature = "std-surface")]
