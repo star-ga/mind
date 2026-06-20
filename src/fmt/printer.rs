@@ -546,7 +546,19 @@ fn emit_enum_def(
         let ind = p.indent_str();
         p.push(&ind);
         p.push(&v.name);
-        if !v.payload.is_empty() {
+        if !v.field_names.is_empty() {
+            // Struct variant `V { f: T, g: U }` — names parallel to payload.
+            p.push(" { ");
+            for (i, fname) in v.field_names.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                p.push(fname);
+                p.push(": ");
+                emit_type_ann(p, &v.payload[i]);
+            }
+            p.push(" }");
+        } else if !v.payload.is_empty() {
             p.push("(");
             for (i, ty) in v.payload.iter().enumerate() {
                 if i > 0 {
@@ -1846,6 +1858,27 @@ fn emit_pattern(p: &mut Printer, pat: &Pattern) {
                 emit_pattern(p, e);
             }
             p.push(")");
+        }
+        Pattern::EnumStruct { path, fields } => {
+            p.push(path);
+            p.push(" { ");
+            for (i, (fname, sub)) in fields.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                p.push(fname);
+                // Emit the shorthand `{ f }` when the sub-pattern just binds the
+                // field's own name; otherwise `{ f: <pat> }`. Keeps the formatted
+                // text stable (round-trips to the same AST).
+                match sub {
+                    Pattern::Ident(n) if n == fname => {}
+                    _ => {
+                        p.push(": ");
+                        emit_pattern(p, sub);
+                    }
+                }
+            }
+            p.push(" }");
         }
     }
 }

@@ -1576,7 +1576,9 @@ impl<'a> P<'a> {
                 .to_string();
             self.skip_ws();
             let mut payload = Vec::new();
+            let mut field_names = Vec::new();
             if self.eat(b'(') {
+                // Tuple variant `V(T, U)` — positional payload, no field names.
                 self.skip_ws();
                 while !self.at(b')') && !self.at_end() {
                     payload.push(self.type_ann()?);
@@ -1591,6 +1593,36 @@ impl<'a> P<'a> {
                     return Err(self.err("expected `)` to close variant payload".into()));
                 }
                 self.skip_ws();
+            } else if self.eat(b'{') {
+                // Struct variant `V { f: T, g: U }` — named payload. The fields
+                // lower to the SAME positional boxed-record slots as a tuple
+                // variant (declaration order), with `field_names` recording the
+                // names so construction/match can resolve each by name.
+                self.skip_ws_and_newlines();
+                while !self.at(b'}') && !self.at_end() {
+                    let fname = self
+                        .word()
+                        .ok_or_else(|| self.err("expected field name in struct variant".into()))?
+                        .to_string();
+                    self.skip_ws();
+                    if !self.eat(b':') {
+                        return Err(self.err("expected `:` after struct-variant field name".into()));
+                    }
+                    self.skip_ws();
+                    payload.push(self.type_ann()?);
+                    field_names.push(fname);
+                    self.skip_ws_and_newlines();
+                    if self.eat(b',') {
+                        self.skip_ws_and_newlines();
+                    } else {
+                        break;
+                    }
+                }
+                self.skip_ws_and_newlines();
+                if !self.eat(b'}') {
+                    return Err(self.err("expected `}` to close struct variant".into()));
+                }
+                self.skip_ws();
             }
             // Optional `= discriminant` — ignore the value but consume it
             if self.eat(b'=') {
@@ -1602,6 +1634,7 @@ impl<'a> P<'a> {
             variants.push(crate::ast::EnumVariant {
                 name: v_name,
                 payload,
+                field_names,
                 span: v_span,
             });
             if self.eat(b',') {
@@ -2936,6 +2969,18 @@ impl<'a> P<'a> {
                 if let Some(dot_idx) = ident.find('.') {
                     let first = &ident[..dot_idx];
                     if first != "tensor" {
+                        // A dot-qualified name immediately followed by a
+                        // `{ field: value }` body is a QUALIFIED struct/enum-variant
+                        // literal — e.g. `Expr.StringLit { value: .. }` (a struct
+                        // variant of enum `Expr`) or `mod.Point { x: 1 }`. Keep the
+                        // FULL dotted path as the type name rather than slicing off
+                        // everything after the first dot. The `struct_lit_body_ahead`
+                        // guard (requires `IDENT :`) keeps this from stealing a
+                        // control-flow `{ }` body that merely follows a field access
+                        // like `if cfg.on { … }`.
+                        if self.at(b'{') && self.struct_lit_body_ahead() {
+                            return self.parse_struct_literal(ident, start);
+                        }
                         self.pos = start + first.len();
                         self.skip_ws();
                         if self.at(b'(') {
@@ -3964,6 +4009,47 @@ impl<'a> P<'a> {
                 path: name,
                 args: sub,
             });
+        }
+        // A `{ field, field: pat }` body makes this a STRUCT-variant pattern
+        // `E.V { w, h }` / `E.V { w: pat }` — the named fields bind the variant's
+        // declared slots (resolved at lower time via the enum's field_names).
+        // Shorthand `{ f }` binds `f`. (enum_match #9 struct variants.)
+        if self.at(b'{') {
+            self.pos += 1;
+            let mut fields = Vec::new();
+            self.skip_ws_and_newlines();
+            while !self.at(b'}') && !self.at_end() {
+                // `..` rest pattern — bind the listed fields, ignore the rest
+                // (`E.V { span, .. }`). Unmentioned fields already lower to a
+                // `Wildcard` slot, so this only needs to be accepted + skipped.
+                if self.at(b'.') && self.b.get(self.pos + 1) == Some(&b'.') {
+                    self.pos += 2;
+                    self.skip_ws_and_newlines();
+                    break;
+                }
+                let fname = self
+                    .word()
+                    .ok_or_else(|| {
+                        self.err("expected field name in struct-variant pattern".into())
+                    })?
+                    .to_string();
+                self.skip_ws();
+                let sub = if self.eat(b':') {
+                    self.skip_ws_and_newlines();
+                    self.parse_pattern()?
+                } else {
+                    // Shorthand `{ f }` binds a variable named `f`.
+                    Pattern::Ident(fname.clone())
+                };
+                fields.push((fname, sub));
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+            }
+            self.expect(b'}')?;
+            return Ok(Pattern::EnumStruct { path: name, fields });
         }
         // No payload: a `::`-qualified name is a unit variant (`Mode::On`); a
         // bare lowercase-or-any name binds the whole scrutinee (`x`).

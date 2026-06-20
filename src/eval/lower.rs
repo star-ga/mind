@@ -705,6 +705,14 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                                 variant.payload.clone(),
                             );
                         }
+                        // Struct-variant field-name order, so a named construction
+                        // / match resolves each field to its declared slot.
+                        if !variant.field_names.is_empty() {
+                            ir.enum_struct_field_names.insert(
+                                format!("{name}::{}", variant.name),
+                                variant.field_names.clone(),
+                            );
+                        }
                     }
                 }
                 let id = ir.fresh();
@@ -1702,6 +1710,7 @@ fn lower_expr(
                 fn_ir.boxed_enums = ir.boxed_enums.clone();
                 fn_ir.enum_payload_slots = ir.enum_payload_slots.clone();
                 fn_ir.enum_payload_types = ir.enum_payload_types.clone();
+                fn_ir.enum_struct_field_names = ir.enum_struct_field_names.clone();
                 // Width-aware struct ABI: inherit the per-struct field-type table
                 // so StructLit/FieldAccess/FieldAssign inside a fn body compute
                 // the canonical offset/width (sub-i64 fields), not the legacy
@@ -2477,6 +2486,7 @@ fn lower_expr(
                 &ir.enum_variant_tags,
                 &ir.boxed_enums,
                 &ir.enum_payload_types,
+                &ir.enum_struct_field_names,
             ) {
                 Some(if_node) => lower_expr(&if_node, ir, env, struct_env, receiver_types),
                 None => {
@@ -2753,6 +2763,58 @@ fn lower_expr(
         // order so a forward-reference doesn't lose data.
         #[cfg(feature = "std-surface")]
         ast::Node::StructLit { name, fields, .. } => {
+            // A StructLit whose name resolves to an enum VARIANT is a struct-variant
+            // CONSTRUCTION `E.V { f: a, g: b }` (or `E::V { … }`), not a plain
+            // struct. Build the boxed enum record `[tag, <fields in DECLARED
+            // order>]`, reordering the provided fields by the variant's declared
+            // `field_names` and coercing each across the i64 slot — the identical
+            // machinery the tuple-variant ctor `Call` uses (emit_boxed_enum_record).
+            #[cfg(feature = "std-surface")]
+            {
+                let dotnorm = name.rsplit_once('.').map(|(a, b)| format!("{a}::{b}"));
+                let vkey = if ir.enum_variant_tags.contains_key(name) {
+                    Some(name.clone())
+                } else {
+                    dotnorm.filter(|k| ir.enum_variant_tags.contains_key(k))
+                };
+                if let Some(vkey) = vkey {
+                    let tag = ir.enum_variant_tags[&vkey];
+                    let order = ir.enum_struct_field_names.get(&vkey).cloned();
+                    let field_types = ir.enum_payload_types.get(&vkey).cloned();
+                    if let Some(order) = order {
+                        // Lower each declared field by NAME, in declaration order.
+                        let payloads: Vec<ValueId> = order
+                            .iter()
+                            .enumerate()
+                            .map(
+                                |(i, fname)| match fields.iter().find(|f| &f.name == fname) {
+                                    Some(f) => {
+                                        let ty = field_types.as_ref().and_then(|ts| ts.get(i));
+                                        let coerced = coerce_enum_field_to_bits(
+                                            f.value.clone(),
+                                            ty,
+                                            f.value.span(),
+                                        );
+                                        lower_expr(&coerced, ir, env, struct_env, receiver_types)
+                                    }
+                                    None => {
+                                        // A field omitted in the literal — zero-fill its
+                                        // slot (the record is always fully initialised).
+                                        let z = ir.fresh();
+                                        ir.instrs.push(Instr::ConstI64(z, 0));
+                                        z
+                                    }
+                                },
+                            )
+                            .collect();
+                        let enum_name = vkey.rsplit_once("::").map(|(e, _)| e);
+                        let total_slots = enum_name
+                            .and_then(|e| ir.enum_payload_slots.get(e).copied())
+                            .unwrap_or(1 + payloads.len());
+                        return emit_boxed_enum_record(ir, tag, &payloads, total_slots);
+                    }
+                }
+            }
             // Canonical field order, if the schema is known.
             let canonical = ir.struct_defs.get(name).cloned();
             let order: Vec<&ast::StructLitField> = match canonical {
@@ -3768,8 +3830,56 @@ fn desugar_match_to_if(
     enum_tags: &std::collections::BTreeMap<String, i64>,
     boxed_enums: &std::collections::BTreeSet<String>,
     payload_types: &std::collections::BTreeMap<String, Vec<ast::TypeAnn>>,
+    struct_field_names: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
+    // Normalise any STRUCT-variant pattern `E.V { f, g }` into the equivalent
+    // POSITIONAL variant pattern `E::V(<f-slot>, <g-slot>, …)` using the enum's
+    // declared `field_names`, so the rest of the desugar (tag compare + slot
+    // binding) reuses the tuple-variant machinery verbatim. A field omitted in
+    // the pattern binds a `Wildcard` for its slot; the path is normalised
+    // dot→`::` to match the tag registry. (enum_match #9 struct variants.)
+    let arms_owned: Vec<ast::MatchArm> = arms
+        .iter()
+        .map(|arm| match &arm.pattern {
+            ast::Pattern::EnumStruct { path, fields } => {
+                let key = match path.rsplit_once('.') {
+                    Some((a, b)) => {
+                        let dotted = format!("{a}::{b}");
+                        if enum_tags.contains_key(&dotted) {
+                            dotted
+                        } else {
+                            path.clone()
+                        }
+                    }
+                    None => path.clone(),
+                };
+                let args: Vec<ast::Pattern> = match struct_field_names.get(&key) {
+                    Some(order) => order
+                        .iter()
+                        .map(|fname| {
+                            fields
+                                .iter()
+                                .find(|(n, _)| n == fname)
+                                .map(|(_, p)| p.clone())
+                                .unwrap_or(ast::Pattern::Wildcard)
+                        })
+                        .collect(),
+                    // Unknown variant: keep the given fields in source order so
+                    // the downstream `enum_tags` lookup fails cleanly to the
+                    // fail-loud fallback rather than silently mis-binding.
+                    None => fields.iter().map(|(_, p)| p.clone()).collect(),
+                };
+                ast::MatchArm {
+                    pattern: ast::Pattern::EnumVariant { path: key, args },
+                    body: arm.body.clone(),
+                    span: arm.span,
+                }
+            }
+            _ => arm.clone(),
+        })
+        .collect();
+    let arms = &arms_owned[..];
     // An arm body written with braces (`1 => { x = 100 }`) parses to a single
     // `Node::Block` wrapping the arm's statements, whereas a parsed `if { … }`
     // produces a FLAT `Vec<Node>` of statements. The If lowering only treats

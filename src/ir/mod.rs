@@ -835,6 +835,13 @@ pub struct IRModule {
     /// coercion. Lowering-only side-table (never serialised into mic@3).
     #[cfg(feature = "std-surface")]
     pub enum_payload_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+    /// Struct-variant field NAMES keyed by `"Enum::Variant"` path, parallel to
+    /// `enum_payload_types`. Present only for a struct variant `V { f: T, g: U }`;
+    /// absent for unit/tuple variants. Lets a named construction `E.V { g: y,
+    /// f: x }` and a named match `E.V { f, g }` resolve each field to its declared
+    /// positional record slot (enum_match #9 struct variants). Lowering-only.
+    #[cfg(feature = "std-surface")]
+    pub enum_struct_field_names: std::collections::BTreeMap<String, Vec<String>>,
     /// RFC 0012 §5.1 — function-ABI signature side-table for deterministic
     /// scalar float codegen.
     ///
@@ -886,6 +893,8 @@ impl IRModule {
             enum_payload_slots: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             enum_payload_types: std::collections::BTreeMap::new(),
+            #[cfg(feature = "std-surface")]
+            enum_struct_field_names: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]
             fn_signatures: std::collections::BTreeMap::new(),
             #[cfg(feature = "std-surface")]

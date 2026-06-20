@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2869 | **Est. tokens:** ~6,961,780
-**Generated:** 2026-06-20 19:49 UTC
+**Files:** 2870 | **Est. tokens:** ~6,963,760
+**Generated:** 2026-06-20 21:20 UTC
 
 ## Token Budget Guide
 
@@ -369,7 +369,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~17,517 |
-| `src/ast/` | 1 | ~6,850 |
+| `src/ast/` | 1 | ~7,131 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 3 | ~25,717 |
 | `src/build/` | 2 | ~11,359 |
@@ -383,11 +383,11 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~18,283 |
-| `src/ir/` | 4 | ~24,803 |
+| `src/fmt/` | 3 | ~18,592 |
+| `src/ir/` | 4 | ~24,963 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~44,484 |
+| `src/ir/compact/v3/` | 4 | ~44,531 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,415 |
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,193 |
+| `src/type_checker/` | 1 | ~7,235 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,829 |
-| `tests/` | 190 | ~336,279 |
+| `tests/` | 191 | ~337,420 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3649,7 +3649,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~6850 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7131 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3731,7 +3731,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~13816 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~14125 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3752,11 +3752,11 @@
 - `emit.rs` (~10545 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~13622 tok, huge) — Copyright 2025 STARGA Inc.
-- `parse.rs` (~9461 tok, huge) — Copyright 2025 STARGA Inc.
+- `parse.rs` (~9508 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~10175 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~10335 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7193 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~7235 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3969,6 +3969,7 @@
 - `emit_ir_for_loop.rs` (~369 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `enum_match_run.rs` (~2399 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
+- `enum_struct_variant_run.rs` (~1141 tok, large) — Copyright 2025 STARGA Inc.
 - `exec_basic.rs` (~785 tok, large) — Copyright 2025 STARGA Inc.
 - `expr_parser.rs` (~307 tok, medium) — Copyright 2025 STARGA Inc.
 - `extern_c_phase_a.rs` (~2666 tok, huge) — Copyright 2025 STARGA Inc.
