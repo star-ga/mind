@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2883 | **Est. tokens:** ~6,979,791
-**Generated:** 2026-06-21 08:14 UTC
+**Files:** 2884 | **Est. tokens:** ~6,980,786
+**Generated:** 2026-06-21 08:43 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 204 | ~349,253 |
+| `tests/` | 205 | ~350,248 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4277,6 +4277,7 @@
 - `shapes.rs` (~1132 tok, large) — Copyright 2025 STARGA Inc.
 - `smoke.rs` (~259 tok, medium) — Copyright 2025 STARGA Inc.
 - `sparse_tensor_types.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
+- `statement_mutation_run.rs` (~995 tok, large) — Copyright 2025 STARGA Inc.
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2647 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4814 tok, huge) — Copyright 2025 STARGA Inc.
