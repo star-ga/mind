@@ -694,6 +694,9 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 #[cfg(feature = "std-surface")]
                 if is_array_surface_type(ann) {
                     struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                    if let Some(__e) = ann.as_ref().and_then(array_element_track) {
+                        struct_env.insert(format!("__elem__{}", name), __e);
+                    }
                 }
                 // `set<T>` binding: record the set sentinel so `.contains/.add/.len`
                 // resolve to the std.map runtime.
@@ -1392,6 +1395,119 @@ fn receiver_struct_type(
         }
         _ => None,
     }
+}
+
+/// True when a method-call receiver is the std `String` type — an Ident bound to
+/// a string (`struct_env` sentinel `"String"`, set for string lets/params and
+/// for-each elements over `array<string>`) OR a struct-FIELD whose declared type
+/// is `string`. A string receiver's methods route to the `string_<method>` std
+/// free functions (`.split`→string_split, `.trim`→string_trim, etc.).
+#[cfg(feature = "std-surface")]
+fn receiver_is_string(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> bool {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(v), _) => struct_env
+            .get(v)
+            .map(|s| s == "String" || s == "string")
+            .unwrap_or(false),
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            span,
+        } => {
+            let sname = receiver_types
+                .get(span)
+                .cloned()
+                .or_else(|| receiver_struct_type(base, ir, struct_env));
+            sname
+                .and_then(|sn| {
+                    let idx = ir.struct_defs.get(&sn)?.iter().position(|f| f == field)?;
+                    ir.struct_field_types.get(&sn)?.get(idx).cloned()
+                })
+                .map(|ty| matches!(ty, TypeAnn::Named(n) if n == "string" || n == "String"))
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// The struct_env value tracking an ELEMENT of declared type `ty`: a string
+/// element → `"String"`; a struct element → its type name; a nested
+/// collection element → its collection sentinel. None for a plain scalar.
+#[cfg(feature = "std-surface")]
+fn element_type_sentinel(ty: &TypeAnn) -> Option<String> {
+    match ty {
+        TypeAnn::Named(n) if n == "string" || n == "String" => Some("String".to_string()),
+        _ if is_map_surface_ty(ty) => Some(map_sentinel_for(ty).to_string()),
+        _ if is_set_surface_ty(ty) => Some(set_sentinel_for(ty).to_string()),
+        _ if is_array_surface_ty(ty) => Some(ARRAY_VEC_SENTINEL.to_string()),
+        TypeAnn::Named(n) => Some(n.clone()),
+        _ => None,
+    }
+}
+
+/// Element tracking value for an `array<T>` annotation (the `T` sentinel), or
+/// None. Stored under the `__elem__<name>` struct_env key so a for-each over an
+/// IDENT array recovers the element type the bare `"vec"` sentinel drops.
+#[cfg(feature = "std-surface")]
+fn array_element_track(ty: &TypeAnn) -> Option<String> {
+    if let TypeAnn::Generic { name, args } = ty {
+        if name == "array" {
+            return element_type_sentinel(args.first()?);
+        }
+    }
+    None
+}
+
+/// Resolve the struct_env tracking value for a for-each ELEMENT, from the
+/// collection expression's element type: `coll.split(...)` → String elements; a
+/// struct FIELD of type `array<T>` → element type T; an IDENT `array<T>` via its
+/// recorded `__elem__` tracking. So `for d in decs` tracks `d` as `Decorator`,
+/// `for d in flow.decorators` likewise, and `for part in s.split("+")` tracks
+/// `part` as `String`, letting their methods resolve.
+#[cfg(feature = "std-surface")]
+fn foreach_element_sentinel(
+    collection: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<String> {
+    if let ast::Node::MethodCall { method, .. } = collection {
+        if method == "split" {
+            return Some("String".to_string());
+        }
+    }
+    if let ast::Node::Lit(Literal::Ident(v), _) = collection {
+        if let Some(elem) = struct_env.get(&format!("__elem__{v}")) {
+            return Some(elem.clone());
+        }
+    }
+    if let ast::Node::FieldAccess {
+        receiver: base,
+        field,
+        span,
+    } = collection
+    {
+        let sname = receiver_types
+            .get(span)
+            .cloned()
+            .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+        let idx = ir
+            .struct_defs
+            .get(&sname)?
+            .iter()
+            .position(|f| f == field)?;
+        if let TypeAnn::Generic { name, args } = ir.struct_field_types.get(&sname)?.get(idx)? {
+            if name == "array" {
+                return element_type_sentinel(args.first()?);
+            }
+        }
+    }
+    None
 }
 
 /// Rewrite STATEMENT-position collection mutations into assignments so the
@@ -2380,6 +2496,9 @@ fn lower_expr(
                 #[cfg(feature = "std-surface")]
                 if is_array_surface_ty(&param.ty) {
                     fn_struct_env.insert(param.name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                    if let Some(__e) = array_element_track(&param.ty) {
+                        fn_struct_env.insert(format!("__elem__{}", param.name), __e);
+                    }
                 }
                 // `map<K, V>` param → map sentinel (str-key vs i64-key).
                 #[cfg(feature = "std-surface")]
@@ -2507,6 +2626,9 @@ fn lower_expr(
                         #[cfg(feature = "std-surface")]
                         if is_array_surface_type(ann) {
                             fn_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                            if let Some(__e) = ann.as_ref().and_then(array_element_track) {
+                                fn_struct_env.insert(format!("__elem__{}", name), __e);
+                            }
                         }
                         #[cfg(feature = "std-surface")]
                         if let Some(s) = map_sentinel_for_opt(ann) {
@@ -2693,6 +2815,9 @@ fn lower_expr(
                     #[cfg(feature = "std-surface")]
                     if is_array_surface_type(ann) {
                         local_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                        if let Some(__e) = ann.as_ref().and_then(array_element_track) {
+                            local_struct_env.insert(format!("__elem__{}", name), __e);
+                        }
                     }
                     #[cfg(feature = "std-surface")]
                     if let Some(s) = set_sentinel_for_opt(ann) {
@@ -3697,14 +3822,17 @@ fn lower_expr(
                 // so non-collection field reads are unaffected.
                 #[cfg(feature = "std-surface")]
                 {
-                    let len_fn =
-                        match receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
-                        {
-                            Some(ARRAY_VEC_SENTINEL) => Some("vec_len"),
-                            Some(MAP_SENTINEL) | Some(MAP_STR_SENTINEL) => Some("map_len"),
-                            Some(SET_SENTINEL) | Some(SET_STR_SENTINEL) => Some("map_len"),
-                            _ => None,
-                        };
+                    let len_fn = match receiver_collection_sentinel(
+                        receiver,
+                        &ir,
+                        struct_env,
+                        receiver_types,
+                    ) {
+                        Some(ARRAY_VEC_SENTINEL) => Some("vec_len"),
+                        Some(MAP_SENTINEL) | Some(MAP_STR_SENTINEL) => Some("map_len"),
+                        Some(SET_SENTINEL) | Some(SET_STR_SENTINEL) => Some("map_len"),
+                        _ => None,
+                    };
                     if let Some(len_fn) = len_fn {
                         let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
                         let dst = ir.fresh();
@@ -4324,6 +4452,27 @@ fn lower_expr(
                     }
                 }
             }
+            // String methods on a `String` receiver (Ident or struct field) →
+            // the `string_<method>` std free functions: `.split`→string_split,
+            // `.trim`→string_trim, `.starts_with`→string_starts_with, etc. The
+            // receiver is threaded as arg 0 (UFCS), but routed here so a
+            // FIELD-typed string receiver (whose type the receiver_types side
+            // table may not carry) also resolves.
+            #[cfg(feature = "std-surface")]
+            if receiver_is_string(receiver, &ir, struct_env, receiver_types) {
+                let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let mut call_args = vec![recv_id];
+                for a in args {
+                    call_args.push(lower_expr(a, ir, env, struct_env, receiver_types));
+                }
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst,
+                    name: format!("string_{method}"),
+                    args: call_args,
+                });
+                return dst;
+            }
             // Resolve the receiver's struct type name `T` and, for the cheap
             // Ident path, the bound variable name so we can reuse its SSA id.
             let (struct_name, var_name_opt): (Option<String>, Option<String>) =
@@ -4642,6 +4791,15 @@ fn lower_expr(
             // `coll[idx]` element read lowers to `vec_get`.
             let mut fe_struct_env = struct_env.clone();
             fe_struct_env.insert(coll_var.clone(), ARRAY_VEC_SENTINEL.to_string());
+            // Track the element var's type (struct / String / nested collection)
+            // so methods on it resolve — `for d in flow.decorators` makes `d` a
+            // Decorator, `for part in s.split(...)` makes `part` a String.
+            #[cfg(feature = "std-surface")]
+            if let Some(elem) =
+                foreach_element_sentinel(collection, &ir, struct_env, receiver_types)
+            {
+                fe_struct_env.insert(var.clone(), elem);
+            }
 
             let idx_ident = ast::Node::Lit(Literal::Ident(idx_var.clone()), *span);
             // `let VAR = coll[idx]` — the per-iteration element binding.
