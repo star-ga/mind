@@ -61,6 +61,12 @@ struct P<'a> {
     /// struct field access. Enum declarations precede the fn bodies that use
     /// them, so the set is complete in time.
     enum_names: Vec<String>,
+    /// Cached `!GlobalEnums.names.is_empty()` snapshot, read ONCE at construction.
+    /// Lets `is_enum_name` skip the thread-local registry borrow entirely on the
+    /// common single-file / no-project path (empty registry), where the only
+    /// enums are same-module ones in `enum_names`. Set the cross-module registry
+    /// before parsing (the project builder does) and this is `true`.
+    has_global_enums: bool,
 }
 
 /// Operator-token kind used by the Pratt expression parser
@@ -104,7 +110,28 @@ impl<'a> P<'a> {
             pos: 0,
             imports: Vec::new(),
             enum_names: Vec::new(),
+            has_global_enums: crate::ir::with_global_enums(|g| !g.names.is_empty()),
         }
+    }
+
+    /// Is `name` a declared enum type — either in THIS module (`enum_names`) or
+    /// anywhere in the active project (the global registry the project builder
+    /// populates for cross-module enums)? A dotted `name.Variant` reference is
+    /// then normalised to `name::Variant`. Outside a project the global registry
+    /// is empty, so this reduces to the same-module check and single-file parses
+    /// stay byte-identical.
+    #[inline]
+    fn is_enum_name(&self, name: &str) -> bool {
+        if self.enum_names.iter().any(|n| n == name) {
+            return true;
+        }
+        // Short-circuit before the thread-local borrow on the common no-project
+        // path: `has_global_enums` was snapshotted once at construction, so a
+        // single-file parse pays zero per-dotted-ident registry cost.
+        if !self.has_global_enums {
+            return false;
+        }
+        crate::ir::with_global_enums(|g| g.names.iter().any(|n| n == name))
     }
 
     #[inline(always)]
@@ -3112,8 +3139,9 @@ impl<'a> P<'a> {
                     // (`Color.Red`), a payload constructor (`Expr.IntLit(x)`), or
                     // a struct variant (`Expr.StringLit { … }`). A non-enum
                     // receiver falls through to the struct-field / module-call
-                    // handling below.
-                    if self.enum_names.iter().any(|n| n == first) {
+                    // handling below. A cross-module enum (defined in a sibling
+                    // source file) resolves via the project-wide registry too.
+                    if self.is_enum_name(first) {
                         let qualified = format!("{}::{}", first, &ident[dot_idx + 1..]);
                         self.skip_ws();
                         if self.at(b'(') {
@@ -4148,7 +4176,7 @@ impl<'a> P<'a> {
         // is a declared enum, so the variant-pattern handling below treats it as
         // a variant rather than a dotted binding name (mirrors the value side).
         if let Some(dot_idx) = name.find('.') {
-            if self.enum_names.iter().any(|n| n == &name[..dot_idx]) {
+            if self.is_enum_name(&name[..dot_idx]) {
                 name = format!("{}::{}", &name[..dot_idx], &name[dot_idx + 1..]);
             }
         }
