@@ -437,6 +437,34 @@ fn node_mentions_type_name(node: &ast::Node, tp: &str) -> bool {
 
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let mut ir = IRModule::new();
+    // Built-in Result/Option PRELUDE. MIND has no source-level prelude, but
+    // Rust-style code expects `Result<T,E>` / `Option<T>` with bare `Ok`/`Err`/
+    // `Some`/`None`. Register them in the boxed-enum side-tables (NOT as emitted
+    // `EnumDef` instrs) so a construction `Ok(v)` / `Err(e)` / `Some(v)` and the
+    // matching `match` resolve via the bare-constructor path. All-i64 ABI: each
+    // payload is one i64 handle. These are lowering-only side-tables that never
+    // serialise into mic@3, and the keystone constructs/matches no
+    // Result/Option, so its emit is byte-identical. A user module that DEFINES
+    // its own `Result`/`Option` overwrites these via last-write-wins in the
+    // `EnumDef` arm below.
+    #[cfg(feature = "std-surface")]
+    {
+        use crate::ast::TypeAnn::ScalarI64;
+        ir.enum_variant_tags.insert("Result::Ok".to_string(), 0);
+        ir.enum_variant_tags.insert("Result::Err".to_string(), 1);
+        ir.enum_variant_tags.insert("Option::Some".to_string(), 0);
+        ir.enum_variant_tags.insert("Option::None".to_string(), 1);
+        ir.boxed_enums.insert("Result".to_string());
+        ir.boxed_enums.insert("Option".to_string());
+        ir.enum_payload_slots.insert("Result".to_string(), 2);
+        ir.enum_payload_slots.insert("Option".to_string(), 2);
+        ir.enum_payload_types
+            .insert("Result::Ok".to_string(), vec![ScalarI64]);
+        ir.enum_payload_types
+            .insert("Result::Err".to_string(), vec![ScalarI64]);
+        ir.enum_payload_types
+            .insert("Option::Some".to_string(), vec![ScalarI64]);
+    }
     // Pre-size the instruction buffer. `IRModule::new()` starts `instrs` at
     // capacity 0, so the AST→IR builder below grows it 0→4→8→16…, and the
     // profiler attributes the resulting `RawVec::finish_grow` realloc +
@@ -1211,21 +1239,39 @@ fn lower_expr(
             // identifier, matching the `enum_variant_tags` registry built when
             // the `EnumDef` was lowered.
             #[cfg(feature = "std-surface")]
-            if let Some(tag) = ir.enum_variant_tags.get(name).copied() {
-                // A FIELDLESS variant of a BOXED enum (one with a payload
-                // sibling, e.g. `Opt::None`) must lower to the SAME 2-field heap
-                // record `[tag, 0]` its payload siblings use, so the match's
-                // `__mind_load_i64(scrutinee + 0)` tag-read dereferences a valid
-                // record instead of a bare ordinal (`*1` → SEGFAULT). A purely
-                // fieldless (C-like) enum is not boxed and keeps the bare tag.
-                let enum_name = name.rsplit_once("::").map(|(e, _)| e);
-                if let Some(&total_slots) = enum_name.and_then(|e| ir.enum_payload_slots.get(e)) {
-                    // Fieldless variant: no payload fields, slots zero-filled.
-                    return emit_boxed_enum_record(ir, tag, &[], total_slots);
+            {
+                // Resolve a fieldless variant value used bare (`None`, `Nothing`)
+                // OR qualified (`Mode::On`): a bare name with no `::` is matched
+                // against any `Enum::V` in the registry, mirroring the bare
+                // payload-ctor resolution in the `Node::Call` arm.
+                let vkey: Option<String> = if ir.enum_variant_tags.contains_key(name) {
+                    Some(name.clone())
+                } else if !name.contains("::") {
+                    ir.enum_variant_tags
+                        .keys()
+                        .find(|k| k.rsplit_once("::").map(|(_, v)| v == name).unwrap_or(false))
+                        .cloned()
+                } else {
+                    None
+                };
+                if let Some(vkey) = vkey {
+                    let tag = ir.enum_variant_tags[&vkey];
+                    // A FIELDLESS variant of a BOXED enum (one with a payload
+                    // sibling, e.g. `Opt::None`) must lower to the SAME heap
+                    // record `[tag, 0…]` its payload siblings use, so the match's
+                    // `__mind_load_i64(scrutinee + 0)` tag-read dereferences a
+                    // valid record instead of a bare ordinal (`*1` → SEGFAULT). A
+                    // purely fieldless (C-like) enum is not boxed and keeps the
+                    // bare tag.
+                    let enum_name = vkey.rsplit_once("::").map(|(e, _)| e);
+                    if let Some(&total_slots) = enum_name.and_then(|e| ir.enum_payload_slots.get(e))
+                    {
+                        return emit_boxed_enum_record(ir, tag, &[], total_slots);
+                    }
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(id, tag));
+                    return id;
                 }
-                let id = ir.fresh();
-                ir.instrs.push(Instr::ConstI64(id, tag));
-                return id;
             }
             // Undefined — emit placeholder.
             #[cfg(debug_assertions)]
