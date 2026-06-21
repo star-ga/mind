@@ -3978,6 +3978,34 @@ fn lower_expr(
                 });
                 return dst;
             }
+            // `bytes[N].zero()` — a zeroed N-byte heap buffer (i64 handle). The
+            // receiver parses as `IndexAccess(Ident("bytes"), N)`; lower it to
+            // `__mind_calloc(N)`. mind-flow uses this for fixed-size hash buffers
+            // (`bytes[32]` / `bytes[8]`).
+            #[cfg(feature = "std-surface")]
+            if method == "zero" && args.is_empty() {
+                if let ast::Node::IndexAccess {
+                    receiver: base,
+                    index,
+                    ..
+                } = receiver.as_ref()
+                {
+                    if matches!(base.as_ref(), ast::Node::Lit(Literal::Ident(n), _) if n == "bytes")
+                    {
+                        if let Some(n) = extract_const_i64(index) {
+                            let size = ir.fresh();
+                            ir.instrs.push(Instr::ConstI64(size, n));
+                            let dst = ir.fresh();
+                            ir.instrs.push(Instr::Call {
+                                dst,
+                                name: "__mind_calloc".to_string(),
+                                args: vec![size],
+                            });
+                            return dst;
+                        }
+                    }
+                }
+            }
             // `map<K, V>` methods on a map-sentinel receiver → std.map runtime.
             // The str-key sentinel routes lookups to the content-equality
             // variants (map_get_str / map_contains_key_str); the i64-key sentinel

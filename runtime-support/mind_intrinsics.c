@@ -131,6 +131,14 @@ MIND_EXPORT int64_t __mind_alloc(int64_t bytes) {
     return (int64_t)(uintptr_t)p;
 }
 
+// __mind_calloc — a ZEROED n-byte heap buffer (the `bytes[N].zero()` surface).
+// Deterministic: the contents are all-zero on every host/run.
+MIND_EXPORT int64_t __mind_calloc(int64_t bytes) {
+    if (bytes <= 0) return 0;
+    void *p = calloc(1, (size_t)bytes);
+    return (int64_t)(uintptr_t)p;
+}
+
 MIND_EXPORT int64_t __mind_realloc(int64_t addr, int64_t new_bytes) {
     void *p = realloc((void *)(uintptr_t)addr, (size_t)new_bytes);
     return (int64_t)(uintptr_t)p;

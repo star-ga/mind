@@ -376,6 +376,10 @@ impl<'a> Resolver<'a> {
     fn ident_resolvable(&self, name: &str) -> bool {
         self.scopes.contains(name)
             || self.syms.names.contains(name)
+            // `bytes` is a builtin fixed-byte-buffer type usable as a value base
+            // for `bytes[N].zero()` (a zeroed N-byte buffer). A user binding named
+            // `bytes` shadows it via the `scopes` check above.
+            || name == "bytes"
             // A qualified path used as a *value* — an enum-variant constructor
             // (`Mode::On`), an associated const, etc. — folds its `::` segments
             // into one ident string. This pass owns the BARE undefined-reference
