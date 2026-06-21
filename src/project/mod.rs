@@ -673,7 +673,36 @@ pub fn build_project(opts: &BuildOptions) -> Result<BuildResult> {
         if let Some(parent) = cdylib_out.parent() {
             fs::create_dir_all(parent)?;
         }
-        build_cdylib_from_entry(&entry_path, &cdylib_out, &backend, opts)?;
+        // Cross-module ENUM propagation for the cdylib path. The cdylib build
+        // compiles only the entry (sibling `.mind` files are not translation
+        // units of one shared object — see above), so it never reaches
+        // `compile_sources`' whole-project enum-registry setup. But an entry
+        // that uses a SIBLING module's enum via the dot form (`TokKind.Eof`)
+        // still needs that enum's name (parser normalisation) + tags (lowering)
+        // — and an enum needs no link-time symbol, only the registry plus the
+        // resolver's `::`-path rule. So collect every declared enum across all
+        // project sources and install the registry around the entry compile,
+        // mirroring the set-before / clear-after discipline in `compile_sources`.
+        #[cfg(feature = "cross-module-imports")]
+        {
+            let mut parsed: Vec<(String, crate::ast::Module)> = Vec::new();
+            for src in &sources {
+                if let Ok(text) = fs::read_to_string(src) {
+                    if let Ok(m) = crate::parser::parse(&text) {
+                        let key = src
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        parsed.push((key, m));
+                    }
+                }
+            }
+            crate::ir::set_global_enums(build_global_enums(&parsed));
+        }
+        let cdylib_result = build_cdylib_from_entry(&entry_path, &cdylib_out, &backend, opts);
+        #[cfg(feature = "cross-module-imports")]
+        crate::ir::clear_global_enums();
+        cdylib_result?;
 
         if opts.verbose {
             println!("  Output: {}", cdylib_out.display());
@@ -1094,6 +1123,15 @@ fn compile_sources(
             parsed.iter().map(|(p, m)| (p.clone(), m)).collect();
         let table = crate::project::module_table::build_module_table(&refs);
         crate::type_checker::cm_set_project_table(Some(table));
+        // Cross-module ENUM propagation: collect every enum DECLARED in any
+        // parsed source into one whole-project registry, set at project scope
+        // before the per-file compile loop (mirroring the project table). This
+        // lets a module use a sibling module's enum via the dot form
+        // (`TokKind.Eof` → `TokKind::Eof`) in BOTH the parser (name set) and the
+        // lowering (variant tags / payload records). Cleared after the loop so a
+        // later single-file compile sees an empty registry and stays
+        // byte-identical.
+        crate::ir::set_global_enums(build_global_enums(&parsed));
     }
 
     let mut objects = Vec::new();
@@ -1121,9 +1159,64 @@ fn compile_sources(
     }
 
     #[cfg(feature = "cross-module-imports")]
-    crate::type_checker::cm_set_project_table(None);
+    {
+        crate::type_checker::cm_set_project_table(None);
+        crate::ir::clear_global_enums();
+    }
 
     Ok(objects)
+}
+
+/// Walk every parsed module's top-level `Node::EnumDef` items and build the
+/// whole-project [`crate::ir::GlobalEnums`] registry. Mirrors the per-module
+/// `EnumDef` lowering in `lower_to_ir`: variant `name` → `Enum::Variant` with an
+/// ordinal tag; an enum with a payload on ≥1 variant is "boxed" with
+/// `1 + max payload arity` heap slots and per-variant payload/field-name records.
+/// On a name collision, last-write-wins (a later source file overrides an
+/// earlier definition of the same enum name) — the same contract the per-module
+/// registration uses.
+#[cfg(feature = "cross-module-imports")]
+fn build_global_enums(parsed: &[(String, crate::ast::Module)]) -> crate::ir::GlobalEnums {
+    let mut enums = crate::ir::GlobalEnums::default();
+    for (_path, module) in parsed {
+        for item in &module.items {
+            if let crate::ast::Node::EnumDef { name, variants, .. } = item {
+                if !enums.names.iter().any(|n| n == name) {
+                    enums.names.push(name.clone());
+                }
+                #[cfg(feature = "std-surface")]
+                {
+                    for (ordinal, variant) in variants.iter().enumerate() {
+                        enums
+                            .variant_tags
+                            .insert(format!("{name}::{}", variant.name), ordinal as i64);
+                    }
+                    let max_arity = variants.iter().map(|v| v.payload.len()).max().unwrap_or(0);
+                    if max_arity > 0 {
+                        enums.boxed.insert(name.clone());
+                        enums.slots.insert(name.clone(), 1 + max_arity);
+                        for variant in variants {
+                            if !variant.payload.is_empty() {
+                                enums.payload_types.insert(
+                                    format!("{name}::{}", variant.name),
+                                    variant.payload.clone(),
+                                );
+                            }
+                            if !variant.field_names.is_empty() {
+                                enums.struct_field_names.insert(
+                                    format!("{name}::{}", variant.name),
+                                    variant.field_names.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(feature = "std-surface"))]
+                let _ = variants;
+            }
+        }
+    }
+    enums
 }
 
 /// Emit a visible warning when a project module cannot be compiled natively and

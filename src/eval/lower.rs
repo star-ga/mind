@@ -464,6 +464,31 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             .insert("Result::Err".to_string(), vec![ScalarI64]);
         ir.enum_payload_types
             .insert("Option::Some".to_string(), vec![ScalarI64]);
+        // Cross-module enum propagation: merge the whole-project enum registry
+        // (collected by the project builder from EVERY parsed source) so a
+        // variant defined in a SIBLING module — e.g. `TokKind::Eof` from another
+        // file — resolves to its tag / boxed record here, even though this
+        // module never lowered its `EnumDef`. The per-module `EnumDef` arm below
+        // still overwrites any same-name entry via last-write-wins, so a locally
+        // defined enum wins. Outside a project the registry is empty, so this
+        // inserts nothing and the keystone emit stays byte-identical.
+        crate::ir::with_global_enums(|g| {
+            for (k, v) in &g.variant_tags {
+                ir.enum_variant_tags.insert(k.clone(), *v);
+            }
+            for (k, v) in &g.payload_types {
+                ir.enum_payload_types.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &g.slots {
+                ir.enum_payload_slots.insert(k.clone(), *v);
+            }
+            for name in &g.boxed {
+                ir.boxed_enums.insert(name.clone());
+            }
+            for (k, v) in &g.struct_field_names {
+                ir.enum_struct_field_names.insert(k.clone(), v.clone());
+            }
+        });
     }
     // Pre-size the instruction buffer. `IRModule::new()` starts `instrs` at
     // capacity 0, so the AST→IR builder below grows it 0→4→8→16…, and the
