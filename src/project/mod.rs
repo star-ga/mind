@@ -1214,6 +1214,18 @@ fn build_global_enums(parsed: &[(String, crate::ast::Module)]) -> crate::ir::Glo
                 #[cfg(not(feature = "std-surface"))]
                 let _ = variants;
             }
+            // Every struct → (field names, field types) for cross-module field
+            // resolution (a module reading a sibling-module struct's collection
+            // field, e.g. compile.mind's `analyzed.determinism`).
+            #[cfg(feature = "std-surface")]
+            if let crate::ast::Node::StructDef { name, fields, .. } = item {
+                let field_names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
+                let field_types: Vec<crate::ast::TypeAnn> =
+                    fields.iter().map(|f| f.ty.clone()).collect();
+                enums
+                    .structs
+                    .insert(name.clone(), (field_names, field_types));
+            }
         }
     }
     enums

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2887 | **Est. tokens:** ~6,983,805
-**Generated:** 2026-06-21 10:06 UTC
+**Files:** 2888 | **Est. tokens:** ~6,985,014
+**Generated:** 2026-06-21 10:42 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,080 |
-| `src/ir/` | 4 | ~25,685 |
+| `src/ir/` | 4 | ~25,825 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~44,531 |
@@ -396,7 +396,7 @@
 | `src/opt/` | 4 | ~9,635 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~27,511 |
+| `src/project/` | 3 | ~27,688 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 208 | ~352,902 |
+| `tests/` | 209 | ~353,794 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3756,7 +3756,7 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~11057 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~11197 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -3809,7 +3809,7 @@
 - `pipeline.rs` (~4477 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~20305 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~20482 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
 - `stdlib.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4333,6 +4333,7 @@
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
+- `struct_field_collection_run.rs` (~892 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_narrow_field.rs` (~860 tok, large) — Copyright 2025 STARGA Inc.
 - `target_cerebras.rs` (~340 tok, medium) — Cerebras backend target — first-class surface tests.
 - `tensor_broadcast.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.

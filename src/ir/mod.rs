@@ -60,6 +60,14 @@ pub struct GlobalEnums {
     /// `payload_types`), present only for a struct variant `V { f: T }`.
     #[cfg(feature = "std-surface")]
     pub struct_field_names: std::collections::BTreeMap<String, Vec<String>>,
+    /// Every STRUCT declared across the project → (field names, field types),
+    /// declaration order. Merged into `IRModule::struct_defs` /
+    /// `struct_field_types` so a module can resolve a cross-module struct's field
+    /// types (e.g. compile.mind reading `analyzed.determinism` where the
+    /// `AnalyzedFlow` type lives in sema.mind). Same cross-module-propagation
+    /// role the enum tables play for variants.
+    #[cfg(feature = "std-surface")]
+    pub structs: std::collections::BTreeMap<String, (Vec<String>, Vec<crate::ast::TypeAnn>)>,
 }
 
 thread_local! {
