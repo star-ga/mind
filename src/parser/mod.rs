@@ -4108,27 +4108,7 @@ impl<'a> P<'a> {
             }
             self.pos += 2;
             self.skip_ws_and_newlines();
-            let body = if self.at(b'{') {
-                let blk_start = self.pos;
-                self.pos += 1;
-                let stmts = self.parse_fn_body_stmts()?;
-                self.skip_ws_and_newlines();
-                self.expect(b'}')?;
-                let blk_span = Span::new(blk_start, self.pos);
-                Node::Block {
-                    stmts,
-                    span: blk_span,
-                }
-            } else if self.at_keyword(b"return") {
-                // `=> return <expr>` — an early-return statement as the arm body
-                // (idiomatic for guard/error arms like `Err(e) => return Err(e)`).
-                // parse_expr does not handle the `return` keyword, so without this
-                // it consumed only `return` and the loop mis-read the rest as a
-                // new arm.
-                self.parse_return()?
-            } else {
-                self.parse_expr()?
-            };
+            let body = self.parse_match_arm_body(arm_start)?;
             let arm_span = Span::new(arm_start, self.pos);
             arms.push(MatchArm {
                 pattern,
@@ -4148,6 +4128,63 @@ impl<'a> P<'a> {
             arms,
             span,
         })
+    }
+
+    /// Parse a match-arm body: a `{ … }` block, a statement (`return` /
+    /// `continue` / `break` / `lhs = rhs` assignment), or an expression. The
+    /// statement forms matter for Rust-ish match arms that mutate (`Ok(p) =>
+    /// set = f(set, p)`) or skip (`Err(_) => continue`) — `parse_expr` handles
+    /// none of these, so without this the loop mis-reads the remainder as a new
+    /// arm pattern.
+    fn parse_match_arm_body(&mut self, arm_start: usize) -> Result<Node, ParseError> {
+        if self.at(b'{') {
+            let blk_start = self.pos;
+            self.pos += 1;
+            let stmts = self.parse_fn_body_stmts()?;
+            self.skip_ws_and_newlines();
+            self.expect(b'}')?;
+            return Ok(Node::Block {
+                stmts,
+                span: Span::new(blk_start, self.pos),
+            });
+        }
+        if self.at_keyword(b"return") {
+            return self.parse_return();
+        }
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"break") {
+            let s = self.pos;
+            self.pos += 5;
+            return Ok(Node::Break {
+                span: Span::new(s, self.pos),
+            });
+        }
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"continue") {
+            let s = self.pos;
+            self.pos += 8;
+            return Ok(Node::Continue {
+                span: Span::new(s, self.pos),
+            });
+        }
+        let expr = self.parse_expr()?;
+        self.skip_ws();
+        // `=> lhs = rhs` — a bare assignment as the arm body. parse_expr stops
+        // at `=`, so detect an `ident =` (not `==`) and parse the assignment.
+        if self.at(b'=') && !self.starts_with(b"==") {
+            if let Node::Lit(Literal::Ident(name), _) = &expr {
+                let name = name.clone();
+                self.pos += 1; // consume '='
+                self.skip_ws_and_newlines();
+                let value = self.parse_expr()?;
+                return Ok(Node::Assign {
+                    name,
+                    value: Box::new(value),
+                    span: Span::new(arm_start, self.pos),
+                });
+            }
+        }
+        Ok(expr)
     }
 
     /// Parse a single match-arm pattern.
