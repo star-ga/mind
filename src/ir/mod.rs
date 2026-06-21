@@ -68,6 +68,11 @@ pub struct GlobalEnums {
     /// role the enum tables play for variants.
     #[cfg(feature = "std-surface")]
     pub structs: std::collections::BTreeMap<String, (Vec<String>, Vec<crate::ast::TypeAnn>)>,
+    /// Every FUNCTION declared across the project → its declared return type.
+    /// Lets a `let x = f(...)` infer `x`'s type (string / collection / struct)
+    /// for method-call resolution — `let raw = decorator_arg_string(d); raw.split(…)`.
+    #[cfg(feature = "std-surface")]
+    pub fn_returns: std::collections::BTreeMap<String, crate::ast::TypeAnn>,
 }
 
 thread_local! {
