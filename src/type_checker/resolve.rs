@@ -208,6 +208,14 @@ fn stdlib_exports() -> &'static BTreeMap<String, BTreeSet<String>> {
 fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSyms {
     let mut names: BTreeSet<String> = injected.clone();
     collect_decl_names(module, &mut names);
+    // Built-in Result/Option prelude: the bare variant names are always
+    // resolvable (the compiler registers the enums in the lowering side-tables;
+    // they have no source-level `EnumDef` to feed `collect_decl_names`). A user
+    // module that defines its own `Result`/`Option` already adds these via
+    // `collect_decl_names` — this only ever ADDS names, never removes.
+    for v in ["Result", "Option", "Ok", "Err", "Some", "None"] {
+        names.insert(v.to_string());
+    }
     let std_exports = stdlib_exports();
     // The std-surface is the language standard library: its public names are
     // always resolvable. std modules reference each other WITHOUT explicit
