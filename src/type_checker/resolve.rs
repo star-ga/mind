@@ -625,6 +625,12 @@ impl<'a> Resolver<'a> {
                     self.walk(e);
                 }
             }
+            Node::MapLit { entries, .. } => {
+                for (k, v) in entries {
+                    self.walk(k);
+                    self.walk(v);
+                }
+            }
             Node::Print { args, .. } => {
                 for a in args {
                     self.walk(a);

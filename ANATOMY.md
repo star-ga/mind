@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2881 | **Est. tokens:** ~6,977,700
-**Generated:** 2026-06-21 07:04 UTC
+**Files:** 2882 | **Est. tokens:** ~6,978,907
+**Generated:** 2026-06-21 08:01 UTC
 
 ## Token Budget Guide
 
@@ -369,7 +369,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~17,517 |
-| `src/ast/` | 1 | ~7,229 |
+| `src/ast/` | 1 | ~7,314 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 3 | ~25,717 |
 | `src/build/` | 2 | ~11,359 |
@@ -383,7 +383,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~18,921 |
+| `src/fmt/` | 3 | ~19,009 |
 | `src/ir/` | 4 | ~25,685 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,595 |
+| `src/type_checker/` | 1 | ~7,642 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 202 | ~347,382 |
+| `tests/` | 203 | ~348,369 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3649,7 +3649,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~7229 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7314 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3731,7 +3731,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~14454 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~14542 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7595 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~7642 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4032,6 +4032,7 @@
 - `loop_run.rs` (~803 tok, large) — Copyright 2025 STARGA Inc.
 - `loud_fail_non_i64.rs` (~745 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
 - `map_runtime_run.rs` (~881 tok, large) — Copyright 2025 STARGA Inc.
+- `map_surface_run.rs` (~987 tok, large) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mic3_cli_emit.rs` (~2494 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4637 tok, huge) — Copyright 2025 STARGA Inc.

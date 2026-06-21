@@ -2781,6 +2781,37 @@ impl<'a> P<'a> {
         Ok(Node::ArrayLit { elements, span })
     }
 
+    /// Parse a map literal: `{}` (empty) or `{ key: value, … }`. Keys and values
+    /// are arbitrary expressions; trailing comma allowed. Lowers onto std.map.
+    fn parse_map_lit(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.expect(b'{')?;
+        let mut entries: Vec<(Node, Node)> = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b'}') {
+            loop {
+                self.skip_ws_and_newlines();
+                if self.at(b'}') {
+                    break;
+                }
+                let key = self.parse_expr()?;
+                self.skip_ws();
+                self.expect(b':')?;
+                self.skip_ws_and_newlines();
+                let value = self.parse_expr()?;
+                entries.push((key, value));
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b'}')?;
+        let span = Span::new(start, self.pos);
+        Ok(Node::MapLit { entries, span })
+    }
+
     fn parse_atom(&mut self) -> Result<Node, ParseError> {
         let mut node = self.parse_primary()?;
         loop {
@@ -2924,6 +2955,14 @@ impl<'a> P<'a> {
         }
         if self.at(b'[') {
             return self.parse_array_lit();
+        }
+        // A bare `{` in expression position is a MAP literal (`{}` or
+        // `{ k: v, … }`). A named struct literal `Name { … }` is parsed in the
+        // identifier path (the name comes first), so a leading `{` here is never
+        // a struct literal; statement blocks are parsed by the statement layer,
+        // not parse_primary.
+        if self.at(b'{') {
+            return self.parse_map_lit();
         }
         if self.at(b'"') {
             return self.parse_string_lit();
