@@ -28,6 +28,64 @@ pub use evidence::ir_trace_hash;
 pub use print::format_ir_module;
 pub use verify::{IrVerifyError, SsaRule, SsaViolation, check_ssa_well_formed, verify_module};
 
+/// Whole-project enum registry — every enum DECLARED anywhere in a project,
+/// collected once by the project builder and made visible to BOTH the parser
+/// (so a cross-module `Enum.Variant` dot reference normalises to the canonical
+/// `Enum::Variant`) and the lowering (so the variant tags / payload records are
+/// known even when the defining `EnumDef` lives in a sibling source file).
+///
+/// A single-file compile outside a project never populates this — it stays the
+/// empty default, so emitted mic@1/mic@3 bytes (and the keystone's
+/// cross-substrate identity) are unaffected. Set/cleared with the same
+/// set-before / clear-after discipline as the cross-module project table.
+#[derive(Debug, Clone, Default)]
+pub struct GlobalEnums {
+    /// Enum type names declared across the project. The parser checks this to
+    /// decide whether a dotted `First.Second` reference is a variant access.
+    pub names: Vec<String>,
+    /// `"Enum::Variant"` → ordinal tag, mirroring the per-module `EnumDef`
+    /// lowering. Merged into `IRModule::enum_variant_tags`.
+    #[cfg(feature = "std-surface")]
+    pub variant_tags: std::collections::BTreeMap<String, i64>,
+    /// `"Enum::Variant"` → declared positional payload field types.
+    #[cfg(feature = "std-surface")]
+    pub payload_types: std::collections::BTreeMap<String, Vec<crate::ast::TypeAnn>>,
+    /// `"Enum"` → heap-record slot count (`1 + max payload arity`).
+    #[cfg(feature = "std-surface")]
+    pub slots: std::collections::BTreeMap<String, usize>,
+    /// Enum type names that carry a payload on ≥1 variant (boxed enums).
+    #[cfg(feature = "std-surface")]
+    pub boxed: std::collections::BTreeSet<String>,
+    /// `"Enum::Variant"` → struct-variant field NAMES (parallel to
+    /// `payload_types`), present only for a struct variant `V { f: T }`.
+    #[cfg(feature = "std-surface")]
+    pub struct_field_names: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+thread_local! {
+    static GLOBAL_ENUMS: std::cell::RefCell<GlobalEnums> =
+        std::cell::RefCell::new(GlobalEnums::default());
+}
+
+/// Install the whole-project enum registry. The project builder calls this once
+/// BEFORE the per-source compile loop (mirroring `cm_set_project_table`).
+pub fn set_global_enums(enums: GlobalEnums) {
+    GLOBAL_ENUMS.with(|cell| *cell.borrow_mut() = enums);
+}
+
+/// Reset the registry to empty. Called AFTER the per-source compile loop so a
+/// subsequent single-file compile sees an empty registry and stays
+/// byte-identical.
+pub fn clear_global_enums() {
+    GLOBAL_ENUMS.with(|cell| *cell.borrow_mut() = GlobalEnums::default());
+}
+
+/// Read-only access to the active registry. The closure runs with a borrow of
+/// the thread-local, avoiding a clone on the hot path.
+pub fn with_global_enums<R>(f: impl FnOnce(&GlobalEnums) -> R) -> R {
+    GLOBAL_ENUMS.with(|cell| f(&cell.borrow()))
+}
+
 /// Errors surfaced by [`load`].
 #[derive(Debug)]
 pub enum LoadError {
