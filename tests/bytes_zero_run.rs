@@ -30,6 +30,32 @@ pub fn writable() -> i64 {
     let _ = __mind_store_i64(h + 8, 12345)
     return __mind_load_i64(h + 8) + __mind_load_i64(h)
 }
+
+// `bytes[N]` as a PARAMETER and RETURN type (the i64-handle ABI). The `[N]`
+// suffix on a Named type must parse in signature position (mind-flow uses
+// `-> bytes[32]` for hashes).
+fn first_word(buf: bytes[32]) -> i64 {
+    return __mind_load_i64(buf)
+}
+
+fn make() -> bytes[32] {
+    let h = bytes[32].zero()
+    let _ = __mind_store_i64(h, 777)
+    return h
+}
+
+// `bytes[N]` as a STRUCT FIELD type.
+struct Hashed {
+    tag: i64,
+    digest: bytes[32],
+}
+
+pub fn typed_roundtrip() -> i64 {
+    let h = make()
+    let r = first_word(h)
+    let rec = Hashed { tag: 5, digest: bytes[8].zero() }
+    return r + rec.tag
+}
 "#;
 
 fn mindc_bin() -> PathBuf {
@@ -70,9 +96,10 @@ fn bytes_zero_runs() {
     let py = format!(
         "import ctypes\n\
          lib = ctypes.CDLL(r'{}')\n\
-         for _n in ('zeroed','writable'): getattr(lib,_n).restype = ctypes.c_int64\n\
+         for _n in ('zeroed','writable','typed_roundtrip'): getattr(lib,_n).restype = ctypes.c_int64\n\
          r = lib.zeroed(); assert r == 0, 'zeroed=' + str(r)\n\
          r = lib.writable(); assert r == 12345, 'writable=' + str(r)\n\
+         r = lib.typed_roundtrip(); assert r == 782, 'typed_roundtrip=' + str(r)\n\
          print('ok')\n",
         so.to_string_lossy()
     );
