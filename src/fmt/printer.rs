@@ -1268,6 +1268,16 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             }
             p.push("}");
         }
+        Node::SetLit { elements, .. } => {
+            p.push("{");
+            for (i, e) in elements.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                emit_expr(p, e);
+            }
+            p.push("}");
+        }
         Node::As { expr, ty, .. } => {
             emit_expr(p, expr);
             p.push(" as ");
