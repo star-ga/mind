@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2873 | **Est. tokens:** ~6,966,307
-**Generated:** 2026-06-21 02:36 UTC
+**Files:** 2874 | **Est. tokens:** ~6,967,372
+**Generated:** 2026-06-21 02:57 UTC
 
 ## Token Budget Guide
 
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,235 |
+| `src/type_checker/` | 1 | ~7,376 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,829 |
-| `tests/` | 194 | ~339,967 |
+| `tests/` | 195 | ~340,891 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7235 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~7376 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3888,6 +3888,7 @@
 - `gpu_graceful_failure.mind` (~73 tok, small) — Backend test: GPU backend graceful failure
 ### `tests/`
 
+- `bare_variant_ctor_run.rs` (~924 tok, large) — Copyright 2025 STARGA Inc.
 - `blas_smoke.rs` (~5888 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_q16_smoke.rs` (~5739 tok, huge) — Copyright 2025 STARGA Inc.
 - `blas_vec_smoke.rs` (~2229 tok, huge) — Copyright 2025 STARGA Inc.
