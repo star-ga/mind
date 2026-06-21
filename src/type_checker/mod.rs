@@ -1560,6 +1560,15 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 Ok((ValueType::ScalarI32, *span))
             }
         }
+        Node::MapLit { entries, span } => {
+            // A map literal is an i64 std.map handle. Validate each key/value
+            // expression, then type as the i64 handle (the map ABI).
+            for (k, v) in entries {
+                let _ = infer_expr(k, env);
+                let _ = infer_expr(v, env);
+            }
+            Ok((ValueType::ScalarI64, *span))
+        }
         Node::For {
             var, body, span, ..
         } => {

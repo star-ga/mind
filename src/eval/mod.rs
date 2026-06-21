@@ -1355,6 +1355,11 @@ pub(crate) fn eval_value_expr_mode(
              std.vec runtime; the tree-walking eval fallback does not interpret it"
                 .into(),
         )),
+        Node::MapLit { .. } => Err(EvalError::UnsupportedMsg(
+            "map literal (`{}` / `{k: v}`) is lowered by the native compiler over the \
+             std.map runtime; the tree-walking eval fallback does not interpret it"
+                .into(),
+        )),
         Node::For {
             var,
             start,
