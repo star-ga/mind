@@ -444,6 +444,21 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     let preprocessed = preprocess_collection_mutations(module);
     #[cfg(feature = "std-surface")]
     let module = preprocessed.as_ref().unwrap_or(module);
+    // Install this module's top-level `const NAME = value` table so a reference
+    // `Lit(Ident(NAME))` inlines the value at its use site (the read path in the
+    // `Lit(Ident)` arm). Overwrites any prior pass's table — a const-free module
+    // (the keystone) installs an empty table and is byte-identical.
+    #[cfg(feature = "std-surface")]
+    {
+        crate::ir::clear_module_consts();
+        let mut consts = std::collections::BTreeMap::new();
+        for item in &module.items {
+            if let ast::Node::Const { name, value, .. } = item {
+                consts.insert(name.clone(), (**value).clone());
+            }
+        }
+        crate::ir::set_module_consts(consts);
+    }
     let mut ir = IRModule::new();
     // Built-in Result/Option PRELUDE. MIND has no source-level prelude, but
     // Rust-style code expects `Result<T,E>` / `Option<T>` with bare `Ok`/`Err`/
@@ -1991,6 +2006,24 @@ fn lower_expr(
                     name: Some(name.clone()),
                     values,
                 });
+                return id;
+            }
+            // Module-level `const NAME = value` (scalar / string / collection):
+            // inline the value expression in the current SSA namespace. `env` is
+            // checked first above, so a local of the same name shadows the const.
+            // `const A = B` (const-references-const) resolves by re-entering this
+            // arm for `B`; a self-cycle is caught by the resolving guard and
+            // fails loud rather than recursing forever.
+            #[cfg(feature = "std-surface")]
+            if let Some(cval) = crate::ir::module_const_value(name) {
+                if !crate::ir::begin_resolving_const(name) {
+                    panic!(
+                        "const `{name}` is defined in terms of itself (cyclic \
+                         const reference) — refusing to inline (that would loop)."
+                    );
+                }
+                let id = lower_expr(&cval, ir, env, struct_env, receiver_types);
+                crate::ir::end_resolving_const(name);
                 return id;
             }
             // "finish MIND" Step 2 (Defect B fix): a fully-qualified enum
@@ -5095,6 +5128,17 @@ fn lower_expr(
                 span: *span,
             };
             lower_expr(&while_node, ir, &loop_env, &fe_struct_env, receiver_types)
+        }
+        // A `const NAME = value` DECLARATION is a no-op at the value level — the
+        // value is inlined at each `Lit(Ident(NAME))` use site (see the
+        // `module_const_value` read path above), exactly as `StructDef`/`EnumDef`
+        // declarations emit a unit placeholder. (The top-level `array`-const arm
+        // keeps its dedicated `ConstArray` path; this catches scalar / string /
+        // collection consts and any const reaching a block position.)
+        ast::Node::Const { .. } => {
+            let id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(id, 0));
+            id
         }
         // Genuinely-unhandled value-position node. After the explicit Import /
         // Print arms above, std/ + examples/ no longer reach here (verified by
