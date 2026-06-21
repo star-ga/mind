@@ -623,6 +623,69 @@ MIND_EXPORT int64_t string_push_byte(int64_t s, int64_t b) {
     return rec;
 }
 
+// string_from_range — a fresh String holding the bytes [src, src+n). Deterministic.
+static int64_t string_from_range(int64_t src, int64_t n) {
+    int64_t rec = __mind_alloc(24);
+    if (n <= 0) {
+        __mind_store_i64(rec, 0);
+        __mind_store_i64(rec + 8, 0);
+        __mind_store_i64(rec + 16, 0);
+        return rec;
+    }
+    int64_t buf = __mind_alloc(n + 7); // 7-byte pad: matches string_push_byte
+    memcpy((void *)(uintptr_t)buf, (void *)(uintptr_t)src, (size_t)n);
+    __mind_store_i64(rec, buf);
+    __mind_store_i64(rec + 8, n);
+    __mind_store_i64(rec + 16, n);
+    return rec;
+}
+
+// string_split(s, sep) -> array<string> (a std.vec of String handles). Splits
+// `s` on each (possibly multi-byte) occurrence of `sep`, in order. An empty
+// `sep` yields one segment (the whole string). Deterministic: same bytes ->
+// same segments on every host/run.
+MIND_EXPORT int64_t string_split(int64_t s, int64_t sep) {
+    int64_t saddr   = __mind_load_i64(s);
+    int64_t slen    = __mind_load_i64(s + 8);
+    int64_t sepaddr = __mind_load_i64(sep);
+    int64_t seplen  = __mind_load_i64(sep + 8);
+    int64_t out = vec_new();
+    const unsigned char *sp   = (const unsigned char *)(uintptr_t)saddr;
+    const unsigned char *sepp = (const unsigned char *)(uintptr_t)sepaddr;
+    if (seplen <= 0) {
+        return vec_push(out, string_from_range(saddr, slen));
+    }
+    int64_t start = 0;
+    int64_t i = 0;
+    while (i + seplen <= slen) {
+        if (memcmp(sp + i, sepp, (size_t)seplen) == 0) {
+            out = vec_push(out, string_from_range(saddr + start, i - start));
+            i += seplen;
+            start = i;
+        } else {
+            i++;
+        }
+    }
+    return vec_push(out, string_from_range(saddr + start, slen - start));
+}
+
+// string_trim(s) -> a String with leading/trailing ASCII whitespace removed.
+MIND_EXPORT int64_t string_trim(int64_t s) {
+    int64_t saddr = __mind_load_i64(s);
+    int64_t slen  = __mind_load_i64(s + 8);
+    const unsigned char *sp = (const unsigned char *)(uintptr_t)saddr;
+    int64_t a = 0;
+    int64_t b = slen;
+    while (a < b && (sp[a] == ' ' || sp[a] == '\t' || sp[a] == '\n' || sp[a] == '\r')) {
+        a++;
+    }
+    while (b > a && (sp[b - 1] == ' ' || sp[b - 1] == '\t' || sp[b - 1] == '\n' ||
+                     sp[b - 1] == '\r')) {
+        b--;
+    }
+    return string_from_range(saddr + a, b - a);
+}
+
 // ---------------------------------------------------------------------------
 // mind-blas Track A — runtime-support SIMD bridge (RFC 0006).
 //
