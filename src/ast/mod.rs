@@ -494,6 +494,15 @@ pub enum Node {
         entries: Vec<(Node, Node)>,
         span: Span,
     },
+    /// Set literal: `{ a, b, c }` (comma-separated, no colons). Backed by the
+    /// std.map runtime (a set is a map keyed by its elements); lowers to
+    /// `map_new()` then a `map_insert(m, elem, 1)` chain. The empty case `{}` is
+    /// a `MapLit` (both lower to `map_new`); a `set<T>` binding's sentinel makes
+    /// `.contains` / `.add` resolve.
+    SetLit {
+        elements: Vec<Node>,
+        span: Span,
+    },
     /// For loop: `for i in 0..N { body }`
     For {
         var: String,
@@ -857,6 +866,7 @@ impl Node {
             | Node::Import { span, .. }
             | Node::ArrayLit { span, .. }
             | Node::MapLit { span, .. }
+            | Node::SetLit { span, .. }
             | Node::For { span, .. }
             | Node::ForEach { span, .. }
             | Node::Print { span, .. }

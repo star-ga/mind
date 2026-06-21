@@ -635,6 +635,11 @@ impl<'a> Resolver<'a> {
                     self.walk(v);
                 }
             }
+            Node::SetLit { elements, .. } => {
+                for e in elements {
+                    self.walk(e);
+                }
+            }
             Node::Print { args, .. } => {
                 for a in args {
                     self.walk(a);
