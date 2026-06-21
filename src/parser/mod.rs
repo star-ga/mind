@@ -3552,6 +3552,30 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
+        // `u32(x)` / `i64(x)` / … — a scalar CAST written in call form. Desugar
+        // to `x as <type>`, reusing the existing cast typecheck/codegen path (no
+        // new IR). mind-flow writes `u32(i + 1)`. Only the reserved scalar type
+        // names with exactly one argument convert; everything else is a call.
+        if args.len() == 1 {
+            let cast_ty = match callee.as_str() {
+                "u32" => Some(TypeAnn::ScalarU32),
+                "i32" => Some(TypeAnn::ScalarI32),
+                "i64" => Some(TypeAnn::ScalarI64),
+                "f64" => Some(TypeAnn::ScalarF64),
+                "u8" | "u16" | "u64" | "i8" | "i16" | "usize" | "f32" => {
+                    Some(TypeAnn::Named(callee.clone()))
+                }
+                _ => None,
+            };
+            if let Some(ty) = cast_ty {
+                let expr = args.pop().unwrap();
+                return Ok(Node::As {
+                    expr: Box::new(expr),
+                    ty,
+                    span,
+                });
+            }
+        }
         Ok(Node::Call { callee, args, span })
     }
 

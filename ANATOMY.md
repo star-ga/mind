@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2885 | **Est. tokens:** ~6,981,854
-**Generated:** 2026-06-21 09:16 UTC
+**Files:** 2886 | **Est. tokens:** ~6,982,611
+**Generated:** 2026-06-21 09:26 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 206 | ~351,175 |
+| `tests/` | 207 | ~351,932 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4189,6 +4189,9 @@
 
 - `elementwise_add.mind` (~68 tok, small) — Runtime test: Element-wise addition execution
 - `reduction_sum.mind` (~67 tok, small) — Runtime test: Reduction sum operation
+### `tests/`
+
+- `scalar_cast_call_run.rs` (~757 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/selfhost_gaps/`
 
 - `call-arg-nesting_1.mind` (~25 tok, tiny)
