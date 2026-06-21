@@ -2681,8 +2681,19 @@ impl<'a> P<'a> {
         let start = self.pos;
         self.expect(b'"')?;
         let str_start = self.pos;
+        // Escape-aware scan: a backslash escapes the following byte so that
+        // `\"` (escaped quote) and `\\` (escaped backslash) do not prematurely
+        // terminate the literal. Without this, `"\\"` ended at the inner `\`,
+        // leaving a dangling `"` that corrupted the rest of the parse (it only
+        // surfaced as a downstream "expected expression"). Bytes are retained
+        // verbatim (escapes are not decoded here) to match the established
+        // string-scanning convention.
         while self.pos < self.b.len() && self.b[self.pos] != b'"' {
-            self.pos += 1;
+            if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                self.pos += 2;
+            } else {
+                self.pos += 1;
+            }
         }
         let s = std::str::from_utf8(&self.b[str_start..self.pos])
             .unwrap()
