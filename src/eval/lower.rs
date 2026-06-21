@@ -496,6 +496,18 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             for (k, v) in &g.struct_field_names {
                 ir.enum_struct_field_names.insert(k.clone(), v.clone());
             }
+            // Cross-module struct field names + types, so a module can resolve a
+            // sibling-module struct's field (e.g. compile.mind reading
+            // `analyzed.determinism` where `AnalyzedFlow` lives in sema.mind). The
+            // module's OWN StructDef arm below re-inserts via last-write-wins.
+            for (name, (field_names, field_types)) in &g.structs {
+                ir.struct_defs
+                    .entry(name.clone())
+                    .or_insert_with(|| field_names.clone());
+                ir.struct_field_types
+                    .entry(name.clone())
+                    .or_insert_with(|| field_types.clone());
+            }
         });
     }
     // Pre-size the instruction buffer. `IRModule::new()` starts `instrs` at
@@ -1286,6 +1298,100 @@ fn lower_set_surface_lit(
         handle = next;
     }
     handle
+}
+
+/// Collection sentinel for a `TypeAnn` (`array<T>`/`map<K,V>`/`set<T>`), or None.
+#[cfg(feature = "std-surface")]
+fn collection_sentinel_for_ty(ty: &TypeAnn) -> Option<&'static str> {
+    if is_array_surface_ty(ty) {
+        Some(ARRAY_VEC_SENTINEL)
+    } else if is_map_surface_ty(ty) {
+        Some(map_sentinel_for(ty))
+    } else if is_set_surface_ty(ty) {
+        Some(set_sentinel_for(ty))
+    } else {
+        None
+    }
+}
+
+/// Resolve the collection sentinel of a method-call / index RECEIVER, covering
+/// BOTH an Ident bound to a collection (via `struct_env`) AND a struct-FIELD
+/// access whose declared field type is a collection
+/// (`analyzed.determinism.contains_key(...)`). For the field case the base
+/// struct type comes from the `receiver_types` side-table (the same source the
+/// FieldAccess read path uses), then the field's declared type is looked up in
+/// `struct_field_types`. None for a non-collection receiver (the caller then
+/// falls through to the normal struct / UFCS path).
+#[cfg(feature = "std-surface")]
+fn receiver_collection_sentinel(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<&'static str> {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(v), _) => match struct_env.get(v).map(|s| s.as_str()) {
+            Some(ARRAY_VEC_SENTINEL) => Some(ARRAY_VEC_SENTINEL),
+            Some(MAP_SENTINEL) => Some(MAP_SENTINEL),
+            Some(MAP_STR_SENTINEL) => Some(MAP_STR_SENTINEL),
+            Some(SET_SENTINEL) => Some(SET_SENTINEL),
+            Some(SET_STR_SENTINEL) => Some(SET_STR_SENTINEL),
+            _ => None,
+        },
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            span,
+        } => {
+            // The base struct type: the `receiver_types` side-table when the
+            // struct_resolver populated it, else struct_env recursion (covers a
+            // method-receiver field access the resolver skips, and struct params).
+            let sname = receiver_types
+                .get(span)
+                .cloned()
+                .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+            let fields = ir.struct_defs.get(&sname)?;
+            let idx = fields.iter().position(|f| f == field)?;
+            let field_ty = ir.struct_field_types.get(&sname)?.get(idx)?;
+            collection_sentinel_for_ty(field_ty)
+        }
+        _ => None,
+    }
+}
+
+/// Resolve the STRUCT-TYPE NAME a receiver evaluates to: an Ident via
+/// `struct_env` (struct-typed param/let), or a nested `s.field` whose declared
+/// field type is itself a struct. None when not a known struct.
+#[cfg(feature = "std-surface")]
+fn receiver_struct_type(
+    receiver: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+) -> Option<String> {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(v), _) => {
+            let s = struct_env.get(v)?;
+            if ir.struct_defs.contains_key(s) {
+                Some(s.clone())
+            } else {
+                None
+            }
+        }
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            ..
+        } => {
+            let sname = receiver_struct_type(base, ir, struct_env)?;
+            let fields = ir.struct_defs.get(&sname)?;
+            let idx = fields.iter().position(|f| f == field)?;
+            match ir.struct_field_types.get(&sname)?.get(idx)? {
+                TypeAnn::Named(n) if ir.struct_defs.contains_key(n) => Some(n.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Rewrite STATEMENT-position collection mutations into assignments so the
@@ -2286,6 +2392,17 @@ fn lower_expr(
                 if is_set_surface_ty(&param.ty) {
                     fn_struct_env
                         .insert(param.name.clone(), set_sentinel_for(&param.ty).to_string());
+                }
+                // Struct-typed param → record its struct TYPE NAME so a field
+                // access on it (`analyzed.determinism`) resolves the field's type
+                // for the collection-method desugar. Just the Named name; the
+                // struct may be cross-module (merged into struct_defs from the
+                // global registry), so no struct_defs check here.
+                #[cfg(feature = "std-surface")]
+                if let TypeAnn::Named(n) = &param.ty {
+                    fn_struct_env
+                        .entry(param.name.clone())
+                        .or_insert_with(|| n.clone());
                 }
             }
 
@@ -3573,17 +3690,21 @@ fn lower_expr(
             // field reads are unaffected and the keystone never hits this path.
             #[cfg(feature = "std-surface")]
             if field == "len" || field == "length" {
-                if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
-                    // `arr.len`/`.length` → vec_len; `m.len`/`.length` → map_len.
-                    // mind-flow writes `.length`; std exposes `vec_len`/`map_len`,
-                    // so the name is normalised here. Only set for collection-typed
-                    // bindings/params, so non-collection field reads are unaffected.
-                    let len_fn = match struct_env.get(var_name).map(|s| s.as_str()) {
-                        Some(ARRAY_VEC_SENTINEL) => Some("vec_len"),
-                        Some(MAP_SENTINEL) | Some(MAP_STR_SENTINEL) => Some("map_len"),
-                        Some(SET_SENTINEL) | Some(SET_STR_SENTINEL) => Some("map_len"),
-                        _ => None,
-                    };
+                // `arr.len`/`.length` → vec_len; `m.len`/`s.len` → map_len.
+                // mind-flow writes `.length`; std exposes `vec_len`/`map_len`, so
+                // the name is normalised. Resolves an Ident-bound collection AND a
+                // struct-FIELD collection (`a.ids.len`) via the unified resolver,
+                // so non-collection field reads are unaffected.
+                #[cfg(feature = "std-surface")]
+                {
+                    let len_fn =
+                        match receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+                        {
+                            Some(ARRAY_VEC_SENTINEL) => Some("vec_len"),
+                            Some(MAP_SENTINEL) | Some(MAP_STR_SENTINEL) => Some("map_len"),
+                            Some(SET_SENTINEL) | Some(SET_STR_SENTINEL) => Some("map_len"),
+                            _ => None,
+                        };
                     if let Some(len_fn) = len_fn {
                         let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
                         let dst = ir.fresh();
@@ -4120,8 +4241,9 @@ fn lower_expr(
             // uses identity. Intercepted here (not via UFCS) so `.length`→map_len
             // and the str-key split both resolve correctly.
             #[cfg(feature = "std-surface")]
-            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
-                let sentinel = struct_env.get(var_name).map(|s| s.as_str());
+            {
+                let sentinel =
+                    receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types);
                 if sentinel == Some(MAP_SENTINEL) || sentinel == Some(MAP_STR_SENTINEL) {
                     let is_str = sentinel == Some(MAP_STR_SENTINEL);
                     let fname = match method.as_str() {
@@ -4156,8 +4278,9 @@ fn lower_expr(
             // (_str for string elements); `.add`/`.insert` → map_insert(recv, x, 1)
             // (the unit value is synthesized); `.len` → map_len.
             #[cfg(feature = "std-surface")]
-            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
-                let sentinel = struct_env.get(var_name).map(|s| s.as_str());
+            {
+                let sentinel =
+                    receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types);
                 if sentinel == Some(SET_SENTINEL) || sentinel == Some(SET_STR_SENTINEL) {
                     let is_str = sentinel == Some(SET_STR_SENTINEL);
                     let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
