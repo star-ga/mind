@@ -106,3 +106,77 @@ pub fn map_insert(m: Map, key: i64, value: i64) -> Map {
     __mind_store_i64(new_vals + m.len * 8, value);
     Map { keys_addr: new_keys, vals_addr: new_vals, len: new_len, cap: new_cap }
 }
+
+// map_get — first value whose key == `key` (i64 identity), or 0 if the key is
+// absent. Linear scan over insertion order (deterministic). For STRING keys use
+// map_get_str: an i64 `==` on two String handles compares POINTERS, not byte
+// contents, so two equal-content strings with distinct allocations would miss.
+pub fn map_get(m: Map, key: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < m.len {
+        if __mind_load_i64(m.keys_addr + i * 8) == key {
+            return __mind_load_i64(m.vals_addr + i * 8);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// map_contains_key — 1 if some key == `key` (i64 identity), else 0.
+pub fn map_contains_key(m: Map, key: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < m.len {
+        if __mind_load_i64(m.keys_addr + i * 8) == key {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// map_str_key_eq — byte-content equality of two String handles. A String is a
+// heap record {addr@0, len@8, cap@16} passed by handle (Option-C i64 ABI), so
+// the handle is a pointer to that record. Reads len/addr directly (no String
+// type needed) and compares bytes — the correct equality for string keys.
+fn map_str_key_eq(a: i64, b: i64) -> i64 {
+    let alen: i64 = __mind_load_i64(a + 8);
+    let blen: i64 = __mind_load_i64(b + 8);
+    if alen != blen {
+        return 0;
+    }
+    let aaddr: i64 = __mind_load_i64(a + 0);
+    let baddr: i64 = __mind_load_i64(b + 0);
+    let mut i: i64 = 0;
+    while i < alen {
+        if __mind_load_i8(aaddr + i) != __mind_load_i8(baddr + i) {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+
+// map_get_str — value for the first key whose String CONTENTS equal `key`'s
+// (content equality, not handle identity), or 0 if absent. For `map<string,_>`.
+pub fn map_get_str(m: Map, key: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < m.len {
+        if map_str_key_eq(__mind_load_i64(m.keys_addr + i * 8), key) == 1 {
+            return __mind_load_i64(m.vals_addr + i * 8);
+        }
+        i = i + 1;
+    }
+    return 0;
+}
+
+// map_contains_key_str — 1 if some key's String CONTENTS equal `key`'s, else 0.
+pub fn map_contains_key_str(m: Map, key: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < m.len {
+        if map_str_key_eq(__mind_load_i64(m.keys_addr + i * 8), key) == 1 {
+            return 1;
+        }
+        i = i + 1;
+    }
+    return 0;
+}
