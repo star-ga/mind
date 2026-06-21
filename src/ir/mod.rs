@@ -99,6 +99,51 @@ pub fn with_global_enums<R>(f: impl FnOnce(&GlobalEnums) -> R) -> R {
     GLOBAL_ENUMS.with(|cell| f(&cell.borrow()))
 }
 
+thread_local! {
+    /// Module-level `const NAME = value` table for the current `lower_to_ir`
+    /// pass. A purely lowering-time inlining table — consts are substituted at
+    /// each `Lit(Ident)` use site, so the table is NEVER serialised into mic@3
+    /// and the keystone (which declares no module consts) stays byte-identical.
+    static MODULE_CONSTS: std::cell::RefCell<
+        std::collections::BTreeMap<String, crate::ast::Node>,
+    > = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    /// Names of consts currently being inlined — guards `const A = B; const B = A`
+    /// from recursing forever (fail-loud at the use site instead).
+    static RESOLVING_CONSTS: std::cell::RefCell<std::collections::BTreeSet<String>> =
+        std::cell::RefCell::new(std::collections::BTreeSet::new());
+}
+
+/// Install the module-level const table for the current lowering pass.
+pub fn set_module_consts(consts: std::collections::BTreeMap<String, crate::ast::Node>) {
+    MODULE_CONSTS.with(|c| *c.borrow_mut() = consts);
+}
+
+/// Reset the const table (and the in-flight resolving set) to empty after the
+/// pass so a subsequent compile starts clean.
+pub fn clear_module_consts() {
+    MODULE_CONSTS.with(|c| c.borrow_mut().clear());
+    RESOLVING_CONSTS.with(|c| c.borrow_mut().clear());
+}
+
+/// Look up a module const's value expression by name (cloned), or `None` if the
+/// name is not a module const.
+pub fn module_const_value(name: &str) -> Option<crate::ast::Node> {
+    MODULE_CONSTS.with(|c| c.borrow().get(name).cloned())
+}
+
+/// Mark `name` as currently-resolving; returns `false` if it was already in
+/// flight (a const-reference cycle).
+pub fn begin_resolving_const(name: &str) -> bool {
+    RESOLVING_CONSTS.with(|c| c.borrow_mut().insert(name.to_string()))
+}
+
+/// Clear the in-flight mark for `name` once its value has been lowered.
+pub fn end_resolving_const(name: &str) {
+    RESOLVING_CONSTS.with(|c| {
+        c.borrow_mut().remove(name);
+    });
+}
+
 /// Errors surfaced by [`load`].
 #[derive(Debug)]
 pub enum LoadError {

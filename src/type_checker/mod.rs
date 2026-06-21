@@ -3218,7 +3218,17 @@ pub fn check_module_types_in_file(
                     Ok((vt_rhs, _)) => {
                         if let Some(ann) = ty {
                             if let Some(vt_ann) = valuetype_from_ann(ann) {
-                                if vt_ann != vt_rhs {
+                                // An integer-literal / const-foldable integer RHS
+                                // coerces to an integer annotation as long as it
+                                // WIDENS (or matches) — the same rule a fn-body
+                                // `let x: i64 = 5` already applies (a bare literal
+                                // defaults to i32). A genuine narrowing or a
+                                // non-integer mismatch still errors.
+                                let int_widen = vt_ann != vt_rhs
+                                    && int_scalar_bits(&vt_ann).is_some()
+                                    && int_scalar_bits(&vt_rhs).is_some()
+                                    && !is_implicit_narrowing(&vt_ann, &vt_rhs);
+                                if vt_ann != vt_rhs && !int_widen {
                                     errs.push(diag_from_span(
                                         src,
                                         file,
