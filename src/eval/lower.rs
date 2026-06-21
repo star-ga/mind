@@ -436,6 +436,14 @@ fn node_mentions_type_name(node: &ast::Node, tp: &str) -> bool {
 }
 
 pub fn lower_to_ir(module: &ast::Module) -> IRModule {
+    // Pre-pass: rewrite statement-position collection mutations (`m.insert(k,v)`,
+    // `v.push(x)`) into assignments so the non-mutating std handle is rebound.
+    // A no-op (byte-identical) for any module with no collection-mutation
+    // statement — notably the keystone main.mind.
+    #[cfg(feature = "std-surface")]
+    let preprocessed = preprocess_collection_mutations(module);
+    #[cfg(feature = "std-surface")]
+    let module = preprocessed.as_ref().unwrap_or(module);
     let mut ir = IRModule::new();
     // Built-in Result/Option PRELUDE. MIND has no source-level prelude, but
     // Rust-style code expects `Result<T,E>` / `Option<T>` with bare `Ok`/`Err`/
@@ -1199,6 +1207,172 @@ fn lower_map_surface_lit(
         handle = next;
     }
     handle
+}
+
+/// Rewrite STATEMENT-position collection mutations into assignments so the
+/// non-mutating std handle is rebound. `m.insert(k,v)` / `v.push(x)` /
+/// `v.set(i,x)` as a bare statement (result discarded) → `m = m.insert(k,v)`.
+/// std.map's `map_insert` and (on realloc) std.vec's `vec_push` return a FRESH
+/// handle, so without the rebind the change is silently lost. Emitting a real
+/// `Node::Assign` — rather than rebinding the SSA env after lowering — keeps the
+/// existing loop-carried-SSA detection intact (the `while`/`for` lowering scans
+/// the body for `Node::Assign` to find loop-carried vars; an env-only rebind
+/// would be invisible to it). Only applied when the receiver is a local KNOWN to
+/// be a collection (`array<T>` / `map<K,V>` from its let/param annotation), so a
+/// non-collection `.insert`/`.push`/`.set` is untouched and the keystone (no
+/// collections) is byte-identical.
+#[cfg(feature = "std-surface")]
+fn rewrite_collection_mutations(
+    stmts: &mut [ast::Node],
+    collections: &std::collections::HashSet<String>,
+) {
+    let mut scope = collections.clone();
+    for stmt in stmts.iter_mut() {
+        // A `let x: array<T> | map<K,V>` introduces a new collection local.
+        if let ast::Node::Let { name, ann, .. } = stmt {
+            if is_array_surface_type(ann) || map_sentinel_for_opt(ann).is_some() {
+                scope.insert(name.clone());
+            }
+        }
+        // A bare `x.insert/push/set(args)` statement on a collection local →
+        // rebind: `x = x.insert/push/set(args)`.
+        let rebind_var: Option<String> = if let ast::Node::MethodCall {
+            receiver, method, ..
+        } = stmt
+        {
+            if matches!(method.as_str(), "insert" | "push" | "set") {
+                match receiver.as_ref() {
+                    ast::Node::Lit(Literal::Ident(v), _) if scope.contains(v) => Some(v.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(var) = rebind_var {
+            let sp = stmt.span();
+            let mc = std::mem::replace(stmt, ast::Node::Lit(Literal::Int(0), sp));
+            *stmt = ast::Node::Assign {
+                name: var,
+                value: Box::new(mc),
+                span: sp,
+            };
+            continue; // an Assign has no nested statement lists to recurse into
+        }
+        // Recurse into nested statement bodies, threading the collection scope.
+        match stmt {
+            ast::Node::For { body, .. }
+            | ast::Node::ForEach { body, .. }
+            | ast::Node::While { body, .. }
+            | ast::Node::Block { stmts: body, .. } => {
+                rewrite_collection_mutations(body, &scope);
+            }
+            ast::Node::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                rewrite_collection_mutations(then_branch, &scope);
+                if let Some(eb) = else_branch {
+                    rewrite_collection_mutations(eb, &scope);
+                }
+            }
+            ast::Node::Match { arms, .. } => {
+                for arm in arms.iter_mut() {
+                    if let ast::Node::Block { stmts: body, .. } = &mut arm.body {
+                        rewrite_collection_mutations(body, &scope);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Cheap bool pre-scan: does the module declare ANY `array<T>` / `map<K,V>`
+/// binding or parameter? If not, there is nothing to rewrite and the expensive
+/// module clone in [`preprocess_collection_mutations`] is skipped entirely. An
+/// allocation-free, early-exit walk — keeps the collection-free hot path (the
+/// keystone, the compile_small bench) at zero added cost.
+#[cfg(feature = "std-surface")]
+fn module_declares_collection(module: &ast::Module) -> bool {
+    fn ann_is_collection(ann: &Option<TypeAnn>) -> bool {
+        matches!(ann, Some(t) if is_array_surface_ty(t) || is_map_surface_ty(t))
+    }
+    fn walk(stmts: &[ast::Node]) -> bool {
+        for s in stmts {
+            match s {
+                ast::Node::Let { ann, .. } if ann_is_collection(ann) => return true,
+                ast::Node::FnDef { params, body, .. } => {
+                    if params
+                        .iter()
+                        .any(|p| is_array_surface_ty(&p.ty) || is_map_surface_ty(&p.ty))
+                    {
+                        return true;
+                    }
+                    if walk(body) {
+                        return true;
+                    }
+                }
+                ast::Node::For { body, .. }
+                | ast::Node::ForEach { body, .. }
+                | ast::Node::While { body, .. }
+                | ast::Node::Block { stmts: body, .. } => {
+                    if walk(body) {
+                        return true;
+                    }
+                }
+                ast::Node::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    if walk(then_branch) || else_branch.as_deref().is_some_and(walk) {
+                        return true;
+                    }
+                }
+                ast::Node::Match { arms, .. } => {
+                    for arm in arms {
+                        if let ast::Node::Block { stmts: body, .. } = &arm.body {
+                            if walk(body) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    walk(&module.items)
+}
+
+/// Apply [`rewrite_collection_mutations`] to every top-level function body,
+/// seeding each with its `array<T>` / `map<K,V>` parameters. Returns `Some` of a
+/// rewritten clone only when the module declares a collection; `None` (no clone)
+/// otherwise — so a collection-free module (e.g. the keystone main.mind, the
+/// compile_small bench fixture) pays only the cheap pre-scan, not a full clone.
+#[cfg(feature = "std-surface")]
+fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> {
+    if !module_declares_collection(module) {
+        return None;
+    }
+    let mut m = module.clone();
+    for item in m.items.iter_mut() {
+        if let ast::Node::FnDef { params, body, .. } = item {
+            let mut collections = std::collections::HashSet::new();
+            for p in params.iter() {
+                if is_array_surface_ty(&p.ty) || is_map_surface_ty(&p.ty) {
+                    collections.insert(p.name.clone());
+                }
+            }
+            rewrite_collection_mutations(body, &collections);
+        }
+    }
+    Some(m)
 }
 
 fn lower_expr(
