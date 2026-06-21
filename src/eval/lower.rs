@@ -2425,11 +2425,32 @@ fn lower_expr(
             // no new Instr/intrinsic/ABI is introduced.
             #[cfg(feature = "std-surface")]
             if !args.is_empty() {
-                if let Some(tag) = ir.enum_variant_tags.get(callee).copied() {
+                // Resolve the variant key: a qualified `Enum::V` callee matches
+                // directly; a BARE `V` (`Some(x)`, `Ok(v)`, `Err(e)`) is matched
+                // against any `Enum::V` in the registry so UNQUALIFIED
+                // constructors resolve (one global link unit). A bare name that
+                // collides across enums takes the first in deterministic BTreeMap
+                // order — distinct in practice (Ok/Err/Some/None).
+                let vkey: Option<String> = if ir.enum_variant_tags.contains_key(callee) {
+                    Some(callee.clone())
+                } else if !callee.contains("::") {
+                    ir.enum_variant_tags
+                        .keys()
+                        .find(|k| {
+                            k.rsplit_once("::")
+                                .map(|(_, v)| v == callee)
+                                .unwrap_or(false)
+                        })
+                        .cloned()
+                } else {
+                    None
+                };
+                if let Some(vkey) = vkey {
+                    let tag = ir.enum_variant_tags[&vkey];
                     // Lower every payload field in declaration order (mirrors the
                     // StructLit per-field lowering order), coercing a non-i64
                     // field (e.g. `f64`) to its raw bits so the i64 slot holds it.
-                    let field_types = ir.enum_payload_types.get(callee).cloned();
+                    let field_types = ir.enum_payload_types.get(&vkey).cloned();
                     let payloads: Vec<ValueId> = args
                         .iter()
                         .enumerate()
@@ -2439,9 +2460,10 @@ fn lower_expr(
                             lower_expr(&coerced, ir, env, struct_env, receiver_types)
                         })
                         .collect();
-                    // Record size = the enum's uniform `1 + max arity`; default
-                    // to `1 + this variant's arity` if (impossibly) unregistered.
-                    let enum_name = callee.rsplit_once("::").map(|(e, _)| e);
+                    // Record size = the enum's uniform `1 + max arity` (recovered
+                    // from the RESOLVED qualified key so a bare ctor is sized for
+                    // its whole enum, not just this variant's arity).
+                    let enum_name = vkey.rsplit_once("::").map(|(e, _)| e);
                     let total_slots = enum_name
                         .and_then(|e| ir.enum_payload_slots.get(e).copied())
                         .unwrap_or(1 + payloads.len());
@@ -3892,6 +3914,29 @@ fn desugar_match_to_if(
                     .collect();
                 ast::MatchArm {
                     pattern: ast::Pattern::EnumVariant { path: key, args },
+                    body: arm.body.clone(),
+                    span: arm.span,
+                }
+            }
+            // Resolve a BARE variant pattern (`Some(v)`, `Ok(e)`, `Err(e)`) to
+            // its qualified `Enum::V` so the tag compare below finds it — the
+            // pattern-side mirror of the bare-constructor resolution in the
+            // `Node::Call` arm. An unknown bare name is left as-is.
+            ast::Pattern::EnumVariant { path, args } if !path.contains("::") => {
+                let key = if enum_tags.contains_key(path) {
+                    path.clone()
+                } else {
+                    enum_tags
+                        .keys()
+                        .find(|k| k.rsplit_once("::").map(|(_, v)| v == path).unwrap_or(false))
+                        .cloned()
+                        .unwrap_or_else(|| path.clone())
+                };
+                ast::MatchArm {
+                    pattern: ast::Pattern::EnumVariant {
+                        path: key,
+                        args: args.clone(),
+                    },
                     body: arm.body.clone(),
                     span: arm.span,
                 }

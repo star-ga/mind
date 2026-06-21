@@ -143,9 +143,19 @@ pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
             | Node::Const { name, .. }
             | Node::Let { name, .. }
             | Node::StructDef { name, .. }
-            | Node::EnumDef { name, .. }
             | Node::TypeAlias { name, .. } => {
                 out.insert(name.clone());
+            }
+            Node::EnumDef { name, variants, .. } => {
+                // The enum name, plus each variant's BARE name so an UNQUALIFIED
+                // constructor or unit value (`Some(x)`, `None`, `Ok(v)`,
+                // `Err(e)`) resolves — not just the `Enum::Variant` form. MIND
+                // links all modules into one unit, so a bare variant name is
+                // resolvable; the exact tag/enum is recovered in lowering.
+                out.insert(name.clone());
+                for v in variants {
+                    out.insert(v.name.clone());
+                }
             }
             Node::ExternBlock { fns, .. } => {
                 for efn in fns {
