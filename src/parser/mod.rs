@@ -45,6 +45,15 @@ impl std::fmt::Display for ParseError {
 struct P<'a> {
     b: &'a [u8],
     pos: usize,
+    /// Module names brought into scope by `import X` / `use X` (the last path
+    /// segment). A method call whose receiver is one of these is a MODULE-
+    /// QUALIFIED call `mod.fn(args)` — desugared to the bare cross-module call
+    /// `fn(args)` (all module functions share one global link unit), not a UFCS
+    /// method on a value. Imports precede fn bodies, so the set is complete by
+    /// the time a body parses. A `Vec` (not a `HashSet`) avoids per-parse
+    /// `RandomState` hasher init — import lists are tiny, so linear `contains`
+    /// is faster and keeps `compile_small` at its nanosecond floor.
+    imports: Vec<String>,
 }
 
 /// Operator-token kind used by the Pratt expression parser
@@ -86,6 +95,7 @@ impl<'a> P<'a> {
         Self {
             b: src.as_bytes(),
             pos: 0,
+            imports: Vec::new(),
         }
     }
 
@@ -1178,6 +1188,13 @@ impl<'a> P<'a> {
         }
         self.skip_ws();
         self.eat(b';'); // optional semicolon
+        // Record the qualifier (last path segment) so a later `mod.fn(args)`
+        // call desugars to the bare cross-module `fn(args)`.
+        if let Some(last) = path.last() {
+            if !self.imports.iter().any(|s| s == last) {
+                self.imports.push(last.clone());
+            }
+        }
         let span = Span::new(start, self.pos);
         Ok(Node::Import { path, span })
     }
@@ -1199,6 +1216,11 @@ impl<'a> P<'a> {
         }
         self.skip_ws();
         self.eat(b';'); // optional semicolon
+        if let Some(last) = path.last() {
+            if !self.imports.iter().any(|s| s == last) {
+                self.imports.push(last.clone());
+            }
+        }
         let span = Span::new(start, self.pos);
         Ok(Node::Import { path, span })
     }
@@ -2750,6 +2772,25 @@ impl<'a> P<'a> {
                                 }
                             };
                             continue;
+                        }
+                        // Module-qualified call `mod.fn(args)` → bare cross-module
+                        // call `fn(args)`: when the receiver is a bare identifier
+                        // naming an imported MODULE, the `.fn(...)` is a namespace
+                        // access, not a UFCS method on a value. All module
+                        // functions share one global link unit, so the bare call
+                        // resolves (the import injects `fn`) and lowers directly.
+                        // A receiver that is NOT an imported module (a local
+                        // value, a field access like `p.lexer`) keeps the
+                        // MethodCall path untouched.
+                        if let Node::Lit(Literal::Ident(recv_name), _) = &node {
+                            if self.imports.iter().any(|s| s == recv_name) {
+                                node = Node::Call {
+                                    callee: method,
+                                    args,
+                                    span,
+                                };
+                                continue;
+                            }
                         }
                         node = Node::MethodCall {
                             receiver: Box::new(node),
