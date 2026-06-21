@@ -453,6 +453,78 @@ MIND_EXPORT int64_t map_insert(int64_t m, int64_t key, int64_t value) {
     return rec;
 }
 
+// map_get — first value whose key == `key` (i64 identity), or 0 if absent.
+// Linear scan over insertion order (deterministic). For STRING keys use
+// map_get_str: an i64 == on two String handles compares pointers, not contents.
+MIND_EXPORT int64_t map_get(int64_t m, int64_t key) {
+    int64_t keys = __mind_load_i64(m);
+    int64_t vals = __mind_load_i64(m + 8);
+    int64_t len  = __mind_load_i64(m + 16);
+    for (int64_t i = 0; i < len; i++) {
+        if (__mind_load_i64(keys + i * 8) == key) {
+            return __mind_load_i64(vals + i * 8);
+        }
+    }
+    return 0;
+}
+
+// map_contains_key — 1 if some key == `key` (i64 identity), else 0.
+MIND_EXPORT int64_t map_contains_key(int64_t m, int64_t key) {
+    int64_t keys = __mind_load_i64(m);
+    int64_t len  = __mind_load_i64(m + 16);
+    for (int64_t i = 0; i < len; i++) {
+        if (__mind_load_i64(keys + i * 8) == key) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// map_str_key_eq — byte-content equality of two String handles. A String is a
+// heap record {addr@0, len@8, cap@16} passed by handle, so the handle points at
+// that record. Reads len/addr directly and compares bytes — the correct
+// equality for string keys (distinct allocations of equal content must match).
+static int64_t map_str_key_eq(int64_t a, int64_t b) {
+    int64_t alen = __mind_load_i64(a + 8);
+    int64_t blen = __mind_load_i64(b + 8);
+    if (alen != blen) {
+        return 0;
+    }
+    int64_t aaddr = __mind_load_i64(a);
+    int64_t baddr = __mind_load_i64(b);
+    return memcmp((const void *)(uintptr_t)aaddr,
+                  (const void *)(uintptr_t)baddr,
+                  (size_t)alen) == 0
+               ? 1
+               : 0;
+}
+
+// map_get_str — value for the first key whose String CONTENTS equal `key`'s
+// (content equality, not handle identity), or 0 if absent. For map<string,_>.
+MIND_EXPORT int64_t map_get_str(int64_t m, int64_t key) {
+    int64_t keys = __mind_load_i64(m);
+    int64_t vals = __mind_load_i64(m + 8);
+    int64_t len  = __mind_load_i64(m + 16);
+    for (int64_t i = 0; i < len; i++) {
+        if (map_str_key_eq(__mind_load_i64(keys + i * 8), key)) {
+            return __mind_load_i64(vals + i * 8);
+        }
+    }
+    return 0;
+}
+
+// map_contains_key_str — 1 if some key's String CONTENTS equal `key`'s, else 0.
+MIND_EXPORT int64_t map_contains_key_str(int64_t m, int64_t key) {
+    int64_t keys = __mind_load_i64(m);
+    int64_t len  = __mind_load_i64(m + 16);
+    for (int64_t i = 0; i < len; i++) {
+        if (map_str_key_eq(__mind_load_i64(keys + i * 8), key)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // std.string surface — RFC 0005 Option C heap-record layout.
 //
