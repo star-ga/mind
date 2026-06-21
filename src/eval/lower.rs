@@ -704,6 +704,21 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 if let Some(s) = set_sentinel_for_opt(ann) {
                     struct_env.insert(name.clone(), s.to_string());
                 }
+                // `let x = f(...)` / `let x = s.field` — infer x's type from the
+                // RHS so a method on x resolves without an annotation (e.g.
+                // `let raw = decorator_arg_string(d); raw.split(…)`). Annotations
+                // (handled above) win via or_insert.
+                #[cfg(feature = "std-surface")]
+                if let Some((__s, __e)) =
+                    let_rhs_collection_track(value, &ir, &struct_env, receiver_types)
+                {
+                    struct_env.entry(name.clone()).or_insert(__s);
+                    if let Some(__el) = __e {
+                        struct_env
+                            .entry(format!("__elem__{}", name))
+                            .or_insert(__el);
+                    }
+                }
                 // `map<K, V>` binding: record the map sentinel (str-key vs i64-key)
                 // so `m.insert/.get/.contains_key/.len` resolve to std.map.
                 #[cfg(feature = "std-surface")]
@@ -1508,6 +1523,69 @@ fn foreach_element_sentinel(
         }
     }
     None
+}
+
+/// Infer the struct_env tracking for a `let x = <rhs>` from the RHS TYPE, so a
+/// method on `x` resolves: `let raw = decorator_arg_string(d)` (a string-returning
+/// call) → `x` is `String`; `let s = analyzed.flags` (a `set<T>` field) → the set
+/// sentinel; `let d = decorator_new(...)` (a struct-returning call) → the struct
+/// name. Returns `(sentinel, optional __elem__ element)` for an `array<T>` RHS so
+/// a later for-each over `x` recovers `T`. None for a scalar/unknown RHS.
+#[cfg(feature = "std-surface")]
+fn let_rhs_collection_track(
+    value: &ast::Node,
+    ir: &IRModule,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> Option<(String, Option<String>)> {
+    // A string method whose result is itself a string (`text.slice(..)`,
+    // `s.trim()`) or an `array<string>` (`s.split(..)`) — track the binding so a
+    // chained method on the result (`text.slice(0, n).byte_at(i)` via a let)
+    // resolves. Only fires when the receiver is statically known to be a string.
+    if let ast::Node::MethodCall {
+        receiver, method, ..
+    } = value
+    {
+        if receiver_is_string(receiver, ir, struct_env, receiver_types) {
+            return match method.as_str() {
+                "slice" | "substring" | "trim" | "trim_start" | "trim_end" | "to_lowercase"
+                | "to_uppercase" | "to_lower" | "to_upper" | "replace" | "concat" | "repeat" => {
+                    Some(("String".to_string(), None))
+                }
+                "split" | "split_whitespace" | "lines" => {
+                    Some(("vec".to_string(), Some("String".to_string())))
+                }
+                _ => None,
+            };
+        }
+        return None;
+    }
+    let ty: TypeAnn = match value {
+        ast::Node::Call { callee, .. } => {
+            crate::ir::with_global_enums(|g| g.fn_returns.get(callee).cloned())?
+        }
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            span,
+        } => {
+            let sname = receiver_types
+                .get(span)
+                .cloned()
+                .or_else(|| receiver_struct_type(base, ir, struct_env))?;
+            let idx = ir.struct_defs.get(&sname)?.iter().position(|f| f == field)?;
+            ir.struct_field_types.get(&sname)?.get(idx)?.clone()
+        }
+        _ => return None,
+    };
+    let sentinel = element_type_sentinel(&ty)?;
+    let elem = match &ty {
+        TypeAnn::Generic { name, args } if name == "array" => {
+            args.first().and_then(element_type_sentinel)
+        }
+        _ => None,
+    };
+    Some((sentinel, elem))
 }
 
 /// Rewrite STATEMENT-position collection mutations into assignments so the
@@ -2638,6 +2716,18 @@ fn lower_expr(
                         if let Some(s) = set_sentinel_for_opt(ann) {
                             fn_struct_env.insert(name.clone(), s.to_string());
                         }
+                        // RHS type inference (`let raw = f(...); raw.split(…)`).
+                        #[cfg(feature = "std-surface")]
+                        if let Some((__s, __e)) =
+                            let_rhs_collection_track(value, &fn_ir, &fn_struct_env, receiver_types)
+                        {
+                            fn_struct_env.entry(name.clone()).or_insert(__s);
+                            if let Some(__el) = __e {
+                                fn_struct_env
+                                    .entry(format!("__elem__{}", name))
+                                    .or_insert(__el);
+                            }
+                        }
                     }
                     ast::Node::LetTuple { names, value, .. } => {
                         // Tuple-destructuring `let (a, b) = expr` in a fn body:
@@ -2827,6 +2917,18 @@ fn lower_expr(
                     if let Some(s) = map_sentinel_for_opt(ann) {
                         local_struct_env.insert(name.clone(), s.to_string());
                     }
+                    // RHS type inference (`let raw = f(...); raw.split(…)`).
+                    #[cfg(feature = "std-surface")]
+                    if let Some((__s, __e)) =
+                        let_rhs_collection_track(value, ir, &local_struct_env, receiver_types)
+                    {
+                        local_struct_env.entry(name.clone()).or_insert(__s);
+                        if let Some(__el) = __e {
+                            local_struct_env
+                                .entry(format!("__elem__{}", name))
+                                .or_insert(__el);
+                        }
+                    }
                     last_id = Some(id);
                 } else if let ast::Node::LetTuple { names, value, .. } = stmt {
                     // Tuple-destructuring `let (a, b) = expr` inside a block: lower
@@ -2928,13 +3030,21 @@ fn lower_expr(
                     writes.push(name.to_owned());
                 }
             };
+            // Branch-local struct-type env so a collection/string `let` inside the
+            // then-branch is tracked for later methods in the same branch
+            // (`let raw = f(); for p in raw.split(…)`). Outer `struct_env` is
+            // shared-immutable.
+            #[cfg(feature = "std-surface")]
+            let mut then_struct_env = struct_env.clone();
+            #[cfg(not(feature = "std-surface"))]
+            let then_struct_env = struct_env;
             let mut then_result = then_ir.fresh();
             then_ir.instrs.push(Instr::ConstI64(then_result, 0));
             for stmt in then_branch {
                 match stmt {
                     ast::Node::Return { value, .. } => {
                         let ret_val = value.as_ref().map(|v| {
-                            lower_expr(v, &mut then_ir, &then_env, struct_env, receiver_types)
+                            lower_expr(v, &mut then_ir, &then_env, &then_struct_env, receiver_types)
                         });
                         then_ir.instrs.push(Instr::Return { value: ret_val });
                         if let Some(rv) = ret_val {
@@ -2952,31 +3062,71 @@ fn lower_expr(
                                 dtype,
                                 dims,
                                 &then_env,
-                                struct_env,
+                                &then_struct_env,
                                 receiver_types,
                             ),
                             _ => lower_expr(
                                 value,
                                 &mut then_ir,
                                 &then_env,
-                                struct_env,
+                                &then_struct_env,
                                 receiver_types,
                             ),
                         };
                         then_env.insert(name.clone(), id);
+                        #[cfg(feature = "std-surface")]
+                        {
+                            let _ = ann;
+                            if is_array_surface_type(ann) {
+                                then_struct_env
+                                    .insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                            }
+                            if let Some(s) = map_sentinel_for_opt(ann) {
+                                then_struct_env.insert(name.clone(), s.to_string());
+                            }
+                            if let Some(s) = set_sentinel_for_opt(ann) {
+                                then_struct_env.insert(name.clone(), s.to_string());
+                            }
+                            if let Some((__s, __e)) = let_rhs_collection_track(
+                                value,
+                                &then_ir,
+                                &then_struct_env,
+                                receiver_types,
+                            ) {
+                                then_struct_env.entry(name.clone()).or_insert(__s);
+                                if let Some(__el) = __e {
+                                    then_struct_env
+                                        .entry(format!("__elem__{}", name))
+                                        .or_insert(__el);
+                                }
+                            }
+                        }
                         record_then_write(name, &mut then_writes);
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
                         let id =
-                            lower_expr(value, &mut then_ir, &then_env, struct_env, receiver_types);
+                            lower_expr(value, &mut then_ir, &then_env, &then_struct_env, receiver_types);
                         then_env.insert(name.clone(), id);
                         record_then_write(name, &mut then_writes);
                         then_result = id;
                     }
+                    ast::Node::LetTuple { names, value, .. } => {
+                        then_result = lower_lettuple_stmt(
+                            names,
+                            value,
+                            &mut then_ir,
+                            &mut then_env,
+                            struct_env,
+                            receiver_types,
+                        );
+                        for nm in names {
+                            record_then_write(nm, &mut then_writes);
+                        }
+                    }
                     other => {
                         then_result =
-                            lower_expr(other, &mut then_ir, &then_env, struct_env, receiver_types);
+                            lower_expr(other, &mut then_ir, &then_env, &then_struct_env, receiver_types);
                         // F2: thread a nested region's EXIT/merge ids upward so
                         // an outer var mutated inside it is visible (and
                         // dominating) at this branch's exit.
@@ -2998,6 +3148,10 @@ fn lower_expr(
                     writes.push(name.to_owned());
                 }
             };
+            #[cfg(feature = "std-surface")]
+            let mut else_struct_env = struct_env.clone();
+            #[cfg(not(feature = "std-surface"))]
+            let else_struct_env = struct_env;
             let mut else_result = else_ir.fresh();
             else_ir.instrs.push(Instr::ConstI64(else_result, 0));
             if let Some(else_stmts) = else_branch {
@@ -3005,7 +3159,7 @@ fn lower_expr(
                     match stmt {
                         ast::Node::Return { value, .. } => {
                             let ret_val = value.as_ref().map(|v| {
-                                lower_expr(v, &mut else_ir, &else_env, struct_env, receiver_types)
+                                lower_expr(v, &mut else_ir, &else_env, &else_struct_env, receiver_types)
                             });
                             else_ir.instrs.push(Instr::Return { value: ret_val });
                             if let Some(rv) = ret_val {
@@ -3024,7 +3178,7 @@ fn lower_expr(
                                         dtype,
                                         dims,
                                         &else_env,
-                                        struct_env,
+                                        &else_struct_env,
                                         receiver_types,
                                     )
                                 }
@@ -3032,11 +3186,38 @@ fn lower_expr(
                                     value,
                                     &mut else_ir,
                                     &else_env,
-                                    struct_env,
+                                    &else_struct_env,
                                     receiver_types,
                                 ),
                             };
                             else_env.insert(name.clone(), id);
+                            #[cfg(feature = "std-surface")]
+                            {
+                                let _ = ann;
+                                if is_array_surface_type(ann) {
+                                    else_struct_env
+                                        .insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                                }
+                                if let Some(s) = map_sentinel_for_opt(ann) {
+                                    else_struct_env.insert(name.clone(), s.to_string());
+                                }
+                                if let Some(s) = set_sentinel_for_opt(ann) {
+                                    else_struct_env.insert(name.clone(), s.to_string());
+                                }
+                                if let Some((__s, __e)) = let_rhs_collection_track(
+                                    value,
+                                    &else_ir,
+                                    &else_struct_env,
+                                    receiver_types,
+                                ) {
+                                    else_struct_env.entry(name.clone()).or_insert(__s);
+                                    if let Some(__el) = __e {
+                                        else_struct_env
+                                            .entry(format!("__elem__{}", name))
+                                            .or_insert(__el);
+                                    }
+                                }
+                            }
                             record_else_write(name, &mut else_writes);
                             else_result = id;
                         }
@@ -3045,19 +3226,32 @@ fn lower_expr(
                                 value,
                                 &mut else_ir,
                                 &else_env,
-                                struct_env,
+                                &else_struct_env,
                                 receiver_types,
                             );
                             else_env.insert(name.clone(), id);
                             record_else_write(name, &mut else_writes);
                             else_result = id;
                         }
+                        ast::Node::LetTuple { names, value, .. } => {
+                            else_result = lower_lettuple_stmt(
+                                names,
+                                value,
+                                &mut else_ir,
+                                &mut else_env,
+                                struct_env,
+                                receiver_types,
+                            );
+                            for nm in names {
+                                record_else_write(nm, &mut else_writes);
+                            }
+                        }
                         other => {
                             else_result = lower_expr(
                                 other,
                                 &mut else_ir,
                                 &else_env,
-                                struct_env,
+                                &else_struct_env,
                                 receiver_types,
                             );
                             for (nm, eid) in last_region_exit_rebindings(&else_ir.instrs) {
@@ -3499,27 +3693,85 @@ fn lower_expr(
                 }
             }
 
+            // The loop body gets its OWN mutable struct-type env clone so a
+            // collection/string-typed `let` inside the body is tracked for later
+            // methods in the same body (`let raw = f(); for p in raw.split(…)`).
+            // The outer `struct_env` is shared-immutable, so without this a
+            // loop-body let's type was lost.
+            #[cfg(feature = "std-surface")]
+            let mut body_struct_env = struct_env.clone();
+            #[cfg(not(feature = "std-surface"))]
+            let body_struct_env = struct_env;
             for stmt in body {
                 match stmt {
-                    ast::Node::Let { name, value, .. } => {
+                    ast::Node::Let {
+                        name, ann, value, ..
+                    } => {
                         // `let` inside the loop body introduces a new SSA binding
                         // scoped to the body.  Emit the RHS and update body_env so
                         // subsequent body statements can reference the binding.
                         // These are NOT live_vars (they don't survive across the
                         // back-edge) unless a later Assign overwrites them.
-                        let new_id =
-                            lower_expr(value, &mut body_ir, &body_env, struct_env, receiver_types);
+                        let new_id = lower_expr(
+                            value,
+                            &mut body_ir,
+                            &body_env,
+                            &body_struct_env,
+                            receiver_types,
+                        );
                         body_env.insert(name.clone(), new_id);
+                        #[cfg(feature = "std-surface")]
+                        {
+                            let _ = ann;
+                            if is_array_surface_type(ann) {
+                                body_struct_env
+                                    .insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                            }
+                            if let Some(s) = map_sentinel_for_opt(ann) {
+                                body_struct_env.insert(name.clone(), s.to_string());
+                            }
+                            if let Some(s) = set_sentinel_for_opt(ann) {
+                                body_struct_env.insert(name.clone(), s.to_string());
+                            }
+                            if let Some((__s, __e)) = let_rhs_collection_track(
+                                value,
+                                &body_ir,
+                                &body_struct_env,
+                                receiver_types,
+                            ) {
+                                body_struct_env.entry(name.clone()).or_insert(__s);
+                                if let Some(__el) = __e {
+                                    body_struct_env
+                                        .entry(format!("__elem__{}", name))
+                                        .or_insert(__el);
+                                }
+                            }
+                        }
                     }
                     ast::Node::Assign { name, value, .. } => {
                         let pre_init = body_env.get(name.as_str()).copied();
-                        let new_id =
-                            lower_expr(value, &mut body_ir, &body_env, struct_env, receiver_types);
+                        let new_id = lower_expr(
+                            value,
+                            &mut body_ir,
+                            &body_env,
+                            &body_struct_env,
+                            receiver_types,
+                        );
                         body_env.insert(name.clone(), new_id);
                         record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
                     }
+                    ast::Node::LetTuple { names, value, .. } => {
+                        lower_lettuple_stmt(
+                            names,
+                            value,
+                            &mut body_ir,
+                            &mut body_env,
+                            struct_env,
+                            receiver_types,
+                        );
+                    }
                     other => {
-                        lower_expr(other, &mut body_ir, &body_env, struct_env, receiver_types);
+                        lower_expr(other, &mut body_ir, &body_env, &body_struct_env, receiver_types);
                         // F2: a nested region (if/while) inside the loop body may
                         // mutate an OUTER (loop-carried) variable. Thread the
                         // nested region's EXIT/merge id into body_env AND record
@@ -5105,6 +5357,27 @@ fn desugar_match_to_if(
                     span: arm.span,
                 }
             }
+            // A fieldless enum variant written with DOT notation
+            // (`MindTypeKind.Scalar`) parses as a bare `Ident` pattern (no `::`,
+            // no args). Resolve it to its `Enum::Variant` form when the dotted
+            // path is a known tag so it becomes a discriminant TEST arm rather
+            // than being misread as a catch-all binding. A plain ident that is
+            // NOT a known variant (a real binding/catch-all) is left untouched.
+            ast::Pattern::Ident(name) if name.contains('.') => {
+                let dotted = name.replacen('.', "::", 1);
+                if enum_tags.contains_key(&dotted) {
+                    ast::MatchArm {
+                        pattern: ast::Pattern::EnumVariant {
+                            path: dotted,
+                            args: Vec::new(),
+                        },
+                        body: arm.body.clone(),
+                        span: arm.span,
+                    }
+                } else {
+                    arm.clone()
+                }
+            }
             _ => arm.clone(),
         };
         arms_owned.push(converted);
@@ -5252,35 +5525,91 @@ fn desugar_match_to_if(
         // the emit path (never a silent sequential miscompile).
         let then_branch: Vec<ast::Node> = match &arm.pattern {
             ast::Pattern::EnumVariant { path, args } if !args.is_empty() => {
-                if !args
-                    .iter()
-                    .all(|p| matches!(p, ast::Pattern::Ident(_) | ast::Pattern::Wildcard))
-                {
+                // Each payload sub-pattern must be an `Ident`, a `Wildcard`, or a
+                // single-level `Tuple` of Idents/Wildcards (`Ok((a, b))`). A
+                // nested struct/literal/deeper-tuple sub-pattern bails the whole
+                // match to `None` (loud fail-closed downstream), never a silent
+                // sequential miscompile.
+                let sub_ok = |p: &ast::Pattern| {
+                    matches!(p, ast::Pattern::Ident(_) | ast::Pattern::Wildcard)
+                        || matches!(p, ast::Pattern::Tuple(inner)
+                            if inner.iter().all(|q| matches!(q,
+                                ast::Pattern::Ident(_) | ast::Pattern::Wildcard)))
+                };
+                if !args.iter().all(sub_ok) {
                     return None;
                 }
                 let field_types = payload_types.get(path);
                 let mut stmts = Vec::new();
                 for (i, sub) in args.iter().enumerate() {
-                    if let ast::Pattern::Ident(name) = sub {
-                        // field_addr = scrutinee + 8*(i+1)
-                        let offset = ast::Node::Lit(Literal::Int(((i + 1) * 8) as i64), span);
-                        let field_addr = ast::Node::Binary {
-                            op: ast::BinOp::Add,
-                            left: Box::new(scrutinee.clone()),
-                            right: Box::new(offset),
-                            span,
-                        };
-                        // Reinterpret the i64 slot back to the field's declared
-                        // type (e.g. `f64`) so the binding has the right type.
-                        let ty = field_types.and_then(|ts| ts.get(i));
-                        let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
-                        stmts.push(ast::Node::Let {
-                            name: name.clone(),
-                            mutable: false,
-                            ann: None,
-                            value: Box::new(value),
-                            span,
-                        });
+                    // field_addr = scrutinee + 8*(i+1)
+                    let offset = ast::Node::Lit(Literal::Int(((i + 1) * 8) as i64), span);
+                    let field_addr = ast::Node::Binary {
+                        op: ast::BinOp::Add,
+                        left: Box::new(scrutinee.clone()),
+                        right: Box::new(offset),
+                        span,
+                    };
+                    match sub {
+                        ast::Pattern::Ident(name) => {
+                            // Reinterpret the i64 slot back to the field's declared
+                            // type (e.g. `f64`) so the binding has the right type.
+                            let ty = field_types.and_then(|ts| ts.get(i));
+                            let value =
+                                coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
+                            stmts.push(ast::Node::Let {
+                                name: name.clone(),
+                                mutable: false,
+                                ann: None,
+                                value: Box::new(value),
+                                span,
+                            });
+                        }
+                        // `Ok((a, b))` — the payload slot holds a handle to a
+                        // tuple aggregate ([elem@+0, elem@+8, …], all-i64). Bind
+                        // the handle to a hidden let, then load each element. The
+                        // hidden name is span+index-unique so sibling arms/nested
+                        // matches never collide.
+                        ast::Pattern::Tuple(inner) => {
+                            let tp_name =
+                                format!("__mind_tp_{}_{}", span.start(), i);
+                            stmts.push(ast::Node::Let {
+                                name: tp_name.clone(),
+                                mutable: false,
+                                ann: None,
+                                value: Box::new(load_i64(field_addr)),
+                                span,
+                            });
+                            for (j, inner_p) in inner.iter().enumerate() {
+                                if let ast::Pattern::Ident(name) = inner_p {
+                                    let base = ast::Node::Lit(
+                                        Literal::Ident(tp_name.clone()),
+                                        span,
+                                    );
+                                    let elem_addr = if j == 0 {
+                                        base
+                                    } else {
+                                        ast::Node::Binary {
+                                            op: ast::BinOp::Add,
+                                            left: Box::new(base),
+                                            right: Box::new(ast::Node::Lit(
+                                                Literal::Int((j * 8) as i64),
+                                                span,
+                                            )),
+                                            span,
+                                        }
+                                    };
+                                    stmts.push(ast::Node::Let {
+                                        name: name.clone(),
+                                        mutable: false,
+                                        ann: None,
+                                        value: Box::new(load_i64(elem_addr)),
+                                        span,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 stmts.extend(flatten_body(arm.body.clone()));
@@ -5391,6 +5720,49 @@ fn lower_stmt_seq(
         last_id = Some(id);
     }
     last_id
+}
+
+/// Lower a tuple-destructuring `let (a, b, …) = expr` as a *statement* into a
+/// mutable env: lower the RHS to the tuple base pointer, then bind each name to
+/// `__mind_load_i64(addr + 8*i)` (all-i64, 8-byte slots — the read side of the
+/// `Node::Tuple` aggregate). Used by the if-then/else and while-body block loops
+/// where statements are otherwise routed through value-position `lower_expr`,
+/// which cannot mutate the caller's binding env.
+fn lower_lettuple_stmt(
+    names: &[String],
+    value: &ast::Node,
+    ir: &mut IRModule,
+    env: &mut HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    let addr = lower_expr(value, ir, env, struct_env, receiver_types);
+    let mut last = addr;
+    for (i, nm) in names.iter().enumerate() {
+        let elem_addr = if i == 0 {
+            addr
+        } else {
+            let offset = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(offset, (i as i64) * 8));
+            let sum = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: sum,
+                op: BinOp::Add,
+                lhs: addr,
+                rhs: offset,
+            });
+            sum
+        };
+        let loaded = ir.fresh();
+        ir.instrs.push(Instr::Call {
+            dst: loaded,
+            name: "__mind_load_i64".to_string(),
+            args: vec![elem_addr],
+        });
+        env.insert(nm.clone(), loaded);
+        last = loaded;
+    }
+    last
 }
 
 /// Extract a compile-time i64 value from a literal expression node.
