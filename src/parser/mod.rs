@@ -876,6 +876,24 @@ impl<'a> P<'a> {
             // Keeps the common case bit-identical to the pre-Phase-10.6
             // hot loop.
             if self.pos >= self.b.len() || (self.b[self.pos] != b'.' && self.b[self.pos] != b'<') {
+                // `Name[N]` — a fixed-size buffer type (e.g. `bytes[32]`,
+                // `bytes[8]` for hashes), the size suffixing the name. Consume the
+                // `[N]` and keep the opaque Named handle (i64 ABI); N is only
+                // material at the `Name[N].zero()` value constructor (which
+                // recovers it from the IndexAccess). Distinct from `[T; N]` (a
+                // const array, parsed from a LEADING `[`).
+                if self.pos < self.b.len() && self.b[self.pos] == b'[' {
+                    let save = self.pos;
+                    self.pos += 1;
+                    self.skip_ws();
+                    if self.digits().is_some() {
+                        self.skip_ws();
+                        if self.eat(b']') {
+                            return Ok(TypeAnn::Named(first.to_string()));
+                        }
+                    }
+                    self.pos = save; // not `[N]` — leave the `[` for the caller
+                }
                 return Ok(TypeAnn::Named(first.to_string()));
             }
             // Path accumulation: `a.b.c` becomes a single Named("a.b.c").
@@ -922,6 +940,23 @@ impl<'a> P<'a> {
                     return Err(self.err("expected `>` to close generic type arguments".into()));
                 }
                 return Ok(TypeAnn::Generic { name, args });
+            }
+            // `Name[N]` — a fixed-size buffer type (e.g. `bytes[32]`, `bytes[8]`
+            // for hashes), the size suffixing the name. Treated as the opaque
+            // Named handle (i64 ABI); N is only material at the `Name[N].zero()`
+            // value constructor, which recovers it from the IndexAccess. Distinct
+            // from `[T; N]` (a const array, parsed from a LEADING `[`).
+            if self.pos < self.b.len() && self.b[self.pos] == b'[' {
+                let save = self.pos;
+                self.pos += 1;
+                self.skip_ws();
+                if self.digits().is_some() {
+                    self.skip_ws();
+                    if self.eat(b']') {
+                        return Ok(TypeAnn::Named(name));
+                    }
+                }
+                self.pos = save; // not `[N]` — leave the `[` for the caller
             }
             return Ok(TypeAnn::Named(name));
         }
