@@ -495,6 +495,15 @@ pub enum Node {
         body: Vec<Node>,
         span: Span,
     },
+    /// For-each loop: `for x in collection { body }` over an `array<T>` (a
+    /// std.vec handle). Lowers to an indexed `while` over `vec_len` / `vec_get`,
+    /// flat-desugared (no nested Block) so loop-carried SSA is preserved.
+    ForEach {
+        var: String,
+        collection: Box<Node>,
+        body: Vec<Node>,
+        span: Span,
+    },
     /// While loop: `while cond { body }` (RFC 0005 Gap 1).
     ///
     /// Lowers to a header-block + body-block basic-block loop in MLIR with
@@ -841,6 +850,7 @@ impl Node {
             | Node::Import { span, .. }
             | Node::ArrayLit { span, .. }
             | Node::For { span, .. }
+            | Node::ForEach { span, .. }
             | Node::Print { span, .. }
             | Node::Neg { span, .. }
             | Node::Not { span, .. }

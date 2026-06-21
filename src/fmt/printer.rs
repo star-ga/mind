@@ -387,6 +387,14 @@ fn emit_node(p: &mut Printer, node: &Node, _extra_indent: usize) {
         } => {
             emit_for(p, var, start, end, body, *span);
         }
+        Node::ForEach {
+            var,
+            collection,
+            body,
+            span,
+        } => {
+            emit_foreach(p, var, collection, body, *span);
+        }
         #[cfg(feature = "std-surface")]
         Node::While { cond, body, span } => {
             emit_while(p, cond, body, *span);
@@ -673,6 +681,17 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
                 let ind = p.indent_str();
                 p.push(&ind);
                 emit_for_inline(p, var, start, end, body, *span);
+                p.push("\n");
+            }
+            Node::ForEach {
+                var,
+                collection,
+                body,
+                span,
+            } => {
+                let ind = p.indent_str();
+                p.push(&ind);
+                emit_foreach_inline(p, var, collection, body, *span);
                 p.push("\n");
             }
             #[cfg(feature = "std-surface")]
@@ -1016,6 +1035,27 @@ fn emit_for_inline(
     emit_expr(p, start);
     p.push("..");
     emit_expr(p, end);
+    p.push(" {\n");
+    p.indent += 1;
+    let close_line = p.stripped_idx.line_of(span.end());
+    emit_body_stmts(p, body, close_line);
+    p.indent -= 1;
+    let ind = p.indent_str();
+    p.push(&ind);
+    p.push("}");
+}
+
+fn emit_foreach(p: &mut Printer, var: &str, collection: &Node, body: &[Node], span: Span) {
+    let ind = p.indent_str();
+    p.push(&ind);
+    emit_foreach_inline(p, var, collection, body, span);
+}
+
+fn emit_foreach_inline(p: &mut Printer, var: &str, collection: &Node, body: &[Node], span: Span) {
+    p.push("for ");
+    p.push(var);
+    p.push(" in ");
+    emit_expr(p, collection);
     p.push(" {\n");
     p.indent += 1;
     let close_line = p.stripped_idx.line_of(span.end());
@@ -1532,6 +1572,14 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             span,
         } => {
             emit_for_inline(p, var, start, end, body, *span);
+        }
+        Node::ForEach {
+            var,
+            collection,
+            body,
+            span,
+        } => {
+            emit_foreach_inline(p, var, collection, body, *span);
         }
         #[cfg(feature = "std-surface")]
         Node::While { cond, body, span } => {
