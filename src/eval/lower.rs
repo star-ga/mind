@@ -683,6 +683,12 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 if is_array_surface_type(ann) {
                     struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
                 }
+                // `set<T>` binding: record the set sentinel so `.contains/.add/.len`
+                // resolve to the std.map runtime.
+                #[cfg(feature = "std-surface")]
+                if let Some(s) = set_sentinel_for_opt(ann) {
+                    struct_env.insert(name.clone(), s.to_string());
+                }
                 // `map<K, V>` binding: record the map sentinel (str-key vs i64-key)
                 // so `m.insert/.get/.contains_key/.len` resolve to std.map.
                 #[cfg(feature = "std-surface")]
@@ -1209,6 +1215,79 @@ fn lower_map_surface_lit(
     handle
 }
 
+// `set<T>` is a map keyed by its elements (value 1). Two sentinels mirror the
+// map ones for the element-type comparison: `SET_SENTINEL` (i64 identity) and
+// `SET_STR_SENTINEL` (String content equality). The MethodCall arm routes
+// `.contains`→map_contains_key(_str), `.add`/`.insert`→map_insert(recv, x, 1),
+// `.len`→map_len.
+#[cfg(feature = "std-surface")]
+const SET_SENTINEL: &str = "set";
+#[cfg(feature = "std-surface")]
+const SET_STR_SENTINEL: &str = "setstr";
+
+/// True when `ann` is the `set<T>` surface type.
+#[cfg(feature = "std-surface")]
+fn is_set_surface_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Generic { name, .. } if name == "set")
+}
+
+/// The sentinel for a `set<T>`-typed binding: `SET_STR_SENTINEL` when the
+/// element type `T` is `string`, else `SET_SENTINEL`.
+#[cfg(feature = "std-surface")]
+fn set_sentinel_for(ty: &TypeAnn) -> &'static str {
+    let elem_is_string = matches!(
+        ty,
+        TypeAnn::Generic { name, args } if name == "set"
+            && matches!(args.first(), Some(TypeAnn::Named(n)) if n == "string")
+    );
+    if elem_is_string {
+        SET_STR_SENTINEL
+    } else {
+        SET_SENTINEL
+    }
+}
+
+/// `Option<TypeAnn>` form for let-binding annotations.
+#[cfg(feature = "std-surface")]
+fn set_sentinel_for_opt(ann: &Option<TypeAnn>) -> Option<&'static str> {
+    match ann {
+        Some(t) if is_set_surface_ty(t) => Some(set_sentinel_for(t)),
+        _ => None,
+    }
+}
+
+/// Lower a set literal `{ a, b, c }` onto the std.map runtime: `map_new()` then
+/// a `map_insert(m, elem, 1)` chain (the value is the unit sentinel 1). Returns
+/// the SSA id holding the final handle.
+#[cfg(feature = "std-surface")]
+fn lower_set_surface_lit(
+    elements: &[ast::Node],
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    let mut handle = ir.fresh();
+    ir.instrs.push(Instr::Call {
+        dst: handle,
+        name: "map_new".to_string(),
+        args: vec![],
+    });
+    for elem in elements {
+        let k = lower_expr(elem, ir, env, struct_env, receiver_types);
+        let one = ir.fresh();
+        ir.instrs.push(Instr::ConstI64(one, 1));
+        let next = ir.fresh();
+        ir.instrs.push(Instr::Call {
+            dst: next,
+            name: "map_insert".to_string(),
+            args: vec![handle, k, one],
+        });
+        handle = next;
+    }
+    handle
+}
+
 /// Rewrite STATEMENT-position collection mutations into assignments so the
 /// non-mutating std handle is rebound. `m.insert(k,v)` / `v.push(x)` /
 /// `v.set(i,x)` as a bare statement (result discarded) → `m = m.insert(k,v)`.
@@ -1230,7 +1309,10 @@ fn rewrite_collection_mutations(
     for stmt in stmts.iter_mut() {
         // A `let x: array<T> | map<K,V>` introduces a new collection local.
         if let ast::Node::Let { name, ann, .. } = stmt {
-            if is_array_surface_type(ann) || map_sentinel_for_opt(ann).is_some() {
+            if is_array_surface_type(ann)
+                || map_sentinel_for_opt(ann).is_some()
+                || set_sentinel_for_opt(ann).is_some()
+            {
                 scope.insert(name.clone());
             }
         }
@@ -1240,7 +1322,7 @@ fn rewrite_collection_mutations(
             receiver, method, ..
         } = stmt
         {
-            if matches!(method.as_str(), "insert" | "push" | "set") {
+            if matches!(method.as_str(), "insert" | "push" | "set" | "add") {
                 match receiver.as_ref() {
                     ast::Node::Lit(Literal::Ident(v), _) if scope.contains(v) => Some(v.clone()),
                     _ => None,
@@ -1299,17 +1381,18 @@ fn rewrite_collection_mutations(
 #[cfg(feature = "std-surface")]
 fn module_declares_collection(module: &ast::Module) -> bool {
     fn ann_is_collection(ann: &Option<TypeAnn>) -> bool {
-        matches!(ann, Some(t) if is_array_surface_ty(t) || is_map_surface_ty(t))
+        matches!(ann, Some(t) if is_array_surface_ty(t) || is_map_surface_ty(t) || is_set_surface_ty(t))
     }
     fn walk(stmts: &[ast::Node]) -> bool {
         for s in stmts {
             match s {
                 ast::Node::Let { ann, .. } if ann_is_collection(ann) => return true,
                 ast::Node::FnDef { params, body, .. } => {
-                    if params
-                        .iter()
-                        .any(|p| is_array_surface_ty(&p.ty) || is_map_surface_ty(&p.ty))
-                    {
+                    if params.iter().any(|p| {
+                        is_array_surface_ty(&p.ty)
+                            || is_map_surface_ty(&p.ty)
+                            || is_set_surface_ty(&p.ty)
+                    }) {
                         return true;
                     }
                     if walk(body) {
@@ -1365,7 +1448,10 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
         if let ast::Node::FnDef { params, body, .. } = item {
             let mut collections = std::collections::HashSet::new();
             for p in params.iter() {
-                if is_array_surface_ty(&p.ty) || is_map_surface_ty(&p.ty) {
+                if is_array_surface_ty(&p.ty)
+                    || is_map_surface_ty(&p.ty)
+                    || is_set_surface_ty(&p.ty)
+                {
                     collections.insert(p.name.clone());
                 }
             }
@@ -2195,6 +2281,12 @@ fn lower_expr(
                     fn_struct_env
                         .insert(param.name.clone(), map_sentinel_for(&param.ty).to_string());
                 }
+                // `set<T>` param → set sentinel.
+                #[cfg(feature = "std-surface")]
+                if is_set_surface_ty(&param.ty) {
+                    fn_struct_env
+                        .insert(param.name.clone(), set_sentinel_for(&param.ty).to_string());
+                }
             }
 
             // Part 1 (generics): expose this fn's params as inferable concrete
@@ -2301,6 +2393,10 @@ fn lower_expr(
                         }
                         #[cfg(feature = "std-surface")]
                         if let Some(s) = map_sentinel_for_opt(ann) {
+                            fn_struct_env.insert(name.clone(), s.to_string());
+                        }
+                        #[cfg(feature = "std-surface")]
+                        if let Some(s) = set_sentinel_for_opt(ann) {
                             fn_struct_env.insert(name.clone(), s.to_string());
                         }
                     }
@@ -2480,6 +2576,10 @@ fn lower_expr(
                     #[cfg(feature = "std-surface")]
                     if is_array_surface_type(ann) {
                         local_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                    }
+                    #[cfg(feature = "std-surface")]
+                    if let Some(s) = set_sentinel_for_opt(ann) {
+                        local_struct_env.insert(name.clone(), s.to_string());
                     }
                     #[cfg(feature = "std-surface")]
                     if let Some(s) = map_sentinel_for_opt(ann) {
@@ -3481,6 +3581,7 @@ fn lower_expr(
                     let len_fn = match struct_env.get(var_name).map(|s| s.as_str()) {
                         Some(ARRAY_VEC_SENTINEL) => Some("vec_len"),
                         Some(MAP_SENTINEL) | Some(MAP_STR_SENTINEL) => Some("map_len"),
+                        Some(SET_SENTINEL) | Some(SET_STR_SENTINEL) => Some("map_len"),
                         _ => None,
                     };
                     if let Some(len_fn) = len_fn {
@@ -3742,6 +3843,13 @@ fn lower_expr(
         #[cfg(feature = "std-surface")]
         ast::Node::MapLit { entries, .. } => {
             lower_map_surface_lit(entries, ir, env, struct_env, receiver_types)
+        }
+        // Set literal `{ a, b, c }` → std.map runtime (map_new + map_insert(_,_,1)
+        // chain — a set is a map keyed by its elements). main.mind has no set
+        // literal, so the keystone is unaffected.
+        #[cfg(feature = "std-surface")]
+        ast::Node::SetLit { elements, .. } => {
+            lower_set_surface_lit(elements, ir, env, struct_env, receiver_types)
         }
         // RFC 0005 Phase 6.2b Gap 2 — `receiver[index]`.  When the receiver
         // resolves to a ConstArray base address, this emits `ArrayLoad`.
@@ -4040,6 +4148,56 @@ fn lower_expr(
                             args: call_args,
                         });
                         return dst;
+                    }
+                }
+            }
+            // `set<T>` methods on a set-sentinel receiver → std.map runtime (a set
+            // is a map keyed by its elements). `.contains`/`.has` → map_contains_key
+            // (_str for string elements); `.add`/`.insert` → map_insert(recv, x, 1)
+            // (the unit value is synthesized); `.len` → map_len.
+            #[cfg(feature = "std-surface")]
+            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
+                let sentinel = struct_env.get(var_name).map(|s| s.as_str());
+                if sentinel == Some(SET_SENTINEL) || sentinel == Some(SET_STR_SENTINEL) {
+                    let is_str = sentinel == Some(SET_STR_SENTINEL);
+                    let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                    match method.as_str() {
+                        "contains" | "has" if args.len() == 1 => {
+                            let x = lower_expr(&args[0], ir, env, struct_env, receiver_types);
+                            let dst = ir.fresh();
+                            ir.instrs.push(Instr::Call {
+                                dst,
+                                name: if is_str {
+                                    "map_contains_key_str".to_string()
+                                } else {
+                                    "map_contains_key".to_string()
+                                },
+                                args: vec![recv_id, x],
+                            });
+                            return dst;
+                        }
+                        "add" | "insert" if args.len() == 1 => {
+                            let x = lower_expr(&args[0], ir, env, struct_env, receiver_types);
+                            let one = ir.fresh();
+                            ir.instrs.push(Instr::ConstI64(one, 1));
+                            let dst = ir.fresh();
+                            ir.instrs.push(Instr::Call {
+                                dst,
+                                name: "map_insert".to_string(),
+                                args: vec![recv_id, x, one],
+                            });
+                            return dst;
+                        }
+                        "len" | "length" if args.is_empty() => {
+                            let dst = ir.fresh();
+                            ir.instrs.push(Instr::Call {
+                                dst,
+                                name: "map_len".to_string(),
+                                args: vec![recv_id],
+                            });
+                            return dst;
+                        }
+                        _ => {}
                     }
                 }
             }

@@ -1360,6 +1360,11 @@ pub(crate) fn eval_value_expr_mode(
              std.map runtime; the tree-walking eval fallback does not interpret it"
                 .into(),
         )),
+        Node::SetLit { .. } => Err(EvalError::UnsupportedMsg(
+            "set literal (`{a, b, c}`) is lowered by the native compiler over the \
+             std.map runtime; the tree-walking eval fallback does not interpret it"
+                .into(),
+        )),
         Node::For {
             var,
             start,

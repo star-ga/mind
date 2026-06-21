@@ -2816,15 +2816,32 @@ impl<'a> P<'a> {
         Ok(Node::ArrayLit { elements, span })
     }
 
-    /// Parse a map literal: `{}` (empty) or `{ key: value, … }`. Keys and values
-    /// are arbitrary expressions; trailing comma allowed. Lowers onto std.map.
+    /// Parse a brace literal: a MAP `{ key: value, … }` (colon-separated) or a
+    /// SET `{ a, b, c }` (comma-separated, no colons). Disambiguated by the
+    /// token after the first element: `:` → map, `,`/`}` → set. The empty `{}`
+    /// is a MapLit (both lower to `map_new`). Trailing comma allowed.
     fn parse_map_lit(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.expect(b'{')?;
-        let mut entries: Vec<(Node, Node)> = Vec::new();
         self.skip_ws_and_newlines();
-        if !self.at(b'}') {
-            loop {
+        if self.at(b'}') {
+            self.pos += 1;
+            return Ok(Node::MapLit {
+                entries: Vec::new(),
+                span: Span::new(start, self.pos),
+            });
+        }
+        // Parse the first element, then decide map vs set by the next token.
+        let first = self.parse_expr()?;
+        self.skip_ws();
+        if self.at(b':') {
+            // MAP: `{ k: v, … }`.
+            self.pos += 1; // ':'
+            self.skip_ws_and_newlines();
+            let first_val = self.parse_expr()?;
+            let mut entries: Vec<(Node, Node)> = vec![(first, first_val)];
+            self.skip_ws_and_newlines();
+            while self.eat(b',') {
                 self.skip_ws_and_newlines();
                 if self.at(b'}') {
                     break;
@@ -2836,15 +2853,31 @@ impl<'a> P<'a> {
                 let value = self.parse_expr()?;
                 entries.push((key, value));
                 self.skip_ws_and_newlines();
-                if !self.eat(b',') {
-                    break;
-                }
             }
+            self.skip_ws_and_newlines();
+            self.expect(b'}')?;
+            return Ok(Node::MapLit {
+                entries,
+                span: Span::new(start, self.pos),
+            });
+        }
+        // SET: `{ a, b, c }`.
+        let mut elements: Vec<Node> = vec![first];
+        self.skip_ws_and_newlines();
+        while self.eat(b',') {
+            self.skip_ws_and_newlines();
+            if self.at(b'}') {
+                break;
+            }
+            elements.push(self.parse_expr()?);
+            self.skip_ws_and_newlines();
         }
         self.skip_ws_and_newlines();
         self.expect(b'}')?;
-        let span = Span::new(start, self.pos);
-        Ok(Node::MapLit { entries, span })
+        Ok(Node::SetLit {
+            elements,
+            span: Span::new(start, self.pos),
+        })
     }
 
     fn parse_atom(&mut self) -> Result<Node, ParseError> {

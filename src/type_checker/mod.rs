@@ -1569,6 +1569,13 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
             }
             Ok((ValueType::ScalarI64, *span))
         }
+        Node::SetLit { elements, span } => {
+            // A set literal is an i64 std.map handle (a map keyed by elements).
+            for e in elements {
+                let _ = infer_expr(e, env);
+            }
+            Ok((ValueType::ScalarI64, *span))
+        }
         Node::For {
             var, body, span, ..
         } => {
