@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2878 | **Est. tokens:** ~6,973,211
-**Generated:** 2026-06-21 05:59 UTC
+**Files:** 2880 | **Est. tokens:** ~6,975,556
+**Generated:** 2026-06-21 06:43 UTC
 
 ## Token Budget Guide
 
@@ -369,7 +369,7 @@
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
 | `src/` | 7 | ~17,517 |
-| `src/ast/` | 1 | ~7,131 |
+| `src/ast/` | 1 | ~7,229 |
 | `src/autodiff/` | 3 | ~6,624 |
 | `src/bin/` | 3 | ~25,717 |
 | `src/build/` | 2 | ~11,359 |
@@ -383,7 +383,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~18,592 |
+| `src/fmt/` | 3 | ~18,921 |
 | `src/ir/` | 4 | ~25,685 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,499 |
+| `src/type_checker/` | 1 | ~7,595 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,829 |
-| `tests/` | 199 | ~344,679 |
+| `tests/` | 201 | ~346,501 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3649,7 +3649,7 @@
 - `SKILL.md` (~6002 tok, huge) — Write MIND Code
 ### `src/ast/`
 
-- `mod.rs` (~7131 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~7229 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/autodiff/`
 
 - `engine.rs` (~3890 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3731,7 +3731,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~14125 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~14454 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7499 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~7595 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -3872,6 +3872,9 @@
 - `toml.mind` (~9906 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
+### `tests/`
+
+- `array_surface_run.rs` (~925 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -3995,6 +3998,7 @@
 - `fmt_idempotence.rs` (~2782 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~2030 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
+- `for_each_run.rs` (~897 tok, large) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6574 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
