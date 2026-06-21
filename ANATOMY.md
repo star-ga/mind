@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2882 | **Est. tokens:** ~6,978,907
-**Generated:** 2026-06-21 08:01 UTC
+**Files:** 2883 | **Est. tokens:** ~6,979,791
+**Generated:** 2026-06-21 08:14 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 203 | ~348,369 |
+| `tests/` | 204 | ~349,253 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4033,6 +4033,7 @@
 - `loud_fail_non_i64.rs` (~745 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
 - `map_runtime_run.rs` (~881 tok, large) — Copyright 2025 STARGA Inc.
 - `map_surface_run.rs` (~987 tok, large) — Copyright 2025 STARGA Inc.
+- `match_arm_stmt_run.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mic3_cli_emit.rs` (~2494 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4637 tok, huge) — Copyright 2025 STARGA Inc.
