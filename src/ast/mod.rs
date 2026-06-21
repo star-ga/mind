@@ -487,6 +487,13 @@ pub enum Node {
         elements: Vec<Node>,
         span: Span,
     },
+    /// Map literal: `{}` (empty) or `{ k1: v1, k2: v2 }` over the std.map
+    /// runtime. `entries` are (key-expr, value-expr) pairs in source order;
+    /// empty for `{}`. Lowers to `map_new()` then a `map_insert` chain.
+    MapLit {
+        entries: Vec<(Node, Node)>,
+        span: Span,
+    },
     /// For loop: `for i in 0..N { body }`
     For {
         var: String,
@@ -849,6 +856,7 @@ impl Node {
             | Node::If { span, .. }
             | Node::Import { span, .. }
             | Node::ArrayLit { span, .. }
+            | Node::MapLit { span, .. }
             | Node::For { span, .. }
             | Node::ForEach { span, .. }
             | Node::Print { span, .. }

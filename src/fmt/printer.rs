@@ -1256,6 +1256,18 @@ fn emit_expr(p: &mut Printer, node: &Node) {
             }
             p.push("]");
         }
+        Node::MapLit { entries, .. } => {
+            p.push("{");
+            for (i, (k, v)) in entries.iter().enumerate() {
+                if i > 0 {
+                    p.push(", ");
+                }
+                emit_expr(p, k);
+                p.push(": ");
+                emit_expr(p, v);
+            }
+            p.push("}");
+        }
         Node::As { expr, ty, .. } => {
             emit_expr(p, expr);
             p.push(" as ");

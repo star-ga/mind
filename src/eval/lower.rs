@@ -675,6 +675,12 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 if is_array_surface_type(ann) {
                     struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
                 }
+                // `map<K, V>` binding: record the map sentinel (str-key vs i64-key)
+                // so `m.insert/.get/.contains_key/.len` resolve to std.map.
+                #[cfg(feature = "std-surface")]
+                if let Some(s) = map_sentinel_for_opt(ann) {
+                    struct_env.insert(name.clone(), s.to_string());
+                }
                 ir.instrs.push(Instr::Output(id));
             }
             ast::Node::Assign { name, value, .. } => {
@@ -1111,6 +1117,84 @@ fn lower_array_surface_lit(
             dst: next,
             name: "vec_push".to_string(),
             args: vec![handle, val],
+        });
+        handle = next;
+    }
+    handle
+}
+
+// `map<K, V>` surface over the std.map heap runtime (i64 handles). Two
+// sentinels distinguish the KEY type so a lookup picks the correct comparison:
+// `MAP_SENTINEL` (i64-identity keys → map_get / map_contains_key) lowercases to
+// `map`, so the UFCS method desugar resolves `m.insert/.get/.len` for free;
+// `MAP_STR_SENTINEL` (String keys → map_get_str / map_contains_key_str, content
+// equality) is routed explicitly in the MethodCall arm. A handle `==` on two
+// String keys would compare pointers, not bytes — the wrong answer — so the
+// key-type split is load-bearing for correctness, not an optimization.
+#[cfg(feature = "std-surface")]
+const MAP_SENTINEL: &str = "map";
+#[cfg(feature = "std-surface")]
+const MAP_STR_SENTINEL: &str = "mapstr";
+
+/// True when `ann` is the dynamic-map surface type `map<K, V>`
+/// (`TypeAnn::Generic { name: "map", .. }`).
+#[cfg(feature = "std-surface")]
+fn is_map_surface_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Generic { name, .. } if name == "map")
+}
+
+/// The struct-env sentinel for a `map<K, V>`-typed binding: `MAP_STR_SENTINEL`
+/// when the key type `K` is `string` (content-equality lookups), else
+/// `MAP_SENTINEL` (i64-identity lookups).
+#[cfg(feature = "std-surface")]
+fn map_sentinel_for(ty: &TypeAnn) -> &'static str {
+    let key_is_string = matches!(
+        ty,
+        TypeAnn::Generic { name, args } if name == "map"
+            && matches!(args.first(), Some(TypeAnn::Named(n)) if n == "string")
+    );
+    if key_is_string {
+        MAP_STR_SENTINEL
+    } else {
+        MAP_SENTINEL
+    }
+}
+
+/// `Option<TypeAnn>` form for let-binding annotations.
+#[cfg(feature = "std-surface")]
+fn map_sentinel_for_opt(ann: &Option<TypeAnn>) -> Option<&'static str> {
+    match ann {
+        Some(t) if is_map_surface_ty(t) => Some(map_sentinel_for(t)),
+        _ => None,
+    }
+}
+
+/// Lower a map literal `{}` / `{ k: v, … }` onto the std.map heap runtime:
+/// `let _m = map_new(); _m = map_insert(_m, k, v); …; _m`. `map_insert` returns
+/// the (possibly grown) handle, threaded through each entry. Returns the SSA id
+/// holding the final map handle.
+#[cfg(feature = "std-surface")]
+fn lower_map_surface_lit(
+    entries: &[(ast::Node, ast::Node)],
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    let mut handle = ir.fresh();
+    ir.instrs.push(Instr::Call {
+        dst: handle,
+        name: "map_new".to_string(),
+        args: vec![],
+    });
+    for (key, value) in entries {
+        let k = lower_expr(key, ir, env, struct_env, receiver_types);
+        let v = lower_expr(value, ir, env, struct_env, receiver_types);
+        let next = ir.fresh();
+        ir.instrs.push(Instr::Call {
+            dst: next,
+            name: "map_insert".to_string(),
+            args: vec![handle, k, v],
         });
         handle = next;
     }
@@ -1931,6 +2015,12 @@ fn lower_expr(
                 if is_array_surface_ty(&param.ty) {
                     fn_struct_env.insert(param.name.clone(), ARRAY_VEC_SENTINEL.to_string());
                 }
+                // `map<K, V>` param → map sentinel (str-key vs i64-key).
+                #[cfg(feature = "std-surface")]
+                if is_map_surface_ty(&param.ty) {
+                    fn_struct_env
+                        .insert(param.name.clone(), map_sentinel_for(&param.ty).to_string());
+                }
             }
 
             // Part 1 (generics): expose this fn's params as inferable concrete
@@ -2034,6 +2124,10 @@ fn lower_expr(
                         #[cfg(feature = "std-surface")]
                         if is_array_surface_type(ann) {
                             fn_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                        }
+                        #[cfg(feature = "std-surface")]
+                        if let Some(s) = map_sentinel_for_opt(ann) {
+                            fn_struct_env.insert(name.clone(), s.to_string());
                         }
                     }
                     ast::Node::LetTuple { names, value, .. } => {
@@ -2212,6 +2306,10 @@ fn lower_expr(
                     #[cfg(feature = "std-surface")]
                     if is_array_surface_type(ann) {
                         local_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                    }
+                    #[cfg(feature = "std-surface")]
+                    if let Some(s) = map_sentinel_for_opt(ann) {
+                        local_struct_env.insert(name.clone(), s.to_string());
                     }
                     last_id = Some(id);
                 } else if let ast::Node::LetTuple { names, value, .. } = stmt {
@@ -3202,12 +3300,21 @@ fn lower_expr(
             #[cfg(feature = "std-surface")]
             if field == "len" || field == "length" {
                 if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
-                    if struct_env.get(var_name).map(|s| s.as_str()) == Some(ARRAY_VEC_SENTINEL) {
+                    // `arr.len`/`.length` → vec_len; `m.len`/`.length` → map_len.
+                    // mind-flow writes `.length`; std exposes `vec_len`/`map_len`,
+                    // so the name is normalised here. Only set for collection-typed
+                    // bindings/params, so non-collection field reads are unaffected.
+                    let len_fn = match struct_env.get(var_name).map(|s| s.as_str()) {
+                        Some(ARRAY_VEC_SENTINEL) => Some("vec_len"),
+                        Some(MAP_SENTINEL) | Some(MAP_STR_SENTINEL) => Some("map_len"),
+                        _ => None,
+                    };
+                    if let Some(len_fn) = len_fn {
                         let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
                         let dst = ir.fresh();
                         ir.instrs.push(Instr::Call {
                             dst,
-                            name: "vec_len".to_string(),
+                            name: len_fn.to_string(),
                             args: vec![recv_id],
                         });
                         return dst;
@@ -3454,6 +3561,14 @@ fn lower_expr(
             });
             dst
         }
+        // Map literal `{}` / `{ k: v, … }` → std.map heap runtime (map_new +
+        // map_insert chain). Unlike ArrayLit there is no const-map path, so this
+        // one arm handles every position (binding RHS, arg, return). main.mind
+        // has no map literal, so the keystone is unaffected.
+        #[cfg(feature = "std-surface")]
+        ast::Node::MapLit { entries, .. } => {
+            lower_map_surface_lit(entries, ir, env, struct_env, receiver_types)
+        }
         // RFC 0005 Phase 6.2b Gap 2 — `receiver[index]`.  When the receiver
         // resolves to a ConstArray base address, this emits `ArrayLoad`.
         #[cfg(feature = "std-surface")]
@@ -3688,6 +3803,43 @@ fn lower_expr(
                     rhs: mask,
                 });
                 return dst;
+            }
+            // `map<K, V>` methods on a map-sentinel receiver → std.map runtime.
+            // The str-key sentinel routes lookups to the content-equality
+            // variants (map_get_str / map_contains_key_str); the i64-key sentinel
+            // uses identity. Intercepted here (not via UFCS) so `.length`→map_len
+            // and the str-key split both resolve correctly.
+            #[cfg(feature = "std-surface")]
+            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
+                let sentinel = struct_env.get(var_name).map(|s| s.as_str());
+                if sentinel == Some(MAP_SENTINEL) || sentinel == Some(MAP_STR_SENTINEL) {
+                    let is_str = sentinel == Some(MAP_STR_SENTINEL);
+                    let fname = match method.as_str() {
+                        "insert" => Some("map_insert"),
+                        "get" => Some(if is_str { "map_get_str" } else { "map_get" }),
+                        "contains_key" => Some(if is_str {
+                            "map_contains_key_str"
+                        } else {
+                            "map_contains_key"
+                        }),
+                        "len" | "length" => Some("map_len"),
+                        _ => None,
+                    };
+                    if let Some(fname) = fname {
+                        let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                        let mut call_args = vec![recv_id];
+                        for a in args {
+                            call_args.push(lower_expr(a, ir, env, struct_env, receiver_types));
+                        }
+                        let dst = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst,
+                            name: fname.to_string(),
+                            args: call_args,
+                        });
+                        return dst;
+                    }
+                }
             }
             // Resolve the receiver's struct type name `T` and, for the cheap
             // Ident path, the bound variable name so we can reuse its SSA id.
