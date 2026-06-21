@@ -551,6 +551,20 @@ impl<'a> Resolver<'a> {
                 }
                 self.scopes.pop();
             }
+            Node::ForEach {
+                var,
+                collection,
+                body,
+                ..
+            } => {
+                self.walk(collection);
+                self.scopes.push();
+                self.scopes.bind(var);
+                for s in body {
+                    self.walk(s);
+                }
+                self.scopes.pop();
+            }
             Node::Match {
                 scrutinee, arms, ..
             } => {

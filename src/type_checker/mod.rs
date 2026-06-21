@@ -1583,6 +1583,34 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                 Ok((ValueType::ScalarI32, *span))
             }
         }
+        Node::ForEach {
+            var,
+            collection,
+            body,
+            span,
+        } => {
+            // Validate the collection expression, then type-check the body with
+            // the element bound. The element is the `vec_get` result (an i64
+            // handle/value under the std.vec ABI), so it types as ScalarI64.
+            let _ = infer_expr(collection, env);
+            let env = &mut env.clone();
+            env.insert(var.clone(), ValueType::ScalarI64);
+            for stmt in body {
+                if let Node::Let { name, .. } = stmt {
+                    env.insert(name.clone(), ValueType::ScalarI64);
+                }
+                if let Node::Assign { name, .. } = stmt {
+                    if !env.contains_key(name) {
+                        env.insert(name.clone(), ValueType::ScalarI64);
+                    }
+                }
+            }
+            if let Some(last) = body.last() {
+                infer_expr(last, env)
+            } else {
+                Ok((ValueType::ScalarI32, *span))
+            }
+        }
         Node::Print { span, .. } => Ok((ValueType::ScalarI32, *span)),
         Node::Neg { operand, .. } => infer_expr(operand, env),
         // `!expr` yields a 0/1 boolean. Validate the operand infers, then type

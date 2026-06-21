@@ -2283,12 +2283,25 @@ impl<'a> P<'a> {
         self.skip_ws_and_newlines();
         let start_expr = self.parse_atom()?;
         self.skip_ws();
-        // Expect '..'
+        // No `..` → this is a FOR-EACH over a collection: `for x in coll { … }`.
+        // `start_expr` is the collection expression. (A range `for i in a..b`
+        // takes the branch below.)
         if !(self.pos + 1 < self.b.len()
             && self.b[self.pos] == b'.'
             && self.b[self.pos + 1] == b'.')
         {
-            return Err(self.err("expected '..' in range".into()));
+            self.skip_ws_and_newlines();
+            self.expect(b'{')?;
+            let body = self.parse_fn_body_stmts()?;
+            self.skip_ws_and_newlines();
+            self.expect(b'}')?;
+            let span = Span::new(start, self.pos);
+            return Ok(Node::ForEach {
+                var,
+                collection: Box::new(start_expr),
+                body,
+                span,
+            });
         }
         self.pos += 2;
         self.skip_ws_and_newlines();

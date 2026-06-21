@@ -3968,6 +3968,89 @@ fn lower_expr(
             // F2 region-scoped exit ids).
             lower_expr(&while_node, ir, &loop_env, struct_env, receiver_types)
         }
+        // For-each `for x in coll { body }` over an `array<T>` (std.vec handle).
+        // Flat-desugared to an indexed `while` so the loop-carried index gets the
+        // same region-scoped SSA the `For`/`While` arms provide — no nested Block
+        // (which would break loop-carried value detection). The collection and
+        // its length are pre-lowered once into hidden span-unique bindings so a
+        // NESTED for-each never collides; the hidden collection binding carries
+        // the vec sentinel so `coll[idx]` lowers to `vec_get`.
+        #[cfg(feature = "std-surface")]
+        ast::Node::ForEach {
+            var,
+            collection,
+            body,
+            span,
+        } => {
+            let uniq = span.start();
+            let coll_var = format!("__fe_coll_{uniq}");
+            let idx_var = format!("__fe_i_{uniq}");
+            let len_var = format!("__fe_len_{uniq}");
+
+            // Pre-lower the collection (i64 vec handle) and its length once.
+            let coll_id = lower_expr(collection, ir, env, struct_env, receiver_types);
+            let len_id = ir.fresh();
+            ir.instrs.push(Instr::Call {
+                dst: len_id,
+                name: "vec_len".to_string(),
+                args: vec![coll_id],
+            });
+            let zero_id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(zero_id, 0));
+
+            let mut loop_env = env.clone();
+            loop_env.insert(coll_var.clone(), coll_id);
+            loop_env.insert(len_var.clone(), len_id);
+            loop_env.insert(idx_var.clone(), zero_id);
+
+            // Mark the hidden collection binding as a vec sentinel so the
+            // `coll[idx]` element read lowers to `vec_get`.
+            let mut fe_struct_env = struct_env.clone();
+            fe_struct_env.insert(coll_var.clone(), ARRAY_VEC_SENTINEL.to_string());
+
+            let idx_ident = ast::Node::Lit(Literal::Ident(idx_var.clone()), *span);
+            // `let VAR = coll[idx]` — the per-iteration element binding.
+            let elem_bind = ast::Node::Let {
+                name: var.clone(),
+                mutable: false,
+                ann: None,
+                value: Box::new(ast::Node::IndexAccess {
+                    receiver: Box::new(ast::Node::Lit(Literal::Ident(coll_var.clone()), *span)),
+                    index: Box::new(idx_ident.clone()),
+                    span: *span,
+                }),
+                span: *span,
+            };
+            // `idx = idx + 1` — makes idx loop-carried (mirrors the For arm).
+            let incr = ast::Node::Assign {
+                name: idx_var.clone(),
+                value: Box::new(ast::Node::Binary {
+                    op: ast::BinOp::Add,
+                    left: Box::new(idx_ident.clone()),
+                    right: Box::new(ast::Node::Lit(Literal::Int(1), *span)),
+                    span: *span,
+                }),
+                span: *span,
+            };
+            let mut while_body = Vec::with_capacity(body.len() + 2);
+            while_body.push(elem_bind);
+            while_body.extend(body.iter().cloned());
+            while_body.push(incr);
+
+            // Condition `idx < len`.
+            let cond = ast::Node::Binary {
+                op: ast::BinOp::Lt,
+                left: Box::new(idx_ident),
+                right: Box::new(ast::Node::Lit(Literal::Ident(len_var.clone()), *span)),
+                span: *span,
+            };
+            let while_node = ast::Node::While {
+                cond: Box::new(cond),
+                body: while_body,
+                span: *span,
+            };
+            lower_expr(&while_node, ir, &loop_env, &fe_struct_env, receiver_types)
+        }
         // Genuinely-unhandled value-position node. After the explicit Import /
         // Print arms above, std/ + examples/ no longer reach here (verified by
         // the #54 sweep). FAIL CLOSED (#306 philosophy): a const-0 placeholder

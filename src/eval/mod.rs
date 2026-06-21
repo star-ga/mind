@@ -1350,6 +1350,11 @@ pub(crate) fn eval_value_expr_mode(
             }
             Ok(Value::Tuple(vals))
         }
+        Node::ForEach { .. } => Err(EvalError::UnsupportedMsg(
+            "for-each (`for x in coll`) is lowered by the native compiler over the \
+             std.vec runtime; the tree-walking eval fallback does not interpret it"
+                .into(),
+        )),
         Node::For {
             var,
             start,
