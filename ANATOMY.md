@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2890 | **Est. tokens:** ~6,987,789
-**Generated:** 2026-06-21 22:26 UTC
+**Files:** 2891 | **Est. tokens:** ~6,989,098
+**Generated:** 2026-06-21 22:51 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,080 |
-| `src/ir/` | 4 | ~25,916 |
+| `src/ir/` | 4 | ~26,412 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~44,531 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 211 | ~355,768 |
+| `tests/` | 212 | ~356,581 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3756,7 +3756,7 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~11288 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~11784 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4162,6 +4162,7 @@
 - `mlir_jit.rs` (~285 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_lowering.rs` (~1490 tok, large)
 - `mlir_opt.rs` (~424 tok, medium) — Copyright 2025 STARGA Inc.
+- `module_const_run.rs` (~813 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `nested_block_surface_run.rs` (~1074 tok, large) — Copyright 2025 STARGA Inc.
