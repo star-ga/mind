@@ -3113,6 +3113,19 @@ impl<'a> P<'a> {
                 }
             }
             _ => {
+                // Bare boolean literals `true` / `false` in value position lower
+                // to the i64 truthiness encoding (1 / 0) — the same mapping the
+                // pattern side uses and the representation MIND's bool ABI
+                // expects (there is no dedicated `Literal::Bool`). Without this
+                // they fell through to `Literal::Ident` and the type-checker
+                // reported them as unknown identifiers (e.g. `return Err(false)`,
+                // `T { flag: false }`). main.mind never uses a bare bool value,
+                // so this path never fires for the keystone self-compile.
+                if ident == "true" || ident == "false" {
+                    let span = Span::new(start, self.pos);
+                    let v = if ident == "true" { 1 } else { 0 };
+                    return Ok(Node::Lit(Literal::Int(v), span));
+                }
                 // Phase 10.6: identifiers that contain `::` segment
                 // separators (enum variant access — e.g.
                 // `config.AddressingMode::Content`) keep the full path
