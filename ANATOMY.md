@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2875 | **Est. tokens:** ~6,968,443
-**Generated:** 2026-06-21 03:14 UTC
+**Files:** 2876 | **Est. tokens:** ~6,969,288
+**Generated:** 2026-06-21 05:07 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~108,829 |
-| `tests/` | 196 | ~341,839 |
+| `tests/` | 197 | ~342,684 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3967,6 +3967,7 @@
 
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
+- `dot_enum_variant_run.rs` (~845 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `emit_ir_for_loop.rs` (~369 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `enum_match_run.rs` (~2399 tok, huge) — Copyright 2025 STARGA Inc.

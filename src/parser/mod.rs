@@ -54,6 +54,13 @@ struct P<'a> {
     /// `RandomState` hasher init — import lists are tiny, so linear `contains`
     /// is faster and keeps `compile_small` at its nanosecond floor.
     imports: Vec<String>,
+    /// Enum type names declared in this module. A dotted reference whose first
+    /// segment is one of these is a VARIANT access `Enum.Variant`, normalised to
+    /// the canonical `Enum::Variant` — both as a value (`Color.Red`) and in a
+    /// pattern (`Color.Red => …`). A receiver that is NOT a declared enum stays a
+    /// struct field access. Enum declarations precede the fn bodies that use
+    /// them, so the set is complete in time.
+    enum_names: Vec<String>,
 }
 
 /// Operator-token kind used by the Pratt expression parser
@@ -96,6 +103,7 @@ impl<'a> P<'a> {
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
+            enum_names: Vec::new(),
         }
     }
 
@@ -1676,6 +1684,11 @@ impl<'a> P<'a> {
         if !self.eat(b'}') {
             return Err(self.err("expected `}` to close enum".into()));
         }
+        // Record the enum name so a later `Name.Variant` reference normalises to
+        // `Name::Variant` instead of parsing as a struct field access.
+        if !self.enum_names.iter().any(|n| n == &name) {
+            self.enum_names.push(name.clone());
+        }
         let span = Span::new(start, self.pos);
         Ok(Node::EnumDef {
             is_pub,
@@ -3094,6 +3107,24 @@ impl<'a> P<'a> {
                 // parse_atom's dot-loop can handle method calls.
                 if let Some(dot_idx) = ident.find('.') {
                     let first = &ident[..dot_idx];
+                    // `Enum.Variant` (dot) → canonical `Enum::Variant` when the
+                    // first segment is a declared enum: a unit value
+                    // (`Color.Red`), a payload constructor (`Expr.IntLit(x)`), or
+                    // a struct variant (`Expr.StringLit { … }`). A non-enum
+                    // receiver falls through to the struct-field / module-call
+                    // handling below.
+                    if self.enum_names.iter().any(|n| n == first) {
+                        let qualified = format!("{}::{}", first, &ident[dot_idx + 1..]);
+                        self.skip_ws();
+                        if self.at(b'(') {
+                            return self.parse_generic_call(qualified, start);
+                        } else if self.at(b'{') && self.struct_lit_body_ahead() {
+                            return self.parse_struct_literal(qualified, start);
+                        } else {
+                            let span = Span::new(start, self.pos);
+                            return Ok(Node::Lit(Literal::Ident(qualified), span));
+                        }
+                    }
                     if first != "tensor" {
                         // A dot-qualified name immediately followed by a
                         // `{ field: value }` body is a QUALIFIED struct/enum-variant
@@ -4105,13 +4136,21 @@ impl<'a> P<'a> {
             }
             return Ok(Pattern::Tuple(elems));
         }
-        let name = self
+        let mut name = self
             .dotted_ident()
             .ok_or_else(|| self.err("expected pattern".into()))?;
         match name.as_str() {
             "true" => return Ok(Pattern::Literal(Literal::Int(1))),
             "false" => return Ok(Pattern::Literal(Literal::Int(0))),
             _ => {}
+        }
+        // `Enum.Variant` (dot) → canonical `Enum::Variant` when the first segment
+        // is a declared enum, so the variant-pattern handling below treats it as
+        // a variant rather than a dotted binding name (mirrors the value side).
+        if let Some(dot_idx) = name.find('.') {
+            if self.enum_names.iter().any(|n| n == &name[..dot_idx]) {
+                name = format!("{}::{}", &name[..dot_idx], &name[dot_idx + 1..]);
+            }
         }
         // A payload list `(...)` makes this a variant pattern regardless of
         // qualification: `Ok(x)`, `Err(e)`, `Some(v)` (unqualified) AND
