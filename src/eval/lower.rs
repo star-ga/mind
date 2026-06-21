@@ -636,6 +636,25 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                         &struct_env,
                         receiver_types,
                     ),
+                    // `array<T>` binding whose RHS is an array literal `[..]`:
+                    // lower onto the std.vec heap runtime (vec_new + vec_push
+                    // chain) instead of the const-array/tensor path.
+                    #[cfg(feature = "std-surface")]
+                    _ if is_array_surface_type(ann)
+                        && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                    {
+                        let elements = match value.as_ref() {
+                            ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+                            _ => &[],
+                        };
+                        lower_array_surface_lit(
+                            elements,
+                            &mut ir,
+                            &env,
+                            &struct_env,
+                            receiver_types,
+                        )
+                    }
                     _ => lower_expr(value, &mut ir, &env, &struct_env, receiver_types),
                 };
                 env.insert(name.clone(), id);
@@ -648,6 +667,13 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 } = value.as_ref()
                 {
                     struct_env.insert(name.clone(), struct_name.clone());
+                }
+                // `array<T>` binding: record the vec sentinel so a later
+                // `arr.push/get/set/len/length` or `arr[i]` resolves to the
+                // std.vec runtime. Pure metadata (never serialized into mic@3).
+                #[cfg(feature = "std-surface")]
+                if is_array_surface_type(ann) {
+                    struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
                 }
                 ir.instrs.push(Instr::Output(id));
             }
@@ -1022,6 +1048,73 @@ fn struct_layout(ir: &IRModule, name: &str) -> Option<StructLayout> {
         running = offset + w;
     }
     Some((layout, running, all_i64))
+}
+
+/// Sentinel "struct type name" recorded in `struct_env` for an `array<T>`-typed
+/// binding. It is deliberately the lowercase string `"vec"` so the existing UFCS
+/// method-call desugar (`{lowercase(T)}_{method}`) resolves `arr.push(x)` to the
+/// `vec_push` free function in `std/vec.mind` with no special-case branch. It is
+/// NOT a real struct (`ir.struct_defs` has no `"vec"` entry — the runtime struct
+/// is `Vec`), so the zero-arg field-accessor fast path never matches it and every
+/// `array<T>` method/index falls through to the vec runtime mapping.
+#[cfg(feature = "std-surface")]
+const ARRAY_VEC_SENTINEL: &str = "vec";
+
+/// True when `ann` is the dynamic-array surface type `array<T>` (RFC 0005 vec
+/// surface). Parsed as `TypeAnn::Generic { name: "array", .. }`. The fixed-size
+/// `[T; N]` LUT type (`TypeAnn::Array`) and the slice `[T]` (`TypeAnn::Slice`)
+/// are distinct and intentionally NOT matched — those keep the const-array /
+/// tensor lowering, so the keystone (which uses neither `array<T>`) is untouched.
+#[cfg(feature = "std-surface")]
+fn is_array_surface_type(ann: &Option<TypeAnn>) -> bool {
+    matches!(ann, Some(t) if is_array_surface_ty(t))
+}
+
+/// `&TypeAnn` form of [`is_array_surface_type`], for params/fields whose type is
+/// a bare `TypeAnn` (not `Option<TypeAnn>`).
+#[cfg(feature = "std-surface")]
+fn is_array_surface_ty(ty: &TypeAnn) -> bool {
+    matches!(ty, TypeAnn::Generic { name, .. } if name == "array")
+}
+
+/// Lower a dynamic-array literal `[a, b, c]` onto the `std.vec` heap runtime:
+///
+/// ```text
+///   let _v = vec_new();
+///   _v = vec_push(_v, a);   // vec_push returns the (possibly realloc'd) handle
+///   _v = vec_push(_v, b);
+///   _v = vec_push(_v, c);
+///   _v                       // final handle is the array value
+/// ```
+///
+/// `[]` lowers to a bare `vec_new()`. The handle is an opaque i64 — no pointer
+/// bits, no const-tensor, no `tensor.extract` (which does not bufferize in the
+/// build pipeline). Returns the SSA id holding the final vec handle.
+#[cfg(feature = "std-surface")]
+fn lower_array_surface_lit(
+    elements: &[ast::Node],
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    let mut handle = ir.fresh();
+    ir.instrs.push(Instr::Call {
+        dst: handle,
+        name: "vec_new".to_string(),
+        args: vec![],
+    });
+    for elem in elements {
+        let val = lower_expr(elem, ir, env, struct_env, receiver_types);
+        let next = ir.fresh();
+        ir.instrs.push(Instr::Call {
+            dst: next,
+            name: "vec_push".to_string(),
+            args: vec![handle, val],
+        });
+        handle = next;
+    }
+    handle
 }
 
 fn lower_expr(
@@ -1831,6 +1924,13 @@ fn lower_expr(
                 });
                 fn_env.insert(param.name.clone(), param_id);
                 param_pairs.push((param.name.clone(), param_id));
+                // `array<T>` param → vec sentinel so `p.push/get/len/length` and
+                // `p[i]` in the body resolve to the std.vec runtime (e.g.
+                // mind-flow `fn assign_ids(order: array<string>)`).
+                #[cfg(feature = "std-surface")]
+                if is_array_surface_ty(&param.ty) {
+                    fn_struct_env.insert(param.name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                }
             }
 
             // Part 1 (generics): expose this fn's params as inferable concrete
@@ -1881,6 +1981,24 @@ fn lower_expr(
                                 &fn_struct_env,
                                 receiver_types,
                             ),
+                            // `array<T>` binding with an array-literal RHS:
+                            // lower onto the std.vec heap runtime.
+                            #[cfg(feature = "std-surface")]
+                            _ if is_array_surface_type(ann)
+                                && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                            {
+                                let elements = match value.as_ref() {
+                                    ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+                                    _ => &[],
+                                };
+                                lower_array_surface_lit(
+                                    elements,
+                                    &mut fn_ir,
+                                    &fn_env,
+                                    &fn_struct_env,
+                                    receiver_types,
+                                )
+                            }
                             _ => lower_expr(
                                 value,
                                 &mut fn_ir,
@@ -1910,6 +2028,12 @@ fn lower_expr(
                         } = value.as_ref()
                         {
                             fn_struct_env.insert(name.clone(), struct_name.clone());
+                        }
+                        // `array<T>` binding: record the vec sentinel so a later
+                        // method/index on this name resolves to the std.vec runtime.
+                        #[cfg(feature = "std-surface")]
+                        if is_array_surface_type(ann) {
+                            fn_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
                         }
                     }
                     ast::Node::LetTuple { names, value, .. } => {
@@ -2053,6 +2177,24 @@ fn lower_expr(
                             &local_struct_env,
                             receiver_types,
                         ),
+                        // `array<T>` binding with an array-literal RHS: lower
+                        // onto the std.vec heap runtime.
+                        #[cfg(feature = "std-surface")]
+                        _ if is_array_surface_type(ann)
+                            && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                        {
+                            let elements = match value.as_ref() {
+                                ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
+                                _ => &[],
+                            };
+                            lower_array_surface_lit(
+                                elements,
+                                ir,
+                                &local_env,
+                                &local_struct_env,
+                                receiver_types,
+                            )
+                        }
                         _ => lower_expr(value, ir, &local_env, &local_struct_env, receiver_types),
                     };
                     local_env.insert(name.clone(), id);
@@ -2064,6 +2206,12 @@ fn lower_expr(
                     } = value.as_ref()
                     {
                         local_struct_env.insert(name.clone(), struct_name.clone());
+                    }
+                    // `array<T>` binding: record the vec sentinel for later
+                    // method/index resolution onto the std.vec runtime.
+                    #[cfg(feature = "std-surface")]
+                    if is_array_surface_type(ann) {
+                        local_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
                     }
                     last_id = Some(id);
                 } else if let ast::Node::LetTuple { names, value, .. } = stmt {
@@ -3045,6 +3193,27 @@ fn lower_expr(
             field,
             span,
         } => {
+            // `array<T>` length: `arr.len` / `arr.length` (no parens) on a
+            // vec-sentinel receiver lowers to the std.vec `vec_len` free
+            // function. mind-flow writes `.length`; std.vec exposes `vec_len`,
+            // so the name is normalised here. The sentinel is only set for
+            // `array<T>`-annotated bindings/params, so non-array `.len`/`.length`
+            // field reads are unaffected and the keystone never hits this path.
+            #[cfg(feature = "std-surface")]
+            if field == "len" || field == "length" {
+                if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
+                    if struct_env.get(var_name).map(|s| s.as_str()) == Some(ARRAY_VEC_SENTINEL) {
+                        let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                        let dst = ir.fresh();
+                        ir.instrs.push(Instr::Call {
+                            dst,
+                            name: "vec_len".to_string(),
+                            args: vec![recv_id],
+                        });
+                        return dst;
+                    }
+                }
+            }
             // ── Step 1: cheap Ident-bound lookup ─────────────────────
             let step1 = match receiver.as_ref() {
                 ast::Node::Lit(Literal::Ident(var_name), _) => {
@@ -3291,6 +3460,23 @@ fn lower_expr(
         ast::Node::IndexAccess {
             receiver, index, ..
         } => {
+            // `arr[i]` on a vec-sentinel (`array<T>`) receiver → std.vec
+            // `vec_get` (the receiver is an i64 heap handle, not a const array,
+            // so the `ArrayLoad` LUT path below would misinterpret it).
+            #[cfg(feature = "std-surface")]
+            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
+                if struct_env.get(var_name).map(|s| s.as_str()) == Some(ARRAY_VEC_SENTINEL) {
+                    let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                    let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+                    let dst = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst,
+                        name: "vec_get".to_string(),
+                        args: vec![base, index_id],
+                    });
+                    return dst;
+                }
+            }
             let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
             let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
             let dst = ir.fresh();
@@ -3301,11 +3487,32 @@ fn lower_expr(
             });
             dst
         }
-        // RFC 0005 Phase 6.2b Gap 2 — `receiver[index] = value` on arrays.
-        // Const arrays are read-only in this phase; emit a placeholder to
-        // keep the IR shape stable.
+        // RFC 0005 Phase 6.2b Gap 2 — `receiver[index] = value`.
         #[cfg(feature = "std-surface")]
-        ast::Node::IndexAssign { .. } => {
+        ast::Node::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
+            // `arr[i] = v` on a vec-sentinel (`array<T>`) receiver → std.vec
+            // `vec_set`. A const array stays read-only (placeholder), preserving
+            // the prior IR shape for the non-array path.
+            #[cfg(feature = "std-surface")]
+            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
+                if struct_env.get(var_name).map(|s| s.as_str()) == Some(ARRAY_VEC_SENTINEL) {
+                    let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                    let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+                    let val_id = lower_expr(value, ir, env, struct_env, receiver_types);
+                    let dst = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst,
+                        name: "vec_set".to_string(),
+                        args: vec![base, index_id, val_id],
+                    });
+                    return dst;
+                }
+            }
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
             id
@@ -3549,7 +3756,17 @@ fn lower_expr(
                     for a in args {
                         call_args.push(lower_expr(a, ir, env, struct_env, receiver_types));
                     }
-                    let fn_name = format!("{}_{}", t.to_lowercase(), method);
+                    // `array<T>` (the `vec` sentinel) method-name aliasing onto
+                    // the std.vec free functions. The only surface/runtime name
+                    // mismatch is `.length` → `vec_len` (mind-flow spells the
+                    // length accessor `.length`; the runtime exports `vec_len`).
+                    // `.push/.get/.set/.len` already match `vec_*` 1:1.
+                    let method_lc: &str = if t == ARRAY_VEC_SENTINEL && method == "length" {
+                        "len"
+                    } else {
+                        method.as_str()
+                    };
+                    let fn_name = format!("{}_{}", t.to_lowercase(), method_lc);
                     let dst = ir.fresh();
                     ir.instrs.push(Instr::Call {
                         dst,
