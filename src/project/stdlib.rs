@@ -57,6 +57,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.ring", include_str!("../../std/ring.mind")),
     ("std.sha256", include_str!("../../std/sha256.mind")),
     ("std.string", include_str!("../../std/string.mind")),
+    ("std.time", include_str!("../../std/time.mind")),
     ("std.toml", include_str!("../../std/toml.mind")),
     ("std.tui", include_str!("../../std/tui.mind")),
     ("std.vec", include_str!("../../std/vec.mind")),
