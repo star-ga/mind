@@ -911,10 +911,10 @@ impl<'a> P<'a> {
                     let save = self.pos;
                     self.pos += 1;
                     self.skip_ws();
-                    if self.digits().is_some() {
+                    if let Some(n) = self.digits() {
                         self.skip_ws();
                         if self.eat(b']') {
-                            return Ok(TypeAnn::Named(first.to_string()));
+                            return Ok(TypeAnn::Named(format!("{first}[{n}]")));
                         }
                     }
                     self.pos = save; // not `[N]` — leave the `[` for the caller
@@ -975,10 +975,10 @@ impl<'a> P<'a> {
                 let save = self.pos;
                 self.pos += 1;
                 self.skip_ws();
-                if self.digits().is_some() {
+                if let Some(n) = self.digits() {
                     self.skip_ws();
                     if self.eat(b']') {
-                        return Ok(TypeAnn::Named(name));
+                        return Ok(TypeAnn::Named(format!("{name}[{n}]")));
                     }
                 }
                 self.pos = save; // not `[N]` — leave the `[` for the caller
