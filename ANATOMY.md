@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2895 | **Est. tokens:** ~6,992,582
-**Generated:** 2026-06-22 05:32 UTC
+**Files:** 2896 | **Est. tokens:** ~6,993,604
+**Generated:** 2026-06-22 05:52 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~9,002 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~14,738 |
+| `runtime-support/` | 1 | ~14,852 |
 | `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,744 |
+| `src/type_checker/` | 1 | ~7,904 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 216 | ~359,828 |
+| `tests/` | 217 | ~360,576 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -844,7 +844,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~14738 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~14852 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7744 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~7904 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4338,6 +4338,7 @@
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_from_bytes_run.rs` (~748 tok, large) — Copyright 2025 STARGA Inc.
 - `string_split_run.rs` (~900 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_array_field_run.rs` (~886 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_field_collection_run.rs` (~892 tok, large) — Copyright 2025 STARGA Inc.

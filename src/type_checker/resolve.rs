@@ -649,7 +649,19 @@ impl<'a> Resolver<'a> {
             Node::MethodCall { receiver, args, .. } => {
                 // The method name is a member, not a binding. Resolve the
                 // receiver and the value arguments only.
-                self.walk(receiver);
+                //
+                // EXCEPTION: a static/associated type-name call
+                // (`string.from_utf8_bytes(..)`) has a TYPE name as the receiver,
+                // not a binding — don't flag it "unknown identifier `string`". A
+                // real local of that name (resolvable) keeps the normal path.
+                let static_type_recv = matches!(
+                    receiver.as_ref(),
+                    Node::Lit(Literal::Ident(n), _)
+                        if (n == "string" || n == "String") && !self.ident_resolvable(n)
+                );
+                if !static_type_recv {
+                    self.walk(receiver);
+                }
                 for a in args {
                     self.walk(a);
                 }

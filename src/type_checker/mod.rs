@@ -1634,6 +1634,16 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
         // truthy/falsy and feeds `if`/`while` conditions — enum_match #9).
         Node::Not { operand, .. } => infer_expr(operand, env),
         Node::MethodCall { receiver, span, .. } => {
+            // Static/associated type-name call (`string.from_utf8_bytes(..)`): the
+            // receiver is a TYPE name, not a value — don't resolve it as an
+            // identifier (it would error "unknown identifier `string`"). The
+            // result is an opaque handle (i64). Only when no local shadows the
+            // name (a real value receiver keeps the normal path).
+            if let Node::Lit(Literal::Ident(tn), _) = receiver.as_ref() {
+                if (tn == "string" || tn == "String") && env.get(tn).is_none() {
+                    return Ok((ValueType::ScalarI64, *span));
+                }
+            }
             let (recv_ty, _) = infer_expr(receiver, env)?;
             Ok((recv_ty, *span))
         }
