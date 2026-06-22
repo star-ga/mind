@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2897 | **Est. tokens:** ~6,994,285
-**Generated:** 2026-06-22 06:10 UTC
+**Files:** 2898 | **Est. tokens:** ~6,994,951
+**Generated:** 2026-06-22 06:27 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 218 | ~361,257 |
+| `tests/` | 219 | ~361,923 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4364,6 +4364,7 @@
 
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
+- `type_struct_run.rs` (~666 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~852 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_f64_let.rs` (~1186 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
