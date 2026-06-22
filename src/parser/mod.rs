@@ -1457,6 +1457,14 @@ impl<'a> P<'a> {
             .word()
             .ok_or_else(|| self.err("expected type alias name".into()))?
             .to_string();
+        self.skip_ws_and_newlines();
+        // `type X { field: ty, … }` — a record type defined with the `type`
+        // keyword (not `type X = Y`). Parse it as a struct definition. (Keystone
+        // uses `struct`, not `type {…}`, so this branch never fires there → the
+        // bootstrap fixed point is byte-identical.)
+        if self.at(b'{') {
+            return self.parse_struct_body(name, attrs, true, start);
+        }
         self.skip_ws();
         if !self.eat(b'=') {
             return Err(self.err("expected `=` in type alias".into()));
@@ -1604,6 +1612,19 @@ impl<'a> P<'a> {
             .ok_or_else(|| self.err("expected struct name".into()))?
             .to_string();
         self.skip_ws_and_newlines();
+        self.parse_struct_body(name, attrs, is_pub, start)
+    }
+
+    /// Parse a struct BODY `{ field: ty, … }` after the name has been read, into
+    /// a `Node::StructDef`. Shared by `struct X { … }` and the `type X { … }`
+    /// record-definition form (a struct defined with the `type` keyword).
+    fn parse_struct_body(
+        &mut self,
+        name: String,
+        attrs: Vec<crate::ast::Attribute>,
+        is_pub: bool,
+        start: usize,
+    ) -> Result<Node, ParseError> {
         if !self.eat(b'{') {
             return Err(self.err("expected `{` after struct name".into()));
         }
