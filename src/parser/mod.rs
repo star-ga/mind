@@ -1488,6 +1488,16 @@ impl<'a> P<'a> {
             .word()
             .ok_or_else(|| self.err("expected module name".into()))?
             .to_string();
+        // Consume a DOTTED module path (`module backends.tool`) — the `.segment`
+        // continuation that `word()` stops at. Without this the trailing
+        // `.tool` is left for the next item parse → "expected expression". The
+        // path is a transparent marker (the file IS the module); we only need to
+        // consume it. (Keystone has no dotted module decls → byte-identical.)
+        while self.at(b'.') {
+            self.pos += 1; // '.'
+            self.word()
+                .ok_or_else(|| self.err("expected module path segment after `.`".into()))?;
+        }
         self.skip_ws_and_newlines();
         if !self.eat(b'{') {
             // File-level `module NAME` header (no block). The build path accepts
