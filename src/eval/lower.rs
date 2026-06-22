@@ -1182,6 +1182,41 @@ fn lower_array_surface_lit(
     handle
 }
 
+/// Lower a `StructLit` FIELD value. A field declared `array<T>` whose literal is
+/// `[..]` must lower onto the std.vec heap runtime (a registered i64 handle), not
+/// the generic `ArrayLit` const-array/tensor path — whose result is a non-i64
+/// aggregate the field's `__mind_store_i64` cannot accept (it surfaces as the
+/// "non-i64 argument to call" aggregate-ABI error). Every other field value
+/// lowers normally.
+#[cfg(feature = "std-surface")]
+fn lower_struct_field_value(
+    struct_name: &str,
+    field_name: &str,
+    value: &ast::Node,
+    ir: &mut IRModule,
+    env: &HashMap<String, ValueId>,
+    struct_env: &HashMap<String, String>,
+    receiver_types: &HashMap<crate::ast::Span, String>,
+) -> ValueId {
+    if let ast::Node::ArrayLit { elements, .. } = value {
+        let is_arr_field = ir
+            .struct_defs
+            .get(struct_name)
+            .and_then(|names| names.iter().position(|n| n == field_name))
+            .and_then(|idx| {
+                ir.struct_field_types
+                    .get(struct_name)
+                    .and_then(|ts| ts.get(idx))
+            })
+            .map(is_array_surface_ty)
+            .unwrap_or(false);
+        if is_arr_field {
+            return lower_array_surface_lit(elements, ir, env, struct_env, receiver_types);
+        }
+    }
+    lower_expr(value, ir, env, struct_env, receiver_types)
+}
+
 // `map<K, V>` surface over the std.map heap runtime (i64 handles). Two
 // sentinels distinguish the KEY type so a lookup picks the correct comparison:
 // `MAP_SENTINEL` (i64-identity keys → map_get / map_contains_key) lowercases to
@@ -1619,10 +1654,15 @@ fn let_rhs_collection_track(
 fn rewrite_collection_mutations(
     stmts: &mut [ast::Node],
     collections: &std::collections::HashSet<String>,
+    struct_collection_fields: &std::collections::HashSet<(String, String)>,
+    var_types: &std::collections::HashMap<String, String>,
 ) {
     let mut scope = collections.clone();
+    let mut vtypes = var_types.clone();
     for stmt in stmts.iter_mut() {
-        // A `let x: array<T> | map<K,V>` introduces a new collection local.
+        // A `let x: array<T> | map<K,V>` introduces a new collection local; a
+        // `let x: StructName` introduces a struct-typed local (so `x.field.push`
+        // can resolve `x`'s struct below).
         if let ast::Node::Let { name, ann, .. } = stmt {
             if is_array_surface_type(ann)
                 || map_sentinel_for_opt(ann).is_some()
@@ -1630,16 +1670,45 @@ fn rewrite_collection_mutations(
             {
                 scope.insert(name.clone());
             }
+            if let Some(ast::TypeAnn::Named(sname)) = ann {
+                vtypes.insert(name.clone(), sname.clone());
+            }
         }
         // A bare `x.insert/push/set(args)` statement on a collection local →
-        // rebind: `x = x.insert/push/set(args)`.
-        let rebind_var: Option<String> = if let ast::Node::MethodCall {
+        // rebind `x = x.insert/push/set(args)`; and `obj.field.push(args)` on a
+        // collection FIELD → rebind `obj.field = obj.field.push(args)` (a
+        // FieldAssign). The std handle is fresh on realloc, so without the
+        // rebind the mutation silently drops.
+        enum Rebind {
+            Var(String),
+            Field,
+        }
+        let rebind: Option<Rebind> = if let ast::Node::MethodCall {
             receiver, method, ..
         } = stmt
         {
             if matches!(method.as_str(), "insert" | "push" | "set" | "add") {
                 match receiver.as_ref() {
-                    ast::Node::Lit(Literal::Ident(v), _) if scope.contains(v) => Some(v.clone()),
+                    ast::Node::Lit(Literal::Ident(v), _) if scope.contains(v) => {
+                        Some(Rebind::Var(v.clone()))
+                    }
+                    ast::Node::FieldAccess {
+                        receiver: base,
+                        field,
+                        ..
+                    } => match base.as_ref() {
+                        ast::Node::Lit(Literal::Ident(obj), _)
+                            if vtypes
+                                .get(obj)
+                                .map(|s| {
+                                    struct_collection_fields.contains(&(s.clone(), field.clone()))
+                                })
+                                .unwrap_or(false) =>
+                        {
+                            Some(Rebind::Field)
+                        }
+                        _ => None,
+                    },
                     _ => None,
                 }
             } else {
@@ -1648,38 +1717,76 @@ fn rewrite_collection_mutations(
         } else {
             None
         };
-        if let Some(var) = rebind_var {
-            let sp = stmt.span();
-            let mc = std::mem::replace(stmt, ast::Node::Lit(Literal::Int(0), sp));
-            *stmt = ast::Node::Assign {
-                name: var,
-                value: Box::new(mc),
-                span: sp,
-            };
-            continue; // an Assign has no nested statement lists to recurse into
+        match rebind {
+            Some(Rebind::Var(var)) => {
+                let sp = stmt.span();
+                let mc = std::mem::replace(stmt, ast::Node::Lit(Literal::Int(0), sp));
+                *stmt = ast::Node::Assign {
+                    name: var,
+                    value: Box::new(mc),
+                    span: sp,
+                };
+                continue; // an Assign has no nested statement lists to recurse into
+            }
+            Some(Rebind::Field) => {
+                let sp = stmt.span();
+                let mc = std::mem::replace(stmt, ast::Node::Lit(Literal::Int(0), sp));
+                // Reconstruct the FieldAssign LHS from the method receiver
+                // (`obj.field`), reusing the same receiver/field nodes.
+                if let ast::Node::MethodCall { receiver, .. } = &mc {
+                    if let ast::Node::FieldAccess {
+                        receiver: base,
+                        field,
+                        ..
+                    } = receiver.as_ref()
+                    {
+                        *stmt = ast::Node::FieldAssign {
+                            receiver: base.clone(),
+                            field: field.clone(),
+                            value: Box::new(mc),
+                            span: sp,
+                        };
+                        continue;
+                    }
+                }
+                // Shouldn't happen (we matched the shape above); restore.
+                *stmt = mc;
+            }
+            None => {}
         }
-        // Recurse into nested statement bodies, threading the collection scope.
+        // Recurse into nested statement bodies, threading the collection scope
+        // and struct-type env.
         match stmt {
             ast::Node::For { body, .. }
             | ast::Node::ForEach { body, .. }
             | ast::Node::While { body, .. }
             | ast::Node::Block { stmts: body, .. } => {
-                rewrite_collection_mutations(body, &scope);
+                rewrite_collection_mutations(body, &scope, struct_collection_fields, &vtypes);
             }
             ast::Node::If {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                rewrite_collection_mutations(then_branch, &scope);
+                rewrite_collection_mutations(
+                    then_branch,
+                    &scope,
+                    struct_collection_fields,
+                    &vtypes,
+                );
                 if let Some(eb) = else_branch {
-                    rewrite_collection_mutations(eb, &scope);
+                    rewrite_collection_mutations(eb, &scope, struct_collection_fields, &vtypes);
                 }
             }
             ast::Node::Match { arms, .. } => {
                 for arm in arms.iter_mut() {
                     if let ast::Node::Block { stmts: body, .. } = &mut arm.body {
-                        rewrite_collection_mutations(body, &scope);
+                        rewrite_collection_mutations(
+                            body,
+                            &scope,
+                            struct_collection_fields,
+                            &vtypes,
+                        );
                     }
                 }
             }
@@ -1740,6 +1847,19 @@ fn module_declares_collection(module: &ast::Module) -> bool {
                         }
                     }
                 }
+                // A struct with a collection FIELD (`struct Bag { items: array<T> }`)
+                // also needs the rewrite pass — `obj.field.push(x)` is rebound to
+                // `obj.field = obj.field.push(x)` so the fresh-on-realloc handle
+                // persists.
+                ast::Node::StructDef { fields, .. }
+                    if fields.iter().any(|f| {
+                        is_array_surface_ty(&f.ty)
+                            || is_map_surface_ty(&f.ty)
+                            || is_set_surface_ty(&f.ty)
+                    }) =>
+                {
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -1759,9 +1879,29 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
         return None;
     }
     let mut m = module.clone();
+    // (struct, field) pairs whose field is itself a collection — so a
+    // `obj.field.push(x)` statement (a FieldAccess receiver) can be rebound to
+    // `obj.field = obj.field.push(x)` (the std handle is fresh on realloc).
+    let mut struct_collection_fields: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+    for item in &m.items {
+        if let ast::Node::StructDef { name, fields, .. } = item {
+            for f in fields {
+                if is_array_surface_ty(&f.ty)
+                    || is_map_surface_ty(&f.ty)
+                    || is_set_surface_ty(&f.ty)
+                {
+                    struct_collection_fields.insert((name.clone(), f.name.clone()));
+                }
+            }
+        }
+    }
     for item in m.items.iter_mut() {
         if let ast::Node::FnDef { params, body, .. } = item {
             let mut collections = std::collections::HashSet::new();
+            // var -> struct-type name, so `obj.field` can resolve `obj`'s struct.
+            let mut var_types: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             for p in params.iter() {
                 if is_array_surface_ty(&p.ty)
                     || is_map_surface_ty(&p.ty)
@@ -1769,8 +1909,16 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
                 {
                     collections.insert(p.name.clone());
                 }
+                if let ast::TypeAnn::Named(sname) = &p.ty {
+                    var_types.insert(p.name.clone(), sname.clone());
+                }
             }
-            rewrite_collection_mutations(body, &collections);
+            rewrite_collection_mutations(
+                body,
+                &collections,
+                &struct_collection_fields,
+                &var_types,
+            );
         }
     }
     Some(m)
@@ -3999,6 +4147,17 @@ fn lower_expr(
 
                 // Per-field store at offset 8*i.
                 for (i, f) in order.iter().enumerate() {
+                    #[cfg(feature = "std-surface")]
+                    let value = lower_struct_field_value(
+                        name,
+                        &f.name,
+                        &f.value,
+                        ir,
+                        env,
+                        struct_env,
+                        receiver_types,
+                    );
+                    #[cfg(not(feature = "std-surface"))]
                     let value = lower_expr(&f.value, ir, env, struct_env, receiver_types);
                     let field_addr = if i == 0 {
                         addr
@@ -4038,6 +4197,17 @@ fn lower_expr(
                 args: vec![bytes],
             });
             for (i, f) in order.iter().enumerate() {
+                #[cfg(feature = "std-surface")]
+                let value = lower_struct_field_value(
+                    name,
+                    &f.name,
+                    &f.value,
+                    ir,
+                    env,
+                    struct_env,
+                    receiver_types,
+                );
+                #[cfg(not(feature = "std-surface"))]
                 let value = lower_expr(&f.value, ir, env, struct_env, receiver_types);
                 let (offset, width, _signed) = layout[i];
                 let field_addr = if offset == 0 {
@@ -4394,19 +4564,22 @@ fn lower_expr(
             // `arr[i]` on a vec-sentinel (`array<T>`) receiver → std.vec
             // `vec_get` (the receiver is an i64 heap handle, not a const array,
             // so the `ArrayLoad` LUT path below would misinterpret it).
+            // The vec-sentinel receiver may be an Ident (`arr[i]`) OR a struct
+            // FIELD of `array<T>` (`b.items[i]`) — `receiver_collection_sentinel`
+            // resolves both. A const-array Ident keeps the `ArrayLoad` path below.
             #[cfg(feature = "std-surface")]
-            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
-                if struct_env.get(var_name).map(|s| s.as_str()) == Some(ARRAY_VEC_SENTINEL) {
-                    let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
-                    let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
-                    let dst = ir.fresh();
-                    ir.instrs.push(Instr::Call {
-                        dst,
-                        name: "vec_get".to_string(),
-                        args: vec![base, index_id],
-                    });
-                    return dst;
-                }
+            if receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+                == Some(ARRAY_VEC_SENTINEL)
+            {
+                let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst,
+                    name: "vec_get".to_string(),
+                    args: vec![base, index_id],
+                });
+                return dst;
             }
             let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
             let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
@@ -4430,19 +4603,19 @@ fn lower_expr(
             // `vec_set`. A const array stays read-only (placeholder), preserving
             // the prior IR shape for the non-array path.
             #[cfg(feature = "std-surface")]
-            if let ast::Node::Lit(Literal::Ident(var_name), _) = receiver.as_ref() {
-                if struct_env.get(var_name).map(|s| s.as_str()) == Some(ARRAY_VEC_SENTINEL) {
-                    let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
-                    let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
-                    let val_id = lower_expr(value, ir, env, struct_env, receiver_types);
-                    let dst = ir.fresh();
-                    ir.instrs.push(Instr::Call {
-                        dst,
-                        name: "vec_set".to_string(),
-                        args: vec![base, index_id, val_id],
-                    });
-                    return dst;
-                }
+            if receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+                == Some(ARRAY_VEC_SENTINEL)
+            {
+                let base = lower_expr(receiver, ir, env, struct_env, receiver_types);
+                let index_id = lower_expr(index, ir, env, struct_env, receiver_types);
+                let val_id = lower_expr(value, ir, env, struct_env, receiver_types);
+                let dst = ir.fresh();
+                ir.instrs.push(Instr::Call {
+                    dst,
+                    name: "vec_set".to_string(),
+                    args: vec![base, index_id, val_id],
+                });
+                return dst;
             }
             let id = ir.fresh();
             ir.instrs.push(Instr::ConstI64(id, 0));
@@ -4766,7 +4939,31 @@ fn lower_expr(
                         Some(t) => (Some(t.clone()), Some(var_name.clone())),
                         None => (receiver_types.get(span).cloned(), None),
                     },
-                    _ => (receiver_types.get(span).cloned(), None),
+                    // A FieldAccess receiver whose field is itself an `array<T>`
+                    // (`next.scopes.push(x)` where `scopes: array<T>`) resolves to
+                    // the vec sentinel so `.push`/`.get`/`.set`/`.length` route to
+                    // the std.vec free functions — mirroring the map/set field
+                    // receivers handled in the intercept above. The mutating forms
+                    // are rebound to a FieldAssign in `rewrite_collection_mutations`
+                    // so the fresh-on-realloc handle persists. Falls back to the
+                    // struct-type side table for a struct-typed field receiver.
+                    _ => {
+                        #[cfg(feature = "std-surface")]
+                        {
+                            let sentinel = receiver_collection_sentinel(
+                                receiver,
+                                &ir,
+                                struct_env,
+                                receiver_types,
+                            )
+                            .map(|s| s.to_string());
+                            (sentinel.or_else(|| receiver_types.get(span).cloned()), None)
+                        }
+                        #[cfg(not(feature = "std-surface"))]
+                        {
+                            (receiver_types.get(span).cloned(), None)
+                        }
+                    }
                 };
 
             // Case 1 — zero-arg accessor whose name is a field of `T`.
