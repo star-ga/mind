@@ -5124,6 +5124,31 @@ fn lower_expr(
             // receiver is threaded as arg 0 (UFCS), but routed here so a
             // FIELD-typed string receiver (whose type the receiver_types side
             // table may not carry) also resolves.
+            // STATIC/associated string fn: `string.from_utf8_bytes(buf)` — the
+            // receiver is the bare TYPE name `string`/`String`, NOT a value, so it
+            // routes to `string_<method>(args…)` with NO receiver arg (distinct
+            // from the instance-method UFCS path below which threads the receiver
+            // as arg 0). A local actually named `string`/`String` would be in
+            // `struct_env`/`env`; the static path only fires when it is not.
+            #[cfg(feature = "std-surface")]
+            if let ast::Node::Lit(Literal::Ident(tn), _) = receiver.as_ref() {
+                if (tn == "string" || tn == "String")
+                    && !env.contains_key(tn)
+                    && !struct_env.contains_key(tn)
+                {
+                    let mut call_args = Vec::with_capacity(args.len());
+                    for a in args {
+                        call_args.push(lower_expr(a, ir, env, struct_env, receiver_types));
+                    }
+                    let dst = ir.fresh();
+                    ir.instrs.push(Instr::Call {
+                        dst,
+                        name: format!("string_{method}"),
+                        args: call_args,
+                    });
+                    return dst;
+                }
+            }
             #[cfg(feature = "std-surface")]
             if receiver_is_string(receiver, &ir, struct_env, receiver_types) {
                 let recv_id = lower_expr(receiver, ir, env, struct_env, receiver_types);
