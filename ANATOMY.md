@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2893 | **Est. tokens:** ~6,990,840
-**Generated:** 2026-06-22 01:05 UTC
+**Files:** 2894 | **Est. tokens:** ~6,991,829
+**Generated:** 2026-06-22 01:22 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,080 |
-| `src/ir/` | 4 | ~26,412 |
+| `src/ir/` | 4 | ~26,649 |
 | `src/ir/compact/` | 3 | ~14,842 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~44,531 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 214 | ~358,323 |
+| `tests/` | 215 | ~359,075 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3756,7 +3756,7 @@
 ### `src/ir/`
 
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~11784 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~12021 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
 - `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
@@ -4032,6 +4032,7 @@
 - `lint_infrastructure.rs` (~2540 tok, huge) — Copyright 2025 STARGA Inc.
 - `loop_run.rs` (~803 tok, large) — Copyright 2025 STARGA Inc.
 - `loud_fail_non_i64.rs` (~745 tok, large) — Release-readiness P1.1 — the runnable-artifact ABI gate.
+- `map_get_inference_run.rs` (~752 tok, large) — Copyright 2025 STARGA Inc.
 - `map_runtime_run.rs` (~881 tok, large) — Copyright 2025 STARGA Inc.
 - `map_surface_run.rs` (~987 tok, large) — Copyright 2025 STARGA Inc.
 - `match_arm_stmt_run.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.

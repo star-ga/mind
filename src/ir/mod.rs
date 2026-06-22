@@ -113,6 +113,28 @@ thread_local! {
         std::cell::RefCell::new(std::collections::BTreeSet::new());
 }
 
+thread_local! {
+    /// Declared TYPE of each module-level `const` (when annotated), so a method
+    /// receiver that is a const of collection type (`BACKEND_AVAILABILITY.get(p)`
+    /// where `const BACKEND_AVAILABILITY: map<…>`) resolves its sentinel / value
+    /// type. Lowering-time only; never serialised.
+    static MODULE_CONST_TYPES: std::cell::RefCell<
+        std::collections::BTreeMap<String, crate::ast::TypeAnn>,
+    > = std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+/// Install the declared types of module-level consts for the current pass.
+pub fn set_module_const_types(
+    types: std::collections::BTreeMap<String, crate::ast::TypeAnn>,
+) {
+    MODULE_CONST_TYPES.with(|c| *c.borrow_mut() = types);
+}
+
+/// Look up a module const's declared TypeAnn by name, or `None`.
+pub fn module_const_type(name: &str) -> Option<crate::ast::TypeAnn> {
+    MODULE_CONST_TYPES.with(|c| c.borrow().get(name).cloned())
+}
+
 /// Install the module-level const table for the current lowering pass.
 pub fn set_module_consts(consts: std::collections::BTreeMap<String, crate::ast::Node>) {
     MODULE_CONSTS.with(|c| *c.borrow_mut() = consts);
