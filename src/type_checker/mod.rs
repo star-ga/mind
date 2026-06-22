@@ -68,6 +68,10 @@ type FnTensorSigs = HashMap<String, Vec<TensorParamSig>>;
 #[derive(Debug, Clone)]
 struct IntraFnSig {
     param_count: usize,
+    /// Declared parameter TypeAnns, carried for the Bug #38 fixed-buffer /
+    /// growable-`bytes` mismatch check ONLY. The general per-arg type check
+    /// stays disabled under the loose i64 ABI; see `check_intra_fn_call`.
+    param_types: Vec<TypeAnn>,
 }
 
 /// Maps an intra-module function name to its captured call signature.
@@ -106,6 +110,16 @@ const MATCH_NONEXHAUSTIVE_CODE: &str = "match::non_exhaustive";
 /// demoted exact-width `E2001` mismatch (which i32-vs-i64 siblings trigger and
 /// which is intentionally tolerated as both are i64-backed).
 const MATCH_ARM_MISMATCH_CODE: &str = "match::arm_mismatch";
+
+/// Bug #38 — a fixed-size buffer value (`bytes[N]`, an opaque i64 handle to N
+/// raw bytes, e.g. from `bytes[N].zero()` or `std.sha256.hash`) flows into a
+/// parameter declared as the GROWABLE `bytes` vec record `[addr|len|cap]`.
+/// The two share the i64 ABI but have incompatible layouts: reading `.length`
+/// on a fixed buffer reads raw payload bytes as the vec len field — a silent
+/// miscompile. Fail loud rather than emit it (consistent with the #306
+/// fail-closed philosophy). NARROW by construction: fires ONLY on the exact
+/// growable-`bytes`-param + fixed-`bytes[N]`-arg pairing.
+const FIXED_BYTES_INTO_VEC_CODE: &str = "E2006";
 
 /// True for the RFC 0012 shape-diagnostic codes. Used to keep the
 /// additive FnDef-body shape pass from contributing non-shape errors
@@ -2102,6 +2116,60 @@ fn check_std_surface_intrinsic(
     Ok((ValueType::ScalarI64, span))
 }
 
+/// Bug #38 — true when `ann` is a fixed-size buffer type `bytes[N]`
+/// (parser renders it `Named("bytes[N]")`), distinct from the growable
+/// `Named("bytes")` vec record. The `[` suffix is the sole discriminator.
+fn typeann_is_fixed_bytes(ann: &TypeAnn) -> bool {
+    matches!(ann, TypeAnn::Named(n) if n.starts_with("bytes["))
+}
+
+/// Bug #38 — recognise an argument EXPRESSION that evaluates to a fixed-size
+/// `bytes[N]` buffer handle. NARROW by construction: returns `true` only for
+/// the two value forms that produce such a handle, and `None`-equivalent
+/// (`false`) for every other expression, so Phase-A loose typing is fully
+/// preserved and no valid program can be rejected.
+///
+///   1. `bytes[N].zero()` — parses as `MethodCall { receiver:
+///      IndexAccess { receiver: Ident("bytes"), .. }, method: "zero" }`,
+///      the same shape the lowerer matches at lower.rs (`__mind_calloc`).
+///   2. A call to a fn whose declared return type is `Named("bytes[...]")`
+///      (e.g. `std.sha256.hash(...) -> bytes[32]`), looked up via the
+///      cross-module signature table.
+fn arg_is_fixed_bytes_buffer(arg: &Node) -> bool {
+    match arg {
+        Node::MethodCall {
+            receiver, method, ..
+        } if method == "zero" => matches!(
+            receiver.as_ref(),
+            Node::IndexAccess { receiver: base, .. }
+                if matches!(base.as_ref(), Node::Lit(Literal::Ident(n), _) if n == "bytes")
+        ),
+        #[cfg(feature = "cross-module-imports")]
+        Node::Call { callee, .. } => cm_lookup_fn(callee)
+            .and_then(|sig| sig.ret_type)
+            .as_ref()
+            .is_some_and(typeann_is_fixed_bytes),
+        _ => false,
+    }
+}
+
+/// Bug #38 — given a callee's declared parameter TypeAnns and the call's
+/// argument expressions, return the first `(index, span)` where a growable
+/// `bytes` parameter receives a fixed-size `bytes[N]` buffer handle. This is
+/// the only arg/param type comparison performed under the loose i64 ABI, and
+/// it fires ONLY on this exact mismatch — see `arg_is_fixed_bytes_buffer`.
+fn fixed_bytes_into_vec_violation(
+    param_types: &[TypeAnn],
+    args: &[Node],
+) -> Option<(usize, AstSpan)> {
+    for (i, (param, arg)) in param_types.iter().zip(args.iter()).enumerate() {
+        if matches!(param, TypeAnn::Named(n) if n == "bytes") && arg_is_fixed_bytes_buffer(arg) {
+            return Some((i, arg.span()));
+        }
+    }
+    None
+}
+
 fn infer_call(
     callee: &str,
     args: &[Node],
@@ -2746,9 +2814,26 @@ fn check_intra_fn_call(
             span,
         });
     }
-    // Arity is the ONLY property validated here — it is always soundly knowable
-    // from the AST regardless of the loose i64 ABI (see the module note on
-    // `build_intra_fn_sigs`). We deliberately do NOT re-infer the argument
+    // Bug #38 — the ONE per-arg type comparison done under the loose i64 ABI:
+    // refuse a fixed-size `bytes[N]` buffer flowing into a growable `bytes`
+    // parameter (a silent miscompile). NARROW — fires only on that exact
+    // pairing (see `fixed_bytes_into_vec_violation`), so the loose typing the
+    // rest of this fn relies on is untouched.
+    if let Some((i, arg_span)) = fixed_bytes_into_vec_violation(&sig.param_types, args) {
+        return Err(TypeErrSpan {
+            msg: format!(
+                "function `{callee}` parameter {i} is a growable `bytes` vec, but the \
+                 argument is a fixed-size `bytes[N]` buffer handle. These share the i64 \
+                 ABI but have incompatible layouts — reading `.length` on the buffer \
+                 would read raw payload as the vec length (silent miscompile). Copy the \
+                 buffer into a `bytes` vec, or declare the parameter `bytes[N]`."
+            ),
+            span: arg_span,
+        });
+    }
+    // Arity is otherwise the ONLY property validated here — it is always soundly
+    // knowable from the AST regardless of the loose i64 ABI (see the module note
+    // on `build_intra_fn_sigs`). We deliberately do NOT re-infer the argument
     // expressions: per-arg type checking is not soundly determinable under the
     // i64 ABI, and a re-walk via `infer_expr` false-positives on valid value
     // forms the outer type-check pass already accepts — notably enum-variant
@@ -2877,6 +2962,23 @@ fn check_imported_fn_call(
                 got = args.len(),
             ),
             span,
+        });
+    }
+    // Bug #38 — refuse a fixed-size `bytes[N]` buffer flowing into a growable
+    // `bytes` parameter (narrow; see `fixed_bytes_into_vec_violation`). Runs
+    // before the ValueType-level compatibility walk below, which cannot see
+    // the distinction (both collapse to ScalarI64).
+    if let Some((i, arg_span)) = fixed_bytes_into_vec_violation(&sig.param_types, args) {
+        return Err(TypeErrSpan {
+            msg: format!(
+                "imported `{name}` parameter {i} is a growable `bytes` vec, but the \
+                 argument is a fixed-size `bytes[N]` buffer handle. These share the i64 \
+                 ABI but have incompatible layouts — reading `.length` on the buffer \
+                 would read raw payload as the vec length (silent miscompile). Copy the \
+                 buffer into a `bytes` vec, or declare the parameter `bytes[N]`.",
+                name = sig.name,
+            ),
+            span: arg_span,
         });
     }
     for (i, (arg, declared)) in args.iter().zip(sig.param_types.iter()).enumerate() {
@@ -3027,6 +3129,7 @@ pub fn check_module_types_in_file(
                     name.clone(),
                     IntraFnSig {
                         param_count: params.len(),
+                        param_types: params.iter().map(|p| p.ty.clone()).collect(),
                     },
                 );
             }
@@ -3436,12 +3539,21 @@ pub fn check_module_types_in_file(
                 // constructs that made the generic mismatch path unsafe inside
                 // bodies — so admitting them surfaces these soundness holes
                 // where most calls and matches actually live (fn bodies).
+                // Bug #38 — the fixed-buffer-into-`bytes`-vec diagnostic (E2006)
+                // joins this whitelist for the same reason as arity: it fires
+                // ONLY on the narrow, concrete `bytes[N]`-arg + `bytes`-param
+                // pairing (gated by `arg_is_fixed_bytes_buffer`), never on the
+                // ref/match-binding/struct-arg constructs that made the generic
+                // mismatch path unsafe inside bodies. Most such calls live in fn
+                // bodies, so without this the silent miscompile would slip
+                // through exactly where it occurs.
                 errs.extend(body_errs.into_iter().filter(|d| {
                     is_shape_diag_code(d.code)
                         || d.code == NARROWING_CODE
                         || d.code == CALL_ARITY_CODE
                         || d.code == MATCH_NONEXHAUSTIVE_CODE
                         || d.code == MATCH_ARM_MISMATCH_CODE
+                        || d.code == FIXED_BYTES_INTO_VEC_CODE
                 }));
 
                 // Issue #23 — scoped name resolution for the fn body. Replaces
@@ -4603,6 +4715,9 @@ fn classify_error_code(msg: &str) -> &'static str {
     } else if msg.starts_with("match arm type class mismatch") {
         // Finding 19: cross-class arm mismatch (int tag vs float payload).
         MATCH_ARM_MISMATCH_CODE
+    } else if msg.contains("fixed-size `bytes[N]` buffer handle") {
+        // Bug #38: fixed buffer flowing into a growable `bytes` parameter.
+        FIXED_BYTES_INTO_VEC_CODE
     } else {
         TYPE_ERR_CODE
     }
