@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2892 | **Est. tokens:** ~6,989,984
-**Generated:** 2026-06-22 00:20 UTC
+**Files:** 2893 | **Est. tokens:** ~6,990,840
+**Generated:** 2026-06-22 01:05 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 213 | ~357,467 |
+| `tests/` | 214 | ~358,323 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4166,6 +4166,7 @@
 - `narrow_call_abi.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `nested_block_surface_run.rs` (~1074 tok, large) — Copyright 2025 STARGA Inc.
+- `nested_collection_run.rs` (~856 tok, large) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
