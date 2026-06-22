@@ -3044,6 +3044,84 @@ impl<'a> P<'a> {
         Ok(node)
     }
 
+    /// Parse a generic-type STATIC CONSTRUCTOR `Type<args>.method(args)` after the
+    /// `Type` name (`map`/`set`/`array`) has been read and the cursor is at `<`.
+    /// Returns `Some(Call)` mapping to the runtime constructor (`map_new` for
+    /// map/set, `vec_new` for array) — or `None` (cursor fully restored) when it
+    /// is NOT actually a `<…>.method(…)` form, so a real `map < x` comparison or
+    /// any other use parses normally.
+    fn try_parse_collection_ctor(
+        &mut self,
+        type_name: &str,
+        start: usize,
+    ) -> Result<Option<Node>, ParseError> {
+        let saved = self.pos;
+        // Consume a balanced `<…>` (handles nested generics like
+        // `map<string, array<string>>`).
+        debug_assert!(self.at(b'<'));
+        let mut depth: i32 = 0;
+        loop {
+            if self.at_end() {
+                self.pos = saved;
+                return Ok(None);
+            }
+            let c = self.b[self.pos];
+            self.pos += 1;
+            if c == b'<' {
+                depth += 1;
+            } else if c == b'>' {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+        }
+        self.skip_ws();
+        if !self.eat(b'.') {
+            self.pos = saved;
+            return Ok(None);
+        }
+        let method = match self.word() {
+            Some(w) => w.to_string(),
+            None => {
+                self.pos = saved;
+                return Ok(None);
+            }
+        };
+        self.skip_ws();
+        if !self.eat(b'(') {
+            self.pos = saved;
+            return Ok(None);
+        }
+        let mut args = Vec::new();
+        self.skip_ws_and_newlines();
+        if !self.at(b')') {
+            args.push(self.parse_call_arg()?);
+            loop {
+                self.skip_ws_and_newlines();
+                if !self.eat(b',') {
+                    break;
+                }
+                self.skip_ws_and_newlines();
+                if self.at(b')') {
+                    break;
+                }
+                args.push(self.parse_call_arg()?);
+            }
+        }
+        self.skip_ws_and_newlines();
+        self.expect(b')')?;
+        let span = Span::new(start, self.pos);
+        // map/set are both the std.map runtime; array is std.vec.
+        let prefix = if type_name == "array" { "vec" } else { type_name };
+        let callee = if method == "new" && type_name == "set" {
+            "map_new".to_string()
+        } else {
+            format!("{prefix}_{method}")
+        };
+        Ok(Some(Node::Call { callee, args, span }))
+    }
+
     fn parse_primary(&mut self) -> Result<Node, ParseError> {
         self.skip_ws_and_newlines();
         if self.at_end() {
@@ -3147,6 +3225,15 @@ impl<'a> P<'a> {
             .dotted_ident()
             .ok_or_else(|| self.err("expected expression".into()))?;
         self.skip_ws();
+        // `map<K,V>.new(args)` / `set<T>.new()` / `array<T>.new()` — a generic-type
+        // STATIC CONSTRUCTOR in expression position. Gated on the exact collection
+        // type-name followed by `<` (so a real `map < x` comparison is untouched),
+        // with full position restore if it isn't actually a `<…>.method(…)` form.
+        if matches!(ident.as_str(), "map" | "set" | "array") && self.at(b'<') {
+            if let Some(node) = self.try_parse_collection_ctor(&ident, start)? {
+                return Ok(node);
+            }
+        }
         match ident.as_str() {
             "grad" if self.at(b'(') => self.parse_grad_call(start),
             "tensor.sum" if self.at(b'(') => {
