@@ -686,6 +686,18 @@ MIND_EXPORT int64_t string_trim(int64_t s) {
     return string_from_range(saddr + a, b - a);
 }
 
+// string_from_utf8_bytes(v) -> String. Builds a String from a std.vec of byte
+// values (each element is one i64 byte, 0..255). Used by the static-type call
+// `string.from_utf8_bytes(buf)` where `buf` is a growable `bytes` buffer.
+MIND_EXPORT int64_t string_from_utf8_bytes(int64_t v) {
+    int64_t s = string_new();
+    int64_t n = vec_len(v);
+    for (int64_t i = 0; i < n; i++) {
+        s = string_push_byte(s, vec_get(v, i));
+    }
+    return s;
+}
+
 // ---------------------------------------------------------------------------
 // mind-blas Track A — runtime-support SIMD bridge (RFC 0006).
 //
