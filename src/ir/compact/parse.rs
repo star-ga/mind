@@ -722,8 +722,15 @@ impl<'a> MicParser<'a> {
                 let inner = &arg[1..arg.len() - 1];
                 for pair in inner.split(',') {
                     if let Some((axis_str, idx_str)) = pair.split_once(':') {
-                        let axis: i64 = axis_str.trim().parse().unwrap_or(0);
-                        let index: i64 = idx_str.trim().parse().unwrap_or(0);
+                        // Propagate corrupt numeric fields instead of silently
+                        // treating them as 0: a malformed axis/index must not be
+                        // accepted as valid IR.
+                        let axis: i64 = axis_str.trim().parse().map_err(|_| {
+                            self.error(format!("invalid index axis: {}", axis_str.trim()))
+                        })?;
+                        let index: i64 = idx_str.trim().parse().map_err(|_| {
+                            self.error(format!("invalid index value: {}", idx_str.trim()))
+                        })?;
                         indices.push(IndexSpec { axis, index });
                     }
                 }
@@ -752,14 +759,25 @@ impl<'a> MicParser<'a> {
                 for (axis, spec) in arg.split(',').enumerate() {
                     let parts: Vec<&str> = spec.split(':').collect();
                     if parts.len() >= 2 {
-                        let start: i64 = parts[0].parse().unwrap_or(0);
+                        // Propagate corrupt numeric fields instead of silently
+                        // defaulting (start->0, end->None, stride->1): malformed
+                        // slice bounds must not be accepted as valid IR. An empty
+                        // `end` token is a legitimate open bound (None) and is
+                        // preserved; only a non-empty unparseable token errors.
+                        let start: i64 = parts[0].parse().map_err(|_| {
+                            self.error(format!("invalid slice start: {}", parts[0]))
+                        })?;
                         let end: Option<i64> = if parts.len() > 1 && !parts[1].is_empty() {
-                            parts[1].parse().ok()
+                            Some(parts[1].parse().map_err(|_| {
+                                self.error(format!("invalid slice end: {}", parts[1]))
+                            })?)
                         } else {
                             None
                         };
                         let stride: i64 = if parts.len() > 2 {
-                            parts[2].parse().unwrap_or(1)
+                            parts[2].parse().map_err(|_| {
+                                self.error(format!("invalid slice stride: {}", parts[2]))
+                            })?
                         } else {
                             1
                         };
@@ -790,7 +808,10 @@ impl<'a> MicParser<'a> {
         let mut axis = 0i64;
         for arg in &args[2..] {
             if let Some(ax_str) = arg.strip_prefix("ax=") {
-                axis = ax_str.parse().unwrap_or(0);
+                // Propagate a corrupt axis instead of silently defaulting to 0.
+                axis = ax_str
+                    .parse()
+                    .map_err(|_| self.error(format!("invalid gather axis: {}", ax_str)))?;
             }
         }
 
