@@ -330,13 +330,29 @@ impl Scopes {
     }
 }
 
-/// True for tensor builtins whose `Node::Call` arguments include dtype/shape
-/// identifier literals (`tensor.zeros(f32, (..))`) rather than value
-/// expressions. We must not descend into their args as references — `f32` and
-/// symbolic shape names are not variables. All such callees start with
-/// `tensor.`; their callee is always a builtin, so it is never undefined.
-fn is_builtin_callee(callee: &str) -> bool {
-    callee.starts_with("tensor.")
+/// True ONLY for the dtype/shape-LITERAL tensor builtins — those whose leading
+/// `Node::Call` argument is a bare dtype identifier (`f32`, `f64`, …) rather
+/// than a value expression (`tensor.zeros(f32, (..))`). We must not descend into
+/// these args as references: `f32` is not a resolvable variable, so walking it
+/// would false-positive E2002.
+///
+/// CRIT — missed diagnostic: this used to return `true` for ALL `tensor.*`
+/// callees, so the resolver skipped the value arguments of *every* tensor
+/// builtin (e.g. `tensor.sum(x, undefined_var)`) and an undefined identifier
+/// inside them was never reported. The skip is now scoped to exactly the
+/// dtype-literal constructors; all other `tensor.*` generic calls have their
+/// value arguments walked, so undefined idents are caught (E2002).
+///
+/// `tensor.rand` parses to a dedicated `Node::CallTensorRand` leaf and never
+/// reaches this generic-call path, but it is listed for documentation /
+/// forward-compatibility (if it ever falls back to a generic call its first
+/// arg is still a dtype literal). Likewise `tensor.full` is reserved for the
+/// same `(dtype, shape, fill)` constructor shape.
+fn is_dtype_literal_builtin(callee: &str) -> bool {
+    matches!(
+        callee,
+        "tensor.zeros" | "tensor.ones" | "tensor.full" | "tensor.rand"
+    )
 }
 
 /// Did-you-mean suggestion drawn from the in-scope names + module symbols.
@@ -508,9 +524,12 @@ impl<'a> Resolver<'a> {
                         suggestion,
                     });
                 }
-                // Skip arg descent for tensor builtins whose args carry
-                // dtype/shape identifier literals (not variables).
-                if !is_builtin_callee(callee) {
+                // Skip arg descent ONLY for the dtype-literal tensor
+                // constructors, whose leading arg is a bare dtype ident
+                // (`f32`) — not a variable. Every other call (including all
+                // other `tensor.*` builtins) has its value args walked so an
+                // undefined ident inside them is reported (E2002).
+                if !is_dtype_literal_builtin(callee) {
                     for a in args {
                         self.walk(a);
                     }

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2901 | **Est. tokens:** ~6,996,946
-**Generated:** 2026-06-22 11:28 UTC
+**Files:** 2901 | **Est. tokens:** ~6,997,584
+**Generated:** 2026-06-22 12:46 UTC
 
 ## Token Budget Guide
 
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~7,904 |
+| `src/type_checker/` | 1 | ~8,181 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 22 | ~109,432 |
-| `tests/` | 222 | ~363,918 |
+| `tests/` | 222 | ~364,279 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3838,7 +3838,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~7904 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~8181 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4188,7 +4188,7 @@
 - `relu_exec.rs` (~472 tok, medium) — Copyright 2025 STARGA Inc.
 - `relu_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
-- `resolve_fn_body.rs` (~670 tok, large) — Copyright 2025 STARGA Inc.
+- `resolve_fn_body.rs` (~1031 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~948 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1182 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6540 tok, huge) — Copyright 2025 STARGA Inc.

@@ -76,3 +76,40 @@ fn shape_variable_resolves() {
         "a shape variable used as a value must resolve; got {errs:?}"
     );
 }
+
+#[test]
+fn undefined_arg_in_tensor_builtin_is_reported_e2002() {
+    // Finding #2 (missed diagnostic): the resolver used to skip the value
+    // arguments of EVERY `tensor.*` builtin, so an undefined identifier inside
+    // one was silently accepted. Only the dtype-literal constructors may skip
+    // their args; everything else must be walked.
+    let errs = diagnostics(
+        "fn f() -> i64 {\n    let x: Tensor[f32,(2,2)] = 1\n    let y = tensor.sum(x, undefined_var)\n    0\n}\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("E2002") && e.contains("undefined_var")),
+        "an undefined ident inside a `tensor.*` call arg MUST flag E2002; got {errs:?}"
+    );
+}
+
+#[test]
+fn dtype_literal_builtin_args_are_not_false_flagged() {
+    // The fix must NOT over-correct: `tensor.zeros(f32, (3, 4))` carries a bare
+    // dtype literal `f32` (not a variable) plus a shape tuple — neither may
+    // raise E2002.
+    let errs = diagnostics(
+        "fn g() -> i64 {\n    let z = tensor.zeros(f32, (3, 4))\n    0\n}\n",
+    );
+    assert!(
+        !has_e2002(&errs),
+        "a dtype-literal builtin's `f32`/shape args must not be flagged; got {errs:?}"
+    );
+    let errs2 = diagnostics(
+        "fn g2() -> i64 {\n    let z = tensor.ones(f64, (2, 2))\n    0\n}\n",
+    );
+    assert!(
+        !has_e2002(&errs2),
+        "`tensor.ones(f64, ..)` dtype/shape args must not be flagged; got {errs2:?}"
+    );
+}
