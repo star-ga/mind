@@ -42,6 +42,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 // --- #225: compiler/OS portability shim (MSVC + Windows) -----------------
 // Function/data attributes that vary between GCC/Clang and MSVC, plus
@@ -147,6 +148,25 @@ MIND_EXPORT int64_t __mind_realloc(int64_t addr, int64_t new_bytes) {
 MIND_EXPORT int64_t __mind_free(int64_t addr) {
     free((void *)(uintptr_t)addr);
     return 0;
+}
+
+// __mind_now_ns — wall-clock nanoseconds since the Unix epoch (CLOCK_REALTIME).
+//
+// EXPLICITLY NON-DETERMINISTIC, by design: this is a RUNTIME capability for
+// evidence/audit timestamps ("when was this inference evaluated"), in the same
+// I/O category as the std.fs / std.iouring host calls — NOT a computation
+// primitive. The compiler's byte-identity invariant is about the OUTPUT artifact
+// (the .so / mic@3 bytes), which is unaffected by a program reading the clock at
+// run time. No deterministic / byte-identity-critical path may consume this; it
+// exists solely so the evidence layer can stamp real time. The i64 argument is
+// an unused placeholder to match the auto-generated `(i64) -> i64` extern shape.
+MIND_EXPORT int64_t __mind_now_ns(int64_t _unused) {
+    (void)_unused;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return 0;
+    }
+    return (int64_t)ts.tv_sec * 1000000000LL + (int64_t)ts.tv_nsec;
 }
 
 MIND_EXPORT int64_t __mind_load_i64(int64_t addr) {
