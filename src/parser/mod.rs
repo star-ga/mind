@@ -877,19 +877,24 @@ impl<'a> P<'a> {
             // hot loop.
             if self.pos >= self.b.len() || (self.b[self.pos] != b'.' && self.b[self.pos] != b'<') {
                 // `Name[N]` — a fixed-size buffer type (e.g. `bytes[32]`,
-                // `bytes[8]` for hashes), the size suffixing the name. Consume the
-                // `[N]` and keep the opaque Named handle (i64 ABI); N is only
-                // material at the `Name[N].zero()` value constructor (which
-                // recovers it from the IndexAccess). Distinct from `[T; N]` (a
-                // const array, parsed from a LEADING `[`).
+                // `bytes[8]` for hashes), the size suffixing the name. The size N
+                // is preserved in the Named string as `Name[N]` so the type
+                // checker can distinguish a fixed N-byte buffer (a raw i64 handle)
+                // from the growable `bytes` vec record — passing the former where
+                // the latter is expected is a silent miscompile (#38), now
+                // rejected at the call site. The opaque i64 ABI is unchanged:
+                // `Named(_)` lowers identically regardless of the `[N]` suffix.
+                // N stays material at the `Name[N].zero()` value constructor
+                // (which recovers it from the IndexAccess AST, not the type).
+                // Distinct from `[T; N]` (a const array, parsed from a LEADING `[`).
                 if self.pos < self.b.len() && self.b[self.pos] == b'[' {
                     let save = self.pos;
                     self.pos += 1;
                     self.skip_ws();
-                    if self.digits().is_some() {
+                    if let Some(n) = self.digits() {
                         self.skip_ws();
                         if self.eat(b']') {
-                            return Ok(TypeAnn::Named(first.to_string()));
+                            return Ok(TypeAnn::Named(format!("{first}[{n}]")));
                         }
                     }
                     self.pos = save; // not `[N]` — leave the `[` for the caller
@@ -942,18 +947,19 @@ impl<'a> P<'a> {
                 return Ok(TypeAnn::Generic { name, args });
             }
             // `Name[N]` — a fixed-size buffer type (e.g. `bytes[32]`, `bytes[8]`
-            // for hashes), the size suffixing the name. Treated as the opaque
-            // Named handle (i64 ABI); N is only material at the `Name[N].zero()`
-            // value constructor, which recovers it from the IndexAccess. Distinct
-            // from `[T; N]` (a const array, parsed from a LEADING `[`).
+            // for hashes), the size suffixing the name. The size N is preserved in
+            // the Named string as `Name[N]` (see the bare-Name fast path above for
+            // the #38 rationale); the opaque i64 ABI is unchanged. N stays material
+            // at the `Name[N].zero()` value constructor (recovered from the
+            // IndexAccess AST). Distinct from `[T; N]` (a const array, LEADING `[`).
             if self.pos < self.b.len() && self.b[self.pos] == b'[' {
                 let save = self.pos;
                 self.pos += 1;
                 self.skip_ws();
-                if self.digits().is_some() {
+                if let Some(n) = self.digits() {
                     self.skip_ws();
                     if self.eat(b']') {
-                        return Ok(TypeAnn::Named(name));
+                        return Ok(TypeAnn::Named(format!("{name}[{n}]")));
                     }
                 }
                 self.pos = save; // not `[N]` — leave the `[` for the caller
