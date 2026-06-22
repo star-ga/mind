@@ -1041,6 +1041,18 @@ impl<'a> P<'a> {
         if self.at_keyword(b"export") {
             return self.parse_export_block();
         }
+        // `invariant NAME { ... }` — a governance/DIFC contract declaration (512-mind
+        // invariant system). It produces NO executable code: the native compiler
+        // accepts it as a transparent marker and the governance tooling (arch-mind /
+        // the 512-mind runtime) consumes the body. std-surface-gated; the keystone
+        // source has no invariants, so its emit stays byte-identical.
+        // deferred: the `check(...)` body is currently skipped, not lowered — upgrade
+        // path is to register invariant checks with the governance pass so they can
+        // be verified at runtime, rather than dropped here.
+        #[cfg(feature = "std-surface")]
+        if self.at_keyword(b"invariant") {
+            return self.parse_invariant_block();
+        }
         if self.at_keyword(b"struct") {
             return self.parse_struct(Vec::new(), is_pub);
         }
@@ -1596,6 +1608,86 @@ impl<'a> P<'a> {
         self.eat(b';');
         let span = Span::new(start, self.pos);
         Ok(Node::Export { names, span })
+    }
+
+    /// Parse `invariant NAME { ... }` — a governance/DIFC contract declaration.
+    ///
+    /// The invariant is a 512-mind governance construct (a `description` plus one
+    /// or more `check(...)` predicates). It is NOT part of the executable lowering:
+    /// the native compiler accepts the whole `{ ... }` body as opaque and emits a
+    /// transparent empty block, so a module that declares invariants compiles to
+    /// native code while the governance tooling consumes the contract separately.
+    ///
+    /// The body is skipped with brace-balancing that is aware of string literals
+    /// and `//` / `/* */` comments so a `}` inside a string or comment does not
+    /// close the block prematurely.
+    #[cfg(feature = "std-surface")]
+    fn parse_invariant_block(&mut self) -> Result<Node, ParseError> {
+        let start = self.pos;
+        self.pos += "invariant".len();
+        self.skip_ws();
+        // Optional name (`invariant evidence_per_edge { ... }`).
+        let _ = self.word();
+        self.skip_ws_and_newlines();
+        if !self.eat(b'{') {
+            return Err(self.err("expected `{` to open invariant block".into()));
+        }
+        let mut depth: u32 = 1;
+        while depth > 0 {
+            if self.at_end() {
+                return Err(self.err("unterminated invariant block".into()));
+            }
+            let c = self.b[self.pos];
+            match c {
+                b'"' => {
+                    // String literal: skip to the closing quote, honouring `\"`.
+                    self.pos += 1;
+                    while !self.at_end() && self.b[self.pos] != b'"' {
+                        if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                            self.pos += 2;
+                        } else {
+                            self.pos += 1;
+                        }
+                    }
+                    if !self.at_end() {
+                        self.pos += 1; // closing quote
+                    }
+                }
+                b'/' if self.b.get(self.pos + 1) == Some(&b'/') => {
+                    // Line comment: skip to end of line.
+                    while !self.at_end() && self.b[self.pos] != b'\n' {
+                        self.pos += 1;
+                    }
+                }
+                b'/' if self.b.get(self.pos + 1) == Some(&b'*') => {
+                    // Block comment: skip to `*/`.
+                    self.pos += 2;
+                    while !self.at_end()
+                        && !(self.b[self.pos] == b'*' && self.b.get(self.pos + 1) == Some(&b'/'))
+                    {
+                        self.pos += 1;
+                    }
+                    if !self.at_end() {
+                        self.pos += 2; // consume `*/`
+                    }
+                }
+                b'{' => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    self.pos += 1;
+                }
+                _ => self.pos += 1,
+            }
+        }
+        let span = Span::new(start, self.pos);
+        // Transparent: an empty block produces no executable code.
+        Ok(Node::Block {
+            stmts: Vec::new(),
+            span,
+        })
     }
 
     /// Parse `struct NAME { field: T, field: T }`.
@@ -3495,9 +3587,24 @@ impl<'a> P<'a> {
             let span = Span::new(start, self.pos);
             return Ok(Node::Lit(Literal::Int(val), span));
         }
-        let d = self
+        let mut d = self
             .digits()
             .ok_or_else(|| self.err("expected number".into()))?;
+        // Digit separators in DECIMAL literals: `120_000`, `1_000_000`. An `_` is
+        // part of the literal ONLY between two digits (`d _ d`); a trailing `_` or
+        // an `_` before a non-digit is left for the surrounding parse. The `_`s are
+        // dropped, so the value is `120000`. The radix path (above) already does
+        // this; the decimal path was missing it, breaking `const X: u64 = 120_000`.
+        // The keystone source uses no separators, so its emit stays byte-identical.
+        while self.pos + 1 < self.b.len()
+            && self.b[self.pos] == b'_'
+            && self.b[self.pos + 1].is_ascii_digit()
+        {
+            self.pos += 1; // consume the `_`
+            if let Some(more) = self.digits() {
+                d.push_str(&more);
+            }
+        }
         // Check for decimal point → float literal. A `.` is a decimal point ONLY
         // when a DIGIT follows it (`1.0`). `1..10` (range) and `1.method()` /
         // `1.field` (a non-digit after `.`, e.g. a method call on an integer
