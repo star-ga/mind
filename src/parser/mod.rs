@@ -61,12 +61,17 @@ struct P<'a> {
     /// struct field access. Enum declarations precede the fn bodies that use
     /// them, so the set is complete in time.
     enum_names: Vec<String>,
-    /// Cached `!GlobalEnums.names.is_empty()` snapshot, read ONCE at construction.
-    /// Lets `is_enum_name` skip the thread-local registry borrow entirely on the
-    /// common single-file / no-project path (empty registry), where the only
-    /// enums are same-module ones in `enum_names`. Set the cross-module registry
-    /// before parsing (the project builder does) and this is `true`.
-    has_global_enums: bool,
+    /// Whole-project enum type names, captured ONCE at construction. This is an
+    /// EXPLICIT snapshot of the cross-module registry, NOT a live read: once a
+    /// `P` exists, enum-name resolution is a pure function of `(enum_names,
+    /// global_enums)` and is independent of any later mutation of the ambient
+    /// thread-local. `P::new` captures the current registry (the back-compat
+    /// default the project builder relies on via its set-before / clear-after
+    /// discipline); `P::new_with_enums` lets a caller supply the registry
+    /// explicitly, making parsing a pure function of `(source, registry)`.
+    /// Empty on the single-file / no-project path, so those parses pay zero
+    /// per-dotted-ident registry cost and stay byte-identical.
+    global_enums: Vec<String>,
 }
 
 /// Operator-token kind used by the Pratt expression parser
@@ -104,13 +109,27 @@ enum CompoundOp {
 }
 
 impl<'a> P<'a> {
+    /// Construct a parser, capturing the active cross-module enum registry as an
+    /// explicit snapshot. The snapshot is taken ONCE here (not re-read per
+    /// dotted-ident), so parsing is order-independent w.r.t. any later registry
+    /// mutation. The project builder's set-before / clear-after discipline means
+    /// the snapshot reflects exactly the project's enums during a build, and is
+    /// empty for single-file parses.
     fn new(src: &'a str) -> Self {
+        let global_enums = crate::ir::with_global_enums(|g| g.names.clone());
+        Self::new_with_enums(src, global_enums)
+    }
+
+    /// Construct a parser with an EXPLICIT enum registry, making the parse a pure
+    /// function of `(source, global_enums)` with no ambient thread-local read.
+    /// Pass `Vec::new()` for a single-file / no-cross-module parse.
+    fn new_with_enums(src: &'a str, global_enums: Vec<String>) -> Self {
         Self {
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
             enum_names: Vec::new(),
-            has_global_enums: crate::ir::with_global_enums(|g| !g.names.is_empty()),
+            global_enums,
         }
     }
 
@@ -125,13 +144,11 @@ impl<'a> P<'a> {
         if self.enum_names.iter().any(|n| n == name) {
             return true;
         }
-        // Short-circuit before the thread-local borrow on the common no-project
-        // path: `has_global_enums` was snapshotted once at construction, so a
-        // single-file parse pays zero per-dotted-ident registry cost.
-        if !self.has_global_enums {
-            return false;
-        }
-        crate::ir::with_global_enums(|g| g.names.iter().any(|n| n == name))
+        // Pure check against the registry snapshot captured at construction — no
+        // live thread-local borrow, so resolution can't drift if the ambient
+        // registry is mutated after this parser was built. Empty on the
+        // single-file path, so that case short-circuits to `false` immediately.
+        self.global_enums.iter().any(|n| n == name)
     }
 
     #[inline(always)]
@@ -3635,6 +3652,16 @@ impl<'a> P<'a> {
                     .ok_or_else(|| self.err("expected exponent digits".into()))?;
                 num_str.push_str(&exp);
             }
+            // Cross-substrate byte-identity (THE WEDGE): `str::parse::<f64>()`
+            // is std's `FromStr for f64`, which is spec'd to round to the
+            // NEAREST representable value (ties-to-even) and is implemented as a
+            // pure software routine in `core` (Eisel-Lemire fast path + a
+            // big-integer slow-path fallback, since Rust 1.55). It does NOT call
+            // libc `strtod` and does NOT consult locale/platform state, so the
+            // same decimal literal yields the identical IEEE-754 bit pattern on
+            // x86, ARM, and GPU hosts. The parsed `f64` therefore does not
+            // poison constant folding / lowering. Do NOT swap this for a custom
+            // or libc routine — that would risk changing valid float bits.
             let val: f64 = num_str
                 .parse()
                 .map_err(|_| self.err("invalid float".into()))?;
@@ -3654,6 +3681,9 @@ impl<'a> P<'a> {
                 .digits()
                 .ok_or_else(|| self.err("expected exponent digits".into()))?;
             num_str.push_str(&exp);
+            // Deterministic across substrates for the same reason as the
+            // decimal-point case above: std's correctly-rounded, locale-free
+            // `f64::from_str`. See the note at the `1.0` site.
             let val: f64 = num_str
                 .parse()
                 .map_err(|_| self.err("invalid float".into()))?;
