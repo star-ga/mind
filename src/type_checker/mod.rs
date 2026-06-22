@@ -17,9 +17,6 @@ mod resolve;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
-
 use crate::ast::BinOp;
 
 use crate::ast::Literal;
@@ -477,7 +474,7 @@ fn conv_output_dim(
     };
     match result {
         Ok(Some(v)) => Ok(ShapeDim::Known(v)),
-        Ok(None) => Ok(ShapeDim::Sym(fresh_symbol(&format!("_conv_{axis}")))),
+        Ok(None) => Ok(ShapeDim::Sym(fresh_symbol(&format!("_conv_{axis}"), span))),
         Err(msg) => Err(TypeErrSpan {
             msg: format!("`tensor.conv2d`: {msg} ({axis})"),
             span,
@@ -970,7 +967,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     let new_dim = match (dim_len(&tensor.shape[axis_norm]), slice_len(*start, *end))
                     {
                         (Some(_), Some(len)) => ShapeDim::Known(len),
-                        _ => ShapeDim::Sym(fresh_symbol("_slice")),
+                        _ => ShapeDim::Sym(fresh_symbol("_slice", *span)),
                     };
                     let mut shape = tensor.shape.clone();
                     shape[axis_norm] = new_dim;
@@ -1018,7 +1015,7 @@ fn infer_expr(node: &Node, env: &TypeEnv) -> Result<(ValueType, AstSpan), TypeEr
                     } else if (*step > 0 && *start >= *end) || (*step < 0 && *start <= *end) {
                         ShapeDim::Known(0)
                     } else {
-                        ShapeDim::Sym(fresh_symbol("_slice_stride"))
+                        ShapeDim::Sym(fresh_symbol("_slice_stride", *span))
                     };
                     let mut shape = tensor.shape.clone();
                     shape[axis_norm] = new_dim;
@@ -2388,10 +2385,21 @@ fn leak_symbol(name: &str) -> &'static str {
     crate::types::intern::intern_str(name)
 }
 
-fn fresh_symbol(prefix: &str) -> &'static str {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    crate::types::intern::intern_str(&format!("{prefix}{id}"))
+/// A fresh symbolic shape-dim name, *content-addressed* by the source span of
+/// the callsite that produced it.
+///
+/// Determinism (CRIT): a process-global `AtomicUsize` counter made the emitted
+/// `ShapeDim::Sym` name depend on how many prior compilations ran in the same
+/// process — two modules type-checked in one process drew different names by
+/// order, breaking run-to-run / in-process reproducibility for any symbolic
+/// shape that reaches MLIR. Deriving the name from the callsite's `(start,end)`
+/// byte span makes it a pure function of the source: the SAME source always
+/// yields the SAME name regardless of prior compiles, and two DISTINCT
+/// callsites have distinct spans so no two symbolic dims collide. The `prefix`
+/// already encodes the role (`_slice`, `_slice_stride`, `_conv_<axis>`), so a
+/// single callsite that yields one symbol per axis stays collision-free.
+fn fresh_symbol(prefix: &str, span: AstSpan) -> &'static str {
+    crate::types::intern::intern_str(&format!("{prefix}_{}_{}", span.start(), span.end()))
 }
 
 fn dtype_from_str(s: &str) -> Option<DType> {
