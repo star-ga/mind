@@ -54,6 +54,13 @@ struct P<'a> {
     /// `RandomState` hasher init — import lists are tiny, so linear `contains`
     /// is faster and keeps `compile_small` at its nanosecond floor.
     imports: Vec<String>,
+    /// Invariant block names declared in this module (`invariant NAME { … }`).
+    /// A dotted call `NAME.pred(args)` whose receiver is one of these is a
+    /// namespace access onto the predicate free function `NAME_pred`, not a
+    /// UFCS method on a value — mirrors the `imports` rewrite. Invariant blocks
+    /// precede the fn bodies that call into them, so the set is complete in
+    /// time. A small `Vec` keeps linear `contains` at its nanosecond floor.
+    invariants: Vec<String>,
     /// Enum type names declared in this module. A dotted reference whose first
     /// segment is one of these is a VARIANT access `Enum.Variant`, normalised to
     /// the canonical `Enum::Variant` — both as a value (`Color.Red`) and in a
@@ -128,6 +135,7 @@ impl<'a> P<'a> {
             b: src.as_bytes(),
             pos: 0,
             imports: Vec::new(),
+            invariants: Vec::new(),
             enum_names: Vec::new(),
             global_enums,
         }
@@ -1643,68 +1651,215 @@ impl<'a> P<'a> {
         let start = self.pos;
         self.pos += "invariant".len();
         self.skip_ws();
-        // Optional name (`invariant evidence_per_edge { ... }`).
-        let _ = self.word();
+        // Block name (`invariant evidence_per_edge { ... }`). Required so each
+        // predicate becomes the callable free fn `NAME_pred`.
+        let name = self
+            .word()
+            .ok_or_else(|| self.err("expected invariant name".into()))?
+            .to_string();
+        self.invariants.push(name.clone());
         self.skip_ws_and_newlines();
         if !self.eat(b'{') {
             return Err(self.err("expected `{` to open invariant block".into()));
         }
-        let mut depth: u32 = 1;
-        while depth > 0 {
+        // Each predicate `pred(params): ret { body }` lowers to a `pub fn`
+        // named `NAME_pred`, enabling the `NAME.pred(args)` call site (rewritten
+        // to a bare `NAME_pred(args)` call by the method-call desugar). Other
+        // fields (`description: "…"`) are metadata and produce no code. Brace /
+        // string / comment handling stays so unrecognised content cannot close
+        // the block prematurely.
+        let mut fndefs: Vec<Node> = Vec::new();
+        loop {
+            self.skip_invariant_trivia();
             if self.at_end() {
                 return Err(self.err("unterminated invariant block".into()));
             }
-            let c = self.b[self.pos];
-            match c {
-                b'"' => {
-                    // String literal: skip to the closing quote, honouring `\"`.
-                    self.pos += 1;
-                    while !self.at_end() && self.b[self.pos] != b'"' {
-                        if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
-                            self.pos += 2;
-                        } else {
-                            self.pos += 1;
+            if self.eat(b'}') {
+                break;
+            }
+            let field_start = self.pos;
+            let ident = self
+                .word()
+                .ok_or_else(|| self.err("expected invariant field or predicate".into()))?
+                .to_string();
+            self.skip_ws();
+            if self.at(b'(') {
+                // Predicate definition `ident(params): ret { body }`.
+                self.expect(b'(')?;
+                let mut params = Vec::new();
+                self.skip_ws_and_newlines();
+                if !self.at(b')') {
+                    params.push(self.parse_param()?);
+                    loop {
+                        self.skip_ws_and_newlines();
+                        if !self.eat(b',') {
+                            break;
                         }
-                    }
-                    if !self.at_end() {
-                        self.pos += 1; // closing quote
-                    }
-                }
-                b'/' if self.b.get(self.pos + 1) == Some(&b'/') => {
-                    // Line comment: skip to end of line.
-                    while !self.at_end() && self.b[self.pos] != b'\n' {
-                        self.pos += 1;
+                        self.skip_ws_and_newlines();
+                        if self.at(b')') {
+                            break;
+                        }
+                        params.push(self.parse_param()?);
                     }
                 }
-                b'/' if self.b.get(self.pos + 1) == Some(&b'*') => {
-                    // Block comment: skip to `*/`.
+                self.skip_ws_and_newlines();
+                self.expect(b')')?;
+                self.skip_ws_and_newlines();
+                // Return type: the predicate form uses `: T`; also accept `-> T`.
+                let ret_type = if self.eat(b':') {
+                    self.skip_ws_and_newlines();
+                    Some(self.type_ann()?)
+                } else if self.starts_with(b"->") {
                     self.pos += 2;
-                    while !self.at_end()
-                        && !(self.b[self.pos] == b'*' && self.b.get(self.pos + 1) == Some(&b'/'))
-                    {
-                        self.pos += 1;
-                    }
-                    if !self.at_end() {
-                        self.pos += 2; // consume `*/`
-                    }
-                }
-                b'{' => {
-                    depth += 1;
-                    self.pos += 1;
-                }
-                b'}' => {
-                    depth -= 1;
-                    self.pos += 1;
-                }
-                _ => self.pos += 1,
+                    self.skip_ws_and_newlines();
+                    Some(self.type_ann()?)
+                } else {
+                    None
+                };
+                self.skip_ws_and_newlines();
+                self.expect(b'{')?;
+                let body = self.parse_fn_body_stmts()?;
+                self.skip_ws_and_newlines();
+                self.expect(b'}')?;
+                let span = Span::new(field_start, self.pos);
+                fndefs.push(Node::FnDef {
+                    is_pub: true,
+                    is_test: false,
+                    name: format!("{name}_{ident}"),
+                    type_params: Vec::new(),
+                    params,
+                    ret_type,
+                    body,
+                    reap_threshold: None,
+                    attrs: Vec::new(),
+                    span,
+                });
+            } else if self.eat(b':') {
+                // Metadata field (`description: "…"`): consume one value and
+                // drop it — invariant metadata produces no executable code.
+                self.skip_ws_and_newlines();
+                self.skip_invariant_field_value();
+            } else {
+                return Err(
+                    self.err(format!("unexpected token in invariant block after `{ident}`"))
+                );
             }
         }
         let span = Span::new(start, self.pos);
-        // Transparent: an empty block produces no executable code.
         Ok(Node::Block {
-            stmts: Vec::new(),
+            stmts: fndefs,
             span,
         })
+    }
+
+    /// Skip whitespace, newlines, and `//` / `/* */` comments between invariant
+    /// fields.
+    #[cfg(feature = "std-surface")]
+    fn skip_invariant_trivia(&mut self) {
+        loop {
+            self.skip_ws_and_newlines();
+            if self.b.get(self.pos) == Some(&b'/') && self.b.get(self.pos + 1) == Some(&b'/') {
+                while !self.at_end() && self.b[self.pos] != b'\n' {
+                    self.pos += 1;
+                }
+            } else if self.b.get(self.pos) == Some(&b'/')
+                && self.b.get(self.pos + 1) == Some(&b'*')
+            {
+                self.pos += 2;
+                while !self.at_end()
+                    && !(self.b[self.pos] == b'*' && self.b.get(self.pos + 1) == Some(&b'/'))
+                {
+                    self.pos += 1;
+                }
+                if !self.at_end() {
+                    self.pos += 2;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Skip a single invariant metadata field value (string, comment-/string-
+    /// aware braced group, or a bare token), producing no code.
+    #[cfg(feature = "std-surface")]
+    fn skip_invariant_field_value(&mut self) {
+        if self.at_end() {
+            return;
+        }
+        match self.b[self.pos] {
+            b'"' => {
+                self.pos += 1;
+                while !self.at_end() && self.b[self.pos] != b'"' {
+                    if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                        self.pos += 2;
+                    } else {
+                        self.pos += 1;
+                    }
+                }
+                if !self.at_end() {
+                    self.pos += 1; // closing quote
+                }
+            }
+            b'{' => {
+                let mut depth: u32 = 0;
+                loop {
+                    if self.at_end() {
+                        return;
+                    }
+                    match self.b[self.pos] {
+                        b'"' => {
+                            self.pos += 1;
+                            while !self.at_end() && self.b[self.pos] != b'"' {
+                                if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                                    self.pos += 2;
+                                } else {
+                                    self.pos += 1;
+                                }
+                            }
+                            if !self.at_end() {
+                                self.pos += 1;
+                            }
+                        }
+                        b'/' if self.b.get(self.pos + 1) == Some(&b'/') => {
+                            while !self.at_end() && self.b[self.pos] != b'\n' {
+                                self.pos += 1;
+                            }
+                        }
+                        b'/' if self.b.get(self.pos + 1) == Some(&b'*') => {
+                            self.pos += 2;
+                            while !self.at_end()
+                                && !(self.b[self.pos] == b'*'
+                                    && self.b.get(self.pos + 1) == Some(&b'/'))
+                            {
+                                self.pos += 1;
+                            }
+                            if !self.at_end() {
+                                self.pos += 2;
+                            }
+                        }
+                        b'{' => {
+                            depth += 1;
+                            self.pos += 1;
+                        }
+                        b'}' => {
+                            depth -= 1;
+                            self.pos += 1;
+                            if depth == 0 {
+                                return;
+                            }
+                        }
+                        _ => self.pos += 1,
+                    }
+                }
+            }
+            _ => {
+                // Bare token to end of line (or block close).
+                while !self.at_end() && self.b[self.pos] != b'\n' && self.b[self.pos] != b'}' {
+                    self.pos += 1;
+                }
+            }
+        }
     }
 
     /// Parse `struct NAME { field: T, field: T }`.
@@ -3089,6 +3244,18 @@ impl<'a> P<'a> {
                             if self.imports.iter().any(|s| s == recv_name) {
                                 node = Node::Call {
                                     callee: method,
+                                    args,
+                                    span,
+                                };
+                                continue;
+                            }
+                            // Invariant predicate call: `inv.check(args)` where
+                            // `inv` names an invariant block resolves to the free
+                            // function `<inv>_check(args)` that parse_invariant_block
+                            // emits for each `check(...)` predicate.
+                            if self.invariants.iter().any(|s| s == recv_name) {
+                                node = Node::Call {
+                                    callee: format!("{recv_name}_{method}"),
                                     args,
                                     span,
                                 };
