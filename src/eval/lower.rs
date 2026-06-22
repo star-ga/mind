@@ -452,12 +452,17 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     {
         crate::ir::clear_module_consts();
         let mut consts = std::collections::BTreeMap::new();
+        let mut const_types = std::collections::BTreeMap::new();
         for item in &module.items {
-            if let ast::Node::Const { name, value, .. } = item {
+            if let ast::Node::Const { name, value, ty, .. } = item {
                 consts.insert(name.clone(), (**value).clone());
+                if let Some(t) = ty {
+                    const_types.insert(name.clone(), t.clone());
+                }
             }
         }
         crate::ir::set_module_consts(consts);
+        crate::ir::set_module_const_types(const_types);
     }
     let mut ir = IRModule::new();
     // Built-in Result/Option PRELUDE. MIND has no source-level prelude, but
@@ -1419,7 +1424,9 @@ fn receiver_collection_sentinel(
             Some(MAP_STR_SENTINEL) => Some(MAP_STR_SENTINEL),
             Some(SET_SENTINEL) => Some(SET_SENTINEL),
             Some(SET_STR_SENTINEL) => Some(SET_STR_SENTINEL),
-            _ => None,
+            // Not a local/param — may be a module-level `const` of collection
+            // type (`BACKEND_AVAILABILITY.get(p)` where `const … : map<…>`).
+            _ => crate::ir::module_const_type(v).and_then(|t| collection_sentinel_for_ty(&t)),
         },
         ast::Node::FieldAccess {
             receiver: base,
@@ -1649,6 +1656,44 @@ fn let_rhs_collection_track(
                 }
                 _ => None,
             };
+        }
+        // `m.get(k)` on a `map<K, V>` FIELD → the binding takes the VALUE type V,
+        // so a method on it resolves (`let deps = n.edges.get(x); deps.push(..)`
+        // where `edges: map<_, array<_>>` makes `deps` a vec). Resolves V from the
+        // map field's declared type.
+        if method == "get" {
+            // Resolve the receiver map's declared `map<K, V>` type: a struct map
+            // FIELD (`n.edges.get`) or a module-level const map
+            // (`BACKEND_AVAILABILITY.get`).
+            let map_ty: Option<TypeAnn> = match receiver.as_ref() {
+                ast::Node::FieldAccess {
+                    receiver: obj,
+                    field,
+                    span,
+                } => receiver_types
+                    .get(span)
+                    .cloned()
+                    .or_else(|| receiver_struct_type(obj, ir, struct_env))
+                    .and_then(|sname| {
+                        let idx = ir.struct_defs.get(&sname)?.iter().position(|f| f == field)?;
+                        ir.struct_field_types.get(&sname)?.get(idx).cloned()
+                    }),
+                ast::Node::Lit(Literal::Ident(v), _) => crate::ir::module_const_type(v),
+                _ => None,
+            };
+            if let Some(TypeAnn::Generic { name, args }) = map_ty {
+                if name == "map" {
+                    let v = args.get(1)?;
+                    let sentinel = element_type_sentinel(v)?;
+                    let elem = match v {
+                        TypeAnn::Generic { name, args } if name == "array" => {
+                            args.first().and_then(element_type_sentinel)
+                        }
+                        _ => None,
+                    };
+                    return Some((sentinel, elem));
+                }
+            }
         }
         return None;
     }
