@@ -703,6 +703,21 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 {
                     struct_env.insert(name.clone(), struct_name.clone());
                 }
+                // `let x = y` where `y` is a tracked struct/collection local or
+                // param: `x` aliases `y`'s type (and element tracking), so a
+                // field/method/index on `x` resolves — e.g. `let next = t;
+                // next.scopes.push(..)` with `t: SomeStruct`.
+                #[cfg(feature = "std-surface")]
+                if let ast::Node::Lit(Literal::Ident(src), _) = value.as_ref() {
+                    if let Some(t) = struct_env.get(src).cloned() {
+                        struct_env.entry(name.clone()).or_insert(t);
+                    }
+                    if let Some(e) = struct_env.get(&format!("__elem__{src}")).cloned() {
+                        struct_env
+                            .entry(format!("__elem__{name}"))
+                            .or_insert(e);
+                    }
+                }
                 // `array<T>` binding: record the vec sentinel so a later
                 // `arr.push/get/set/len/length` or `arr[i]` resolves to the
                 // std.vec runtime. Pure metadata (never serialized into mic@3).
@@ -1423,6 +1438,33 @@ fn receiver_collection_sentinel(
             let field_ty = ir.struct_field_types.get(&sname)?.get(idx)?;
             collection_sentinel_for_ty(field_ty)
         }
+        // `coll[i]` — the sentinel of the ELEMENT type of `coll`. Resolves a
+        // struct array FIELD indexed to a nested collection element
+        // (`next.scopes[i]` where `scopes: array<map<K,V>>` → the map sentinel),
+        // so a method on `coll[i]` desugars correctly.
+        ast::Node::IndexAccess { receiver: base, .. } => {
+            if let ast::Node::FieldAccess {
+                receiver: obj,
+                field,
+                span,
+            } = base.as_ref()
+            {
+                let sname = receiver_types
+                    .get(span)
+                    .cloned()
+                    .or_else(|| receiver_struct_type(obj, ir, struct_env))?;
+                let fields = ir.struct_defs.get(&sname)?;
+                let idx = fields.iter().position(|f| f == field)?;
+                let field_ty = ir.struct_field_types.get(&sname)?.get(idx)?;
+                let elem = match field_ty {
+                    TypeAnn::Generic { name, args } if name == "array" => args.first(),
+                    _ => None,
+                }?;
+                collection_sentinel_for_ty(elem)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -1655,15 +1697,19 @@ fn rewrite_collection_mutations(
     stmts: &mut [ast::Node],
     collections: &std::collections::HashSet<String>,
     struct_collection_fields: &std::collections::HashSet<(String, String)>,
+    struct_collection_element_fields: &std::collections::HashSet<(String, String)>,
     var_types: &std::collections::HashMap<String, String>,
 ) {
     let mut scope = collections.clone();
     let mut vtypes = var_types.clone();
     for stmt in stmts.iter_mut() {
         // A `let x: array<T> | map<K,V>` introduces a new collection local; a
-        // `let x: StructName` introduces a struct-typed local (so `x.field.push`
-        // can resolve `x`'s struct below).
-        if let ast::Node::Let { name, ann, .. } = stmt {
+        // `let x: StructName` (or `let x = y` aliasing a tracked struct) introduces
+        // a struct-typed local (so `x.field.push` / `x.field[i].insert` resolve).
+        if let ast::Node::Let {
+            name, ann, value, ..
+        } = stmt
+        {
             if is_array_surface_type(ann)
                 || map_sentinel_for_opt(ann).is_some()
                 || set_sentinel_for_opt(ann).is_some()
@@ -1673,15 +1719,21 @@ fn rewrite_collection_mutations(
             if let Some(ast::TypeAnn::Named(sname)) = ann {
                 vtypes.insert(name.clone(), sname.clone());
             }
+            if let ast::Node::Lit(Literal::Ident(src), _) = value.as_ref() {
+                if let Some(t) = vtypes.get(src).cloned() {
+                    vtypes.entry(name.clone()).or_insert(t);
+                }
+            }
         }
-        // A bare `x.insert/push/set(args)` statement on a collection local →
-        // rebind `x = x.insert/push/set(args)`; and `obj.field.push(args)` on a
-        // collection FIELD → rebind `obj.field = obj.field.push(args)` (a
-        // FieldAssign). The std handle is fresh on realloc, so without the
-        // rebind the mutation silently drops.
+        // A bare collection-mutation statement whose fresh-on-realloc std handle
+        // would otherwise be discarded is rebound to write the handle back:
+        //   `x.push(a)`              → `x = x.push(a)`                 (Var)
+        //   `obj.field.push(a)`      → `obj.field = obj.field.push(a)` (Field)
+        //   `obj.field[i].insert(a)` → `obj.field[i] = obj.field[i].insert(a)` (Index)
         enum Rebind {
             Var(String),
             Field,
+            Index,
         }
         let rebind: Option<Rebind> = if let ast::Node::MethodCall {
             receiver, method, ..
@@ -1707,6 +1759,29 @@ fn rewrite_collection_mutations(
                         {
                             Some(Rebind::Field)
                         }
+                        _ => None,
+                    },
+                    // `obj.field[i].method(..)` — a collection ELEMENT of a struct
+                    // `array<collection>` field.
+                    ast::Node::IndexAccess { receiver: base, .. } => match base.as_ref() {
+                        ast::Node::FieldAccess {
+                            receiver: obj,
+                            field,
+                            ..
+                        } => match obj.as_ref() {
+                            ast::Node::Lit(Literal::Ident(ov), _)
+                                if vtypes
+                                    .get(ov)
+                                    .map(|s| {
+                                        struct_collection_element_fields
+                                            .contains(&(s.clone(), field.clone()))
+                                    })
+                                    .unwrap_or(false) =>
+                            {
+                                Some(Rebind::Index)
+                            }
+                            _ => None,
+                        },
                         _ => None,
                     },
                     _ => None,
@@ -1752,6 +1827,29 @@ fn rewrite_collection_mutations(
                 // Shouldn't happen (we matched the shape above); restore.
                 *stmt = mc;
             }
+            Some(Rebind::Index) => {
+                let sp = stmt.span();
+                let mc = std::mem::replace(stmt, ast::Node::Lit(Literal::Int(0), sp));
+                // Reconstruct the IndexAssign LHS from the method receiver
+                // (`obj.field[i]`), reusing the same receiver/index nodes.
+                if let ast::Node::MethodCall { receiver, .. } = &mc {
+                    if let ast::Node::IndexAccess {
+                        receiver: base,
+                        index,
+                        ..
+                    } = receiver.as_ref()
+                    {
+                        *stmt = ast::Node::IndexAssign {
+                            receiver: base.clone(),
+                            index: index.clone(),
+                            value: Box::new(mc),
+                            span: sp,
+                        };
+                        continue;
+                    }
+                }
+                *stmt = mc;
+            }
             None => {}
         }
         // Recurse into nested statement bodies, threading the collection scope
@@ -1761,7 +1859,7 @@ fn rewrite_collection_mutations(
             | ast::Node::ForEach { body, .. }
             | ast::Node::While { body, .. }
             | ast::Node::Block { stmts: body, .. } => {
-                rewrite_collection_mutations(body, &scope, struct_collection_fields, &vtypes);
+                rewrite_collection_mutations(body, &scope, struct_collection_fields, struct_collection_element_fields, &vtypes);
             }
             ast::Node::If {
                 then_branch,
@@ -1772,10 +1870,11 @@ fn rewrite_collection_mutations(
                     then_branch,
                     &scope,
                     struct_collection_fields,
+                    struct_collection_element_fields,
                     &vtypes,
                 );
                 if let Some(eb) = else_branch {
-                    rewrite_collection_mutations(eb, &scope, struct_collection_fields, &vtypes);
+                    rewrite_collection_mutations(eb, &scope, struct_collection_fields, struct_collection_element_fields, &vtypes);
                 }
             }
             ast::Node::Match { arms, .. } => {
@@ -1785,6 +1884,7 @@ fn rewrite_collection_mutations(
                             body,
                             &scope,
                             struct_collection_fields,
+                            struct_collection_element_fields,
                             &vtypes,
                         );
                     }
@@ -1884,6 +1984,11 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
     // `obj.field = obj.field.push(x)` (the std handle is fresh on realloc).
     let mut struct_collection_fields: std::collections::HashSet<(String, String)> =
         std::collections::HashSet::new();
+    // (struct, field) pairs whose field is `array<collection>` — so an indexed
+    // element mutation `obj.field[i].insert(x)` can be rebound to
+    // `obj.field[i] = obj.field[i].insert(x)`.
+    let mut struct_collection_element_fields: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     for item in &m.items {
         if let ast::Node::StructDef { name, fields, .. } = item {
             for f in fields {
@@ -1892,6 +1997,20 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
                     || is_set_surface_ty(&f.ty)
                 {
                     struct_collection_fields.insert((name.clone(), f.name.clone()));
+                }
+                // `array<COLLECTION>` — the element is itself a collection.
+                if let TypeAnn::Generic { name: g, args } = &f.ty {
+                    if g == "array" {
+                        if let Some(elem) = args.first() {
+                            if is_array_surface_ty(elem)
+                                || is_map_surface_ty(elem)
+                                || is_set_surface_ty(elem)
+                            {
+                                struct_collection_element_fields
+                                    .insert((name.clone(), f.name.clone()));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1917,6 +2036,7 @@ fn preprocess_collection_mutations(module: &ast::Module) -> Option<ast::Module> 
                 body,
                 &collections,
                 &struct_collection_fields,
+                &struct_collection_element_fields,
                 &var_types,
             );
         }
@@ -2879,6 +2999,20 @@ fn lower_expr(
                         } = value.as_ref()
                         {
                             fn_struct_env.insert(name.clone(), struct_name.clone());
+                        }
+                        // `let x = y` where `y` is a tracked struct/collection
+                        // local or param: `x` aliases `y`'s type + element
+                        // tracking (e.g. `let next = t; next.scopes.push(..)`).
+                        #[cfg(feature = "std-surface")]
+                        if let ast::Node::Lit(Literal::Ident(src), _) = value.as_ref() {
+                            if let Some(t) = fn_struct_env.get(src).cloned() {
+                                fn_struct_env.entry(name.clone()).or_insert(t);
+                            }
+                            if let Some(e) = fn_struct_env.get(&format!("__elem__{src}")).cloned() {
+                                fn_struct_env
+                                    .entry(format!("__elem__{name}"))
+                                    .or_insert(e);
+                            }
                         }
                         // `array<T>` binding: record the vec sentinel so a later
                         // method/index on this name resolves to the std.vec runtime.
