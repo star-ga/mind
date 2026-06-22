@@ -484,3 +484,23 @@ pub fn sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
 
     0
 }
+
+// Ergonomic wrapper: hash a growable `bytes` value, return a 32-byte digest.
+// Return type is bytes[32] (a fixed-size buffer = i64 handle ABI), so handing
+// back the i64 pointer to the 32-byte output buffer is correct. Input `bytes`
+// is the growable vec record [addr|len|cap] whose u8 elements are stored at
+// 8-byte stride; copy them into a stride-1 scratch buffer the raw entry reads.
+pub fn hash(input: bytes) -> bytes[32] {
+    let data: i64 = __mind_load_i64(input + 0)
+    let len: i64 = __mind_load_i64(input + 8)
+    let scratch_len: i64 = if len > 0 { len } else { 1 }
+    let scratch: i64 = __mind_alloc(scratch_len)
+    let mut ci: i64 = 0
+    while ci < len {
+        __mind_store_i8(scratch + ci, __mind_load_i64(data + ci * 8) & 255)
+        ci = ci + 1
+    }
+    let out: i64 = __mind_alloc(32)
+    sha256(scratch, len, out)
+    return out
+}
