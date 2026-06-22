@@ -147,13 +147,21 @@ pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
                 out.insert(name.clone());
             }
             Node::EnumDef { name, variants, .. } => {
-                // The enum name, plus each variant's BARE name so an UNQUALIFIED
-                // constructor or unit value (`Some(x)`, `None`, `Ok(v)`,
-                // `Err(e)`) resolves — not just the `Enum::Variant` form. MIND
-                // links all modules into one unit, so a bare variant name is
-                // resolvable; the exact tag/enum is recovered in lowering.
+                // The enum name, plus per variant BOTH the qualified `Enum::Variant`
+                // form AND the BARE name. The qualified form (matching the parser's
+                // `Enum.Variant` → `Enum::Variant` normalisation) is what keeps
+                // variant resolution precise: `Res::Ok` resolves to exactly this
+                // enum, so two enums that share a variant name (`Ok`, `None`) no
+                // longer alias when referenced qualified. The bare name is kept so
+                // an UNQUALIFIED constructor or unit value (`Some(x)`, `None`,
+                // `Ok(v)`, `Err(e)`) still resolves — MIND links all modules into
+                // one unit and the exact tag/enum is recovered in lowering. (This
+                // pass owns only the undefined-reference question; verifying a
+                // bare variant belongs to the EXPECTED enum is a later type-check
+                // concern.)
                 out.insert(name.clone());
                 for v in variants {
+                    out.insert(format!("{name}::{}", v.name));
                     out.insert(v.name.clone());
                 }
             }
@@ -277,14 +285,25 @@ pub fn collect_shape_vars(ty: &TypeAnn, out: &mut BTreeSet<String>) {
                 collect_shape_vars(r, out);
             }
         }
-        // Scalars and user-named types carry no shape dimensions.
+        // A user-named annotation can be a *type alias for a shape variable*:
+        // `type N = u32` then `fn f(x: [i64; N]) -> i64 { reshape(x, [N]) }`
+        // parses the dim/extent `N` as `Named("N")`, and that same `N` is read
+        // in the body. Pre-bind the name so the body reference resolves instead
+        // of false-positiving E2002. This only ADDS a resolvable name: when the
+        // name is instead a real struct/enum/alias type it is ALREADY a module
+        // decl-name (so the union is unchanged), and a never-referenced type
+        // name in the set is harmless — so this can never produce a false
+        // positive, matching the rest of this collector's contract.
+        TypeAnn::Named(name) => {
+            out.insert(name.clone());
+        }
+        // Scalars carry no shape dimensions.
         TypeAnn::ScalarI32
         | TypeAnn::ScalarI64
         | TypeAnn::ScalarF32
         | TypeAnn::ScalarF64
         | TypeAnn::ScalarBool
-        | TypeAnn::ScalarU32
-        | TypeAnn::Named(_) => {}
+        | TypeAnn::ScalarU32 => {}
     }
 }
 

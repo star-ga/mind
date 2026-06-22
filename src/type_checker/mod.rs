@@ -3386,6 +3386,7 @@ pub fn check_module_types_in_file(
                 params,
                 body,
                 ret_type,
+                type_params,
                 span: fn_span,
                 ..
             } => {
@@ -3465,6 +3466,15 @@ pub fn check_module_types_in_file(
                 }
                 if let Some(rt) = ret_type {
                     resolve::collect_shape_vars(rt, &mut injected);
+                }
+                // Generic type-parameter names declared as `fn id<T, U>(...)` are
+                // in scope throughout the body wherever the type is referenced as
+                // a value (e.g. `T::default()`, `size_of::<T>()`, or a `Named("T")`
+                // shape var). Without this, a generic body false-positives E2002
+                // on its own type params. Like shape vars, this only ADDS names —
+                // it can never turn a genuine undefined ident into a pass.
+                for tp in type_params {
+                    injected.insert(tp.clone());
                 }
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 for u in resolve::resolve_fn_body(body, &param_names, module, &injected) {
@@ -4227,7 +4237,46 @@ fn collect_call_targets(node: &Node, out: &mut Vec<(String, AstSpan)>) {
 ///   `Some(false)` — implicitly NON-deterministic: `_f32`/`_f64` floating
 ///                   reductions are not order-fixed under SIMD.
 ///   `None`        — unknown surface: conservatively NOT flagged.
+/// Builtins that are nondeterministic by construction: PRNG draws (their result
+/// depends on hidden entropy/seed state) and wall-clock / IO reads (observe the
+/// world). A `#[deterministic]` function may not call any of these, so they map
+/// to `Some(false)` even though they carry no `_f32`/`_f64` dtype suffix — the
+/// suffix heuristic alone let `random`/`rand_*` slip through as `None` (unknown,
+/// not flagged). Matched on the bare callee name AND the `std.rand.*` style
+/// dotted path tail, so `random`, `std.rand.random`, and `rng.rand_uniform`
+/// (recv.method desugar) all resolve to the same nondeterministic verdict.
+const NONDETERMINISTIC_BUILTINS: &[&str] = &[
+    // PRNG draws.
+    "random",
+    "rand",
+    "rand_normal",
+    "rand_uniform",
+    "rand_int",
+    "rand_range",
+    "rand_bytes",
+    "rand_seed",
+    "randn",
+    "shuffle",
+    // Wall-clock / nondeterministic environment reads.
+    "now",
+    "time_now",
+    "system_time",
+    "monotonic_now",
+    "read_line",
+    "read_input",
+];
+
 fn implicit_external_determinism(callee: &str) -> Option<bool> {
+    // A nondeterministic builtin is flagged regardless of any dtype suffix.
+    // Match the bare name or the last dotted/`::`-qualified path segment so a
+    // qualified call (`std.rand.random`, `rng::rand_uniform`) is caught too.
+    let tail = callee
+        .rsplit(['.', ':'])
+        .next()
+        .unwrap_or(callee);
+    if NONDETERMINISTIC_BUILTINS.contains(&tail) || NONDETERMINISTIC_BUILTINS.contains(&callee) {
+        return Some(false);
+    }
     if callee.starts_with("__mind_") || callee.contains("_q16") {
         Some(true)
     } else if callee.contains("_f32") || callee.contains("_f64") {
@@ -4449,11 +4498,24 @@ fn check_determinism_annotations(
                     }
                     Some(_) => (false, ""),
                     None => match implicit_external_determinism(&callee) {
-                        Some(false) => (
-                            true,
-                            "its floating-point reductions are not deterministic — \
-                             use the q16 variant or remove the call",
-                        ),
+                        Some(false) => {
+                            // PRNG / wall-clock / IO builtins get a precise hint;
+                            // float reductions keep the q16-variant guidance.
+                            let nondet_tail = callee
+                                .rsplit(['.', ':'])
+                                .next()
+                                .unwrap_or(callee.as_str());
+                            let hint = if NONDETERMINISTIC_BUILTINS.contains(&nondet_tail)
+                                || NONDETERMINISTIC_BUILTINS.contains(&callee.as_str())
+                            {
+                                "it is nondeterministic (PRNG / wall-clock / IO) — \
+                                 a `#[deterministic]` fn cannot draw entropy or read the world"
+                            } else {
+                                "its floating-point reductions are not deterministic — \
+                                 use the q16 variant or remove the call"
+                            };
+                            (true, hint)
+                        }
                         _ => (false, ""),
                     },
                 };
