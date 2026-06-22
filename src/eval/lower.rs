@@ -680,8 +680,9 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                     // lower onto the std.vec heap runtime (vec_new + vec_push
                     // chain) instead of the const-array/tensor path.
                     #[cfg(feature = "std-surface")]
-                    _ if is_array_surface_type(ann)
-                        && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                    _ if (is_array_surface_type(ann)
+                        && matches!(value.as_ref(), ast::Node::ArrayLit { .. }))
+                        || is_growable_bytes_init(ann, value) =>
                     {
                         let elements = match value.as_ref() {
                             ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
@@ -698,6 +699,11 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                     _ => lower_expr(value, &mut ir, &env, &struct_env, receiver_types),
                 };
                 env.insert(name.clone(), id);
+                // Dynamic `bytes = [..]` tracks as the vec surface (growable u8).
+                #[cfg(feature = "std-surface")]
+                if is_growable_bytes_init(ann, value) {
+                    struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
+                }
                 // P0f Step 1: if the RHS is a StructLit, record the var→type
                 // binding so a later FieldAccess on this name resolves the
                 // correct offset out of `ir.struct_defs`.
@@ -1153,6 +1159,17 @@ const ARRAY_VEC_SENTINEL: &str = "vec";
 #[cfg(feature = "std-surface")]
 fn is_array_surface_type(ann: &Option<TypeAnn>) -> bool {
     matches!(ann, Some(t) if is_array_surface_ty(t))
+}
+
+/// A `let x: bytes = [..]` binding — dynamic `bytes` INITIALISED from an array
+/// literal is a growable `Vec<u8>` (`buf.push(b)`), so it lowers onto the std.vec
+/// runtime exactly like `array<u8>`. Gated on the `[..]` initialiser so a raw
+/// byte VIEW (a `bytes` struct field / param read from data, NOT freshly built)
+/// is left untouched — conflating the two would miscompile the view's indexing.
+#[cfg(feature = "std-surface")]
+fn is_growable_bytes_init(ann: &Option<TypeAnn>, value: &ast::Node) -> bool {
+    matches!(ann, Some(TypeAnn::Named(n)) if n == "bytes")
+        && matches!(value, ast::Node::ArrayLit { .. })
 }
 
 /// `&TypeAnn` form of [`is_array_surface_type`], for params/fields whose type is
@@ -1755,14 +1772,20 @@ fn rewrite_collection_mutations(
             name, ann, value, ..
         } = stmt
         {
+            let growable = is_growable_bytes_init(ann, value);
             if is_array_surface_type(ann)
                 || map_sentinel_for_opt(ann).is_some()
                 || set_sentinel_for_opt(ann).is_some()
+                || growable
             {
                 scope.insert(name.clone());
             }
-            if let Some(ast::TypeAnn::Named(sname)) = ann {
-                vtypes.insert(name.clone(), sname.clone());
+            // A `bytes`-typed name is a struct alias only when NOT a growable
+            // `[..]` buffer (which is a vec, tracked above).
+            if !growable {
+                if let Some(ast::TypeAnn::Named(sname)) = ann {
+                    vtypes.insert(name.clone(), sname.clone());
+                }
             }
             if let ast::Node::Lit(Literal::Ident(src), _) = value.as_ref() {
                 if let Some(t) = vtypes.get(src).cloned() {
@@ -3000,8 +3023,9 @@ fn lower_expr(
                             // `array<T>` binding with an array-literal RHS:
                             // lower onto the std.vec heap runtime.
                             #[cfg(feature = "std-surface")]
-                            _ if is_array_surface_type(ann)
-                                && matches!(value.as_ref(), ast::Node::ArrayLit { .. }) =>
+                            _ if (is_array_surface_type(ann)
+                                && matches!(value.as_ref(), ast::Node::ArrayLit { .. }))
+                                || is_growable_bytes_init(ann, value) =>
                             {
                                 let elements = match value.as_ref() {
                                     ast::Node::ArrayLit { elements, .. } => elements.as_slice(),
@@ -3067,6 +3091,11 @@ fn lower_expr(
                             if let Some(__e) = ann.as_ref().and_then(array_element_track) {
                                 fn_struct_env.insert(format!("__elem__{}", name), __e);
                             }
+                        }
+                        // Dynamic `bytes = [..]` tracks as the vec surface.
+                        #[cfg(feature = "std-surface")]
+                        if is_growable_bytes_init(ann, value) {
+                            fn_struct_env.insert(name.clone(), ARRAY_VEC_SENTINEL.to_string());
                         }
                         #[cfg(feature = "std-surface")]
                         if let Some(s) = map_sentinel_for_opt(ann) {
