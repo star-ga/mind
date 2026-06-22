@@ -1,0 +1,21 @@
+// std.time — wall-clock access for evidence / audit timestamps.
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// This is a self-contained substrate module (imports nothing) so its object can
+// be compiled and statically linked on demand by the project build path.
+//
+// `now_ns` is EXPLICITLY non-deterministic by design: it reads the host wall
+// clock for run-time evidence stamps ("when did this happen"), in the same I/O
+// category as std.fs / std.iouring. It MUST NOT be used in any deterministic or
+// byte-identity-critical computation — the wedge's byte-identity invariant is
+// about the compiled OUTPUT, which a runtime clock read does not affect.
+
+// Nanoseconds since the Unix epoch (CLOCK_REALTIME), as reported by the host.
+// The argument to the raw intrinsic is an unused placeholder matching the
+// auto-generated (i64) -> i64 extern shape.
+pub fn now_ns() -> i64 {
+    return __mind_now_ns(0)
+}

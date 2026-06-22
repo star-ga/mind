@@ -914,6 +914,7 @@ fn build_cdylib_from_entry(
                     "std.reactor",
                     "std.ring",
                     "std.sha256",
+                    "std.time",
                 ];
                 let mut found = Vec::new();
                 if let Ok(ast) = crate::parser::parse(src) {

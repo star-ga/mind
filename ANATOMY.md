@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2902 | **Est. tokens:** ~6,999,801
-**Generated:** 2026-06-22 21:31 UTC
+**Files:** 2904 | **Est. tokens:** ~7,001,004
+**Generated:** 2026-06-22 21:40 UTC
 
 ## Token Budget Guide
 
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 25 | ~58,129 |
+| `examples/mindc_mind/` | 26 | ~58,807 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -63,7 +63,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~9,002 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~14,852 |
+| `runtime-support/` | 1 | ~15,099 |
 | `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -396,7 +396,7 @@
 | `src/opt/` | 4 | ~9,635 |
 | `src/package/` | 2 | ~1,668 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~27,800 |
+| `src/project/` | 3 | ~27,821 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -404,7 +404,7 @@
 | `src/type_checker/` | 1 | ~8,519 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 22 | ~109,648 |
+| `std/` | 23 | ~109,905 |
 | `tests/` | 222 | ~364,599 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -755,6 +755,7 @@
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22299 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `multi_let_smoke.py` (~1499 tok, large)
+- `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
@@ -845,7 +846,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~14852 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~15099 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -3810,9 +3811,9 @@
 - `pipeline.rs` (~4477 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/project/`
 
-- `mod.rs` (~20594 tok, huge) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~20602 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3553 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
@@ -3870,6 +3871,7 @@
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
 - `sha256.mind` (~3635 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
 - `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
+- `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
 - `toml.mind` (~9906 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
 - `tui.mind` (~4815 tok, huge) — std/tui.mind — RFC 0013 Tier 1 (c): minimal pure-MIND TUI surface.
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
