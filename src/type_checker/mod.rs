@@ -121,6 +121,18 @@ const MATCH_ARM_MISMATCH_CODE: &str = "match::arm_mismatch";
 /// growable-`bytes`-param + fixed-`bytes[N]`-arg pairing.
 const FIXED_BYTES_INTO_VEC_CODE: &str = "E2006";
 
+/// An `import std.X` line was parsed but this `mindc` binary was built
+/// WITHOUT the std surface compiled in (neither `std-surface` nor
+/// `cross-module-imports`). Without that surface the bundled stdlib
+/// export set is empty, so every `map_new` / `jv_parse` / `vec_*` call
+/// resolves nowhere and the user otherwise gets a confusing storm of
+/// per-call `E2003 unsupported call` errors. We instead fail LOUD ONCE
+/// at the import span pointing at the real cause: the feature-stripped
+/// build. This code is only ever emitted on the featureless path, so a
+/// `std-surface`-enabled (default) build is byte-for-byte unchanged.
+#[cfg(not(any(feature = "std-surface", feature = "cross-module-imports")))]
+const STD_IMPORT_NO_SURFACE_CODE: &str = "E2007";
+
 /// True for the RFC 0012 shape-diagnostic codes. Used to keep the
 /// additive FnDef-body shape pass from contributing non-shape errors
 /// (see the FnDef arm in `check_module_types_in_file`).
@@ -3436,11 +3448,44 @@ pub fn check_module_types_in_file(
             // identifier lookups resolve across the file boundary.
             // Default build: byte-identical no-op (the arm compiles to
             // a discarded pattern binding, zero runtime cost).
-            Node::Import { path, .. } => {
+            Node::Import { path, span } => {
                 #[cfg(feature = "cross-module-imports")]
                 cm_inject_imported_symbols(&mut tenv, path);
-                #[cfg(not(feature = "cross-module-imports"))]
-                let _ = path;
+                // FAIL LOUD at the import/std-path resolution layer: a
+                // featureless `mindc` (built with neither `std-surface`
+                // nor `cross-module-imports`) carries an EMPTY bundled
+                // std surface, so an `import std.X` resolves no names and
+                // every `map_new` / `jv_parse` / `vec_*` call would
+                // otherwise produce a confusing per-call `E2003 unsupported
+                // call`. Point the user at the real cause ONCE, at the
+                // import span, instead. This block only compiles on the
+                // featureless build; a `std-surface`/`cross-module-imports`
+                // binary (the default + the prescribed release build) takes
+                // the inject path above and is byte-for-byte unchanged.
+                #[cfg(not(any(feature = "std-surface", feature = "cross-module-imports")))]
+                if path.first().map(String::as_str) == Some("std") {
+                    errs.push(diag_from_span(
+                        src,
+                        file,
+                        format!(
+                            "`import {}` requires a mindc built with the \
+                             `std-surface` (or `cross-module-imports`) feature; \
+                             this binary has no std surface so its functions \
+                             cannot be resolved — rebuild with \
+                             `--features std-surface`",
+                            path.join("."),
+                        ),
+                        *span,
+                        STD_IMPORT_NO_SURFACE_CODE,
+                    ));
+                }
+                // `path` is consumed by `cm_inject_imported_symbols` (CMI on)
+                // or by the std-surface check above (both off); `span` is only
+                // read on the both-off path. Discard both here so every
+                // remaining feature combo — notably `std-surface` ON +
+                // `cross-module-imports` OFF — compiles warning-free without
+                // re-touching this arm.
+                let _ = (path, span);
             }
             // Phase 10.5 Tier-1: const introduces a name into the type env.
             // Phase 10.5 Tier-1: type aliases, exports — recorded but not
