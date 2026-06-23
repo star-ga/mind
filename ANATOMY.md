@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2932 | **Est. tokens:** ~7,033,944
-**Generated:** 2026-06-23 12:41 UTC
+**Files:** 2934 | **Est. tokens:** ~7,035,828
+**Generated:** 2026-06-23 12:46 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 240 | ~388,458 |
+| `tests/` | 242 | ~390,342 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4211,6 +4211,7 @@
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
 - `narrow_local_mask_run.rs` (~792 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_reassign_mask_run.rs` (~1296 tok, large) — Copyright 2025 STARGA Inc.
+- `narrow_reassign_run.rs` (~733 tok, large) — Copyright 2026 STARGA Inc.
 - `narrow_unsigned_div_zero_run.rs` (~1217 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~1036 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
@@ -4334,6 +4335,7 @@
 - `smoke.rs` (~259 tok, medium) — Copyright 2025 STARGA Inc.
 - `sparse_tensor_types.rs` (~1960 tok, huge) — Copyright 2025 STARGA Inc.
 - `statement_mutation_run.rs` (~957 tok, large) — Copyright 2025 STARGA Inc.
+- `std_import_standalone_run.rs` (~1151 tok, large) — Copyright 2025 STARGA Inc.
 - `stdlib_tensor.rs` (~256 tok, medium) — Copyright 2025 STARGA Inc.
 - `std_llvm_bindings_smoke.rs` (~2606 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_mlir_bindings_smoke.rs` (~4774 tok, huge) — Copyright 2025 STARGA Inc.
