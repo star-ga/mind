@@ -1,0 +1,29 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The bare int16 dot reduction (the "int-dot" tier), exercised DIRECTLY through
+# the reduction intrinsic __mind_blas_dot_i16_v rather than the matrix wrapper
+# (gemv-i16-256x256 only reaches it via matmul_rmajor_i16_v). y = (i32 sum)
+# Σ_i sext(a[i])*sext(b[i]): each i16 is sign-extended to i64, multiply-
+# accumulated with NO Q16 shift, and the i64 accumulator is narrowed once to
+# i32. Integer add is associative + commutative, so any tiling / lane order
+# yields the identical exact int32 sum and the SAME MLIR lowers to vpmaddwd
+# (AVX2) / SDOT / SMMLA (aarch64) — avx2 == neon by construction (RFC 0015 §3.1).
+# Track #16: broadens the canary set to the raw int16 dot lowering.
+
+version = "1"
+name = "dot-i16-4096"
+description = "int16 dot reduction y = a.b, len 4096 (matmul/dot_i16_v); exact integer reduction, narrowed once to i32, NO Q16 shift — the bare int-dot reduction lowering."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"          # a (len i16) generated before b (len i16); sample = (x>>16) as i16
+seed = 3735928559          # 0xDEADBEEF
+length = 4096
+dtype = "i16"              # a and b are each `length` row-major i16
+
+[kernel]
+symbol = "doti16"          # direct: one call to __mind_blas_dot_i16_v (a, b, n)
+returns = "i64"            # the dot result, narrowed to i32 then widened to i64
+output_encoding = "i64_le" # 8 little-endian bytes of the result, then sha256

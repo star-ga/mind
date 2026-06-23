@@ -1,0 +1,19 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes. The fused Q16.16 GEMM is exact fixed-point
+# arithmetic (M·N per-element reductions, each product `>> 16` then accumulated
+# in i64 and truncated once), so avx2 == neon by construction (RFC 0015 §3.1).
+#
+# NOTE — this hash is INTENTIONALLY identical to gemm-q16-64x64x64: the fused
+# outer-product microkernel (matmul_mm_q16_v) and the gemv-composed path
+# (M gemv calls over Bᵀ) are two DIFFERENT lowerings of the same Q16.16 GEMM
+# over the same seeded input, so byte-identity between them is itself a wedge
+# property — cross-LOWERING bit-identity, on top of cross-substrate.
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04).
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10. The exact Q16.16
+#          result is substrate-independent, so the same MLIR MUST reproduce the
+#          avx2 hash on aarch64; the ARM runner proves it.
+
+avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+neon = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
