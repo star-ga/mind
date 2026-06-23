@@ -1485,9 +1485,28 @@ pub(crate) fn eval_value_expr_mode(
         // Phase 10.5 stretch: assert is a no-op at eval-time in the
         // preview path; runtime checking is a future-extension item.
         Node::Assert { .. } => Ok(Value::Int(0)),
-        // `expr as type` — evaluate the expression, ignore the cast at
-        // preview level (the type checker performs the cast checks).
-        Node::As { expr, .. } => eval_value_expr_mode(expr, env, tensor_env, mode),
+        // `expr as type` — evaluate the operand, then apply the SAME narrowing
+        // the codegen path (`lower.rs` `Node::As`) emits, so the interpreter and
+        // the runnable artifact agree. Without this the cast was a transparent
+        // no-op: `300 as u8` yielded the raw `300` while the compiled `.so`
+        // masks it to `44`, and any downstream comparison (`(300 as u8) == 44`)
+        // picked the WRONG branch in the interpreter — a silent miscompile.
+        //
+        //   * narrow SIGNED (`i8`/`i16`/`i32`) → truncate + sign-extend, exactly
+        //     the `(x << (64-W)) >> (64-W)` shift-pair codegen uses.
+        //   * narrow UNSIGNED (`u8`/`u16`/`u32`) → zero-extend via `x & ((1<<W)-1)`.
+        //   * `i64`/`u64`/floats/pointers/aliases → transparent pass-through
+        //     (same as the codegen fall-through), so non-narrowing casts and the
+        //     keystone are unchanged.
+        Node::As { expr, ty, .. } => {
+            let inner = eval_value_expr_mode(expr, env, tensor_env, mode)?;
+            match inner {
+                Value::Int(n) => Ok(Value::Int(apply_scalar_cast(n, ty))),
+                // Non-integer operands (floats, tensors, enums) keep the prior
+                // transparent behaviour — the cast checks live in typecheck.
+                other => Ok(other),
+            }
+        }
         // `a && b`, `a || b` — short-circuit boolean evaluation in i32.
         Node::Logical {
             op, left, right, ..
@@ -2104,6 +2123,63 @@ fn apply_int_op(op: BinOp, left: i64, right: i64) -> Result<i64, EvalError> {
         BinOp::Eq => (left == right) as i64,
         BinOp::Ne => (left != right) as i64,
     })
+}
+
+/// Apply a scalar `as`-cast to an i64-carried interpreter value, matching the
+/// codegen path (`src/eval/lower.rs` `Node::As` + `scalar_int_cast_width` /
+/// `scalar_uint_cast_width`) bit-for-bit so the interpreter never diverges from
+/// the runnable artifact.
+///
+///   * SIGNED narrow (`i8`/`i16`/`i32`, also `TypeAnn::ScalarI32`): truncate to
+///     the low `W` bits then sign-extend — `(n << (64-W)) >> (64-W)` with an
+///     arithmetic right shift, exactly the codegen shift pair.
+///   * UNSIGNED narrow (`u8`/`u16`/`u32`, also `TypeAnn::ScalarU32`): zero-extend
+///     by masking the low `W` bits — `n & ((1<<W)-1)`.
+///   * `i64`/`u64`/floats/pointers/aliases / any non-narrowing target: returned
+///     unchanged (the transparent codegen fall-through).
+fn apply_scalar_cast(n: i64, ty: &TypeAnn) -> i64 {
+    // Signed narrowing widths (mirror of lower.rs::scalar_int_cast_width).
+    let signed_width = match ty {
+        TypeAnn::ScalarI32 => Some(32u32),
+        TypeAnn::ScalarI64 => Some(64),
+        TypeAnn::Named(name) => match name.as_str() {
+            "i8" => Some(8),
+            "i16" => Some(16),
+            "i32" => Some(32),
+            "i64" => Some(64),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(width) = signed_width {
+        if width < 64 {
+            let shift = 64 - width as i64;
+            return (n << shift) >> shift;
+        }
+        return n;
+    }
+    // Unsigned narrowing widths (mirror of lower.rs::scalar_uint_cast_width).
+    let unsigned_width = match ty {
+        TypeAnn::ScalarU32 => Some(32u32),
+        TypeAnn::Named(name) => match name.as_str() {
+            "u8" => Some(8),
+            "u16" => Some(16),
+            "u32" => Some(32),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(width) = unsigned_width {
+        if width < 64 {
+            let mask: i64 = if width == 32 {
+                0xFFFF_FFFF
+            } else {
+                (1i64 << width) - 1
+            };
+            return n & mask;
+        }
+    }
+    n
 }
 
 fn apply_tensor_scalar(
@@ -2791,6 +2867,50 @@ mod tests {
             Value::Int(n) => assert_eq!(n, 5, "generic id(5) should run and return 5"),
             other => panic!("expected Int(5), got {other:?}"),
         }
+    }
+
+    /// Regression: the interpreter's narrowing `as`-cast must truncate to the
+    /// target width, matching the lowered IR / compiled artifact. Before the
+    /// fix the `Node::As` arm was a transparent no-op, so `300 as u8` yielded
+    /// the RAW `300` while codegen masked it to `44` (300 & 0xFF) — a silent
+    /// miscompile that flipped any downstream comparison (`(300 as u8) == 44`
+    /// evaluated false in the interpreter but true in the runnable artifact).
+    #[cfg(feature = "std-surface")]
+    #[test]
+    fn eval_as_cast_narrows_to_width() {
+        let eval_int = |src: &str| -> i64 {
+            let module = parser::parse(src).unwrap();
+            let mut env = HashMap::new();
+            match eval_module_value_with_env(&module, &mut env, Some(src)).unwrap() {
+                Value::Int(n) => n,
+                other => panic!("expected Int for `{src}`, got {other:?}"),
+            }
+        };
+        // Unsigned narrowings zero-extend (mask the low W bits).
+        assert_eq!(eval_int("300 as u8"), 44, "300 as u8 must mask to 44");
+        assert_eq!(eval_int("(0 - 1) as u8"), 255, "-1 as u8 must mask to 255");
+        assert_eq!(eval_int("5000 as u8"), 136, "5000 as u8 must mask to 136");
+        assert_eq!(
+            eval_int("4294967296 as u32"),
+            0,
+            "2^32 as u32 must mask to 0"
+        );
+        // Signed narrowings truncate then sign-extend.
+        assert_eq!(eval_int("200 as i8"), -56, "200 as i8 must sign-extend to -56");
+        assert_eq!(
+            eval_int("100000 as i16"),
+            -31072,
+            "100000 as i16 must sign-extend"
+        );
+        // The downstream EQUALITY must now pick the right branch, matching the
+        // runnable artifact (this is the comparison the no-op cast corrupted).
+        assert_eq!(
+            eval_int("(300 as u8) == 44"),
+            1,
+            "(300 as u8) == 44 must be true (1), as in the compiled artifact"
+        );
+        // A non-narrowing cast (i64, u64, pointer-width) stays transparent.
+        assert_eq!(eval_int("300 as i64"), 300, "300 as i64 is unchanged");
     }
 }
 

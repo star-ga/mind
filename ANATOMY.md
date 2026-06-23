@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2927 | **Est. tokens:** ~7,026,555
-**Generated:** 2026-06-23 07:04 UTC
+**Files:** 2927 | **Est. tokens:** ~7,029,934
+**Generated:** 2026-06-23 07:29 UTC
 
 ## Token Budget Guide
 
@@ -384,7 +384,7 @@
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
 | `src/fmt/` | 3 | ~19,662 |
-| `src/ir/` | 4 | ~26,649 |
+| `src/ir/` | 4 | ~28,158 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
 | `src/ir/compact/v3/` | 4 | ~44,978 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 236 | ~384,590 |
+| `tests/` | 236 | ~386,460 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3764,7 +3764,7 @@
 - `evidence.rs` (~1913 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~12021 tok, huge) — Copyright 2025 STARGA Inc.
 - `print.rs` (~3540 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify.rs` (~9175 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify.rs` (~10684 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `lib.rs` (~1006 tok, large) — Copyright 2025 STARGA Inc.
@@ -4410,7 +4410,7 @@
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
 - `verify_audit.rs` (~2010 tok, huge) — Audit coverage tests for the IR verifier (C1: SSA verification, conv2d stride/axis validation).
 - `verify_cli.rs` (~2444 tok, huge) — Copyright 2025 STARGA Inc.
-- `verify_ssa.rs` (~4532 tok, huge) — Copyright 2025 STARGA Inc.
+- `verify_ssa.rs` (~6402 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
