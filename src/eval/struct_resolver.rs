@@ -122,6 +122,70 @@ pub fn build_field_access_types(module: &Module) -> FieldAccessTypes {
             _ => {}
         }
     }
+    // Cross-module struct names + field types + fn returns. A pure CONSUMER
+    // module (no local `StructDef`, e.g. mind-flow's compile.mind reading a
+    // sibling module's `AnalyzedFlow`) declares none of these locally, so
+    // without this the span->struct-name resolver below has nothing to anchor
+    // on and a value-position FieldAccess on a sibling struct falls through to
+    // the `ConstI64(0)` placeholder (a silent miscompile). The most common
+    // concrete miss is a BY-REFERENCE struct param (`p: &Point`): the lowering
+    // fast-path (struct_env) only seeds a `TypeAnn::Named` param, so a `&Point`
+    // param never seeds Step 1, and Step 2 is empty unless this resolver runs —
+    // `p.y` then reads `ConstI64(0)`.
+    //
+    // The field-name->offset + field-type data for these sibling structs is
+    // ALREADY merged into `ir.struct_defs` / `ir.struct_field_types` in
+    // `lower_to_ir` (via `with_global_enums`); here we only teach the resolver
+    // that these names ARE structs so it records the right `receiver_types[span]`
+    // entry. `unwrap_to_named` below already peels `&T` so a `&Point` param seeds
+    // correctly.
+    //
+    // Outside a project the registry is empty, so this inserts nothing and the
+    // resolver behaves byte-identically to the local-only path (the keystone and
+    // every single-file compile see an empty registry). All inserts use
+    // `or_insert`-style guards so a module's OWN `StructDef`/`FnDef` wins on a
+    // name collision — the local declaration is authoritative.
+    //
+    // This populates the SAME `receiver_types` side-table consulted by the
+    // FieldAccess-read arm, the MethodCall accessor arm, and the FieldAssign
+    // write arm in `lower.rs` (all key on the node span via `infer_struct`), so
+    // the cross-module fix is uniform across all three.
+    // deferred: only the value-position FieldAccess-READ form (by-ref param) is
+    // covered by a *_run.rs regression here; cross-module MethodCall-accessor and
+    // FieldAssign resolution flow through the identical machinery but their
+    // end-to-end run-tests are a follow-up — upgrade path: extend
+    // tests/cross_module_field_access_run.rs with a sibling-struct `s.len()`
+    // accessor and an `o.f = x` write, ctypes-asserting both.
+    #[cfg(feature = "std-surface")]
+    crate::ir::with_global_enums(|g| {
+        for name in g.structs.keys() {
+            if !struct_defs.iter().any(|s| s == name) {
+                struct_defs.push(name.clone());
+            }
+        }
+        // Seed cross-module `(struct, field) -> inner-struct-name` so a CHAINED
+        // read `a.b.c` on sibling structs resolves: `infer_struct` walks
+        // `a -> S`, `(S, b) -> Inner`, then `.c` resolves against `Inner`. The
+        // retain below drops any whose inner name isn't a real struct.
+        for (sname, (fnames, ftypes)) in &g.structs {
+            for (fname, fty) in fnames.iter().zip(ftypes) {
+                if let Some(t) = unwrap_to_named(fty) {
+                    field_types
+                        .entry((sname.clone(), fname.clone()))
+                        .or_insert_with(|| t.to_string());
+                }
+            }
+        }
+        // Cross-module fn returns, for `let x = sibling_fn(); x.field`.
+        for (fname, rt) in &g.fn_returns {
+            if let Some(t) = unwrap_to_named(rt) {
+                fn_returns
+                    .entry(fname.clone())
+                    .or_insert_with(|| t.to_string());
+            }
+        }
+    });
+
     // Filter fn_returns to only those whose return-type is a real struct.
     fn_returns.retain(|_, t| struct_defs.iter().any(|s| s == t));
     // Likewise keep only field types that name a real struct — scalar

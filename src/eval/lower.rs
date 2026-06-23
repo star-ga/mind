@@ -621,11 +621,23 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
     // resolve to `None` exactly as they would against the empty map the walk
     // would have returned — so emitted mic@1/mic@3 bytes and cross-substrate
     // identity are byte-for-byte unchanged.
+    //
+    // CONSUMER-MODULE WIDENING: the shallow `any(StructDef)` scan is sufficient
+    // ONLY for a self-contained module. A pure consumer module (no local
+    // `StructDef`) that reads a SIBLING-module struct field still needs the
+    // resolver to run — the cross-module struct names/field-types now live in
+    // the global registry (and were merged into `ir.struct_defs` above). So also
+    // run the resolver when that registry holds any struct. When the registry is
+    // empty (the keystone, scalar_math, every single-file compile, every canary)
+    // BOTH disjuncts are false for a struct-less module and the walk is skipped
+    // exactly as before, so emitted mic@1/mic@3 bytes + cross-substrate identity
+    // are byte-for-byte unchanged.
     #[cfg(feature = "std-surface")]
     let receiver_types_owned: HashMap<crate::ast::Span, String> = if module
         .items
         .iter()
         .any(|it| matches!(it, ast::Node::StructDef { .. }))
+        || crate::ir::with_global_enums(|g| !g.structs.is_empty())
     {
         crate::eval::struct_resolver::build_field_access_types(module)
     } else {
