@@ -388,6 +388,47 @@ fn walk_expr(
                 );
             }
         }
+        // A `while` loop body is a scope, like a Block/If branch. Without this
+        // arm a `FieldAccess` inside the loop body — `make().field`,
+        // `a.b.c`, or a method accessor — was never recorded in the side-table,
+        // so lowering's Step 2 could not resolve it and it fell through to the
+        // `ConstI64(0)` placeholder (a SILENT wrong-value read). Snapshot `vars`
+        // so an in-loop `let` shadow does not leak past the loop.
+        Node::While { cond, body, .. } => {
+            walk_expr(cond, vars, fn_returns, struct_defs, field_types, types);
+            let mut local = vars.clone();
+            for stmt in body {
+                walk_stmt(
+                    stmt,
+                    &mut local,
+                    fn_returns,
+                    struct_defs,
+                    field_types,
+                    types,
+                );
+            }
+        }
+        // A `for x in coll` body is likewise a scope. The element binding `x`
+        // is a per-iteration collection element whose struct type this
+        // side-table does not track (collections are i64-handle shaped here),
+        // so we only walk the collection expression and the body statements —
+        // enough for an in-body `make().field` / `a.b.c` to resolve.
+        Node::ForEach {
+            collection, body, ..
+        } => {
+            walk_expr(collection, vars, fn_returns, struct_defs, field_types, types);
+            let mut local = vars.clone();
+            for stmt in body {
+                walk_stmt(
+                    stmt,
+                    &mut local,
+                    fn_returns,
+                    struct_defs,
+                    field_types,
+                    types,
+                );
+            }
+        }
         // Other nodes either don't contain expressions or are
         // declaration-shaped (StructDef, EnumDef, …) — nothing to walk.
         _ => {}
