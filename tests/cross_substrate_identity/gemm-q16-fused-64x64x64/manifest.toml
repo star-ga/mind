@@ -1,0 +1,37 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# The FUSED Q16.16 GEMM C[M,N] = A[M,K] . B[K,N], M = K = N = 64, row-major,
+# driven directly by the fused outer-product intrinsic __mind_blas_matmul_mm_q16_v
+# (A is M×K, B is K×N UN-transposed, C is M×N i32). This is a DISTINCT lowering
+# from the gemv-composed gemm-q16-64x64x64 canary (which makes M gemv calls over
+# Bᵀ): the fused kernel is a register-tiled outer-product microkernel with NO
+# horizontal reduction. Each output element is C[i,j] = (i32) Σ_k (A[i,k]*B[k,j])
+# >> 16 — each product shifted before the associative i64 accumulate, so the
+# result is byte-identical to the per-element scalar oracle for all shapes and
+# the SAME exact value lowers identically on AVX2 / aarch64: avx2 == neon by
+# construction (RFC 0015 §3.1).
+#
+# Track #16: this canary proves the fused outer-product Q16.16 GEMM lowering
+# produces the SAME bytes as the gemv-composed path — its committed hash is
+# IDENTICAL to gemm-q16-64x64x64 (cross-lowering byte-identity, made inspectable).
+# The output is the M×N Q16.16 matrix; canonical encoding is each i32 LE, sha256.
+
+version = "1"
+name = "gemm-q16-fused-64x64x64"
+description = "Fused Q16.16 square GEMM C = A.B via the outer-product microkernel matmul_mm_q16_v (A 64x64, B 64x64 UN-transposed, C 64x64 i32); per-product >>16 then exact i64 accumulate — distinct lowering from the gemv-composed gemm-q16, same bytes."
+weight = 2.0
+substrates = ["avx2", "neon"]
+
+[input]
+generator = "lcg"          # A (m*k i32) generated before B (k*n i32); B is UN-transposed
+seed = 3735928559          # 0xDEADBEEF; same input as gemm-q16-64x64x64
+m = 64
+k = 64
+n = 64
+dtype = "q16"              # A is m*k row-major Q16.16; B is k*n row-major Q16.16 (un-transposed); C is m*n i32
+
+[kernel]
+symbol = "gemmqmm"         # direct: one call to __mind_blas_matmul_mm_q16_v (a, b, c, m, k, n)
+returns = "i64"            # status (0 ok); result written to caller C buffer
+output_encoding = "i32_le_matrix"  # m*n i32, row-major, each little-endian, then sha256

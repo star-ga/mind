@@ -1,0 +1,35 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# A struct-by-handle round-trip — exercises mindc's heap-handle ABI and its
+# address arithmetic with NO reduction and NO float. The kernel allocates a
+# 4-field i64 record via __mind_alloc(32), stores the four inputs through
+# __mind_store_i64 at base, base+8, base+16, base+24, reads them back through
+# __mind_load_i64, and combines them as `((r0+r1)*2 - r2) + r3*3`. The store/load
+# round-trip is the identity, so the result is a fixed integer function of the
+# inputs. The alloc/store/load handle path and its pointer arithmetic are
+# deterministic data movement that must produce the identical bytes on every
+# substrate — avx2 == neon by construction (RFC 0015 §3.1). This canary pins the
+# struct-by-handle ABI lowering specifically.
+
+version = "1"
+name = "struct-handle-roundtrip"
+description = "Struct-by-handle round-trip: __mind_alloc 4xi64, store/load via __mind_store_i64/__mind_load_i64, combine ((r0+r1)*2-r2)+r3*3 — the heap-handle ABI + address-arithmetic determinism canary."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Four fixed i64 inputs (no LCG); the round-trip is the identity.
+[input]
+generator = "fixed"
+a = 1111
+b = 2222
+c = 3333
+d = 4444
+dtype = "i64"
+
+[kernel]
+symbol = "struct_handle_roundtrip"
+layout = "4 x i64 @ base, base+8, base+16, base+24 (__mind_alloc(32))"
+op_order = "((r0+r1)*2 - r2) + r3*3 after store/load round-trip"
+returns = "i64"            # the combined result
+output_encoding = "i64_le" # 8 little-endian bytes of the result, then sha256
