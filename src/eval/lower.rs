@@ -4138,11 +4138,29 @@ fn lower_expr(
                     merged_names.push(n.clone());
                 }
             }
-            // A branch that ends in `return` does not fall through to
+            // A branch that ends in a block terminator does not fall through to
             // `^if_after`; its `cf.br` is omitted and it must not pass a merge
             // value (and must not get a dead const pushed after its terminator).
-            let then_falls_through = !matches!(then_ir.instrs.last(), Some(Instr::Return { .. }));
-            let else_falls_through = !matches!(else_ir.instrs.last(), Some(Instr::Return { .. }));
+            // `return` always terminates; under `std-surface`, `break` /
+            // `continue` (a `match` arm body that exits/re-tests the enclosing
+            // `while`) terminate too. Recognizing only `Return` here wrongly
+            // deemed a `break`/`continue` branch to fall through, pushing dead
+            // merge-placeholder consts AFTER the terminator — which then made
+            // the MLIR if-lowering's `.last()` terminator check (correctly
+            // returns true for Break/Continue) miss, so it appended a second
+            // `cf.br ^if_after`, yielding a mid-block + trailing `cf.br` that
+            // mlir-opt rejects. ADDITIVE: a non-std-surface build only matches
+            // `Return`, so the keystone stays byte-identical.
+            fn branch_terminates(instrs: &[Instr]) -> bool {
+                match instrs.last() {
+                    Some(Instr::Return { .. }) => true,
+                    #[cfg(feature = "std-surface")]
+                    Some(Instr::Break { .. }) | Some(Instr::Continue { .. }) => true,
+                    _ => false,
+                }
+            }
+            let then_falls_through = !branch_terminates(&then_ir.instrs);
+            let else_falls_through = !branch_terminates(&else_ir.instrs);
             let mut branch_bindings: Vec<(String, ValueId)> = Vec::new();
             let mut merges: Vec<(ValueId, ValueId, ValueId)> = Vec::new();
             for name in &merged_names {
