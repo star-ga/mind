@@ -742,6 +742,25 @@ fn emit_body_stmts(p: &mut Printer, stmts: &[Node], close_line: usize) {
                 emit_fn_def(p, *is_pub, name, params, ret_type, body, attrs, *span);
                 p.push("\n");
             }
+            // Item declarations nested inside a Block. A `module NAME { … }`
+            // header parses to a transparent `Node::Block` whose statements are
+            // the module's items; the same Block holds whatever item kinds the
+            // module declares (`const`, `struct`, `enum`, `type`, `import`,
+            // `export`). These MUST route to the item emitters — falling through
+            // to the bare-expression arm calls `emit_expr`, which prints ONLY the
+            // item's NAME (e.g. `const VERSION: i32 = 1` collapses to `VERSION`),
+            // silently dropping the declaration so the formatted source no longer
+            // defines it (a fmt silent miscompile). `emit_node` dispatches each
+            // kind to its full emitter; item decls take no trailing `;`.
+            Node::Const { .. }
+            | Node::StructDef { .. }
+            | Node::EnumDef { .. }
+            | Node::TypeAlias { .. }
+            | Node::Import { .. }
+            | Node::Export { .. } => {
+                emit_node(p, stmt, 0);
+                p.push("\n");
+            }
             // Statements with mandatory semicolons regardless of position.
             Node::Let { .. }
             | Node::Return { .. }

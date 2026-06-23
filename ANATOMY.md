@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2925 | **Est. tokens:** ~7,024,283
-**Generated:** 2026-06-23 05:48 UTC
+**Files:** 2927 | **Est. tokens:** ~7,026,555
+**Generated:** 2026-06-23 07:03 UTC
 
 ## Token Budget Guide
 
@@ -383,7 +383,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,387 |
+| `src/fmt/` | 3 | ~19,662 |
 | `src/ir/` | 4 | ~26,649 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 234 | ~382,593 |
+| `tests/` | 236 | ~384,590 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3737,7 +3737,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~14920 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~15195 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4005,6 +4005,7 @@
 - `dot_enum_variant_run.rs` (~845 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
 - `emit_ir_for_loop.rs` (~369 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
+- `enum_match_collision_run.rs` (~1071 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_match_run.rs` (~2399 tok, huge) — Copyright 2025 STARGA Inc.
 - `enum_soundness.rs` (~1411 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_struct_variant_run.rs` (~1369 tok, large) — Copyright 2025 STARGA Inc.
@@ -4027,6 +4028,7 @@
 - `fmt_comment_placement.rs` (~2772 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_idempotence.rs` (~2782 tok, huge) — Copyright 2025 STARGA Inc.
 - `fmt_ir_preservation.rs` (~2030 tok, huge) — Copyright 2025 STARGA Inc.
+- `fmt_module_block_item_preserved.rs` (~926 tok, large) — Regression: `mindc fmt` must not drop item declarations nested inside a
 - `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
 - `for_each_run.rs` (~897 tok, large) — Copyright 2025 STARGA Inc.
 - `g2_differential_mlir.rs` (~6574 tok, huge) — Copyright 2025 STARGA Inc.
