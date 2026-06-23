@@ -1770,6 +1770,140 @@ fn let_rhs_collection_track(
     Some((sentinel, elem))
 }
 
+/// The collection mutating-method names whose std implementation returns a
+/// FRESH handle on realloc (`vec_push`, `map_insert`, …). A bare-statement call
+/// is rebound (see [`rewrite_collection_mutations`]); the same call in
+/// expression position cannot rebind its realloc'd handle and is rejected.
+/// Kept IN SYNC with the statement-rebind matcher's method list so a mutator is
+/// rejected in expr position iff it would be rebound as a statement.
+#[cfg(feature = "std-surface")]
+const COLLECTION_MUTATORS: &[&str] = &["insert", "push", "set", "add"];
+
+/// Does `receiver` name a tracked collection (a local/param of `array<T>` /
+/// `map<K,V>` / `set<T>`, a struct collection FIELD, or a struct
+/// `array<collection>` ELEMENT)? Mirrors the rebind matcher in
+/// [`rewrite_collection_mutations`] so the expr-position reject below fires on
+/// exactly the same receiver shapes that statement-position rebinding handles.
+#[cfg(feature = "std-surface")]
+fn receiver_is_tracked_collection(
+    receiver: &ast::Node,
+    scope: &std::collections::HashSet<String>,
+    struct_collection_fields: &std::collections::HashSet<(String, String)>,
+    struct_collection_element_fields: &std::collections::HashSet<(String, String)>,
+    vtypes: &std::collections::HashMap<String, String>,
+) -> bool {
+    match receiver {
+        ast::Node::Lit(Literal::Ident(v), _) => scope.contains(v),
+        ast::Node::FieldAccess {
+            receiver: base,
+            field,
+            ..
+        } => matches!(base.as_ref(), ast::Node::Lit(Literal::Ident(obj), _)
+            if vtypes.get(obj).is_some_and(|s| {
+                struct_collection_fields.contains(&(s.clone(), field.clone()))
+            })),
+        ast::Node::IndexAccess { receiver: base, .. } => matches!(
+            base.as_ref(),
+            ast::Node::FieldAccess { receiver: obj, field, .. }
+                if matches!(obj.as_ref(), ast::Node::Lit(Literal::Ident(ov), _)
+                    if vtypes.get(ov).is_some_and(|s| {
+                        struct_collection_element_fields.contains(&(s.clone(), field.clone()))
+                    }))
+        ),
+        _ => false,
+    }
+}
+
+/// Walk an EXPRESSION (non-statement) sub-tree and FAIL LOUD (#306) on any
+/// collection mutating-method call on a tracked collection receiver. Such a call
+/// (`w.push(v.push(5))`, `f(a.push(x))`, `let n = a.push(x)`) cannot rebind its
+/// realloc'd handle in expression position — only the bare-statement form is
+/// rebound — so it would silently lose the mutation. Refuse it at compile time
+/// rather than emit a silent miscompile. A normal value-returning method
+/// (`a.length`, `a.get(i)`, a non-collection `.add`) is NOT a tracked-collection
+/// mutator, so it passes through untouched. Does NOT descend into nested
+/// statement bodies (`If`/`Block`/closures) — the main loop recurses into those
+/// with the correct lexical scope.
+#[cfg(feature = "std-surface")]
+fn reject_collection_mutation_in_expr(
+    expr: &ast::Node,
+    scope: &std::collections::HashSet<String>,
+    struct_collection_fields: &std::collections::HashSet<(String, String)>,
+    struct_collection_element_fields: &std::collections::HashSet<(String, String)>,
+    vtypes: &std::collections::HashMap<String, String>,
+) {
+    use ast::Node as N;
+    if let N::MethodCall {
+        receiver, method, ..
+    } = expr
+    {
+        if COLLECTION_MUTATORS.contains(&method.as_str())
+            && receiver_is_tracked_collection(
+                receiver,
+                scope,
+                struct_collection_fields,
+                struct_collection_element_fields,
+                vtypes,
+            )
+        {
+            panic!(
+                "collection mutation `{}.{}(...)` in expression position is not \
+                 supported: the std `{}` returns a fresh handle on realloc that \
+                 cannot be rebound here, so the mutation would be silently lost. \
+                 Use it as its own statement (`{}.{}(...)`) instead. (#306: \
+                 refusing a known silent miscompile.)",
+                describe_receiver(receiver),
+                method,
+                method,
+                describe_receiver(receiver),
+                method,
+            );
+        }
+    }
+    // Recurse into expression children only. The walk mirrors `lower_expr`'s
+    // value-position descent; it deliberately stops at nodes that open a new
+    // statement scope (`If`/`Block`/`Match`/`FnDef`), which the caller's main
+    // loop handles with the correct collection scope.
+    let recur = |e: &ast::Node| {
+        reject_collection_mutation_in_expr(
+            e,
+            scope,
+            struct_collection_fields,
+            struct_collection_element_fields,
+            vtypes,
+        )
+    };
+    match expr {
+        N::Binary { left, right, .. } => {
+            recur(left);
+            recur(right);
+        }
+        N::Paren(inner, _) => recur(inner),
+        N::Tuple { elements, .. } | N::ArrayLit { elements, .. } => {
+            elements.iter().for_each(recur)
+        }
+        N::Call { args, .. } => args.iter().for_each(recur),
+        N::MethodCall {
+            receiver, args, ..
+        } => {
+            recur(receiver);
+            args.iter().for_each(recur);
+        }
+        N::FieldAccess { receiver, .. } => recur(receiver),
+        N::IndexAccess { receiver, index, .. } => {
+            recur(receiver);
+            recur(index);
+        }
+        N::MapLit { entries, .. } => {
+            for (k, v) in entries {
+                recur(k);
+                recur(v);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Rewrite STATEMENT-position collection mutations into assignments so the
 /// non-mutating std handle is rebound. `m.insert(k,v)` / `v.push(x)` /
 /// `v.set(i,x)` as a bare statement (result discarded) → `m = m.insert(k,v)`.
@@ -1819,6 +1953,64 @@ fn rewrite_collection_mutations(
                 if let Some(t) = vtypes.get(src).cloned() {
                     vtypes.entry(name.clone()).or_insert(t);
                 }
+            }
+        }
+        // FAIL LOUD (#306): a collection mutating call used in EXPRESSION
+        // position (`let n = a.push(x)`, `f(a.push(x))`, `w.push(v.push(5))`)
+        // cannot rebind its realloc'd handle and would silently lose the
+        // mutation. Scan every expression-position child of this statement and
+        // refuse it. The statement-level mutating call itself is rebound below
+        // (allowed) — so for a bare `MethodCall` statement only its receiver's
+        // sub-expressions and ARGUMENTS are scanned, never the top call.
+        {
+            let reject = |e: &ast::Node| {
+                reject_collection_mutation_in_expr(
+                    e,
+                    &scope,
+                    struct_collection_fields,
+                    struct_collection_element_fields,
+                    &vtypes,
+                );
+            };
+            match stmt {
+                ast::Node::Let { value, .. }
+                | ast::Node::Assign { value, .. }
+                | ast::Node::LetTuple { value, .. } => reject(value),
+                ast::Node::Return { value: Some(v), .. } => reject(v),
+                ast::Node::FieldAssign { receiver, value, .. } => {
+                    reject(receiver);
+                    reject(value);
+                }
+                ast::Node::IndexAssign {
+                    receiver,
+                    index,
+                    value,
+                    ..
+                } => {
+                    reject(receiver);
+                    reject(index);
+                    reject(value);
+                }
+                ast::Node::Call { args, .. } => args.iter().for_each(&reject),
+                // A bare `recv.method(args)` statement: the top call is either a
+                // rebound mutation (allowed) or a value-returning method (no
+                // mutation). Either way scan its receiver's sub-expressions and
+                // its arguments for nested expr-position mutations.
+                ast::Node::MethodCall {
+                    receiver, args, ..
+                } => {
+                    match receiver.as_ref() {
+                        ast::Node::FieldAccess { receiver: b, .. } => reject(b),
+                        ast::Node::IndexAccess { receiver: b, index, .. } => {
+                            reject(b);
+                            reject(index);
+                        }
+                        other => reject(other),
+                    }
+                    args.iter().for_each(&reject);
+                }
+                ast::Node::If { cond, .. } | ast::Node::While { cond, .. } => reject(cond),
+                _ => {}
             }
         }
         // A bare collection-mutation statement whose fresh-on-realloc std handle
