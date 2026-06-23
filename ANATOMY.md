@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2921 | **Est. tokens:** ~7,018,202
-**Generated:** 2026-06-23 04:55 UTC
+**Files:** 2922 | **Est. tokens:** ~7,019,357
+**Generated:** 2026-06-23 05:45 UTC
 
 ## Token Budget Guide
 
@@ -439,7 +439,7 @@
 | `tests/selfhost_gaps/` | 67 | ~5,301 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tools/` | 3 | ~3,423 |
+| `tools/` | 4 | ~4,578 |
 | `tools/mindfuzz/` | 7 | ~15,992 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -4409,7 +4409,7 @@
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
-- `bench_gate.py` (~1719 tok, huge) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~2344 tok, huge) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `tools/mindfuzz/`
 
@@ -4443,6 +4443,9 @@
 
 - `__init__.py` (~0 tok, tiny)
 - `test_bridge.py` (~1244 tok, large) — # Copyright 2025-2026 STARGA Inc.
+### `tools/`
+
+- `run_bench_gate.sh` (~530 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 ### `.wrangler/cache/`
 
 - `wrangler-account.json` (~21 tok, tiny) — Keys: account

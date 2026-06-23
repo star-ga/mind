@@ -3063,24 +3063,50 @@ impl<'a> P<'a> {
     fn parse_string_lit(&mut self) -> Result<Node, ParseError> {
         let start = self.pos;
         self.expect(b'"')?;
-        let str_start = self.pos;
-        // Escape-aware scan: a backslash escapes the following byte so that
-        // `\"` (escaped quote) and `\\` (escaped backslash) do not prematurely
-        // terminate the literal. Without this, `"\\"` ended at the inner `\`,
-        // leaving a dangling `"` that corrupted the rest of the parse (it only
-        // surfaced as a downstream "expected expression"). Bytes are retained
-        // verbatim (escapes are not decoded here) to match the established
-        // string-scanning convention.
+        // Escape-aware scan that DECODES escapes into their byte values, so the
+        // stored `Literal::Str` carries the same bytes the program observes at
+        // runtime (string_len / string_get_byte read these bytes verbatim via
+        // the `__mind_alloc` + `__mind_store_i8` lowering in eval/lower.rs).
+        //
+        // The escape table is identical to `parse_char_lit` so `'\n'` and the
+        // `"\n"` inside a string agree on the byte (10) — the prior verbatim
+        // retention produced the 2-byte sequence `\` `n`, a SILENT MISCOMPILE
+        // (`"\n".len()` returned 2, `string_get_byte("\n",0)` returned 92).
+        // A `\` still escapes the following byte during the scan so `\"`
+        // (escaped quote) and `\\` (escaped backslash) do not prematurely
+        // terminate the literal. Unknown escapes keep the literal following
+        // byte (`other => other`), matching `parse_char_lit`.
+        //
+        // Keystone byte-identity: the bootstrap source uses no string-literal
+        // escapes (every `\` in main.mind is in a `//` comment), so this branch
+        // never decodes anything for it and its emit stays byte-identical.
+        let mut decoded: Vec<u8> = Vec::new();
         while self.pos < self.b.len() && self.b[self.pos] != b'"' {
             if self.b[self.pos] == b'\\' && self.pos + 1 < self.b.len() {
+                let esc = self.b[self.pos + 1];
                 self.pos += 2;
+                decoded.push(match esc {
+                    b'n' => b'\n',
+                    b't' => b'\t',
+                    b'r' => b'\r',
+                    b'0' => b'\0',
+                    b'\\' => b'\\',
+                    b'\'' => b'\'',
+                    b'"' => b'"',
+                    other => other,
+                });
             } else {
+                decoded.push(self.b[self.pos]);
                 self.pos += 1;
             }
         }
-        let s = std::str::from_utf8(&self.b[str_start..self.pos])
-            .unwrap()
-            .to_string();
+        // Decoded bytes are a UTF-8-valid byte sequence: the source was UTF-8,
+        // every escape maps to a single ASCII byte, and non-escaped multi-byte
+        // UTF-8 scalars are copied byte-for-byte. `from_utf8` therefore never
+        // errors here; fall back to a lossy decode rather than panic if a
+        // future escape extension ever breaks that invariant.
+        let s = String::from_utf8(decoded)
+            .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
         self.expect(b'"')?;
         let span = Span::new(start, self.pos);
         Ok(Node::Lit(Literal::Str(s), span))
