@@ -698,6 +698,12 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                     }
                     _ => lower_expr(value, &mut ir, &env, &struct_env, receiver_types),
                 };
+                // Narrow-typed binding (`let c: u8 = a * b`, i8/u8/i16/u16/u32):
+                // truncate/sign-adjust the lowered init to the declared width, so
+                // later arithmetic on `c` sees the real-width value (no-op for
+                // i64/u64/handles/collections — preserves byte-identity).
+                #[cfg(feature = "std-surface")]
+                let id = mask_narrow_let(&mut ir, ann, id);
                 env.insert(name.clone(), id);
                 // Dynamic `bytes = [..]` tracks as the vec surface (growable u8).
                 #[cfg(feature = "std-surface")]
@@ -1067,6 +1073,80 @@ fn scalar_uint_cast_width(ty: &TypeAnn) -> Option<u32> {
         },
         _ => None,
     }
+}
+
+/// Truncate/sign-adjust the lowered init value `val` of a `let` binding to its
+/// declared narrow integer width, mirroring the `as`-cast scalar path.
+///
+/// MIND scalars are carried full-width in i64 SSA. A `let c: u8 = a * b` (or
+/// `i8`/`u8`/`i16`/`u16`/`u32`) must materialise `c` at its real width — without
+/// this, the un-truncated i64 product flows into subsequent arithmetic on `c`,
+/// a silent miscompile (e.g. `200 * 2 == 400` instead of `144`). The catch-all
+/// `_ => lower_expr(value, ..)` Let arms previously dropped the declared width.
+///
+///   * narrow SIGNED (`i8`/`i16`/`i32`) → the `(x << (64-W)) >> (64-W)` shift
+///     pair with an arithmetic (signed) right shift — clears high bits AND
+///     sign-extends in one i64-carried value (same as `scalar_int_cast_width`).
+///   * narrow UNSIGNED (`u8`/`u16`/`u32`) → a single `BitAnd` against the i64
+///     const mask `(1 << W) - 1` (zero-extend, same as `scalar_uint_cast_width`).
+///   * `i64`/`u64`/pointers/floats/handles/aliases/no annotation → unchanged
+///     (`val` returned verbatim, so i64 locals and the keystone are byte-identical).
+///
+/// No new IR opcode and no mic@1/mic@3 layout change (only `ConstI64`/`BinOp`),
+/// so no version bump. Gated to `std-surface` because the narrow scalar types and
+/// the `Shl`/`Shr`/`BitAnd` ops only exist there.
+#[cfg(feature = "std-surface")]
+fn mask_narrow_let(ir: &mut IRModule, ann: &Option<TypeAnn>, val: ValueId) -> ValueId {
+    let ty = match ann {
+        Some(t) => t,
+        None => return val,
+    };
+    // Signed narrow widths: shift-pair sign-extend.
+    if let Some(width) = scalar_int_cast_width(ty) {
+        if width < 64 {
+            let shift = 64 - width as i64;
+            let shift_id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(shift_id, shift));
+            let shl_id = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: shl_id,
+                op: BinOp::Shl,
+                lhs: val,
+                rhs: shift_id,
+            });
+            let shr_id = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: shr_id,
+                op: BinOp::Shr,
+                lhs: shl_id,
+                rhs: shift_id,
+            });
+            return shr_id;
+        }
+        // width == 64 (i64): leave the value untouched.
+        return val;
+    }
+    // Unsigned narrow widths: BitAnd zero-extend mask.
+    if let Some(width) = scalar_uint_cast_width(ty) {
+        if width < 64 {
+            let mask: i64 = if width == 32 {
+                0xFFFF_FFFF
+            } else {
+                (1i64 << width) - 1
+            };
+            let mask_id = ir.fresh();
+            ir.instrs.push(Instr::ConstI64(mask_id, mask));
+            let and_id = ir.fresh();
+            ir.instrs.push(Instr::BinOp {
+                dst: and_id,
+                op: BinOp::BitAnd,
+                lhs: val,
+                rhs: mask_id,
+            });
+            return and_id;
+        }
+    }
+    val
 }
 
 /// The byte width and signedness of a struct field type for the canonical
@@ -3267,6 +3347,10 @@ fn lower_expr(
                                 receiver_types,
                             ),
                         };
+                        // Narrow-typed binding: mask/sign-adjust to declared width
+                        // (no-op for i64/u64/handles/collections).
+                        #[cfg(feature = "std-surface")]
+                        let id = mask_narrow_let(&mut fn_ir, ann, id);
                         fn_env.insert(name.clone(), id);
                         // Generic-arg inference: record this top-level Let's
                         // scalar type so a later `id(z)` over `z` monomorphizes.
@@ -3499,6 +3583,9 @@ fn lower_expr(
                         }
                         _ => lower_expr(value, ir, &local_env, &local_struct_env, receiver_types),
                     };
+                    // Narrow-typed block-local: mask/sign-adjust to declared width.
+                    #[cfg(feature = "std-surface")]
+                    let id = mask_narrow_let(ir, ann, id);
                     local_env.insert(name.clone(), id);
                     // P0f Step 1: track var→struct binding so a later FieldAccess
                     // inside this block resolves the canonical field offset.
@@ -3682,6 +3769,9 @@ fn lower_expr(
                                 receiver_types,
                             ),
                         };
+                        // Narrow-typed branch-local: mask/sign-adjust to width.
+                        #[cfg(feature = "std-surface")]
+                        let id = mask_narrow_let(&mut then_ir, ann, id);
                         then_env.insert(name.clone(), id);
                         #[cfg(feature = "std-surface")]
                         {
@@ -3799,6 +3889,9 @@ fn lower_expr(
                                     receiver_types,
                                 ),
                             };
+                            // Narrow-typed branch-local: mask/sign-adjust to width.
+                            #[cfg(feature = "std-surface")]
+                            let id = mask_narrow_let(&mut else_ir, ann, id);
                             else_env.insert(name.clone(), id);
                             #[cfg(feature = "std-surface")]
                             {
@@ -4353,6 +4446,9 @@ fn lower_expr(
                             &body_struct_env,
                             receiver_types,
                         );
+                        // Narrow-typed loop-body local: mask/sign-adjust to width.
+                        #[cfg(feature = "std-surface")]
+                        let new_id = mask_narrow_let(&mut body_ir, ann, new_id);
                         body_env.insert(name.clone(), new_id);
                         #[cfg(feature = "std-surface")]
                         {
