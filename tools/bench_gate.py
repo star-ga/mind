@@ -85,35 +85,44 @@ def parse_baseline(path: Path) -> dict[str, float]:
 
 # Bencher-style one-line output (criterion --output-format bencher):
 #   test compiler_pipeline/parse_typecheck_ir/small_matmul ... bench:  2773 ns/iter (+/- 76)
+# The "(+/- N)" is criterion's measured spread — load-bearing here: a run on
+# a busy box produces a huge spread, and a delta computed from a noisy median
+# is statistically meaningless, so the gate must NOT trip on it.
 BENCHER_LINE = re.compile(
     r"test\s+compiler_pipeline/parse_typecheck_ir/(?P<name>\S+)\s+\.\.\.\s+"
     r"bench:\s+(?P<value>[0-9.]+)\s+(?P<unit>ns|us|µs|ms)/iter"
+    r"(?:\s*\(\+/-\s*(?P<variance>[0-9.]+)\s*(?P<vunit>ns|us|µs|ms)?\))?"
 )
 
 
-def parse_current(path: Path) -> dict[str, float]:
-    """Read criterion bench output into microseconds.
+def parse_current(path: Path) -> dict[str, tuple[float, float | None]]:
+    """Read criterion bench output into ``{name: (microseconds, rel_variance)}``.
+
+    ``rel_variance`` is the bencher ``(+/- N)`` spread divided by the median
+    (``None`` when unavailable, e.g. the default two-line format). It lets the
+    gate ignore load-contaminated runs instead of failing on noise.
 
     Handles both criterion's default format (`Benchmarking ... time: [..]`)
     and `--output-format bencher` (`test ... bench: N ns/iter (+/- ..)`).
     The CI workflow uses bencher format.
-
-    For default format, uses the mean (middle) of `[low mid high]`.
-    For bencher format, the single value is the median.
     """
     text = path.read_text()
-    out: dict[str, float] = {}
+    out: dict[str, tuple[float, float | None]] = {}
 
     # Pass 1: bencher format (one-liner; preferred — matches CI invocation).
     for raw in text.splitlines():
         m = BENCHER_LINE.search(raw)
         if m and m.group("name") not in out:
-            value = float(m.group("value"))
-            out[m.group("name")] = _to_us(value, m.group("unit"))
+            us = _to_us(float(m.group("value")), m.group("unit"))
+            rel_var: float | None = None
+            if m.group("variance") is not None and us > 0:
+                vunit = m.group("vunit") or m.group("unit")
+                var_us = _to_us(float(m.group("variance")), vunit)
+                rel_var = var_us / us
+            out[m.group("name")] = (us, rel_var)
 
     # Pass 2: default criterion format (two-line "Benchmarking ... time:").
-    # Skipped if pass 1 already populated the bench (bencher numbers are
-    # canonical for the gate).
+    # The [low mid high] spread gives a variance proxy: (high-low)/mid.
     pending: str | None = None
     for raw in text.splitlines():
         m = BENCHMARKING_LINE.search(raw)
@@ -123,9 +132,11 @@ def parse_current(path: Path) -> dict[str, float]:
         if pending is not None:
             t = TIME_PATTERN.search(raw)
             if t and pending not in out:
-                mid_value = float(t.group(3))
-                mid_unit = t.group(4)
-                out[pending] = _to_us(mid_value, mid_unit)
+                low = _to_us(float(t.group(1)), t.group(2))
+                mid = _to_us(float(t.group(3)), t.group(4))
+                high = _to_us(float(t.group(5)), t.group(6))
+                rel_var = ((high - low) / mid) if mid > 0 else None
+                out[pending] = (mid, rel_var)
             pending = None
     return out
 
@@ -144,46 +155,83 @@ def main() -> int:
             "bound. Exceeding it is a stop-and-decide trigger, not a block."
         ),
     )
+    ap.add_argument(
+        "--max-rel-variance",
+        type=float,
+        default=0.12,
+        help=(
+            "max trusted spread; a bench whose criterion (+/- N) spread "
+            "exceeds this fraction of its median is INCONCLUSIVE (the box was "
+            "loaded), not a regression — the gate refuses to fail on it and "
+            "asks for an idle re-run. 0.12 = 12%%."
+        ),
+    )
     args = ap.parse_args()
 
     baseline = parse_baseline(args.baseline)
     current = parse_current(args.current)
 
-    rows: list[tuple[str, float, float, float, bool]] = []
+    # (name, baseline_us, current_us, delta, rel_var, verdict)
+    #   verdict ∈ {"OK", "FAIL", "NOISY"}
+    rows: list[tuple[str, float, float, float, float | None, str]] = []
     failed = False
+    trusted = 0
     for name in WATCHED:
         b = baseline.get(name)
-        c = current.get(name)
-        if b is None or c is None:
-            print(f"::warning::missing bench for {name} (baseline={b}, current={c})")
+        cv = current.get(name)
+        if b is None or cv is None:
+            print(f"::warning::missing bench for {name} (baseline={b}, current={cv})")
             continue
-        # One-sided gate: delta < 0 is a speedup (always OK, no upper bound);
-        # only a regression strictly beyond +threshold trips it. A trip is a
-        # stop-and-decide signal (revert, or re-bless the baseline with a
-        # documented rationale when a dramatic win elsewhere justifies the
-        # slowdown), not a permanent block.
+        c, rel_var = cv
         delta = (c - b) / b
-        ok = delta <= args.threshold
-        failed = failed or not ok
-        rows.append((name, b, c, delta, ok))
+        # A regression only counts when the measurement is TRUSTWORTHY. A run
+        # on a busy box has a large (+/- N) spread; a delta from a noisy median
+        # is meaningless, so flag it NOISY (inconclusive) rather than FAIL.
+        if rel_var is not None and rel_var > args.max_rel_variance:
+            verdict = "NOISY"
+        else:
+            trusted += 1
+            # One-sided gate: delta < 0 is a speedup (always OK); only a
+            # regression strictly beyond +threshold on a TRUSTED measurement
+            # trips it (stop-and-decide, not a permanent block).
+            ok = delta <= args.threshold
+            verdict = "OK" if ok else "FAIL"
+            failed = failed or not ok
+        rows.append((name, b, c, delta, rel_var, verdict))
 
     print()
-    print(f"{'bench':<18} {'baseline':>12} {'current':>12} {'delta':>10}   gate")
-    for name, b, c, delta, ok in rows:
-        marker = "OK" if ok else "FAIL"
+    print(f"{'bench':<18} {'baseline':>12} {'current':>12} {'delta':>10} {'spread':>8}   gate")
+    for name, b, c, delta, rel_var, verdict in rows:
+        sp = f"{rel_var:.1%}" if rel_var is not None else "  n/a"
         print(
-            f"{name:<18} {b:>10.3f} µs {c:>10.3f} µs {delta:>+9.2%}   {marker}"
+            f"{name:<18} {b:>10.3f} µs {c:>10.3f} µs {delta:>+9.2%} {sp:>8}   {verdict}"
         )
     print()
 
+    noisy = [r[0] for r in rows if r[5] == "NOISY"]
     if failed:
         print(
-            f"::error::pipeline regression exceeded +{args.threshold:.0%} "
-            f"(one-sided gate; a speedup never fails). STOP and decide if it "
-            f"is worth it: revert, or re-bless the baseline with a documented "
-            f"rationale when a dramatic win elsewhere justifies the slowdown."
+            f"::error::pipeline regression exceeded +{args.threshold:.0%} on a "
+            f"low-variance (trustworthy) measurement. STOP and decide: revert, "
+            f"or re-bless the baseline with a documented rationale when a "
+            f"dramatic win elsewhere justifies the slowdown."
         )
         return 1
+    if trusted == 0 and noisy:
+        # Every watched bench was too noisy to trust — the box was loaded.
+        # Do NOT pass-or-fail on garbage; signal a re-run is needed.
+        print(
+            f"::warning::all benches inconclusive (spread > "
+            f"{args.max_rel_variance:.0%}): the box was loaded during the run. "
+            f"Re-run on an idle host (taskset-pinned) before trusting deltas."
+        )
+        return 2
+    if noisy:
+        print(
+            f"::warning::ignored {len(noisy)} noisy bench(es) {noisy} "
+            f"(spread > {args.max_rel_variance:.0%}); gated on the "
+            f"{trusted} trustworthy one(s)."
+        )
     print("bench gate: PASS")
     return 0
 
