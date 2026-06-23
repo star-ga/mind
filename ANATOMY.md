@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2931 | **Est. tokens:** ~7,031,436
-**Generated:** 2026-06-23 11:06 UTC
+**Files:** 2932 | **Est. tokens:** ~7,033,944
+**Generated:** 2026-06-23 12:41 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~9,002 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~15,099 |
+| `runtime-support/` | 1 | ~15,557 |
 | `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 239 | ~386,408 |
+| `tests/` | 240 | ~388,458 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -851,7 +851,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~15099 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~15557 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -4344,7 +4344,7 @@
 - `std_surface_bool_return.rs` (~1247 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_break_continue.rs` (~1314 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_call_lowering.rs` (~834 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_cdylib_link.rs` (~1823 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_cdylib_link.rs` (~2078 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_equals_form.rs` (~871 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli.rs` (~1005 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_cli_subcommand.rs` (~796 tok, large) — Copyright 2025 STARGA Inc.
@@ -4369,6 +4369,7 @@
 - `std_surface_reactor.rs` (~1357 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_regex.rs` (~4835 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_ring.rs` (~1310 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_self_emit_shared.rs` (~1795 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_string_module.rs` (~2284 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_push_str.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.

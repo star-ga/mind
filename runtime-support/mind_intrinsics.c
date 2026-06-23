@@ -68,6 +68,38 @@
 #  define MIND_EXPORT
 #endif
 
+// Weak export for the pure-MIND std surface (vec_* / map_* / string_*).
+//
+// When mindc compiles ONE of the std surface modules (std/vec.mind,
+// std/map.mind, std/string.mind) with --emit-shared, the MIND-compiled
+// functions get the exact same external symbol names this stub provides
+// (vec_new, map_new, string_new, …). The --emit-shared link path
+// UNCONDITIONALLY links this stub .o into every cdylib so the .so is
+// self-contained, so `ld` would then see each surface symbol defined
+// twice (the strong MIND .o def + the strong C stub def) -> "multiple
+// definition" -> the link fails.
+//
+// Marking the surface fallbacks WEAK fixes this without losing the
+// self-contained property:
+//   * a consumer cdylib that does NOT define vec_new/etc. still gets the
+//     weak C fallback (a weak def with no strong override is used), so
+//     the .so remains self-contained and dlopen-able as before;
+//   * a self-compiling surface module that DOES define the symbol with a
+//     strong (global) binding wins -> the C fallback is dropped, no
+//     collision.
+// Only the symbol BINDING changes (STB_GLOBAL -> STB_WEAK in .symtab) for
+// these fallbacks; the emitted machine code is byte-identical, and these
+// functions never execute in the GEMM / keystone paths, so the
+// cross-substrate trace hashes and the keystone self-consistency gate are
+// unaffected. MSVC has no weak-symbol attribute, so it keeps the strong
+// dllexport — the std self-compile + emit-shared path is exercised on the
+// ELF/Mach-O toolchains only.
+#if defined(_WIN32) || defined(_WIN64)
+#  define MIND_EXPORT_WEAK __declspec(dllexport)
+#else
+#  define MIND_EXPORT_WEAK __attribute__((weak))
+#endif
+
 // POSIX I/O: Windows has _read / _write in <io.h> and lacks pread/pwrite.
 // Emulate pread/pwrite via _lseeki64+_read/_write — non-atomic, matches
 // the existing single-threaded runtime use.
@@ -306,7 +338,7 @@ MIND_EXPORT void printNewline(void) {
 // ---------------------------------------------------------------------------
 
 // Allocate a new Vec heap record with addr=0, len=0, cap=0.
-MIND_EXPORT int64_t vec_new(void) {
+MIND_EXPORT_WEAK int64_t vec_new(void) {
     int64_t rec = __mind_alloc(24); // 3 × i64
     __mind_store_i64(rec,      0);  // addr
     __mind_store_i64(rec + 8,  0);  // len
@@ -314,24 +346,24 @@ MIND_EXPORT int64_t vec_new(void) {
     return rec;
 }
 
-MIND_EXPORT int64_t vec_len(int64_t v) {
+MIND_EXPORT_WEAK int64_t vec_len(int64_t v) {
     return __mind_load_i64(v + 8);
 }
 
-MIND_EXPORT int64_t vec_cap(int64_t v) {
+MIND_EXPORT_WEAK int64_t vec_cap(int64_t v) {
     return __mind_load_i64(v + 16);
 }
 
-MIND_EXPORT int64_t vec_addr(int64_t v) {
+MIND_EXPORT_WEAK int64_t vec_addr(int64_t v) {
     return __mind_load_i64(v);
 }
 
-MIND_EXPORT int64_t vec_get(int64_t v, int64_t i) {
+MIND_EXPORT_WEAK int64_t vec_get(int64_t v, int64_t i) {
     int64_t base = __mind_load_i64(v);
     return __mind_load_i64(base + i * 8);
 }
 
-MIND_EXPORT int64_t vec_set(int64_t v, int64_t i, int64_t value) {
+MIND_EXPORT_WEAK int64_t vec_set(int64_t v, int64_t i, int64_t value) {
     int64_t base = __mind_load_i64(v);
     return __mind_store_i64(base + i * 8, value);
 }
@@ -340,7 +372,7 @@ MIND_EXPORT int64_t vec_set(int64_t v, int64_t i, int64_t value) {
 //
 // Returns the same Vec record address (mutates in place).
 // Growth: cap 0 → 4, otherwise double when len == cap.
-MIND_EXPORT int64_t vec_push(int64_t v, int64_t value) {
+MIND_EXPORT_WEAK int64_t vec_push(int64_t v, int64_t value) {
     int64_t len  = __mind_load_i64(v + 8);
     int64_t cap  = __mind_load_i64(v + 16);
     int64_t base = __mind_load_i64(v);
@@ -390,7 +422,7 @@ MIND_EXPORT int64_t __mind_vec_zeroed(int64_t n) {
 // ---------------------------------------------------------------------------
 
 // map_new — empty Map heap record, all fields zero.
-MIND_EXPORT int64_t map_new(void) {
+MIND_EXPORT_WEAK int64_t map_new(void) {
     int64_t rec = __mind_alloc(32); // 4 × i64
     __mind_store_i64(rec,      0);  // keys_addr
     __mind_store_i64(rec + 8,  0);  // vals_addr
@@ -400,33 +432,33 @@ MIND_EXPORT int64_t map_new(void) {
 }
 
 // map_len — current entry count.
-MIND_EXPORT int64_t map_len(int64_t m) {
+MIND_EXPORT_WEAK int64_t map_len(int64_t m) {
     return __mind_load_i64(m + 16);
 }
 
 // map_cap — current backing-store capacity.
-MIND_EXPORT int64_t map_cap(int64_t m) {
+MIND_EXPORT_WEAK int64_t map_cap(int64_t m) {
     return __mind_load_i64(m + 24);
 }
 
 // map_keys_addr — opaque i64 base address of the keys array.
-MIND_EXPORT int64_t map_keys_addr(int64_t m) {
+MIND_EXPORT_WEAK int64_t map_keys_addr(int64_t m) {
     return __mind_load_i64(m);
 }
 
 // map_vals_addr — opaque i64 base address of the values array.
-MIND_EXPORT int64_t map_vals_addr(int64_t m) {
+MIND_EXPORT_WEAK int64_t map_vals_addr(int64_t m) {
     return __mind_load_i64(m + 8);
 }
 
 // map_key_at — key at logical index i (no bounds check).
-MIND_EXPORT int64_t map_key_at(int64_t m, int64_t i) {
+MIND_EXPORT_WEAK int64_t map_key_at(int64_t m, int64_t i) {
     int64_t keys = __mind_load_i64(m);
     return __mind_load_i64(keys + i * 8);
 }
 
 // map_value_at — value at logical index i (no bounds check).
-MIND_EXPORT int64_t map_value_at(int64_t m, int64_t i) {
+MIND_EXPORT_WEAK int64_t map_value_at(int64_t m, int64_t i) {
     int64_t vals = __mind_load_i64(m + 8);
     return __mind_load_i64(vals + i * 8);
 }
@@ -438,7 +470,7 @@ MIND_EXPORT int64_t map_value_at(int64_t m, int64_t i) {
 // returns a new Map handle).  The backing stores are either reused (when
 // len < cap) or reallocated (when len == cap, doubling policy).
 // Growth: cap 0 → 4, then doubles.
-MIND_EXPORT int64_t map_insert(int64_t m, int64_t key, int64_t value) {
+MIND_EXPORT_WEAK int64_t map_insert(int64_t m, int64_t key, int64_t value) {
     int64_t keys_addr = __mind_load_i64(m);
     int64_t vals_addr = __mind_load_i64(m + 8);
     int64_t len       = __mind_load_i64(m + 16);
@@ -484,7 +516,7 @@ MIND_EXPORT int64_t map_insert(int64_t m, int64_t key, int64_t value) {
 // map_get — first value whose key == `key` (i64 identity), or 0 if absent.
 // Linear scan over insertion order (deterministic). For STRING keys use
 // map_get_str: an i64 == on two String handles compares pointers, not contents.
-MIND_EXPORT int64_t map_get(int64_t m, int64_t key) {
+MIND_EXPORT_WEAK int64_t map_get(int64_t m, int64_t key) {
     int64_t keys = __mind_load_i64(m);
     int64_t vals = __mind_load_i64(m + 8);
     int64_t len  = __mind_load_i64(m + 16);
@@ -497,7 +529,7 @@ MIND_EXPORT int64_t map_get(int64_t m, int64_t key) {
 }
 
 // map_contains_key — 1 if some key == `key` (i64 identity), else 0.
-MIND_EXPORT int64_t map_contains_key(int64_t m, int64_t key) {
+MIND_EXPORT_WEAK int64_t map_contains_key(int64_t m, int64_t key) {
     int64_t keys = __mind_load_i64(m);
     int64_t len  = __mind_load_i64(m + 16);
     for (int64_t i = 0; i < len; i++) {
@@ -529,7 +561,7 @@ static int64_t map_str_key_eq(int64_t a, int64_t b) {
 
 // map_get_str — value for the first key whose String CONTENTS equal `key`'s
 // (content equality, not handle identity), or 0 if absent. For map<string,_>.
-MIND_EXPORT int64_t map_get_str(int64_t m, int64_t key) {
+MIND_EXPORT_WEAK int64_t map_get_str(int64_t m, int64_t key) {
     int64_t keys = __mind_load_i64(m);
     int64_t vals = __mind_load_i64(m + 8);
     int64_t len  = __mind_load_i64(m + 16);
@@ -542,7 +574,7 @@ MIND_EXPORT int64_t map_get_str(int64_t m, int64_t key) {
 }
 
 // map_contains_key_str — 1 if some key's String CONTENTS equal `key`'s, else 0.
-MIND_EXPORT int64_t map_contains_key_str(int64_t m, int64_t key) {
+MIND_EXPORT_WEAK int64_t map_contains_key_str(int64_t m, int64_t key) {
     int64_t keys = __mind_load_i64(m);
     int64_t len  = __mind_load_i64(m + 16);
     for (int64_t i = 0; i < len; i++) {
@@ -564,7 +596,7 @@ MIND_EXPORT int64_t map_contains_key_str(int64_t m, int64_t key) {
 // ---------------------------------------------------------------------------
 
 // string_new — empty String heap record, all fields zero.
-MIND_EXPORT int64_t string_new(void) {
+MIND_EXPORT_WEAK int64_t string_new(void) {
     int64_t rec = __mind_alloc(24); // 3 × i64
     __mind_store_i64(rec,      0);  // addr
     __mind_store_i64(rec + 8,  0);  // len
@@ -573,22 +605,22 @@ MIND_EXPORT int64_t string_new(void) {
 }
 
 // string_len — current byte length.
-MIND_EXPORT int64_t string_len(int64_t s) {
+MIND_EXPORT_WEAK int64_t string_len(int64_t s) {
     return __mind_load_i64(s + 8);
 }
 
 // string_cap — backing-store capacity in bytes.
-MIND_EXPORT int64_t string_cap(int64_t s) {
+MIND_EXPORT_WEAK int64_t string_cap(int64_t s) {
     return __mind_load_i64(s + 16);
 }
 
 // string_addr — opaque i64 base address of the byte content.
-MIND_EXPORT int64_t string_addr(int64_t s) {
+MIND_EXPORT_WEAK int64_t string_addr(int64_t s) {
     return __mind_load_i64(s);
 }
 
 // string_get_byte — single byte read (lower 8 bits, no bounds check).
-MIND_EXPORT int64_t string_get_byte(int64_t s, int64_t i) {
+MIND_EXPORT_WEAK int64_t string_get_byte(int64_t s, int64_t i) {
     int64_t base = __mind_load_i64(s);
     return __mind_load_i64(base + i) & 0xFF;
 }
@@ -607,7 +639,7 @@ MIND_EXPORT int64_t string_get_byte(int64_t s, int64_t i) {
 // at least new_cap + 7 bytes.  The extra 7 bytes are never part of the
 // logical string content (cap field controls the logical boundary); they
 // exist purely to make the 8-byte i64 store safe at every position.
-MIND_EXPORT int64_t string_push_byte(int64_t s, int64_t b) {
+MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
     int64_t base    = __mind_load_i64(s);
     int64_t len     = __mind_load_i64(s + 8);
     int64_t cap     = __mind_load_i64(s + 16);
@@ -664,7 +696,7 @@ static int64_t string_from_range(int64_t src, int64_t n) {
 // `s` on each (possibly multi-byte) occurrence of `sep`, in order. An empty
 // `sep` yields one segment (the whole string). Deterministic: same bytes ->
 // same segments on every host/run.
-MIND_EXPORT int64_t string_split(int64_t s, int64_t sep) {
+MIND_EXPORT_WEAK int64_t string_split(int64_t s, int64_t sep) {
     int64_t saddr   = __mind_load_i64(s);
     int64_t slen    = __mind_load_i64(s + 8);
     int64_t sepaddr = __mind_load_i64(sep);
@@ -690,7 +722,7 @@ MIND_EXPORT int64_t string_split(int64_t s, int64_t sep) {
 }
 
 // string_trim(s) -> a String with leading/trailing ASCII whitespace removed.
-MIND_EXPORT int64_t string_trim(int64_t s) {
+MIND_EXPORT_WEAK int64_t string_trim(int64_t s) {
     int64_t saddr = __mind_load_i64(s);
     int64_t slen  = __mind_load_i64(s + 8);
     const unsigned char *sp = (const unsigned char *)(uintptr_t)saddr;
@@ -709,7 +741,7 @@ MIND_EXPORT int64_t string_trim(int64_t s) {
 // string_from_utf8_bytes(v) -> String. Builds a String from a std.vec of byte
 // values (each element is one i64 byte, 0..255). Used by the static-type call
 // `string.from_utf8_bytes(buf)` where `buf` is a growable `bytes` buffer.
-MIND_EXPORT int64_t string_from_utf8_bytes(int64_t v) {
+MIND_EXPORT_WEAK int64_t string_from_utf8_bytes(int64_t v) {
     int64_t s = string_new();
     int64_t n = vec_len(v);
     for (int64_t i = 0; i < n; i++) {
