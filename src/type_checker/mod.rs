@@ -2144,6 +2144,12 @@ fn arg_is_fixed_bytes_buffer(arg: &Node) -> bool {
             Node::IndexAccess { receiver: base, .. }
                 if matches!(base.as_ref(), Node::Lit(Literal::Ident(n), _) if n == "bytes")
         ),
+        // A bare identifier bound to a fixed `bytes[N]` buffer (`let buf:
+        // bytes[32] = …; take_bytes(buf)`) is the SAME i64 handle as the value
+        // forms above — binding it is not a copy into a growable vec. Resolve it
+        // against the fn-body's `bytes[N]` local set so the #38 miscompile is
+        // refused through an alias too, not just when written directly.
+        Node::Lit(Literal::Ident(n), _) => fixed_bytes_local(n),
         #[cfg(feature = "cross-module-imports")]
         Node::Call { callee, .. } => cm_lookup_fn(callee)
             .and_then(|sig| sig.ret_type)
@@ -2884,6 +2890,117 @@ impl Drop for IntraSigGuard {
     }
 }
 
+// ── Bug #38 follow-up — fixed-`bytes[N]` LOCAL bindings ───────────────
+//
+// The #38 guard (`arg_is_fixed_bytes_buffer`) recognised a fixed buffer only in
+// its two SYNTACTIC value forms — `bytes[N].zero()` written DIRECTLY in argument
+// position, or a call whose declared return type is `bytes[N]`. It missed the
+// fixed buffer flowing through a LOCAL BINDING:
+//
+//     let buf: bytes[32] = bytes[32].zero()   // a fixed buffer handle
+//     take_bytes(buf)                          // `bytes` param — SAME miscompile
+//
+// `let buf: bytes[32] = …` is NOT a copy into a growable vec (the guard message's
+// own suggested fix); it keeps the identical i64 handle, so passing `buf` to a
+// `bytes` parameter reads the buffer's raw payload at +8 as the vec `.length` —
+// exactly the silent miscompile #38 fails loud on, but via a one-line alias.
+//
+// We close it by recording every body-local binding whose DECLARED annotation is
+// `bytes[N]`, then resolving an `Ident` argument against that set in
+// `arg_is_fixed_bytes_buffer`. Threaded via the same set-on-entry / restore-on-
+// drop thread-local discipline as `INTRA_FN_SIGS` so the shared
+// `check_module_types*` signature (the moat) is untouched. Built once per FnDef
+// body from its `let`/`let mut` statements and merged onto any parent set so a
+// nested block's body check still sees the enclosing fn's bytes[N] locals.
+thread_local! {
+    static FIXED_BYTES_LOCALS: std::cell::RefCell<Option<BTreeSet<String>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// True iff `name` is a body-local binding declared with a fixed `bytes[N]`
+/// annotation in the currently-checked fn body. `false` when the side-table is
+/// unpopulated (no fn-body context) — preserving the loose i64 ABI everywhere
+/// the narrow #38 pairing does not apply.
+fn fixed_bytes_local(name: &str) -> bool {
+    FIXED_BYTES_LOCALS.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .is_some_and(|set| set.contains(name))
+    })
+}
+
+/// Collect the names of `let`/`let mut` bindings whose declared annotation is a
+/// fixed `bytes[N]` type, recursing into nested blocks/branches/loops so a
+/// buffer declared in any sub-scope of the fn body is tracked. Pure and additive
+/// — it only ever records names that are provably fixed buffers, so it can never
+/// flag a growable `bytes` value (which never carries a `bytes[N]` annotation).
+fn collect_fixed_bytes_locals(stmts: &[Node], out: &mut BTreeSet<String>) {
+    for s in stmts {
+        match s {
+            Node::Let { name, ann, .. } => {
+                if matches!(ann, Some(a) if typeann_is_fixed_bytes(a)) {
+                    out.insert(name.clone());
+                }
+            }
+            Node::Block { stmts, .. } => collect_fixed_bytes_locals(stmts, out),
+            Node::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_fixed_bytes_locals(then_branch, out);
+                if let Some(eb) = else_branch {
+                    collect_fixed_bytes_locals(eb, out);
+                }
+            }
+            Node::For { body, .. } | Node::ForEach { body, .. } => {
+                collect_fixed_bytes_locals(body, out);
+            }
+            #[cfg(feature = "std-surface")]
+            Node::While { body, .. } => collect_fixed_bytes_locals(body, out),
+            #[cfg(feature = "std-surface")]
+            Node::Region { body, .. } => collect_fixed_bytes_locals(body, out),
+            Node::Match { arms, .. } => {
+                for arm in arms {
+                    if let Node::Block { stmts, .. } = &arm.body {
+                        collect_fixed_bytes_locals(stmts, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// RAII guard that installs the fixed-`bytes[N]` local set into the thread-local
+/// for the duration of a fn-body check and restores the previous value on drop.
+/// Merges onto any parent set (child names win) so a nested block's recursive
+/// body check still sees the enclosing fn's bytes[N] locals.
+struct FixedBytesLocalsGuard {
+    prev: Option<BTreeSet<String>>,
+}
+
+impl FixedBytesLocalsGuard {
+    fn install(locals: BTreeSet<String>) -> Self {
+        let prev = FIXED_BYTES_LOCALS.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let prev = slot.clone();
+            match slot.as_mut() {
+                Some(existing) => existing.extend(locals),
+                None => *slot = Some(locals),
+            }
+            prev
+        });
+        FixedBytesLocalsGuard { prev }
+    }
+}
+
+impl Drop for FixedBytesLocalsGuard {
+    fn drop(&mut self) {
+        FIXED_BYTES_LOCALS.with(|cell| *cell.borrow_mut() = self.prev.take());
+    }
+}
+
 // ── Cross-module imports (Phase 10.6 item 9 / Phase 15) — D2 ──────────
 //
 // The module table is threaded via a thread-local set by the gated
@@ -3510,6 +3627,15 @@ pub fn check_module_types_in_file(
                 // level walker recursively (same path as Node::Block above).
                 let body_module = Module {
                     items: body.clone(),
+                };
+                // Bug #38 follow-up — record this body's fixed-`bytes[N]` local
+                // bindings so a buffer flowed through an alias (`let buf:
+                // bytes[32] = …; take_bytes(buf)`) is caught by the same E2006
+                // guard as the direct `bytes[N].zero()` form. Restored on drop.
+                let _fixed_bytes_guard = {
+                    let mut locals = BTreeSet::new();
+                    collect_fixed_bytes_locals(body, &mut locals);
+                    (!locals.is_empty()).then(|| FixedBytesLocalsGuard::install(locals))
                 };
                 let body_errs = check_module_types_in_file(&body_module, src, file, &fn_env);
                 // RFC 0012 Phase A is PURELY ADDITIVE: this recursion exists
