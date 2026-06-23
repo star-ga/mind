@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2927 | **Est. tokens:** ~7,029,934
-**Generated:** 2026-06-23 07:30 UTC
+**Files:** 2928 | **Est. tokens:** ~7,031,194
+**Generated:** 2026-06-23 08:49 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 236 | ~386,460 |
+| `tests/` | 237 | ~387,720 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3938,6 +3938,7 @@
 - `conformance.rs` (~129 tok, small)
 - `CONFORMANCE_TESTS.md` (~1225 tok, large) — MIND Conformance Test Corpus
 - `const_folding.rs` (~246 tok, medium) — Copyright 2025 STARGA Inc.
+- `continue_in_match_arm_run.rs` (~1260 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_exec.rs` (~620 tok, large) — Copyright 2025 STARGA Inc.
 - `conv2d_grad.rs` (~3194 tok, huge) — Copyright 2025 STARGA Inc.
 - `conv2d_types.rs` (~366 tok, medium) — Copyright 2025 STARGA Inc.
