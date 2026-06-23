@@ -1,0 +1,19 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# A scalar Q16.16 arithmetic chain `((a*b)+(b*c))-(a*c)`, each `*` a Q16.16
+# product `(x*y) >> 16`, over three fixed exact-representable inputs. Each op is
+# exact integer arithmetic (i64 multiply, arithmetic shift-right, add/sub) with a
+# single deterministic truncating shift per product — no accumulation order, no
+# contraction, no reassociation — so the value is architecture-independent:
+# avx2 == neon by construction (RFC 0015 §3.1). Any divergence is a real
+# fixed-point lowering bug (e.g. a dropped or extra shift) and a release-blocker.
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04):
+#          lowers to i64 imul / sar / add / sub.
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10: the aarch64
+#          integer mul / asr / add / sub reproduce the identical bytes every run.
+
+avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
+neon = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"

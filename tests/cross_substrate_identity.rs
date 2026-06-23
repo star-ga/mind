@@ -92,6 +92,61 @@ pub fn gemmq(a: i64, bt: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
 pub fn gemmi8(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
     __mind_blas_matmul_mm_i8_v(a, b, c, m, k, n)
 }
+// Track #16 additions — broaden the cross-substrate canary set with
+// determinism-sensitive paths NOT covered by the kernels above.
+//
+// (1) Bare int16 dot reduction (`int-dot` tier). The gemv-i16 canary exercises
+// the matrix-x-vector wrapper; this hits the raw reduction intrinsic directly
+// (sext i16->i64, mac, narrow once to i32 — NO Q16 shift). Exact integer add is
+// associative, so the result is grouping-/substrate-independent (RFC 0015 §3.1).
+pub fn doti16(a: i64, b: i64, n: i64) -> i64 {
+    __mind_blas_dot_i16_v(a, b, n)
+}
+// (2) FUSED Q16.16 GEMM via the outer-product microkernel intrinsic
+// __mind_blas_matmul_mm_q16_v (A M×K, B K×N UN-transposed, C M×N) — a DISTINCT
+// lowering from the gemv-composed `gemmq` above (register-tiled outer product,
+// no horizontal reduction). Per-product `>> 16` then i64 accumulate, byte-
+// identical to the scalar oracle Σ_k (A[i,k]*B[k,j])>>16 for all shapes.
+pub fn gemmqmm(a: i64, b: i64, c: i64, m: i64, k: i64, n: i64) -> i64 {
+    __mind_blas_matmul_mm_q16_v(a, b, c, m, k, n)
+}
+// (3) Scalar Q16.16 fixed-point arithmetic chain — exercises mindc's per-element
+// fixed-point lowering directly (i64 multiply, arithmetic shift-right by 16,
+// add/sub) with NO intrinsic, NO reduction. q16_mul(x,y) = (x*y) >> 16 is the
+// fundamental Q16.16 product; the chain composes mul/add/sub in a fixed source
+// order. Each op is exact integer arithmetic with a single deterministic
+// truncating shift per product, so the result is byte-identical across
+// substrates by construction (RFC 0015 §3.1) — the scalar analogue of the
+// Q16.16 reduction tiers, isolating the shift+arith lowering.
+fn q16_mul(x: i64, y: i64) -> i64 {
+    (x * y) >> 16
+}
+pub fn q16_arith_chain(a: i64, b: i64, c: i64) -> i64 {
+    // ((a*b) + (b*c)) - (a*c), all in Q16.16; fixed precedence, no contraction.
+    let ab: i64 = q16_mul(a, b);
+    let bc: i64 = q16_mul(b, c);
+    let ac: i64 = q16_mul(a, c);
+    (ab + bc) - ac
+}
+// (4) Struct-by-handle round-trip: allocate a 4-field i64 record on the heap via
+// __mind_alloc, store the inputs through __mind_store_i64, read them back through
+// __mind_load_i64, and combine them. Exercises the alloc/store/load handle ABI
+// and its address arithmetic (the struct-by-handle path) — deterministic data
+// movement, no reduction, no float. The result is a fixed integer function of
+// the inputs, so it is byte-identical across substrates by construction.
+pub fn struct_handle_roundtrip(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    let base: i64 = __mind_alloc(32);
+    __mind_store_i64(base, a);
+    __mind_store_i64(base + 8, b);
+    __mind_store_i64(base + 16, c);
+    __mind_store_i64(base + 24, d);
+    let r0: i64 = __mind_load_i64(base);
+    let r1: i64 = __mind_load_i64(base + 8);
+    let r2: i64 = __mind_load_i64(base + 16);
+    let r3: i64 = __mind_load_i64(base + 24);
+    // Fixed combination: (r0 + r1) * 2 - r2 + r3 * 3.
+    ((r0 + r1) * 2 - r2) + r3 * 3
+}
 // RFC 0012 §5.1 — deterministic scalar IEEE-754 f64 elementwise chain. A fixed
 // sequence of scalar `+ − × ÷` over four f64 inputs supplied by the harness.
 // Lowers to strict IEEE `arith.addf/subf/mulf/divf` (vaddsd/vmulsd/vdivsd/vsubsd
@@ -111,6 +166,10 @@ type MatmulFn = unsafe extern "C" fn(i64, i64, i64, i64, i64) -> i64;
 type GemmFn = unsafe extern "C" fn(i64, i64, i64, i64, i64, i64) -> i64;
 /// The scalar-f64 chain: four f64 args in, one f64 result out (System V xmm ABI).
 type ScalarF64Fn = unsafe extern "C" fn(f64, f64, f64, f64) -> f64;
+/// Track #16: a 3-arg → i64 scalar kernel (the Q16.16 arithmetic chain).
+type Arith3Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;
+/// Track #16: a 4-arg → i64 scalar kernel (the struct-by-handle round-trip).
+type Arith4Fn = unsafe extern "C" fn(i64, i64, i64, i64) -> i64;
 
 fn mindc_path() -> PathBuf {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -924,4 +983,253 @@ fn scalar_float_f64_reproducibility_gate() {
             result.to_bits()
         ),
     }
+}
+
+// ===========================================================================
+// Track #16 — broaden the cross-substrate canary set (determinism hardening).
+//
+// Four NEW byte-identity canaries over determinism-sensitive paths the gates
+// above do not exercise. Each is a real compiled kernel whose output is pinned
+// to a committed per-substrate reference (avx2 == neon, RFC 0015 §3.1) and
+// cross-checked against an independent in-process oracle within the run. The
+// f32 reductions are deliberately excluded — they use tree-shaped summation
+// that reorders, so they are NOT bit-exact and belong in the approximate
+// surface (RFC 0020 §8), never as a byte-identity reference (README §"Why only
+// Q16.16 integer workloads").
+// ===========================================================================
+
+/// Shared hash-pin / bless step for a scalar-i64-result canary. Pins `computed`
+/// to the committed per-substrate reference, or prints a `BLESS` line under
+/// MIND_BENCH_BLESS. Same contract as the per-test inline blocks above.
+fn pin_or_bless(id: &str, computed: &str, result: i64) {
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n result_i64={result}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed} \
+             (result_i64={result}); bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- dot-i16 workload (bare int16 dot reduction) ---------------------------
+// The `int-dot` tier's raw reduction intrinsic __mind_blas_dot_i16_v, exercised
+// directly (the gemv-i16 canary only reaches it through the matrix wrapper).
+// y = Σ_i (i32 sum) sext(w[i])*sext(x[i]), accumulated in i64, narrowed once to
+// i32. Exact integer add is associative, so the vectorised reduction is
+// grouping-/substrate-independent (RFC 0015 §3.1). Scalar i64 output.
+
+/// Regenerate a single int16 vector pair from a seed (a before b), full i16
+/// range from the shared LCG window — same generator as gemv-i16.
+fn make_pair_i16(len: usize, seed: u64) -> (Vec<i16>, Vec<i16>) {
+    let mut g = Lcg::new(seed);
+    let next_i16 = |g: &mut Lcg| (g.next_u32() >> 16) as i16;
+    let a: Vec<i16> = (0..len).map(|_| next_i16(&mut g)).collect();
+    let b: Vec<i16> = (0..len).map(|_| next_i16(&mut g)).collect();
+    (a, b)
+}
+
+#[test]
+fn dot_i16_reproducibility_gate() {
+    let id = "dot-i16-4096";
+    let (len, seed) = (4096usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let dot: Symbol<DotFn> = unsafe { lib.get(b"doti16").expect("doti16 symbol") };
+
+    let (a, b) = make_pair_i16(len, seed);
+    let vec_result = unsafe { dot(a.as_ptr() as i64, b.as_ptr() as i64, len as i64) };
+
+    // Within-run exactness vs the scalar int16 dot oracle (already in this file).
+    let oracle = ref_dot_i16_scalar(&a, &b) as i64;
+    assert_eq!(
+        vec_result, oracle,
+        "{id}: int16 dot vector path diverged from the scalar oracle within a run"
+    );
+
+    pin_or_bless(id, &canonical_hash(vec_result), vec_result);
+}
+
+// --- gemm-q16-fused workload (outer-product microkernel) -------------------
+// FUSED Q16.16 GEMM via __mind_blas_matmul_mm_q16_v (A M×K, B K×N UN-transposed,
+// C M×N), a DISTINCT lowering from the gemv-composed `gemmq` gate (register-tiled
+// outer product, no horizontal reduction). Per-product `>> 16` then i64
+// accumulate, byte-identical to Σ_k (A[i,k]*B[k,j])>>16. M=K=N=64. The output is
+// the M×N Q16.16 matrix; canonical encoding is its i32 LE bytes → sha256.
+
+/// Scalar Q16.16 GEMM oracle over the UN-transposed B (B[k*n+j]), matching the
+/// fused intrinsic's ABI: C[i,j] = Σ_k (A[i,k]*B[k,j]) >> 16, each product
+/// shifted before the associative i64 accumulate (exact within a run).
+fn ref_gemm_q16_mm_scalar(a: &[i32], b: &[i32], m: usize, k: usize, n: usize) -> Vec<i32> {
+    let mut c = vec![0i32; m * n];
+    for i in 0..m {
+        for j in 0..n {
+            let mut acc: i64 = 0;
+            for kk in 0..k {
+                acc += ((a[i * k + kk] as i64) * (b[kk * n + j] as i64)) >> 16;
+            }
+            c[i * n + j] = acc as i32;
+        }
+    }
+    c
+}
+
+#[test]
+fn gemm_q16_fused_reproducibility_gate() {
+    let id = "gemm-q16-fused-64x64x64";
+    let (m, k, n, seed) = (64usize, 64usize, 64usize, 0xDEADBEEFu64);
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let gemmqmm: Symbol<GemmFn> = unsafe { lib.get(b"gemmqmm").expect("gemmqmm symbol") };
+
+    // The fused intrinsic consumes the UN-transposed B (K×N); reuse the gemm-q16
+    // generator and take its B (the second return), not Bᵀ.
+    let (a, b, _bt) = make_gemm_q16(m, k, n, seed);
+    let mut c = vec![0i32; m * n];
+    let rc = unsafe {
+        gemmqmm(
+            a.as_ptr() as i64,
+            b.as_ptr() as i64,
+            c.as_mut_ptr() as i64,
+            m as i64,
+            k as i64,
+            n as i64,
+        )
+    };
+    assert_eq!(rc, 0, "{id}: kernel returned {rc} (expected 0)");
+
+    let oracle = ref_gemm_q16_mm_scalar(&a, &b, m, k, n);
+    assert_eq!(
+        c, oracle,
+        "{id}: fused q16 gemm vector path diverged from the scalar oracle"
+    );
+
+    let computed = canonical_hash_i32s(&c);
+    let substrate = host_substrate();
+    if std::env::var("MIND_BENCH_BLESS").is_ok() {
+        println!("BLESS {id} {substrate} {computed}");
+        return;
+    }
+    match reference_hash(id, substrate) {
+        Some(expected) => assert_eq!(
+            computed, expected,
+            "{id} [{substrate}]: output hash drifted from the committed reference.\n\
+             computed={computed}\n expected={expected}\n\
+             Re-bless with MIND_BENCH_BLESS=1 only on an intentional lowering change (RFC 0020 §13)."
+        ),
+        None => panic!(
+            "{id}: no reference hash for substrate '{substrate}'. Computed {computed}; \
+             bless with MIND_BENCH_BLESS=1 if this host is canonical."
+        ),
+    }
+}
+
+// --- q16-arith-chain workload (scalar Q16.16 fixed-point arithmetic) -------
+// A scalar Q16.16 arithmetic chain `((a*b)+(b*c))-(a*c)` where each `*` is a
+// Q16.16 product `(x*y) >> 16` — exercises mindc's per-element fixed-point
+// lowering (i64 multiply, arithmetic shift-right, add/sub) with NO intrinsic and
+// NO reduction. Each op is exact integer arithmetic with a single deterministic
+// truncating shift per product, so the result is byte-identical across
+// substrates (RFC 0015 §3.1). Scalar i64 output → canonical_hash.
+
+/// Independent in-process oracle for the Q16.16 arithmetic chain — the identical
+/// fixed-point ops in the identical source order, bit-exact within a run and
+/// (being exact integer arithmetic with fixed truncation points) the same on
+/// every substrate.
+fn ref_q16_arith_chain(a: i64, b: i64, c: i64) -> i64 {
+    let q16_mul = |x: i64, y: i64| (x * y) >> 16;
+    let ab = q16_mul(a, b);
+    let bc = q16_mul(b, c);
+    let ac = q16_mul(a, c);
+    (ab + bc) - ac
+}
+
+/// Three deterministic Q16.16 inputs (manifest `[input]`): 1.5, 2.25, 3.125 in
+/// Q16.16 (value << 16). Chosen exact-representable so the oracle is unambiguous.
+const Q16_ARITH_INPUTS: (i64, i64, i64) = (
+    (1.5 * 65536.0) as i64,   // 98304
+    (2.25 * 65536.0) as i64,  // 147456
+    (3.125 * 65536.0) as i64, // 204800
+);
+
+#[test]
+fn q16_arith_chain_reproducibility_gate() {
+    let id = "q16-arith-chain";
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let chain: Symbol<Arith3Fn> =
+        unsafe { lib.get(b"q16_arith_chain").expect("q16_arith_chain symbol") };
+
+    let (a, b, c) = Q16_ARITH_INPUTS;
+    let result = unsafe { chain(a, b, c) };
+
+    let oracle = ref_q16_arith_chain(a, b, c);
+    assert_eq!(
+        result, oracle,
+        "{id}: q16 arithmetic chain diverged from the in-process oracle within a run \
+         (kernel={result}, oracle={oracle})"
+    );
+
+    pin_or_bless(id, &canonical_hash(result), result);
+}
+
+// --- struct-handle-roundtrip workload (alloc/store/load handle ABI) --------
+// Allocate a 4-field i64 record via __mind_alloc, store the inputs through
+// __mind_store_i64, read them back through __mind_load_i64, and combine them.
+// Exercises the struct-by-handle ABI (heap handle + address arithmetic +
+// store/load round-trip) — deterministic data movement, no reduction, no float.
+// The result is a fixed integer function of the inputs, byte-identical across
+// substrates by construction. Scalar i64 output → canonical_hash.
+
+/// Independent oracle for the struct-by-handle round-trip: the round-trip is the
+/// identity, so the result is the fixed combination of the inputs.
+fn ref_struct_handle_roundtrip(a: i64, b: i64, c: i64, d: i64) -> i64 {
+    ((a + b) * 2 - c) + d * 3
+}
+
+/// Four deterministic inputs (manifest `[input]`): fixed integers, no LCG.
+const STRUCT_HANDLE_INPUTS: (i64, i64, i64, i64) = (1111, 2222, 3333, 4444);
+
+#[test]
+fn struct_handle_roundtrip_reproducibility_gate() {
+    let id = "struct-handle-roundtrip";
+
+    let Some(so) = build_dot_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen workload .so") };
+    let f: Symbol<Arith4Fn> = unsafe {
+        lib.get(b"struct_handle_roundtrip")
+            .expect("struct_handle_roundtrip symbol")
+    };
+
+    let (a, b, c, d) = STRUCT_HANDLE_INPUTS;
+    let result = unsafe { f(a, b, c, d) };
+
+    let oracle = ref_struct_handle_roundtrip(a, b, c, d);
+    assert_eq!(
+        result, oracle,
+        "{id}: struct-handle round-trip diverged from the in-process oracle within a run \
+         (kernel={result}, oracle={oracle})"
+    );
+
+    pin_or_bless(id, &canonical_hash(result), result);
 }

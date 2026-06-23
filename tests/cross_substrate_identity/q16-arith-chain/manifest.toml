@@ -1,0 +1,33 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# A scalar Q16.16 fixed-point ARITHMETIC chain — the scalar analogue of the
+# Q16.16 reduction tiers, isolating mindc's per-element fixed-point lowering with
+# NO intrinsic and NO reduction. The kernel computes `((a*b)+(b*c))-(a*c)` where
+# each `*` is a Q16.16 product q16_mul(x,y) = (x*y) >> 16. Each step lowers to
+# i64 `arith.muli`, `arith.shrsi` (arithmetic shift-right by 16) and
+# `arith.addi/subi` in a fixed source order — exact integer arithmetic with a
+# single deterministic truncating shift per product. There is no accumulation
+# order, no contraction and no reassociation to differ across substrates, so the
+# result is byte-identical on x86 avx2 and ARM neon by construction (RFC 0015
+# §3.1). This canary pins the SHIFT + integer-arith lowering specifically.
+
+version = "1"
+name = "q16-arith-chain"
+description = "Scalar Q16.16 arithmetic chain ((a*b)+(b*c))-(a*c) with q16_mul = (x*y)>>16; exact i64 multiply + arithmetic shift + add/sub, fixed precedence — the scalar fixed-point lowering canary."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Three fixed Q16.16 inputs (value << 16), exact-representable: 1.5, 2.25, 3.125.
+[input]
+generator = "fixed"
+a = 98304                  # 1.5   in Q16.16 (1.5 * 65536)
+b = 147456                 # 2.25  in Q16.16 (2.25 * 65536)
+c = 204800                 # 3.125 in Q16.16 (3.125 * 65536)
+dtype = "q16"
+
+[kernel]
+symbol = "q16_arith_chain"
+op_order = "((a*b)+(b*c))-(a*c), each * = (x*y)>>16"  # fixed source precedence
+returns = "i64"            # the Q16.16 result
+output_encoding = "i64_le" # 8 little-endian bytes of the result, then sha256

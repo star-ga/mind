@@ -1,0 +1,18 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# A struct-by-handle round-trip: __mind_alloc a 4xi64 record, store the inputs,
+# read them back, and combine them as `((r0+r1)*2 - r2) + r3*3`. The store/load
+# round-trip is the identity and the combination is exact integer arithmetic, so
+# the result is a fixed integer function of the inputs — deterministic data
+# movement and pointer arithmetic that must produce the identical bytes on every
+# substrate: avx2 == neon by construction (RFC 0015 §3.1). Any divergence is a
+# real handle-ABI / address-arithmetic lowering bug and a release-blocker.
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04).
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10: the aarch64
+#          load/store + integer-arith lowering reproduces the identical bytes.
+
+avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
+neon = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"

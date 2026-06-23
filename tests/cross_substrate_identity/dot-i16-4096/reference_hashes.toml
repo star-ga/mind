@@ -1,0 +1,13 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes. The int16 dot is exact integer arithmetic
+# (sext i16->i64, multiply-accumulate, narrow once to i32), so avx2 == neon by
+# construction (RFC 0015 §3.1).
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04).
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10. The exact int32
+#          sum is substrate-independent, so the same MLIR (lowered to SDOT /
+#          SMMLA on aarch64) MUST reproduce the avx2 hash; the ARM runner proves it.
+
+avx2 = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
+neon = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
