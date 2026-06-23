@@ -9,7 +9,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Integration tests for the `mindc verify` subcommand (RFC 0021 §4.2 /
@@ -25,22 +24,13 @@
 //! * plain mic@3 with no evidence    → exit 0, reported `attested: no` (RFC 0017)
 //! * unreadable artifact path        → exit 2 (I/O error)
 
+mod common;
+use common::mindc_bin;
+
 use std::path::PathBuf;
 use std::process::Command;
 
-fn mindc_binary() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target");
-    #[cfg(debug_assertions)]
-    path.push("debug");
-    #[cfg(not(debug_assertions))]
-    path.push("release");
-    #[cfg(target_os = "windows")]
-    path.push("mindc.exe");
-    #[cfg(not(target_os = "windows"))]
-    path.push("mindc");
-    path
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 fn fixture(name: &str) -> String {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -82,7 +72,7 @@ fn emit_evidence(bin: &PathBuf, out: &str) -> bool {
 
 #[test]
 fn verify_valid_artifact_exit_zero() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     let tmp = tempfile_path("valid.bin");
     if !emit_evidence(&bin, &tmp) {
         return;
@@ -113,7 +103,7 @@ fn verify_valid_artifact_exit_zero() {
 
 #[test]
 fn verify_json_reports_valid() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     let tmp = tempfile_path("json.bin");
     if !emit_evidence(&bin, &tmp) {
         return;
@@ -147,7 +137,7 @@ fn verify_json_reports_valid() {
 
 #[test]
 fn verify_tampered_artifact_fails() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     let tmp = tempfile_path("tampered.bin");
     if !emit_evidence(&bin, &tmp) {
         return;
@@ -213,7 +203,7 @@ fn verify_tampered_artifact_fails() {
 
 #[test]
 fn verify_unattested_artifact_reports_unattested() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     if !bin.exists() {
         eprintln!("Skipping: mindc binary not found");
         return;
@@ -257,7 +247,7 @@ fn verify_unattested_artifact_reports_unattested() {
 
 #[test]
 fn verify_missing_file_exit_two() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     if !bin.exists() {
         eprintln!("Skipping: mindc binary not found");
         return;

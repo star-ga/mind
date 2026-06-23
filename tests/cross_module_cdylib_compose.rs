@@ -25,7 +25,9 @@
     feature = "cross-module-imports"
 ))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 const MAIN_MIND: &str = r#"
@@ -273,14 +275,7 @@ optimize = "release"
 entry = "src/main.mind"
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let debug = manifest_dir.join("target").join("debug").join("mindc");
-    if debug.exists() {
-        return debug;
-    }
-    manifest_dir.join("target").join("release").join("mindc")
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn substrate_modules_link_natively_into_consumer_cdylib() {

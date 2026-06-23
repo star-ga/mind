@@ -28,6 +28,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -242,15 +245,11 @@ mod cross_module {
 
 #[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
+    use super::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
-    fn mindc_bin() -> PathBuf {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let dbg = manifest.join("target").join("debug").join("mindc");
-        let rel = manifest.join("target").join("release").join("mindc");
-        if dbg.exists() { dbg } else { rel }
-    }
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     fn out_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

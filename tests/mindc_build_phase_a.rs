@@ -14,6 +14,9 @@
 // mlir_build.rs, so `cargo test --workspace` (no features) stays green.
 #![cfg(feature = "mlir-build")]
 
+mod common;
+use common::mindc_bin;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -22,20 +25,7 @@ use std::process::Command;
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn mindc_bin() -> PathBuf {
-    // Prefer the binary already built for this test run.
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("target");
-    #[cfg(debug_assertions)]
-    p.push("debug");
-    #[cfg(not(debug_assertions))]
-    p.push("release");
-    #[cfg(target_os = "windows")]
-    p.push("mindc.exe");
-    #[cfg(not(target_os = "windows"))]
-    p.push("mindc");
-    p
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 fn require_mindc() -> Option<PathBuf> {
     let bin = mindc_bin();

@@ -41,7 +41,9 @@
     feature = "cross-module-imports"
 ))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 // Sibling module: defines the struct. The consumer declares no struct of its own.
@@ -81,15 +83,7 @@ backend = "cpu"
 c_abi = ["ref_param_read", "val_param_read"]
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let m = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = m.join("target").join("debug").join("mindc");
-    if d.exists() {
-        d
-    } else {
-        m.join("target").join("release").join("mindc")
-    }
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn cross_module_field_access_runs() {

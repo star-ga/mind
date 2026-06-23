@@ -9,7 +9,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! RFC 0005 Phase 6.5 Stage 1b — cdylib self-contained linkage test.
@@ -31,6 +30,8 @@
     feature = "std-surface",
     feature = "cross-module-imports"
 ))]
+
+mod common;
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -61,26 +62,8 @@ fn build_test_so() -> PathBuf {
 
     std::fs::write(&src_path, SRC).expect("write test .mind source");
 
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mindc = manifest_dir.join("target").join("debug").join("mindc");
-
-    if !mindc.exists() {
-        // Try release build location as fallback.
-        let rel = manifest_dir.join("target").join("release").join("mindc");
-        if !rel.exists() {
-            panic!(
-                "mindc binary not found at {mindc:?} or {rel:?}; \
-                 build with: cargo build --features \
-                 \"mlir-build std-surface cross-module-imports\" --bin mindc"
-            );
-        }
-    }
-
-    let mindc = if mindc.exists() {
-        mindc
-    } else {
-        manifest_dir.join("target").join("release").join("mindc")
-    };
+    // Binary resolved via tests/common::mindc_bin() (CARGO_BIN_EXE_mindc).
+    let mindc = common::mindc_bin();
 
     let status = Command::new(&mindc)
         .args([

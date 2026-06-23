@@ -32,7 +32,9 @@
     feature = "cross-module-imports"
 ))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 use libmind::eval::lower::lower_to_ir;
@@ -86,21 +88,7 @@ fn count_calls_named(instrs: &[Instr], target: &str) -> usize {
     n
 }
 
-fn mindc_bin() -> PathBuf {
-    // Prefer cargo's feature-matched binary: when run as `cargo test --features
-    // "mlir-build std-surface ..."`, CARGO_BIN_EXE_mindc points at a `mindc` built
-    // with THIS test's features (so `--emit-shared` / mlir-build is present). This
-    // avoids panicking against a stale `target/debug/mindc` lacking mlir-build.
-    if let Some(p) = option_env!("CARGO_BIN_EXE_mindc") {
-        return PathBuf::from(p);
-    }
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let debug = manifest_dir.join("target").join("debug").join("mindc");
-    if debug.exists() {
-        return debug;
-    }
-    manifest_dir.join("target").join("release").join("mindc")
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 /// Compile `src` to a temp `.so` via `mindc --emit-shared`, `dlopen` it through
 /// python3 + ctypes, call the zero-arg `i64` entry `probe`, and return its

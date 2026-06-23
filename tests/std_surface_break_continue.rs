@@ -17,6 +17,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::ir::compact::emit_mic3;
 use libmind::{CompileOptions, compile_source};
 
@@ -36,15 +39,11 @@ fn break_continue_lower_deterministically() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod functional {
+    use super::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
-    fn mindc_bin() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("release")
-            .join("mindc")
-    }
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     /// Compile break/continue programs to a `.so` and check loop-carried
     /// correctness — the SSA proof that mid-iteration carried values are

@@ -9,7 +9,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! RFC 0006 Track B (increment 1) — native MLIR vector-dialect smoke
@@ -45,6 +44,9 @@
 ))]
 #![cfg(not(windows))]
 
+mod common;
+use common::mindc_bin;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -63,21 +65,7 @@ pub fn dotv(a: i64, b: i64, n: i64) -> i64 {
 
 type DotFn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 
-fn mindc_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dbg = manifest_dir.join("target").join("debug").join("mindc");
-    if dbg.exists() {
-        return dbg;
-    }
-    let rel = manifest_dir.join("target").join("release").join("mindc");
-    assert!(
-        rel.exists(),
-        "mindc binary not found at {dbg:?} or {rel:?}; build with: \
-         cargo build --features \"mlir-build std-surface cross-module-imports\" \
-         --bin mindc"
-    );
-    rel
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 /// Compile SRC to a temporary `.so` via the native vector-dialect path,
 /// **exactly once** for the whole test binary (the `OnceLock` makes the
@@ -105,7 +93,7 @@ fn build_vec_so() -> Option<&'static PathBuf> {
         let so_path = dir.join("mind_blas_vec_smoke.so");
         std::fs::write(&src_path, SRC).expect("write test .mind source");
 
-        let status = Command::new(mindc_path())
+        let status = Command::new(mindc_bin())
             .args([
                 src_path.to_str().unwrap(),
                 "--emit-shared",
