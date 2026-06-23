@@ -3707,6 +3707,8 @@ fn lower_expr(
                     #[cfg(feature = "std-surface")]
                     let id = mask_narrow_let(ir, ann, id);
                     local_env.insert(name.clone(), id);
+                    #[cfg(feature = "std-surface")]
+                    record_narrow_let(name, ann);
                     // P0f Step 1: track var→struct binding so a later FieldAccess
                     // inside this block resolves the canonical field offset.
                     #[cfg(feature = "std-surface")]
@@ -3894,6 +3896,8 @@ fn lower_expr(
                         let id = mask_narrow_let(&mut then_ir, ann, id);
                         then_env.insert(name.clone(), id);
                         #[cfg(feature = "std-surface")]
+                        record_narrow_let(name, ann);
+                        #[cfg(feature = "std-surface")]
                         {
                             let _ = ann;
                             if is_array_surface_type(ann) {
@@ -4016,6 +4020,8 @@ fn lower_expr(
                             #[cfg(feature = "std-surface")]
                             let id = mask_narrow_let(&mut else_ir, ann, id);
                             else_env.insert(name.clone(), id);
+                            #[cfg(feature = "std-surface")]
+                            record_narrow_let(name, ann);
                             #[cfg(feature = "std-surface")]
                             {
                                 let _ = ann;
@@ -4594,6 +4600,8 @@ fn lower_expr(
                         #[cfg(feature = "std-surface")]
                         let new_id = mask_narrow_let(&mut body_ir, ann, new_id);
                         body_env.insert(name.clone(), new_id);
+                        #[cfg(feature = "std-surface")]
+                        record_narrow_let(name, ann);
                         #[cfg(feature = "std-surface")]
                         {
                             let _ = ann;
