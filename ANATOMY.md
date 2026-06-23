@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2917 | **Est. tokens:** ~7,013,128
-**Generated:** 2026-06-23 03:33 UTC
+**Files:** 2919 | **Est. tokens:** ~7,014,994
+**Generated:** 2026-06-23 03:42 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 227 | ~373,533 |
+| `tests/` | 229 | ~375,399 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3915,6 +3915,7 @@
 - `cli_exec.rs` (~558 tok, large) — Copyright 2025 STARGA Inc.
 - `cli_tensor.rs` (~469 tok, medium) — Copyright 2025 STARGA Inc.
 - `collection_ctor_run.rs` (~546 tok, large) — Copyright 2025 STARGA Inc.
+- `collection_mutation_expr_position_run.rs` (~1035 tok, large) — Copyright 2025 STARGA Inc.
 - `compound_assign.rs` (~1073 tok, large) — Copyright 2025 STARGA Inc.
 - `cond_truthiness.rs` (~929 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/conformance/cpu_baseline/`
@@ -4197,6 +4198,7 @@
 - `module_decl_run.rs` (~681 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
 - `narrowing_check.rs` (~438 tok, medium) — Regression test for the silent i64->i32 narrowing miscompile found by MIND-Fuzz
+- `narrow_local_mask_run.rs` (~831 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_block_surface_run.rs` (~1074 tok, large) — Copyright 2025 STARGA Inc.
 - `nested_collection_run.rs` (~856 tok, large) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
