@@ -1633,8 +1633,30 @@ fn emit_literal(p: &mut Printer, lit: &Literal) {
             }
         }
         Literal::Str(s) => {
+            // The parser now DECODES escapes into raw bytes (so runtime byte
+            // values are correct), so the printer must RE-ESCAPE the control
+            // bytes and the two structural bytes (`\` and `"`) to round-trip:
+            // `parse(fmt(parse(src))) == parse(src)`. The escape spellings
+            // mirror `parser::parse_string_lit` / `parse_char_lit` exactly.
+            // Sources with no escapes (e.g. the keystone) contain none of these
+            // bytes, so the emit is unchanged and fmt stays byte-identical.
             p.push("\"");
-            p.push(s);
+            // Iterate over `char`s (not bytes) so multi-byte UTF-8 scalars are
+            // copied intact; only the ASCII control/structural bytes get an
+            // escape spelling.
+            let mut esc = String::with_capacity(s.len());
+            for c in s.chars() {
+                match c {
+                    '\n' => esc.push_str("\\n"),
+                    '\t' => esc.push_str("\\t"),
+                    '\r' => esc.push_str("\\r"),
+                    '\0' => esc.push_str("\\0"),
+                    '\\' => esc.push_str("\\\\"),
+                    '"' => esc.push_str("\\\""),
+                    other => esc.push(other),
+                }
+            }
+            p.push(&esc);
             p.push("\"");
         }
         Literal::Ident(name) => p.push(name),
