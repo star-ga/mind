@@ -737,6 +737,13 @@ impl<'a> Resolver<'a> {
             // ── Tensor-builtin AST variants: recurse into expr children ───
             // These carry only `Box<Node>` value children (no bare dtype/shape
             // idents), so descending is safe.
+            // r1#4 (re-audited: NOT a resolve-pass gap). A bogus `wrt`
+            // differentiation target is NOT unvalidated — type-checking already
+            // reports it with a SPECIFIC diagnostic (E2001 "unknown tensor `X`
+            // in `wrt`"). Adding a resolve-pass check here would only replace
+            // that precise message with a generic E2002. Walk only `loss`; the
+            // wrt targets are a type-check concern. tests/grad_wrt_resolve.rs
+            // locks that the bogus target stays reported (exactly once).
             Node::CallGrad { loss, .. } => self.walk(loss),
             Node::CallTensorSum { x, .. }
             | Node::CallTensorMean { x, .. }
