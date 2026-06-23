@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2922 | **Est. tokens:** ~7,019,357
-**Generated:** 2026-06-23 05:26 UTC
+**Files:** 2923 | **Est. tokens:** ~7,020,912
+**Generated:** 2026-06-23 05:46 UTC
 
 ## Token Budget Guide
 
@@ -383,7 +383,7 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,080 |
+| `src/fmt/` | 3 | ~19,387 |
 | `src/ir/` | 4 | ~26,649 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 231 | ~378,607 |
+| `tests/` | 232 | ~379,855 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -3737,7 +3737,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~14613 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~14920 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4372,6 +4372,7 @@
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_escape_decode_run.rs` (~1248 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_from_bytes_run.rs` (~748 tok, large) — Copyright 2025 STARGA Inc.
 - `string_split_run.rs` (~900 tok, large) — Copyright 2025 STARGA Inc.
