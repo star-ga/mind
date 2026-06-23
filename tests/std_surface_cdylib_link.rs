@@ -103,21 +103,49 @@ fn cdylib_has_no_undefined_mind_symbols() {
 
     let undefined: Vec<&str> = text.lines().filter(|l| l.contains(" U ")).collect();
 
-    // The only undefined symbols allowed are libc symbols that the
-    // runtime-support stub itself depends on.  The POSIX I/O calls
-    // are pulled in by std.io's __mind_read / __mind_write / pread /
-    // pwrite passthrough (see runtime-support/mind_intrinsics.c).
-    // `abort` is referenced by the RFC 0010 GenRef region allocator for
-    // deterministic OOM / generation-wrap / region-nesting panics.
+    // The only undefined symbols allowed are libc / compiler-builtin symbols
+    // that the runtime-support stub itself depends on (resolved by the loader
+    // from libc at dlopen time). The POSIX I/O calls are pulled in by std.io's
+    // __mind_read / __mind_write / pread / pwrite passthrough; `abort` is the
+    // RFC 0010 GenRef deterministic-panic path; `calloc` backs __mind_calloc;
+    // `bcmp`/`memcmp`/`strlen` are the byte-compare/length builtins clang
+    // synthesises from the C source; `clock_gettime` backs __mind_now_ns; and
+    // `__cpu_indicator_init` / `__cpu_model` are the AVX2 runtime-dispatch
+    // resolver the BLAS kernels emit. None are MIND symbols — a MISSING
+    // `__mind_*` / `vec_*` / `map_*` / `string_*` is what "not self-contained"
+    // would mean, and that is asserted negatively below.
     let allowed = [
-        "malloc", "free", "memcpy", "realloc", "read", "write", "pread", "pwrite", "abort",
+        "malloc",
+        "free",
+        "memcpy",
+        "memmove",
+        "memset",
+        "realloc",
+        "calloc",
+        "read",
+        "write",
+        "pread",
+        "pwrite",
+        "abort",
+        "bcmp",
+        "memcmp",
+        "strlen",
+        "clock_gettime",
+        "__cpu_indicator_init",
+        "__cpu_model",
     ];
 
     for sym_line in &undefined {
         let name = sym_line.split_whitespace().last().unwrap_or("");
         let bare = name.split('@').next().unwrap_or(name);
+        // A leftover MIND symbol is the real failure (not self-contained); a
+        // libc/builtin not in `allowed` should be appended above, not silenced.
+        let is_mind = bare.starts_with("__mind_")
+            || bare.starts_with("vec_")
+            || bare.starts_with("map_")
+            || bare.starts_with("string_");
         assert!(
-            allowed.contains(&bare),
+            allowed.contains(&bare) && !is_mind,
             "unexpected undefined symbol in cdylib: {sym_line}\n\
              Full undefined list: {undefined:#?}"
         );
