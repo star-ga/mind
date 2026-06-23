@@ -6251,6 +6251,84 @@ fn desugar_match_to_if(
     struct_field_names: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Option<ast::Node> {
     let span = scrutinee.span();
+    // Disambiguate BARE variant patterns (`Foo(v)`, `Bar`) to a single owning
+    // enum BEFORE the per-arm normalisation. All variant arms of one match
+    // belong to the same enum, so a bare name must resolve within THAT enum —
+    // the prior code resolved each bare arm INDEPENDENTLY to the first
+    // lexicographic `Enum::V` in the registry, which silently picks the WRONG
+    // enum (wrong tag → wrong arm) whenever a variant name collides across enums
+    // (e.g. `Foo` in both `Alpha` and `Zeta` — a `Zeta` scrutinee then tested
+    // `Foo` against `Alpha::Foo`'s tag). Determine one owning enum:
+    //   1. If ANY arm is qualified (`Zeta::Bar`), that enum owns the match; every
+    //      bare arm resolves within it.
+    //   2. Otherwise pick the UNIQUE enum whose variant set contains every bare
+    //      variant name. If 0 or ≥2 enums qualify, leave `owning_enum = None`
+    //      and `resolve_bare` falls back to the prior first-match resolution
+    //      (deterministic, and correct for the non-colliding Option/Result-style
+    //      programs where the user enum sorts before the builtin registry copy).
+    let bare_variant_names: Vec<&str> = arms
+        .iter()
+        .filter_map(|a| match &a.pattern {
+            ast::Pattern::EnumVariant { path, .. } if !path.contains("::") => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    let owning_enum: Option<String> = if bare_variant_names.is_empty() {
+        None
+    } else {
+        // (1) A qualified arm pins the enum.
+        let qualified_enum: Option<String> = arms.iter().find_map(|a| match &a.pattern {
+            ast::Pattern::EnumVariant { path, .. } => path
+                .rsplit_once("::")
+                .map(|(e, _)| e.to_string()),
+            ast::Pattern::EnumStruct { path, .. } => path
+                .rsplit_once("::")
+                .or_else(|| path.rsplit_once('.'))
+                .map(|(e, _)| e.to_string()),
+            _ => None,
+        });
+        if let Some(e) = qualified_enum {
+            Some(e)
+        } else {
+            // (2) Candidate enums = those declaring EVERY bare variant name.
+            let mut candidates: std::collections::BTreeSet<String> = enum_tags
+                .keys()
+                .filter_map(|k| k.rsplit_once("::"))
+                .filter(|(_, v)| bare_variant_names.contains(v))
+                .map(|(e, _)| e.to_string())
+                .collect();
+            candidates.retain(|e| {
+                bare_variant_names
+                    .iter()
+                    .all(|v| enum_tags.contains_key(&format!("{e}::{v}")))
+            });
+            // Exactly one enum owns all the bare names → unambiguous.
+            if candidates.len() == 1 {
+                candidates.into_iter().next()
+            } else {
+                None
+            }
+        }
+    };
+    // Resolve a bare variant name. When an owning enum was determined, anchor to
+    // it (the collision fix). Otherwise reproduce the prior deterministic
+    // first-in-BTreeMap resolution so non-colliding programs are byte-identical.
+    let resolve_bare = |path: &str| -> String {
+        if path.contains("::") || enum_tags.contains_key(path) {
+            return path.to_string();
+        }
+        if let Some(e) = &owning_enum {
+            let qualified = format!("{e}::{path}");
+            if enum_tags.contains_key(&qualified) {
+                return qualified;
+            }
+        }
+        enum_tags
+            .keys()
+            .find(|k| k.rsplit_once("::").map(|(_, v)| v == path).unwrap_or(false))
+            .cloned()
+            .unwrap_or_else(|| path.to_string())
+    };
     // Normalise any STRUCT-variant pattern `E.V { f, g }` into the equivalent
     // POSITIONAL variant pattern `E::V(<f-slot>, <g-slot>, …)` using the enum's
     // declared `field_names`, so the rest of the desugar (tag compare + slot
@@ -6298,16 +6376,15 @@ fn desugar_match_to_if(
             // Resolve a BARE variant pattern (`Some(v)`, `Ok(e)`, `Err(e)`) to
             // its qualified `Enum::V` so the tag compare below finds it — the
             // pattern-side mirror of the bare-constructor resolution in the
-            // `Node::Call` arm. An unknown bare name is left as-is.
+            // `Node::Call` arm. Resolution is anchored to the match's OWNING enum
+            // (computed above) so a variant name shared by two enums resolves to
+            // the scrutinee's enum, never the first lexicographic registry hit.
+            // An unknown bare name is left as-is.
             ast::Pattern::EnumVariant { path, args } if !path.contains("::") => {
                 let key = if enum_tags.contains_key(path) {
                     path.clone()
                 } else {
-                    enum_tags
-                        .keys()
-                        .find(|k| k.rsplit_once("::").map(|(_, v)| v == path).unwrap_or(false))
-                        .cloned()
-                        .unwrap_or_else(|| path.clone())
+                    resolve_bare(path)
                 };
                 ast::MatchArm {
                     pattern: ast::Pattern::EnumVariant {
