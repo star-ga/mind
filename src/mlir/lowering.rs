@@ -1629,7 +1629,14 @@ impl LoweringContext {
                 // Q16.16 uses `arith.maxsi` vs `0` (a float op/literal on an
                 // integer type is invalid MLIR). Pure elementwise either way.
                 let (zero_lit, max_op) = match &info.dtype {
-                    DType::F32 | DType::F16 | DType::BF16 => ("0.0", "arith.maximumf"),
+                    // RFC 0012 §5.1: `F64` is a float tensor too — it must use the
+                    // float `arith.maximumf` vs `0.0`, NOT fall through to the
+                    // integer `_` arm (`arith.maxsi` / int `0` on an `f64` element
+                    // is invalid MLIR — mlir-opt rejects it). Same class as the
+                    // already-fixed `select_arith_op` F64 omission.
+                    DType::F64 | DType::F32 | DType::F16 | DType::BF16 => {
+                        ("0.0", "arith.maximumf")
+                    }
                     _ => ("0", "arith.maxsi"),
                 };
                 let ty = tensor_type(&info.shape, elem);
@@ -1682,7 +1689,13 @@ impl LoweringContext {
                 // must use `cmpi "sgt"` vs `0` (a float literal or `cmpf` on an
                 // integer type is invalid MLIR). Pure elementwise either way.
                 let (zero_lit, cmp_op) = match &info.dtype {
-                    DType::F32 | DType::F16 | DType::BF16 => ("0.0", "arith.cmpf \"ogt\""),
+                    // RFC 0012 §5.1: `F64` float tensors gate with `cmpf "ogt"` vs
+                    // `0.0`, NOT the integer `cmpi "sgt"` / int `0` (`cmpi` on an
+                    // `f64` element is invalid MLIR). Same F64-into-integer-arm
+                    // class as `Relu` above and the fixed `select_arith_op`.
+                    DType::F64 | DType::F32 | DType::F16 | DType::BF16 => {
+                        ("0.0", "arith.cmpf \"ogt\"")
+                    }
                     _ => ("0", "arith.cmpi \"sgt\""),
                 };
                 let ty = tensor_type(&info.shape, elem);
@@ -9448,10 +9461,15 @@ fn known_dim(dim: &ShapeDim) -> Option<usize> {
 }
 
 fn format_fill(fill: Option<f64>, dtype: &DType) -> String {
+    // `F64` is a float dtype: its fill keeps the fractional value (`format_number`)
+    // and its zero is `0.0`. Omitting it routed `F64` through the integer arms,
+    // which TRUNCATED a fractional fill to an int and emitted `0` (not `0.0`) for
+    // an `f64` tensor element — wrong value / invalid MLIR. Same F64-into-integer
+    // class as `Relu`/`ReluGrad`/`select_arith_op`.
     match (fill, dtype) {
-        (Some(v), DType::F32 | DType::F16 | DType::BF16) => format_number(v),
+        (Some(v), DType::F64 | DType::F32 | DType::F16 | DType::BF16) => format_number(v),
         (Some(v), _) => format_number(v.trunc()),
-        (None, DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
+        (None, DType::F64 | DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
         (None, _) => "0".to_string(),
     }
 }
