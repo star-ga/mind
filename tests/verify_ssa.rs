@@ -524,3 +524,173 @@ fn ssa_if_merge_differential_emit_parse_agrees() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// SOUNDNESS (While loop-carry) — a `While`'s `live_vars` post-body id is the
+// BACK-EDGE value of a loop-carried variable: the value the var holds at the
+// END of the body, fed back to the loop header on the next iteration. It must be
+// an SSA value that is DEFINED and dominates the back-edge — produced inside the
+// loop (`cond` ∪ `body`) OR live from the enclosing (pre-loop) scope (a plain
+// rebinding such as `a = b` legitimately re-points the carried var at another
+// already-live id). Post-loop code, by contrast, reads the loop's `exit_ids`
+// (`^while_after` block args), NOT the post-body ids.
+//
+// A `live_vars` back-edge id that is defined NOWHERE in `enclosing ∪ cond ∪ body`
+// is a forgery — the loop header would read an SSA id out of thin air (a
+// use-before-def on the back-edge, a wrong/dangling value). This is the loop
+// analog of the `If` cross-branch merge forgery (issue #24): both verifiers MUST
+// reject it.
+//
+// Before the fix `expose_region_definitions` wrongly EXPOSED the post-body ids
+// into the enclosing scope (so a forged id was silently treated as "defined" for
+// the rest of the fn body), and neither verifier validated them at all, so a
+// `While` whose back-edge value points at an undefined id passed clean — a
+// wrong-value module certified valid.
+// ---------------------------------------------------------------------------
+
+/// Build a `FnDef` with a single counted `while` loop carrying one var `s`.
+/// The body computes `s_body = s + 1` (`%4`), the genuine back-edge value.
+/// `live_post` is what `While.live_vars` claims that back-edge id is — set it to
+/// `%4` for a legit loop, or to a forged id to model a tampered artifact.
+#[cfg(feature = "std-surface")]
+fn while_carry_module(live_post: ValueId) -> IRModule {
+    let mut m = IRModule::new();
+    // %0 = param n ; %1 = const 0 (s init) ; %2 = const 1 (cond literal) ;
+    // body: %3 = const 1 ; %4 = s + 1 (back-edge value) ;
+    // exit ids: %5 (^while_after block arg for s) ; return %5.
+    m.instrs.push(Instr::FnDef {
+        name: "f".to_string(),
+        params: vec![("n".to_string(), ValueId(0))],
+        ret_id: Some(ValueId(5)),
+        body: vec![
+            Instr::Param {
+                dst: ValueId(0),
+                name: "n".to_string(),
+                index: 0,
+            },
+            Instr::ConstI64(ValueId(1), 0), // s = 0 (pre-loop / init)
+            Instr::While {
+                cond_id: ValueId(2),
+                cond_instrs: vec![Instr::ConstI64(ValueId(2), 1)],
+                body: vec![
+                    Instr::ConstI64(ValueId(3), 1),
+                    Instr::BinOp {
+                        dst: ValueId(4),
+                        op: BinOp::Add,
+                        lhs: ValueId(1),
+                        rhs: ValueId(3),
+                    },
+                ],
+                // back-edge value for `s`: legit = %4 (body-defined); forged otherwise.
+                live_vars: vec![("s".to_string(), live_post)],
+                init_ids: vec![ValueId(1)],
+                exit_ids: vec![ValueId(5)],
+            },
+            Instr::Return {
+                value: Some(ValueId(5)),
+            },
+        ],
+        reap_threshold: None,
+    });
+    m.instrs.push(Instr::ConstI64(ValueId(0), 0));
+    m.instrs.push(Instr::Output(ValueId(0)));
+    m.next_id = 6;
+    m
+}
+
+/// A well-formed loop whose back-edge value `%4` is defined inside the body must
+/// pass BOTH verifiers (no false positive).
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_while_carry_legit_passes() {
+    let m = while_carry_module(ValueId(4));
+    assert!(
+        check_ssa_well_formed(&m).is_ok(),
+        "legit loop-carry must pass check_ssa_well_formed: {:?}",
+        check_ssa_well_formed(&m)
+    );
+    assert!(
+        libmind::ir::verify_module(&m).is_ok(),
+        "legit loop-carry must pass verify_module: {:?}",
+        libmind::ir::verify_module(&m)
+    );
+}
+
+/// A legit loop whose carried back-edge value is a PRE-LOOP value (`%1`, the
+/// init) must still pass: a plain rebinding (`a = b`) or a no-op (`s = s`) points
+/// the carried var at an already-live id without emitting a new instruction, so
+/// an enclosing-scope back-edge id is valid. (Guards against the over-strict
+/// "must be a fresh body def" check that would false-positive real `fib`-style
+/// loops, where `a = b` makes `a`'s back-edge `b`'s pre-loop id.)
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_while_carry_preloop_backedge_passes() {
+    let m = while_carry_module(ValueId(1));
+    assert!(
+        check_ssa_well_formed(&m).is_ok(),
+        "enclosing-scope (rebind) back-edge must pass check_ssa_well_formed: {:?}",
+        check_ssa_well_formed(&m)
+    );
+    assert!(
+        libmind::ir::verify_module(&m).is_ok(),
+        "enclosing-scope (rebind) back-edge must pass verify_module: {:?}",
+        libmind::ir::verify_module(&m)
+    );
+}
+
+/// ★ SOUNDNESS — the `live_vars` back-edge id `%99` is defined NOWHERE in
+/// `enclosing ∪ cond ∪ body`. This is a loop-carry forgery: the loop header
+/// would read an undefined SSA value on the back-edge (a wrong/dangling value).
+/// BOTH verifiers must REJECT it with define-before-use. Before the fix this was
+/// wrongly accepted (the post-body id was exposed, never validated).
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_while_carry_undefined_post_id_rejected() {
+    let m = while_carry_module(ValueId(99));
+    let err = check_ssa_well_formed(&m)
+        .expect_err("undefined loop-carry back-edge id must be rejected by check_ssa_well_formed");
+    assert_eq!(err.value, ValueId(99), "violation must name the undefined %99");
+    assert_eq!(
+        err.rule,
+        SsaRule::DefineBeforeUse,
+        "loop-carry back-edge forgery is a define-before-use fault"
+    );
+    assert!(
+        libmind::ir::verify_module(&m).is_err(),
+        "verify_module must also reject the undefined loop-carry back-edge id"
+    );
+}
+
+/// ★ SOUNDNESS (DIFFERENTIAL) — the consumer verifier on the codec round-trip
+/// (`check_ssa_well_formed(parse(emit(ir)))`) and the in-pipeline `verify_module`
+/// agree on the legit, rebind, and forged loop-carry cases. `While.live_vars` is
+/// serialized in mic@3 (version 0x02), so a tampered artifact's forged back-edge
+/// id survives the round-trip and must be rejected on the consumer side too.
+#[cfg(feature = "std-surface")]
+#[test]
+fn ssa_while_carry_differential_emit_parse_agrees() {
+    use libmind::ir::compact::v3::parse_mic3;
+    let cases = [
+        (while_carry_module(ValueId(4)), true),
+        (while_carry_module(ValueId(1)), true),
+        (while_carry_module(ValueId(99)), false),
+    ];
+    for (m, expect_ok) in cases {
+        let vm_ok = libmind::ir::verify_module(&m).is_ok();
+        let bytes = emit_mic3(&m);
+        let parsed = parse_mic3(&bytes).expect("parse round-trip");
+        let consumer_ok = check_ssa_well_formed(&parsed).is_ok();
+        assert_eq!(
+            vm_ok, expect_ok,
+            "verify_module verdict mismatch for expect_ok={expect_ok}"
+        );
+        assert_eq!(
+            consumer_ok, expect_ok,
+            "check_ssa_well_formed(parse(emit)) verdict mismatch for expect_ok={expect_ok}"
+        );
+        assert_eq!(
+            vm_ok, consumer_ok,
+            "DIFFERENTIAL: verify_module and check_ssa_well_formed must agree on loop-carry"
+        );
+    }
+}
