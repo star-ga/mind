@@ -23,7 +23,9 @@
 
 #![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 const SRC: &str = r#"
@@ -221,15 +223,7 @@ pub fn t_mixf() -> f64 { mix_f(Mix::Pair(9, 3.25)) }
 pub fn t_mixi() -> i64 { mix_i(Mix::Pair(9, 3.25)) }
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let m = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = m.join("target").join("debug").join("mindc");
-    if d.exists() {
-        d
-    } else {
-        m.join("target").join("release").join("mindc")
-    }
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn boxed_enum_match_runs() {

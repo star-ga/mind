@@ -21,6 +21,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -287,15 +290,11 @@ fn bundled_stdlib_resolves_use_std_json() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
+    use super::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
-    fn mindc_bin() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("release")
-            .join("mindc")
-    }
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     /// Compile a driver MIND program that includes json.mind inline, build it,
     /// and run it against a variety of JSON fixtures.

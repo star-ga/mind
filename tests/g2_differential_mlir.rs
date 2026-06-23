@@ -55,6 +55,9 @@
 //! (it dlopens an ELF and calls in over the System V AMD64 C ABI); on other
 //! platforms the test no-ops as a pass.
 
+mod common;
+use common::mindc_bin;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -70,14 +73,7 @@ fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn mindc_bin() -> PathBuf {
-    let root = repo_root();
-    let rel = root.join("target").join("release").join("mindc");
-    if rel.exists() {
-        return rel;
-    }
-    root.join("target").join("debug").join("mindc")
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 fn require_mindc() -> Option<PathBuf> {
     let bin = mindc_bin();

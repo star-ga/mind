@@ -22,7 +22,9 @@
     feature = "cross-module-imports"
 ))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 const SRC: &str = r#"
@@ -54,15 +56,7 @@ pub fn empty_lit_idx() -> i64 {
 }
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let m = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = m.join("target").join("debug").join("mindc");
-    if d.exists() {
-        d
-    } else {
-        m.join("target").join("release").join("mindc")
-    }
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn array_ctor_push_get_runs() {

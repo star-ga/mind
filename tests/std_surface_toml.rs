@@ -25,6 +25,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -324,15 +327,11 @@ fn mind_toml_rust_parse_ground_truth() {
 
 #[cfg(all(feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
+    use super::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
-    fn mindc_bin() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("release")
-            .join("mindc")
-    }
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     #[test]
     fn toml_parse_mind_toml_via_compiled_so() {

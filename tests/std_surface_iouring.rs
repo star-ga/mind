@@ -19,6 +19,8 @@
 
 #![cfg(all(target_os = "linux", feature = "mlir-build", feature = "std-surface"))]
 
+mod common;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -97,14 +99,8 @@ fn iouring_parses_and_lowers_with_ring_api() {
 #[test]
 fn iouring_nop_roundtrips_user_data() {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mindc = {
-        let d = manifest.join("target").join("debug").join("mindc");
-        if d.exists() {
-            d
-        } else {
-            manifest.join("target").join("release").join("mindc")
-        }
-    };
+    // Binary resolved via tests/common::mindc_bin() (CARGO_BIN_EXE_mindc).
+    let mindc = common::mindc_bin();
     if !mindc.exists() {
         println!("iouring: mindc not found; skipping");
         return;

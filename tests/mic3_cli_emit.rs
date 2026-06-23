@@ -9,7 +9,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Integration tests for RFC 0021 step 3: `--emit-mic3` and `--emit-evidence`
@@ -24,25 +23,16 @@
 //! 3. Existing `--emit-mic` (mic@1 text) output is byte-unchanged.
 //! 4. Default invocation (no emit flags) still prints IR text to stdout.
 
+mod common;
+use common::mindc_bin;
+
 use std::path::PathBuf;
 use std::process::Command;
 
-fn mindc_binary() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target");
-    #[cfg(debug_assertions)]
-    path.push("debug");
-    #[cfg(not(debug_assertions))]
-    path.push("release");
-    #[cfg(target_os = "windows")]
-    path.push("mindc.exe");
-    #[cfg(not(target_os = "windows"))]
-    path.push("mindc");
-    path
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 fn require_mindc() -> PathBuf {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     if !bin.exists() {
         eprintln!("Skipping: mindc binary not found at {bin:?}");
     }

@@ -9,7 +9,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! RFC 0010 Phase F — `std/llvm.mind` bindings smoke test.
@@ -36,24 +35,19 @@
 
 #![cfg(all(feature = "std-surface", feature = "mlir-lowering"))]
 
+mod common;
+use common::mindc_bin;
+
 use std::path::PathBuf;
 use std::process::Command;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-fn mindc_path() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // prefer release; fall back to debug
-    let rel = manifest.join("target/release/mindc");
-    if rel.exists() {
-        return rel;
-    }
-    manifest.join("target/debug/mindc")
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 /// Run `mindc <args>` and return stdout on success, or panic with full stderr.
 fn run_mindc(args: &[&str]) -> String {
-    let out = Command::new(mindc_path())
+    let out = Command::new(mindc_bin())
         .args(args)
         .output()
         .unwrap_or_else(|e| panic!("failed to spawn mindc: {e}"));
@@ -142,7 +136,7 @@ fn std_llvm_mind_passes_mindc_check() {
         path.exists(),
         "std/llvm.mind not found at {path:?}; did you forget to create it?"
     );
-    let out = Command::new(mindc_path())
+    let out = Command::new(mindc_bin())
         .args(["check", path.to_str().unwrap()])
         .output()
         .unwrap_or_else(|e| panic!("spawn mindc check: {e}"));

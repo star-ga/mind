@@ -39,27 +39,16 @@
 ))]
 #![cfg(not(windows))]
 
+mod common;
+use common::mindc_bin;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
 
 use libloading::{Library, Symbol};
 
-fn mindc_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dbg = manifest_dir.join("target").join("debug").join("mindc");
-    if dbg.exists() {
-        return dbg;
-    }
-    let rel = manifest_dir.join("target").join("release").join("mindc");
-    assert!(
-        rel.exists(),
-        "mindc binary not found at {dbg:?} or {rel:?}; build with: \
-         cargo build --features \"mlir-build std-surface cross-module-imports\" \
-         --bin mindc"
-    );
-    rel
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 /// Build the sha256.mind wrapper to a `.so`, exactly once per test run.
 /// Returns `None` if the MLIR toolchain is absent (self-skip).
@@ -85,7 +74,7 @@ fn build_sha256_so() -> Option<&'static PathBuf> {
         let dir = std::env::temp_dir();
         let so_path = dir.join("mind_sha256_smoke.so");
 
-        let status = Command::new(mindc_path())
+        let status = Command::new(mindc_bin())
             .args([
                 src_path.to_str().unwrap(),
                 "--emit-shared",

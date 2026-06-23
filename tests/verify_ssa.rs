@@ -9,7 +9,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
 
 //! Tests for the SSA well-formedness slice of `mindc verify` (RFC 0017,
@@ -22,7 +21,9 @@
 //!     hand-corrupted one (duplicate result id) fails with `ssa_valid: NO` and
 //!     a nonzero exit, mirroring the trace_hash gate in `verify_cli.rs`.
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 use libmind::ir::compact::emit_mic3;
@@ -200,19 +201,7 @@ fn ssa_duplicate_result_id_in_fn_body_fails() {
 // CLI-level: mindc verify reports ssa_valid over a mic@3 artifact.
 // ---------------------------------------------------------------------------
 
-fn mindc_binary() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target");
-    #[cfg(debug_assertions)]
-    path.push("debug");
-    #[cfg(not(debug_assertions))]
-    path.push("release");
-    #[cfg(target_os = "windows")]
-    path.push("mindc.exe");
-    #[cfg(not(target_os = "windows"))]
-    path.push("mindc");
-    path
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 fn tempfile_path(name: &str) -> String {
     let mut p = std::env::temp_dir();
@@ -222,7 +211,7 @@ fn tempfile_path(name: &str) -> String {
 
 #[test]
 fn cli_verify_reports_ssa_valid_on_well_formed_artifact() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     if !bin.exists() {
         eprintln!("Skipping: mindc binary not found at {bin:?}");
         return;
@@ -250,7 +239,7 @@ fn cli_verify_reports_ssa_valid_on_well_formed_artifact() {
 
 #[test]
 fn cli_verify_fails_on_ssa_corrupted_artifact() {
-    let bin = mindc_binary();
+    let bin = mindc_bin();
     if !bin.exists() {
         eprintln!("Skipping: mindc binary not found at {bin:?}");
         return;

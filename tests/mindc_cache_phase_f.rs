@@ -23,6 +23,9 @@
 //!  9. Determinism — two cold builds on the same source produce byte-identical artifacts.
 //! 10. Concurrent builds — two parallel invocations don't produce corrupt cache entries.
 
+mod common;
+use common::mindc_bin;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -36,19 +39,7 @@ use libmind::project::{BuildTarget, OptimizeLevel};
 // Test infrastructure
 // ---------------------------------------------------------------------------
 
-fn mindc_bin() -> PathBuf {
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.push("target");
-    #[cfg(debug_assertions)]
-    p.push("debug");
-    #[cfg(not(debug_assertions))]
-    p.push("release");
-    #[cfg(target_os = "windows")]
-    p.push("mindc.exe");
-    #[cfg(not(target_os = "windows"))]
-    p.push("mindc");
-    p
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 fn require_mindc() -> Option<PathBuf> {
     let bin = mindc_bin();

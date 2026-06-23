@@ -15,7 +15,9 @@
 
 #![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 // Stores two adjacent u32s, reads both back, and checks a high-bit value
@@ -46,15 +48,7 @@ pub fn i32_probe() -> i64 {
 }
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let m = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = m.join("target").join("debug").join("mindc");
-    if d.exists() {
-        d
-    } else {
-        m.join("target").join("release").join("mindc")
-    }
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn i32_load_store_no_clobber_and_zero_extend() {

@@ -20,7 +20,9 @@
 
 #![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 const SRC: &str = r#"
@@ -51,15 +53,7 @@ pub fn plain_len() -> i64 { let s: String = "hello"; return string_len(s) }
 pub fn plain_b0() -> i64 { let s: String = "hello"; return string_get_byte(s, 0) }
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let m = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = m.join("target").join("debug").join("mindc");
-    if d.exists() {
-        d
-    } else {
-        m.join("target").join("release").join("mindc")
-    }
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn string_escapes_decode_to_bytes() {

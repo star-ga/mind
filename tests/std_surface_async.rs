@@ -25,6 +25,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -222,19 +225,11 @@ fn sched_kind_accessor_in_ir() {
 
 #[cfg(feature = "mlir-build")]
 mod mlir_tests {
+    use super::mindc_bin;
 
     use std::path::PathBuf;
 
-    fn mindc_bin() -> PathBuf {
-        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.push("target");
-        #[cfg(not(debug_assertions))]
-        p.push("release");
-        #[cfg(debug_assertions)]
-        p.push("debug");
-        p.push("mindc");
-        p
-    }
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     fn tool_on_path(name: &str) -> bool {
         std::process::Command::new("which")

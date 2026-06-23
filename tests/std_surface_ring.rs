@@ -15,6 +15,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -57,15 +60,11 @@ fn ring_parses_and_lowers_with_api() {
 
 #[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
+    use super::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
-    fn mindc_bin() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("release")
-            .join("mindc")
-    }
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     #[test]
     fn fifo_full_wrap_partial_via_compiled_so() {
