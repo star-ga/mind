@@ -124,8 +124,12 @@ pub fn check_ssa_well_formed(module: &IRModule) -> Result<(), SsaViolation> {
 ///
 /// * `If`  — the post-merge `dst` plus every F2 merge id (`^if_after` block
 ///   args, the `merges[i].0`).
-/// * `While` — every `live_vars` post-body id plus every `exit_ids` id
-///   (`^while_after` block args). The loop-carried values seen after the loop.
+/// * `While` — every `exit_ids` id (`^while_after` block args): the
+///   loop-carried values seen AFTER the loop, which the lowering rebinds each
+///   carried var to. The `live_vars` post-body ids are NOT exposed: they are the
+///   loop's BACK-EDGE operands, defined inside the body and validated there (the
+///   loop analog of `If`'s `then_val`/`else_val`), never visible to post-loop
+///   code.
 /// * `Region` — its `result` id (the last body value, exposed to the enclosing
 ///   scope).
 /// * everything else — its plain `dst` if it produces one (the simple
@@ -199,14 +203,23 @@ fn expose_region_definitions(instr: &Instr, scope: &mut BTreeSet<ValueId>) {
             }
         }
         #[cfg(feature = "std-surface")]
-        Instr::While {
-            live_vars,
-            exit_ids,
-            ..
-        } => {
-            for (_name, post_id) in live_vars {
-                scope.insert(*post_id);
-            }
+        Instr::While { exit_ids, .. } => {
+            // ONLY the `exit_ids` (`^while_after` block args) are region-EXIT
+            // values visible to post-loop code; the lowering rebinds every
+            // loop-carried var to its `exit_id` after the loop
+            // (`src/eval/lower.rs`: "code AFTER the loop is rebound to these exit
+            // ids instead of the body-internal post_id`s").
+            //
+            // The `live_vars` post-body ids are NOT exposed here: they are the
+            // loop's BACK-EDGE operands (the value each carried var holds at the
+            // end of the body, fed to the header on the next iteration), defined
+            // INSIDE the body and consumed only by the loop itself. Exposing them
+            // to the enclosing scope would (a) leak body-internal ids to code that
+            // can never legitimately reference them and (b) mask a forged
+            // `live_vars` id by silently treating it as "defined". Their
+            // definedness is instead VALIDATED against the body scope where they
+            // are produced (the `While` arms of `check_ssa_stream` / `verify_module`),
+            // exactly as `If` validates its `then_val`/`else_val` per-branch.
             for exit_id in exit_ids {
                 scope.insert(*exit_id);
             }
@@ -330,10 +343,34 @@ fn check_ssa_stream(instrs: &[Instr], defined: &mut BTreeSet<ValueId>) -> Result
             }
             #[cfg(feature = "std-surface")]
             Instr::While {
-                cond_instrs, body, ..
+                cond_instrs,
+                body,
+                live_vars,
+                ..
             } => {
+                // Snapshot the enclosing scope BEFORE threading in the loop's own
+                // defs — the back-edge validation below needs the pre-loop state
+                // to tell a genuine BODY definition apart from an enclosing value.
+                let enclosing_before = defined.clone();
+                // Walk cond + body for SSA discipline inside the loop's own
+                // namespace (threaded through the enclosing `defined`, as before).
                 check_ssa_stream(cond_instrs, defined)?;
                 check_ssa_stream(body, defined)?;
+                // SOUNDNESS (loop-carry): each `live_vars` post-body id is the
+                // BACK-EDGE value of a loop-carried var. It must be DEFINED in
+                // `enclosing ∪ cond ∪ body` (a body def, or an enclosing value a
+                // rebinding like `a = b` re-points the var at). An id defined
+                // NOWHERE is a forgery. Validate via the SHARED helper so this
+                // verifier and `verify_module` reject identical loop-carry
+                // forgeries — the loop analog of `validate_if_merges` (issue #24).
+                if let Err(post_id) =
+                    validate_while_backedges(cond_instrs, body, live_vars, &enclosing_before)
+                {
+                    return Err(SsaViolation {
+                        value: post_id,
+                        rule: SsaRule::DefineBeforeUse,
+                    });
+                }
             }
             #[cfg(feature = "std-surface")]
             Instr::If {
@@ -503,6 +540,50 @@ fn collect_branch_scope(
     Ok(scope)
 }
 
+/// Validate a `While` node's loop-carried back-edge values — the soundness
+/// core of the loop analog of the #24 `If` fix, SHARED by both verifiers so
+/// they can never diverge.
+///
+/// Each `live_vars` post-body id is the value a loop-carried var holds at the
+/// END of the body — the back-edge value forwarded to the loop header on the
+/// next iteration. It must be an SSA value that is DEFINED and dominates the
+/// back-edge: either a definition produced INSIDE the loop (`cond` ∪ `body`) or
+/// a value live from the ENCLOSING (pre-loop) scope. The latter is legitimate
+/// because a plain rebinding such as `a = b` re-points a carried var at another
+/// already-live id without emitting a new instruction (e.g. `a`'s back-edge
+/// becomes `b`'s pre-loop id), and a no-op `s = s` keeps the init id.
+///
+/// What is NOT legitimate — and what this check rejects — is a `live_vars`
+/// back-edge id that is defined NOWHERE in `enclosing ∪ cond ∪ body`: a forged
+/// or dangling id whose value the loop header would read out of thin air (a
+/// use-before-def on the back-edge). Pre-fix the verifier exposed the post-body
+/// ids unconditionally and never checked them, so such a forgery passed clean.
+///
+/// Returns `Err(offending_post_id)` on the first undefined back-edge id.
+#[cfg(feature = "std-surface")]
+fn validate_while_backedges(
+    cond_instrs: &[Instr],
+    body: &[Instr],
+    live_vars: &[(String, ValueId)],
+    enclosing: &BTreeSet<ValueId>,
+) -> Result<(), ValueId> {
+    // Reachable = everything defined before the loop, plus every id the cond and
+    // body produce. A genuine back-edge value is reachable in this set.
+    let mut reachable = enclosing.clone();
+    for instr in cond_instrs {
+        expose_region_definitions(instr, &mut reachable);
+    }
+    for instr in body {
+        expose_region_definitions(instr, &mut reachable);
+    }
+    for (_name, post_id) in live_vars {
+        if !reachable.contains(post_id) {
+            return Err(*post_id);
+        }
+    }
+    Ok(())
+}
+
 /// Validate one `If` node's F2 merge operands against PER-BRANCH scopes for the
 /// in-pipeline verifier, recursing into nested `If`s. The soundness core of the
 /// #24 fix on the `verify_module` side: it builds each branch's own scope via
@@ -658,14 +739,40 @@ fn validate_operands(
                 {
                     validate_if_node(then_instrs, else_instrs, merges, &body_defined)?;
                 }
+                // SOUNDNESS (loop-carry): a nested `While` carries `live_vars`
+                // back-edge ids that MUST be defined inside the loop body (the
+                // loop analog of the `If` merge check above). Validate them
+                // against the fn-body scope as it stands NOW — before the loop's
+                // own `exit_ids` are exposed below — via the SHARED
+                // `validate_while_backedges` so both verifiers reject identical
+                // loop-carry forgeries.
+                #[cfg(feature = "std-surface")]
+                if let Instr::While {
+                    cond_instrs,
+                    body,
+                    live_vars,
+                    ..
+                } = body_instr
+                {
+                    if let Err(post_id) =
+                        validate_while_backedges(cond_instrs, body, live_vars, &body_defined)
+                    {
+                        return Err(IrVerifyError::UseBeforeDefinition {
+                            value: post_id,
+                            instr_index: body_idx,
+                        });
+                    }
+                }
                 // Expose every id this instruction makes visible to the enclosing
                 // (fn-body) scope via the SHARED `expose_region_definitions`
                 // helper — the same one the consumer-side `check_ssa_stream` uses,
                 // so the two verifiers can never diverge. For a straight-line op
-                // this inserts its plain `dst`; for a `While` it adds the
-                // `live_vars` post-body + `exit_ids` (^while_after block args);
-                // for an `If` it adds the `merges` ids (^if_after block args) plus
-                // `dst`; for a `Region` its `result`. RFC 0005 Gap 1 + F2.
+                // this inserts its plain `dst`; for a `While` it adds ONLY the
+                // `exit_ids` (^while_after block args — the post-loop-visible
+                // values; the body-internal `live_vars` back-edge ids are NOT
+                // exposed, they are validated above); for an `If` it adds the
+                // `merges` ids (^if_after block args) plus `dst`; for a `Region`
+                // its `result`. RFC 0005 Gap 1 + F2.
                 expose_region_definitions(body_instr, &mut body_defined);
                 // Check operand references within body scope.
                 //
