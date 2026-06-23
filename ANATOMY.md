@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2915 | **Est. tokens:** ~7,010,386
-**Generated:** 2026-06-23 01:16 UTC
+**Files:** 2917 | **Est. tokens:** ~7,013,128
+**Generated:** 2026-06-23 03:02 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 225 | ~370,791 |
+| `tests/` | 227 | ~373,533 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -4227,6 +4227,7 @@
 ### `tests/`
 
 - `scalar_cast_call_run.rs` (~757 tok, large) — Copyright 2025 STARGA Inc.
+- `scalar_cast_unsigned_narrow_run.rs` (~1131 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/selfhost_gaps/`
 
 - `call-arg-nesting_1.mind` (~25 tok, tiny)
@@ -4377,6 +4378,7 @@
 - `tensor_broadcast.rs` (~1004 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_buffers.rs` (~517 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_eval.rs` (~457 tok, medium) — Copyright 2025 STARGA Inc.
+- `tensor_param_fail_loud_run.rs` (~1611 tok, huge) — Copyright 2025 STARGA Inc.
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.

@@ -1041,6 +1041,34 @@ fn scalar_int_cast_width(ty: &TypeAnn) -> Option<u32> {
     }
 }
 
+/// Unsigned-integer bit-width of a scalar `as`-cast (or call-form `uN(x)`)
+/// *target* type, if the target is a narrowing unsigned width (`u8`/`u16`/`u32`)
+/// the scalar i64 ABI must materialise at its real width by *zero*-extending.
+///
+/// MIND's scalar values are carried in i64. A narrowing cast to an unsigned
+/// width must keep only the low `width` bits with the high bits CLEARED (zero
+/// extension), unlike the signed path which sign-extends. The caller emits a
+/// `BitAnd` against the i64 const mask `(1 << width) - 1`. Returns `None` for
+/// full-width (`u64`) and any non-narrowing-unsigned target, which lower
+/// transparently (the i64 SSA value is left unchanged).
+///
+/// `u32` reaches this both as `TypeAnn::ScalarU32` (postfix `as u32` and the
+/// `u32(x)` call-form) and as `TypeAnn::Named("u32")`; `u8`/`u16` arrive as
+/// `TypeAnn::Named`. All map to their mask width here.
+#[cfg(feature = "std-surface")]
+fn scalar_uint_cast_width(ty: &TypeAnn) -> Option<u32> {
+    match ty {
+        TypeAnn::ScalarU32 => Some(32),
+        TypeAnn::Named(name) => match name.as_str() {
+            "u8" => Some(8),
+            "u16" => Some(16),
+            "u32" => Some(32),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The byte width and signedness of a struct field type for the canonical
 /// width-aware struct ABI. Returns `(width_bytes, signed)`:
 ///   * `i64`/`u64`/struct-handle (`Named` non-narrow)/pointer  → 8, signed
@@ -4009,7 +4037,32 @@ fn lower_expr(
                     });
                     shr_id
                 }
-                _ => val,
+                // Narrowing to a known unsigned integer narrower than 64 bits
+                // (`u8`/`u16`/`u32`, in `as` and call form): ZERO-extend by
+                // masking off the high bits with `val & ((1 << width) - 1)`.
+                // Unlike the signed path this must NOT sign-extend, so it uses a
+                // single `BitAnd` against an i64 const mask (no new IR opcode, no
+                // mic@1/mic@3 layout change). `u64`/full-width stays transparent.
+                _ => match scalar_uint_cast_width(ty) {
+                    Some(width) if width < 64 => {
+                        let mask: i64 = if width == 32 {
+                            0xFFFF_FFFF
+                        } else {
+                            (1i64 << width) - 1
+                        };
+                        let mask_id = ir.fresh();
+                        ir.instrs.push(Instr::ConstI64(mask_id, mask));
+                        let and_id = ir.fresh();
+                        ir.instrs.push(Instr::BinOp {
+                            dst: and_id,
+                            op: BinOp::BitAnd,
+                            lhs: val,
+                            rhs: mask_id,
+                        });
+                        and_id
+                    }
+                    _ => val,
+                },
             }
         }
         #[cfg(not(feature = "std-surface"))]
