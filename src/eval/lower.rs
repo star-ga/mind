@@ -4577,6 +4577,34 @@ fn lower_expr(
                             if let Some(s) = set_sentinel_for_opt(ann) {
                                 body_struct_env.insert(name.clone(), s.to_string());
                             }
+                            // A `let p = T { .. }` declared INSIDE the loop body
+                            // must record `p`'s struct type so a later `p.field`
+                            // resolves its 8-byte offset (Step 1) — exactly as
+                            // the module/fn-scope `Let` handler already does. Without
+                            // this the in-loop field read fell through to the
+                            // `ConstI64(0)` placeholder and SILENTLY read 0 instead
+                            // of the stored value.
+                            if let ast::Node::StructLit {
+                                name: struct_name, ..
+                            } = value.as_ref()
+                            {
+                                body_struct_env.insert(name.clone(), struct_name.clone());
+                            }
+                            // `let q = p` inside the loop aliases `p`'s tracked
+                            // struct/collection type (and element tracking), matching
+                            // the outer-scope alias rule.
+                            if let ast::Node::Lit(Literal::Ident(src), _) = value.as_ref() {
+                                if let Some(t) = body_struct_env.get(src).cloned() {
+                                    body_struct_env.entry(name.clone()).or_insert(t);
+                                }
+                                if let Some(e) =
+                                    body_struct_env.get(&format!("__elem__{src}")).cloned()
+                                {
+                                    body_struct_env
+                                        .entry(format!("__elem__{name}"))
+                                        .or_insert(e);
+                                }
+                            }
                             if let Some((__s, __e)) = let_rhs_collection_track(
                                 value,
                                 &body_ir,
