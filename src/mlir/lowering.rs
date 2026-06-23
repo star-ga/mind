@@ -1265,8 +1265,9 @@ impl LoweringContext {
                             // when the divisor was 0 (`x/0 == 0`, `x%0 == 0`).
                             // Elided for a constant divisor that is neither -1 nor 0.
                             // INT_MIN(ity) built as 1<<(w-1). Unsigned narrow div has
-                            // no INT_MIN/-1 case but is NOT routed here (this arm is
-                            // signed-only) — its div-by-zero is a separate path.
+                            // no INT_MIN/-1 case but IS routed (this arm is
+                            // signed-only) — its div-by-zero is the unsigned guard
+                            // branch immediately below.
                             let wb = match ity {
                                 "i64" => 63,
                                 _ => 31,
@@ -1317,6 +1318,46 @@ impl LoweringContext {
                             ));
                             div_zero_guard = Some(format!("%disz{}", dst.0));
                             format!("%dsf{}", dst.0)
+                        } else if unsigned
+                            && matches!(op, BinOp::Div | BinOp::Mod)
+                            && ity != "i1"
+                            && !self
+                                .const_i64_map
+                                .get(rhs)
+                                .is_some_and(|&v| v != 0)
+                        {
+                            // Unsigned narrow div/rem determinism — divisor-0.
+                            // x86 `divl`/`divq` raise #DE on a zero divisor
+                            // (SIGFPE / process crash), while AArch64 `udiv`
+                            // returns 0 with no trap — a cross-substrate
+                            // divergence and a crash where the deterministic
+                            // contract (matching the signed and i64 arms) is
+                            // `x/0 == 0`, `x%0 == 0`. Substitute divisor 1 when
+                            // the divisor is 0 (never traps); the common emit
+                            // forces the result to 0 via `div_zero_guard`.
+                            // Unsigned division has NO INT_MIN/-1 overflow case,
+                            // so unlike the signed arm this only guards zero.
+                            // Elided for a constant divisor known to be nonzero.
+                            // Gated; an i64-only program never reaches this arm,
+                            // so keystone/canary bytes are unchanged.
+                            self.emit_line(&format!(
+                                "    %udone{0} = arith.constant 1 : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %udzc{0} = arith.constant 0 : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %udisz{0} = arith.cmpi \"eq\", {rhs_ref}, %udzc{0} : {ity}",
+                                dst.0
+                            ));
+                            self.emit_line(&format!(
+                                "    %udsf{0} = arith.select %udisz{0}, %udone{0}, {rhs_ref} : {ity}",
+                                dst.0
+                            ));
+                            div_zero_guard = Some(format!("%udisz{}", dst.0));
+                            format!("%udsf{}", dst.0)
                         } else {
                             rhs_ref
                         };
