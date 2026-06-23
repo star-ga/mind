@@ -704,6 +704,11 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                 // i64/u64/handles/collections — preserves byte-identity).
                 #[cfg(feature = "std-surface")]
                 let id = mask_narrow_let(&mut ir, ann, id);
+                // Track a module-level narrow local so a later top-level `c = c + …`
+                // reassignment re-masks (no-op for non-narrow; per-fn scopes take +
+                // restore this map, so the entry never leaks into a fn body).
+                #[cfg(feature = "std-surface")]
+                record_narrow_let(name, ann);
                 env.insert(name.clone(), id);
                 // Dynamic `bytes = [..]` tracks as the vec surface (growable u8).
                 #[cfg(feature = "std-surface")]
@@ -776,6 +781,10 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
             }
             ast::Node::Assign { name, value, .. } => {
                 let id = lower_expr(value, &mut ir, &env, &struct_env, receiver_types);
+                // Reassigning a module-level narrow local re-masks to its declared
+                // width (no-op for non-narrow names — the all-i64 hot path).
+                #[cfg(feature = "std-surface")]
+                let id = mask_narrow_assign(&mut ir, name, id);
                 env.insert(name.clone(), id);
                 ir.instrs.push(Instr::Output(id));
             }
@@ -1147,6 +1156,90 @@ fn mask_narrow_let(ir: &mut IRModule, ann: &Option<TypeAnn>, val: ValueId) -> Va
         }
     }
     val
+}
+
+/// True when `ty` is a NARROW integer scalar that `mask_narrow_let` actually
+/// re-materialises at sub-i64 width (`i8`/`i16`/`i32`/`u8`/`u16`/`u32`). `i64`,
+/// `u64`, pointers, handles, floats and aliases all return `false` — they carry
+/// their full i64 representation unchanged, so they never need re-masking on
+/// reassignment and never enter the narrow-locals registry (keeping it empty for
+/// any all-i64 module, the keystone included).
+#[cfg(feature = "std-surface")]
+fn is_narrow_scalar_ty(ty: &TypeAnn) -> bool {
+    matches!(scalar_int_cast_width(ty), Some(w) if w < 64)
+        || matches!(scalar_uint_cast_width(ty), Some(w) if w < 64)
+}
+
+thread_local! {
+    /// Per-fn registry of NARROW-typed locals/params (`name -> declared TypeAnn`).
+    /// A `let c: u8 = …` masks its initializer to 8 bits (`mask_narrow_let`), but a
+    /// later REASSIGNMENT `c = c + 100` (and the `c += 100` that desugars to it)
+    /// carries no annotation — without re-masking, `c` silently keeps the full i64
+    /// value (`300` instead of `44`), a SILENT MISCOMPILE that spans top-level,
+    /// branch and loop bodies. `Assign` lowering consults this map and re-applies
+    /// `mask_narrow_let`. Populated ONLY with genuinely narrow scalars (see
+    /// `is_narrow_scalar_ty`), so an all-i64 module leaves it empty and the masking
+    /// is a no-op (zero extra IR, byte-identical hot path). Scoped per fn body and
+    /// restored on exit via `NarrowLocalsGuard`, so it never leaks across fns.
+    #[cfg(feature = "std-surface")]
+    static NARROW_LOCALS: std::cell::RefCell<std::collections::HashMap<String, TypeAnn>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// RAII guard restoring the previous `NARROW_LOCALS` map when a fn body's lowering
+/// scope ends, mirroring `ParamTypesGuard`. Seeds the map with this fn's narrow
+/// PARAMS so a reassigned narrow param (`fn f(c: u8) { c = c + 100 }`) re-masks too.
+#[cfg(feature = "std-surface")]
+struct NarrowLocalsGuard(std::collections::HashMap<String, TypeAnn>);
+
+#[cfg(feature = "std-surface")]
+impl Drop for NarrowLocalsGuard {
+    fn drop(&mut self) {
+        NARROW_LOCALS.with(|n| *n.borrow_mut() = std::mem::take(&mut self.0));
+    }
+}
+
+/// Begin a fresh narrow-locals scope for a fn body, seeded with its narrow
+/// params. Returns the restore guard. Cheap (one HashMap swap) and only inserts
+/// narrow-typed params, so a non-narrow fn keeps an empty map.
+#[cfg(feature = "std-surface")]
+fn enter_narrow_scope(params: &[ast::Param]) -> NarrowLocalsGuard {
+    NARROW_LOCALS.with(|n| {
+        let prev = std::mem::take(&mut *n.borrow_mut());
+        {
+            let mut m = n.borrow_mut();
+            for prm in params {
+                if is_narrow_scalar_ty(&prm.ty) {
+                    m.insert(prm.name.clone(), prm.ty.clone());
+                }
+            }
+        }
+        NarrowLocalsGuard(prev)
+    })
+}
+
+/// Record a narrow-typed `let` so a later reassignment of `name` re-masks.
+/// No-op for non-narrow annotations (keeps the registry empty for i64 modules).
+#[cfg(feature = "std-surface")]
+fn record_narrow_let(name: &str, ann: &Option<TypeAnn>) {
+    if let Some(ty) = ann {
+        if is_narrow_scalar_ty(ty) {
+            NARROW_LOCALS.with(|n| n.borrow_mut().insert(name.to_string(), ty.clone()));
+        }
+    }
+}
+
+/// Re-apply the declared narrow-width mask after a reassignment `name = …`.
+/// Looks `name` up in the per-fn narrow-locals registry; emits the same
+/// truncate/sign-extend `mask_narrow_let` uses, or returns `val` unchanged when
+/// `name` is not a tracked narrow local (the byte-identical all-i64 path).
+#[cfg(feature = "std-surface")]
+fn mask_narrow_assign(ir: &mut IRModule, name: &str, val: ValueId) -> ValueId {
+    let ann = NARROW_LOCALS.with(|n| n.borrow().get(name).cloned());
+    match ann {
+        Some(ty) => mask_narrow_let(ir, &Some(ty), val),
+        None => val,
+    }
 }
 
 /// The byte width and signedness of a struct field type for the canonical
@@ -3277,6 +3370,13 @@ fn lower_expr(
             // No-op (no allocation) unless the module declares templates; the
             // guard restores the prior map when this fn's body finishes lowering.
             let _param_types_guard = seed_param_types(params);
+            // Fresh narrow-locals scope (seeded with this fn's narrow params) so a
+            // REASSIGNMENT of a narrow local/param re-masks to its declared width.
+            // Empty (and a no-op) for any fn with no narrow scalars — the keystone
+            // included — so the byte-identity hot path is untouched. Guard restores
+            // the prior map on body-scope exit, so narrow types never leak across fns.
+            #[cfg(feature = "std-surface")]
+            let _narrow_guard = enter_narrow_scope(params);
             // Whether the module declares generic templates (computed once):
             // gates the per-Let binding-type recording below so a non-generic
             // module records nothing on its byte-identity hot path.
@@ -3351,6 +3451,10 @@ fn lower_expr(
                         // (no-op for i64/u64/handles/collections).
                         #[cfg(feature = "std-surface")]
                         let id = mask_narrow_let(&mut fn_ir, ann, id);
+                        // Remember a narrow declared type so a LATER `c = c + …`
+                        // reassignment (incl. the desugared `c += …`) re-masks.
+                        #[cfg(feature = "std-surface")]
+                        record_narrow_let(name, ann);
                         fn_env.insert(name.clone(), id);
                         // Generic-arg inference: record this top-level Let's
                         // scalar type so a later `id(z)` over `z` monomorphizes.
@@ -3457,6 +3561,10 @@ fn lower_expr(
                     ast::Node::Assign { name, value, .. } => {
                         let id =
                             lower_expr(value, &mut fn_ir, &fn_env, &fn_struct_env, receiver_types);
+                        // Reassigning a narrow local/param re-masks to its declared
+                        // width (no-op for non-narrow names — the all-i64 hot path).
+                        #[cfg(feature = "std-surface")]
+                        let id = mask_narrow_assign(&mut fn_ir, name, id);
                         fn_env.insert(name.clone(), id);
                     }
                     other => {
@@ -3806,6 +3914,9 @@ fn lower_expr(
                     ast::Node::Assign { name, value, .. } => {
                         let id =
                             lower_expr(value, &mut then_ir, &then_env, &then_struct_env, receiver_types);
+                        // Re-mask a narrow local reassigned inside the then-branch.
+                        #[cfg(feature = "std-surface")]
+                        let id = mask_narrow_assign(&mut then_ir, name, id);
                         then_env.insert(name.clone(), id);
                         record_then_write(name, &mut then_writes);
                         then_result = id;
@@ -3931,6 +4042,9 @@ fn lower_expr(
                                 &else_struct_env,
                                 receiver_types,
                             );
+                            // Re-mask a narrow local reassigned inside the else-branch.
+                            #[cfg(feature = "std-surface")]
+                            let id = mask_narrow_assign(&mut else_ir, name, id);
                             else_env.insert(name.clone(), id);
                             record_else_write(name, &mut else_writes);
                             else_result = id;
@@ -4487,6 +4601,10 @@ fn lower_expr(
                             &body_struct_env,
                             receiver_types,
                         );
+                        // Re-mask a narrow loop-carried local to its declared width;
+                        // the masked id is what gets recorded as the carried value.
+                        #[cfg(feature = "std-surface")]
+                        let new_id = mask_narrow_assign(&mut body_ir, name, new_id);
                         body_env.insert(name.clone(), new_id);
                         record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
                     }
@@ -6487,6 +6605,12 @@ fn lower_stmt_seq(
                     ),
                     _ => lower_expr(value, ir, env, struct_env, receiver_types),
                 };
+                // Narrow-typed Region-local: mask to declared width AND record it
+                // so a later `c = c + …` reassignment in this region re-masks.
+                #[cfg(feature = "std-surface")]
+                let id = mask_narrow_let(ir, ann, id);
+                #[cfg(feature = "std-surface")]
+                record_narrow_let(name, ann);
                 env.insert(name.clone(), id);
                 id
             }
@@ -6524,6 +6648,9 @@ fn lower_stmt_seq(
             }
             ast::Node::Assign { name, value, .. } => {
                 let id = lower_expr(value, ir, env, struct_env, receiver_types);
+                // Reassigning a narrow Region-local re-masks to its declared width.
+                #[cfg(feature = "std-surface")]
+                let id = mask_narrow_assign(ir, name, id);
                 env.insert(name.clone(), id);
                 id
             }
