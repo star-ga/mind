@@ -625,6 +625,13 @@ MIND_EXPORT_WEAK int64_t string_get_byte(int64_t s, int64_t i) {
     return __mind_load_i64(base + i) & 0xFF;
 }
 
+// string_validate_utf8 — mirrors the current pure-MIND std.string contract:
+// ASCII fast-path placeholder, accepting all byte sequences for now.
+MIND_EXPORT_WEAK int64_t string_validate_utf8(int64_t s) {
+    (void)s;
+    return 0;
+}
+
 // string_push_byte — append a single byte, returning a new String handle.
 //
 // Non-mutating ABI: allocates a fresh 3-field String heap record on every
@@ -673,6 +680,125 @@ MIND_EXPORT_WEAK int64_t string_push_byte(int64_t s, int64_t b) {
     __mind_store_i64(rec + 8,  len + 1);
     __mind_store_i64(rec + 16, new_cap);
     return rec;
+}
+
+// string_eq — byte-for-byte equality, not handle identity.
+MIND_EXPORT_WEAK int64_t string_eq(int64_t a, int64_t b) {
+    int64_t alen = __mind_load_i64(a + 8);
+    int64_t blen = __mind_load_i64(b + 8);
+    if (alen != blen) return 0;
+    int64_t aaddr = __mind_load_i64(a);
+    int64_t baddr = __mind_load_i64(b);
+    if (alen <= 0) return 1;
+    return memcmp((const void *)(uintptr_t)aaddr,
+                  (const void *)(uintptr_t)baddr,
+                  (size_t)alen) == 0
+               ? 1
+               : 0;
+}
+
+// string_starts_with — byte prefix check. Empty needle is always a prefix.
+MIND_EXPORT_WEAK int64_t string_starts_with(int64_t haystack, int64_t needle) {
+    int64_t hlen = __mind_load_i64(haystack + 8);
+    int64_t nlen = __mind_load_i64(needle + 8);
+    if (nlen > hlen) return 0;
+    if (nlen <= 0) return 1;
+    int64_t haddr = __mind_load_i64(haystack);
+    int64_t naddr = __mind_load_i64(needle);
+    return memcmp((const void *)(uintptr_t)haddr,
+                  (const void *)(uintptr_t)naddr,
+                  (size_t)nlen) == 0
+               ? 1
+               : 0;
+}
+
+// string_slice_from — zero-copy view with cap=0 so subsequent appends allocate.
+MIND_EXPORT_WEAK int64_t string_slice_from(int64_t s, int64_t start) {
+    int64_t len = __mind_load_i64(s + 8);
+    if (start >= len) {
+        return string_new();
+    }
+    int64_t base = __mind_load_i64(s);
+    int64_t rec = __mind_alloc(24);
+    if (start < 0) {
+        __mind_store_i64(rec, base);
+        __mind_store_i64(rec + 8, len);
+        __mind_store_i64(rec + 16, 0);
+        return rec;
+    }
+    __mind_store_i64(rec, base + start);
+    __mind_store_i64(rec + 8, len - start);
+    __mind_store_i64(rec + 16, 0);
+    return rec;
+}
+
+// string_push_str — append src bytes to dst, returning a fresh String header.
+MIND_EXPORT_WEAK int64_t string_push_str(int64_t dst, int64_t src) {
+    int64_t dst_addr = __mind_load_i64(dst);
+    int64_t dst_len  = __mind_load_i64(dst + 8);
+    int64_t dst_cap  = __mind_load_i64(dst + 16);
+    int64_t src_addr = __mind_load_i64(src);
+    int64_t src_len  = __mind_load_i64(src + 8);
+    int64_t needed = dst_len + src_len;
+
+    int64_t new_cap;
+    if (needed <= dst_cap) {
+        new_cap = dst_cap;
+    } else {
+        new_cap = (dst_cap == 0) ? 16 : dst_cap;
+        while (new_cap < needed) new_cap *= 2;
+    }
+
+    int64_t new_addr;
+    if (new_cap == dst_cap) {
+        new_addr = dst_addr;
+    } else {
+        new_addr = __mind_alloc(new_cap + 7);
+        if (dst_len > 0 && dst_addr != 0) {
+            memcpy((void *)(uintptr_t)new_addr,
+                   (const void *)(uintptr_t)dst_addr,
+                   (size_t)dst_len);
+        }
+    }
+    if (src_len > 0 && src_addr != 0) {
+        memcpy((void *)(uintptr_t)(new_addr + dst_len),
+               (const void *)(uintptr_t)src_addr,
+               (size_t)src_len);
+    }
+
+    int64_t rec = __mind_alloc(24);
+    __mind_store_i64(rec, new_addr);
+    __mind_store_i64(rec + 8, needed);
+    __mind_store_i64(rec + 16, new_cap);
+    return rec;
+}
+
+// string_push_i64 — decimal ASCII append, matching std/string.mind.
+MIND_EXPORT_WEAK int64_t string_push_i64(int64_t s, int64_t n) {
+    if (n == 0) {
+        return string_push_byte(s, 48);
+    }
+    int64_t out = s;
+    uint64_t mag;
+    if (n < 0) {
+        out = string_push_byte(out, 45);
+        mag = ~(uint64_t)n + 1ULL;
+    } else {
+        mag = (uint64_t)n;
+    }
+
+    uint64_t div = 1;
+    uint64_t tmp = mag;
+    while (tmp >= 10) {
+        div *= 10;
+        tmp /= 10;
+    }
+    while (div > 0) {
+        uint64_t digit = (mag / div) % 10;
+        out = string_push_byte(out, (int64_t)(48 + digit));
+        div /= 10;
+    }
+    return out;
 }
 
 // string_from_range — a fresh String holding the bytes [src, src+n). Deterministic.

@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2934 | **Est. tokens:** ~7,035,828
-**Generated:** 2026-06-23 12:46 UTC
+**Files:** 2935 | **Est. tokens:** ~7,037,846
+**Generated:** 2026-06-23 12:51 UTC
 
 ## Token Budget Guide
 
@@ -63,7 +63,7 @@
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
 | `.github/workflows/` | 8 | ~9,002 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
-| `runtime-support/` | 1 | ~15,557 |
+| `runtime-support/` | 1 | ~16,548 |
 | `scripts/` | 7 | ~9,074 |
 | `scripts/mind-vs-rust/` | 3 | ~933 |
 | `scripts/mind-vs-rust/src/` | 1 | ~2,372 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 242 | ~390,342 |
+| `tests/` | 243 | ~391,369 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -851,7 +851,7 @@
 - `verification.mind` (~948 tok, large) — Verification plane for inference consistency (LCU)
 ### `runtime-support/`
 
-- `mind_intrinsics.c` (~15557 tok, huge) — Copyright 2025 STARGA Inc.
+- `mind_intrinsics.c` (~16548 tok, huge) — Copyright 2025 STARGA Inc.
 ### `scripts/`
 
 - `anatomy-hook.sh` (~258 tok, medium) — anatomy-hook.sh — Git pre-commit hook to refresh ANATOMY.md
@@ -4389,6 +4389,7 @@
 - `string_escape_decode_run.rs` (~1209 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_from_bytes_run.rs` (~709 tok, large) — Copyright 2025 STARGA Inc.
+- `string_runtime_shim_run.rs` (~1027 tok, large) — Copyright 2025 STARGA Inc.
 - `string_split_run.rs` (~861 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_array_field_run.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
 - `struct_field_collection_run.rs` (~854 tok, large) — Copyright 2025 STARGA Inc.
