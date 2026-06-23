@@ -4771,6 +4771,47 @@ impl<'a> P<'a> {
             return Ok(Pattern::Literal(Literal::Int(-v)));
         }
         if self.peek().is_some_and(|c| c.is_ascii_digit()) {
+            // Radix-prefixed integer literal pattern: `0x..`/`0o..`/`0b..`.
+            // A pattern matches on the VALUE, so the optional integer type
+            // suffix (`u8`/`i8`/…) is consumed and discarded (width is purely
+            // annotation here). Mirrors the expression-position radix path so
+            // `match c { 0x00u8 => …, 0b10i8 => … }` parse. Additive: the
+            // keystone uses no radix/suffixed literal patterns → byte-identical.
+            if self.b[self.pos] == b'0'
+                && self
+                    .b
+                    .get(self.pos + 1)
+                    .is_some_and(|c| matches!(c.to_ascii_lowercase(), b'x' | b'o' | b'b'))
+            {
+                let radix: u32 = match self.b[self.pos + 1].to_ascii_lowercase() {
+                    b'x' => 16,
+                    b'o' => 8,
+                    _ => 2,
+                };
+                self.pos += 2; // consume `0x` / `0o` / `0b`
+                let dstart = self.pos;
+                while self.pos < self.b.len()
+                    && (self.b[self.pos] == b'_'
+                        || (self.b[self.pos] as char).is_digit(radix))
+                {
+                    self.pos += 1;
+                }
+                let raw: String = self.b[dstart..self.pos]
+                    .iter()
+                    .filter(|&&c| c != b'_')
+                    .map(|&c| c as char)
+                    .collect();
+                if raw.is_empty() {
+                    return Err(
+                        self.err("expected digits after integer radix prefix in pattern".into())
+                    );
+                }
+                let v = i64::from_str_radix(&raw, radix)
+                    .or_else(|_| u64::from_str_radix(&raw, radix).map(|u| u as i64))
+                    .map_err(|_| self.err("integer overflow in pattern".into()))?;
+                let _ = self.int_type_suffix(); // discard a trailing width suffix
+                return Ok(Pattern::Literal(Literal::Int(v)));
+            }
             let d = self.digits().unwrap();
             if self.at(b'.') && self.b.get(self.pos + 1).is_some_and(|c| c.is_ascii_digit()) {
                 self.pos += 1;
@@ -4782,6 +4823,7 @@ impl<'a> P<'a> {
                 return Ok(Pattern::Literal(Literal::Float(f)));
             }
             let v = self.parse_i64_pattern(&d)?;
+            let _ = self.int_type_suffix(); // discard a trailing width suffix (e.g. `0u8`)
             return Ok(Pattern::Literal(Literal::Int(v)));
         }
         // A leading `(` with no preceding name is a tuple pattern:
