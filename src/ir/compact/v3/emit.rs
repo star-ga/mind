@@ -562,6 +562,19 @@ fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
         Instr::Region { body, .. } => {
             collect_strings(body, st);
         }
+        // `Break`/`Continue` carry a `live` snapshot (`name -> ValueId`) that
+        // `emit_instr` serializes via `encode_named_vids` — i.e. it writes a
+        // string-table index per name. Those names MUST be interned here or
+        // `StringTable::get` falls back to index 0 (release) / panics (debug),
+        // silently round-tripping the live binding to `strings[0]` — a wrong
+        // decoded value for any name that appears only inside a break/continue
+        // snapshot (e.g. an in-scope var that is not a loop-carried `live_var`).
+        #[cfg(feature = "std-surface")]
+        Instr::Break { live } | Instr::Continue { live } => {
+            for (name, _) in live {
+                st.intern(name);
+            }
+        }
         #[cfg(feature = "std-surface")]
         Instr::ExternFnDecl {
             name,
