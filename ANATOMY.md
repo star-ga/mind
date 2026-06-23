@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2930 | **Est. tokens:** ~7,030,672
-**Generated:** 2026-06-23 10:57 UTC
+**Files:** 2931 | **Est. tokens:** ~7,031,436
+**Generated:** 2026-06-23 11:06 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 238 | ~385,644 |
+| `tests/` | 239 | ~386,408 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4410,6 +4410,7 @@
 - `dtype_mismatch.mind` (~74 tok, small) — Type checker test: Dtype mismatch detection
 ### `tests/`
 
+- `typed_literal_match_pattern_run.rs` (~764 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_struct_run.rs` (~628 tok, large) — Copyright 2025 STARGA Inc.
