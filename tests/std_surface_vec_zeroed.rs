@@ -16,6 +16,9 @@
 
 #![cfg(feature = "std-surface")]
 
+mod common;
+use common::mindc_bin;
+
 use libmind::eval::lower::lower_to_ir;
 use libmind::ir::Instr;
 use libmind::parser;
@@ -45,15 +48,11 @@ fn vec_zeroed_parses_and_lowers() {
 
 #[cfg(all(unix, feature = "mlir-build", feature = "cross-module-imports"))]
 mod mlir_functional {
+    use super::mindc_bin;
     use std::path::PathBuf;
     use std::process::Command;
 
-    fn mindc_bin() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("release")
-            .join("mindc")
-    }
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     #[test]
     fn vec_zeroed_zero_fill_via_compiled_so() {

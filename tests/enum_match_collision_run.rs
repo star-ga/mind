@@ -29,7 +29,9 @@
 
 #![cfg(all(unix, feature = "mlir-build", feature = "std-surface"))]
 
-use std::path::PathBuf;
+mod common;
+use common::mindc_bin;
+
 use std::process::Command;
 
 // `Alpha` sorts lexicographically before `Zeta`, so `Alpha::Foo` (tag 1) is the
@@ -57,15 +59,7 @@ pub fn t_z_foo() -> i64 { gz(Zeta::Foo(7)) }
 pub fn t_z_bar() -> i64 { gz(Zeta::Bar(3)) }
 "#;
 
-fn mindc_bin() -> PathBuf {
-    let m = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let d = m.join("target").join("debug").join("mindc");
-    if d.exists() {
-        d
-    } else {
-        m.join("target").join("release").join("mindc")
-    }
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 #[test]
 fn cross_enum_bare_variant_collision_takes_correct_arm() {

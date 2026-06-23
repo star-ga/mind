@@ -9,34 +9,20 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 // Part of the MIND project (Machine Intelligence Native Design).
+
+mod common;
+use common::mindc_bin;
 
 use std::path::PathBuf;
 use std::process::Command;
 
 /// Get the path to the mindc binary from the cargo target directory
-fn mindc_binary() -> PathBuf {
-    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target");
-
-    // Use release or debug based on build profile
-    #[cfg(debug_assertions)]
-    path.push("debug");
-    #[cfg(not(debug_assertions))]
-    path.push("release");
-
-    #[cfg(target_os = "windows")]
-    path.push("mindc.exe");
-    #[cfg(not(target_os = "windows"))]
-    path.push("mindc");
-
-    path
-}
+// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
 /// Check if the mindc binary exists, skip test if not
 fn require_mindc() -> PathBuf {
-    let binary = mindc_binary();
+    let binary = mindc_bin();
     if !binary.exists() {
         eprintln!("Skipping: mindc binary not found at {:?}", binary);
     }
