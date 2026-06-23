@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2921 | **Est. tokens:** ~7,018,202
-**Generated:** 2026-06-23 04:55 UTC
+**Files:** 2924 | **Est. tokens:** ~7,022,711
+**Generated:** 2026-06-23 05:48 UTC
 
 ## Token Budget Guide
 
@@ -383,11 +383,11 @@
 | `src/eval/stdlib/` | 2 | ~8,529 |
 | `src/exec/` | 3 | ~4,592 |
 | `src/ffi/` | 3 | ~3,919 |
-| `src/fmt/` | 3 | ~19,080 |
+| `src/fmt/` | 3 | ~19,387 |
 | `src/ir/` | 4 | ~26,649 |
 | `src/ir/compact/` | 3 | ~15,194 |
 | `src/ir/compact/v2/` | 8 | ~37,343 |
-| `src/ir/compact/v3/` | 4 | ~44,790 |
+| `src/ir/compact/v3/` | 4 | ~44,978 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,415 |
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 231 | ~378,607 |
+| `tests/` | 233 | ~381,466 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
@@ -439,7 +439,7 @@
 | `tests/selfhost_gaps/` | 67 | ~5,301 |
 | `tests/shapes/` | 3 | ~260 |
 | `tests/type_checker/` | 2 | ~140 |
-| `tools/` | 3 | ~3,423 |
+| `tools/` | 4 | ~4,578 |
 | `tools/mindfuzz/` | 7 | ~15,992 |
 | `tools/mindfuzz/seeds/` | 6 | ~1,330 |
 | `tools/mindfuzz/violations/` | 1 | ~0 |
@@ -3737,7 +3737,7 @@
 
 - `cli.rs` (~3873 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~594 tok, large) — Copyright 2025 STARGA Inc.
-- `printer.rs` (~14613 tok, huge) — Copyright 2025 STARGA Inc.
+- `printer.rs` (~14920 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/`
 
 - `emit.rs` (~4693 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3755,7 +3755,7 @@
 - `varint.rs` (~1599 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v3/`
 
-- `emit.rs` (~10545 tok, huge) — Copyright 2025 STARGA Inc.
+- `emit.rs` (~10733 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~10856 tok, huge) — Copyright 2025 STARGA Inc.
 - `mod.rs` (~13622 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse.rs` (~9767 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4068,6 +4068,7 @@
 - `map_surface_run.rs` (~987 tok, large) — Copyright 2025 STARGA Inc.
 - `match_arm_stmt_run.rs` (~884 tok, large) — Copyright 2025 STARGA Inc.
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
+- `mic3_break_continue_string_roundtrip.rs` (~1611 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2494 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4637 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5332 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4372,6 +4373,7 @@
 - `stride_gather_grad.rs` (~312 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_preview.rs` (~279 tok, medium) — Copyright 2025 STARGA Inc.
 - `stride_types.rs` (~250 tok, medium) — Copyright 2025 STARGA Inc.
+- `string_escape_decode_run.rs` (~1248 tok, large) — Copyright 2025 STARGA Inc.
 - `string_escape_parse.rs` (~483 tok, medium) — Copyright 2025 STARGA Inc.
 - `string_from_bytes_run.rs` (~748 tok, large) — Copyright 2025 STARGA Inc.
 - `string_split_run.rs` (~900 tok, large) — Copyright 2025 STARGA Inc.
@@ -4409,7 +4411,7 @@
 ### `tools/`
 
 - `add_copyright_headers.py` (~1132 tok, large) — # Copyright 2025 STARGA Inc.
-- `bench_gate.py` (~1719 tok, huge) — # Copyright 2025 STARGA Inc.
+- `bench_gate.py` (~2344 tok, huge) — # Copyright 2025 STARGA Inc.
 - `cargo-deny-sanitize.sh` (~572 tok, large) — Run cargo-deny but sanitize advisory entries that older cargo-deny versions
 ### `tools/mindfuzz/`
 
@@ -4443,6 +4445,9 @@
 
 - `__init__.py` (~0 tok, tiny)
 - `test_bridge.py` (~1244 tok, large) — # Copyright 2025-2026 STARGA Inc.
+### `tools/`
+
+- `run_bench_gate.sh` (~530 tok, large) — Copyright 2025 STARGA Inc. Licensed under the Apache License, Version 2.0.
 ### `.wrangler/cache/`
 
 - `wrangler-account.json` (~21 tok, tiny) — Keys: account
