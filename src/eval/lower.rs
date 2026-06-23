@@ -2158,9 +2158,30 @@ fn rewrite_collection_mutations(
                 );
             };
             match stmt {
-                ast::Node::Let { value, .. }
-                | ast::Node::Assign { value, .. }
-                | ast::Node::LetTuple { value, .. } => reject(value),
+                // A SAME-NAME functional-update rebind `let m = m.insert(..)`
+                // SHADOWS the receiver `m` with the realloc'd fresh handle: the
+                // old handle becomes unreachable, so nothing dangles and the
+                // mutation is NOT lost. This is the safe, idiomatic map<K,V> /
+                // vec update form (the new `let` binds the fresh handle), so it
+                // must be allowed — unlike a DIFFERENT-name `let n = m.insert(..)`
+                // which leaves `m` pointing at the freed handle and IS rejected.
+                ast::Node::Let { name, value, .. } => {
+                    let same_name_rebind = matches!(
+                        value.as_ref(),
+                        ast::Node::MethodCall { receiver, method, .. }
+                            if COLLECTION_MUTATORS.contains(&method.as_str())
+                                && matches!(
+                                    receiver.as_ref(),
+                                    ast::Node::Lit(Literal::Ident(r), _) if r == name
+                                )
+                    );
+                    if !same_name_rebind {
+                        reject(value);
+                    }
+                }
+                ast::Node::Assign { value, .. } | ast::Node::LetTuple { value, .. } => {
+                    reject(value)
+                }
                 ast::Node::Return { value: Some(v), .. } => reject(v),
                 ast::Node::FieldAssign { receiver, value, .. } => {
                     reject(receiver);
