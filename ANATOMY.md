@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2906 | **Est. tokens:** ~7,002,808
-**Generated:** 2026-06-23 00:21 UTC
+**Files:** 2915 | **Est. tokens:** ~7,010,386
+**Generated:** 2026-06-23 01:16 UTC
 
 ## Token Budget Guide
 
@@ -405,19 +405,23 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 224 | ~366,403 |
+| `tests/` | 225 | ~370,791 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
-| `tests/cross_substrate_identity/` | 2 | ~3,708 |
+| `tests/cross_substrate_identity/` | 2 | ~4,052 |
+| `tests/cross_substrate_identity/dot-i16-4096/` | 2 | ~590 |
 | `tests/cross_substrate_identity/dot-l1-q16/` | 2 | ~305 |
 | `tests/cross_substrate_identity/dot-l2-q16/` | 2 | ~755 |
 | `tests/cross_substrate_identity/gemm-i8-64x64x64/` | 2 | ~649 |
 | `tests/cross_substrate_identity/gemm-q16-64x64x64/` | 2 | ~558 |
+| `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~838 |
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
+| `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~730 |
 | `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,238 |
+| `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~688 |
 | `tests/fixtures/` | 6 | ~228 |
 | `tests/ir_verification/` | 2 | ~108 |
 | `tests/lexical/` | 3 | ~191 |
@@ -3877,6 +3881,7 @@
 - `vec.mind` (~1100 tok, large) — std/vec.mind — RFC 0005 Phase 2: pure-MIND growable vector.
 ### `tests/`
 
+- `array_ctor_push_get_run.rs` (~945 tok, large) — Copyright 2025 STARGA Inc.
 - `array_surface_run.rs` (~925 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
 
@@ -3938,6 +3943,10 @@
 - `cross_module_cdylib_compose.rs` (~4159 tok, huge) — Copyright 2025 STARGA Inc.
 - `cross_module_enum_run.rs` (~1171 tok, large) — Copyright 2025 STARGA Inc.
 - `cross_module.rs` (~847 tok, large) — Copyright 2025 STARGA Inc.
+### `tests/cross_substrate_identity/dot-i16-4096/`
+
+- `manifest.toml` (~384 tok, medium) — version = "1"
+- `reference_hashes.toml` (~206 tok, medium) — avx2 = "af0fc3cf1b510f8f7306a5d7250ae25a52b35281a7cefff2a0ac94b0cd80a127"
 ### `tests/cross_substrate_identity/dot-l1-q16/`
 
 - `manifest.toml` (~157 tok, small) — version = "1"
@@ -3954,6 +3963,10 @@
 
 - `manifest.toml` (~391 tok, medium) — version = "1"
 - `reference_hashes.toml` (~167 tok, small) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
+### `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/`
+
+- `manifest.toml` (~529 tok, large) — version = "1"
+- `reference_hashes.toml` (~309 tok, medium) — avx2 = "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f"
 ### `tests/cross_substrate_identity/gemv-i16-256x256/`
 
 - `manifest.toml` (~375 tok, medium) — version = "1"
@@ -3962,16 +3975,24 @@
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
 - `reference_hashes.toml` (~151 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+### `tests/cross_substrate_identity/q16-arith-chain/`
+
+- `manifest.toml` (~432 tok, medium) — version = "1"
+- `reference_hashes.toml` (~298 tok, medium) — avx2 = "ce93cdeb0e650c1c8e0cd05687ed986bbdbac691b6a8742e155b8ffd65997d78"
 ### `tests/cross_substrate_identity/`
 
-- `README.md` (~875 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
+- `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~9408 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~12851 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"
 - `reference_hashes.toml` (~460 tok, medium) — avx2 = "7592a52a5e10a2f24469765f71ce1f9f8ebd9efb51904cf9a18f310d33b3c92d"
+### `tests/cross_substrate_identity/struct-handle-roundtrip/`
+
+- `manifest.toml` (~403 tok, medium) — version = "1"
+- `reference_hashes.toml` (~285 tok, medium) — avx2 = "018a335a0e9fc397c6f41cba4fc2617f0cf8d1326c5dbf77d53e27feacaeb64c"
 ### `tests/cross_substrate_identity/`
 
 - `xnode_driver.c` (~2833 tok, huge)
