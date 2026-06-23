@@ -295,6 +295,38 @@ impl<'a> MicbEncoder<'a> {
     }
 }
 
+// ─── DoS hardening ───────────────────────────────────────────────────────────
+
+/// Absolute cap on any ULEB128 element count or byte-length read by the
+/// MIC-B parser.  16 million is comfortably above any realistic graph
+/// (the residual-block test uses ~tens of entries) while staying far below
+/// the gigabytes of allocation that a single crafted varint could otherwise
+/// trigger on a stream reader (where there is no known total length to
+/// compare against).  A well-formed artifact always has counts below this
+/// cap, so this limit is never reached on valid input — every existing
+/// round-trip test passes byte-identically.
+const MAX_MICB_ELEMENTS: usize = 16_000_000;
+
+/// Read one ULEB128 value from `r` and reject it if it exceeds
+/// [`MAX_MICB_ELEMENTS`].  Mirrors the `read_count` helper in the mic@3
+/// parser (`src/ir/compact/v3/parse.rs`) adapted for the stream case where
+/// no total-input length is available.
+#[inline]
+fn read_bounded_count<R: Read>(r: &mut R) -> Result<usize, MicbError> {
+    let n = uleb128_read(r)? as usize;
+    if n > MAX_MICB_ELEMENTS {
+        return Err(MicbError {
+            message: format!(
+                "element count {} exceeds MAX_MICB_ELEMENTS {} (possible DoS blob)",
+                n, MAX_MICB_ELEMENTS
+            ),
+        });
+    }
+    Ok(n)
+}
+
+// ─── MIC-B decoder ───────────────────────────────────────────────────────────
+
 /// MIC-B decoder.
 struct MicbDecoder {
     strings: Vec<String>,
@@ -330,10 +362,10 @@ impl MicbDecoder {
         }
 
         // String table
-        let n_strings = uleb128_read(r)? as usize;
+        let n_strings = read_bounded_count(r)?;
         self.strings = Vec::with_capacity(n_strings);
         for _ in 0..n_strings {
-            let len = uleb128_read(r)? as usize;
+            let len = read_bounded_count(r)?;
             let mut buf = vec![0u8; len];
             r.read_exact(&mut buf)?;
             let s = String::from_utf8(buf).map_err(|_| MicbError {
@@ -343,7 +375,7 @@ impl MicbDecoder {
         }
 
         // Symbol table
-        let n_symbols = uleb128_read(r)? as usize;
+        let n_symbols = read_bounded_count(r)?;
         let mut symbols = Vec::with_capacity(n_symbols);
         for _ in 0..n_symbols {
             let idx = uleb128_read(r)? as usize;
@@ -356,7 +388,7 @@ impl MicbDecoder {
         }
 
         // Type table
-        let n_types = uleb128_read(r)? as usize;
+        let n_types = read_bounded_count(r)?;
         let mut types = Vec::with_capacity(n_types);
         for _ in 0..n_types {
             let mut dtype_byte = [0u8; 1];
@@ -365,7 +397,7 @@ impl MicbDecoder {
                 message: format!("unknown dtype byte: {}", dtype_byte[0]),
             })?;
 
-            let rank = uleb128_read(r)? as usize;
+            let rank = read_bounded_count(r)?;
             let mut shape = Vec::with_capacity(rank);
             for _ in 0..rank {
                 let idx = uleb128_read(r)? as usize;
@@ -381,7 +413,7 @@ impl MicbDecoder {
         }
 
         // Value table
-        let n_values = uleb128_read(r)? as usize;
+        let n_values = read_bounded_count(r)?;
         let mut values = Vec::with_capacity(n_values);
         for vid in 0..n_values {
             let value = self.decode_value(r, vid, types.len())?;
@@ -445,7 +477,7 @@ impl MicbDecoder {
             2 => {
                 // Node
                 let opcode = self.decode_opcode(r)?;
-                let n_inputs = uleb128_read(r)? as usize;
+                let n_inputs = read_bounded_count(r)?;
                 let mut inputs = Vec::with_capacity(n_inputs);
                 for _ in 0..n_inputs {
                     let inp = uleb128_read(r)? as usize;
@@ -496,7 +528,7 @@ impl MicbDecoder {
     }
 
     fn decode_map_entries<R: Read>(&self, r: &mut R) -> Result<Map, MicbError> {
-        let count = uleb128_read(r)? as usize;
+        let count = read_bounded_count(r)?;
         let mut map = Map::new();
         for _ in 0..count {
             let key_idx = uleb128_read(r)? as usize;
@@ -531,7 +563,7 @@ impl MicbDecoder {
                 Ok(MapValue::Int(i))
             }
             2 => {
-                let len = uleb128_read(r)? as usize;
+                let len = read_bounded_count(r)?;
                 let mut buf = vec![0u8; len];
                 r.read_exact(&mut buf)?;
                 Ok(MapValue::Bytes(buf))
@@ -566,7 +598,7 @@ impl MicbDecoder {
             9 => Ok(Opcode::Gelu),
             10 => Ok(Opcode::LayerNorm),
             11 => {
-                let n = uleb128_read(r)? as usize;
+                let n = read_bounded_count(r)?;
                 let mut perm = Vec::with_capacity(n);
                 for _ in 0..n {
                     perm.push(sleb128_read(r)?);
@@ -575,7 +607,7 @@ impl MicbDecoder {
             }
             12 => Ok(Opcode::Reshape),
             13 => {
-                let n = uleb128_read(r)? as usize;
+                let n = read_bounded_count(r)?;
                 let mut axes = Vec::with_capacity(n);
                 for _ in 0..n {
                     axes.push(sleb128_read(r)?);
@@ -583,7 +615,7 @@ impl MicbDecoder {
                 Ok(Opcode::Sum(axes))
             }
             14 => {
-                let n = uleb128_read(r)? as usize;
+                let n = read_bounded_count(r)?;
                 let mut axes = Vec::with_capacity(n);
                 for _ in 0..n {
                     axes.push(sleb128_read(r)?);
@@ -591,7 +623,7 @@ impl MicbDecoder {
                 Ok(Opcode::Mean(axes))
             }
             15 => {
-                let n = uleb128_read(r)? as usize;
+                let n = read_bounded_count(r)?;
                 let mut axes = Vec::with_capacity(n);
                 for _ in 0..n {
                     axes.push(sleb128_read(r)?);

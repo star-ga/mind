@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2936 | **Est. tokens:** ~7,038,818
-**Generated:** 2026-06-23 13:08 UTC
+**Files:** 2938 | **Est. tokens:** ~7,042,427
+**Generated:** 2026-06-23 22:18 UTC
 
 ## Token Budget Guide
 
@@ -386,7 +386,7 @@
 | `src/fmt/` | 3 | ~19,662 |
 | `src/ir/` | 4 | ~28,158 |
 | `src/ir/compact/` | 3 | ~15,194 |
-| `src/ir/compact/v2/` | 8 | ~37,343 |
+| `src/ir/compact/v2/` | 8 | ~37,747 |
 | `src/ir/compact/v3/` | 4 | ~44,978 |
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
@@ -401,11 +401,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~8,519 |
+| `src/type_checker/` | 1 | ~8,655 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 244 | ~392,341 |
+| `tests/` | 246 | ~395,410 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3746,7 +3746,7 @@
 - `parse.rs` (~8124 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/ir/compact/v2/`
 
-- `binary.rs` (~5910 tok, huge) — Copyright 2025 STARGA Inc.
+- `binary.rs` (~6314 tok, huge) — Copyright 2025 STARGA Inc.
 - `emit.rs` (~2445 tok, huge) — Copyright 2025 STARGA Inc.
 - `evidence.rs` (~9867 tok, huge) — Copyright 2025 STARGA Inc.
 - `map_tests.rs` (~5702 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3845,7 +3845,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~8519 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~8655 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4044,6 +4044,7 @@
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
+- `grad_wrt_resolve.rs` (~736 tok, large) — Copyright 2025 STARGA Inc.
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4081,6 +4082,7 @@
 - `method_call.rs` (~397 tok, medium) — Copyright 2025 STARGA Inc.
 - `mic3_break_continue_string_roundtrip.rs` (~1611 tok, huge) — Copyright 2026 STARGA Inc.
 - `mic3_cli_emit.rs` (~2431 tok, huge) — Copyright 2025 STARGA Inc.
+- `micb_dos_reject.rs` (~2333 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_build_phase_a.rs` (~4566 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_cache_phase_f.rs` (~5276 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc_deps_phase_de.rs` (~6823 tok, huge) — Copyright 2025 STARGA Inc.
