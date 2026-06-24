@@ -18225,6 +18225,469 @@ pub fn nb_emit_load_i64(code: String, addr_disp: i64) -> String {
     nb_push(c6, 0)
 }
 
+// emit_store_i8(addr_disp, val_disp): write the LOW BYTE of val only (mirror
+// src/native::emit_store_i8). The byte store must NOT clobber the adjacent 7.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov rcx,[rbp+val] = 48 8B 8D
+//   <disp32> ; mov byte [rax],cl = 88 08.
+pub fn nb_emit_store_i8(code: String, addr_disp: i64, val_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    let c7: String = nb_push(c6, 141);
+    let c8: String = nb_i32le_signed(c7, val_disp);
+    let c9: String = nb_push(c8, 136);
+    nb_push(c9, 8)
+}
+
+// emit_load_i8(addr_disp): load ONE byte, ZERO-extend to i64 (mirror
+// src/native::emit_load_i8). Result in rax.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; movzx rax,byte [rax] = 48 0F B6 00.
+pub fn nb_emit_load_i8(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 182);
+    nb_push(c7, 0)
+}
+
+// emit_write(fd_disp, buf_disp, count_disp): raw write(2) syscall, NO libc
+// (mirror src/native::emit_write). The print path's offset arg is the -1 sentinel
+// that write(2) already implements, so it is intentionally unused here.
+//   mov rdi,[rbp+fd]    = 48 8B BD <disp32>
+//   mov rsi,[rbp+buf]   = 48 8B B5 <disp32>
+//   mov rdx,[rbp+count] = 48 8B 95 <disp32>
+//   mov rax,1           = 48 C7 C0 01 00 00 00
+//   syscall             = 0F 05
+pub fn nb_emit_write(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 189);
+    let c4: String = nb_i32le_signed(c3, fd_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    let c7: String = nb_push(c6, 181);
+    let c8: String = nb_i32le_signed(c7, buf_disp);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 139);
+    let c11: String = nb_push(c10, 149);
+    let c12: String = nb_i32le_signed(c11, count_disp);
+    let c13: String = nb_push(c12, 72);
+    let c14: String = nb_push(c13, 199);
+    let c15: String = nb_push(c14, 192);
+    let c16: String = nb_push(c15, 1);
+    let c17: String = nb_push(c16, 0);
+    let c18: String = nb_push(c17, 0);
+    let c19: String = nb_push(c18, 0);
+    let c20: String = nb_push(c19, 15);
+    nb_push(c20, 5)
+}
+
+// emit_read(fd_disp, buf_disp, count_disp): raw read(2) syscall, NO libc (mirror
+// src/native::emit_read). The exact dual of nb_emit_write; rax=0 (SYS_read).
+//   mov rdi,[rbp+fd]    = 48 8B BD <disp32>
+//   mov rsi,[rbp+buf]   = 48 8B B5 <disp32>
+//   mov rdx,[rbp+count] = 48 8B 95 <disp32>
+//   mov rax,0           = 48 C7 C0 00 00 00 00
+//   syscall             = 0F 05
+pub fn nb_emit_read(code: String, fd_disp: i64, buf_disp: i64, count_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 189);
+    let c4: String = nb_i32le_signed(c3, fd_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    let c7: String = nb_push(c6, 181);
+    let c8: String = nb_i32le_signed(c7, buf_disp);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 139);
+    let c11: String = nb_push(c10, 149);
+    let c12: String = nb_i32le_signed(c11, count_disp);
+    let c13: String = nb_push(c12, 72);
+    let c14: String = nb_push(c13, 199);
+    let c15: String = nb_push(c14, 192);
+    let c16: String = nb_push(c15, 0);
+    let c17: String = nb_push(c16, 0);
+    let c18: String = nb_push(c17, 0);
+    let c19: String = nb_push(c18, 0);
+    let c20: String = nb_push(c19, 15);
+    nb_push(c20, 5)
+}
+
+// emit_free: the no-free bump arena (mirror src/native::__mind_free arm). The ptr
+// arg is intentionally unread; the contract value is 0.
+//   xor rax,rax = 48 31 C0
+pub fn nb_emit_free_xor(code: String) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 49);
+    nb_push(c2, 192)
+}
+
+// emit_realloc(addr_disp, bytes_disp): grow-and-preserve over the no-free bump
+// arena (mirror src/native::emit_realloc byte-for-byte). New DATA ptr -> rax. The
+// three internal forward jumps (je-done, jge-exit, jmp-back) are self-contained
+// within this emitted sequence; their rel32s are patched in-place after assembly
+// using the captured absolute offsets (same pattern as the If-arm jumps). All
+// emitted bytes are a pure function of the IR.
+pub fn nb_emit_realloc(code: String, addr_disp: i64, bytes_disp: i64) -> String {
+    // rsi = round_up([new_bytes],8)
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 181);
+    let c4: String = nb_i32le_signed(c3, bytes_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 131);
+    let c7: String = nb_push(c6, 198);
+    let c8: String = nb_push(c7, 7);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 131);
+    let c11: String = nb_push(c10, 230);
+    let c12: String = nb_push(c11, 248);
+    // alloc the new block (header + data) -> rax
+    let c13: String = nb_emit_alloc_core(c12);
+    // r8 = [addr]  (old data ptr)  = 4C 8B 85 <disp32>
+    let c14: String = nb_push(c13, 76);
+    let c15: String = nb_push(c14, 139);
+    let c16: String = nb_push(c15, 133);
+    let c17: String = nb_i32le_signed(c16, addr_disp);
+    // test r8,r8 = 4D 85 C0
+    let c18: String = nb_push(c17, 77);
+    let c19: String = nb_push(c18, 133);
+    let c20: String = nb_push(c19, 192);
+    // je rel32 (skip copy when addr==0) = 0F 84 <rel32>
+    let c21: String = nb_push(c20, 15);
+    let c22: String = nb_push(c21, 132);
+    let je_site: i64 = string_len(c22);
+    let c23: String = nb_u32(c22, 0);
+    // r10 = [r8-8]  (old_size) = 4D 8B 50 F8
+    let c24: String = nb_push(c23, 77);
+    let c25: String = nb_push(c24, 139);
+    let c26: String = nb_push(c25, 80);
+    let c27: String = nb_push(c26, 248);
+    // r11 = [rbp+new_bytes] = 4C 8B 9D <disp32>
+    let c28: String = nb_push(c27, 76);
+    let c29: String = nb_push(c28, 139);
+    let c30: String = nb_push(c29, 157);
+    let c31: String = nb_i32le_signed(c30, bytes_disp);
+    // add r11,7 = 49 83 C3 07 ; and r11,-8 = 49 83 E3 F8
+    let c32: String = nb_push(c31, 73);
+    let c33: String = nb_push(c32, 131);
+    let c34: String = nb_push(c33, 195);
+    let c35: String = nb_push(c34, 7);
+    let c36: String = nb_push(c35, 73);
+    let c37: String = nb_push(c36, 131);
+    let c38: String = nb_push(c37, 227);
+    let c39: String = nb_push(c38, 248);
+    // cmp r10,r11 = 4D 39 DA ; cmovg r10,r11 = 4D 0F 4F D3
+    let c40: String = nb_push(c39, 77);
+    let c41: String = nb_push(c40, 57);
+    let c42: String = nb_push(c41, 218);
+    let c43: String = nb_push(c42, 77);
+    let c44: String = nb_push(c43, 15);
+    let c45: String = nb_push(c44, 79);
+    let c46: String = nb_push(c45, 211);
+    // xor rcx,rcx = 48 31 C9
+    let c47: String = nb_push(c46, 72);
+    let c48: String = nb_push(c47, 49);
+    let c49: String = nb_push(c48, 201);
+    // loop_top:
+    let loop_top: i64 = string_len(c49);
+    // cmp rcx,r10 = 4C 39 D1
+    let c50: String = nb_push(c49, 76);
+    let c51: String = nb_push(c50, 57);
+    let c52: String = nb_push(c51, 209);
+    // jge rel32 (exit) = 0F 8D <rel32>
+    let c53: String = nb_push(c52, 15);
+    let c54: String = nb_push(c53, 141);
+    let jge_site: i64 = string_len(c54);
+    let c55: String = nb_u32(c54, 0);
+    // mov rdx,[r8+rcx] = 49 8B 14 08 ; mov [rax+rcx],rdx = 48 89 14 08
+    let c56: String = nb_push(c55, 73);
+    let c57: String = nb_push(c56, 139);
+    let c58: String = nb_push(c57, 20);
+    let c59: String = nb_push(c58, 8);
+    let c60: String = nb_push(c59, 72);
+    let c61: String = nb_push(c60, 137);
+    let c62: String = nb_push(c61, 20);
+    let c63: String = nb_push(c62, 8);
+    // add rcx,8 = 48 83 C1 08
+    let c64: String = nb_push(c63, 72);
+    let c65: String = nb_push(c64, 131);
+    let c66: String = nb_push(c65, 193);
+    let c67: String = nb_push(c66, 8);
+    // jmp rel32 back to loop_top = E9 <rel32>
+    let c68: String = nb_push(c67, 233);
+    let jmp_site: i64 = string_len(c68);
+    let c69: String = nb_u32(c68, 0);
+    // after_loop: patch jge -> here
+    let after_loop: i64 = string_len(c69);
+    // done: (je target) -> here (same point: nothing emitted between)
+    let done_at: i64 = after_loop;
+    // Patch the three rel32s in place. rel = target - (site + 4).
+    let addr: i64 = string_addr(c69);
+    let _p1: i64 = nb_patch_rel32(addr, je_site, done_at - (je_site + 4));
+    let _p2: i64 = nb_patch_rel32(addr, jge_site, after_loop - (jge_site + 4));
+    let _p3: i64 = nb_patch_rel32(addr, jmp_site, loop_top - (jmp_site + 4));
+    c69
+}
+
+// nb_intrinsic_id(buf, lo, hi): name-match the callee span [lo,hi) in buf against
+// the inlined __mind_* intrinsic set (mirror the Rust Instr::Intrinsic dispatch at
+// src/native/mod.rs:784-918). Returns a small code, or -1 for a regular call:
+//   1 __mind_alloc   2 __mind_store_i64  3 __mind_load_i64  4 __mind_store_i8
+//   5 __mind_load_i8 6 __mind_realloc    7 __mind_free      8 __mind_write
+//   9 __mind_read
+// Length-first then byte-by-byte (like is_struct_kw) so it stays in the self-host
+// mic@3 subset and lowers byte-identically. All names share the "__mind_" prefix
+// (95 95 109 105 110 100 95); only the suffix is matched per length.
+pub fn nb_intrinsic_id(buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = hi - lo;
+    // Common prefix "__mind_" guard (7 bytes). If absent, not an intrinsic.
+    if n < 11 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 0) != 95 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 1) != 95 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 2) != 109 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 3) != 105 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 4) != 110 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 5) != 100 {
+        return 0 - 1;
+    }
+    if load_byte(buf, lo + 6) != 95 {
+        return 0 - 1;
+    }
+    // __mind_alloc (12): a l l o c
+    if n == 12 {
+        if load_byte(buf, lo + 7) == 97 {
+            if load_byte(buf, lo + 8) == 108 {
+                if load_byte(buf, lo + 9) == 108 {
+                    if load_byte(buf, lo + 10) == 111 {
+                        if load_byte(buf, lo + 11) == 99 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+        // __mind_write (12): w r i t e
+        if load_byte(buf, lo + 7) == 119 {
+            if load_byte(buf, lo + 8) == 114 {
+                if load_byte(buf, lo + 9) == 105 {
+                    if load_byte(buf, lo + 10) == 116 {
+                        if load_byte(buf, lo + 11) == 101 {
+                            return 8;
+                        }
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    // __mind_free (11): f r e e
+    if n == 11 {
+        if load_byte(buf, lo + 7) == 102 {
+            if load_byte(buf, lo + 8) == 114 {
+                if load_byte(buf, lo + 9) == 101 {
+                    if load_byte(buf, lo + 10) == 101 {
+                        return 7;
+                    }
+                }
+            }
+        }
+        // __mind_read (11): r e a d
+        if load_byte(buf, lo + 7) == 114 {
+            if load_byte(buf, lo + 8) == 101 {
+                if load_byte(buf, lo + 9) == 97 {
+                    if load_byte(buf, lo + 10) == 100 {
+                        return 9;
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    // Two 14-byte names: __mind_realloc and __mind_load_i8 (both 7+7). Resolve by
+    // suffix.
+    if n == 14 {
+        // __mind_realloc: r e a l l o c
+        if load_byte(buf, lo + 7) == 114 {
+            if load_byte(buf, lo + 8) == 101 {
+                if load_byte(buf, lo + 9) == 97 {
+                    if load_byte(buf, lo + 10) == 108 {
+                        if load_byte(buf, lo + 11) == 108 {
+                            if load_byte(buf, lo + 12) == 111 {
+                                if load_byte(buf, lo + 13) == 99 {
+                                    return 6;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // __mind_load_i8: l o a d _ i 8
+        if load_byte(buf, lo + 7) == 108 {
+            if load_byte(buf, lo + 8) == 111 {
+                if load_byte(buf, lo + 9) == 97 {
+                    if load_byte(buf, lo + 10) == 100 {
+                        if load_byte(buf, lo + 11) == 95 {
+                            if load_byte(buf, lo + 12) == 105 {
+                                if load_byte(buf, lo + 13) == 56 {
+                                    return 5;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    // __mind_store_i64 (16): s t o r e _ i 6 4
+    if n == 16 {
+        if load_byte(buf, lo + 7) == 115 {
+            if load_byte(buf, lo + 8) == 116 {
+                if load_byte(buf, lo + 9) == 111 {
+                    if load_byte(buf, lo + 10) == 114 {
+                        if load_byte(buf, lo + 11) == 101 {
+                            if load_byte(buf, lo + 12) == 95 {
+                                if load_byte(buf, lo + 13) == 105 {
+                                    if load_byte(buf, lo + 14) == 54 {
+                                        if load_byte(buf, lo + 15) == 52 {
+                                            return 2;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    // __mind_load_i64 (15): l o a d _ i 6 4
+    if n == 15 {
+        if load_byte(buf, lo + 7) == 108 {
+            if load_byte(buf, lo + 8) == 111 {
+                if load_byte(buf, lo + 9) == 97 {
+                    if load_byte(buf, lo + 10) == 100 {
+                        if load_byte(buf, lo + 11) == 95 {
+                            if load_byte(buf, lo + 12) == 105 {
+                                if load_byte(buf, lo + 13) == 54 {
+                                    if load_byte(buf, lo + 14) == 52 {
+                                        return 3;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // __mind_store_i8 (15): s t o r e _ i 8
+        if load_byte(buf, lo + 7) == 115 {
+            if load_byte(buf, lo + 8) == 116 {
+                if load_byte(buf, lo + 9) == 111 {
+                    if load_byte(buf, lo + 10) == 114 {
+                        if load_byte(buf, lo + 11) == 101 {
+                            if load_byte(buf, lo + 12) == 95 {
+                                if load_byte(buf, lo + 13) == 105 {
+                                    if load_byte(buf, lo + 14) == 56 {
+                                        return 4;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return 0 - 1;
+    }
+    0 - 1
+}
+
+// nb_emit_intrinsic(code, kind, ids, args_len, dst_id): emit the inline body for a
+// matched __mind_* intrinsic (mirror src/native/mod.rs:784-918). `ids[i]` holds
+// arg i's value slot; dst_id is the call's result slot. Value-returning intrinsics
+// store rax -> dst slot; the two store intrinsics leave dst untouched (the front-
+// end never reads a store's dst). A pure function of the IR.
+pub fn nb_emit_intrinsic(code: String, kind: i64, ids: i64, dst_id: i64) -> String {
+    if kind == 1 {
+        // __mind_alloc(bytes) -> addr
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_emit_alloc(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 2 {
+        // __mind_store_i64(addr, val) — no dst store
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        return nb_emit_store_i64(code, nb_slot_disp(a0), nb_slot_disp(a1));
+    }
+    if kind == 3 {
+        // __mind_load_i64(addr) -> val
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_emit_load_i64(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 4 {
+        // __mind_store_i8(addr, val) — no dst store
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        return nb_emit_store_i8(code, nb_slot_disp(a0), nb_slot_disp(a1));
+    }
+    if kind == 5 {
+        // __mind_load_i8(addr) -> val
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let c1: String = nb_emit_load_i8(code, nb_slot_disp(a0));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 6 {
+        // __mind_realloc(addr, new_bytes) -> new_addr
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        let c1: String = nb_emit_realloc(code, nb_slot_disp(a0), nb_slot_disp(a1));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 7 {
+        // __mind_free(ptr) -> 0
+        let c1: String = nb_emit_free_xor(code);
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    if kind == 8 {
+        // __mind_write(fd, buf, count, offset) -> i64 (offset unused)
+        let a0: i64 = __mind_load_i64(ids + 0 * 8);
+        let a1: i64 = __mind_load_i64(ids + 1 * 8);
+        let a2: i64 = __mind_load_i64(ids + 2 * 8);
+        let c1: String = nb_emit_write(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2));
+        return nb_store_rax(c1, nb_slot_disp(dst_id));
+    }
+    // kind == 9: __mind_read(fd, buf, count, offset) -> i64 (offset unused)
+    let a0: i64 = __mind_load_i64(ids + 0 * 8);
+    let a1: i64 = __mind_load_i64(ids + 1 * 8);
+    let a2: i64 = __mind_load_i64(ids + 2 * 8);
+    let c1: String = nb_emit_read(code, nb_slot_disp(a0), nb_slot_disp(a1), nb_slot_disp(a2));
+    nb_store_rax(c1, nb_slot_disp(dst_id))
+}
+
 // System-V integer arg registers (index 0..5): (modrm_reg_field, needs_rex).
 //   0 rdi(7,F) 1 rsi(6,F) 2 rdx(2,F) 3 rcx(1,F) 4 r8(0,T) 5 r9(1,T)
 pub fn nb_argreg_field(i: i64) -> i64 {
@@ -18584,6 +19047,17 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let ids: i64 = __mind_alloc((args_len + 1) * 8);
         let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids, lets, lcell);
         let id: i64 = sa.next_id;
+        // Inlined __mind_* intrinsics (mirror src/native/mod.rs:784-918): name-match
+        // the callee and emit the inline syscall/alloc/store/load sequence BEFORE the
+        // regular 0xe8 call path. The args are already lowered into `ids` slots above
+        // (same as the IR's pre-computed value slots the Rust Intrinsic arm reads).
+        // The intrinsic's result slot is `id`; the SSA counter advances by one just
+        // like a regular call, so downstream slot ids are unchanged.
+        let intr: i64 = nb_intrinsic_id(buf, ast_span_lo(callee), ast_span_hi(callee));
+        if intr >= 0 {
+            let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
+            return NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
+        }
         // Spill args 0..min(args_len,6) into the System-V arg registers.
         let c_args: String = nb_emit_argregs(sa.code, ids, args_len, 0);
         // call rel32 (placeholder 0; linker-patched). Record the rel32 offset.
@@ -18633,6 +19107,31 @@ pub fn nb_slit_or_zero(init: i64) -> i64 {
         return init;
     }
     0
+}
+
+// The let-env slit-slot descriptor for a `let NAME: TY = INIT`:
+//   * INIT is a struct LITERAL -> bind to it directly (offset 8*field-index from
+//     the literal's own field order, the Step-1 path).
+//   * else, the let's declared type TY names a struct in `srt` -> bind to that
+//     struct's synthetic field-offset descriptor (the Step-2 FieldAccess path:
+//     `let r: P = mk(...); r.z` reads *(r + 8*idx-of-z)). This covers a struct-
+//     typed let whose init is a CALL / method / any non-literal expr — the
+//     dominant shape in main.mind (`let r: ParseResult = parse_...(); r.field`).
+//   * else 0 (scalar let; field-offset path unchanged).
+// `ty_node` = the let's type leaf (ast_child1); 0 when untyped. An if-STATEMENT
+// chain (no value-if-let phis) so it stays in the self-host subset.
+pub fn nb_let_descriptor(init: i64, ty_node: i64, buf: i64, srt: i64) -> i64 {
+    if ast_kind(init) == ast_struct_lit() {
+        return init;
+    }
+    if ty_node == 0 {
+        return 0;
+    }
+    let sk: i64 = srt_find_by_name(srt, buf, ast_span_lo(ty_node), ast_span_hi(ty_node), 0);
+    if sk < 0 {
+        return 0;
+    }
+    nb_struct_decl_descriptor(srt, buf, sk)
 }
 
 // Emit a field READ at byte offset `off` through the base pointer slot `ptr_id`:
@@ -18780,14 +19279,51 @@ pub fn nb_block_diverges(stmts_addr: i64, stmts_len: i64) -> i64 {
     nb_stmt_diverges(__mind_load_i64(stmts_addr + (stmts_len - 1) * 8))
 }
 
+// True if a body's LAST EMITTED instruction is a `Return` — i.e. control never
+// falls off the end, so NO implicit tail-return is appended (mirror the Rust
+// `!matches!(body.last(), Some(Instr::Return{..}))` guard in src/native::lower_fn
+// at mod.rs:1155). This holds when the last statement is an explicit `return`, OR
+// an if-STATEMENT with an else where BOTH branches' last-emitted instr is a Return
+// (a fully-diverging if — emit_seq lays the then-Return then the else-Return, so
+// the body's last instr is the else's Return). A bare tail expression does NOT
+// terminate, so the implicit return fires (load ret_id -> rax ; epilogue).
+pub fn nb_last_emits_return(stmts_addr: i64, stmts_len: i64) -> i64 {
+    if stmts_len <= 0 {
+        return 0;
+    }
+    let last: i64 = __mind_load_i64(stmts_addr + (stmts_len - 1) * 8);
+    let k: i64 = ast_kind(last);
+    if k == ast_return() {
+        return 1;
+    }
+    if k == ast_if() {
+        // A value-if-expr-as-statement is NOT a terminator (its branches yield
+        // values, not returns); only a plain diverging if-statement is.
+        if is_any_value_if_expr(last) == 1 {
+            return 0;
+        }
+        let else_blk: i64 = ast_child2(last);
+        if else_blk == 0 {
+            return 0;
+        }
+        let then_blk: i64 = ast_child1(last);
+        let then_term: i64 = nb_last_emits_return(ast_child0(then_blk), ast_aux(then_blk));
+        if then_term == 0 {
+            return 0;
+        }
+        return nb_last_emits_return(ast_child0(else_blk), ast_aux(else_blk));
+    }
+    0
+}
+
 // Lower a `let`'s INIT expression: a value if-expr through nb_if_value, anything
 // else through nb_expr. A plain tail-return helper (each arm `return`s the
 // NbState directly) so the caller binds against a cleanly-projected .last_id —
 // `let s = if c { structA } else { structB }` then reading `s.last_id` mis-reads
 // the field (value-if-bound struct projection), so we never form that shape.
-pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64) -> NbState {
     if is_any_value_if_expr(init) == 1 {
-        return nb_if_value(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+        return nb_if_value(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
     }
     nb_expr(st, buf, init, params_addr, n_params, calls, lets, lcell)
 }
@@ -18795,7 +19331,7 @@ pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_p
 // Lower one body statement: a `return EXPR` lowers EXPR then the return; an `if`
 // statement lowers per the src/native If arm; any other (bare expr) lowers the
 // expr. `jmps`/`jcell` are the intra-fn forward-jump scratch (used by the If arm).
-pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_return() {
         let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
@@ -18807,16 +19343,16 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // `let X = INIT`: lower INIT (value-if-exprs go through the value-if path,
         // mirroring emit_mlir_stmt_env's is_mlir_value_if branch), then bind X to
         // INIT's result slot so later reads resolve to it. child0 = name leaf,
-        // child2 = init expr. The init lowering is routed through nb_lower_let_init
-        // (a tail-return helper, NOT a `let s = if {struct} else {struct}` — a
-        // value-if-bound-struct projection mis-reads .last_id) so it reads cleanly.
+        // child1 = type leaf, child2 = init expr. The init lowering is routed
+        // through nb_lower_let_init (a tail-return helper) so it reads cleanly.
         let name_leaf: i64 = ast_child0(node);
         let init: i64 = ast_child2(node);
-        let s1: NbState = nb_lower_let_init(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
-        // Record the struct-LITERAL node (or 0) so a later `name.field` read can
-        // recover the field's declared index (8*index byte offset) from it. The
-        // 0-or-init pick is a helper (if-statement), not a value-if-let phi.
-        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_slit_or_zero(init));
+        let s1: NbState = nb_lower_let_init(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
+        // Record the struct descriptor (struct-LITERAL init OR a struct-typed
+        // annotation, else 0) so a later `name.field` read recovers the field's
+        // declared index (8*index byte offset). The pick is a helper (if-statement
+        // chain), not a value-if-let phi.
+        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_let_descriptor(init, ast_child1(node), buf, srt));
         return s1;
     }
     if k == ast_if() {
@@ -18824,9 +19360,9 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // (then_result/else_result = the branch values); a plain if-statement
         // (diverging or unit) through nb_if_stmt.
         if is_any_value_if_expr(node) == 1 {
-            return nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+            return nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
         }
-        return nb_if_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+        return nb_if_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
     }
     nb_expr(st, buf, node, params_addr, n_params, calls, lets, lcell)
 }
@@ -18847,7 +19383,7 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
 //   patch the join jmp (if any) -> end_at.
 // branch_bindings / merges are empty for the scalar if-statement subset (no
 // let-escapes across the branch), matching the fixture's `merges: []`.
-pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64) -> NbState {
     let cond: i64 = ast_child0(node);
     let then_blk: i64 = ast_child1(node);
     let then_sa: i64 = ast_child0(then_blk);
@@ -18864,7 +19400,7 @@ pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: 
     // then-block: leading const0, then the then-stmts.
     let s_t0: NbState = nb_emit_const0(s_je);
     let then_result: i64 = s_t0.last_id;
-    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
     let then_diverges: i64 = nb_block_diverges(then_sa, then_sl);
     // If the then-branch falls through: copy then_result -> dst, then jmp to end.
     // The dst id is fresh AFTER the else-block is laid out; we therefore defer the
@@ -18886,7 +19422,7 @@ pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: 
     // time let-env (lets/lcell) is the count env so any struct field-read offset in
     // the else-block counts the same as it emits.
     let else_const0_id: i64 = s_tb.next_id;
-    let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell);
+    let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell, srt);
     let dst_id: i64 = after_else;
 
     // then fall-through emit (dst copy + join jmp) — only when not diverging.
@@ -18903,7 +19439,7 @@ pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: 
     // else-block: leading const0, then the else-stmts.
     let s_e0: NbState = nb_emit_const0(s_tj);
     let else_result: i64 = s_e0.last_id;
-    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
     let else_diverges: i64 = nb_block_diverges(else_sa, else_sl);
     // else fall-through: copy else_result -> dst (no jmp; it falls to end).
     let s_ej: NbState = nb_if_else_join(s_eb, else_diverges, else_result, dst_id);
@@ -18931,7 +19467,7 @@ pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: 
 //   cond_instrs ; cmp/je(cond) ; then const0 ; then-stmts ;
 //   load then_result; store dst; jmp(join) ; patch je->else_at ;
 //   else const0 ; else-stmts ; load else_result; store dst ; patch jmp->end_at.
-pub fn nb_if_value(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+pub fn nb_if_value(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64) -> NbState {
     let cond: i64 = ast_child0(node);
     let then_blk: i64 = ast_child1(node);
     let then_sa: i64 = ast_child0(then_blk);
@@ -18950,14 +19486,14 @@ pub fn nb_if_value(st: NbState, buf: i64, node: i64, params_addr: i64, n_params:
     // then-block: leading const0, then the then value-expr (its trailing slot is
     // the then_result). A value block always falls through.
     let s_t0: NbState = nb_emit_const0(s_je);
-    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
     let then_result: i64 = s_tb.last_id;
 
     // dst id is fresh AFTER the whole else-block is laid out; pre-walk to find it
     // (a pure function of the IR id-numbering, independent of emitted bytes). next
     // after then = s_tb.next_id; else adds 1 (leading const0) + else-stmt ids.
     let else_const0_id: i64 = s_tb.next_id;
-    let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell);
+    let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell, srt);
     let dst_id: i64 = after_else;
 
     // then fall-through: load then_result; store dst; jmp(join).
@@ -18971,7 +19507,7 @@ pub fn nb_if_value(st: NbState, buf: i64, node: i64, params_addr: i64, n_params:
 
     // else-block: leading const0, then the else value-expr (trailing = else_result).
     let s_e0: NbState = nb_emit_const0(s_tj);
-    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
     let else_result: i64 = s_eb.last_id;
     // else fall-through: load else_result; store dst (no jmp; it falls to end).
     let s_ej: NbState = nb_if_else_join(s_eb, 0, else_result, dst_id);
@@ -19025,13 +19561,13 @@ pub fn nb_maybe_set_jmp(jmp_which: i64, jmps: i64, jcell: i64, end_at: i64) -> i
 }
 
 // Lower the body statement sequence.
-pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64, srt: i64) -> NbState {
     if i >= stmts_len {
         return st;
     }
     let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let s1: NbState = nb_stmt(st, buf, stmt_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
-    nb_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell)
+    let s1: NbState = nb_stmt(st, buf, stmt_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
+    nb_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt)
 }
 
 // Count the frame slots a function's IR defines (params + every body value), by
@@ -19116,19 +19652,20 @@ pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i
     let after: i64 = nb_count_expr(next_id, buf, arg_node, params_addr, n_params, clets, clcell);
     nb_count_args(after, buf, args_addr, args_len, i + 1, params_addr, n_params, clets, clcell)
 }
-pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
+pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64) -> i64 {
     let k: i64 = ast_kind(node);
     if k == ast_return() {
         return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
     }
     if k == ast_let() {
         // `let X = INIT`: X reuses INIT's result slot (no new id), so the slot
-        // count is exactly INIT's. Record the count-time name->struct-lit binding
-        // (or 0) so a later `X.field` read counts the same offset emission does.
-        let after_init: i64 = nb_count_stmt(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell);
+        // count is exactly INIT's. Record the count-time name->struct-descriptor
+        // binding (struct-literal init OR a struct-typed annotation, else 0) so a
+        // later `X.field` read counts the same offset emission does.
+        let after_init: i64 = nb_count_stmt(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell, srt);
         let name_leaf: i64 = ast_child0(node);
         let init: i64 = ast_child2(node);
-        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_slit_or_zero(init));
+        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt));
         return after_init;
     }
     if k == ast_if() {
@@ -19138,7 +19675,7 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         let cond: i64 = ast_child0(node);
         let after_cond: i64 = nb_count_expr(next_id, buf, cond, params_addr, n_params, clets, clcell);
         let then_blk: i64 = ast_child1(node);
-        let after_then: i64 = nb_count_stmts(after_cond + 1, buf, ast_child0(then_blk), ast_aux(then_blk), 0, params_addr, n_params, clets, clcell);
+        let after_then: i64 = nb_count_stmts(after_cond + 1, buf, ast_child0(then_blk), ast_aux(then_blk), 0, params_addr, n_params, clets, clcell, srt);
         let else_blk: i64 = ast_child2(node);
         let else_sa: i64 = if else_blk == 0 {
             0
@@ -19150,18 +19687,127 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         } else {
             ast_aux(else_blk)
         };
-        let after_else: i64 = nb_count_stmts(after_then + 1, buf, else_sa, else_sl, 0, params_addr, n_params, clets, clcell);
+        let after_else: i64 = nb_count_stmts(after_then + 1, buf, else_sa, else_sl, 0, params_addr, n_params, clets, clcell, srt);
         return after_else + 1;
     }
     nb_count_expr(next_id, buf, node, params_addr, n_params, clets, clcell)
 }
-pub fn nb_count_stmts(next_id: i64, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
+pub fn nb_count_stmts(next_id: i64, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64, srt: i64) -> i64 {
     if i >= stmts_len {
         return next_id;
     }
     let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let after: i64 = nb_count_stmt(next_id, buf, stmt_node, params_addr, n_params, clets, clcell);
-    nb_count_stmts(after, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, clets, clcell)
+    let after: i64 = nb_count_stmt(next_id, buf, stmt_node, params_addr, n_params, clets, clcell, srt);
+    nb_count_stmts(after, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, clets, clcell, srt)
+}
+
+// ---- call-site counter (size the calls/call_owner tables exactly) ----
+// Walk the SAME expr/stmt tree shape as nb_count_expr / nb_count_stmt (which the
+// emitter's nb_expr / nb_block_stmts mirror arm-for-arm) and bump a 1-i64 count
+// cell `ccell` at every ast_call() node. This is offset-independent (no clets,
+// no SSA ids), so it is a pure structural walk. The total it returns sizes the
+// `calls` (3 words/record) and `call_owner` (1 word/record) tables exactly, so
+// nb_calls_push / nb_set_owners can never overrun (the old fixed 256 records
+// overflowed the bump arena once the module passed 256 call sites, corrupting
+// nb_patch_all). Mirrors src/native/mod.rs, which sizes its Vec<CallSite> by the
+// real call count rather than a fixed cap.
+pub fn nb_ccount_expr(buf: i64, node: i64, ccell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_ident() {
+        return 0;
+    }
+    if k == ast_paren() {
+        return nb_ccount_expr(buf, ast_child0(node), ccell);
+    }
+    if k == ast_struct_lit() {
+        let fields_addr: i64 = ast_child1(node);
+        let nfields: i64 = ast_aux(node);
+        return nb_ccount_struct_fields(buf, fields_addr, nfields, 0, ccell);
+    }
+    if k == ast_field() {
+        return nb_ccount_expr(buf, ast_child0(node), ccell);
+    }
+    if k == ast_call() {
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        let _a: i64 = nb_ccount_args(buf, args_addr, args_len, 0, ccell);
+        __mind_store_i64(ccell, __mind_load_i64(ccell) + 1);
+        return 0;
+    }
+    // binop: walk both operands.
+    let _l: i64 = nb_ccount_expr(buf, ast_child0(node), ccell);
+    nb_ccount_expr(buf, ast_child1(node), ccell)
+}
+pub fn nb_ccount_struct_fields(buf: i64, fields_addr: i64, nfields: i64, i: i64, ccell: i64) -> i64 {
+    if i >= nfields {
+        return 0;
+    }
+    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    let _v: i64 = nb_ccount_expr(buf, value_node, ccell);
+    nb_ccount_struct_fields(buf, fields_addr, nfields, i + 1, ccell)
+}
+pub fn nb_ccount_args(buf: i64, args_addr: i64, args_len: i64, i: i64, ccell: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
+    let _a: i64 = nb_ccount_expr(buf, arg_node, ccell);
+    nb_ccount_args(buf, args_addr, args_len, i + 1, ccell)
+}
+pub fn nb_ccount_stmt(buf: i64, node: i64, ccell: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        return nb_ccount_expr(buf, ast_child0(node), ccell);
+    }
+    if k == ast_let() {
+        return nb_ccount_stmt(buf, ast_child2(node), ccell);
+    }
+    if k == ast_if() {
+        let cond: i64 = ast_child0(node);
+        let _c: i64 = nb_ccount_expr(buf, cond, ccell);
+        let then_blk: i64 = ast_child1(node);
+        let _t: i64 = nb_ccount_stmts(buf, ast_child0(then_blk), ast_aux(then_blk), 0, ccell);
+        let else_blk: i64 = ast_child2(node);
+        let else_sa: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_child0(else_blk)
+        };
+        let else_sl: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_aux(else_blk)
+        };
+        return nb_ccount_stmts(buf, else_sa, else_sl, 0, ccell);
+    }
+    nb_ccount_expr(buf, node, ccell)
+}
+pub fn nb_ccount_stmts(buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, ccell: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let _s: i64 = nb_ccount_stmt(buf, stmt_node, ccell);
+    nb_ccount_stmts(buf, stmts_addr, stmts_len, i + 1, ccell)
+}
+// Count every call site in fn_def `node`'s body.
+pub fn nb_ccount_fn(buf: i64, node: i64, ccell: i64) -> i64 {
+    let body: i64 = ast_child2(node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+    nb_ccount_stmts(buf, stmts_addr, stmts_len, 0, ccell)
+}
+// Sum the call sites of all ordered fns into ccell; returns the total.
+pub fn nb_count_all_calls(buf: i64, ordered: i64, n_fns: i64, k: i64, ccell: i64) -> i64 {
+    if k >= n_fns {
+        return __mind_load_i64(ccell);
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    let _c: i64 = nb_ccount_fn(buf, node, ccell);
+    nb_count_all_calls(buf, ordered, n_fns, k + 1, ccell)
 }
 
 // round_up(x, 16)
@@ -19173,11 +19819,96 @@ pub fn nb_round16(x: i64) -> i64 {
     x + (16 - r)
 }
 
+// Append the implicit tail-return to a lowered body (mirror src/native::lower_fn
+// at mod.rs:1155-1162). If the body's last statement already terminates (explicit
+// `return` / fully-diverging if), the load+epilogue was emitted in nb_stmt — return
+// the body unchanged. Otherwise the trailing value-expression's slot (st0.last_id)
+// IS the FnDef's ret_id: emit `mov rax,[ret_id]` then the epilogue. A tail-return
+// helper (each arm `return`s the NbState directly) so it stays in the self-host
+// mic@3 subset — NOT a struct-typed value-if (which mis-lowers).
+pub fn nb_finish_body(st0: NbState, is_entry: i64, stmts_addr: i64, stmts_len: i64) -> NbState {
+    if nb_last_emits_return(stmts_addr, stmts_len) == 1 {
+        return st0;
+    }
+    let r1: String = nb_load_rax(st0.code, nb_slot_disp(st0.last_id));
+    let r2: String = nb_emit_return(r1, is_entry);
+    NbState { code: r2, next_id: st0.next_id, last_id: st0.last_id, ncalls: st0.ncalls }
+}
+
+// Build a synthetic ast_struct_lit-SHAPED descriptor node for struct `k` in the
+// `srt` registry, so a struct-typed PARAMETER binds to it in the let-env exactly
+// like a let-bound struct literal does. nb_slit_field_index reads only child1
+// (+32 = fields_addr, 3-i64 triples) and aux (+48 = field_count), so the synthetic
+// node carries the struct DECL's field-name spans as triples (name_lo, name_hi, 0)
+// — the value slot is unused on the read path. This is the Step-2 path of
+// eval/lower.rs's FieldAccess arm (receiver_types side-table -> ir.struct_defs):
+// resolve the receiver's declared struct type, then 8*declared-index. Returns the
+// descriptor node addr.
+pub fn nb_struct_decl_descriptor(srt: i64, src: i64, k: i64) -> i64 {
+    let nf: i64 = srt_field_count(srt, k);
+    let fields_addr: i64 = __mind_alloc((nf * 3 + 1) * 8);
+    let _f: i64 = nb_fill_decl_triples(srt, src, k, nf, fields_addr, 0);
+    let n: i64 = ast_alloc();
+    __mind_store_i64(n + 0, ast_struct_lit());
+    __mind_store_i64(n + 8, 0);
+    __mind_store_i64(n + 16, 0);
+    __mind_store_i64(n + 24, 0);
+    __mind_store_i64(n + 32, fields_addr);
+    __mind_store_i64(n + 40, 0);
+    __mind_store_i64(n + 48, nf);
+    __mind_store_i64(n + 56, 0);
+    n
+}
+
+// Fill the descriptor's 3-i64 field triples (field_name_lo, field_name_hi, 0) in
+// DECLARATION order from struct `k`'s field spans. Value slot stays 0 (unused on
+// the field-READ path; nb_slit_field_index only matches name spans).
+pub fn nb_fill_decl_triples(srt: i64, src: i64, k: i64, nf: i64, fields_addr: i64, j: i64) -> i64 {
+    if j >= nf {
+        return 0;
+    }
+    __mind_store_i64(fields_addr + (j * 3 + 0) * 8, srt_field_lo(srt, k, j));
+    __mind_store_i64(fields_addr + (j * 3 + 1) * 8, srt_field_hi(srt, k, j));
+    __mind_store_i64(fields_addr + (j * 3 + 2) * 8, 0);
+    nb_fill_decl_triples(srt, src, k, nf, fields_addr, j + 1)
+}
+
+// Register each struct-typed PARAMETER into the let-env `lets`/`lcell` so a later
+// `p.field` read recovers the field offset (8*declared-index) through the same
+// Step-1 lookup (nb_lets_lookup_slit -> nb_slit_field_index) a let-bound struct
+// literal uses. A param node is (name_leaf at child0, type_leaf at child1); the
+// type leaf's span names the declared type. When that type resolves to a struct
+// in `srt`, bind the param name -> the struct's synthetic descriptor; otherwise
+// bind -> 0 (scalar param, offset path unchanged). Registered FIRST (before body
+// lets), so a same-name `let` correctly shadows it (last-match-wins). MUST run on
+// BOTH the count-lets (clets) and emit-lets so the frame-size count and emission
+// agree byte-for-byte.
+pub fn nb_register_struct_params(srt: i64, src: i64, params_addr: i64, n_params: i64, lets: i64, lcell: i64, i: i64) -> i64 {
+    if i >= n_params {
+        return 0;
+    }
+    let pnode: i64 = __mind_load_i64(params_addr + i * 8);
+    let name_leaf: i64 = ast_child0(pnode);
+    let ty_leaf: i64 = ast_child1(pnode);
+    let ty_lo: i64 = ast_span_lo(ty_leaf);
+    let ty_hi: i64 = ast_span_hi(ty_leaf);
+    let sk: i64 = srt_find_by_name(srt, src, ty_lo, ty_hi, 0);
+    let desc: i64 = if sk < 0 {
+        0
+    } else {
+        nb_struct_decl_descriptor(srt, src, sk)
+    };
+    let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), i, desc);
+    nb_register_struct_params(srt, src, params_addr, n_params, lets, lcell, i + 1)
+}
+
 // Lower one fn_def to its code String + call records. The entry (is_entry==1)
 // gets the STACK_TOP rsp-switch before the prologue. The calls scratch table is
 // shared; rel32 offsets are recorded RELATIVE TO THIS FUNCTION'S code start.
-// Returns NbState{code = this fn's bytes, ncalls = updated count}.
-pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64) -> NbState {
+// Returns NbState{code = this fn's bytes, ncalls = updated count}. `srt` is the
+// whole-module struct registry, used to give struct-typed params a field-offset
+// descriptor in the let-env (the Step-2 FieldAccess path).
+pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64, srt: i64) -> NbState {
     let params_addr: i64 = ast_child1(node);
     let n_params: i64 = ast_aux(node) / 2;
     let body: i64 = ast_child2(node);
@@ -19190,7 +19921,11 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64)
     let clets0: i64 = __mind_alloc(512 * 4 * 8);
     let clcell0: i64 = __mind_alloc(8);
     __mind_store_i64(clcell0, 0);
-    let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params, clets0, clcell0);
+    // Register struct-typed params into the count-lets FIRST, so the field-access
+    // count recovers the same 8*declared-index offset the emission does (the extra
+    // CONST+ADD ids for a nonzero-offset field read must be counted into nslots).
+    let _crp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, clets0, clcell0, 0);
+    let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params, clets0, clcell0, srt);
     let frame: i64 = nb_round16(8 * nslots);
 
     let code0: String = string_new();
@@ -19228,9 +19963,18 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64)
     let lets: i64 = __mind_alloc(512 * 4 * 8);
     let lcell: i64 = __mind_alloc(8);
     __mind_store_i64(lcell, 0);
+    // Register struct-typed params FIRST (before body lets append, so a same-name
+    // let shadows last-match-wins), mirroring the count-lets registration above so
+    // the emitted offsets match the counted frame size exactly.
+    let _erp: i64 = nb_register_struct_params(srt, buf, params_addr, n_params, lets, lcell, 0);
 
     // Body.
-    let st_body: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let st_body0: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt);
+
+    // Implicit tail-return (mirror src/native::lower_fn:1155-1162). Routed through a
+    // tail-return helper (NOT a `let s: NbState = if {..} else {..}` value-if — that
+    // struct-typed value-if shape is outside the self-host subset and mis-lowers).
+    let st_body: NbState = nb_finish_body(st_body0, is_entry, stmts_addr, stmts_len);
 
     // Patch every recorded forward jump into this fn's assembled code IN PLACE
     // (string_addr) before nb_lower_all concatenates it into the image. Intra-fn
@@ -19265,6 +20009,22 @@ pub fn nb_synth_entry() -> String {
     let c7: String = nb_push(c6, 0);
     let c8: String = nb_push(c7, 15);
     nb_push(c8, 5)
+}
+
+// No-`main` (library) modules synthesize a 9-byte entry stub at code offset 0
+// (mirrors src/native/mod.rs: synth_lib_entry() is pushed as funcs[0], so the
+// real fns all shift down by its length). Every recorded start offset must add
+// the stub length so the inter-fn rel32 patches (callee_start - (caller_start +
+// rel_off + 4)) stay exact — a uniform shift of all starts cancels in the rel32,
+// and entry_off stays 0 (the stub IS the entry). Gate on the no-main case only:
+// fixtures WITH a real `main` lay it first (entry_idx>=0) and add no stub, so
+// their bytes are unchanged.
+pub fn nb_shift_starts(starts: i64, n_fns: i64, delta: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    __mind_store_i64(starts + k * 8, __mind_load_i64(starts + k * 8) + delta);
+    nb_shift_starts(starts, n_fns, delta, k + 1)
 }
 
 // ---- ELF note (trace-hash provenance) ----
@@ -19385,6 +20145,217 @@ pub fn nb_zeros(code: String, n: i64) -> String {
     nb_zeros(c1, n - 1)
 }
 
+// ---- stdlib-bundling reachability prune (mirrors bin/mind-native.rs) ----
+//
+// The Rust mind-native driver PREPENDS all ~21 bundled std/*.mind modules ahead
+// of the user file, lowers the union, then dead-code-prunes to the user file's
+// call graph (prune_unreachable_fns) and finally keeps only the LAST FnDef per
+// name (compile_to_elf's last-write-wins dedup). To stay byte-identical the pure
+// front-end does the same over `fns` (collected in combined source order):
+//
+//   * roots  = every fn whose NAME starts at/after `user_lo` (the offset where
+//              the user file begins in the combined buffer). With user_lo==0 all
+//              fns are roots, so a single-file fixture prunes to a no-op — the
+//              5-fixture native ladder stays byte-identical.
+//   * BFS    = mark every fn transitively reachable from a root via call edges
+//              (callee name -> LAST defining fn index, the last-write-wins ABI).
+//   * dedup  = keep fn k only if it is the LAST def of its own name (drops the
+//              shadowed bundled brick when the user redefines a std name).
+//
+// All of this is a pure function of the parsed AST (name-set reachability), so
+// byte-identity holds. Reachability is computed over the `fns` array of fn_def
+// nodes; `reach[k]` is a 1/0 byte-per-i64 marker array parallel to `fns`.
+
+// Return the LAST index in fns[0..n_fns) whose fn-name span equals buf[lo..hi),
+// or -1. `best` threads the best-so-far so the final (largest) match wins —
+// matching compile_to_elf's "keep the LAST FnDef per name" contract.
+pub fn nb_last_def_idx(buf: i64, fns: i64, n_fns: i64, lo: i64, hi: i64, k: i64, best: i64) -> i64 {
+    if k >= n_fns {
+        return best;
+    }
+    let node: i64 = __mind_load_i64(fns + k * 8);
+    let name_node: i64 = ast_child0(node);
+    let best2: i64 = if span_bytes_equal(buf, lo, hi, ast_span_lo(name_node), ast_span_hi(name_node)) == 1 {
+        k
+    } else {
+        best
+    };
+    nb_last_def_idx(buf, fns, n_fns, lo, hi, k + 1, best2)
+}
+
+// Seed reach[k]=1 for every fn whose NAME begins at/after `user_lo` (the user
+// roots). user_lo==0 makes every fn a root (single-file no-op prune).
+pub fn nb_mark_roots(buf: i64, fns: i64, n_fns: i64, user_lo: i64, reach: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(fns + k * 8);
+    let name_node: i64 = ast_child0(node);
+    let r: i64 = if ast_span_lo(name_node) >= user_lo {
+        1
+    } else {
+        0
+    };
+    __mind_store_i64(reach + k * 8, r);
+    nb_mark_roots(buf, fns, n_fns, user_lo, reach, k + 1)
+}
+
+// Mark the callee of one call node reachable (resolve its name to the LAST
+// defining fn index). `changed` is bumped if a previously-unreached fn flips on.
+pub fn nb_reach_callee(buf: i64, fns: i64, n_fns: i64, reach: i64, callee: i64, changed: i64) -> i64 {
+    let idx: i64 = nb_last_def_idx(buf, fns, n_fns, ast_span_lo(callee), ast_span_hi(callee), 0, 0 - 1);
+    if idx < 0 {
+        return 0;
+    }
+    if __mind_load_i64(reach + idx * 8) == 1 {
+        return 0;
+    }
+    __mind_store_i64(reach + idx * 8, 1);
+    __mind_store_i64(changed, __mind_load_i64(changed) + 1);
+    0
+}
+
+// Walk one expression marking every call's callee reachable.
+pub fn nb_reach_expr(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, changed: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 0;
+    }
+    if k == ast_ident() {
+        return 0;
+    }
+    if k == ast_paren() {
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+    }
+    if k == ast_struct_lit() {
+        let fields_addr: i64 = ast_child1(node);
+        let nfields: i64 = ast_aux(node);
+        return nb_reach_struct_fields(buf, fns, n_fns, reach, fields_addr, nfields, 0, changed);
+    }
+    if k == ast_field() {
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+    }
+    if k == ast_call() {
+        let callee: i64 = ast_child0(node);
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        let _a: i64 = nb_reach_args(buf, fns, n_fns, reach, args_addr, args_len, 0, changed);
+        let _c: i64 = nb_reach_callee(buf, fns, n_fns, reach, callee, changed);
+        return 0;
+    }
+    let _l: i64 = nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+    nb_reach_expr(buf, fns, n_fns, reach, ast_child1(node), changed)
+}
+pub fn nb_reach_struct_fields(buf: i64, fns: i64, n_fns: i64, reach: i64, fields_addr: i64, nfields: i64, i: i64, changed: i64) -> i64 {
+    if i >= nfields {
+        return 0;
+    }
+    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    let _v: i64 = nb_reach_expr(buf, fns, n_fns, reach, value_node, changed);
+    nb_reach_struct_fields(buf, fns, n_fns, reach, fields_addr, nfields, i + 1, changed)
+}
+pub fn nb_reach_args(buf: i64, fns: i64, n_fns: i64, reach: i64, args_addr: i64, args_len: i64, i: i64, changed: i64) -> i64 {
+    if i >= args_len {
+        return 0;
+    }
+    let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
+    let _a: i64 = nb_reach_expr(buf, fns, n_fns, reach, arg_node, changed);
+    nb_reach_args(buf, fns, n_fns, reach, args_addr, args_len, i + 1, changed)
+}
+pub fn nb_reach_stmt(buf: i64, fns: i64, n_fns: i64, reach: i64, node: i64, changed: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        return nb_reach_expr(buf, fns, n_fns, reach, ast_child0(node), changed);
+    }
+    if k == ast_let() {
+        return nb_reach_stmt(buf, fns, n_fns, reach, ast_child2(node), changed);
+    }
+    if k == ast_if() {
+        let cond: i64 = ast_child0(node);
+        let _c: i64 = nb_reach_expr(buf, fns, n_fns, reach, cond, changed);
+        let then_blk: i64 = ast_child1(node);
+        let _t: i64 = nb_reach_stmts(buf, fns, n_fns, reach, ast_child0(then_blk), ast_aux(then_blk), 0, changed);
+        let else_blk: i64 = ast_child2(node);
+        let else_sa: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_child0(else_blk)
+        };
+        let else_sl: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_aux(else_blk)
+        };
+        return nb_reach_stmts(buf, fns, n_fns, reach, else_sa, else_sl, 0, changed);
+    }
+    nb_reach_expr(buf, fns, n_fns, reach, node, changed)
+}
+pub fn nb_reach_stmts(buf: i64, fns: i64, n_fns: i64, reach: i64, stmts_addr: i64, stmts_len: i64, i: i64, changed: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let _s: i64 = nb_reach_stmt(buf, fns, n_fns, reach, stmt_node, changed);
+    nb_reach_stmts(buf, fns, n_fns, reach, stmts_addr, stmts_len, i + 1, changed)
+}
+// Expand the call edges of EVERY currently-reachable fn once; bumps `changed`
+// for each newly-marked fn so the caller can iterate to a fixpoint.
+pub fn nb_reach_pass(buf: i64, fns: i64, n_fns: i64, reach: i64, k: i64, changed: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let do_it: i64 = if __mind_load_i64(reach + k * 8) == 1 {
+        let node: i64 = __mind_load_i64(fns + k * 8);
+        let body: i64 = ast_child2(node);
+        let stmts_addr: i64 = ast_child0(body);
+        let stmts_len: i64 = ast_aux(body);
+        nb_reach_stmts(buf, fns, n_fns, reach, stmts_addr, stmts_len, 0, changed)
+    } else {
+        0
+    };
+    nb_reach_pass(buf, fns, n_fns, reach, k + 1, changed)
+}
+// Iterate nb_reach_pass to a fixpoint (no new fn marked). Bounded by n_fns
+// rounds (each round marks >=1 new fn or terminates), so it always converges.
+pub fn nb_reach_fixpoint(buf: i64, fns: i64, n_fns: i64, reach: i64, rounds: i64) -> i64 {
+    if rounds <= 0 {
+        return 0;
+    }
+    let changed: i64 = __mind_alloc(8);
+    __mind_store_i64(changed, 0);
+    let _p: i64 = nb_reach_pass(buf, fns, n_fns, reach, 0, changed);
+    if __mind_load_i64(changed) == 0 {
+        return 0;
+    }
+    nb_reach_fixpoint(buf, fns, n_fns, reach, rounds - 1)
+}
+// Build kept[] = the fn nodes to emit: reachable AND the LAST def of their name
+// (last-write-wins dedup). Returns the kept count.
+pub fn nb_build_kept(buf: i64, fns: i64, n_fns: i64, reach: i64, kept: i64, k: i64, m: i64) -> i64 {
+    if k >= n_fns {
+        return m;
+    }
+    let node: i64 = __mind_load_i64(fns + k * 8);
+    let name_node: i64 = ast_child0(node);
+    let last_idx: i64 = nb_last_def_idx(buf, fns, n_fns, ast_span_lo(name_node), ast_span_hi(name_node), 0, 0 - 1);
+    let keep: i64 = if __mind_load_i64(reach + k * 8) == 1 {
+        if last_idx == k {
+            1
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let m2: i64 = if keep == 1 {
+        __mind_store_i64(kept + m * 8, node);
+        m + 1
+    } else {
+        m
+    };
+    nb_build_kept(buf, fns, n_fns, reach, kept, k + 1, m2)
+}
+
 // ---- linker: patch each call's rel32 into the assembled code buffer ----
 // `funcs` describes the laid-out functions: starts[k] = function k's code start
 // in the combined image, and (lo,hi) name spans to resolve callees. Each call
@@ -19444,15 +20415,36 @@ pub fn nb_patch_rel32(code_addr: i64, abs_off: i64, rel: i64) -> i64 {
 //   deferred: ir_trace_hash is not yet ported to pure MIND — the harness passes
 //   the oracle's 32-byte hash so the note matches. upgrade path: port
 //   src/ir/ir_trace_hash into main.mind and drop the hash_addr arg.)
+// 3-arg entry: single-file form (no bundled stdlib). user_lo=0 -> every fn is a
+// reachability root, so the prune is a no-op and the native ladder fixtures stay
+// byte-identical. The stdlib-bundling path uses the 4-arg variant below.
 pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> EmitState {
+    selftest_native_elf_hb(src_addr, src_len, hash_addr, 0)
+}
+
+// 4-arg form: `user_lo` is the offset in `src_addr` where the USER file begins
+// (the bundled std/*.mind sources are concatenated ahead of it). Fns whose name
+// starts at/after user_lo are the prune roots; reachable+last-def-per-name fns
+// are emitted. Mirrors bin/mind-native.rs (seed stdlib, lower union, prune to the
+// user call graph, last-write-wins dedup) so the two emitters lay the SAME fn set.
+pub fn selftest_native_elf_hb(src_addr: i64, src_len: i64, hash_addr: i64, user_lo: i64) -> EmitState {
     let tokens: Vec = lex(src_addr, src_len);
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
 
-    // Collect fn_def items in order; also collect the entry index (`main`).
-    let fns: i64 = __mind_alloc((items_len + 1) * 8);
-    let n_fns: i64 = nb_collect_fns(items_addr, items_len, 0, fns, 0);
+    // Collect ALL fn_def items in combined source order (std bricks first, then
+    // the user file). nb_all = the pre-prune set.
+    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
+
+    // Reachability prune to the user call graph, then last-write-wins dedup. For
+    // a single file (user_lo==0) every fn is a root => kept == all (no-op).
+    let reach: i64 = __mind_alloc((nb_all + 1) * 8);
+    let _r0: i64 = nb_mark_roots(src_addr, all_fns, nb_all, user_lo, reach, 0);
+    let _rf: i64 = nb_reach_fixpoint(src_addr, all_fns, nb_all, reach, nb_all + 1);
+    let fns: i64 = __mind_alloc((nb_all + 1) * 8);
+    let n_fns: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, fns, 0, 0);
     let entry_idx: i64 = nb_find_main(src_addr, fns, n_fns, 0);
 
     // Lay out: entry (main) FIRST, then the rest in source order.
@@ -19464,18 +20456,45 @@ pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> Emi
     let fn_names: i64 = __mind_alloc((n_fns + 1) * 2 * 8);
     let _fn: i64 = nb_fill_names(ordered, n_fns, 0, fn_names);
 
-    // calls scratch table: up to 256 call records (3 words each).
-    let calls: i64 = __mind_alloc(256 * 3 * 8);
+    // calls scratch table: ONE record (3 i64 words) per call site in the module.
+    // Size it from the actual call count (nb_count_all_calls walks every ordered
+    // fn body, bumping ccell at each ast_call); the old fixed 256-record cap
+    // overflowed the bump arena on real modules (main.mind has ~10.7k call sites),
+    // corrupting nb_patch_all. `+1` keeps a call-free module's alloc non-zero.
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    let n_calls: i64 = nb_count_all_calls(src_addr, ordered, n_fns, 0, ccell);
+    let calls: i64 = __mind_alloc((n_calls + 1) * 3 * 8);
     // per-fn: start offset; call k belongs to fn call_owner[k].
     let starts: i64 = __mind_alloc((n_fns + 1) * 8);
-    let call_owner: i64 = __mind_alloc(256 * 8);
+    let call_owner: i64 = __mind_alloc((n_calls + 1) * 8);
 
     // Lower each ordered fn; concatenate into `image` (threaded as acc.code; the
     // running call count is threaded as acc.ncalls).
+    // Whole-module struct registry (type-name -> field-name list), built once and
+    // threaded through nb_lower_all so each fn's struct-typed params resolve their
+    // field offsets (the Step-2 FieldAccess path) without re-lexing per fn.
+    let srt: i64 = srt_build(src_addr, src_len);
     let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
-    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx);
-    let image: String = lr.code;
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx, srt);
+    let image0: String = lr.code;
     let total_calls: i64 = lr.ncalls;
+
+    // No-`main` (library) module: prepend the 9-byte synth entry stub at offset 0
+    // (mirrors src/native/mod.rs pushing synth_lib_entry() as funcs[0]) and shift
+    // every recorded fn start by 9 so the inter-fn rel32 patches stay exact. With
+    // a real `main` (entry_idx>=0) the stub is omitted and starts are unchanged.
+    let stub_len: i64 = if entry_idx < 0 {
+        9
+    } else {
+        0
+    };
+    let _ss: i64 = nb_shift_starts(starts, n_fns, stub_len, 0);
+    let image: String = if entry_idx < 0 {
+        string_push_str(nb_synth_entry(), image0)
+    } else {
+        image0
+    };
 
     // Patch each call's rel32. call k: owner fn = call_owner[k]; rel_off recorded
     // relative to that fn => abs_off = starts[owner] + rel_off. Resolve callee.
@@ -19594,7 +20613,7 @@ pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
 // The guard returns the param `acc` (NOT a struct literal) so the body stays
 // inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
 // a multi-statement recursive struct fn is outside it — verified empirically).
-pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64) -> NbState {
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64, srt: i64) -> NbState {
     if k >= n_fns {
         return acc;
     }
@@ -19603,12 +20622,12 @@ pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, ca
     let ncalls0: i64 = acc.ncalls;
     let image: String = acc.code;
     __mind_store_i64(starts + k * 8, string_len(image));
-    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0);
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0, srt);
     // Record owner for each newly-added call.
     let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
     let image2: String = string_push_str(image, fr.code);
     let acc2: NbState = NbState { code: image2, next_id: 0, last_id: 0, ncalls: fr.ncalls };
-    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx)
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx, srt)
 }
 pub fn nb_set_owners(call_owner: i64, c0: i64, c1: i64, k: i64) -> i64 {
     if c0 >= c1 {
