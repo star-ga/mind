@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2945 | **Est. tokens:** ~7,045,636
-**Generated:** 2026-06-24 09:45 UTC
+**Files:** 2940 | **Est. tokens:** ~7,045,570
+**Generated:** 2026-06-24 09:51 UTC
 
 ## Token Budget Guide
 
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 32 | ~60,080 |
+| `examples/mindc_mind/` | 27 | ~60,014 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -759,11 +759,6 @@
 - `mic3_flip_smoke.py` (~1093 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22299 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
-- `_mlir_add.mind` (~13 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
-- `_mlir_c.mind` (~8 tok, tiny) — fn c() -> i64 {
-- `_mlir_mul.mind` (~13 tok, tiny) — fn mul(a: i64, b: i64) -> i64 {
-- `_mlir_sub.mind` (~13 tok, tiny) — fn sub(a: i64, b: i64) -> i64 {
-- `_mlir_two.mind` (~19 tok, tiny) — fn two(a: i64, b: i64) -> i64 {
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
