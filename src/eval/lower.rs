@@ -1035,6 +1035,35 @@ fn lower_tensor_binding(
                 }
                 _ => {}
             },
+            // Dense tensor literal `let t: tensor<f32[3]> = [1.0, 2.0, 3.0]`.
+            // Materialise the EXACT per-element bits via ConstDenseTensor (the
+            // generic i64 ConstArray path coerced floats to 0 and registered no
+            // tensor type, so `t + u` failed "missing type information"). Only
+            // emit when the element count matches a fully-known shape; otherwise
+            // fall through so the type checker reports the shape/literal mismatch.
+            ast::Node::ArrayLit { elements, .. } => {
+                let expected: usize = shape
+                    .iter()
+                    .map(|d| match d {
+                        ShapeDim::Known(n) => *n as usize,
+                        _ => 0,
+                    })
+                    .product();
+                if expected == elements.len() {
+                    let data: Vec<u64> = elements
+                        .iter()
+                        .map(|e| dense_elem_bits(e, &dtype))
+                        .collect();
+                    let id = ir.fresh();
+                    ir.instrs.push(Instr::ConstDenseTensor {
+                        dst: id,
+                        dtype,
+                        shape,
+                        data,
+                    });
+                    return id;
+                }
+            }
             _ => {}
         }
     }
@@ -6879,6 +6908,37 @@ fn extract_const_i64(node: &ast::Node) -> Option<i64> {
         ast::Node::Lit(Literal::Int(n), _) => Some(*n),
         ast::Node::Neg { operand, .. } => extract_const_i64(operand).map(|v| -v),
         _ => None,
+    }
+}
+
+/// Extract a constant numeric element as f64 (int literals widen to float),
+/// honouring a leading unary `-`. Used to materialise dense tensor literals.
+fn extract_const_f64(node: &ast::Node) -> Option<f64> {
+    match node {
+        ast::Node::Lit(Literal::Float(f), _) => Some(*f),
+        ast::Node::Lit(Literal::Int(n), _) => Some(*n as f64),
+        ast::Node::Neg { operand, .. } => extract_const_f64(operand).map(|v| -v),
+        _ => None,
+    }
+}
+
+/// Encode one dense-tensor-literal element to the `u64` bit pattern stored in
+/// `Instr::ConstDenseTensor` (must mirror `render_dense_elem` in the MLIR
+/// backend): f32 → its u32 IEEE bits, f64 → all 64 bits, i32 → two's-complement
+/// low-32, i64 as-is, Q16.16 → `round(v * 2^16)` as i32. Preserves the EXACT
+/// element bits (the old i64 ConstArray path coerced floats to 0).
+fn dense_elem_bits(node: &ast::Node, dtype: &DType) -> u64 {
+    match dtype {
+        DType::F32 | DType::F16 | DType::BF16 => {
+            (extract_const_f64(node).unwrap_or(0.0) as f32).to_bits() as u64
+        }
+        DType::F64 => extract_const_f64(node).unwrap_or(0.0).to_bits(),
+        DType::I32 => ((extract_const_i64(node).unwrap_or(0) as i32) as u32) as u64,
+        DType::Q16 => {
+            let q = (extract_const_f64(node).unwrap_or(0.0) * 65536.0).round() as i32;
+            (q as u32) as u64
+        }
+        DType::I64 => extract_const_i64(node).unwrap_or(0) as u64,
     }
 }
 

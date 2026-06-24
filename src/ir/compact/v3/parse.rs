@@ -21,7 +21,8 @@ use crate::types::ShapeDim;
 use crate::types::intern::intern_str;
 
 use super::emit::{
-    OP_ARRAY_LOAD, OP_BINOP, OP_BREAK, OP_CALL, OP_CONST_ARRAY, OP_CONST_F64, OP_CONST_I64,
+    OP_ARRAY_LOAD, OP_BINOP, OP_BREAK, OP_CALL, OP_CONST_ARRAY, OP_CONST_DENSE_TENSOR,
+    OP_CONST_F64, OP_CONST_I64,
     OP_CONST_TENSOR, OP_CONTINUE, OP_CONV2D, OP_CONV2D_GRAD_FILTER, OP_CONV2D_GRAD_INPUT, OP_DOT,
     OP_EXPAND_DIMS, OP_EXTERN_FN_DECL, OP_FN_DEF, OP_GATHER, OP_IF, OP_INDEX, OP_MATMUL, OP_MEAN,
     OP_OUTPUT, OP_PARAM, OP_REGION, OP_RELU, OP_RELU_GRAD, OP_RESHAPE, OP_RETURN, OP_SLICE,
@@ -438,6 +439,24 @@ fn decode_instr<R: Read>(
             let shape = read_shape(r, strings, limit)?;
             let fill = read_opt_f64(r)?;
             Ok(Instr::ConstTensor(dst, dtype, shape, fill))
+        }
+        OP_CONST_DENSE_TENSOR => {
+            let dst = read_vid(r)?;
+            let dtype_byte = read_u8(r)?;
+            let dtype = byte_to_dtype(dtype_byte)
+                .ok_or_else(|| err!("unknown dtype byte: {}", dtype_byte))?;
+            let shape = read_shape(r, strings, limit)?;
+            let n = read_count(r, limit)?;
+            let mut data = Vec::with_capacity(bounded_cap(n, limit));
+            for _ in 0..n {
+                data.push(read_u64_le(r)?);
+            }
+            Ok(Instr::ConstDenseTensor {
+                dst,
+                dtype,
+                shape,
+                data,
+            })
         }
         OP_BINOP => {
             let dst = read_vid(r)?;

@@ -299,7 +299,10 @@ fn next_sequential_id(module: &IRModule) -> usize {
 /// The two MUST visit the exact same operand set (DCE correctness + determinism).
 pub(crate) fn for_each_operand(instr: &Instr, mut f: impl FnMut(ValueId)) {
     match instr {
-        Instr::ConstI64(_, _) | Instr::ConstF64(_, _) | Instr::ConstTensor(_, _, _, _) => {}
+        Instr::ConstI64(_, _)
+        | Instr::ConstF64(_, _)
+        | Instr::ConstTensor(_, _, _, _)
+        | Instr::ConstDenseTensor { .. } => {}
         Instr::BinOp { lhs, rhs, .. } => {
             f(*lhs);
             f(*rhs);

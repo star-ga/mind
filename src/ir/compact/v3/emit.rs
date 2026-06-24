@@ -74,6 +74,11 @@ pub(super) const OP_RELU_GRAD: u8 = 0x27;
 pub(super) const OP_BREAK: u8 = 0x28;
 /// Loop `continue` marker (zero operands). Appended after `OP_BREAK`.
 pub(super) const OP_CONTINUE: u8 = 0x29;
+/// Dense tensor literal (`{dst, dtype, shape, data}`): per-element bit patterns,
+/// not a broadcast fill. Appended in previously-unused op-space so existing
+/// mic@3 byte streams — and their `trace_hash` — are unchanged (append-only:
+/// 0x01..0x29 are NEVER renumbered).
+pub(super) const OP_CONST_DENSE_TENSOR: u8 = 0x2A;
 
 // ─── DType byte tags ─────────────────────────────────────────────────────────
 
@@ -497,7 +502,8 @@ fn collect_strings(instrs: &[Instr], st: &mut StringTable) {
 
 fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
     match instr {
-        Instr::ConstTensor(_, _, shape, _) => {
+        Instr::ConstTensor(_, _, shape, _)
+        | Instr::ConstDenseTensor { shape, .. } => {
             for dim in shape {
                 if let ShapeDim::Sym(s) = dim {
                     st.intern(s);
@@ -812,6 +818,27 @@ fn emit_instr<W: Write>(w: &mut W, instr: &Instr, st: &StringTable) {
                 encode_shape_dim(w, dim, st).unwrap();
             }
             encode_opt_f64(w, *fill).unwrap();
+        }
+        Instr::ConstDenseTensor {
+            dst,
+            dtype,
+            shape,
+            data,
+        } => {
+            w.write_all(&[OP_CONST_DENSE_TENSOR]).unwrap();
+            write_vid(w, *dst).unwrap();
+            w.write_all(&[dtype_to_byte(dtype)]).unwrap();
+            uleb128_write(w, shape.len() as u64).unwrap();
+            for dim in shape {
+                encode_shape_dim(w, dim, st).unwrap();
+            }
+            // Element bit patterns: fixed 8-byte little-endian so the EXACT
+            // bits round-trip (uleb of a full u64 would still be exact but the
+            // fixed encoding keeps the parse arm unambiguous and append-only).
+            uleb128_write(w, data.len() as u64).unwrap();
+            for &bits in data {
+                write_u64_le(w, bits).unwrap();
+            }
         }
         Instr::BinOp { dst, op, lhs, rhs } => {
             w.write_all(&[OP_BINOP]).unwrap();

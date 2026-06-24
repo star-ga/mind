@@ -2939,6 +2939,39 @@ impl LoweringContext {
                     dst, elems, n
                 ));
             }
+            // Dense tensor literal `[e0, e1, ...]` — per-element bit patterns
+            // (NOT a broadcast fill). Generalises the i64-only ConstArray emit to
+            // any dtype, and registers `ValueKind::Tensor` so downstream binops
+            // (`a + b`) find the operand type instead of failing "missing type
+            // information". Q16.16 stores as i32 at the MLIR layer.
+            Instr::ConstDenseTensor {
+                dst,
+                dtype,
+                shape,
+                data,
+            } => {
+                let elem_ty = match dtype {
+                    DType::Q16 => "i32",
+                    _ => dtype.as_str(),
+                };
+                let tensor_ty = tensor_type(shape, elem_ty);
+                let elems: String = data
+                    .iter()
+                    .map(|&bits| render_dense_elem(bits, dtype))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.emit_line(&format!(
+                    "    %{} = arith.constant dense<[{}]> : {}",
+                    dst.0, elems, tensor_ty
+                ));
+                self.values.insert(
+                    *dst,
+                    ValueKind::Tensor {
+                        dtype: dtype.clone(),
+                        shape: shape.clone(),
+                    },
+                );
+            }
             // RFC 0005 Phase 6.2b Gap 2 — `arr[idx]` element load.
             // Lowers to an `tensor.extract` from the base tensor constant.
             #[cfg(feature = "std-surface")]
@@ -9471,6 +9504,22 @@ fn format_fill(fill: Option<f64>, dtype: &DType) -> String {
         (Some(v), _) => format_number(v.trunc()),
         (None, DType::F64 | DType::F32 | DType::F16 | DType::BF16) => "0.0".to_string(),
         (None, _) => "0".to_string(),
+    }
+}
+
+/// Render one element of a dense tensor literal from its stored `u64` bit
+/// pattern (see `Instr::ConstDenseTensor` in `src/ir/mod.rs`), deterministically
+/// and round-trip-exact for the dtype: f32 from its low-32 bits, f64 from all 64,
+/// i32 as two's-complement (sign-extended from the low 32), i64 as-is, Q16.16
+/// stored as i32. No fast-math, no locale — a pure bits→text function.
+fn render_dense_elem(bits: u64, dtype: &DType) -> String {
+    match dtype {
+        DType::F32 | DType::F16 | DType::BF16 => {
+            format_number(f32::from_bits(bits as u32) as f64)
+        }
+        DType::F64 => format_number(f64::from_bits(bits)),
+        DType::I32 | DType::Q16 => (((bits as u32) as i32) as i64).to_string(),
+        DType::I64 => (bits as i64).to_string(),
     }
 }
 
