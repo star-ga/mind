@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2939 | **Est. tokens:** ~7,044,094
-**Generated:** 2026-06-24 08:39 UTC
+**Files:** 2945 | **Est. tokens:** ~7,045,636
+**Generated:** 2026-06-24 09:45 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~26,604 |
+| `./` | 34 | ~26,647 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -39,7 +39,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 28 | ~52,832 |
+| `docs/` | 28 | ~53,058 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 26 | ~58,807 |
+| `examples/mindc_mind/` | 32 | ~60,080 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -479,7 +479,7 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5148 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5191 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
@@ -690,7 +690,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~13881 tok, huge) — Roadmap
+- `roadmap.md` (~14107 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3176 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1331 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
@@ -759,10 +759,16 @@
 - `mic3_flip_smoke.py` (~1093 tok, large)
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22299 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
+- `_mlir_add.mind` (~13 tok, tiny) — fn add(a: i64, b: i64) -> i64 {
+- `_mlir_c.mind` (~8 tok, tiny) — fn c() -> i64 {
+- `_mlir_mul.mind` (~13 tok, tiny) — fn mul(a: i64, b: i64) -> i64 {
+- `_mlir_sub.mind` (~13 tok, tiny) — fn sub(a: i64, b: i64) -> i64 {
+- `_mlir_two.mind` (~19 tok, tiny) — fn two(a: i64, b: i64) -> i64 {
 - `multi_let_smoke.py` (~1499 tok, large)
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
+- `self_host_mlir_smoke.py` (~1207 tok, large)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
