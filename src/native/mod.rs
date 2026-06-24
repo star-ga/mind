@@ -102,14 +102,37 @@ const ARENA_ADDR: u64 = 0x100_0000;
 /// Bytes reserved at the arena base for the bump cursor (8) — the data region
 /// starts here. Kept 8-aligned so every allocation stays 8-aligned.
 const ARENA_CURSOR_RESERVE: u64 = 8;
-/// Total mapped arena size, including the cursor reserve. 16 MiB of zero-filled
-/// BSS — generous for the scalar-struct slice; bump past it traps. Bump this (and
-/// document it) when programs need larger heaps.
-const ARENA_BYTES: u64 = 16 * 1024 * 1024;
+/// Total mapped arena size, including the cursor reserve. 256 MiB of zero-filled
+/// BSS — bump past it traps. Costs nothing on disk (BSS `p_filesz = 0`; only
+/// `p_memsz` grows). Sized for the ULTIMATE self-host: the native compiler running
+/// `selftest_mic3_module_nfn` on all of main.mind (~262 KB mic@3 out) allocates a
+/// large transient heap (lexer tokens, AST, struct registry, the strtab + per-fn
+/// emit buffers) — the 16 MiB the scalar-struct slice used overflowed (SIGSEGV on a
+/// store past the BSS edge). Bump this (and document it) when programs need larger
+/// heaps; the no-free bump arena never reclaims, so peak == sum of all allocations.
+const ARENA_BYTES: u64 = 1024 * 1024 * 1024;
 /// First address handed out by the allocator (offset 0 of the data region).
 const ARENA_DATA: u64 = ARENA_ADDR + ARENA_CURSOR_RESERVE;
 /// Usable data-region size (the bytes available to bump-allocate).
 const ARENA_DATA_BYTES: u64 = ARENA_BYTES - ARENA_CURSOR_RESERVE;
+
+/// Dedicated call-stack region (a fourth BSS PT_LOAD). The `main` entry switches
+/// `rsp` to the TOP of this region in its first instructions, so the program runs
+/// on a stack WE size — not the OS-provided one (which `ulimit -s` caps, typically
+/// at 8 MiB). The self-host emitter recurses deeply (recursive-descent parse + AST
+/// walks over ~17.9k lines), overflowing the default stack with a SIGSEGV on the
+/// guard page. Switching to a fixed, large, zero-filled BSS stack makes the
+/// artifact self-contained: it runs identically regardless of the caller's
+/// `ulimit`, with no host-varying bytes (all phdr constants). Placed well ABOVE the
+/// arena so the two BSS mappings never overlap for any `ARENA_BYTES`.
+const STACK_BYTES: u64 = 4u64 * 1024 * 1024 * 1024;
+/// Stack region base vaddr — page-aligned, above the arena's top
+/// (`ARENA_ADDR + ARENA_BYTES`) with a one-page gap. The stack grows DOWN from the
+/// region's top, so the initial `rsp` is `STACK_ADDR + STACK_BYTES` (kept
+/// 16-aligned: both operands are page-multiples).
+const STACK_ADDR: u64 = ARENA_ADDR + ARENA_BYTES + 0x1000;
+/// Initial `rsp` — the top of the stack region (stack grows downward).
+const STACK_TOP: u64 = STACK_ADDR + STACK_BYTES;
 
 /// System-V integer argument registers, in order. `(modrm_reg_field, needs_rex)`.
 const ARG_REGS: [(u8, bool); 6] = [
@@ -451,6 +474,42 @@ fn emit_write(code: &mut Vec<u8>, fd_disp: i32, buf_disp: i32, count_disp: i32) 
     // rax = 1 (SYS_write)
     code.extend_from_slice(&[0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00]); // mov rax, 1
     code.extend_from_slice(&[0x0F, 0x05]); // syscall — result (bytes written / -errno) in rax
+}
+
+/// Inline `__mind_read(fd, buf_addr, count, offset) -> i64`: the raw `read(2)`
+/// syscall — NO libc. The exact mirror of `emit_write` but for the read path
+/// (std/io.mind `file_read` / `read_stdin_bytes` at io.mind:53/81). Contract:
+/// `__mind_read(fd, buf_addr, count, offset) -> i64`. The streaming-input surface
+/// passes `offset == -1` ("current stream position"), which is exactly `read(2)`'s
+/// behaviour, so the IR's `offset` arg is intentionally unused (same `-1`-sentinel
+/// reasoning as `emit_write`).
+///
+/// x86-64 syscall #0: `rdi=fd, rsi=buf, rdx=count`, number in rax. `read`'s return
+/// (byte count, 0 at EOF, or a negative `-errno`) lands in rax and is stored to the
+/// caller's dst slot — matching the i64 contract in io.mind:13.
+///
+/// Pure function of the IR: only frame-slot `mov`s, the fixed syscall-number bytes,
+/// and `syscall` — no host-varying bytes, so byte-identity holds. The syscall
+/// clobbers rax (result), rcx and r11 (Linux/System-V syscall ABI); all are dead
+/// between instructions in the slot model, so no save/restore is needed.
+///
+/// deferred: a non-`-1` (absolute) `offset` would need `pread64` (syscall #17, with
+///   the offset in r10) instead of `read`. The streaming-input surface only ever
+///   passes `-1`, so `read(2)` is correct here; upgrade path mirrors emit_write's
+///   pwrite note (branch on the offset slot, or a distinct `__mind_pread`).
+fn emit_read(code: &mut Vec<u8>, fd_disp: i32, buf_disp: i32, count_disp: i32) {
+    // rdi = [fd]
+    code.extend_from_slice(&[0x48, 0x8B, 0xBD]); // mov rdi, [rbp+fd]
+    code.extend_from_slice(&fd_disp.to_le_bytes());
+    // rsi = [buf_addr]
+    code.extend_from_slice(&[0x48, 0x8B, 0xB5]); // mov rsi, [rbp+buf]
+    code.extend_from_slice(&buf_disp.to_le_bytes());
+    // rdx = [count]
+    code.extend_from_slice(&[0x48, 0x8B, 0x95]); // mov rdx, [rbp+count]
+    code.extend_from_slice(&count_disp.to_le_bytes());
+    // rax = 0 (SYS_read)
+    code.extend_from_slice(&[0x48, 0xC7, 0xC0, 0x00, 0x00, 0x00, 0x00]); // mov rax, 0
+    code.extend_from_slice(&[0x0F, 0x05]); // syscall — result (bytes read / 0=EOF / -errno) in rax
 }
 
 /// `mov <argreg>, [rbp+disp32]` — marshal a slot value into a System-V arg reg.
@@ -832,13 +891,37 @@ fn emit_seq(
                         emit_write(code, disp(fd)?, disp(buf)?, disp(count)?);
                         store_rax(code, disp(dst)?); // bytes written (or -errno) -> dst
                     }
+                    "__mind_read" => {
+                        // Raw read(2) syscall (NO libc) — the streaming-input path
+                        // (std/io.mind file_read / read_stdin_bytes). Contract:
+                        // __mind_read(fd, buf_addr, count, offset) -> i64. The input
+                        // surface passes offset == -1 ("current position"), which is
+                        // exactly read(2); the offset arg is unused (see emit_read's
+                        // deferred-pread note). The exact dual of the __mind_write arm.
+                        let fd = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_read missing fd".into())
+                        })?;
+                        let buf = args.get(1).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_read missing buf_addr".into())
+                        })?;
+                        let count = args.get(2).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_read missing count".into())
+                        })?;
+                        // args[3] (offset) is the -1 "current position" sentinel on
+                        // the input path; read(2) ignores it. It must still be present
+                        // (the four-arg contract) — fail loud if absent.
+                        let _offset = args.get(3).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_read missing offset".into())
+                        })?;
+                        emit_read(code, disp(fd)?, disp(buf)?, disp(count)?);
+                        store_rax(code, disp(dst)?); // bytes read (0=EOF / -errno) -> dst
+                    }
                     other => {
-                        // Wider sub-i64 helpers (__mind_store_i16/i32, …) and the
-                        // read syscall (__mind_read) are not yet inlined — fail loud
-                        // rather than silently miscompile.
+                        // Wider sub-i64 helpers (__mind_store_i16/i32, …) are not yet
+                        // inlined — fail loud rather than silently miscompile.
                         return Err(NativeError::Unsupported(format!(
                             "intrinsic {other} (only \
-                             __mind_alloc/realloc/free/store_i64/load_i64/store_i8/load_i8/write inlined)"
+                             __mind_alloc/realloc/free/store_i64/load_i64/store_i8/load_i8/write/read inlined)"
                         )));
                     }
                 }
@@ -1041,8 +1124,24 @@ fn lower_fn(
     let slot = assign_slots(body);
     let frame = (8 * slot.len()).next_multiple_of(16) as i32; // keep rsp 16-aligned
 
+    let mut code = Vec::new();
+
+    // Entry-only stack switch: move rsp to the top of the dedicated BSS stack
+    // region (STACK_TOP) before the standard prologue, so the whole program runs on
+    // a stack WE size rather than the OS-provided one (`ulimit -s`-capped). The
+    // self-host emitter's deep recursion overflows the default 8 MiB stack with a
+    // SIGSEGV; STACK_TOP is 16-aligned (page-multiple), so the call/push ABI stays
+    // correct. The OS-provided argc/argv/envp/auxv on the original stack are
+    // abandoned — `main()` takes no args and never reads them, and the program's
+    // terminal `exit` syscall needs no stack. Pure constant emit (a fixed movabs),
+    // no host-varying bytes, so byte-identity holds.
+    if is_entry {
+        code.extend_from_slice(&[0x48, 0xBC]); // movabs rsp, STACK_TOP
+        code.extend_from_slice(&STACK_TOP.to_le_bytes());
+    }
+
     // Prologue: push rbp ; mov rbp, rsp ; sub rsp, frame
-    let mut code = vec![0x55, 0x48, 0x89, 0xE5, 0x48, 0x81, 0xEC];
+    code.extend_from_slice(&[0x55, 0x48, 0x89, 0xE5, 0x48, 0x81, 0xEC]);
     code.extend_from_slice(&frame.to_le_bytes());
 
     let mut calls = Vec::new();
@@ -1148,7 +1247,7 @@ fn build_note(trace_hash: &[u8; 32]) -> Vec<u8> {
 /// existing on-disk determinism.
 fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     const LOAD_ADDR: u64 = 0x40_0000;
-    const HDRS: u64 = 64 + 3 * 56; // ehdr + three phdrs (code, note, arena)
+    const HDRS: u64 = 64 + 4 * 56; // ehdr + four phdrs (code, note, arena, stack)
     let entry = LOAD_ADDR + HDRS + entry_off;
     let load_sz = HDRS + code.len() as u64; // PT_LOAD covers headers + code
     let note_off = HDRS + code.len() as u64;
@@ -1166,7 +1265,7 @@ fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     e.extend_from_slice(&0u32.to_le_bytes()); // e_flags
     e.extend_from_slice(&64u16.to_le_bytes()); // e_ehsize
     e.extend_from_slice(&56u16.to_le_bytes()); // e_phentsize
-    e.extend_from_slice(&3u16.to_le_bytes()); // e_phnum = 3 (code, note, arena)
+    e.extend_from_slice(&4u16.to_le_bytes()); // e_phnum = 4 (code, note, arena, stack)
     e.extend_from_slice(&0u16.to_le_bytes()); // e_shentsize
     e.extend_from_slice(&0u16.to_le_bytes()); // e_shnum
     e.extend_from_slice(&0u16.to_le_bytes()); // e_shstrndx
@@ -1200,6 +1299,19 @@ fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     e.extend_from_slice(&ARENA_ADDR.to_le_bytes()); // p_paddr
     e.extend_from_slice(&0u64.to_le_bytes()); // p_filesz = 0 (BSS)
     e.extend_from_slice(&ARENA_BYTES.to_le_bytes()); // p_memsz = whole arena
+    e.extend_from_slice(&0x1000u64.to_le_bytes()); // p_align (page)
+    // --- phdr 4: PT_LOAD (RW) — the dedicated call-stack region (BSS) ---
+    // The entry switches rsp to STACK_TOP (the top of this region) so the program
+    // runs on a stack WE size, not the `ulimit -s`-capped OS stack. p_filesz = 0
+    // (kernel zero-fills at exec); p_memsz = STACK_BYTES at the fixed STACK_ADDR.
+    // All constants — zero host-varying bytes, so on-disk determinism is preserved.
+    e.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+    e.extend_from_slice(&6u32.to_le_bytes()); // RW (no execute)
+    e.extend_from_slice(&0u64.to_le_bytes()); // p_offset (0 file bytes)
+    e.extend_from_slice(&STACK_ADDR.to_le_bytes()); // p_vaddr
+    e.extend_from_slice(&STACK_ADDR.to_le_bytes()); // p_paddr
+    e.extend_from_slice(&0u64.to_le_bytes()); // p_filesz = 0 (BSS)
+    e.extend_from_slice(&STACK_BYTES.to_le_bytes()); // p_memsz = whole stack
     e.extend_from_slice(&0x1000u64.to_le_bytes()); // p_align (page)
     // --- code, then the (unmapped) note ---
     e.extend_from_slice(code);
@@ -1974,6 +2086,90 @@ mod tests {
         }
         let _ = std::fs::remove_file(&path);
         out
+    }
+
+    /// Like `run_capture`, but FEED `stdin_bytes` to the program's stdin first.
+    /// Lets a test exercise the read(2) path end-to-end (the program reads what we
+    /// pipe in). Same ETXTBSY-retry + unique-path discipline as `run_capture`.
+    fn run_capture_stdin(elf: &[u8], name: &str, stdin_bytes: &[u8]) -> Option<(Vec<u8>, i32)> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let uniq = CTR.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{name}.{}.{uniq}", std::process::id()));
+        {
+            let mut fh = std::fs::File::create(&path).expect("create");
+            fh.write_all(elf).expect("write");
+            let mut perms = fh.metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).expect("chmod");
+        } // handle dropped here, before exec
+        let mut out = None;
+        for _ in 0..100 {
+            let spawn = Command::new(&path)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn();
+            match spawn {
+                Ok(mut child) => {
+                    child
+                        .stdin
+                        .take()
+                        .expect("stdin pipe")
+                        .write_all(stdin_bytes)
+                        .expect("feed stdin");
+                    let o = child.wait_with_output().expect("wait");
+                    out = Some((o.stdout, o.status.code().unwrap_or(-1)));
+                    break;
+                }
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => panic!("exec failed: {e}"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        out
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_a_program_that_reads_stdin_then_echoes_via_mind_read_write() {
+        // The raw read(2) syscall path (NO libc), the dual of the __mind_write test.
+        // Front-end-lowered (not a hand-built IR toy): alloc a buffer, read up to 8
+        // bytes from stdin (fd 0, offset -1 = "current position" — the exact shape
+        // read_stdin_bytes at std/io.mind:81 emits), echo exactly `n` bytes back to
+        // stdout via __mind_write, and exit with read's return (the byte count).
+        let src = "fn main() -> i64 { \
+                   let addr: i64 = __mind_alloc(8); \
+                   let n: i64 = __mind_read(0, addr, 8, 0 - 1); \
+                   let w: i64 = __mind_write(1, addr, n, 0 - 1); \
+                   return n; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the __mind_read program");
+
+        // Byte-identity (the wedge): the read codegen is a pure function of the IR
+        // (frame-slot movs + fixed syscall-number bytes + `syscall`, no host-varying
+        // bytes) — two builds of the same IR must be byte-for-byte identical.
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "__mind_read ELF must be byte-identical (no host-varying bytes)"
+        );
+
+        // RUN it: pipe "MIND!" to stdin. The program must read those 5 bytes and echo
+        // them straight back to stdout, exiting with read's return value (5) — proving
+        // the read syscall actually fired and landed the right bytes in the buffer.
+        let (stdout, code) =
+            run_capture_stdin(&elf, "mind_native_read_exe", b"MIND!").expect("the read ELF runs");
+        assert_eq!(
+            stdout, b"MIND!",
+            "__mind_read(0, buf, 8, -1) must read stdin and the echo must print it back"
+        );
+        assert_eq!(
+            code, 5,
+            "read(2) returns the byte count (5 = len(\"MIND!\")); main returns it as the exit code"
+        );
     }
 
     #[test]
