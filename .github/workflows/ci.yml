@@ -348,10 +348,12 @@ jobs:
             ${{ runner.os }}-mindcraft-self-host-
 
       - name: Install MLIR toolchain (Ubuntu 24.04 LLVM 20)
-        # The cdylib/self-host emit uses mindc's native-ELF backend (no LLVM
-        # shell-out since the 2026-05-21 melior/inkwell removal), so the keystone
-        # does not depend on this. Pinned to llvm-20 for parity with the
-        # cross-substrate gate's toolchain and any --emit-shared sub-steps.
+        # The cdylib/self-host emit lowers MIND IR to MLIR text and shells out to
+        # mlir-opt + mlir-translate + clang to produce the .so (the in-process
+        # melior/inkwell LLVM crates were removed 2026-05-21, but the emit still
+        # uses these LLVM/MLIR subprocess tools), so the keystone DOES depend on
+        # this toolchain. Pinned to llvm-20 for parity with the cross-substrate
+        # gate's toolchain and the --emit-shared sub-steps.
         run: |
           sudo apt-get update
           sudo apt-get install -y mlir-20-tools clang-20
