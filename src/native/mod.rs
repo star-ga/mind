@@ -719,6 +719,28 @@ fn emit_seq(
                         emit_realloc(code, disp(addr)?, disp(new_bytes)?);
                         store_rax(code, disp(dst)?); // new data address -> dst slot
                     }
+                    "__mind_free" => {
+                        // No-free bump arena: `__mind_free(ptr)` reclaims nothing
+                        // (the arena only ever bumps; see emit_alloc_core). The
+                        // std/vec.mind `vec_free` (and the realloc/free contract at
+                        // vec.mind:113) define the result as 0 and `__mind_free(0)`
+                        // as a no-op — both fall out of "do nothing, return 0". The
+                        // ptr arg is intentionally unread: there is no metadata to
+                        // touch. Pure constant emit (no memory access, no host-
+                        // varying bytes), so byte-identity holds.
+                        //
+                        // deferred: a real freelist/coalescing allocator would splice
+                        //   the block back onto a free list keyed off the 8-byte size
+                        //   header (emit_alloc_core). Upgrade path: emit that splice
+                        //   here once the arena gains a freelist; the contract's
+                        //   `-> 0` return is unchanged.
+                        let _ptr = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_free missing ptr".into())
+                        })?;
+                        // rax = 0 — the intrinsic's contract value.
+                        code.extend_from_slice(&[0x48, 0x31, 0xC0]); // xor rax, rax
+                        store_rax(code, disp(dst)?); // 0 -> dst slot
+                    }
                     "__mind_write" => {
                         // Raw write(2) syscall (NO libc) — the print path
                         // (std/io.mind print_bytes / file_write). Contract:
@@ -750,7 +772,7 @@ fn emit_seq(
                         // rather than silently miscompile.
                         return Err(NativeError::Unsupported(format!(
                             "intrinsic {other} (only \
-                             __mind_alloc/realloc/store_i64/load_i64/store_i8/load_i8/write inlined)"
+                             __mind_alloc/realloc/free/store_i64/load_i64/store_i8/load_i8/write inlined)"
                         )));
                     }
                 }
@@ -794,33 +816,55 @@ fn emit_seq(
                 merges,
                 ..
             } => {
+                // A branch that ends in a terminator (`return`/`break`/`continue`)
+                // DIVERGES — control never falls through it to the merge. The
+                // lowering encodes this by leaving that branch's merge-tuple edge
+                // (and `then_result`/`else_result` placeholders) as the
+                // `ValueId(usize::MAX)` sentinel, which has no frame slot. Mirror
+                // the MLIR path (`then_ends_with_return` / `else_ends_with_return`
+                // in mlir/lowering.rs): only emit the phi-forwarding + `dst` copy
+                // (+ the join `jmp`) on the FALL-THROUGH side, never the diverging
+                // one — otherwise `disp(usize::MAX)` is a use of an undefined
+                // value. A diverging branch already emitted its own terminator
+                // inside its `emit_seq`, so the copies after it are unreachable.
+                let then_falls = !then_instrs.last().is_some_and(branch_diverges);
+                let else_falls = !else_instrs.last().is_some_and(branch_diverges);
+
                 // Evaluate the condition; branch to the else-block when it is 0.
                 emit_seq(code, calls, cond_instrs, slot, is_entry, loops)?;
                 let je = emit_cmp_je_zero(code, disp(cond_id)?);
 
                 // then-block: body, phi(then side), dst = then_result, jump to end.
                 emit_seq(code, calls, then_instrs, slot, is_entry, loops)?;
-                for (m, then_val, _) in merges {
-                    load_rax(code, disp(then_val)?);
-                    store_rax(code, disp(m)?);
-                }
-                load_rax(code, disp(then_result)?);
-                store_rax(code, disp(dst)?);
-                let jmp = emit_jmp(code);
+                let then_jmp = if then_falls {
+                    for (m, then_val, _) in merges {
+                        load_rax(code, disp(then_val)?);
+                        store_rax(code, disp(m)?);
+                    }
+                    load_rax(code, disp(then_result)?);
+                    store_rax(code, disp(dst)?);
+                    Some(emit_jmp(code))
+                } else {
+                    None // diverged; its terminator was already emitted
+                };
 
                 // else-block: body, phi(else side), dst = else_result.
                 let else_at = code.len();
                 patch_rel32(code, je, else_at);
                 emit_seq(code, calls, else_instrs, slot, is_entry, loops)?;
-                for (m, _, else_val) in merges {
-                    load_rax(code, disp(else_val)?);
-                    store_rax(code, disp(m)?);
+                if else_falls {
+                    for (m, _, else_val) in merges {
+                        load_rax(code, disp(else_val)?);
+                        store_rax(code, disp(m)?);
+                    }
+                    load_rax(code, disp(else_result)?);
+                    store_rax(code, disp(dst)?);
                 }
-                load_rax(code, disp(else_result)?);
-                store_rax(code, disp(dst)?);
 
                 let end_at = code.len();
-                patch_rel32(code, jmp, end_at);
+                if let Some(jmp) = then_jmp {
+                    patch_rel32(code, jmp, end_at);
+                }
             }
             // `while cond { body }` — re-test the condition each iteration; the
             // loop-carried vars live in their (aliased) slots so no phi forwarding
@@ -918,6 +962,21 @@ fn lower_fn(
         code,
         calls,
     })
+}
+
+/// True if `i` terminates control flow — it never falls through to a following
+/// instruction. Mirrors `mlir/lowering.rs::instr_is_block_terminator`: a `return`
+/// (always), or — under std-surface — a `break`/`continue`. The `If` arm uses
+/// this so a branch that diverges (and whose merge edges are therefore the
+/// `ValueId(usize::MAX)` non-fall-through sentinel) skips its phi-forwarding /
+/// `dst` copy / join `jmp`, never emitting `disp(usize::MAX)`.
+fn branch_diverges(i: &Instr) -> bool {
+    match i {
+        Instr::Return { .. } => true,
+        #[cfg(feature = "std-surface")]
+        Instr::Break { .. } | Instr::Continue { .. } => true,
+        _ => false,
+    }
 }
 
 /// A short human label for an unsupported instruction (avoids `Debug` noise).
@@ -1043,6 +1102,31 @@ fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     e
 }
 
+/// Synthesize the deterministic entry stub used when a module has no top-level
+/// `main` (a library, e.g. the self-host compiler `examples/mindc_mind/main.mind`).
+/// The stub is a bare `exit(0)` syscall — `xor edi,edi ; mov eax,60 ; syscall` —
+/// with NO prologue/frame (it never returns), so the produced ELF is a valid,
+/// runnable artifact whose execution is a pure constant. All real library
+/// functions are still lowered alongside it, so any unsupported IR construct in a
+/// library body surfaces as the next blocker rather than being masked.
+///
+/// deferred: this stub exits immediately instead of invoking any library export —
+/// upgrade path: once the front-end designates an export as the program entry
+/// (e.g. a `#[entry]` attribute or a conventional `mindc_compile`), `call` it
+/// here and forward its i64 return into the exit status.
+fn synth_lib_entry() -> Func {
+    Func {
+        name: "__mind_entry".to_string(),
+        // xor edi,edi (status 0) ; mov eax,60 (SYS_exit) ; syscall
+        code: vec![
+            0x31, 0xFF, // xor edi, edi
+            0xB8, 0x3C, 0x00, 0x00, 0x00, // mov eax, 60
+            0x0F, 0x05, // syscall
+        ],
+        calls: Vec::new(),
+    }
+}
+
 /// Lower an `IRModule` to a runnable, deterministic static ELF64 — zero LLVM.
 ///
 /// Scans `ir.instrs` for `FnDef`s, lowers each (the `main` `FnDef` is the entry),
@@ -1066,10 +1150,22 @@ pub fn compile_to_elf(ir: &IRModule) -> Result<Vec<u8>, NativeError> {
             }
         }
     }
-    let (entry_name, entry_body, entry_ret) = entry.ok_or(NativeError::NoEntry)?;
-
     let mut funcs = Vec::with_capacity(rest.len() + 1);
-    funcs.push(lower_fn(entry_name, entry_body, true, entry_ret)?);
+    match entry {
+        Some((entry_name, entry_body, entry_ret)) => {
+            funcs.push(lower_fn(entry_name, entry_body, true, entry_ret)?);
+        }
+        None => {
+            // Library form (e.g. `examples/mindc_mind/main.mind`, the self-host
+            // compiler): a module of exported `fn`s with NO top-level `main`.
+            // Rather than refuse with `NoEntry`, synthesize a deterministic entry
+            // stub that exits cleanly (status 0) and still lower every function in
+            // the module — so a valid runnable ELF is produced AND any unsupported
+            // IR construct in a library body surfaces as the real next blocker
+            // instead of being masked by the missing-entry check.
+            funcs.push(synth_lib_entry());
+        }
+    }
     for (name, body, ret_id) in rest {
         funcs.push(lower_fn(name, body, false, ret_id)?);
     }
@@ -1171,7 +1267,10 @@ mod tests {
     }
 
     #[test]
-    fn missing_main_is_a_clean_error_not_a_panic() {
+    fn missing_main_compiles_as_a_library_with_synth_entry() {
+        // A module of exported `fn`s with NO top-level `main` (the self-host
+        // compiler shape) must NOT be refused: it lowers as a library, the
+        // synthesized stub becomes the entry, and the artifact runs and exits 0.
         let mut m = IRModule::new();
         m.instrs = vec![Instr::FnDef {
             name: "f".into(),
@@ -1180,7 +1279,19 @@ mod tests {
             reap_threshold: None,
             body: vec![Instr::Return { value: None }],
         }];
-        assert_eq!(compile_to_elf(&m), Err(NativeError::NoEntry));
+        let a = compile_to_elf(&m).expect("library module must lower, not NoEntry");
+        // Deterministic: same IR -> byte-identical ELF.
+        assert_eq!(
+            a,
+            compile_to_elf(&m).expect("lowers"),
+            "library lowering must be byte-identical (the wedge)"
+        );
+        // Runnable: the synthesized entry exits cleanly with status 0.
+        assert_eq!(
+            run(&a, "mind_native_lib_exe"),
+            Some(0),
+            "synthesized library entry must exit(0)"
+        );
     }
 
     #[test]
@@ -1451,6 +1562,76 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std-surface")]
+    fn lowers_value_if_with_a_diverging_branch() {
+        // A value-`if` whose ONE branch diverges (`return`) — control never falls
+        // through that branch to the merge. The lowering leaves that branch's
+        // merge edge (and result placeholder) as the `ValueId(usize::MAX)`
+        // non-fall-through sentinel, which has NO frame slot. The native backend
+        // must skip the diverging branch's phi-forwarding / `dst` copy / join
+        // `jmp` (mirroring the MLIR `then_ends_with_return` path) — otherwise it
+        // emits `disp(usize::MAX)` and fails with "use of undefined value
+        // %18446744073709551615". This is the exact construct that blocked
+        // main.mind. Front-end-lowered, not a hand-built IR toy.
+        //
+        // `classify(n) = if n < 0 { return 7 } else { n + 1 } + 100`:
+        //   n >= 0 → falls through the else-edge → (n+1)+100
+        //   n <  0 → the then-branch returns 7 (the merge is never reached)
+        let src = "fn classify(n: i64) -> i64 { \
+                   let r: i64 = if n < 0 { return 7; } else { n + 1 }; \
+                   return r + 100; } \
+                   fn main() -> i64 { return classify(41); }";
+        let ir = crate::eval::lower::lower_to_ir(&crate::parser::parse(src).expect("parse"));
+        let elf = compile_to_elf(&ir).expect("native-lowers a diverging-branch value-if");
+
+        // Byte-identity: skipping the dead diverging-branch copies is a pure
+        // function of the IR (no host-varying bytes), so two builds are identical.
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "diverging-branch if ELF must be byte-identical"
+        );
+
+        // Fall-through (else) path: classify(41) = (41+1)+100 = 142.
+        assert_eq!(
+            run(&elf, "mind_native_if_diverge_else_exe"),
+            Some(142),
+            "n>=0 takes the else-edge: (41+1)+100 = 142"
+        );
+
+        // Diverging (then) path: classify(-5) returns 7 directly — the merge,
+        // whose then-edge is the usize::MAX sentinel, is never reached.
+        let src_neg = "fn classify(n: i64) -> i64 { \
+                       let r: i64 = if n < 0 { return 7; } else { n + 1 }; \
+                       return r + 100; } \
+                       fn main() -> i64 { return classify(-5); }";
+        let ir_neg =
+            crate::eval::lower::lower_to_ir(&crate::parser::parse(src_neg).expect("parse"));
+        let elf_neg = compile_to_elf(&ir_neg).expect("lowers");
+        assert_eq!(
+            run(&elf_neg, "mind_native_if_diverge_then_exe"),
+            Some(7),
+            "n<0 diverges through the then-branch's `return 7`"
+        );
+
+        // The MIRROR case — the ELSE branch diverges, the THEN branch falls
+        // through (its else-edge merge value is the usize::MAX sentinel).
+        // `classify2(n) = if n < 0 { n + 50 } else { return 9 } + 100`.
+        let src_else = "fn classify2(n: i64) -> i64 { \
+                        let r: i64 = if n < 0 { n + 50 } else { return 9; }; \
+                        return r + 100; } \
+                        fn main() -> i64 { return classify2(-8); }";
+        let ir_else =
+            crate::eval::lower::lower_to_ir(&crate::parser::parse(src_else).expect("parse"));
+        let elf_else = compile_to_elf(&ir_else).expect("lowers");
+        assert_eq!(
+            run(&elf_else, "mind_native_if_diverge_else_branch_exe"),
+            Some(142),
+            "n<0 takes the then-edge: (-8+50)+100 = 142"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
     fn lowers_a_struct_program_via_the_option_c_intrinsics() {
         // The front-end lowers this struct literal + field read to the Option-C
         // i64-handle ABI intrinsics — `__mind_alloc(bytes)`, `__mind_store_i64`,
@@ -1573,6 +1754,59 @@ mod tests {
             run(&elf_c, "mind_native_byte_noclobber_exe"),
             Some(42),
             "store_i8 must touch ONLY the low byte (0xFFFF→store_i8 0x2A→0xFF2A): 65322-65280=42"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_mind_free_as_a_no_op_returning_zero() {
+        // `__mind_free(ptr)` over the no-free bump arena is a pure no-op that
+        // returns 0 (the std/vec.mind `vec_free` contract). The native backend
+        // now inlines it (no runtime to link). This is the intrinsic that the
+        // self-host compiler's `vec_free` path reaches once `vec_push` resolves.
+        //
+        // Two assertions in one program: (1) the freed pointer's data SURVIVES
+        // the free (the arena reclaims nothing), and (2) `__mind_free` evaluates
+        // to 0. Store 42 at `addr`, free `addr`, then read it back and ADD the
+        // free's result (which must be 0) — exit(42) only if both hold.
+        let src = "fn main() -> i64 { \
+                   let addr: i64 = __mind_alloc(8); \
+                   let w: i64 = __mind_store_i64(addr, 42); \
+                   let f: i64 = __mind_free(addr); \
+                   let back: i64 = __mind_load_i64(addr); \
+                   return back + f; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the __mind_free program");
+
+        // Byte-identity (the wedge): `__mind_free` emits a pure constant
+        // (`xor rax,rax`) — no memory access, no host-varying bytes.
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "__mind_free ELF must be byte-identical (no-op emit has no host-varying bytes)"
+        );
+
+        // free is a no-op (data survives) AND returns 0: 42 + 0 = 42.
+        assert_eq!(
+            run(&elf, "mind_native_free_exe"),
+            Some(42),
+            "__mind_free must be a no-op returning 0: load-back(42) + free-result(0) = 42"
+        );
+
+        // A second program proves the RETURN value alone is 0 (not just additively
+        // neutral): if `__mind_free` returned anything non-zero, `> 0` would take
+        // the then-branch (7); a 0 return takes the else-branch (42).
+        let src_z = "fn main() -> i64 { \
+                     let addr: i64 = __mind_alloc(8); \
+                     let f: i64 = __mind_free(addr); \
+                     if f > 0 { return 7; } else { return 42; } }";
+        let ir_z = crate::eval::lower::lower_to_ir(&crate::parser::parse(src_z).expect("parse"));
+        let elf_z = compile_to_elf(&ir_z).expect("lowers");
+        assert_eq!(
+            run(&elf_z, "mind_native_free_zero_exe"),
+            Some(42),
+            "__mind_free's result must be exactly 0 (f > 0 is false → else → 42)"
         );
     }
 
