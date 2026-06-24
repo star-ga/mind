@@ -18052,6 +18052,179 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
     nb_i32le_signed(c4, disp)
 }
 
+// The `setcc` second opcode byte for a comparison BinOp, or -1 for a
+// non-comparison op (mirror src/native::setcc_opcode). Signed forms — MIND i64 is
+// signed; sete/setne are sign-agnostic.
+//   Lt setl 0x9C ; Le setle 0x9E ; Gt setg 0x9F ; Ge setge 0x9D ;
+//   Eq sete 0x94 ; Ne setne 0x95.
+pub fn nb_setcc_opcode(op: i64) -> i64 {
+    if op == op_lt() {
+        return 156;
+    }
+    if op == op_le() {
+        return 158;
+    }
+    if op == op_gt() {
+        return 159;
+    }
+    if op == op_ge() {
+        return 157;
+    }
+    if op == op_eq() {
+        return 148;
+    }
+    if op == op_ne() {
+        return 149;
+    }
+    0 - 1
+}
+
+// cmp_rax_mem(setcc, rhs_disp): lhs already in rax — `cmp rax, [rbp+rhs] ;
+// setcc al ; movzx eax, al` — leaves the 0/1 boolean in rax (mirror
+// src/native::cmp_rax_mem).
+//   cmp  = 48 3B 85 <disp32> ; setcc al = 0F <setcc> C0 ; movzx eax,al = 0F B6 C0
+pub fn nb_cmp_rax_mem(code: String, setcc: i64, rhs_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 59);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, rhs_disp);
+    let c5: String = nb_push(c4, 15);
+    let c6: String = nb_push(c5, setcc);
+    let c7: String = nb_push(c6, 192);
+    let c8: String = nb_push(c7, 15);
+    let c9: String = nb_push(c8, 182);
+    nb_push(c9, 192)
+}
+
+// ---- Option-C i64-handle ABI intrinsic emitters (mirror src/native/mod.rs) ----
+// These inline the front-end's struct-literal / field-read lowering: a struct
+// value is the i64 heap base address, allocated by a deterministic bump arena
+// (NEVER malloc/ASLR — byte-identity-by-construction), with per-field 8-byte
+// stores and loads through the handle. Ported byte-for-byte from emit_alloc /
+// emit_alloc_core / emit_store_i64 / emit_load_i64.
+
+// emit_alloc_core: header + data bump over the fixed-vaddr BSS arena. Leaves the
+// returned DATA pointer in rax. Expects the rounded data size already in rsi.
+//   mov rdi,rsi ; add rdi,8 ; movabs rax,ARENA_ADDR ; mov rcx,[rax] ;
+//   movabs rdx,ARENA_DATA ; mov rax,rcx ; add rax,rdx ; mov [rax],rsi ;
+//   add rax,8 ; mov rdx,rcx ; add rdx,rdi ; movabs r8,ARENA_DATA_BYTES ;
+//   cmp r8,rdx ; jae +2 ; ud2 ; movabs r9,ARENA_ADDR ; mov [r9],rdx
+pub fn nb_emit_alloc_core(code: String) -> String {
+    // mov rdi,rsi = 48 89 F7 ; add rdi,8 = 48 83 C7 08
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 137);
+    let c3: String = nb_push(c2, 247);
+    let c4: String = nb_push(c3, 72);
+    let c5: String = nb_push(c4, 131);
+    let c6: String = nb_push(c5, 199);
+    let c7: String = nb_push(c6, 8);
+    // movabs rax,ARENA_ADDR = 48 B8 <imm64> ; mov rcx,[rax] = 48 8B 08
+    let c8: String = nb_push(c7, 72);
+    let c9: String = nb_push(c8, 184);
+    let c10: String = nb_i64le(c9, nb_arena_addr());
+    let c11: String = nb_push(c10, 72);
+    let c12: String = nb_push(c11, 139);
+    let c13: String = nb_push(c12, 8);
+    // movabs rdx,ARENA_DATA = 48 BA <imm64> (ARENA_DATA = ARENA_ADDR + 8)
+    let c14: String = nb_push(c13, 72);
+    let c15: String = nb_push(c14, 186);
+    let c16: String = nb_i64le(c15, nb_arena_addr() + 8);
+    // mov rax,rcx = 48 89 C8 ; add rax,rdx = 48 01 D0
+    let c17: String = nb_push(c16, 72);
+    let c18: String = nb_push(c17, 137);
+    let c19: String = nb_push(c18, 200);
+    let c20: String = nb_push(c19, 72);
+    let c21: String = nb_push(c20, 1);
+    let c22: String = nb_push(c21, 208);
+    // mov [rax],rsi = 48 89 30 ; add rax,8 = 48 83 C0 08
+    let c23: String = nb_push(c22, 72);
+    let c24: String = nb_push(c23, 137);
+    let c25: String = nb_push(c24, 48);
+    let c26: String = nb_push(c25, 72);
+    let c27: String = nb_push(c26, 131);
+    let c28: String = nb_push(c27, 192);
+    let c29: String = nb_push(c28, 8);
+    // mov rdx,rcx = 48 89 CA ; add rdx,rdi = 48 01 FA
+    let c30: String = nb_push(c29, 72);
+    let c31: String = nb_push(c30, 137);
+    let c32: String = nb_push(c31, 202);
+    let c33: String = nb_push(c32, 72);
+    let c34: String = nb_push(c33, 1);
+    let c35: String = nb_push(c34, 250);
+    // movabs r8,ARENA_DATA_BYTES = 49 B8 <imm64> (ARENA_BYTES - 8)
+    let c36: String = nb_push(c35, 73);
+    let c37: String = nb_push(c36, 184);
+    let c38: String = nb_i64le(c37, nb_arena_bytes() - 8);
+    // cmp r8,rdx = 49 39 D0 ; jae +2 = 0F 83 02 00 00 00 ; ud2 = 0F 0B
+    let c39: String = nb_push(c38, 73);
+    let c40: String = nb_push(c39, 57);
+    let c41: String = nb_push(c40, 208);
+    let c42: String = nb_push(c41, 15);
+    let c43: String = nb_push(c42, 131);
+    let c44: String = nb_push(c43, 2);
+    let c45: String = nb_push(c44, 0);
+    let c46: String = nb_push(c45, 0);
+    let c47: String = nb_push(c46, 0);
+    let c48: String = nb_push(c47, 15);
+    let c49: String = nb_push(c48, 11);
+    // movabs r9,ARENA_ADDR = 49 B9 <imm64> ; mov [r9],rdx = 49 89 11
+    let c50: String = nb_push(c49, 73);
+    let c51: String = nb_push(c50, 185);
+    let c52: String = nb_i64le(c51, nb_arena_addr());
+    let c53: String = nb_push(c52, 73);
+    let c54: String = nb_push(c53, 137);
+    nb_push(c54, 17)
+}
+
+// emit_alloc(bytes_disp): round the requested size up to the 8-byte stride into
+// rsi, then bump. Leaves the data pointer in rax.
+//   mov rsi,[rbp+bytes] = 48 8B B5 <disp32> ; add rsi,7 = 48 83 C6 07 ;
+//   and rsi,-8 = 48 83 E6 F8 ; emit_alloc_core.
+pub fn nb_emit_alloc(code: String, bytes_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 181);
+    let c4: String = nb_i32le_signed(c3, bytes_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 131);
+    let c7: String = nb_push(c6, 198);
+    let c8: String = nb_push(c7, 7);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 131);
+    let c11: String = nb_push(c10, 230);
+    let c12: String = nb_push(c11, 248);
+    nb_emit_alloc_core(c12)
+}
+
+// emit_store_i64(addr_disp, val_disp): 8-byte store through the i64 handle.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov rcx,[rbp+val] = 48 8B 8D
+//   <disp32> ; mov [rax],rcx = 48 89 08.
+pub fn nb_emit_store_i64(code: String, addr_disp: i64, val_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    let c7: String = nb_push(c6, 141);
+    let c8: String = nb_i32le_signed(c7, val_disp);
+    let c9: String = nb_push(c8, 72);
+    let c10: String = nb_push(c9, 137);
+    nb_push(c10, 8)
+}
+
+// emit_load_i64(addr_disp): 8-byte load through the i64 handle. Result in rax.
+//   mov rax,[rbp+addr] = 48 8B 85 <disp32> ; mov rax,[rax] = 48 8B 00.
+pub fn nb_emit_load_i64(code: String, addr_disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    let c4: String = nb_i32le_signed(c3, addr_disp);
+    let c5: String = nb_push(c4, 72);
+    let c6: String = nb_push(c5, 139);
+    nb_push(c6, 0)
+}
+
 // System-V integer arg registers (index 0..5): (modrm_reg_field, needs_rex).
 //   0 rdi(7,F) 1 rsi(6,F) 2 rdx(2,F) 3 rcx(1,F) 4 r8(0,T) 5 r9(1,T)
 pub fn nb_argreg_field(i: i64) -> i64 {
@@ -18141,12 +18314,173 @@ pub fn nb_calls_push(calls: i64, n: i64, rel_off: i64, lo: i64, hi: i64) -> i64 
     n + 1
 }
 
+// ---- intra-function forward-jump emit + patch (If control flow) ----
+// The Rust native `If` arm patches je/jmp rel32s WITHIN the function once their
+// targets are known (src/native::patch_rel32 over a Vec<u8>). The pure-MIND code
+// buffer is an append-only String, so we instead RECORD each forward jump's
+// fn-relative rel32 site into a jumps scratch table, leave a 0 placeholder, and
+// patch the assembled fn code in place (string_addr) before it is concatenated.
+// An intra-function jump's rel32 is position-independent (site and target move as
+// one unit when the linker relocates the fn), so a fn-relative patch is exact.
+//
+// One jump record = 2 i64 words: (rel32_site_within_fn, target_off_within_fn).
+// `jcell` is a 1-i64 count cell. nb_jmps_push appends at index [jcell] and bumps.
+pub fn nb_jmps_push(jmps: i64, jcell: i64, site: i64, target: i64) -> i64 {
+    let n: i64 = __mind_load_i64(jcell);
+    __mind_store_i64(jmps + (n * 2 + 0) * 8, site);
+    __mind_store_i64(jmps + (n * 2 + 1) * 8, target);
+    __mind_store_i64(jcell, n + 1);
+    0
+}
+
+// `cmp qword [rbp+disp32], 0 ; je rel32(0 placeholder)` (mirror
+// src/native::emit_cmp_je_zero). Records the je's rel32 site (fn-relative) into
+// the jumps table with target -1 (back-patched by the If arm once else_at known).
+//   cmp = 48 83 BD <disp32> 00 ; je rel32 = 0F 84 <rel32>
+pub fn nb_emit_cmp_je_zero(code: String, cond_disp: i64, jmps: i64, jcell: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 131);
+    let c3: String = nb_push(c2, 189);
+    let c4: String = nb_i32le_signed(c3, cond_disp);
+    let c5: String = nb_push(c4, 0);
+    let c6: String = nb_push(c5, 15);
+    let c7: String = nb_push(c6, 132);
+    // The rel32 field begins at the current length; record the site, emit 0.
+    let site: i64 = string_len(c7);
+    let _j: i64 = nb_jmps_push(jmps, jcell, site, 0 - 1);
+    nb_u32(c7, 0)
+}
+
+// `jmp rel32(0 placeholder)` (mirror src/native::emit_jmp). Records the jmp's
+// rel32 site (fn-relative), target -1 (back-patched once end_at known).
+//   jmp = E9 <rel32>
+pub fn nb_emit_jmp(code: String, jmps: i64, jcell: i64) -> String {
+    let c1: String = nb_push(code, 233);
+    let site: i64 = string_len(c1);
+    let _j: i64 = nb_jmps_push(jmps, jcell, site, 0 - 1);
+    nb_u32(c1, 0)
+}
+
+// Back-patch the MOST-RECENTLY-recorded jump's target (the one whose target is
+// still the -1 sentinel) to `target`. The If arm records je then (maybe) jmp in
+// order; it sets each one's target as soon as it is known, in LIFO order, so the
+// last sentinel-targeted record is always the one being resolved.
+pub fn nb_jmp_set_target(jmps: i64, jcell: i64, which: i64, target: i64) -> i64 {
+    __mind_store_i64(jmps + (which * 2 + 1) * 8, target);
+    0
+}
+
+// Patch every recorded forward jump into the assembled fn code buffer (in place).
+// `code_addr` = string_addr of this fn's code String. For jump c: site/target are
+// fn-relative; rel = target - (site + 4). Records whose target is still -1 (a
+// diverging then-branch's omitted join jmp is never recorded, so this never fires
+// on a sentinel — but guard anyway: skip -1).
+pub fn nb_patch_jmps(code_addr: i64, jmps: i64, njmps: i64, c: i64) -> i64 {
+    if c >= njmps {
+        return 0;
+    }
+    let site: i64 = __mind_load_i64(jmps + (c * 2 + 0) * 8);
+    let target: i64 = __mind_load_i64(jmps + (c * 2 + 1) * 8);
+    if target < 0 {
+        return nb_patch_jmps(code_addr, jmps, njmps, c + 1);
+    }
+    let rel: i64 = target - (site + 4);
+    let _p: i64 = nb_patch_rel32(code_addr, site, rel);
+    nb_patch_jmps(code_addr, jmps, njmps, c + 1)
+}
+
 // ---- NbState: threads the code buffer + SSA counter + call count ----
 struct NbState {
     code: String,
     next_id: i64,
     last_id: i64,
     ncalls: i64,
+}
+
+// ---- native let-env (name span -> frame slot) ----
+// A `let X = INIT` binding maps the name X to a frame slot (== its INIT value's
+// SSA id, since slot id == SSA id in this model — mirrors emit_mlir_stmt_env's
+// env_bind). Threaded as a heap buffer `lets` of (name_lo, name_hi, slot) triples
+// (24 bytes each) plus a 1-i64 count cell `lcell`. For the scalar fixtures (add,
+// if_ret) the buffer stays empty, so nb_expr's ident resolution is unchanged and
+// their ELFs stay byte-identical.
+// Each let-env entry is 4 i64 words: (name_lo, name_hi, slot, slit_node). The
+// 4th word is the struct-LITERAL AST node the name was bound to (0 for a non-
+// struct binding), so a later `p.field` read can recover the field-name ->
+// declared-index mapping (offset = 8*index) without a separate struct registry.
+// The scalar/value_if fixtures bind no struct, so slit_node stays 0 and the
+// extra word never changes their emitted bytes — the 4-word stride is only a
+// wider step over an otherwise-identical (lo, hi, slot) prefix.
+pub fn nb_lets_bind(lets: i64, lcell: i64, name_lo: i64, name_hi: i64, slot: i64, slit_node: i64) -> i64 {
+    let n: i64 = __mind_load_i64(lcell);
+    __mind_store_i64(lets + (n * 4 + 0) * 8, name_lo);
+    __mind_store_i64(lets + (n * 4 + 1) * 8, name_hi);
+    __mind_store_i64(lets + (n * 4 + 2) * 8, slot);
+    __mind_store_i64(lets + (n * 4 + 3) * 8, slit_node);
+    __mind_store_i64(lcell, n + 1);
+    0
+}
+
+// Resolve a name span to its bound let-slot, or -1 if unbound. LAST-match wins
+// (innermost / latest binding), mirroring env_lookup_rest's last-write-wins.
+pub fn nb_lets_lookup(lets: i64, lcell: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = __mind_load_i64(lcell);
+    nb_lets_lookup_rest(lets, n, buf, lo, hi, 0, 0 - 1)
+}
+pub fn nb_lets_lookup_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64, best: i64) -> i64 {
+    if i >= n {
+        return best;
+    }
+    let nlo: i64 = __mind_load_i64(lets + (i * 4 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 4 + 1) * 8);
+    let new_best: i64 = if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
+        __mind_load_i64(lets + (i * 4 + 2) * 8)
+    } else {
+        best
+    };
+    nb_lets_lookup_rest(lets, n, buf, lo, hi, i + 1, new_best)
+}
+
+// Resolve a name span to the struct-LITERAL node it was bound to (or 0). LAST-
+// match wins, mirroring nb_lets_lookup. Used by the ast_field read path to map
+// the field name to its declared index (and thus its 8*index byte offset).
+pub fn nb_lets_lookup_slit(lets: i64, lcell: i64, buf: i64, lo: i64, hi: i64) -> i64 {
+    let n: i64 = __mind_load_i64(lcell);
+    nb_lets_lookup_slit_rest(lets, n, buf, lo, hi, 0, 0)
+}
+pub fn nb_lets_lookup_slit_rest(lets: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64, best: i64) -> i64 {
+    if i >= n {
+        return best;
+    }
+    let nlo: i64 = __mind_load_i64(lets + (i * 4 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(lets + (i * 4 + 1) * 8);
+    let new_best: i64 = if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
+        __mind_load_i64(lets + (i * 4 + 3) * 8)
+    } else {
+        best
+    };
+    nb_lets_lookup_slit_rest(lets, n, buf, lo, hi, i + 1, new_best)
+}
+
+// The declared index of the field named buf[flo..fhi) among a struct-literal's
+// fields (3-i64 triples at fields_addr: name_lo, name_hi, value-node), in SOURCE
+// order — which for the supported fixtures equals declaration order, so the
+// field's byte offset is 8*index. Returns -1 when the name is not found.
+pub fn nb_slit_field_index(slit_node: i64, buf: i64, flo: i64, fhi: i64) -> i64 {
+    let fields_addr: i64 = ast_child1(slit_node);
+    let nfields: i64 = ast_aux(slit_node);
+    nb_slit_field_index_loop(fields_addr, nfields, buf, flo, fhi, 0)
+}
+pub fn nb_slit_field_index_loop(fields_addr: i64, nfields: i64, buf: i64, flo: i64, fhi: i64, i: i64) -> i64 {
+    if i >= nfields {
+        return 0 - 1;
+    }
+    let nlo: i64 = __mind_load_i64(fields_addr + (i * 3 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(fields_addr + (i * 3 + 1) * 8);
+    if span_bytes_equal(buf, flo, fhi, nlo, nhi) == 1 {
+        return i;
+    }
+    nb_slit_field_index_loop(fields_addr, nfields, buf, flo, fhi, i + 1)
 }
 
 // ---- scalar expression lowering -> machine code ----
@@ -18159,7 +18493,7 @@ struct NbState {
 //   paren   -> transparent
 //   call    -> lower args, spill to argregs, call rel32, spill result
 //   binop   -> lower lhs+rhs, mov rax,[lhs]; OP rax,[rhs]; mov [dst],rax
-pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64) -> NbState {
+pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
         let val: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
@@ -18176,13 +18510,71 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         if idx >= 0 {
             return NbState { code: st.code, next_id: st.next_id, last_id: idx, ncalls: st.ncalls };
         }
-        // Out of the scalar subset (a let binding): fail loud by returning -1
-        // last_id; the caller's emit produces a deterministic but wrong slot,
-        // which the byte-diff gate will catch. (Scalar fixture has no lets.)
+        // Not a param: a let binding. Resolve via the let-env (its bound slot).
+        let lslot: i64 = nb_lets_lookup(lets, lcell, buf, ast_span_lo(node), ast_span_hi(node));
+        if lslot >= 0 {
+            return NbState { code: st.code, next_id: st.next_id, last_id: lslot, ncalls: st.ncalls };
+        }
+        // Out of the supported subset: fail loud by returning -1 last_id; the
+        // caller's emit produces a deterministic but wrong slot, which the
+        // byte-diff gate will catch.
         return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
     }
     if k == ast_paren() {
-        return nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls);
+        return nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
+    }
+    if k == ast_struct_lit() {
+        // `Name { f0: e0, .. }` for an all-i64 struct (legacy 8-byte-stride path,
+        // mirrors eval/lower.rs's StructLit all_i64 arm + the IR the Rust native
+        // backend inlines). IR (== oracle disasm): CONST 8 ; CONST n_fields ;
+        // MUL(8,n) ; __mind_alloc(size) -> ptr ; then for each SOURCE-order field
+        // i: emit value -> val ; addr = (i==0 ? ptr : CONST(8*i)+ADD(ptr,off)) ;
+        // __mind_store_i64(addr, val) (its dst id is consumed but never read).
+        // The struct value IS the ptr slot.
+        let fields_addr: i64 = ast_child1(node);
+        let nfields: i64 = ast_aux(node);
+        // CONST 8 (element size).
+        let sz_id: i64 = st.next_id;
+        let a1: String = nb_push(st.code, 72);
+        let a2: String = nb_push(a1, 184);
+        let a3: String = nb_i64le(a2, 8);
+        let a4: String = nb_store_rax(a3, nb_slot_disp(sz_id));
+        // CONST n_fields.
+        let nf_id: i64 = sz_id + 1;
+        let b1: String = nb_push(a4, 72);
+        let b2: String = nb_push(b1, 184);
+        let b3: String = nb_i64le(b2, nfields);
+        let b4: String = nb_store_rax(b3, nb_slot_disp(nf_id));
+        // MUL(sz, nf) -> alloc size.
+        let mul_id: i64 = nf_id + 1;
+        let m1: String = nb_load_rax(b4, nb_slot_disp(sz_id));
+        let m2: String = nb_arith_rax_mem(m1, op_mul(), nb_slot_disp(nf_id));
+        let m3: String = nb_store_rax(m2, nb_slot_disp(mul_id));
+        // __mind_alloc(size) -> ptr (the struct base).
+        let ptr_id: i64 = mul_id + 1;
+        let al1: String = nb_emit_alloc(m3, nb_slot_disp(mul_id));
+        let al2: String = nb_store_rax(al1, nb_slot_disp(ptr_id));
+        let s_alloc: NbState = NbState { code: al2, next_id: ptr_id + 1, last_id: ptr_id, ncalls: st.ncalls };
+        // Per-field stores, in SOURCE order.
+        let s_fields: NbState = nb_struct_fields(s_alloc, buf, fields_addr, nfields, 0, ptr_id, params_addr, n_params, calls, lets, lcell);
+        // The struct-lit's VALUE is the base pointer.
+        return NbState { code: s_fields.code, next_id: s_fields.next_id, last_id: ptr_id, ncalls: s_fields.ncalls };
+    }
+    if k == ast_field() {
+        // `recv.field` field READ (mirrors eval/lower.rs FieldAccess + the Rust
+        // native __mind_load_i64 inline). IR: lower recv -> ptr slot ; addr =
+        // (off==0 ? ptr : CONST(off)+ADD(ptr,off)) ; __mind_load_i64(addr) -> dst.
+        // The field's byte offset = 8*declared-index, recovered from the struct-
+        // literal the receiver name was bound to (no separate struct registry).
+        let recv: i64 = ast_child0(node);
+        let s_recv: NbState = nb_expr(st, buf, recv, params_addr, n_params, calls, lets, lcell);
+        let ptr_id: i64 = s_recv.last_id;
+        // Resolve the field byte offset (8*declared-index, or 0 when unsupported)
+        // and emit the read through a SINGLE tail-return helper, so this if-arm has
+        // exactly one return (a dual-return branch lowers to an extra leading
+        // const0 in the self-host subset, breaking the mic@3 flip).
+        let off: i64 = nb_field_offset(recv, node, buf, lets, lcell);
+        return nb_field_read(s_recv.code, s_recv.next_id, ptr_id, off, s_recv.ncalls);
     }
     if k == ast_call() {
         let callee: i64 = ast_child0(node);
@@ -18190,7 +18582,7 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         let args_len: i64 = ast_aux(node);
         // Lower each arg expr (advancing SSA ids), recording each arg's slot id.
         let ids: i64 = __mind_alloc((args_len + 1) * 8);
-        let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids);
+        let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids, lets, lcell);
         let id: i64 = sa.next_id;
         // Spill args 0..min(args_len,6) into the System-V arg registers.
         let c_args: String = nb_emit_argregs(sa.code, ids, args_len, 0);
@@ -18204,28 +18596,142 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         return NbState { code: c_res, next_id: id + 1, last_id: id, ncalls: nc };
     }
     // ast_binop(): lower both operands, then the in-place op.
-    let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls);
+    let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
     let lhs_id: i64 = s1.last_id;
-    let s2: NbState = nb_expr(s1, buf, ast_child1(node), params_addr, n_params, calls);
+    let s2: NbState = nb_expr(s1, buf, ast_child1(node), params_addr, n_params, calls, lets, lcell);
     let rhs_id: i64 = s2.last_id;
     let id: i64 = s2.next_id;
     let op: i64 = ast_aux(node);
-    // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax
+    // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax. A comparison op routes through
+    // cmp+setcc+movzx (-> 0/1); Add/Sub/Mul through the in-place arith form.
     let c1: String = nb_load_rax(s2.code, nb_slot_disp(lhs_id));
-    let c2: String = nb_arith_rax_mem(c1, op, nb_slot_disp(rhs_id));
+    let setcc: i64 = nb_setcc_opcode(op);
+    let c2: String = if setcc >= 0 {
+        nb_cmp_rax_mem(c1, setcc, nb_slot_disp(rhs_id))
+    } else {
+        nb_arith_rax_mem(c1, op, nb_slot_disp(rhs_id))
+    };
     let c3: String = nb_store_rax(c2, nb_slot_disp(id));
     NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls }
 }
 
 // Lower each call arg in order, storing each arg's resulting slot id into ids[i].
-pub fn nb_call_args(st: NbState, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, ids: i64) -> NbState {
+pub fn nb_call_args(st: NbState, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, ids: i64, lets: i64, lcell: i64) -> NbState {
     if i >= args_len {
         return st;
     }
     let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
-    let s1: NbState = nb_expr(st, buf, arg_node, params_addr, n_params, calls);
+    let s1: NbState = nb_expr(st, buf, arg_node, params_addr, n_params, calls, lets, lcell);
     __mind_store_i64(ids + i * 8, s1.last_id);
-    nb_call_args(s1, buf, args_addr, args_len, i + 1, params_addr, n_params, calls, ids)
+    nb_call_args(s1, buf, args_addr, args_len, i + 1, params_addr, n_params, calls, ids, lets, lcell)
+}
+
+// The struct-literal node if `init` is one, else 0 — for the let-env's slit slot.
+// An if-STATEMENT (not a value-if-let) so it stays in the self-host subset.
+pub fn nb_slit_or_zero(init: i64) -> i64 {
+    if ast_kind(init) == ast_struct_lit() {
+        return init;
+    }
+    0
+}
+
+// Emit a field READ at byte offset `off` through the base pointer slot `ptr_id`:
+//   off==0 -> __mind_load_i64(ptr) -> dst
+//   off>0  -> CONST off ; ADD(ptr,off) -> addr ; __mind_load_i64(addr) -> dst
+// A standalone tail-return helper (two returns are fine at fn scope; the hazard
+// was a dual-return INSIDE a value-producing if-arm of nb_expr). Returns the
+// NbState whose last_id is the loaded value's slot.
+pub fn nb_field_read(code: String, next_id: i64, ptr_id: i64, off: i64, ncalls: i64) -> NbState {
+    if off == 0 {
+        let ld_id: i64 = next_id;
+        let l1: String = nb_emit_load_i64(code, nb_slot_disp(ptr_id));
+        let l2: String = nb_store_rax(l1, nb_slot_disp(ld_id));
+        return NbState { code: l2, next_id: ld_id + 1, last_id: ld_id, ncalls: ncalls };
+    }
+    let off_id: i64 = next_id;
+    let o1: String = nb_push(code, 72);
+    let o2: String = nb_push(o1, 184);
+    let o3: String = nb_i64le(o2, off);
+    let o4: String = nb_store_rax(o3, nb_slot_disp(off_id));
+    let add_id: i64 = off_id + 1;
+    let d1: String = nb_load_rax(o4, nb_slot_disp(ptr_id));
+    let d2: String = nb_arith_rax_mem(d1, op_add(), nb_slot_disp(off_id));
+    let d3: String = nb_store_rax(d2, nb_slot_disp(add_id));
+    let ld_id: i64 = add_id + 1;
+    let e1: String = nb_emit_load_i64(d3, nb_slot_disp(add_id));
+    let e2: String = nb_store_rax(e1, nb_slot_disp(ld_id));
+    NbState { code: e2, next_id: ld_id + 1, last_id: ld_id, ncalls: ncalls }
+}
+
+// Resolve a field access `recv.field`'s byte offset (8 * declared field index),
+// or 0 when the shape is unsupported (non-ident receiver, unbound name, or an
+// unknown field). Uses if-STATEMENTS with early returns (NOT value-if-let phis,
+// which are outside the self-host mic@3 subset) so the pure-MIND compiler lowers
+// this byte-identically to the Rust oracle.
+pub fn nb_field_offset(recv: i64, field_node: i64, buf: i64, lets: i64, lcell: i64) -> i64 {
+    if ast_kind(recv) != ast_ident() {
+        return 0;
+    }
+    let slit: i64 = nb_lets_lookup_slit(lets, lcell, buf, ast_span_lo(recv), ast_span_hi(recv));
+    if slit == 0 {
+        return 0;
+    }
+    let fidx: i64 = nb_slit_field_index(slit, buf, ast_child1(field_node), ast_child2(field_node));
+    if fidx < 0 {
+        return 0;
+    }
+    fidx * 8
+}
+
+// Emit each struct-literal field's store, in SOURCE order. For field i: emit the
+// value expr -> val slot ; addr = (i==0 ? ptr_id : CONST(8*i)+ADD(ptr,off)) ;
+// __mind_store_i64(addr, val) — the store's own dst id is consumed (the front-end
+// never reads a store's result) so the SSA numbering matches the oracle exactly.
+pub fn nb_struct_fields(st: NbState, buf: i64, fields_addr: i64, nfields: i64, i: i64, ptr_id: i64, params_addr: i64, n_params: i64, calls: i64, lets: i64, lcell: i64) -> NbState {
+    if i >= nfields {
+        return st;
+    }
+    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    // Lower the field value -> its slot.
+    let sv: NbState = nb_expr(st, buf, value_node, params_addr, n_params, calls, lets, lcell);
+    let val_id: i64 = sv.last_id;
+    let val_nc: i64 = sv.ncalls;
+    // Emit the per-field store, threading the code String + next_id through a
+    // single tail-return helper per offset case (NOT a two-branch NbState whose
+    // fields are read afterward — that shape confuses the value tracker into
+    // dropping the code handle). field 0 stores at the base ptr; field i>0 first
+    // materialises addr = ptr + 8*i (CONST + ADD).
+    if i == 0 {
+        let s_after: NbState = nb_struct_field_store0(sv.code, sv.next_id, ptr_id, val_id, val_nc);
+        return nb_struct_fields(s_after, buf, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell);
+    }
+    let s_after: NbState = nb_struct_field_store_off(sv.code, sv.next_id, ptr_id, val_id, val_nc, i * 8);
+    nb_struct_fields(s_after, buf, fields_addr, nfields, i + 1, ptr_id, params_addr, n_params, calls, lets, lcell)
+}
+
+// Emit field-0's store at the base pointer (offset 0), consuming the store's dst
+// id. A leaf tail-return helper so the threaded code String stays live.
+pub fn nb_struct_field_store0(code: String, next_id: i64, ptr_id: i64, val_id: i64, ncalls: i64) -> NbState {
+    let store_dst: i64 = next_id;
+    let c_st: String = nb_emit_store_i64(code, nb_slot_disp(ptr_id), nb_slot_disp(val_id));
+    NbState { code: c_st, next_id: store_dst + 1, last_id: store_dst, ncalls: ncalls }
+}
+
+// Emit field-i>0's store: CONST off ; ADD(ptr, off) -> addr ; then the store at
+// addr. Consumes off + add + store-dst ids. A leaf tail-return helper.
+pub fn nb_struct_field_store_off(code: String, next_id: i64, ptr_id: i64, val_id: i64, ncalls: i64, off: i64) -> NbState {
+    let off_id: i64 = next_id;
+    let o1: String = nb_push(code, 72);
+    let o2: String = nb_push(o1, 184);
+    let o3: String = nb_i64le(o2, off);
+    let o4: String = nb_store_rax(o3, nb_slot_disp(off_id));
+    let add_id: i64 = off_id + 1;
+    let a1: String = nb_load_rax(o4, nb_slot_disp(ptr_id));
+    let a2: String = nb_arith_rax_mem(a1, op_add(), nb_slot_disp(off_id));
+    let a3: String = nb_store_rax(a2, nb_slot_disp(add_id));
+    let store_dst: i64 = add_id + 1;
+    let c_st: String = nb_emit_store_i64(a3, nb_slot_disp(add_id), nb_slot_disp(val_id));
+    NbState { code: c_st, next_id: store_dst + 1, last_id: store_dst, ncalls: ncalls }
 }
 
 // Emit `load_argreg(i, slot_disp(ids[i]))` for i = 0..min(n,6)-1.
@@ -18242,34 +18748,302 @@ pub fn nb_emit_argregs(code: String, ids: i64, n: i64, i: i64) -> String {
     nb_emit_argregs(c1, ids, n, i + 1)
 }
 
-// Lower one body statement (scalar subset): a `return EXPR` lowers EXPR then the
-// return; any other (bare expr) just lowers the expr.
-pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64) -> NbState {
+// Emit a synthetic `ConstI64(next_id, 0)` (a branch's leading then_result /
+// else_result unit zero — the lowering pushes one at the start of every branch,
+// even a diverging one; see eval/lower.rs Node::If). movabs rax,0 ; mov [slot],rax.
+// Advances next_id, sets last_id to the consumed id.
+pub fn nb_emit_const0(st: NbState) -> NbState {
+    let id: i64 = st.next_id;
+    let c1: String = nb_push(st.code, 72);
+    let c2: String = nb_push(c1, 184);
+    let c3: String = nb_i64le(c2, 0);
+    let c4: String = nb_store_rax(c3, nb_slot_disp(id));
+    NbState { code: c4, next_id: id + 1, last_id: id, ncalls: st.ncalls }
+}
+
+// True if a statement is a terminator (diverges — control never falls through).
+// Mirror src/native::branch_diverges: a `return` (the only terminator in this
+// subset; break/continue are std-surface, out of scope here).
+pub fn nb_stmt_diverges(node: i64) -> i64 {
+    if ast_kind(node) == ast_return() {
+        return 1;
+    }
+    0
+}
+
+// True if the LAST statement of a block (stmts_addr[0..stmts_len]) diverges.
+// An empty block falls through (returns 0).
+pub fn nb_block_diverges(stmts_addr: i64, stmts_len: i64) -> i64 {
+    if stmts_len <= 0 {
+        return 0;
+    }
+    nb_stmt_diverges(__mind_load_i64(stmts_addr + (stmts_len - 1) * 8))
+}
+
+// Lower a `let`'s INIT expression: a value if-expr through nb_if_value, anything
+// else through nb_expr. A plain tail-return helper (each arm `return`s the
+// NbState directly) so the caller binds against a cleanly-projected .last_id —
+// `let s = if c { structA } else { structB }` then reading `s.last_id` mis-reads
+// the field (value-if-bound struct projection), so we never form that shape.
+pub fn nb_lower_let_init(st: NbState, buf: i64, init: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+    if is_any_value_if_expr(init) == 1 {
+        return nb_if_value(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    }
+    nb_expr(st, buf, init, params_addr, n_params, calls, lets, lcell)
+}
+
+// Lower one body statement: a `return EXPR` lowers EXPR then the return; an `if`
+// statement lowers per the src/native If arm; any other (bare expr) lowers the
+// expr. `jmps`/`jcell` are the intra-fn forward-jump scratch (used by the If arm).
+pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
     let k: i64 = ast_kind(node);
     if k == ast_return() {
-        let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls);
+        let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls, lets, lcell);
         let c1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
         let c2: String = nb_emit_return(c1, is_entry);
         return NbState { code: c2, next_id: s1.next_id, last_id: s1.last_id, ncalls: s1.ncalls };
     }
-    nb_expr(st, buf, node, params_addr, n_params, calls)
+    if k == ast_let() {
+        // `let X = INIT`: lower INIT (value-if-exprs go through the value-if path,
+        // mirroring emit_mlir_stmt_env's is_mlir_value_if branch), then bind X to
+        // INIT's result slot so later reads resolve to it. child0 = name leaf,
+        // child2 = init expr. The init lowering is routed through nb_lower_let_init
+        // (a tail-return helper, NOT a `let s = if {struct} else {struct}` — a
+        // value-if-bound-struct projection mis-reads .last_id) so it reads cleanly.
+        let name_leaf: i64 = ast_child0(node);
+        let init: i64 = ast_child2(node);
+        let s1: NbState = nb_lower_let_init(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+        // Record the struct-LITERAL node (or 0) so a later `name.field` read can
+        // recover the field's declared index (8*index byte offset) from it. The
+        // 0-or-init pick is a helper (if-statement), not a value-if-let phi.
+        let _b: i64 = nb_lets_bind(lets, lcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id, nb_slit_or_zero(init));
+        return s1;
+    }
+    if k == ast_if() {
+        // A value if-EXPRESSION used as a statement goes through the value path
+        // (then_result/else_result = the branch values); a plain if-statement
+        // (diverging or unit) through nb_if_stmt.
+        if is_any_value_if_expr(node) == 1 {
+            return nb_if_value(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+        }
+        return nb_if_stmt(st, buf, node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    }
+    nb_expr(st, buf, node, params_addr, n_params, calls, lets, lcell)
+}
+
+// Lower an `if` STATEMENT (and synthetic-else if-expr-as-statement), mirroring
+// src/native::emit_seq's `If` arm + eval/lower.rs's Node::If lowering byte-for-byte.
+//
+// SSA-id order (== assign_slots first-appearance order; params lowest):
+//   cond expr ids ; then leading ConstI64(then_result,0) ; then-block stmt ids ;
+//   else leading ConstI64(else_result,0) ; else-block stmt ids ; dst = fresh.
+// Emission:
+//   emit cond_instrs ; cmp je_zero(cond_id) ;
+//   THEN: emit leading const0 ; emit then-stmts ; if then FALLS THROUGH (no
+//     terminator): merges(none in this subset) + load then_result/store dst +
+//     join jmp ; else (diverged) omit them (the branch emitted its own ret).
+//   patch je -> else_at ; ELSE: emit leading const0 ; emit else-stmts ; if else
+//     FALLS THROUGH: merges(none) + load else_result/store dst.
+//   patch the join jmp (if any) -> end_at.
+// branch_bindings / merges are empty for the scalar if-statement subset (no
+// let-escapes across the branch), matching the fixture's `merges: []`.
+pub fn nb_if_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+    let cond: i64 = ast_child0(node);
+    let then_blk: i64 = ast_child1(node);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_blk: i64 = ast_child2(node);
+
+    // cond
+    let sc: NbState = nb_expr(st, buf, cond, params_addr, n_params, calls, lets, lcell);
+    let cond_id: i64 = sc.last_id;
+    let c_je: String = nb_emit_cmp_je_zero(sc.code, nb_slot_disp(cond_id), jmps, jcell);
+    let je_which: i64 = __mind_load_i64(jcell) - 1;
+    let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
+
+    // then-block: leading const0, then the then-stmts.
+    let s_t0: NbState = nb_emit_const0(s_je);
+    let then_result: i64 = s_t0.last_id;
+    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let then_diverges: i64 = nb_block_diverges(then_sa, then_sl);
+    // If the then-branch falls through: copy then_result -> dst, then jmp to end.
+    // The dst id is fresh AFTER the else-block is laid out; we therefore defer the
+    // dst-copy to AFTER we know dst's id. But emission order requires the then
+    // dst-copy + jmp to appear BEFORE the else block. So compute dst's id by
+    // pre-walking the else-block's id count (it does not depend on emitted bytes).
+    let else_sa: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_child0(else_blk)
+    };
+    let else_sl: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_aux(else_blk)
+    };
+    // dst id = (id after else leading const0 + else-stmt ids). next_id after then
+    // = s_tb.next_id; else adds 1 (leading const0) + else-stmt id count. The emit-
+    // time let-env (lets/lcell) is the count env so any struct field-read offset in
+    // the else-block counts the same as it emits.
+    let else_const0_id: i64 = s_tb.next_id;
+    let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell);
+    let dst_id: i64 = after_else;
+
+    // then fall-through emit (dst copy + join jmp) — only when not diverging.
+    // Routed through a helper fn (NOT a value-if returning a struct) to keep the
+    // String-field projection robust.
+    let s_tj: NbState = nb_if_then_join(s_tb, then_diverges, then_result, dst_id, jmps, jcell);
+    let jmp_which: i64 = nb_last_jmp_which(then_diverges, jcell);
+
+    // else target = current length: patch the je.
+    let s_tj_code: String = s_tj.code;
+    let else_at: i64 = string_len(s_tj_code);
+    let _pj: i64 = nb_jmp_set_target(jmps, jcell, je_which, else_at);
+
+    // else-block: leading const0, then the else-stmts.
+    let s_e0: NbState = nb_emit_const0(s_tj);
+    let else_result: i64 = s_e0.last_id;
+    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let else_diverges: i64 = nb_block_diverges(else_sa, else_sl);
+    // else fall-through: copy else_result -> dst (no jmp; it falls to end).
+    let s_ej: NbState = nb_if_else_join(s_eb, else_diverges, else_result, dst_id);
+
+    // end target = current length: patch the join jmp (if any).
+    let s_ej_code: String = s_ej.code;
+    let end_at: i64 = string_len(s_ej_code);
+    let _pe: i64 = nb_maybe_set_jmp(jmp_which, jmps, jcell, end_at);
+    // The if's value lives in dst_id; advance next_id past dst (dst = after_else).
+    NbState { code: s_ej.code, next_id: dst_id + 1, last_id: dst_id, ncalls: s_ej.ncalls }
+}
+
+// Lower an if-EXPRESSION used as a value (`let X = if C {A} else {B}` or a value
+// if-expr-as-statement), mirroring src/native::emit_seq's `If` arm + eval/lower.rs
+// Node::If lowering byte-for-byte. The crucial difference from nb_if_stmt: a value
+// block's then_result/else_result is the trailing VALUE EXPRESSION's slot (A / B),
+// NOT the leading ConstI64(0) — and BOTH branches fall through (a value block
+// never ends in a terminator).
+//
+// SSA-id order (== eval::lower Node::If; params lowest):
+//   cond expr ids ; then leading ConstI64(0) ; then-block stmt ids (incl. the
+//   trailing value-expr's instrs) ; else leading ConstI64(0) ; else-block stmt
+//   ids ; dst = fresh.
+// Emission (matches the Rust If arm with then_falls && else_falls):
+//   cond_instrs ; cmp/je(cond) ; then const0 ; then-stmts ;
+//   load then_result; store dst; jmp(join) ; patch je->else_at ;
+//   else const0 ; else-stmts ; load else_result; store dst ; patch jmp->end_at.
+pub fn nb_if_value(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
+    let cond: i64 = ast_child0(node);
+    let then_blk: i64 = ast_child1(node);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_blk: i64 = ast_child2(node);
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+
+    // cond
+    let sc: NbState = nb_expr(st, buf, cond, params_addr, n_params, calls, lets, lcell);
+    let cond_id: i64 = sc.last_id;
+    let c_je: String = nb_emit_cmp_je_zero(sc.code, nb_slot_disp(cond_id), jmps, jcell);
+    let je_which: i64 = __mind_load_i64(jcell) - 1;
+    let s_je: NbState = NbState { code: c_je, next_id: sc.next_id, last_id: sc.last_id, ncalls: sc.ncalls };
+
+    // then-block: leading const0, then the then value-expr (its trailing slot is
+    // the then_result). A value block always falls through.
+    let s_t0: NbState = nb_emit_const0(s_je);
+    let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let then_result: i64 = s_tb.last_id;
+
+    // dst id is fresh AFTER the whole else-block is laid out; pre-walk to find it
+    // (a pure function of the IR id-numbering, independent of emitted bytes). next
+    // after then = s_tb.next_id; else adds 1 (leading const0) + else-stmt ids.
+    let else_const0_id: i64 = s_tb.next_id;
+    let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell);
+    let dst_id: i64 = after_else;
+
+    // then fall-through: load then_result; store dst; jmp(join).
+    let s_tj: NbState = nb_if_then_join(s_tb, 0, then_result, dst_id, jmps, jcell);
+    let jmp_which: i64 = __mind_load_i64(jcell) - 1;
+
+    // else target = current length: patch the je.
+    let s_tj_code: String = s_tj.code;
+    let else_at: i64 = string_len(s_tj_code);
+    let _pj: i64 = nb_jmp_set_target(jmps, jcell, je_which, else_at);
+
+    // else-block: leading const0, then the else value-expr (trailing = else_result).
+    let s_e0: NbState = nb_emit_const0(s_tj);
+    let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    let else_result: i64 = s_eb.last_id;
+    // else fall-through: load else_result; store dst (no jmp; it falls to end).
+    let s_ej: NbState = nb_if_else_join(s_eb, 0, else_result, dst_id);
+
+    // end target = current length: patch the join jmp.
+    let s_ej_code: String = s_ej.code;
+    let end_at: i64 = string_len(s_ej_code);
+    let _pe: i64 = nb_jmp_set_target(jmps, jcell, jmp_which, end_at);
+    // The if's value lives in dst_id; advance next_id past dst.
+    NbState { code: s_ej.code, next_id: dst_id + 1, last_id: dst_id, ncalls: s_ej.ncalls }
+}
+
+// then-branch join tail: on fall-through, copy then_result -> dst and emit the
+// join jmp; on divergence, pass the state through unchanged.
+pub fn nb_if_then_join(s_tb: NbState, then_diverges: i64, then_result: i64, dst_id: i64, jmps: i64, jcell: i64) -> NbState {
+    if then_diverges == 1 {
+        return s_tb;
+    }
+    let ca: String = nb_load_rax(s_tb.code, nb_slot_disp(then_result));
+    let cb: String = nb_store_rax(ca, nb_slot_disp(dst_id));
+    let cc: String = nb_emit_jmp(cb, jmps, jcell);
+    NbState { code: cc, next_id: s_tb.next_id, last_id: s_tb.last_id, ncalls: s_tb.ncalls }
+}
+
+// else-branch join tail: on fall-through, copy else_result -> dst (no jmp; it
+// falls straight into the end); on divergence, pass through.
+pub fn nb_if_else_join(s_eb: NbState, else_diverges: i64, else_result: i64, dst_id: i64) -> NbState {
+    if else_diverges == 1 {
+        return s_eb;
+    }
+    let ca: String = nb_load_rax(s_eb.code, nb_slot_disp(else_result));
+    let cb: String = nb_store_rax(ca, nb_slot_disp(dst_id));
+    NbState { code: cb, next_id: s_eb.next_id, last_id: s_eb.last_id, ncalls: s_eb.ncalls }
+}
+
+// Index of the join jmp record (-1 when the then-branch diverged so none was
+// emitted), captured right after nb_if_then_join.
+pub fn nb_last_jmp_which(then_diverges: i64, jcell: i64) -> i64 {
+    if then_diverges == 1 {
+        return 0 - 1;
+    }
+    __mind_load_i64(jcell) - 1
+}
+
+// Patch the join jmp's target iff one was emitted.
+pub fn nb_maybe_set_jmp(jmp_which: i64, jmps: i64, jcell: i64, end_at: i64) -> i64 {
+    if jmp_which < 0 {
+        return 0;
+    }
+    nb_jmp_set_target(jmps, jcell, jmp_which, end_at)
 }
 
 // Lower the body statement sequence.
-pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64) -> NbState {
+pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64, jmps: i64, jcell: i64, lets: i64, lcell: i64) -> NbState {
     if i >= stmts_len {
         return st;
     }
     let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let s1: NbState = nb_stmt(st, buf, stmt_node, params_addr, n_params, calls, is_entry);
-    nb_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, calls, is_entry)
+    let s1: NbState = nb_stmt(st, buf, stmt_node, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+    nb_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell)
 }
 
 // Count the frame slots a function's IR defines (params + every body value), by
 // re-walking the body with the SAME SSA numbering nb_expr uses, but emitting
 // nothing. The final slot count == the next_id after the body. frame =
 // round_up(8 * nslots, 16).
-pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+// `clets`/`clcell` are a COUNT-TIME let-env (name -> struct-lit node), the exact
+// mirror of the emit-time `lets`/`lcell` so the field-access count can recover a
+// field's byte offset (8*declared-index) the same way emission does. The scalar/
+// value_if fixtures never bind a struct, so clets stays empty and their counts are
+// unchanged. Reuses the 4-word nb_lets_* helpers (only the slit word is read here).
+pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
     let k: i64 = ast_kind(node);
     if k == ast_int_lit() {
         return next_id + 1;
@@ -18278,41 +19052,116 @@ pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         return next_id;
     }
     if k == ast_paren() {
-        return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params);
+        return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+    }
+    if k == ast_struct_lit() {
+        // sz + nf + mul + alloc-ptr = 4 ids, then per SOURCE-order field i:
+        //   value ids + (i==0 ? 0 : 2 for CONST off + ADD) + 1 store-dst.
+        let fields_addr: i64 = ast_child1(node);
+        let nfields: i64 = ast_aux(node);
+        let after_fields: i64 = nb_count_struct_fields(next_id + 4, buf, fields_addr, nfields, 0, params_addr, n_params, clets, clcell);
+        // The struct-lit VALUE is the alloc-ptr slot (next_id+3); no extra id.
+        return after_fields;
+    }
+    if k == ast_field() {
+        // recv ids (an ident contributes 0) + (off==0 ? 1 load : 2 off+add + 1 load).
+        // Offset resolved via the same helper as emission (no value-if-let phis).
+        let recv: i64 = ast_child0(node);
+        let after_recv: i64 = nb_count_expr(next_id, buf, recv, params_addr, n_params, clets, clcell);
+        let off: i64 = nb_field_offset(recv, node, buf, clets, clcell);
+        if off == 0 {
+            // offset 0 (or unsupported, counted as the offset-0 single load).
+            return after_recv + 1;
+        }
+        return after_recv + 3;
     }
     if k == ast_call() {
         let args_addr: i64 = ast_child1(node);
         let args_len: i64 = ast_aux(node);
-        let after_args: i64 = nb_count_args(next_id, buf, args_addr, args_len, 0, params_addr, n_params);
+        let after_args: i64 = nb_count_args(next_id, buf, args_addr, args_len, 0, params_addr, n_params, clets, clcell);
         return after_args + 1;
     }
     // binop
-    let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params);
-    let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params);
+    let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
+    let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params, clets, clcell);
     r + 1
 }
-pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+// The id count of a struct field's ADDRESS computation: 0 for field 0 (stored at
+// the base ptr), 2 for field i>0 (CONST off + ADD). An if-statement helper.
+pub fn nb_field_addr_ids(after_val: i64, i: i64) -> i64 {
+    if i == 0 {
+        return after_val;
+    }
+    after_val + 2
+}
+
+// Count the ids each struct-literal field's store contributes (mirror
+// nb_struct_fields): value ids + (i==0 ? 0 : 2) + 1 store-dst, in SOURCE order.
+pub fn nb_count_struct_fields(next_id: i64, buf: i64, fields_addr: i64, nfields: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
+    if i >= nfields {
+        return next_id;
+    }
+    let value_node: i64 = __mind_load_i64(fields_addr + (i * 3 + 2) * 8);
+    let after_val: i64 = nb_count_expr(next_id, buf, value_node, params_addr, n_params, clets, clcell);
+    // i==0 stores at the base ptr (no addr instrs); i>0 adds CONST+ADD (2 ids).
+    // Computed via a helper (if-statement) to stay in the self-host subset.
+    let after_addr: i64 = nb_field_addr_ids(after_val, i);
+    nb_count_struct_fields(after_addr + 1, buf, fields_addr, nfields, i + 1, params_addr, n_params, clets, clcell)
+}
+pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
     if i >= args_len {
         return next_id;
     }
     let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
-    let after: i64 = nb_count_expr(next_id, buf, arg_node, params_addr, n_params);
-    nb_count_args(after, buf, args_addr, args_len, i + 1, params_addr, n_params)
+    let after: i64 = nb_count_expr(next_id, buf, arg_node, params_addr, n_params, clets, clcell);
+    nb_count_args(after, buf, args_addr, args_len, i + 1, params_addr, n_params, clets, clcell)
 }
-pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
     let k: i64 = ast_kind(node);
     if k == ast_return() {
-        return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params);
+        return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params, clets, clcell);
     }
-    nb_count_expr(next_id, buf, node, params_addr, n_params)
+    if k == ast_let() {
+        // `let X = INIT`: X reuses INIT's result slot (no new id), so the slot
+        // count is exactly INIT's. Record the count-time name->struct-lit binding
+        // (or 0) so a later `X.field` read counts the same offset emission does.
+        let after_init: i64 = nb_count_stmt(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell);
+        let name_leaf: i64 = ast_child0(node);
+        let init: i64 = ast_child2(node);
+        let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_slit_or_zero(init));
+        return after_init;
+    }
+    if k == ast_if() {
+        // Mirror nb_if_stmt / eval::lower Node::If id assignment:
+        //   cond ids ; +1 then-const0 ; then-stmt ids ; +1 else-const0 ;
+        //   else-stmt ids ; +1 dst.
+        let cond: i64 = ast_child0(node);
+        let after_cond: i64 = nb_count_expr(next_id, buf, cond, params_addr, n_params, clets, clcell);
+        let then_blk: i64 = ast_child1(node);
+        let after_then: i64 = nb_count_stmts(after_cond + 1, buf, ast_child0(then_blk), ast_aux(then_blk), 0, params_addr, n_params, clets, clcell);
+        let else_blk: i64 = ast_child2(node);
+        let else_sa: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_child0(else_blk)
+        };
+        let else_sl: i64 = if else_blk == 0 {
+            0
+        } else {
+            ast_aux(else_blk)
+        };
+        let after_else: i64 = nb_count_stmts(after_then + 1, buf, else_sa, else_sl, 0, params_addr, n_params, clets, clcell);
+        return after_else + 1;
+    }
+    nb_count_expr(next_id, buf, node, params_addr, n_params, clets, clcell)
 }
-pub fn nb_count_stmts(next_id: i64, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+pub fn nb_count_stmts(next_id: i64, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, clets: i64, clcell: i64) -> i64 {
     if i >= stmts_len {
         return next_id;
     }
     let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
-    let after: i64 = nb_count_stmt(next_id, buf, stmt_node, params_addr, n_params);
-    nb_count_stmts(after, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
+    let after: i64 = nb_count_stmt(next_id, buf, stmt_node, params_addr, n_params, clets, clcell);
+    nb_count_stmts(after, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, clets, clcell)
 }
 
 // round_up(x, 16)
@@ -18336,8 +19185,12 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64)
     let stmts_len: i64 = ast_aux(body);
 
     // frame = round_up(8 * nslots, 16); nslots = next_id after walking the body
-    // seeded at n_params (params occupy slots 0..n_params-1).
-    let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params);
+    // seeded at n_params (params occupy slots 0..n_params-1). A count-time let-env
+    // (name -> struct-lit) lets the field-access count recover each field's offset.
+    let clets0: i64 = __mind_alloc(512 * 4 * 8);
+    let clcell0: i64 = __mind_alloc(8);
+    __mind_store_i64(clcell0, 0);
+    let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params, clets0, clcell0);
     let frame: i64 = nb_round16(8 * nslots);
 
     let code0: String = string_new();
@@ -18363,8 +19216,29 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64)
     let st_params: NbState = NbState { code: p8, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
     let st_p: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0);
 
+    // Per-fn intra-function forward-jump scratch (je/jmp sites recorded relative
+    // to THIS fn's code String; up to 512 jumps; jcell = a 1-i64 count, zeroed).
+    let jmps: i64 = __mind_alloc(512 * 2 * 8);
+    let jcell: i64 = __mind_alloc(8);
+    __mind_store_i64(jcell, 0);
+
+    // Per-fn let-env: name span -> (frame slot, struct-lit node), for `let`
+    // bindings (up to 512, 4 i64 words each; lcell = a 1-i64 count, zeroed).
+    // Empty for the scalar fixtures.
+    let lets: i64 = __mind_alloc(512 * 4 * 8);
+    let lcell: i64 = __mind_alloc(8);
+    __mind_store_i64(lcell, 0);
+
     // Body.
-    let st_body: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry);
+    let st_body: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell);
+
+    // Patch every recorded forward jump into this fn's assembled code IN PLACE
+    // (string_addr) before nb_lower_all concatenates it into the image. Intra-fn
+    // jumps are position-independent, so a fn-relative patch is exact after the
+    // whole-function copy.
+    let njmps: i64 = __mind_load_i64(jcell);
+    let fn_code_addr: i64 = string_addr(st_body.code);
+    let _pj: i64 = nb_patch_jmps(fn_code_addr, jmps, njmps, 0);
     st_body
 }
 
@@ -18762,3 +19636,4 @@ pub fn nb_patch_all(code_addr: i64, calls: i64, total_calls: i64, call_owner: i6
     let _p: i64 = nb_patch_rel32(code_addr, abs_off, rel);
     nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, buf, c + 1)
 }
+
