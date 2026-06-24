@@ -51,6 +51,8 @@ CASES = [
     ("bxor", "fn f(a: i64, b: i64) -> i64 {\n    return a ^ b;\n}\n"),
     ("shl",  "fn f(a: i64, b: i64) -> i64 {\n    return a << b;\n}\n"),
     ("shr",  "fn f(a: i64, b: i64) -> i64 {\n    return a >> b;\n}\n"),
+    ("nif_then", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    if c == 0 {\n        if a == 0 {\n            return a;\n        }\n        return b;\n    }\n    return a;\n}\n"),
+    ("nif_else", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    if c == 0 {\n        return a;\n    }\n    if b == 0 {\n        return b;\n    }\n    return c;\n}\n"),
 ]
 
 # Hard-coded golden (verified vs `mindc --emit-mlir` 2026-06-24) for `add` — a
