@@ -316,6 +316,23 @@ fn collect_fixtures() -> Vec<PathBuf> {
         collect_mind_files(&full, &mut paths);
     }
 
+    // Negative fixtures: programs DESIGNED to fail compilation (they test that the
+    // compiler correctly REJECTS bad input). They belong to error-path test suites,
+    // not to a self-host PARITY differential — the Rust oracle correctly produces no
+    // IR for them, so they would only ever be reported `RUST_ONLY`. Exclude them so
+    // the differential's RUST_ONLY set reflects only roadmap demos (features pending),
+    // not deliberately-invalid inputs.
+    const NEGATIVE_FIXTURES: &[&str] = &[
+        "tests/fixtures/invalid.mind",            // parse error (intentional)
+        "tests/fixtures/invalid_broadcast.mind",  // type-check error (intentional)
+        "tests/shapes/broadcast_incompatible.mind", // shape type-check error (intentional)
+        "tests/ir_verification/undefined_operand.mind", // IR-verify error (intentional)
+    ];
+    paths.retain(|p| {
+        let rel = p.strip_prefix(&root).unwrap_or(p);
+        !NEGATIVE_FIXTURES.iter().any(|neg| rel == Path::new(neg))
+    });
+
     paths.sort();
     paths.dedup();
     paths
