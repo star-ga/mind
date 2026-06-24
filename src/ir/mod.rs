@@ -275,6 +275,23 @@ pub enum Instr {
     ConstI64(ValueId, i64),
     ConstF64(ValueId, f64),
     ConstTensor(ValueId, DType, Vec<ShapeDim>, Option<f64>),
+    /// Dense tensor literal `[1.0, 2.0, 3.0]` materialised IN-FUNCTION
+    /// (RFC 0012, tensor-RUNS track increment 1). Unlike [`Instr::ConstTensor`]
+    /// (a single fill scalar broadcast across the shape) this carries the
+    /// EXACT per-element bit patterns so an `f32` literal keeps its bits
+    /// (the old i64 `ConstArray` path coerced floats to `[0,0,0]` — a banned
+    /// silent miscompile). `data` holds one entry per element in row-major
+    /// declaration order, each the element value zero-extended to `u64`
+    /// (f32 → u32 → u64, i32 → u32 → u64, i64 as-is) so the exact IEEE / two's
+    /// complement bits round-trip through mic@3 and into the MLIR
+    /// `arith.constant dense<...>`. `data.len()` MUST equal the product of
+    /// the known shape dims (the front end fails loud on a mismatch).
+    ConstDenseTensor {
+        dst: ValueId,
+        dtype: DType,
+        shape: Vec<ShapeDim>,
+        data: Vec<u64>,
+    },
     BinOp {
         dst: ValueId,
         op: BinOp,
@@ -810,6 +827,7 @@ pub(crate) fn instruction_dst(instr: &Instr) -> Option<ValueId> {
         Instr::ConstI64(dst, ..)
         | Instr::ConstF64(dst, ..)
         | Instr::ConstTensor(dst, ..)
+        | Instr::ConstDenseTensor { dst, .. }
         | Instr::BinOp { dst, .. }
         | Instr::Sum { dst, .. }
         | Instr::Mean { dst, .. }

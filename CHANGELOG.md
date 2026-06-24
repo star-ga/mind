@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Dense tensor literals lower correctly in-function (`ConstDenseTensor`).**
+  An f32 array literal bound to a tensor type — `let a: tensor<f32[3]> =
+  [1.0, 2.0, 3.0]` — now materialises its EXACT per-element bit patterns and
+  registers a tensor type, so an in-function elementwise op (`a + b`) lowers to
+  `arith.addf %0, %1 : tensor<3xf32>`. Previously such a literal fell through to
+  the i64 `ConstArray` path, which coerced every float element to `0` (a silent
+  miscompile) and registered no tensor type, so the elementwise binop failed
+  "missing type information for value … while lowering binop". The fix is a new
+  IR instruction `Instr::ConstDenseTensor { dst, dtype, shape, data }` carrying
+  exact element bits, an APPEND-ONLY mic@3 opcode `0x2A` (existing opcodes
+  `0x01..0x29` and their `trace_hash` are untouched; the self-host corpus
+  contains zero tensors, so the keystone fixed point is unchanged), a
+  dtype-parameterised dense MLIR emit, and a front-end `ArrayLit` case in
+  `lower_tensor_binding`. Verified: mic@3 emit→parse→emit round-trips the new
+  opcode exactly (`tests/mic3_const_dense_tensor_roundtrip`), keystone 7/7
+  byte-identical, cross-substrate 12/12. NOTE (scope): this is the in-function
+  constructor only — returning a tensor across a function boundary still needs
+  the opaque-handle ABI (a following increment), so a whole tensor-returning
+  program does not link yet.
+
 - **Pure-MIND front-end self-hosts the full G2 differential corpus (0
   unsupported).** The pure-MIND compiler (`examples/mindc_mind/main.mind`) now
   lowers every top-level construct in the differential corpus byte-identically
