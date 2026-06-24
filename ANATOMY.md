@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2941 | **Est. tokens:** ~7,056,659
-**Generated:** 2026-06-24 15:16 UTC
+**Files:** 2941 | **Est. tokens:** ~7,061,466
+**Generated:** 2026-06-24 15:39 UTC
 
 ## Token Budget Guide
 
@@ -371,7 +371,7 @@
 | `src/` | 7 | ~17,517 |
 | `src/ast/` | 1 | ~7,430 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 3 | ~25,745 |
+| `src/bin/` | 3 | ~27,431 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
@@ -391,7 +391,7 @@
 | `src/lint/` | 2 | ~4,001 |
 | `src/lint/rules/` | 6 | ~9,211 |
 | `src/mlir/` | 3 | ~5,415 |
-| `src/native/` | 1 | ~21,221 |
+| `src/native/` | 1 | ~24,342 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,668 |
@@ -3668,7 +3668,7 @@
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc.rs` (~15275 tok, huge) — Copyright 2025 STARGA Inc.
-- `mind-native.rs` (~665 tok, large) — Copyright 2026 STARGA Inc.
+- `mind-native.rs` (~2351 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3794,7 +3794,7 @@
 - `mod.rs` (~325 tok, medium) — Copyright 2025 STARGA Inc.
 ### `src/native/`
 
-- `mod.rs` (~21221 tok, huge) — Copyright 2026 STARGA Inc.
+- `mod.rs` (~24342 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/ops/`
 
 - `cerebras.rs` (~2713 tok, huge) — Copyright 2025-2026 STARGA Inc.
