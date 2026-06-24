@@ -41,6 +41,7 @@ CASES = [
     ("mul", "fn mul(a: i64, b: i64) -> i64 {\n    return a * b;\n}\n"),
     ("c", "fn c() -> i64 {\n    return 5;\n}\n"),
     ("two", "fn two(a: i64, b: i64) -> i64 {\n    let x: i64 = a + b;\n    return x * b;\n}\n"),
+    ("call", "fn g(x: i64) -> i64 { return x; }\nfn h() -> i64 { return g(5); }\n"),
 ]
 
 # Hard-coded golden (verified vs `mindc --emit-mlir` 2026-06-24) for `add` — a
@@ -55,6 +56,26 @@ GOLDEN_ADD = (
     "  func.func @main() -> (i64) {\n"
     "    %0 = arith.constant 0 : i64\n"
     "    return %0 : i64\n"
+    "  }\n"
+    "}\n\n"
+).encode()
+
+# Hard-coded golden for `call` (func.call + the multi-fn synthetic @main with
+# one i64 result per top-level fn). Verified vs `mindc --emit-mlir` 2026-06-24.
+GOLDEN_CALL = (
+    "module {\n"
+    "  func.func @g(%0: i64) -> i64 {\n"
+    "    return %0 : i64\n"
+    "  }\n"
+    "  func.func @h() -> i64 {\n"
+    "    %0 = arith.constant 5 : i64\n"
+    "    %1 = func.call @g(%0) : (i64) -> i64\n"
+    "    return %1 : i64\n"
+    "  }\n"
+    "  func.func @main() -> (i64, i64) {\n"
+    "    %0 = arith.constant 0 : i64\n"
+    "    %1 = arith.constant 0 : i64\n"
+    "    return %0, %1 : i64, i64\n"
     "  }\n"
     "}\n\n"
 ).encode()
@@ -109,6 +130,12 @@ def main() -> int:
     if live_add != GOLDEN_ADD:
         print("ERROR: live mindc --emit-mlir for `add` drifted from the hard-coded golden:")
         show_diff(GOLDEN_ADD, live_add)
+        return 1
+    call_src = dict(CASES)["call"]
+    live_call = oracle_mlir(call_src)
+    if live_call != GOLDEN_CALL:
+        print("ERROR: live mindc --emit-mlir for `call` drifted from the hard-coded golden:")
+        show_diff(GOLDEN_CALL, live_call)
         return 1
 
     lib = ctypes.CDLL(str(SO))
