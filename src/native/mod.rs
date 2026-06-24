@@ -313,6 +313,42 @@ fn emit_load_i8(code: &mut Vec<u8>, addr_disp: i32) {
     code.extend_from_slice(&[0x48, 0x0F, 0xB6, 0x00]); // movzx rax, byte [rax] (zero-extend)
 }
 
+/// Inline `__mind_write(fd, buf_addr, count, offset) -> i64`: the raw `write(2)`
+/// syscall — NO libc. The std/io.mind contract (and `print_bytes` at io.mind:69)
+/// passes `offset == -1` ("use the current stream position", the `pwrite(-1)`
+/// convention), which is exactly `write(2)`'s behaviour. So the print path lowers
+/// to plain `write(2)` (x86-64 syscall #1: rdi=fd, rsi=buf, rdx=count, number in
+/// rax), and the IR's `offset` arg is intentionally unused — its only print-path
+/// value is the `-1` sentinel that `write` already implements.
+///
+/// `write`'s return (bytes written, or a negative `-errno`) lands in rax and is
+/// stored to the caller's dst slot — matching the i64 contract in io.mind:15.
+///
+/// Pure function of the IR: only frame-slot `mov`s, fixed syscall-number bytes,
+/// and `syscall` — no host-varying bytes, so byte-identity holds. The syscall
+/// clobbers rax (result), rcx and r11 (per the Linux/System-V syscall ABI); all
+/// are dead between instructions in the slot model, so no save/restore is needed.
+///
+/// deferred: a non-`-1` (absolute) `offset` would need `pwrite64` (syscall #18,
+///   with the offset in r10) instead of `write`. The print surface only ever
+///   passes `-1`, so `write(2)` is correct here; upgrade path: branch on the
+///   offset slot at runtime (offset == -1 → write, else → pwrite64), or have the
+///   front-end emit a distinct `__mind_pwrite` intrinsic for the seekable path.
+fn emit_write(code: &mut Vec<u8>, fd_disp: i32, buf_disp: i32, count_disp: i32) {
+    // rdi = [fd]
+    code.extend_from_slice(&[0x48, 0x8B, 0xBD]); // mov rdi, [rbp+fd]
+    code.extend_from_slice(&fd_disp.to_le_bytes());
+    // rsi = [buf_addr]
+    code.extend_from_slice(&[0x48, 0x8B, 0xB5]); // mov rsi, [rbp+buf]
+    code.extend_from_slice(&buf_disp.to_le_bytes());
+    // rdx = [count]
+    code.extend_from_slice(&[0x48, 0x8B, 0x95]); // mov rdx, [rbp+count]
+    code.extend_from_slice(&count_disp.to_le_bytes());
+    // rax = 1 (SYS_write)
+    code.extend_from_slice(&[0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00]); // mov rax, 1
+    code.extend_from_slice(&[0x0F, 0x05]); // syscall — result (bytes written / -errno) in rax
+}
+
 /// `mov <argreg>, [rbp+disp32]` — marshal a slot value into a System-V arg reg.
 fn load_argreg(code: &mut Vec<u8>, arg_index: usize, disp: i32) -> Result<(), NativeError> {
     let (reg, ext) = *ARG_REGS
@@ -563,12 +599,38 @@ fn emit_seq(
                         emit_load_i8(code, disp(addr)?);
                         store_rax(code, disp(dst)?); // zero-extended byte -> dst slot
                     }
+                    "__mind_write" => {
+                        // Raw write(2) syscall (NO libc) — the print path
+                        // (std/io.mind print_bytes / file_write). Contract:
+                        // __mind_write(fd, buf_addr, count, offset) -> i64.
+                        // The print surface always passes offset == -1 ("current
+                        // position"), which is exactly write(2); the offset arg is
+                        // unused here (see emit_write's deferred-pwrite note).
+                        let fd = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_write missing fd".into())
+                        })?;
+                        let buf = args.get(1).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_write missing buf_addr".into())
+                        })?;
+                        let count = args.get(2).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_write missing count".into())
+                        })?;
+                        // args[3] (offset) is the -1 "current position" sentinel on
+                        // the print path; write(2) ignores it. It must still be
+                        // present (the four-arg contract) — fail loud if absent.
+                        let _offset = args.get(3).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_write missing offset".into())
+                        })?;
+                        emit_write(code, disp(fd)?, disp(buf)?, disp(count)?);
+                        store_rax(code, disp(dst)?); // bytes written (or -errno) -> dst
+                    }
                     other => {
-                        // Wider sub-i64 helpers (__mind_store_i16/i32, …) are not yet
-                        // inlined — fail loud rather than silently miscompile.
+                        // Wider sub-i64 helpers (__mind_store_i16/i32, …) and the
+                        // read syscall (__mind_read) are not yet inlined — fail loud
+                        // rather than silently miscompile.
                         return Err(NativeError::Unsupported(format!(
                             "intrinsic {other} (only \
-                             __mind_alloc/store_i64/load_i64/store_i8/load_i8 inlined)"
+                             __mind_alloc/store_i64/load_i64/store_i8/load_i8/write inlined)"
                         )));
                     }
                 }
@@ -1391,6 +1453,82 @@ mod tests {
             run(&elf_c, "mind_native_byte_noclobber_exe"),
             Some(42),
             "store_i8 must touch ONLY the low byte (0xFFFF→store_i8 0x2A→0xFF2A): 65322-65280=42"
+        );
+    }
+
+    /// Write the ELF to a unique temp path, exec it, and capture both its stdout
+    /// bytes and its exit code. Same ETXTBSY-retry + unique-path discipline as
+    /// `run`, but returns the captured stdout alongside the code so a test can
+    /// assert the EXACT bytes a `__mind_write`-emitting program prints.
+    fn run_capture(elf: &[u8], name: &str) -> Option<(Vec<u8>, i32)> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CTR: AtomicU32 = AtomicU32::new(0);
+        let uniq = CTR.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!("{name}.{}.{uniq}", std::process::id()));
+        {
+            let mut fh = std::fs::File::create(&path).expect("create");
+            fh.write_all(elf).expect("write");
+            let mut perms = fh.metadata().unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&path, perms).expect("chmod");
+        } // handle dropped here, before exec
+        let mut out = None;
+        for _ in 0..100 {
+            match Command::new(&path).output() {
+                Ok(o) => {
+                    out = Some((o.stdout, o.status.code().unwrap_or(-1)));
+                    break;
+                }
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(e) => panic!("exec failed: {e}"),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        out
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_a_program_that_writes_bytes_to_stdout_via_mind_write() {
+        // The raw write(2) syscall path (NO libc). Front-end-lowered (not a
+        // hand-built IR toy): alloc a buffer, store the bytes "Hi!" (0x48 0x69
+        // 0x21) one __mind_store_i8 at a time, then __mind_write(fd=1, buf, count=3,
+        // offset=-1) — the exact shape print_bytes (std/io.mind:69) emits — and exit
+        // with write's return (bytes written = 3).
+        let src = "fn main() -> i64 { \
+                   let addr: i64 = __mind_alloc(8); \
+                   let r0: i64 = __mind_store_i8(addr, 72); \
+                   let r1: i64 = __mind_store_i8(addr + 1, 105); \
+                   let r2: i64 = __mind_store_i8(addr + 2, 33); \
+                   let n: i64 = __mind_write(1, addr, 3, 0 - 1); \
+                   return n; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the __mind_write program");
+
+        // Byte-identity (the wedge): the write codegen is a pure function of the IR
+        // (frame-slot movs + fixed syscall-number bytes + `syscall`, no host-varying
+        // bytes) — two builds of the same IR must be byte-for-byte identical.
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "__mind_write ELF must be byte-identical (no host-varying bytes)"
+        );
+
+        // RUN it: capture stdout AND the exit code. The program must print exactly
+        // the three bytes "Hi!" to fd 1, and exit with write's return value (3 bytes
+        // written) — proving the syscall actually fired and wrote the right bytes.
+        let (stdout, code) =
+            run_capture(&elf, "mind_native_write_exe").expect("the __mind_write ELF must run");
+        assert_eq!(
+            stdout, b"Hi!",
+            "__mind_write(1, buf, 3, -1) must print exactly the bytes 'Hi!' to stdout"
+        );
+        assert_eq!(
+            code, 3,
+            "write(2) returns the byte count (3); main returns it as the exit code"
         );
     }
 
