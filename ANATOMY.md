@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2940 | **Est. tokens:** ~7,045,867
-**Generated:** 2026-06-24 11:47 UTC
+**Files:** 2940 | **Est. tokens:** ~7,045,924
+**Generated:** 2026-06-24 12:22 UTC
 
 ## Token Budget Guide
 
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 27 | ~60,311 |
+| `examples/mindc_mind/` | 27 | ~60,368 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -763,7 +763,7 @@
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
-- `self_host_mlir_smoke.py` (~1504 tok, huge)
+- `self_host_mlir_smoke.py` (~1561 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
