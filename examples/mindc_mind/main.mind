@@ -15118,6 +15118,126 @@ pub fn emit_mlir_cmpi(s: EmitState, buf: i64, node: i64, params_addr: i64, n_par
     EmitState { buf: r8.buf, next_id: id + 1, last_id: id, lets: r8.lets }
 }
 
+// True iff `node` is a comparison binop (==,!=,<,<=,>,>=), i.e. already lowers
+// to an i1 the if-stmt can branch on directly. A non-comparison cond (a plain
+// i64 value) needs the `cmpi "ne", %v, 0` wrapper below.
+pub fn cond_is_comparison(node: i64) -> i64 {
+    if ast_kind(node) != ast_binop() {
+        return 0;
+    }
+    let op: i64 = ast_aux(node);
+    if op == op_eq() {
+        return 1;
+    }
+    if op == op_ne() {
+        return 1;
+    }
+    if op == op_lt() {
+        return 1;
+    }
+    if op == op_le() {
+        return 1;
+    }
+    if op == op_gt() {
+        return 1;
+    }
+    if op == op_ge() {
+        return 1;
+    }
+    0
+}
+
+// Emit `%cond_zero_N` (which=0) or `%cond_i1_N` (which=1): the named SSA values
+// mindc synthesises when an if-condition is a plain i64 (not already an i1).
+// Byte-identical to lower.rs's `cond_zero_<id>` / `cond_i1_<id>` naming.
+pub fn emit_mlir_cond_name(s: EmitState, which: i64, n: i64) -> EmitState {
+    let s0: EmitState = es_push(s, ch_percent());
+    // `cond_`
+    let c1: EmitState = es_push(s0, 99);
+    let c2: EmitState = es_push(c1, 111);
+    let c3: EmitState = es_push(c2, 110);
+    let c4: EmitState = es_push(c3, 100);
+    let c5: EmitState = es_push(c4, 95);
+    let mid: EmitState = if which == 0 {
+        // `zero`
+        let z1: EmitState = es_push(c5, 122);
+        let z2: EmitState = es_push(z1, 101);
+        let z3: EmitState = es_push(z2, 114);
+        es_push(z3, 111)
+    } else {
+        // `i1`
+        let i1: EmitState = es_push(c5, 105);
+        es_push(i1, 49)
+    };
+    let u: EmitState = es_push(mid, 95);
+    emit_i64(u, n)
+}
+
+// Lower a plain-i64 if-condition `cond` to an i1 via the named-SSA wrapper:
+//   %cond_zero_N = arith.constant 0 : i64
+//   %cond_i1_N   = arith.cmpi "ne", %v, %cond_zero_N : i64
+// The cond value itself must already be lowered (its id == cond_val_id); these
+// named instrs consume NO numeric SSA ids, mirroring lower.rs. N == dst label.
+pub fn emit_mlir_cond_ne_zero(s: EmitState, cond_val_id: i64, n: i64) -> EmitState {
+    // `    %cond_zero_N = arith.constant 0 : i64\n`
+    let z0: EmitState = es_push(s, ch_space());
+    let z1: EmitState = es_push(z0, ch_space());
+    let z2: EmitState = es_push(z1, ch_space());
+    let z3: EmitState = es_push(z2, ch_space());
+    let z4: EmitState = emit_mlir_cond_name(z3, 0, n);
+    let z5: EmitState = emit_mlir_eq_arith(z4);
+    let z6: EmitState = emit_mlir_constant_kw(z5);
+    let z7: EmitState = es_push(z6, 48);
+    let z8: EmitState = emit_mlir_i64_nl(z7);
+    // `    %cond_i1_N = arith.cmpi "ne", %v, %cond_zero_N : i64\n`
+    let p0: EmitState = es_push(z8, ch_space());
+    let p1: EmitState = es_push(p0, ch_space());
+    let p2: EmitState = es_push(p1, ch_space());
+    let p3: EmitState = es_push(p2, ch_space());
+    let p4: EmitState = emit_mlir_cond_name(p3, 1, n);
+    let p5: EmitState = es_push(p4, ch_space());
+    let p6: EmitState = es_push(p5, ch_eq_sign());
+    let p7: EmitState = es_push(p6, ch_space());
+    // `arith.cmpi `
+    let q1: EmitState = es_push(p7, 97);
+    let q2: EmitState = es_push(q1, 114);
+    let q3: EmitState = es_push(q2, 105);
+    let q4: EmitState = es_push(q3, 116);
+    let q5: EmitState = es_push(q4, 104);
+    let q6: EmitState = es_push(q5, ch_dot());
+    let q7: EmitState = es_push(q6, 99);
+    let q8: EmitState = es_push(q7, 109);
+    let q9: EmitState = es_push(q8, 112);
+    let q10: EmitState = es_push(q9, 105);
+    let q11: EmitState = es_push(q10, ch_space());
+    let r1: EmitState = emit_mlir_cmpi_pred(q11, op_ne());
+    let r2: EmitState = es_push(r1, ch_percent());
+    let r3: EmitState = emit_i64(r2, cond_val_id);
+    let r4: EmitState = es_push(r3, ch_comma());
+    let r5: EmitState = es_push(r4, ch_space());
+    let r6: EmitState = emit_mlir_cond_name(r5, 0, n);
+    let r7: EmitState = emit_mlir_i64_nl(r6);
+    EmitState { buf: r7.buf, next_id: s.next_id, last_id: s.last_id, lets: r7.lets }
+}
+
+// Lower an if-condition to its branchable cond id, dispatching on whether the
+// cond is already a comparison (i1) or a plain i64 needing the cmpi-ne wrapper.
+// Returns the EmitState AFTER both the cond value and (if needed) the named
+// wrapper are emitted. last_id = the value id fed to cond_br: for a comparison
+// it is the numeric cmpi id; for a plain-i64 cond it is the lowered value id
+// (the caller emits `%cond_i1_N` textually). Uses a function return (not a
+// struct-valued if-expr) so the EmitState fields thread correctly.
+pub fn emit_mlir_if_cond(s: EmitState, buf: i64, cond_node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    if cond_is_comparison(cond_node) == 1 {
+        return emit_mlir_cmpi(s, buf, cond_node, params_addr, n_params);
+    }
+    let sv: EmitState = emit_mlir_expr_env(s, buf, cond_node, params_addr, n_params);
+    // dst label N = next_id + 2 (then_result, else_result, dst); wrapper keeps
+    // next_id/last_id so the caller's then/else/dst math is unchanged.
+    let dst: i64 = sv.next_id + 2;
+    emit_mlir_cond_ne_zero(sv, sv.last_id, dst)
+}
+
 // ` : i64)` — the block-arg type suffix + close paren (no newline).
 pub fn emit_mlir_i64_close(s: EmitState) -> EmitState {
     let s1: EmitState = es_push(s, ch_space());
@@ -15218,15 +15338,20 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         let cond_node: i64 = ast_child0(node);
         let then_blk: i64 = ast_child1(node);
         let else_blk: i64 = ast_child2(node);
-        // 1. condition (a comparison) — lowers operands + the cmpi.
-        let sc: EmitState = emit_mlir_cmpi(s, buf, cond_node, params_addr, n_params);
-        let cond_id: i64 = sc.last_id;
+        // 1. condition. A comparison binop lowers operands + the cmpi directly
+        // (numeric %id). A plain-i64 cond lowers the value then synthesises
+        // `%cond_zero_N`/`%cond_i1_N` (no numeric ids) via emit_mlir_if_cond.
+        let is_cmp: i64 = cond_is_comparison(cond_node);
+        let scw: EmitState = emit_mlir_if_cond(s, buf, cond_node, params_addr, n_params);
+        // For a comparison, scw.last_id is the i1 cond id; for a plain-i64 cond
+        // it is the lowered value id (the named %cond_i1_N is emitted textually).
+        let cond_id: i64 = scw.last_id;
         // 2. cf.cond_br %cond, ^if_then_N, ^if_else_N
         // then_result = next fresh id, else_result = next, dst = next ; N = dst.
-        let then_result: i64 = sc.next_id;
+        let then_result: i64 = scw.next_id;
         let else_result: i64 = then_result + 1;
         let dst: i64 = else_result + 1;
-        let b1: EmitState = emit_mlir_cf_kw(sc);
+        let b1: EmitState = emit_mlir_cf_kw(scw);
         // `cond_br %`
         let b2: EmitState = es_push(b1, 99);
         let b3: EmitState = es_push(b2, 111);
@@ -15236,8 +15361,13 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         let b7: EmitState = es_push(b6, 98);
         let b8: EmitState = es_push(b7, 114);
         let b9: EmitState = es_push(b8, ch_space());
-        let b10: EmitState = es_push(b9, ch_percent());
-        let b11: EmitState = emit_i64(b10, cond_id);
+        // comparison: `%<numeric id>` ; plain-i64: `%cond_i1_N`
+        let b11: EmitState = if is_cmp == 1 {
+            let bp: EmitState = es_push(b9, ch_percent());
+            emit_i64(bp, cond_id)
+        } else {
+            emit_mlir_cond_name(b9, 1, dst)
+        };
         let b12: EmitState = es_push(b11, ch_comma());
         let b13: EmitState = es_push(b12, ch_space());
         let b14: EmitState = emit_mlir_if_label(b13, 0, dst);
