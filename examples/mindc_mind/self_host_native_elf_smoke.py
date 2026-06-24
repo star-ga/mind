@@ -37,16 +37,104 @@ _REPO = _HERE.parent.parent
 _DEFAULT_NATIVE = pathlib.Path("/tmp/mind-native-target/debug/mind-native")
 MIND_NATIVE = pathlib.Path(os.environ.get("MIND_NATIVE_BIN", str(_DEFAULT_NATIVE)))
 
-# The scalar i64 add/main fixture. Typed params, intra-module call, exit value 5.
-FIXTURE = (
-    "fn add(a: i64, b: i64) -> i64 {\n"
-    "    return a + b;\n"
-    "}\n"
-    "fn main() -> i64 {\n"
-    "    return add(2, 3);\n"
-    "}\n"
-)
-EXPECTED_EXIT = 5
+# The native-port ladder: each fixture is lowered by the pure-MIND
+# `selftest_native_elf_h` AND by the Rust `mind-native` oracle; the gate requires a
+# byte-for-byte match of the two ELFs AND that the pure-MIND ELF runs + exits with
+# the fixture's value. Each rung adds the emit_seq arms it needs (ported from
+# src/native/mod.rs). PHASE 1.3 of Rust-independence #14.
+FIXTURES = [
+    # add/main — the scalar slice (ConstI64/BinOp-add/Param/Call/Return). exit 5.
+    (
+        "add",
+        (
+            "fn add(a: i64, b: i64) -> i64 {\n"
+            "    return a + b;\n"
+            "}\n"
+            "fn main() -> i64 {\n"
+            "    return add(2, 3);\n"
+            "}\n"
+        ),
+        5,
+    ),
+    # if_ret — `If` control flow (cmp/setcc/je/jmp + a diverging then-branch +
+    # synthetic-else dst-copy) + the Eq comparison op. exit 1.
+    (
+        "if_ret",
+        (
+            "fn f(c: i64) -> i64 {\n"
+            "    if c == 0 {\n"
+            "        return 1;\n"
+            "    }\n"
+            "    return 2;\n"
+            "}\n"
+            "fn main() -> i64 {\n"
+            "    return f(0);\n"
+            "}\n"
+        ),
+        1,
+    ),
+    # value_if — an if-EXPRESSION bound to a `let` (`let m = if a > b { a } else
+    # { b }`): both branches FALL THROUGH (the if_ret then-branch diverged), the
+    # then_result/else_result are the branch VALUES (params a/b, not the leading
+    # ConstI64), a join `jmp` over the else-block, and a let-env so `return m`
+    # resolves to the if's dst slot. Exercises the Gt comparison op too. exit 7.
+    (
+        "value_if",
+        (
+            "fn f(a: i64, b: i64) -> i64 {\n"
+            "    let m: i64 = if a > b { a } else { b };\n"
+            "    return m;\n"
+            "}\n"
+            "fn main() -> i64 {\n"
+            "    return f(3, 7);\n"
+            "}\n"
+        ),
+        7,
+    ),
+    # recursion — RECURSIVE intra-module calls + a non-value `if` statement with a
+    # DIVERGING then-branch and NO else (`if n < 2 { return n; }` then a
+    # fall-through `return`), the `Lt` comparison (cmp/setl/movzx), and `Sub`/`Add`
+    # BinOps (fib(n-1) + fib(n-2)). Exercises the same emit_seq arms already ported
+    # for if_ret/value_if — the `If`-statement path (nb_if_stmt), comparison ops,
+    # and the linker's PC-relative call patching — over a self-referential callee.
+    # exit 13 (fib(7)).
+    (
+        "recursion",
+        (
+            "fn fib(n: i64) -> i64 {\n"
+            "    if n < 2 {\n"
+            "        return n;\n"
+            "    }\n"
+            "    return fib(n - 1) + fib(n - 2);\n"
+            "}\n"
+            "fn main() -> i64 {\n"
+            "    return fib(7);\n"
+            "}\n"
+        ),
+        13,
+    ),
+    # struct_field — the Option-C i64-handle struct ABI: a `struct P { x, y }`
+    # literal `P { x: 7, y: 9 }` lowers (eval/lower.rs StructLit all-i64 path) to
+    # CONST 8 ; CONST n_fields ; MUL ; __mind_alloc(size) -> ptr ; per-field
+    # __mind_store_i64(addr, val) with offset 8*i ; the field read `p.x` to a
+    # __mind_load_i64(ptr + 8*idx). Exercises SECTION 4c's new ast_struct_lit /
+    # ast_field arms + the inlined bump-arena alloc/store/load intrinsics, all
+    # byte-identical to the Rust mind-native ELF. exit 7 (p.x).
+    (
+        "struct_field",
+        (
+            "struct P {\n"
+            "    x: i64,\n"
+            "    y: i64,\n"
+            "}\n"
+            "fn main() -> i64 {\n"
+            "    let p: P = P { x: 7, y: 9 };\n"
+            "    return p.x;\n"
+            "}\n"
+        ),
+        7,
+    ),
+]
 
 
 def oracle_elf(src: str, tmp: pathlib.Path) -> bytes:
@@ -111,46 +199,48 @@ def main() -> int:
 
     import tempfile
 
+    lib = ctypes.CDLL(str(SO))
+    lib.selftest_native_elf_h.restype = ctypes.c_int64
+    lib.selftest_native_elf_h.argtypes = [
+        ctypes.c_int64,
+        ctypes.c_int64,
+        ctypes.c_int64,
+    ]
+
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
-        rust = oracle_elf(FIXTURE, tmp)
-        # The ir_trace_hash anchoring the note: last 52 bytes = 12-byte nhdr +
-        # "MIND\0\0\0\0" (8) + 32-byte hash.
-        note = rust[-52:]
-        if note[12:16] != b"MIND":
-            print(f"ERROR: oracle ELF note missing MIND name: {note[12:20]!r}")
-            return 1
-        trace_hash = note[20:52]
+        for name, fixture, expected_exit in FIXTURES:
+            rust = oracle_elf(fixture, tmp)
+            # The ir_trace_hash anchoring the note: last 52 bytes = 12-byte nhdr +
+            # "MIND\0\0\0\0" (8) + 32-byte hash.
+            note = rust[-52:]
+            if note[12:16] != b"MIND":
+                print(f"ERROR: oracle ELF note missing MIND name: {note[12:20]!r}")
+                return 1
+            trace_hash = note[20:52]
 
-        lib = ctypes.CDLL(str(SO))
-        lib.selftest_native_elf_h.restype = ctypes.c_int64
-        lib.selftest_native_elf_h.argtypes = [
-            ctypes.c_int64,
-            ctypes.c_int64,
-            ctypes.c_int64,
-        ]
-        got = mind_elf(lib, FIXTURE.encode(), trace_hash)
+            got = mind_elf(lib, fixture.encode(), trace_hash)
 
-        ok = got == rust
-        print(
-            f"  {'PASS' if ok else 'FAIL'}  add/main native ELF "
-            f"({len(rust)} oracle bytes / {len(got)} mind bytes)"
-        )
-        if not ok:
-            print(first_diverge(got, rust))
-            return 1
+            ok = got == rust
+            print(
+                f"  {'PASS' if ok else 'FAIL'}  {name} native ELF "
+                f"({len(rust)} oracle bytes / {len(got)} mind bytes)"
+            )
+            if not ok:
+                print(first_diverge(got, rust))
+                return 1
 
-        # Run the pure-MIND-emitted ELF; it must exit with the fixture's value.
-        code = run_elf(got, tmp)
-        run_ok = code == EXPECTED_EXIT
-        print(
-            f"  {'PASS' if run_ok else 'FAIL'}  pure-MIND ELF runs + exits "
-            f"{code} (expected {EXPECTED_EXIT})"
-        )
-        if not run_ok:
-            return 1
+            # Run the pure-MIND-emitted ELF; it must exit with the fixture's value.
+            code = run_elf(got, tmp)
+            run_ok = code == expected_exit
+            print(
+                f"  {'PASS' if run_ok else 'FAIL'}  {name} pure-MIND ELF runs + exits "
+                f"{code} (expected {expected_exit})"
+            )
+            if not run_ok:
+                return 1
 
-    print("\nALL PASS  (byte-identical to Rust mind-native + runs + exits 5)")
+    print("\nALL PASS  (byte-identical to Rust mind-native + runs for every fixture)")
     return 0
 
 
