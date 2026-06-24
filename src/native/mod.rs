@@ -77,6 +77,40 @@ impl std::fmt::Display for NativeError {
 
 impl std::error::Error for NativeError {}
 
+/// ============================ Option-C i64-handle ABI ============================
+/// The front-end (`src/eval/lower.rs`) lowers a struct literal to three intrinsic
+/// `Instr::Call`s — `__mind_alloc(bytes)->addr`, `__mind_store_i64(addr,val)`, and
+/// (for field reads) `__mind_load_i64(addr)->val` — where the struct value is the
+/// i64 heap-record base address. The native backend inlines these directly rather
+/// than emitting a `call` (there is no runtime / libc to link). The crux is the
+/// allocator: the returned address MUST be a pure function of allocation ORDER
+/// (a fixed bump cursor), NEVER malloc / ASLR / a host-varying value — otherwise
+/// the cross-substrate byte-identity wedge breaks at runtime.
+///
+/// The arena lives in a dedicated RW PT_LOAD at a FIXED vaddr, zero-initialized as
+/// BSS (`p_filesz = 0`, `p_memsz = ARENA_BYTES`). Its first 8 bytes are the bump
+/// cursor (a byte OFFSET into the data region); the data region begins at
+/// `ARENA_ADDR + ARENA_CURSOR_RESERVE`. BSS zeroing means the cursor starts at 0
+/// with no runtime initialization, so the first allocation deterministically lands
+/// at `ARENA_DATA` (offset 0) and the cursor advances by `round_up(bytes, 8)`.
+/// On exhaustion the allocator TRAPs (`ud2`) — it never wraps or aliases.
+///
+/// Fixed vaddr above the code segment (16 MiB), page-aligned. Distinct enough from
+/// `LOAD_ADDR` (4 MiB) that the two PT_LOADs never overlap for any plausible code
+/// size.
+const ARENA_ADDR: u64 = 0x100_0000;
+/// Bytes reserved at the arena base for the bump cursor (8) — the data region
+/// starts here. Kept 8-aligned so every allocation stays 8-aligned.
+const ARENA_CURSOR_RESERVE: u64 = 8;
+/// Total mapped arena size, including the cursor reserve. 16 MiB of zero-filled
+/// BSS — generous for the scalar-struct slice; bump past it traps. Bump this (and
+/// document it) when programs need larger heaps.
+const ARENA_BYTES: u64 = 16 * 1024 * 1024;
+/// First address handed out by the allocator (offset 0 of the data region).
+const ARENA_DATA: u64 = ARENA_ADDR + ARENA_CURSOR_RESERVE;
+/// Usable data-region size (the bytes available to bump-allocate).
+const ARENA_DATA_BYTES: u64 = ARENA_BYTES - ARENA_CURSOR_RESERVE;
+
 /// System-V integer argument registers, in order. `(modrm_reg_field, needs_rex)`.
 const ARG_REGS: [(u8, bool); 6] = [
     (7, false), // rdi
@@ -190,6 +224,68 @@ fn emit_div_mod_guarded(code: &mut Vec<u8>, is_mod: bool, rhs_disp: i32) {
     code.extend_from_slice(&[0x4D, 0x31, 0xD2]); // xor r10, r10
     code.extend_from_slice(&[0x4D, 0x85, 0xC0]); // test r8, r8
     code.extend_from_slice(&[0x49, 0x0F, 0x45, 0xC2]); // cmovnz rax, r10
+}
+
+/// Inline `__mind_alloc(bytes) -> addr`: a deterministic bump allocator over the
+/// fixed-vaddr BSS arena. Leaves the allocated address in `rax`. `bytes_disp` is
+/// the frame slot holding the requested size.
+///
+/// Pure function of allocation ORDER — the address depends only on the bump
+/// cursor, never on malloc / ASLR / time / any host-varying value. Sequence:
+///   rsi = round_up([bytes], 8) = ([bytes] + 7) & ~7
+///   rcx = [cursor]                     ; current free offset (BSS-zeroed → 0)
+///   rax = ARENA_DATA + rcx             ; the returned address
+///   rdx = rcx + rsi                    ; new cursor
+///   if rdx > ARENA_DATA_BYTES { ud2 }  ; exhaustion → trap (never wrap/alias)
+///   [cursor] = rdx
+fn emit_alloc(code: &mut Vec<u8>, bytes_disp: i32) {
+    // rsi = [bytes]
+    code.extend_from_slice(&[0x48, 0x8B, 0xB5]); // mov rsi, [rbp+disp32]
+    code.extend_from_slice(&bytes_disp.to_le_bytes());
+    // rsi = (rsi + 7) & ~7   — round up to the 8-byte stride
+    code.extend_from_slice(&[0x48, 0x83, 0xC6, 0x07]); // add rsi, 7
+    code.extend_from_slice(&[0x48, 0x83, 0xE6, 0xF8]); // and rsi, -8
+    // rcx = [cursor]   (absolute load from the fixed cursor vaddr)
+    code.extend_from_slice(&[0x48, 0xB8]); // movabs rax, ARENA_ADDR (cursor vaddr)
+    code.extend_from_slice(&ARENA_ADDR.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x8B, 0x08]); // mov rcx, [rax]
+    // rax = ARENA_DATA + rcx   (the returned address)
+    code.extend_from_slice(&[0x48, 0xBA]); // movabs rdx, ARENA_DATA
+    code.extend_from_slice(&ARENA_DATA.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x89, 0xC8]); // mov rax, rcx
+    code.extend_from_slice(&[0x48, 0x01, 0xD0]); // add rax, rdx  (rax = ARENA_DATA + off)
+    // rdx = rcx + rsi   (new cursor offset)
+    code.extend_from_slice(&[0x48, 0x89, 0xCA]); // mov rdx, rcx
+    code.extend_from_slice(&[0x48, 0x01, 0xF2]); // add rdx, rsi
+    // exhaustion check: if rdx > ARENA_DATA_BYTES { ud2 }
+    code.extend_from_slice(&[0x49, 0xB8]); // movabs r8, ARENA_DATA_BYTES
+    code.extend_from_slice(&ARENA_DATA_BYTES.to_le_bytes());
+    code.extend_from_slice(&[0x49, 0x39, 0xD0]); // cmp r8, rdx   (r8 - rdx)
+    code.extend_from_slice(&[0x0F, 0x83, 0x02, 0x00, 0x00, 0x00]); // jae +2 (skip ud2 when ARENA_DATA_BYTES >= rdx)
+    code.extend_from_slice(&[0x0F, 0x0B]); // ud2 (trap on exhaustion — fail loud)
+    // [cursor] = rdx   (advance the bump cursor; rax still holds the address)
+    code.extend_from_slice(&[0x49, 0xB9]); // movabs r9, ARENA_ADDR (cursor vaddr)
+    code.extend_from_slice(&ARENA_ADDR.to_le_bytes());
+    code.extend_from_slice(&[0x49, 0x89, 0x11]); // mov [r9], rdx
+}
+
+/// Inline `__mind_store_i64(addr, val)`: `mov [addr], val` (8-byte store through
+/// the i64 handle). `addr_disp` / `val_disp` are the two arg slots. The intrinsic
+/// has no meaningful return value; the caller's dst slot is left untouched.
+fn emit_store_i64(code: &mut Vec<u8>, addr_disp: i32, val_disp: i32) {
+    code.extend_from_slice(&[0x48, 0x8B, 0x85]); // mov rax, [rbp+addr]
+    code.extend_from_slice(&addr_disp.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x8B, 0x8D]); // mov rcx, [rbp+val]
+    code.extend_from_slice(&val_disp.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x89, 0x08]); // mov [rax], rcx
+}
+
+/// Inline `__mind_load_i64(addr) -> val`: `mov rax, [addr]` (8-byte load through
+/// the i64 handle). Leaves the loaded value in `rax`. `addr_disp` is the arg slot.
+fn emit_load_i64(code: &mut Vec<u8>, addr_disp: i32) {
+    code.extend_from_slice(&[0x48, 0x8B, 0x85]); // mov rax, [rbp+addr]
+    code.extend_from_slice(&addr_disp.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x8B, 0x00]); // mov rax, [rax]
 }
 
 /// `mov <argreg>, [rbp+disp32]` — marshal a slot value into a System-V arg reg.
@@ -385,6 +481,49 @@ fn emit_seq(
                     _ => arith_rax_mem(code, op, disp(rhs)?)?, // Add/Sub/Mul
                 }
                 store_rax(code, disp(dst)?);
+            }
+            Instr::Call {
+                dst, name, args, ..
+            } if name.starts_with("__mind_") => {
+                // Option-C i64-handle ABI intrinsics: the front-end lowers struct
+                // literals / field reads to these. There is no runtime to link —
+                // inline the codegen directly (a fixed, deterministic sequence)
+                // instead of routing to `link()`, which would (correctly) reject
+                // them as undefined callees.
+                match name.as_str() {
+                    "__mind_alloc" => {
+                        let n = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_alloc with no size arg".into())
+                        })?;
+                        emit_alloc(code, disp(n)?);
+                        store_rax(code, disp(dst)?); // address -> dst slot
+                    }
+                    "__mind_store_i64" => {
+                        let addr = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_store_i64 missing addr".into())
+                        })?;
+                        let val = args.get(1).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_store_i64 missing value".into())
+                        })?;
+                        emit_store_i64(code, disp(addr)?, disp(val)?);
+                        // No meaningful result; the dst slot is intentionally left
+                        // as-is (the front-end never reads a store's dst).
+                    }
+                    "__mind_load_i64" => {
+                        let addr = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_load_i64 missing addr".into())
+                        })?;
+                        emit_load_i64(code, disp(addr)?);
+                        store_rax(code, disp(dst)?); // loaded value -> dst slot
+                    }
+                    other => {
+                        // Sub-i64 width helpers (__mind_store_i8/i16/i32, …) are
+                        // not yet inlined — fail loud rather than silently miscompile.
+                        return Err(NativeError::Unsupported(format!(
+                            "intrinsic {other} (only __mind_alloc/store_i64/load_i64 inlined)"
+                        )));
+                    }
+                }
             }
             Instr::Call {
                 dst, name, args, ..
@@ -604,14 +743,18 @@ fn build_note(trace_hash: &[u8; 32]) -> Vec<u8> {
     n
 }
 
-/// Minimal deterministic static ELF64: a PT_LOAD (R+X over ehdr+phdrs+code) plus
-/// a PT_NOTE carrying the trace-hash provenance. Every byte is a pure function of
-/// `(code, entry_off, note)`. The note sits just past the loaded range — present
-/// in the file (readable via `readelf -n`) but not mapped, so it never affects
-/// execution while making the artifact self-describing.
+/// Minimal deterministic static ELF64: a PT_LOAD (R+X over ehdr+phdrs+code), a
+/// PT_NOTE carrying the trace-hash provenance, and a third PT_LOAD (RW, BSS-style:
+/// `p_filesz = 0`, `p_memsz = ARENA_BYTES`) backing the deterministic bump
+/// allocator at the fixed `ARENA_ADDR`. Every byte is a pure function of
+/// `(code, entry_off, note)` — the arena phdr is all compile-time constants, so it
+/// adds no host-varying bytes. The note sits just past the loaded code range —
+/// present in the file (readable via `readelf -n`) but not mapped — and the arena
+/// occupies zero file bytes (the kernel zero-fills it at exec), preserving the
+/// existing on-disk determinism.
 fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     const LOAD_ADDR: u64 = 0x40_0000;
-    const HDRS: u64 = 64 + 2 * 56; // ehdr + two phdrs
+    const HDRS: u64 = 64 + 3 * 56; // ehdr + three phdrs (code, note, arena)
     let entry = LOAD_ADDR + HDRS + entry_off;
     let load_sz = HDRS + code.len() as u64; // PT_LOAD covers headers + code
     let note_off = HDRS + code.len() as u64;
@@ -629,7 +772,7 @@ fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     e.extend_from_slice(&0u32.to_le_bytes()); // e_flags
     e.extend_from_slice(&64u16.to_le_bytes()); // e_ehsize
     e.extend_from_slice(&56u16.to_le_bytes()); // e_phentsize
-    e.extend_from_slice(&2u16.to_le_bytes()); // e_phnum = 2
+    e.extend_from_slice(&3u16.to_le_bytes()); // e_phnum = 3 (code, note, arena)
     e.extend_from_slice(&0u16.to_le_bytes()); // e_shentsize
     e.extend_from_slice(&0u16.to_le_bytes()); // e_shnum
     e.extend_from_slice(&0u16.to_le_bytes()); // e_shstrndx
@@ -651,6 +794,19 @@ fn write_elf(code: &[u8], entry_off: u64, note: &[u8]) -> Vec<u8> {
     e.extend_from_slice(&(note.len() as u64).to_le_bytes()); // p_filesz
     e.extend_from_slice(&(note.len() as u64).to_le_bytes()); // p_memsz
     e.extend_from_slice(&4u64.to_le_bytes()); // p_align
+    // --- phdr 3: PT_LOAD (RW) — the BSS bump-allocator arena ---
+    // p_filesz = 0 (no file bytes; the kernel zero-fills the mapping at exec, which
+    // is exactly the deterministic zero-initialized cursor + heap the allocator
+    // assumes). p_memsz = ARENA_BYTES at the fixed ARENA_ADDR vaddr. All constants,
+    // so this adds zero host-varying bytes to the image.
+    e.extend_from_slice(&1u32.to_le_bytes()); // PT_LOAD
+    e.extend_from_slice(&6u32.to_le_bytes()); // RW (no execute)
+    e.extend_from_slice(&0u64.to_le_bytes()); // p_offset (0 file bytes)
+    e.extend_from_slice(&ARENA_ADDR.to_le_bytes()); // p_vaddr
+    e.extend_from_slice(&ARENA_ADDR.to_le_bytes()); // p_paddr
+    e.extend_from_slice(&0u64.to_le_bytes()); // p_filesz = 0 (BSS)
+    e.extend_from_slice(&ARENA_BYTES.to_le_bytes()); // p_memsz = whole arena
+    e.extend_from_slice(&0x1000u64.to_le_bytes()); // p_align (page)
     // --- code, then the (unmapped) note ---
     e.extend_from_slice(code);
     e.extend_from_slice(note);
@@ -1060,6 +1216,59 @@ mod tests {
             run(&elf, "mind_native_brk_exe"),
             Some(42),
             "skip 3 + break at 10 = 42"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_a_struct_program_via_the_option_c_intrinsics() {
+        // The front-end lowers this struct literal + field read to the Option-C
+        // i64-handle ABI intrinsics — `__mind_alloc(bytes)`, `__mind_store_i64`,
+        // `__mind_load_i64` — which the native backend now inlines (deterministic
+        // bump allocator over the fixed-vaddr BSS arena), with NO call to a runtime.
+        let src = "struct P { x: i64, y: i64 } \
+                   fn main() -> i64 { let p: P = P { x: 7, y: 9 }; return p.x; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the struct program");
+
+        // Byte-identity (the wedge): the bump allocator returns order-determined
+        // addresses, never a host-varying value — two builds must be identical.
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "struct ELF must be byte-identical (allocator leaks no host-varying address)"
+        );
+
+        // Runs and returns the field value: p.x == 7.
+        assert_eq!(
+            run(&elf, "mind_native_struct_exe"),
+            Some(7),
+            "P {{ x: 7, y: 9 }}.x must exit(7)"
+        );
+
+        // The second field reads back from offset 8 of the same record.
+        let src_y = "struct P { x: i64, y: i64 } \
+                     fn main() -> i64 { let p: P = P { x: 7, y: 9 }; return p.y; }";
+        let ir_y = crate::eval::lower::lower_to_ir(&crate::parser::parse(src_y).expect("parse"));
+        let elf_y = compile_to_elf(&ir_y).expect("lowers");
+        assert_eq!(
+            run(&elf_y, "mind_native_struct_y_exe"),
+            Some(9),
+            "P {{ x: 7, y: 9 }}.y must exit(9)"
+        );
+
+        // Two distinct allocations must NOT alias: the bump cursor advances, so
+        // `a` and `b` get separate records — a.y + b.x = 20 + 5 = 25.
+        let src2 = "struct P { x: i64, y: i64 } \
+                    fn main() -> i64 { let a: P = P { x: 10, y: 20 }; \
+                    let b: P = P { x: 5, y: 7 }; return a.y + b.x; }";
+        let ir2 = crate::eval::lower::lower_to_ir(&crate::parser::parse(src2).expect("parse"));
+        let elf2 = compile_to_elf(&ir2).expect("lowers");
+        assert_eq!(
+            run(&elf2, "mind_native_struct_two_exe"),
+            Some(25),
+            "two struct records must not alias (bump cursor advances): 20 + 5 = 25"
         );
     }
 
