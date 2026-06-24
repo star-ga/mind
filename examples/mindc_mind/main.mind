@@ -14886,6 +14886,29 @@ pub fn emit_mlir_arith_op(s: EmitState, op: i64) -> EmitState {
         let s4: EmitState = es_push(s3, 105);
         return es_push(s4, ch_space());
     }
+    if op == op_bitand() {
+        // "andi "
+        let s1: EmitState = es_push(s, 97);
+        let s2: EmitState = es_push(s1, 110);
+        let s3: EmitState = es_push(s2, 100);
+        let s4: EmitState = es_push(s3, 105);
+        return es_push(s4, ch_space());
+    }
+    if op == op_bitor() {
+        // "ori "
+        let s1: EmitState = es_push(s, 111);
+        let s2: EmitState = es_push(s1, 114);
+        let s3: EmitState = es_push(s2, 105);
+        return es_push(s3, ch_space());
+    }
+    if op == op_bitxor() {
+        // "xori "
+        let s1: EmitState = es_push(s, 120);
+        let s2: EmitState = es_push(s1, 111);
+        let s3: EmitState = es_push(s2, 114);
+        let s4: EmitState = es_push(s3, 105);
+        return es_push(s4, ch_space());
+    }
     // op_div(): "divsi "
     let s1: EmitState = es_push(s, 100);
     let s2: EmitState = es_push(s1, 105);
@@ -14939,6 +14962,82 @@ pub fn emit_mlir_i64_list(s: EmitState, n: i64, i: i64) -> EmitState {
     let s2: EmitState = es_push(s1, 54);
     let s3: EmitState = es_push(s2, 52);
     emit_mlir_i64_list(s3, n, i + 1)
+}
+
+// Emit `shm`/`sha` (the named shift-mask/shift-amount prefixes). which: 0=shm, 1=sha.
+pub fn emit_mlir_sh_name(s: EmitState, which: i64) -> EmitState {
+    let s1: EmitState = es_push(s, ch_percent());
+    let s2: EmitState = es_push(s1, 115);
+    let s3: EmitState = es_push(s2, 104);
+    if which == 0 {
+        return es_push(s3, 109);
+    }
+    es_push(s3, 97)
+}
+
+// Lower a shift `a << b` / `a >> b` (op=1 for shli, op=0 for shrsi). Emits the
+// 3-line masked-shift sequence; the result consumes ONE numeric id N, the named
+// %shm<N>/%sha<N> values consume no numeric id.
+//   %shm<N> = arith.constant 63 : i64
+//   %sha<N> = arith.andi %b, %shm<N> : i64
+//   %<N> = arith.shli|shrsi %a, %sha<N> : i64
+pub fn emit_mlir_shift(s: EmitState, lhs_id: i64, rhs_id: i64, is_shl: i64) -> EmitState {
+    let id: i64 = s.next_id;
+    // Line 1: `    %shm<N> = arith.constant 63 : i64\n`
+    let a1: EmitState = es_push(s, ch_space());
+    let a2: EmitState = es_push(a1, ch_space());
+    let a3: EmitState = es_push(a2, ch_space());
+    let a4: EmitState = es_push(a3, ch_space());
+    let a5: EmitState = emit_mlir_sh_name(a4, 0);
+    let a6: EmitState = emit_i64(a5, id);
+    let a7: EmitState = emit_mlir_eq_arith(a6);
+    let a8: EmitState = emit_mlir_constant_kw(a7);
+    let a9: EmitState = emit_i64(a8, 63);
+    let a10: EmitState = emit_mlir_i64_nl(a9);
+    // Line 2: `    %sha<N> = arith.andi %b, %shm<N> : i64\n`
+    let b1: EmitState = es_push(a10, ch_space());
+    let b2: EmitState = es_push(b1, ch_space());
+    let b3: EmitState = es_push(b2, ch_space());
+    let b4: EmitState = es_push(b3, ch_space());
+    let b5: EmitState = emit_mlir_sh_name(b4, 1);
+    let b6: EmitState = emit_i64(b5, id);
+    let b7: EmitState = emit_mlir_eq_arith(b6);
+    let b8: EmitState = emit_mlir_arith_op(b7, op_bitand());
+    let b9: EmitState = es_push(b8, ch_percent());
+    let b10: EmitState = emit_i64(b9, rhs_id);
+    let b11: EmitState = es_push(b10, ch_comma());
+    let b12: EmitState = es_push(b11, ch_space());
+    let b13: EmitState = emit_mlir_sh_name(b12, 0);
+    let b14: EmitState = emit_i64(b13, id);
+    let b15: EmitState = emit_mlir_i64_nl(b14);
+    // Line 3: `    %<N> = arith.shli|shrsi %a, %sha<N> : i64\n`
+    let c1: EmitState = emit_mlir_indent_pct(b15);
+    let c2: EmitState = emit_i64(c1, id);
+    let c3: EmitState = emit_mlir_eq_arith(c2);
+    let c4: EmitState = if is_shl == 1 {
+        // "shli "
+        let d1: EmitState = es_push(c3, 115);
+        let d2: EmitState = es_push(d1, 104);
+        let d3: EmitState = es_push(d2, 108);
+        let d4: EmitState = es_push(d3, 105);
+        es_push(d4, ch_space())
+    } else {
+        // "shrsi "
+        let e1: EmitState = es_push(c3, 115);
+        let e2: EmitState = es_push(e1, 104);
+        let e3: EmitState = es_push(e2, 114);
+        let e4: EmitState = es_push(e3, 115);
+        let e5: EmitState = es_push(e4, 105);
+        es_push(e5, ch_space())
+    };
+    let c5: EmitState = es_push(c4, ch_percent());
+    let c6: EmitState = emit_i64(c5, lhs_id);
+    let c7: EmitState = es_push(c6, ch_comma());
+    let c8: EmitState = es_push(c7, ch_space());
+    let c9: EmitState = emit_mlir_sh_name(c8, 1);
+    let c10: EmitState = emit_i64(c9, id);
+    let c11: EmitState = emit_mlir_i64_nl(c10);
+    EmitState { buf: c11.buf, next_id: id + 1, last_id: id, lets: c11.lets }
 }
 
 // MLIR expression lowering, scalar i64 subset. Mirrors emit_expr_env's SSA
@@ -15024,6 +15123,16 @@ pub fn emit_mlir_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
     let lhs_id: i64 = s1.last_id;
     let s2: EmitState = emit_mlir_expr_env(s1, buf, ast_child1(node), params_addr, n_params);
     let rhs_id: i64 = s2.last_id;
+    let op_tag: i64 = ast_aux(node);
+    // Shift ops mask the amount to the low 6 bits via a named const + named andi,
+    // then the shift itself consumes the next NUMERIC id; the named SSA values
+    // (%shm<N>, %sha<N>) consume no numeric id.
+    if op_tag == op_shl() {
+        return emit_mlir_shift(s2, lhs_id, rhs_id, 1);
+    }
+    if op_tag == op_shr() {
+        return emit_mlir_shift(s2, lhs_id, rhs_id, 0);
+    }
     let id: i64 = s2.next_id;
     let s3: EmitState = emit_mlir_indent_pct(s2);
     let s4: EmitState = emit_i64(s3, id);
