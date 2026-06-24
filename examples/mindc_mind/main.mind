@@ -14779,6 +14779,395 @@ pub fn find_first_fn(addr: i64, n: i64, i: i64) -> i64 {
     }
 }
 
+// ===========================================================================
+// SECTION 4b — REAL-MLIR-TEXT EMITTER (Rust-independence #14, PHASE 1.1)
+//
+// ADDITIVE / canary-isolated. SECTION 4 (lower_program / emit_fn_def) emits the
+// mic@1 IR text (`%0 = const.i64 0` / `output`) the keystone locks to byte-for-
+// byte; mic@3 is the binary flip. NEITHER is real MLIR. This section adds a NEW
+// emit target that reproduces `mindc <f> --emit-mlir` byte-for-byte for the
+// scalar i64 subset (the bound of PHASE 1.1's FIRST increment):
+//   module {
+//     func.func @NAME(%0: i64, %1: i64) -> i64 {
+//       %k = arith.addi %i, %j : i64
+//       return %k : i64
+//     }
+//     func.func @main() -> (i64) {
+//       %0 = arith.constant 0 : i64
+//       return %0 : i64
+//     }
+//   }
+// (then a trailing `\n` from the Rust `println!`).
+//
+// It REUSES the existing parser + AST walk + SSA numbering (params occupy
+// %0..%n-1, the body continues at %n — identical to emit_fn_def_with_body's
+// real-body path), and emits the MLIR spelling instead of mic@1. NOTHING here is
+// reached through mindc_compile / lower_program — the keystone mic@3 flip and the
+// fixed point are untouched. Exposed via selftest_emit_mlir (the Python gate
+// diffs its EmitState.buf against `--emit-mlir` stdout).
+//
+// COVERED (byte-identical, scalar i64 subset only): the func.func wrapper with
+// `%N: i64` params and `-> i64`, ConstI64 -> `arith.constant N : i64`, BinOp
+// add/sub/mul/div -> `arith.{addi,subi,muli,divsi}`, ident -> param/let SSA id
+// (no instr), let-binding, Return -> `return %k : i64`, plus the synthetic empty
+// `@main`. Anything outside this subset (control flow, calls, tensors, narrow
+// ints, floats, comparisons) is OUT OF SCOPE for this increment and not emitted.
+// ===========================================================================
+
+// `    %` (4 spaces + percent) — the SSA-result line indent inside a func body.
+pub fn emit_mlir_indent_pct(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, ch_space());
+    let s3: EmitState = es_push(s2, ch_space());
+    let s4: EmitState = es_push(s3, ch_space());
+    es_push(s4, ch_percent())
+}
+
+// ` : i64\n` — the scalar result type suffix.
+pub fn emit_mlir_i64_nl(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, 58);
+    let s3: EmitState = es_push(s2, ch_space());
+    let s4: EmitState = es_push(s3, 105);
+    let s5: EmitState = es_push(s4, 54);
+    let s6: EmitState = es_push(s5, 52);
+    es_push(s6, ch_newline())
+}
+
+// ` = arith.` — the operator-spelling prefix shared by every scalar op.
+pub fn emit_mlir_eq_arith(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, ch_eq_sign());
+    let s3: EmitState = es_push(s2, ch_space());
+    let s4: EmitState = es_push(s3, 97);
+    let s5: EmitState = es_push(s4, 114);
+    let s6: EmitState = es_push(s5, 105);
+    let s7: EmitState = es_push(s6, 116);
+    let s8: EmitState = es_push(s7, 104);
+    es_push(s8, ch_dot())
+}
+
+// `constant ` — the arith.constant tail (with trailing space).
+pub fn emit_mlir_constant_kw(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, 99);
+    let s2: EmitState = es_push(s1, 111);
+    let s3: EmitState = es_push(s2, 110);
+    let s4: EmitState = es_push(s3, 115);
+    let s5: EmitState = es_push(s4, 116);
+    let s6: EmitState = es_push(s5, 97);
+    let s7: EmitState = es_push(s6, 110);
+    let s8: EmitState = es_push(s7, 116);
+    es_push(s8, ch_space())
+}
+
+// The integer arith binop mnemonic + a trailing space:
+//   add -> "addi " · sub -> "subi " · mul -> "muli " · div -> "divsi "
+// (signed div is `divsi`; the scalar subset is signed i64). Anything else is
+// OUT OF SCOPE for this increment — caller guards via expr_is_mlir_scalar.
+pub fn emit_mlir_arith_op(s: EmitState, op: i64) -> EmitState {
+    if op == op_add() {
+        let s1: EmitState = es_push(s, 97);
+        let s2: EmitState = es_push(s1, 100);
+        let s3: EmitState = es_push(s2, 100);
+        let s4: EmitState = es_push(s3, 105);
+        return es_push(s4, ch_space());
+    }
+    if op == op_sub() {
+        let s1: EmitState = es_push(s, 115);
+        let s2: EmitState = es_push(s1, 117);
+        let s3: EmitState = es_push(s2, 98);
+        let s4: EmitState = es_push(s3, 105);
+        return es_push(s4, ch_space());
+    }
+    if op == op_mul() {
+        let s1: EmitState = es_push(s, 109);
+        let s2: EmitState = es_push(s1, 117);
+        let s3: EmitState = es_push(s2, 108);
+        let s4: EmitState = es_push(s3, 105);
+        return es_push(s4, ch_space());
+    }
+    // op_div(): "divsi "
+    let s1: EmitState = es_push(s, 100);
+    let s2: EmitState = es_push(s1, 105);
+    let s3: EmitState = es_push(s2, 118);
+    let s4: EmitState = es_push(s3, 115);
+    let s5: EmitState = es_push(s4, 105);
+    es_push(s5, ch_space())
+}
+
+// MLIR expression lowering, scalar i64 subset. Mirrors emit_expr_env's SSA
+// numbering EXACTLY (so a port between targets keeps ids aligned) but emits the
+// MLIR spelling. Returns an EmitState whose last_id is the value's SSA id.
+//   int_lit -> `    %k = arith.constant N : i64`
+//   ident   -> resolves to a param/let SSA id, NO instruction
+//   binop   -> lowers both operands, then `    %k = arith.OP %i, %j : i64`
+//   paren   -> transparent
+pub fn emit_mlir_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        let val: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        let id: i64 = s.next_id;
+        let s1: EmitState = emit_mlir_indent_pct(s);
+        let s2: EmitState = emit_i64(s1, id);
+        let s3: EmitState = emit_mlir_eq_arith(s2);
+        let s4: EmitState = emit_mlir_constant_kw(s3);
+        let s5: EmitState = emit_i64(s4, val);
+        let s6: EmitState = emit_mlir_i64_nl(s5);
+        return EmitState { buf: s6.buf, next_id: id + 1, last_id: id, lets: s6.lets };
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx >= 0 {
+            return EmitState { buf: s.buf, next_id: s.next_id, last_id: idx, lets: s.lets };
+        }
+        let lid: i64 = env_lookup(s.lets, buf, ast_span_lo(node), ast_span_hi(node));
+        return EmitState { buf: s.buf, next_id: s.next_id, last_id: lid - 1, lets: s.lets };
+    }
+    if k == ast_paren() {
+        return emit_mlir_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+    }
+    // ast_binop(): lower both operands, then the arith op line.
+    let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+    let lhs_id: i64 = s1.last_id;
+    let s2: EmitState = emit_mlir_expr_env(s1, buf, ast_child1(node), params_addr, n_params);
+    let rhs_id: i64 = s2.last_id;
+    let id: i64 = s2.next_id;
+    let s3: EmitState = emit_mlir_indent_pct(s2);
+    let s4: EmitState = emit_i64(s3, id);
+    let s5: EmitState = emit_mlir_eq_arith(s4);
+    let s6: EmitState = emit_mlir_arith_op(s5, ast_aux(node));
+    let s7: EmitState = es_push(s6, ch_percent());
+    let s8: EmitState = emit_i64(s7, lhs_id);
+    let s9: EmitState = es_push(s8, ch_comma());
+    let s10: EmitState = es_push(s9, ch_space());
+    let s11: EmitState = es_push(s10, ch_percent());
+    let s12: EmitState = emit_i64(s11, rhs_id);
+    let s13: EmitState = emit_mlir_i64_nl(s12);
+    EmitState { buf: s13.buf, next_id: id + 1, last_id: id, lets: s13.lets }
+}
+
+// MLIR statement lowering, scalar i64 subset. `let` binds the value's SSA id;
+// `return` emits `    return %k : i64`. A trailing bare expression just lowers.
+pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    let k: i64 = ast_kind(node);
+    if k == ast_let() {
+        let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child2(node), params_addr, n_params);
+        let name_leaf: i64 = ast_child0(node);
+        let new_lets: Map = env_bind(s1.lets, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id + 1);
+        return EmitState { buf: s1.buf, next_id: s1.next_id, last_id: s1.last_id, lets: new_lets };
+    }
+    if k == ast_return() {
+        let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+        let rid: i64 = s1.last_id;
+        let s2: EmitState = es_push(s1, ch_space());
+        let s3: EmitState = es_push(s2, ch_space());
+        let s4: EmitState = es_push(s3, ch_space());
+        let s5: EmitState = es_push(s4, ch_space());
+        let s6: EmitState = es_push(s5, 114);
+        let s7: EmitState = es_push(s6, 101);
+        let s8: EmitState = es_push(s7, 116);
+        let s9: EmitState = es_push(s8, 117);
+        let s10: EmitState = es_push(s9, 114);
+        let s11: EmitState = es_push(s10, 110);
+        let s12: EmitState = es_push(s11, ch_space());
+        let s13: EmitState = es_push(s12, ch_percent());
+        let s14: EmitState = emit_i64(s13, rid);
+        return emit_mlir_i64_nl(s14);
+    }
+    emit_mlir_expr_env(s, buf, node, params_addr, n_params)
+}
+
+pub fn emit_mlir_block_stmts_env(s: EmitState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> EmitState {
+    if i >= stmts_len {
+        return s;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let s1: EmitState = emit_mlir_stmt_env(s, buf, stmt_node, params_addr, n_params);
+    emit_mlir_block_stmts_env(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
+}
+
+// Emit one func.func parameter `%i: i64`, comma-separated for i > 0.
+pub fn emit_mlir_params(s: EmitState, i: i64, n_params: i64) -> EmitState {
+    if i >= n_params {
+        return s;
+    }
+    let s0: EmitState = if i == 0 {
+        s
+    } else {
+        let c1: EmitState = es_push(s, ch_comma());
+        es_push(c1, ch_space())
+    };
+    let s1: EmitState = es_push(s0, ch_percent());
+    let s2: EmitState = emit_i64(s1, i);
+    let s3: EmitState = es_push(s2, 58);
+    let s4: EmitState = es_push(s3, ch_space());
+    let s5: EmitState = es_push(s4, 105);
+    let s6: EmitState = es_push(s5, 54);
+    let s7: EmitState = es_push(s6, 52);
+    emit_mlir_params(s7, i + 1, n_params)
+}
+
+// `  func.func @` (2-space indent) — the per-fn wrapper opener prefix.
+pub fn emit_mlir_funcfunc_head(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, ch_space());
+    let s3: EmitState = es_push(s2, 102);
+    let s4: EmitState = es_push(s3, 117);
+    let s5: EmitState = es_push(s4, 110);
+    let s6: EmitState = es_push(s5, 99);
+    let s7: EmitState = es_push(s6, ch_dot());
+    let s8: EmitState = es_push(s7, 102);
+    let s9: EmitState = es_push(s8, 117);
+    let s10: EmitState = es_push(s9, 110);
+    let s11: EmitState = es_push(s10, 99);
+    let s12: EmitState = es_push(s11, ch_space());
+    es_push(s12, 64)
+}
+
+// Emit a complete scalar-i64 `func.func @NAME(...) -> i64 { ... }` for a fn_def
+// node. Params occupy %0..%n-1; the body emits real ops from %n. SSA numbering
+// matches the Rust oracle (and emit_fn_def_with_body) exactly.
+pub fn emit_mlir_fn(s: EmitState, buf: i64, node: i64) -> EmitState {
+    let name_node: i64 = ast_child0(node);
+    let name_lo: i64 = ast_span_lo(name_node);
+    let name_hi: i64 = ast_span_hi(name_node);
+    let params_addr: i64 = ast_child1(node);
+    let n_params: i64 = ast_aux(node) / 2;
+    let body: i64 = ast_child2(node);
+
+    // `  func.func @NAME(`
+    let s1: EmitState = emit_mlir_funcfunc_head(s);
+    let s2: EmitState = emit_byte_range(s1, buf, name_lo, name_hi);
+    let s3: EmitState = es_push(s2, 40);
+    // params `%i: i64`...
+    let s4: EmitState = emit_mlir_params(s3, 0, n_params);
+    // `) -> i64 {\n`
+    let s5: EmitState = es_push(s4, 41);
+    let s6: EmitState = es_push(s5, ch_space());
+    let s7: EmitState = es_push(s6, 45);
+    let s8: EmitState = es_push(s7, 62);
+    let s9: EmitState = es_push(s8, ch_space());
+    let s10: EmitState = es_push(s9, 105);
+    let s11: EmitState = es_push(s10, 54);
+    let s12: EmitState = es_push(s11, 52);
+    let s13: EmitState = es_push(s12, ch_space());
+    let s14: EmitState = es_push(s13, ch_lbrace());
+    let s15: EmitState = es_push(s14, ch_newline());
+
+    // Body: SSA ids continue at n_params; lets env starts fresh.
+    let sb0: EmitState = EmitState { buf: s15.buf, next_id: n_params, last_id: 0 - 1, lets: env_new() };
+    let sb1: EmitState = emit_mlir_block_stmts_env(sb0, buf, ast_child0(body), ast_aux(body), 0, params_addr, n_params);
+
+    // `  }\n`
+    let sc1: EmitState = es_push(sb1, ch_space());
+    let sc2: EmitState = es_push(sc1, ch_space());
+    let sc3: EmitState = es_push(sc2, ch_rbrace());
+    es_push(sc3, ch_newline())
+}
+
+// The synthetic empty `@main` the Rust assembler always appends:
+//   func.func @main() -> (i64) {
+//     %0 = arith.constant 0 : i64
+//     return %0 : i64
+//   }
+pub fn emit_mlir_main(s: EmitState) -> EmitState {
+    // `  func.func @main() -> (i64) {\n`
+    let s1: EmitState = emit_mlir_funcfunc_head(s);
+    let s2: EmitState = es_push(s1, 109);
+    let s3: EmitState = es_push(s2, 97);
+    let s4: EmitState = es_push(s3, 105);
+    let s5: EmitState = es_push(s4, 110);
+    let s6: EmitState = es_push(s5, 40);
+    let s7: EmitState = es_push(s6, 41);
+    let s8: EmitState = es_push(s7, ch_space());
+    let s9: EmitState = es_push(s8, 45);
+    let s10: EmitState = es_push(s9, 62);
+    let s11: EmitState = es_push(s10, ch_space());
+    let s12: EmitState = es_push(s11, 40);
+    let s13: EmitState = es_push(s12, 105);
+    let s14: EmitState = es_push(s13, 54);
+    let s15: EmitState = es_push(s14, 52);
+    let s16: EmitState = es_push(s15, 41);
+    let s17: EmitState = es_push(s16, ch_space());
+    let s18: EmitState = es_push(s17, ch_lbrace());
+    let s19: EmitState = es_push(s18, ch_newline());
+    // `    %0 = arith.constant 0 : i64\n`
+    let m1: EmitState = emit_mlir_indent_pct(s19);
+    let m2: EmitState = emit_i64(m1, 0);
+    let m3: EmitState = emit_mlir_eq_arith(m2);
+    let m4: EmitState = emit_mlir_constant_kw(m3);
+    let m5: EmitState = es_push(m4, 48);
+    let m6: EmitState = emit_mlir_i64_nl(m5);
+    // `    return %0 : i64\n`
+    let r1: EmitState = es_push(m6, ch_space());
+    let r2: EmitState = es_push(r1, ch_space());
+    let r3: EmitState = es_push(r2, ch_space());
+    let r4: EmitState = es_push(r3, ch_space());
+    let r5: EmitState = es_push(r4, 114);
+    let r6: EmitState = es_push(r5, 101);
+    let r7: EmitState = es_push(r6, 116);
+    let r8: EmitState = es_push(r7, 117);
+    let r9: EmitState = es_push(r8, 114);
+    let r10: EmitState = es_push(r9, 110);
+    let r11: EmitState = es_push(r10, ch_space());
+    let r12: EmitState = es_push(r11, ch_percent());
+    let r13: EmitState = emit_i64(r12, 0);
+    let r14: EmitState = emit_mlir_i64_nl(r13);
+    // `  }\n`
+    let c1: EmitState = es_push(r14, ch_space());
+    let c2: EmitState = es_push(c1, ch_space());
+    let c3: EmitState = es_push(c2, ch_rbrace());
+    es_push(c3, ch_newline())
+}
+
+// Walk the program items, emitting one `func.func` per fn_def (scalar subset).
+pub fn emit_mlir_items(s: EmitState, buf: i64, items_addr: i64, items_len: i64, i: i64) -> EmitState {
+    if i >= items_len {
+        return s;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    let s1: EmitState = if ast_kind(item) == ast_fn_def() {
+        emit_mlir_fn(s, buf, item)
+    } else {
+        s
+    };
+    emit_mlir_items(s1, buf, items_addr, items_len, i + 1)
+}
+
+// Full real-MLIR module emit:
+//   module {\n <fns> <@main> }\n\n
+// The trailing extra `\n` mirrors the Rust `println!("{}", text)` that wraps the
+// module text (`--emit-mlir` stdout). Pure / additive / canary-isolated.
+pub fn emit_mlir_module(ast_addr: i64, buf: i64) -> EmitState {
+    let items_addr: i64 = ast_child0(ast_addr);
+    let items_len: i64 = ast_aux(ast_addr);
+    let s0: EmitState = es_new();
+    // `module {\n`
+    let s1: EmitState = es_push(s0, 109);
+    let s2: EmitState = es_push(s1, 111);
+    let s3: EmitState = es_push(s2, 100);
+    let s4: EmitState = es_push(s3, 117);
+    let s5: EmitState = es_push(s4, 108);
+    let s6: EmitState = es_push(s5, 101);
+    let s7: EmitState = es_push(s6, ch_space());
+    let s8: EmitState = es_push(s7, ch_lbrace());
+    let s9: EmitState = es_push(s8, ch_newline());
+    let s10: EmitState = emit_mlir_items(s9, buf, items_addr, items_len, 0);
+    let s11: EmitState = emit_mlir_main(s10);
+    // `}\n` + the println trailing `\n`.
+    let s12: EmitState = es_push(s11, ch_rbrace());
+    let s13: EmitState = es_push(s12, ch_newline());
+    es_push(s13, ch_newline())
+}
+
+// Selftest export: lex+parse `src`, then emit the full real-MLIR module text.
+// The Python gate decodes EmitState.buf and diffs it against `--emit-mlir`.
+pub fn selftest_emit_mlir(src_addr: i64, src_len: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    emit_mlir_module(ast_root, src_addr)
+}
+
 // ===== Program-level lowering =====
 
 // Emit a single const.i64 0 / output stub for items that lower to a placeholder
