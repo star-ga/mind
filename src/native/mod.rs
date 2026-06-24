@@ -479,12 +479,40 @@ fn store_argreg(code: &mut Vec<u8>, arg_index: usize, disp: i32) -> Result<(), N
 
 /// Assign every value defined in `body` a frame slot, in first-appearance order,
 /// recursing through `If` branches. A pure function of the IR.
+///
+/// A loop-carried variable occupies ONE dedicated working slot across iterations.
+/// A `While`'s post-body (`live_vars`) and post-loop (`exit_ids`) SSA ids resolve
+/// to that slot; its pre-loop value (`init_ids`) is COPIED into the slot before
+/// the header (see the `While` arm in `emit_seq`) and the loop's cond+body reads
+/// of the variable are remapped to the working slot. The mem-to-mem model then
+/// needs no phi forwarding — the slot just holds the live value.
+///
+/// Why a dedicated slot + copy instead of aliasing `init_id`'s slot directly:
+/// the front-end inlines `let mut tmp = nn` as a bare-identifier read, so `tmp`
+/// reuses `nn`'s ValueId. If the loop simply aliased its working slot ONTO that
+/// shared init id, every body write to `tmp` would also clobber `nn` — which is
+/// still read after the loop (e.g. `string_push_i64`: the divisor loop mutates
+/// `tmp` while the digit loop later reads `nn`). Two SEQUENTIAL loops carrying
+/// the same variable hit the same hazard the other way: loop 1's `exit_id` IS
+/// loop 2's `init_id`. Copying the init value in (rather than aliasing) and
+/// remapping the in-loop reads keeps each loop's working slot private, so neither
+/// hazard corrupts a live value.
+///
+/// Pure function of the IR: the slot numbering is the deterministic
+/// first-appearance walk order; `union-find` coalesces post↔exit by the same
+/// order, so the mapping is independent of union order.
 fn assign_slots(body: &[Instr]) -> HashMap<ValueId, usize> {
     fn define(slot: &mut HashMap<ValueId, usize>, id: ValueId) {
         let n = slot.len();
         slot.entry(id).or_insert(n);
     }
-    fn walk(body: &[Instr], slot: &mut HashMap<ValueId, usize>) {
+    // Collect (a, b) slot-index pairs that must share one physical slot
+    // (post-body id ↔ post-loop exit id — the variable's dedicated working slot).
+    fn walk(
+        body: &[Instr],
+        slot: &mut HashMap<ValueId, usize>,
+        unions: &mut Vec<(usize, usize)>,
+    ) {
         for ins in body {
             match ins {
                 Instr::Param { dst, .. }
@@ -499,18 +527,14 @@ fn assign_slots(body: &[Instr]) -> HashMap<ValueId, usize> {
                     merges,
                     ..
                 } => {
-                    walk(cond_instrs, slot);
-                    walk(then_instrs, slot);
-                    walk(else_instrs, slot);
+                    walk(cond_instrs, slot, unions);
+                    walk(then_instrs, slot, unions);
+                    walk(else_instrs, slot, unions);
                     define(slot, *dst);
                     for (m, _, _) in merges {
                         define(slot, *m);
                     }
                 }
-                // A loop-carried variable is ONE memory slot across iterations:
-                // its pre-loop (`init_ids`), post-body (`live_vars`), and post-loop
-                // (`exit_ids`) SSA ids all alias to that slot, so the mem-to-mem
-                // model needs no phi nodes — the slot just holds the live value.
                 #[cfg(feature = "std-surface")]
                 Instr::While {
                     cond_instrs,
@@ -520,18 +544,24 @@ fn assign_slots(body: &[Instr]) -> HashMap<ValueId, usize> {
                     exit_ids,
                     ..
                 } => {
-                    walk(cond_instrs, slot);
-                    walk(loop_body, slot);
+                    walk(cond_instrs, slot, unions);
+                    walk(loop_body, slot, unions);
                     for (i, (_, post_id)) in live_vars.iter().enumerate() {
-                        if let Some(&s) = slot.get(post_id) {
-                            if let Some(init_id) = init_ids.get(i) {
-                                if init_id.0 != usize::MAX {
-                                    slot.insert(*init_id, s);
-                                }
+                        // The post-body id is the variable's dedicated working
+                        // slot; the post-loop exit id reads the same slot. The
+                        // init id is NOT coalesced here — it keeps its own slot and
+                        // is copied in at runtime, so a body write never clobbers a
+                        // value that an init id aliases elsewhere.
+                        define(slot, *post_id);
+                        let ps = slot[post_id];
+                        if let Some(init_id) = init_ids.get(i) {
+                            if init_id.0 != usize::MAX {
+                                define(slot, *init_id);
                             }
-                            if let Some(exit_id) = exit_ids.get(i) {
-                                slot.insert(*exit_id, s);
-                            }
+                        }
+                        if let Some(exit_id) = exit_ids.get(i) {
+                            define(slot, *exit_id);
+                            unions.push((slot[exit_id], ps));
                         }
                     }
                 }
@@ -540,7 +570,35 @@ fn assign_slots(body: &[Instr]) -> HashMap<ValueId, usize> {
         }
     }
     let mut slot = HashMap::new();
-    walk(body, &mut slot);
+    let mut unions: Vec<(usize, usize)> = Vec::new();
+    walk(body, &mut slot, &mut unions);
+
+    // Union-find over the raw slot indices: coalesce every post↔exit pair so a
+    // variable's post-body value and its post-loop reads land on one slot.
+    let n = slot.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut Vec<usize>, mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    for (a, b) in unions {
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        if ra != rb {
+            // Lower index wins as the representative — deterministic, independent
+            // of union order.
+            if ra < rb {
+                parent[rb] = ra;
+            } else {
+                parent[ra] = rb;
+            }
+        }
+    }
+    for s in slot.values_mut() {
+        *s = find(&mut parent, *s);
+    }
     slot
 }
 
@@ -600,8 +658,16 @@ fn emit_seq(
     slot: &HashMap<ValueId, usize>,
     is_entry: bool,
     loops: &mut Vec<LoopFrame>,
+    remap: &HashMap<ValueId, ValueId>,
 ) -> Result<(), NativeError> {
+    // `disp` resolves a ValueId to its frame displacement. `remap` redirects a
+    // loop-carried variable's pre-loop `init_id` to the loop's dedicated working
+    // `post_id` slot for the duration of the loop's cond+body — so the body reads
+    // (which the front-end emits against the init id) and writes (post id) hit the
+    // same slot across iterations, without the init id's own slot being aliased
+    // (which would clobber any OTHER live value sharing that init id).
     let disp = |id: &ValueId| -> Result<i32, NativeError> {
+        let id = remap.get(id).unwrap_or(id);
         slot.get(id)
             .map(|&i| slot_disp(i))
             .ok_or_else(|| NativeError::Unsupported(format!("use of undefined value {id}")))
@@ -831,11 +897,11 @@ fn emit_seq(
                 let else_falls = !else_instrs.last().is_some_and(branch_diverges);
 
                 // Evaluate the condition; branch to the else-block when it is 0.
-                emit_seq(code, calls, cond_instrs, slot, is_entry, loops)?;
+                emit_seq(code, calls, cond_instrs, slot, is_entry, loops, remap)?;
                 let je = emit_cmp_je_zero(code, disp(cond_id)?);
 
                 // then-block: body, phi(then side), dst = then_result, jump to end.
-                emit_seq(code, calls, then_instrs, slot, is_entry, loops)?;
+                emit_seq(code, calls, then_instrs, slot, is_entry, loops, remap)?;
                 let then_jmp = if then_falls {
                     for (m, then_val, _) in merges {
                         load_rax(code, disp(then_val)?);
@@ -851,7 +917,7 @@ fn emit_seq(
                 // else-block: body, phi(else side), dst = else_result.
                 let else_at = code.len();
                 patch_rel32(code, je, else_at);
-                emit_seq(code, calls, else_instrs, slot, is_entry, loops)?;
+                emit_seq(code, calls, else_instrs, slot, is_entry, loops, remap)?;
                 if else_falls {
                     for (m, _, else_val) in merges {
                         load_rax(code, disp(else_val)?);
@@ -866,25 +932,63 @@ fn emit_seq(
                     patch_rel32(code, jmp, end_at);
                 }
             }
-            // `while cond { body }` — re-test the condition each iteration; the
-            // loop-carried vars live in their (aliased) slots so no phi forwarding
-            // is needed. A LoopFrame on `loops` lets `break`/`continue` in the body
-            // target this loop's exit / header.
+            // `while cond { body }` — re-test the condition each iteration.
+            //
+            // Each loop-carried variable has a DEDICATED working slot (its
+            // `post_id`'s slot; `exit_id` aliases it via `assign_slots`). Before
+            // the header we COPY each variable's pre-loop value (`init_id`) into
+            // that working slot, then emit the cond+body with a `remap` that
+            // redirects reads of `init_id` to the working slot — so the body's
+            // reads (front-end-emitted against the init id) and writes (post id)
+            // share one slot across iterations, while the init id's OWN slot is
+            // never aliased (it may still be live under another name after the
+            // loop, e.g. `string_push_i64`'s `nn` vs `tmp`). A LoopFrame on `loops`
+            // lets `break`/`continue` in the body target this loop's exit/header.
             #[cfg(feature = "std-surface")]
             Instr::While {
                 cond_id,
                 cond_instrs,
                 body: loop_body,
+                live_vars,
+                init_ids,
                 ..
             } => {
+                // Build the per-loop remap (init_id -> post_id) and copy each
+                // init value into the loop's working slot before the header.
+                // Inherit the enclosing `remap` so nested loops compose.
+                let mut loop_remap = remap.clone();
+                for (i, (_, post_id)) in live_vars.iter().enumerate() {
+                    if let Some(init_id) = init_ids.get(i) {
+                        if init_id.0 != usize::MAX {
+                            // Copy under the OUTER remap so a nested loop's init
+                            // that names an outer loop var reads the outer slot.
+                            let src = remap.get(init_id).copied().unwrap_or(*init_id);
+                            // Only copy when the working slot differs from the
+                            // source slot (a no-op copy is harmless but skipped).
+                            if slot.get(&src) != slot.get(post_id) {
+                                load_rax(code, disp(&src)?);
+                                store_rax(code, disp(post_id)?);
+                            }
+                            loop_remap.insert(*init_id, *post_id);
+                        }
+                    }
+                }
+
                 let header = code.len();
-                emit_seq(code, calls, cond_instrs, slot, is_entry, loops)?;
-                let je = emit_cmp_je_zero(code, disp(cond_id)?); // exit when cond == 0
+                emit_seq(code, calls, cond_instrs, slot, is_entry, loops, &loop_remap)?;
+                let je = emit_cmp_je_zero(code, {
+                    let id = loop_remap.get(cond_id).copied().unwrap_or(*cond_id);
+                    slot.get(&id)
+                        .map(|&i| slot_disp(i))
+                        .ok_or_else(|| {
+                            NativeError::Unsupported(format!("use of undefined value {id}"))
+                        })?
+                }); // exit when cond == 0
                 loops.push(LoopFrame {
                     header,
                     breaks: Vec::new(),
                 });
-                emit_seq(code, calls, loop_body, slot, is_entry, loops)?;
+                emit_seq(code, calls, loop_body, slot, is_entry, loops, &loop_remap)?;
                 let frame = loops.pop().expect("loop frame pushed above");
                 let back = emit_jmp(code);
                 patch_rel32(code, back, header); // back-edge to the header
@@ -943,7 +1047,8 @@ fn lower_fn(
 
     let mut calls = Vec::new();
     let mut loops: Vec<LoopFrame> = Vec::new();
-    emit_seq(&mut code, &mut calls, body, &slot, is_entry, &mut loops)?;
+    let remap = HashMap::new();
+    emit_seq(&mut code, &mut calls, body, &slot, is_entry, &mut loops, &remap)?;
 
     // If the body falls off the end without an explicit `Return` (a trailing
     // value-expression whose result is the FnDef's `ret_id` — e.g. a value-`if`
@@ -1149,6 +1254,34 @@ pub fn compile_to_elf(ir: &IRModule) -> Result<Vec<u8>, NativeError> {
                 rest.push(sig);
             }
         }
+    }
+
+    // Shadowing: when the same function name is DEFINED more than once (the
+    // native path bundles the whole stdlib ahead of the user file, so a user
+    // `fn bytes_eq`/`fn load_byte`/… collides with a bundled std helper of the
+    // same name — e.g. std/toml.mind's own `bytes_eq`/`load_byte`), the LAST
+    // definition wins (user items are appended after the std modules — the
+    // last-write-wins contract documented in `bin/mind-native.rs`). `link`
+    // resolves a callee to a single `Func` by NAME, so leaving both bodies in
+    // would let it bind a `call` to the WRONG (earlier, differently-typed) one:
+    // the bundled `bytes_eq(aa, ba, n)` (3 params) vs the program's
+    // `bytes_eq(buf, lo, hi, cmp, clo, chi)` (6 params) — a runtime miscompile
+    // that lowers + exits 0 yet jumps into a function with the wrong ABI. Keep
+    // only the LAST `FnDef` per name (deterministic — IR order is stable, and a
+    // shadowed earlier body is dropped rather than emitted as dead code).
+    {
+        use std::collections::HashMap;
+        let mut last_index: HashMap<&str, usize> = HashMap::new();
+        for (i, (name, _, _)) in rest.iter().enumerate() {
+            last_index.insert(name, i);
+        }
+        let kept: Vec<FnSig> = rest
+            .iter()
+            .enumerate()
+            .filter(|(i, (name, _, _))| last_index.get(name) == Some(i))
+            .map(|(_, sig)| *sig)
+            .collect();
+        rest = kept;
     }
     let mut funcs = Vec::with_capacity(rest.len() + 1);
     match entry {
@@ -1993,5 +2126,120 @@ mod tests {
                 "{op:?}({a},{b})"
             );
         }
+    }
+
+    /// A loop-carried accumulator updated via a CHAINED expression
+    /// (`acc = acc * 10 + 7`) — two BinOps reading the loop variable. Exercises the
+    /// init-copy + read-remap on a value that flows through intermediates before
+    /// landing back in its own slot. (Kept ≤ 255 so the exit code is exact:
+    /// 3 iterations of `acc*10+7` from 0 give 777, whose low byte is 9 — so use a
+    /// 2-iteration `div` that yields 77.)
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn loop_carried_chained_accumulator() {
+        let src = "fn r() -> i64 { let mut div: i64 = 10; let mut acc: i64 = 0; \
+                     while div > 0 { acc = acc * 10 + 7; div = div / 10; } acc } \
+                   fn main() -> i64 { r() }";
+        let m = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&m);
+        let elf = compile_to_elf(&ir).expect("lowers");
+        assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+        // div = 10 → 2 iterations (10, 1): acc = 0→7→77.
+        assert_eq!(run(&elf, "mind_native_accchain_exe"), Some(77), "acc*10+7 twice");
+    }
+
+    /// Two SEQUENTIAL `while` loops that carry the same variable: loop 1 computes a
+    /// power-of-10 divisor, loop 2 walks it back down counting iterations. The
+    /// loop-carried `div` is live across BOTH loops (loop 1's exit feeds loop 2's
+    /// init), and `n` stays live as a value read inside loop 2's body even though
+    /// loop 1 mutates a sibling derived from it. This is the `string_push_i64`
+    /// digit-emit shape that silently miscompiled to 0 before the dedicated
+    /// loop-slot + init-copy fix (the old direct init-alias clobbered the live
+    /// value through a shared SSA id).
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn sequential_loops_carry_shared_variable() {
+        // f(n) = number of decimal digits in n (1 for n<10, 3 for 100..999, …).
+        let src = "fn f(n: i64) -> i64 { \
+                     let mut div: i64 = 1; let mut tmp: i64 = n; \
+                     while tmp >= 10 { div = div * 10; tmp = tmp / 10; } \
+                     let mut count: i64 = 0; \
+                     while div > 0 { count = count + 1; div = div / 10; } \
+                     count } \
+                   fn main() -> i64 { f(SUBST) }";
+        for (input, expect) in [(5i32, 1i32), (16, 2), (100, 3), (40, 2)] {
+            let m = crate::parser::parse(&src.replace("SUBST", &input.to_string()))
+                .expect("parse");
+            let ir = crate::eval::lower::lower_to_ir(&m);
+            let elf = compile_to_elf(&ir).expect("lowers");
+            assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+            assert_eq!(
+                run(&elf, "mind_native_seqloops_exe"),
+                Some(expect),
+                "digit-count f({input})"
+            );
+        }
+    }
+
+    /// A `while` body that READS one variable while MUTATING another that was
+    /// initialised from it — the exact `string_push_i64` hazard: `nn` holds the
+    /// number, the divisor loop mutates `tmp` (`let mut tmp = nn`, same SSA id as
+    /// `nn`), then a second loop reads `nn` to extract each digit. The dedicated
+    /// loop-slot + init-copy must keep `nn` intact across the first loop.
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn loop_mutates_sibling_without_clobbering_live_value() {
+        // Reconstruct the number from its decimal digits, MSB-first — the body of
+        // string_push_i64's emit loop, returning the value if correct.
+        let src = "fn rebuild(n: i64) -> i64 { \
+                     let mut nn: i64 = n; \
+                     let mut div: i64 = 1; let mut tmp: i64 = nn; \
+                     while tmp >= 10 { div = div * 10; tmp = tmp / 10; } \
+                     let mut acc: i64 = 0; \
+                     while div > 0 { let digit: i64 = (nn / div) % 10; acc = acc * 10 + digit; div = div / 10; } \
+                     acc } \
+                   fn main() -> i64 { rebuild(SUBST) }";
+        // `run` returns the process EXIT CODE — only the low 8 bits survive, so
+        // keep every expected value ≤ 255 (the loop logic is width-independent).
+        for input in [7i32, 16, 42, 90, 201] {
+            let m = crate::parser::parse(&src.replace("SUBST", &input.to_string()))
+                .expect("parse");
+            let ir = crate::eval::lower::lower_to_ir(&m);
+            let elf = compile_to_elf(&ir).expect("lowers");
+            assert_eq!(
+                run(&elf, "mind_native_rebuild_exe"),
+                Some(input),
+                "digit-rebuild rebuild({input}) == {input}"
+            );
+        }
+    }
+
+    /// Name-shadowing: when the same function name is DEFINED twice (the native
+    /// path bundles the whole stdlib ahead of the user file, so a user
+    /// `fn bytes_eq` collides with std/toml.mind's own `bytes_eq` — a DIFFERENT
+    /// signature), a `call` must bind to the LAST (user) definition, never the
+    /// earlier bundled one. Before the dedup fix, `link` resolved to the first
+    /// match: a 6-arg `call` jumped into the 3-arg std body, which then did a
+    /// 1-byte load through a garbage register and segfaulted — a miscompile that
+    /// lowered and "exited 0" on the no-`main` library form yet crashed at run.
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn user_function_shadows_a_bundled_std_name() {
+        // Two definitions of `clash`: the FIRST (bundled-style, 3 params) is a
+        // decoy with a divergent ABI; the SECOND (user, 1 param) must win.
+        let src = "fn clash(a: i64, b: i64, c: i64) -> i64 { a + b + c } \
+                   fn clash(x: i64) -> i64 { x + 100 } \
+                   fn main() -> i64 { clash(7) }";
+        let m = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&m);
+        let elf = compile_to_elf(&ir).expect("lowers");
+        assert_eq!(elf, compile_to_elf(&ir).expect("lowers"), "deterministic");
+        // The LAST `clash` (x + 100) wins: clash(7) = 107. The decoy would
+        // mis-read args and yield garbage / crash.
+        assert_eq!(
+            run(&elf, "mind_native_shadow_exe"),
+            Some(107),
+            "user clash(x)=x+100 shadows the 3-arg decoy"
+        );
     }
 }
