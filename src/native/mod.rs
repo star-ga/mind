@@ -288,6 +288,31 @@ fn emit_load_i64(code: &mut Vec<u8>, addr_disp: i32) {
     code.extend_from_slice(&[0x48, 0x8B, 0x00]); // mov rax, [rax]
 }
 
+/// Inline `__mind_store_i8(addr, val)`: write the LOW BYTE of `val` only — a
+/// 1-byte store through the i64 handle (`mov [addr], cl`). This is the byte-buffer
+/// / string-literal lowering path: the front-end emits one `__mind_store_i8` per
+/// UTF-8 byte (eval/lower.rs). The store touches exactly one byte and must NOT
+/// clobber the adjacent 7 — so `mov byte [rax], cl` (no REX.W), not a qword store.
+/// Mirrors the MLIR path's `llvm.trunc` to i8 + 1-byte store. No meaningful result.
+fn emit_store_i8(code: &mut Vec<u8>, addr_disp: i32, val_disp: i32) {
+    code.extend_from_slice(&[0x48, 0x8B, 0x85]); // mov rax, [rbp+addr]
+    code.extend_from_slice(&addr_disp.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x8B, 0x8D]); // mov rcx, [rbp+val]
+    code.extend_from_slice(&val_disp.to_le_bytes());
+    code.extend_from_slice(&[0x88, 0x08]); // mov byte [rax], cl (1 byte, low byte of val)
+}
+
+/// Inline `__mind_load_i8(addr) -> val`: load ONE byte and ZERO-extend it to i64
+/// (`movzx rax, byte [addr]`). Zero-extend (movzx), NOT sign-extend (movsx): the
+/// byte is an unsigned `u8` (matches the MLIR path's `llvm.zext` to i64 — a byte
+/// `0xFF` reads back as 255, never -1). Leaves the value in `rax`. This is the
+/// `string_get_byte` / index read path. `addr_disp` is the arg slot.
+fn emit_load_i8(code: &mut Vec<u8>, addr_disp: i32) {
+    code.extend_from_slice(&[0x48, 0x8B, 0x85]); // mov rax, [rbp+addr]
+    code.extend_from_slice(&addr_disp.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x0F, 0xB6, 0x00]); // movzx rax, byte [rax] (zero-extend)
+}
+
 /// `mov <argreg>, [rbp+disp32]` — marshal a slot value into a System-V arg reg.
 fn load_argreg(code: &mut Vec<u8>, arg_index: usize, disp: i32) -> Result<(), NativeError> {
     let (reg, ext) = *ARG_REGS
@@ -516,11 +541,34 @@ fn emit_seq(
                         emit_load_i64(code, disp(addr)?);
                         store_rax(code, disp(dst)?); // loaded value -> dst slot
                     }
+                    "__mind_store_i8" => {
+                        // 1-byte store (string-literal / byte-buffer lowering): write
+                        // only the low byte of `val`, never the adjacent 7.
+                        let addr = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_store_i8 missing addr".into())
+                        })?;
+                        let val = args.get(1).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_store_i8 missing value".into())
+                        })?;
+                        emit_store_i8(code, disp(addr)?, disp(val)?);
+                        // No meaningful result; the dst slot is intentionally left
+                        // as-is (the front-end never reads a store's dst).
+                    }
+                    "__mind_load_i8" => {
+                        // 1-byte load (string_get_byte / index read): zero-extend the
+                        // unsigned byte to i64.
+                        let addr = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_load_i8 missing addr".into())
+                        })?;
+                        emit_load_i8(code, disp(addr)?);
+                        store_rax(code, disp(dst)?); // zero-extended byte -> dst slot
+                    }
                     other => {
-                        // Sub-i64 width helpers (__mind_store_i8/i16/i32, …) are
-                        // not yet inlined — fail loud rather than silently miscompile.
+                        // Wider sub-i64 helpers (__mind_store_i16/i32, …) are not yet
+                        // inlined — fail loud rather than silently miscompile.
                         return Err(NativeError::Unsupported(format!(
-                            "intrinsic {other} (only __mind_alloc/store_i64/load_i64 inlined)"
+                            "intrinsic {other} (only \
+                             __mind_alloc/store_i64/load_i64/store_i8/load_i8 inlined)"
                         )));
                     }
                 }
@@ -1269,6 +1317,80 @@ mod tests {
             run(&elf2, "mind_native_struct_two_exe"),
             Some(25),
             "two struct records must not alias (bump cursor advances): 20 + 5 = 25"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_a_byte_buffer_program_via_store_and_load_i8() {
+        // The 1-byte Option-C intrinsics — `__mind_store_i8` (write the low byte
+        // only) and `__mind_load_i8` (zero-extend the unsigned byte to i64) — are
+        // the string-literal / byte-buffer memory path. The native backend now
+        // inlines them directly (no runtime to link). Front-end-lowered, not a
+        // hand-built IR toy: `__mind_alloc` a buffer, store two bytes, read them
+        // back, and exit with their sum.
+        let src = "fn main() -> i64 { \
+                   let addr: i64 = __mind_alloc(8); \
+                   let r0: i64 = __mind_store_i8(addr, 7); \
+                   let r1: i64 = __mind_store_i8(addr + 1, 35); \
+                   let b0: i64 = __mind_load_i8(addr); \
+                   let b1: i64 = __mind_load_i8(addr + 1); \
+                   return b0 + b1; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the byte-buffer program");
+
+        // Byte-identity (the wedge): two builds of the same IR must be identical —
+        // the store_i8 / load_i8 codegen is a pure function of the IR (absolute
+        // movabs + frame-slot moves only, no host-varying bytes).
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "byte-buffer ELF must be byte-identical (store_i8/load_i8 emit no host-varying bytes)"
+        );
+
+        // Runs and reads both bytes back independently: 7 + 35 = 42. This also
+        // proves the 1-byte store does NOT clobber the adjacent byte (if the store
+        // wrote a full qword, byte 0's store would overwrite byte 1's slot).
+        assert_eq!(
+            run(&elf, "mind_native_byte_buf_exe"),
+            Some(42),
+            "store_i8(7) + store_i8(35) read back must exit(42)"
+        );
+
+        // Zero-extend, not sign-extend: a byte 0xC8 (200) must load as +200, never
+        // -56. A signed `> 100` test takes the then-branch (42) only under movzx;
+        // movsx would yield -56 → the else-branch (7). Distinguishes the two
+        // unambiguously (truncated exit codes alone would alias 200 and -56).
+        let src_z = "fn main() -> i64 { \
+                     let addr: i64 = __mind_alloc(8); \
+                     let r0: i64 = __mind_store_i8(addr, 200); \
+                     let b0: i64 = __mind_load_i8(addr); \
+                     if b0 > 100 { return 42; } else { return 7; } }";
+        let ir_z = crate::eval::lower::lower_to_ir(&crate::parser::parse(src_z).expect("parse"));
+        let elf_z = compile_to_elf(&ir_z).expect("lowers");
+        assert_eq!(
+            run(&elf_z, "mind_native_byte_zext_exe"),
+            Some(42),
+            "load_i8 must ZERO-extend (200 > 100 → 42); sign-extend would give -56 → 7"
+        );
+
+        // The 1-byte store overwrites ONLY the low byte of an existing qword: pre-
+        // fill 0xFFFF with store_i64, then store_i8(0x2A) → 0xFF2A (65322). Reading
+        // back the full i64 and subtracting 65280 (0xFF00) leaves 42 only if the
+        // upper byte (0xFF) survived the 1-byte store.
+        let src_c = "fn main() -> i64 { \
+                     let addr: i64 = __mind_alloc(8); \
+                     let big: i64 = __mind_store_i64(addr, 65535); \
+                     let small: i64 = __mind_store_i8(addr, 42); \
+                     let back: i64 = __mind_load_i64(addr); \
+                     return back - 65280; }";
+        let ir_c = crate::eval::lower::lower_to_ir(&crate::parser::parse(src_c).expect("parse"));
+        let elf_c = compile_to_elf(&ir_c).expect("lowers");
+        assert_eq!(
+            run(&elf_c, "mind_native_byte_noclobber_exe"),
+            Some(42),
+            "store_i8 must touch ONLY the low byte (0xFFFF→store_i8 0x2A→0xFF2A): 65322-65280=42"
         );
     }
 
