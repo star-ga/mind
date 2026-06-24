@@ -15039,10 +15039,291 @@ pub fn emit_mlir_expr_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
     EmitState { buf: s13.buf, next_id: id + 1, last_id: id, lets: s13.lets }
 }
 
+// Emit the cmpi predicate token + `, ` for a comparison op code:
+//   ==/!= -> "eq"/"ne" ; signed </<=/>/>= -> "slt"/"sle"/"sgt"/"sge".
+// Emits the leading `"`, the mnemonic, then `", ` (close-quote, comma, space).
+pub fn emit_mlir_cmpi_pred(s: EmitState, op: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 34);
+    let s2: EmitState = if op == op_eq() {
+        let a: EmitState = es_push(s1, 101);
+        es_push(a, 113)
+    } else {
+        if op == op_ne() {
+            let a: EmitState = es_push(s1, 110);
+            es_push(a, 101)
+        } else {
+            // s + (l/g) + (t/e), the signed three-letter forms.
+            let a: EmitState = es_push(s1, 115);
+            let lg: i64 = if op == op_lt() {
+                108
+            } else {
+                if op == op_le() {
+                    108
+                } else {
+                    103
+                }
+            };
+            let b: EmitState = es_push(a, lg);
+            let te: i64 = if op == op_lt() {
+                116
+            } else {
+                if op == op_gt() {
+                    116
+                } else {
+                    101
+                }
+            };
+            es_push(b, te)
+        }
+    };
+    let s3: EmitState = es_push(s2, 34);
+    let s4: EmitState = es_push(s3, ch_comma());
+    es_push(s4, ch_space())
+}
+
+// Emit a comparison `    %k = arith.cmpi "PRED", %lhs, %rhs : i64\n`, lowering
+// both operands first (mirroring the Rust IR builder's cond-sub numbering).
+// Returns the EmitState with last_id = the i1 cmpi result id.
+pub fn emit_mlir_cmpi(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child0(node), params_addr, n_params);
+    let lhs_id: i64 = s1.last_id;
+    let s2: EmitState = emit_mlir_expr_env(s1, buf, ast_child1(node), params_addr, n_params);
+    let rhs_id: i64 = s2.last_id;
+    let id: i64 = s2.next_id;
+    let p1: EmitState = emit_mlir_indent_pct(s2);
+    let p2: EmitState = emit_i64(p1, id);
+    let p3: EmitState = es_push(p2, ch_space());
+    let p4: EmitState = es_push(p3, ch_eq_sign());
+    let p5: EmitState = es_push(p4, ch_space());
+    // `arith.cmpi `
+    let q1: EmitState = es_push(p5, 97);
+    let q2: EmitState = es_push(q1, 114);
+    let q3: EmitState = es_push(q2, 105);
+    let q4: EmitState = es_push(q3, 116);
+    let q5: EmitState = es_push(q4, 104);
+    let q6: EmitState = es_push(q5, ch_dot());
+    let q7: EmitState = es_push(q6, 99);
+    let q8: EmitState = es_push(q7, 109);
+    let q9: EmitState = es_push(q8, 112);
+    let q10: EmitState = es_push(q9, 105);
+    let q11: EmitState = es_push(q10, ch_space());
+    let r1: EmitState = emit_mlir_cmpi_pred(q11, ast_aux(node));
+    let r2: EmitState = es_push(r1, ch_percent());
+    let r3: EmitState = emit_i64(r2, lhs_id);
+    let r4: EmitState = es_push(r3, ch_comma());
+    let r5: EmitState = es_push(r4, ch_space());
+    let r6: EmitState = es_push(r5, ch_percent());
+    let r7: EmitState = emit_i64(r6, rhs_id);
+    let r8: EmitState = emit_mlir_i64_nl(r7);
+    EmitState { buf: r8.buf, next_id: id + 1, last_id: id, lets: r8.lets }
+}
+
+// ` : i64)` — the block-arg type suffix + close paren (no newline).
+pub fn emit_mlir_i64_close(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, 58);
+    let s3: EmitState = es_push(s2, ch_space());
+    let s4: EmitState = es_push(s3, 105);
+    let s5: EmitState = es_push(s4, 54);
+    let s6: EmitState = es_push(s5, 52);
+    es_push(s6, 41)
+}
+
+// `cf.` (4-space indent) — shared opener for cf.cond_br / cf.br.
+pub fn emit_mlir_cf_kw(s: EmitState) -> EmitState {
+    let s1: EmitState = es_push(s, ch_space());
+    let s2: EmitState = es_push(s1, ch_space());
+    let s3: EmitState = es_push(s2, ch_space());
+    let s4: EmitState = es_push(s3, ch_space());
+    let s5: EmitState = es_push(s4, 99);
+    let s6: EmitState = es_push(s5, 102);
+    es_push(s6, ch_dot())
+}
+
+// `^if_then_`/`^if_else_`/`^if_after_` followed by the numeric label N.
+// `which`: 0 = then, 1 = else, 2 = after. Emits `^if_WHICH_N`.
+pub fn emit_mlir_if_label(s: EmitState, which: i64, n: i64) -> EmitState {
+    let s1: EmitState = es_push(s, 94);
+    let s2: EmitState = es_push(s1, 105);
+    let s3: EmitState = es_push(s2, 102);
+    let s4: EmitState = es_push(s3, 95);
+    let s5: EmitState = if which == 0 {
+        // then
+        let a: EmitState = es_push(s4, 116);
+        let b: EmitState = es_push(a, 104);
+        let c: EmitState = es_push(b, 101);
+        es_push(c, 110)
+    } else {
+        if which == 1 {
+            // else
+            let a: EmitState = es_push(s4, 101);
+            let b: EmitState = es_push(a, 108);
+            let c: EmitState = es_push(b, 115);
+            es_push(c, 101)
+        } else {
+            // after
+            let a: EmitState = es_push(s4, 97);
+            let b: EmitState = es_push(a, 102);
+            let c: EmitState = es_push(b, 116);
+            let d: EmitState = es_push(c, 101);
+            es_push(d, 114)
+        }
+    };
+    let s6: EmitState = es_push(s5, 95);
+    emit_i64(s6, n)
+}
+
+// Walk an if-block's statements (then or else), returning the EmitState after
+// the last stmt. Threads `lets`/`next_id` as usual. Used by the if-stmt arm.
+pub fn emit_mlir_if_body(s: EmitState, buf: i64, blk: i64, params_addr: i64, n_params: i64) -> EmitState {
+    if blk == 0 {
+        return s;
+    }
+    emit_mlir_block_stmts_env(s, buf, ast_child0(blk), ast_aux(blk), 0, params_addr, n_params)
+}
+
+// True iff the block's last statement is a `return` (so its `cf.br ^if_after`
+// is omitted — the block is already terminated). Empty/0 block => false.
+pub fn emit_mlir_block_ends_return(blk: i64) -> i64 {
+    if blk == 0 {
+        return 0;
+    }
+    let stmts_len: i64 = ast_aux(blk);
+    if stmts_len == 0 {
+        return 0;
+    }
+    let last_stmt: i64 = __mind_load_i64(ast_child0(blk) + (stmts_len - 1) * 8);
+    if ast_kind(last_stmt) == ast_return() {
+        return 1;
+    }
+    0
+}
+
 // MLIR statement lowering, scalar i64 subset. `let` binds the value's SSA id;
 // `return` emits `    return %k : i64`. A trailing bare expression just lowers.
+//
+// `if`-statement subset (Rust-independence #14, PHASE 1.1): a comparison-cond
+// `if cmp { ... }` (optional simple `else { ... }`) where each branch is a
+// straight statement list that may early-`return`. Lowered to the cf-dialect
+// `cf.cond_br`/`^if_then`/`^if_else`/`cf.br ^if_after(%v : i64)` form, byte-
+// identical to `mindc --emit-mlir`. The IR builder synthesises a placeholder
+// `arith.constant 0` as each branch's first instr and threads the merge value
+// as a block argument on `^if_after_N`. SSA numbering mirrors lower.rs exactly:
+//   then_result = first id after cond ; else_result = next ; dst = next.
+// ADDITIVE: only fires on ast_if; the scalar/call cases are byte-identical.
 pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n_params: i64) -> EmitState {
     let k: i64 = ast_kind(node);
+    if k == ast_if() {
+        // ast_new_if: cond=child0(+24), then-block=child1(+32), else-block=child2(+40).
+        let cond_node: i64 = ast_child0(node);
+        let then_blk: i64 = ast_child1(node);
+        let else_blk: i64 = ast_child2(node);
+        // 1. condition (a comparison) — lowers operands + the cmpi.
+        let sc: EmitState = emit_mlir_cmpi(s, buf, cond_node, params_addr, n_params);
+        let cond_id: i64 = sc.last_id;
+        // 2. cf.cond_br %cond, ^if_then_N, ^if_else_N
+        // then_result = next fresh id, else_result = next, dst = next ; N = dst.
+        let then_result: i64 = sc.next_id;
+        let else_result: i64 = then_result + 1;
+        let dst: i64 = else_result + 1;
+        let b1: EmitState = emit_mlir_cf_kw(sc);
+        // `cond_br %`
+        let b2: EmitState = es_push(b1, 99);
+        let b3: EmitState = es_push(b2, 111);
+        let b4: EmitState = es_push(b3, 110);
+        let b5: EmitState = es_push(b4, 100);
+        let b6: EmitState = es_push(b5, 95);
+        let b7: EmitState = es_push(b6, 98);
+        let b8: EmitState = es_push(b7, 114);
+        let b9: EmitState = es_push(b8, ch_space());
+        let b10: EmitState = es_push(b9, ch_percent());
+        let b11: EmitState = emit_i64(b10, cond_id);
+        let b12: EmitState = es_push(b11, ch_comma());
+        let b13: EmitState = es_push(b12, ch_space());
+        let b14: EmitState = emit_mlir_if_label(b13, 0, dst);
+        let b15: EmitState = es_push(b14, ch_comma());
+        let b16: EmitState = es_push(b15, ch_space());
+        let b17: EmitState = emit_mlir_if_label(b16, 1, dst);
+        let b18: EmitState = es_push(b17, ch_newline());
+        // 3. ^if_then_N:
+        let t0: EmitState = es_push(b18, ch_space());
+        let t0b: EmitState = es_push(t0, ch_space());
+        let t1: EmitState = emit_mlir_if_label(t0b, 0, dst);
+        let t2: EmitState = es_push(t1, 58);
+        let t3: EmitState = es_push(t2, ch_newline());
+        // synthetic placeholder `%then_result = arith.constant 0 : i64`
+        let t4: EmitState = emit_mlir_indent_pct(t3);
+        let t5: EmitState = emit_i64(t4, then_result);
+        let t6: EmitState = emit_mlir_eq_arith(t5);
+        let t7: EmitState = emit_mlir_constant_kw(t6);
+        let t8: EmitState = es_push(t7, 48);
+        let t9: EmitState = emit_mlir_i64_nl(t8);
+        let tb: EmitState = EmitState { buf: t9.buf, next_id: dst, last_id: then_result, lets: t9.lets };
+        let then_s: EmitState = emit_mlir_if_body(tb, buf, then_blk, params_addr, n_params);
+        // then-edge cf.br only if the block did not already `return`.
+        let then_ret: i64 = emit_mlir_block_ends_return(then_blk);
+        let after_then: EmitState = if then_ret == 1 {
+            then_s
+        } else {
+            let z1: EmitState = emit_mlir_cf_kw(then_s);
+            let z2: EmitState = es_push(z1, 98);
+            let z3: EmitState = es_push(z2, 114);
+            let z4: EmitState = es_push(z3, ch_space());
+            let z5: EmitState = emit_mlir_if_label(z4, 2, dst);
+            let z6: EmitState = es_push(z5, 40);
+            let z7: EmitState = es_push(z6, ch_percent());
+            let z8: EmitState = emit_i64(z7, then_s.last_id);
+            let z9: EmitState = emit_mlir_i64_close(z8);
+            es_push(z9, ch_newline())
+        };
+        // 4. ^if_else_N:
+        let e0: EmitState = es_push(after_then, ch_space());
+        let e0b: EmitState = es_push(e0, ch_space());
+        let e1: EmitState = emit_mlir_if_label(e0b, 1, dst);
+        let e2: EmitState = es_push(e1, 58);
+        let e3: EmitState = es_push(e2, ch_newline());
+        // synthetic placeholder `%else_result = arith.constant 0 : i64`
+        let e4: EmitState = emit_mlir_indent_pct(e3);
+        let e5: EmitState = emit_i64(e4, else_result);
+        let e6: EmitState = emit_mlir_eq_arith(e5);
+        let e7: EmitState = emit_mlir_constant_kw(e6);
+        let e8: EmitState = es_push(e7, 48);
+        let e9: EmitState = emit_mlir_i64_nl(e8);
+        let eb: EmitState = EmitState { buf: e9.buf, next_id: dst, last_id: else_result, lets: e9.lets };
+        let else_s: EmitState = emit_mlir_if_body(eb, buf, else_blk, params_addr, n_params);
+        let else_ret: i64 = emit_mlir_block_ends_return(else_blk);
+        let after_else: EmitState = if else_ret == 1 {
+            else_s
+        } else {
+            let z1: EmitState = emit_mlir_cf_kw(else_s);
+            let z2: EmitState = es_push(z1, 98);
+            let z3: EmitState = es_push(z2, 114);
+            let z4: EmitState = es_push(z3, ch_space());
+            let z5: EmitState = emit_mlir_if_label(z4, 2, dst);
+            let z6: EmitState = es_push(z5, 40);
+            let z7: EmitState = es_push(z6, ch_percent());
+            let z8: EmitState = emit_i64(z7, else_s.last_id);
+            let z9: EmitState = emit_mlir_i64_close(z8);
+            es_push(z9, ch_newline())
+        };
+        // 5. ^if_after_N(%dst : i64):
+        let a0: EmitState = es_push(after_else, ch_space());
+        let a0b: EmitState = es_push(a0, ch_space());
+        let a1: EmitState = emit_mlir_if_label(a0b, 2, dst);
+        let a2: EmitState = es_push(a1, 40);
+        let a3: EmitState = es_push(a2, ch_percent());
+        let a4: EmitState = emit_i64(a3, dst);
+        let a5: EmitState = es_push(a4, ch_space());
+        let a6: EmitState = es_push(a5, 58);
+        let a7: EmitState = es_push(a6, ch_space());
+        let a8: EmitState = es_push(a7, 105);
+        let a9: EmitState = es_push(a8, 54);
+        let a10: EmitState = es_push(a9, 52);
+        let a11: EmitState = es_push(a10, 41);
+        let a12: EmitState = es_push(a11, 58);
+        let a13: EmitState = es_push(a12, ch_newline());
+        return EmitState { buf: a13.buf, next_id: dst + 1, last_id: dst, lets: a13.lets };
+    }
     if k == ast_let() {
         let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child2(node), params_addr, n_params);
         let name_leaf: i64 = ast_child0(node);
