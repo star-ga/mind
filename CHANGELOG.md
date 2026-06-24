@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`map<K,V>` same-name rebind now compiles and runs.** The idiomatic
+  `let m = m.insert(k, v)` pattern (functional-update form with the map
+  shadowing its previous binding) now compiles and executes correctly.
+  A same-name rebind is exempt from the collection-mutation guard because
+  the old handle becomes unreachable as soon as `m` is rebound — there is no
+  dangling use. This unblocks the documented and idiomatic map<K,V> / vec
+  functional-update surface; same-name let-binding is the only form allowed
+  on collection mutating methods (a different-name rebind still fails, as
+  does nested mutation). Regression: `tests/map_surface_run.rs` compiles and
+  runs a `map_insert` rebind (commit e6e4a32).
+
+### Fixed
+
+- **F64 tensors now lower through the float arith path.** Three
+  tensor-lowering sites had F64 fall through to the integer `_` arm,
+  producing invalid MLIR (`arith.maxsi` / `arith.constant 0 : f64`) or
+  wrong values (relu/relu_grad/const-fill). F64 now routes to the same
+  float-specialist arms F32/F16/BF16 use (`arith.maximumf`, `arith.cmpf`,
+  `format_number`), emitting type-correct MLIR and preserving fractional
+  fills. All-i64 programs byte-identical (keystone 7/7, cross-substrate
+  12/12 unchanged). Regression: `tests/f64_activation_lowering.rs` (commit
+  0537ba3).
+
+- **Mic-b (v2 binary) parser DoS bound added.** The mic-b binary parser
+  (parse_micb) now caps ULEB128 element counts at MAX_MICB_ELEMENTS
+  (16_000_000), rejecting malformed blobs that could trigger OOM/hang. A
+  malicious blob could previously ULEB-encode an astronomically large count
+  and drive Vec::with_capacity + a `for _ in 0..n` loop of billions of
+  doomed reads. This closes the DoS class already fixed in mic@3. A
+  well-formed blob always has counts below the cap, so valid round-trips are
+  byte-identical (compact::v2::binary lib tests 7/7 green). Regression:
+  `tests/micb_dos_reject.rs` (commit cd6f351).
+
+- **Grad `wrt` target validation locked.** Re-audit of a potential grad-wrt
+  slip-through (fleet-audit r1#4) confirms the type-checker already validates
+  it correctly with diagnostic E2001 "unknown tensor `X` in `wrt`". A
+  resolve-pass check would only replace that precise message with a generic
+  error. The resolve-pass walk is intentionally left as-is to preserve the
+  specific diagnostic. New regression test: `tests/grad_wrt_resolve.rs`
+  (commit f90104d).
+
 ## [0.10.0] - 2026-06-18
 
 ### Added
