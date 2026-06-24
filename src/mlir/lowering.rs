@@ -2519,6 +2519,16 @@ impl LoweringContext {
                     self.emit_line(&format!("    %bext{0} = arith.extui %{0} : i1 to i64", v.0));
                     self.emit_line(&format!("    return %bext{} : i64", v.0));
                 }
+                // Tensor return: emit the value's real tensor type (the scalar
+                // narrow-int reconciliation below does not apply). The build
+                // pipeline's one-shot-bufferize{bufferize-function-boundaries}
+                // converts the by-value tensor boundary to a memref out-param at
+                // the C ABI. The fn's declared `-> tensor<..>` slot already matches
+                // (type_ann_to_abi_mlir), so this is well-typed.
+                Some(v) if matches!(self.values.get(v), Some(ValueKind::Tensor { .. })) => {
+                    let ty = mlir_type(self.values.get(v).expect("tensor kind present"))?;
+                    self.emit_line(&format!("    return %{} : {}", v.0, ty));
+                }
                 // RFC 0012 §5.1 + NARROW-INT ABI: return the value at its real
                 // ABI width — `f64`/`f32` for a scalar-float result, `i32` for a
                 // narrow result, else the i64 ABI slot — then reconcile against
@@ -8992,13 +9002,8 @@ pub fn lower_ir_to_mlir(module: &IRModule) -> Result<MlirModule, MlirLowerError>
     // record all-`i64` here, so their lowered text is byte-identical.
     #[cfg(feature = "std-surface")]
     for (name, (param_types, ret_type)) in &module.fn_signatures {
-        let params: Vec<String> = param_types
-            .iter()
-            .map(|t| type_ann_to_abi_mlir(t).to_string())
-            .collect();
-        let ret = ret_type
-            .as_ref()
-            .map(|t| type_ann_to_abi_mlir(t).to_string());
+        let params: Vec<String> = param_types.iter().map(type_ann_to_abi_mlir).collect();
+        let ret = ret_type.as_ref().map(type_ann_to_abi_mlir);
         ctx.fn_signatures.insert(name.clone(), (params, ret));
         // NARROW-INT ABI: also record the signedness-preserving param kinds so
         // the FnDef arm can seed `u32` distinctly from `i32` (the ABI string
@@ -9187,18 +9192,42 @@ struct TensorInfo {
 /// the established i64 ABI so non-float functions lower byte-identically. Used
 /// only when building the `LoweringContext::fn_signatures` table.
 #[cfg(feature = "std-surface")]
-fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> &'static str {
+fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> String {
     match ty {
-        crate::ast::TypeAnn::ScalarF64 => "f64",
-        crate::ast::TypeAnn::ScalarF32 => "f32",
+        crate::ast::TypeAnn::ScalarF64 => "f64".to_string(),
+        crate::ast::TypeAnn::ScalarF32 => "f32".to_string(),
         // NARROW-INT ABI: i32/u32 params + returns lower to real `i32` MLIR
         // (MLIR ints are signless; signedness is carried by the op). NOTE:
         // ScalarBool intentionally stays "i64" in the return slot to preserve
         // the existing cmpi+extui+ret-i64 byte sequence — do NOT change the
         // bool return ABI here.
-        crate::ast::TypeAnn::ScalarI32 | crate::ast::TypeAnn::ScalarU32 => "i32",
-        _ => "i64",
+        crate::ast::TypeAnn::ScalarI32 | crate::ast::TypeAnn::ScalarU32 => "i32".to_string(),
+        // Tensor param / return: the real MLIR tensor type. The build pipeline's
+        // `one-shot-bufferize{bufferize-function-boundaries=true}` (mlir_build.rs)
+        // converts the by-value tensor boundary to a memref out-param at the C
+        // ABI, so a tensor-param/returning fn links. Q16.16 stores as i32 at the
+        // MLIR layer.
+        crate::ast::TypeAnn::Tensor { dtype, dims }
+        | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
+            let elem = if dtype == "q16" { "i32" } else { dtype.as_str() };
+            tensor_type(&tensor_ann_shape(dims), elem)
+        }
+        _ => "i64".to_string(),
     }
+}
+
+/// Parse tensor-annotation dim strings (`["3", "N"]`) into `ShapeDim`s: a numeric
+/// literal is `Known`, anything else (a named dim) is a symbolic `Sym`.
+fn tensor_ann_shape(dims: &[String]) -> Vec<ShapeDim> {
+    dims.iter()
+        .map(|d| {
+            if let Ok(n) = d.parse::<usize>() {
+                ShapeDim::Known(n)
+            } else {
+                ShapeDim::Sym(crate::types::intern::intern_str(d))
+            }
+        })
+        .collect()
 }
 
 /// NARROW-INT ABI — map a declared `TypeAnn` to the scalar `ValueKind` used to
@@ -9214,6 +9243,11 @@ fn type_ann_to_value_kind(ty: &crate::ast::TypeAnn) -> ValueKind {
         crate::ast::TypeAnn::ScalarI32 => ValueKind::ScalarI32,
         crate::ast::TypeAnn::ScalarU32 => ValueKind::ScalarU32,
         crate::ast::TypeAnn::ScalarBool => ValueKind::ScalarBool,
+        crate::ast::TypeAnn::Tensor { dtype, dims }
+        | crate::ast::TypeAnn::DiffTensor { dtype, dims } => ValueKind::Tensor {
+            dtype: dtype.parse::<DType>().unwrap_or(DType::F32),
+            shape: tensor_ann_shape(dims),
+        },
         _ => ValueKind::ScalarI64,
     }
 }

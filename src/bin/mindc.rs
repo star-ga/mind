@@ -1628,7 +1628,7 @@ fn emit_obj_if_requested(cli: &CompileArgs, products: &libmind::pipeline::Compil
 
     // Build object file
     let opts = libmind::eval::mlir_build::BuildOptions {
-        preset: "core",
+        preset: libmind::eval::mlir_build::preset_for_mlir(&mlir.primal_mlir),
         emit_mlir_file: None,
         emit_llvm_file: None,
         emit_obj_file: Some(Path::new(obj_path)),
@@ -1680,7 +1680,7 @@ fn emit_shared_if_requested(cli: &CompileArgs, products: &libmind::pipeline::Com
     };
 
     let opts = libmind::eval::mlir_build::BuildOptions {
-        preset: "core",
+        preset: libmind::eval::mlir_build::preset_for_mlir(&mlir.primal_mlir),
         emit_mlir_file: None,
         emit_llvm_file: None,
         emit_obj_file: None,

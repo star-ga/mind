@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tensor-returning functions build (RUNS bufferization path).** A function that
+  returns a tensor — `fn f() -> tensor<f32[3]> { ... }` — now compiles + links to
+  a valid ELF cdylib. The MLIR `func.func` signature and the `return` are typed as
+  the real `tensor<...>` (`type_ann_to_abi_mlir` now resolves tensor annotations;
+  the `Instr::Return` arm emits the value's tensor type), and a build whose emitted
+  MLIR carries value-tensor ops auto-selects the tensor-aware `arith-linalg` preset
+  (`empty-tensor-to-alloc-tensor` + `one-shot-bufferize{bufferize-function-
+  boundaries}` + `convert-linalg-to-loops`), which lowers the by-value tensor
+  boundary to a memref out-param at the C ABI. Scalar and `__mind_blas` (Option-C
+  i64 ABI) programs stay on the scalar `core` preset and lower byte-identically, so
+  keystone 7/7 byte-identical, cross-substrate 12/12, and the gap corpus 66/66 are
+  all preserved. NOTE (scope): inter-function tensor-argument calls
+  (`g(tensor_value)`) still need the call-site tensor ABI, and the deterministic
+  intrinsics (`zeros`/`matmul`/`softmax`/`randn`) are follow-ups; f32 tensor results
+  are reproducible-within-substrate, not cross-substrate byte-identical.
+
 - **Dense tensor literals lower correctly in-function (`ConstDenseTensor`).**
   An f32 array literal bound to a tensor type — `let a: tensor<f32[3]> =
   [1.0, 2.0, 3.0]` — now materialises its EXACT per-element bit patterns and

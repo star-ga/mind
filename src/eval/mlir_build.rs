@@ -228,6 +228,7 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
         // remaining vector / memref / index ops at the tail.
         "arith-linalg" | "gpu-default" => Some(
             "canonicalize,cse,\
+             empty-tensor-to-alloc-tensor,\
              one-shot-bufferize{bufferize-function-boundaries=true},\
              convert-linalg-to-loops,\
              convert-scf-to-cf,\
@@ -241,6 +242,23 @@ fn preset_default_pipeline(preset: &str) -> Option<&'static str> {
         ),
         _ => None,
     }
+}
+
+/// Pick the mlir-opt pass preset for a program from its emitted MLIR text. The
+/// tensor-aware `arith-linalg` pipeline (empty-tensor-to-alloc-tensor +
+/// one-shot-bufferize{bufferize-function-boundaries} + convert-linalg-to-loops)
+/// is required when the MLIR carries value-tensor ops the scalar `core` pipeline
+/// cannot legalise: `linalg.*`, `tensor.empty`, `tensor.extract`, or a dense
+/// tensor constant. Scalar programs and the `__mind_blas` (Option-C i64 ABI)
+/// kernels emit none of these, so they stay on `core` and lower byte-identically
+/// — the keystone bootstrap and the cross-substrate BLAS workloads are unaffected.
+#[cfg(feature = "mlir-build")]
+pub fn preset_for_mlir(mlir: &str) -> &'static str {
+    let value_tensor = mlir.contains("linalg.")
+        || mlir.contains("tensor.empty")
+        || mlir.contains("tensor.extract")
+        || (mlir.contains("dense<") && mlir.contains(": tensor<"));
+    if value_tensor { "arith-linalg" } else { "core" }
 }
 
 #[cfg(feature = "mlir-build")]
