@@ -226,18 +226,63 @@ fn emit_div_mod_guarded(code: &mut Vec<u8>, is_mod: bool, rhs_disp: i32) {
     code.extend_from_slice(&[0x49, 0x0F, 0x45, 0xC2]); // cmovnz rax, r10
 }
 
-/// Inline `__mind_alloc(bytes) -> addr`: a deterministic bump allocator over the
-/// fixed-vaddr BSS arena. Leaves the allocated address in `rax`. `bytes_disp` is
-/// the frame slot holding the requested size.
+/// Core bump allocator: the rounded-up DATA byte-size is already in `rsi` on
+/// entry. Reserves an 8-byte SIZE HEADER immediately before the returned data
+/// pointer (`alloc bumps by 8 + round_up(n,8)`; writes the data size at the
+/// header; returns `header_base + 8` = the data ptr in `rax`). The header lets
+/// `__mind_realloc` recover how many bytes to copy without any per-allocation
+/// side table. Inter-allocation offsets shift by 8 per block, but intra-block
+/// field offsets (`data + 8*k`) are unchanged, so struct field access is intact.
 ///
 /// Pure function of allocation ORDER — the address depends only on the bump
-/// cursor, never on malloc / ASLR / time / any host-varying value. Sequence:
-///   rsi = round_up([bytes], 8) = ([bytes] + 7) & ~7
+/// cursor, never on malloc / ASLR / time / any host-varying value. Sequence
+/// (`rsi = round_up(bytes,8)` on entry):
+///   rdi = rsi + 8                      ; header(8) + data, the total bump
 ///   rcx = [cursor]                     ; current free offset (BSS-zeroed → 0)
-///   rax = ARENA_DATA + rcx             ; the returned address
-///   rdx = rcx + rsi                    ; new cursor
+///   rax = ARENA_DATA + rcx + 8         ; the returned DATA address (past header)
+///   [ARENA_DATA + rcx] = rsi           ; write the data byte-size into the header
+///   rdx = rcx + rdi                    ; new cursor
 ///   if rdx > ARENA_DATA_BYTES { ud2 }  ; exhaustion → trap (never wrap/alias)
 ///   [cursor] = rdx
+///
+/// Clobbers rdi/rcx/rdx/r8/r9 (all dead between instrs in the slot model);
+/// leaves the data address in rax and preserves nothing else.
+fn emit_alloc_core(code: &mut Vec<u8>) {
+    // rdi = rsi + 8   (total bump = 8-byte header + rounded data size)
+    code.extend_from_slice(&[0x48, 0x89, 0xF7]); // mov rdi, rsi
+    code.extend_from_slice(&[0x48, 0x83, 0xC7, 0x08]); // add rdi, 8
+    // rcx = [cursor]   (absolute load from the fixed cursor vaddr)
+    code.extend_from_slice(&[0x48, 0xB8]); // movabs rax, ARENA_ADDR (cursor vaddr)
+    code.extend_from_slice(&ARENA_ADDR.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x8B, 0x08]); // mov rcx, [rax]
+    // rax = ARENA_DATA + rcx   (header base for this allocation)
+    code.extend_from_slice(&[0x48, 0xBA]); // movabs rdx, ARENA_DATA
+    code.extend_from_slice(&ARENA_DATA.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x89, 0xC8]); // mov rax, rcx
+    code.extend_from_slice(&[0x48, 0x01, 0xD0]); // add rax, rdx  (rax = ARENA_DATA + off = header base)
+    // [rax] = rsi   (write the data byte-size into the 8-byte size header)
+    code.extend_from_slice(&[0x48, 0x89, 0x30]); // mov [rax], rsi
+    // rax = rax + 8   (advance past the header → the DATA pointer we return)
+    code.extend_from_slice(&[0x48, 0x83, 0xC0, 0x08]); // add rax, 8
+    // rdx = rcx + rdi   (new cursor offset = old + header + data)
+    code.extend_from_slice(&[0x48, 0x89, 0xCA]); // mov rdx, rcx
+    code.extend_from_slice(&[0x48, 0x01, 0xFA]); // add rdx, rdi
+    // exhaustion check: if rdx > ARENA_DATA_BYTES { ud2 }
+    code.extend_from_slice(&[0x49, 0xB8]); // movabs r8, ARENA_DATA_BYTES
+    code.extend_from_slice(&ARENA_DATA_BYTES.to_le_bytes());
+    code.extend_from_slice(&[0x49, 0x39, 0xD0]); // cmp r8, rdx   (r8 - rdx)
+    code.extend_from_slice(&[0x0F, 0x83, 0x02, 0x00, 0x00, 0x00]); // jae +2 (skip ud2 when ARENA_DATA_BYTES >= rdx)
+    code.extend_from_slice(&[0x0F, 0x0B]); // ud2 (trap on exhaustion — fail loud)
+    // [cursor] = rdx   (advance the bump cursor; rax still holds the data address)
+    code.extend_from_slice(&[0x49, 0xB9]); // movabs r9, ARENA_ADDR (cursor vaddr)
+    code.extend_from_slice(&ARENA_ADDR.to_le_bytes());
+    code.extend_from_slice(&[0x49, 0x89, 0x11]); // mov [r9], rdx
+}
+
+/// Inline `__mind_alloc(bytes) -> addr`: a deterministic bump allocator over the
+/// fixed-vaddr BSS arena, with an 8-byte size header per allocation (see
+/// `emit_alloc_core`). Leaves the allocated DATA address in `rax`. `bytes_disp`
+/// is the frame slot holding the requested size.
 fn emit_alloc(code: &mut Vec<u8>, bytes_disp: i32) {
     // rsi = [bytes]
     code.extend_from_slice(&[0x48, 0x8B, 0xB5]); // mov rsi, [rbp+disp32]
@@ -245,28 +290,87 @@ fn emit_alloc(code: &mut Vec<u8>, bytes_disp: i32) {
     // rsi = (rsi + 7) & ~7   — round up to the 8-byte stride
     code.extend_from_slice(&[0x48, 0x83, 0xC6, 0x07]); // add rsi, 7
     code.extend_from_slice(&[0x48, 0x83, 0xE6, 0xF8]); // and rsi, -8
-    // rcx = [cursor]   (absolute load from the fixed cursor vaddr)
-    code.extend_from_slice(&[0x48, 0xB8]); // movabs rax, ARENA_ADDR (cursor vaddr)
-    code.extend_from_slice(&ARENA_ADDR.to_le_bytes());
-    code.extend_from_slice(&[0x48, 0x8B, 0x08]); // mov rcx, [rax]
-    // rax = ARENA_DATA + rcx   (the returned address)
-    code.extend_from_slice(&[0x48, 0xBA]); // movabs rdx, ARENA_DATA
-    code.extend_from_slice(&ARENA_DATA.to_le_bytes());
-    code.extend_from_slice(&[0x48, 0x89, 0xC8]); // mov rax, rcx
-    code.extend_from_slice(&[0x48, 0x01, 0xD0]); // add rax, rdx  (rax = ARENA_DATA + off)
-    // rdx = rcx + rsi   (new cursor offset)
-    code.extend_from_slice(&[0x48, 0x89, 0xCA]); // mov rdx, rcx
-    code.extend_from_slice(&[0x48, 0x01, 0xF2]); // add rdx, rsi
-    // exhaustion check: if rdx > ARENA_DATA_BYTES { ud2 }
-    code.extend_from_slice(&[0x49, 0xB8]); // movabs r8, ARENA_DATA_BYTES
-    code.extend_from_slice(&ARENA_DATA_BYTES.to_le_bytes());
-    code.extend_from_slice(&[0x49, 0x39, 0xD0]); // cmp r8, rdx   (r8 - rdx)
-    code.extend_from_slice(&[0x0F, 0x83, 0x02, 0x00, 0x00, 0x00]); // jae +2 (skip ud2 when ARENA_DATA_BYTES >= rdx)
-    code.extend_from_slice(&[0x0F, 0x0B]); // ud2 (trap on exhaustion — fail loud)
-    // [cursor] = rdx   (advance the bump cursor; rax still holds the address)
-    code.extend_from_slice(&[0x49, 0xB9]); // movabs r9, ARENA_ADDR (cursor vaddr)
-    code.extend_from_slice(&ARENA_ADDR.to_le_bytes());
-    code.extend_from_slice(&[0x49, 0x89, 0x11]); // mov [r9], rdx
+    emit_alloc_core(code); // header + data; data ptr -> rax
+}
+
+/// Inline `__mind_realloc(addr, new_bytes) -> new_addr`: grow-and-preserve over
+/// the no-free bump arena. The front-end (std/vec.mind:85, std/string.mind:97)
+/// calls this to grow a Vec/String backing store while keeping the existing
+/// elements. Contract (std/vec.mind:65):
+///   - `addr == 0` (NULL) ⇒ a fresh allocation, exactly `__mind_alloc(new_bytes)`.
+///   - `addr != 0` ⇒ allocate `new_bytes`, COPY the old block forward, return the
+///     new data ptr. No free — the arena is no-free; the old block is abandoned.
+///
+/// The byte-count to copy is `min(old_size, round_up(new_bytes,8))`, where
+/// `old_size` is read from the 8-byte size header at `[addr - 8]` (written by
+/// `emit_alloc_core`). The copy is a deterministic 8-byte-stride forward loop
+/// (every emitted byte is a pure function of the IR — fixed encodings, fixed
+/// loop, absolute movabs only — so the cross-substrate byte-identity wedge
+/// holds). `addr_disp` / `bytes_disp` are the two arg slots. Leaves the new data
+/// address in `rax`.
+///
+/// The old size is always an exact multiple of 8 (the header stores the rounded
+/// data size), and the new size is rounded up to 8 here, so the min is a multiple
+/// of 8 and the 8-byte-stride copy never over- or under-runs either block.
+fn emit_realloc(code: &mut Vec<u8>, addr_disp: i32, bytes_disp: i32) {
+    // Re-read the OLD data ptr and the new size from their frame slots AFTER the
+    // allocation (rather than caching them in registers across emit_alloc_core).
+    // The slots are stable and re-reading keeps this a leaf sequence that touches
+    // no callee-saved registers — so non-entry callees (vec_push compiled as a
+    // function) never violate the System-V callee-save contract. No `call` is
+    // emitted here, so rsp need not stay 16-aligned within the sequence.
+    //
+    // rsi = round_up([new_bytes], 8)   (the new DATA size, 8-aligned)
+    code.extend_from_slice(&[0x48, 0x8B, 0xB5]); // mov rsi, [rbp+new_bytes]
+    code.extend_from_slice(&bytes_disp.to_le_bytes());
+    code.extend_from_slice(&[0x48, 0x83, 0xC6, 0x07]); // add rsi, 7
+    code.extend_from_slice(&[0x48, 0x83, 0xE6, 0xF8]); // and rsi, -8
+    // Allocate the new block (header + data). New DATA ptr -> rax. Consumes rsi and
+    // clobbers rdi/rcx/rdx/r8/r9 — all dead between instrs in the slot model.
+    emit_alloc_core(code);
+    // r8 = [addr]   (the OLD data ptr; 0 ⇒ fresh). Re-read post-alloc; r8 is caller-
+    // saved (not callee-saved) and dead between instrs, so no ABI obligation.
+    code.extend_from_slice(&[0x4C, 0x8B, 0x85]); // mov r8, [rbp+addr]
+    code.extend_from_slice(&addr_disp.to_le_bytes());
+    // If the old addr was NULL, we are done — return the fresh allocation in rax.
+    code.extend_from_slice(&[0x4D, 0x85, 0xC0]); // test r8, r8
+    let je_done = {
+        code.extend_from_slice(&[0x0F, 0x84]); // je rel32 (skip the copy when addr==0)
+        let site = code.len();
+        code.extend_from_slice(&[0, 0, 0, 0]);
+        site
+    };
+    // --- grow path: copy min(old_size, new_size) bytes from r8 to rax ---
+    // r10 = old_size = [r8 - 8]   (the OLD block's size header, always 8-multiple)
+    code.extend_from_slice(&[0x4D, 0x8B, 0x50, 0xF8]); // mov r10, [r8-8]
+    // r11 = new_size = round_up([new_bytes],8); n = min(old r10, new r11) -> r10
+    code.extend_from_slice(&[0x4C, 0x8B, 0x9D]); // mov r11, [rbp+new_bytes]
+    code.extend_from_slice(&bytes_disp.to_le_bytes());
+    code.extend_from_slice(&[0x49, 0x83, 0xC3, 0x07]); // add r11, 7
+    code.extend_from_slice(&[0x49, 0x83, 0xE3, 0xF8]); // and r11, -8
+    code.extend_from_slice(&[0x4D, 0x39, 0xDA]); // cmp r10, r11   (r10 - r11)
+    code.extend_from_slice(&[0x4D, 0x0F, 0x4F, 0xD3]); // cmovg r10, r11  (if old > new, n = new)
+    // 8-byte-stride forward copy loop: rcx = 0; while rcx < r10 { [rax+rcx] = [r8+rcx]; rcx += 8 }
+    code.extend_from_slice(&[0x48, 0x31, 0xC9]); // xor rcx, rcx
+    let loop_top = code.len();
+    code.extend_from_slice(&[0x4C, 0x39, 0xD1]); // cmp rcx, r10   (rcx - r10)
+    code.extend_from_slice(&[0x0F, 0x8D]); // jge rel32 (exit when rcx >= n)
+    let jge_exit = code.len();
+    code.extend_from_slice(&[0, 0, 0, 0]);
+    code.extend_from_slice(&[0x49, 0x8B, 0x14, 0x08]); // mov rdx, [r8+rcx]  (old qword)
+    code.extend_from_slice(&[0x48, 0x89, 0x14, 0x08]); // mov [rax+rcx], rdx  (new qword)
+    code.extend_from_slice(&[0x48, 0x83, 0xC1, 0x08]); // add rcx, 8
+    {
+        code.push(0xE9); // jmp rel32 back to loop_top
+        let site = code.len();
+        code.extend_from_slice(&[0, 0, 0, 0]);
+        patch_rel32(code, site, loop_top);
+    }
+    let after_loop = code.len();
+    patch_rel32(code, jge_exit, after_loop);
+    let done_at = code.len();
+    patch_rel32(code, je_done, done_at);
+    // rax holds the new DATA ptr (the contract's return value) in both paths.
 }
 
 /// Inline `__mind_store_i64(addr, val)`: `mov [addr], val` (8-byte store through
@@ -599,6 +703,22 @@ fn emit_seq(
                         emit_load_i8(code, disp(addr)?);
                         store_rax(code, disp(dst)?); // zero-extended byte -> dst slot
                     }
+                    "__mind_realloc" => {
+                        // Grow-and-preserve over the no-free bump arena. Contract
+                        // (std/vec.mind:65): __mind_realloc(addr, new_bytes)->new_addr,
+                        // addr==0 ⇒ fresh alloc, addr!=0 ⇒ alloc + copy old block
+                        // forward + return new addr (old block abandoned). The 8-byte
+                        // size header (emit_alloc_core) is what lets the copy know
+                        // how many bytes to preserve.
+                        let addr = args.first().ok_or_else(|| {
+                            NativeError::Unsupported("__mind_realloc missing addr".into())
+                        })?;
+                        let new_bytes = args.get(1).ok_or_else(|| {
+                            NativeError::Unsupported("__mind_realloc missing new_bytes".into())
+                        })?;
+                        emit_realloc(code, disp(addr)?, disp(new_bytes)?);
+                        store_rax(code, disp(dst)?); // new data address -> dst slot
+                    }
                     "__mind_write" => {
                         // Raw write(2) syscall (NO libc) — the print path
                         // (std/io.mind print_bytes / file_write). Contract:
@@ -630,7 +750,7 @@ fn emit_seq(
                         // rather than silently miscompile.
                         return Err(NativeError::Unsupported(format!(
                             "intrinsic {other} (only \
-                             __mind_alloc/store_i64/load_i64/store_i8/load_i8/write inlined)"
+                             __mind_alloc/realloc/store_i64/load_i64/store_i8/load_i8/write inlined)"
                         )));
                     }
                 }
@@ -1529,6 +1649,79 @@ mod tests {
         assert_eq!(
             code, 3,
             "write(2) returns the byte count (3); main returns it as the exit code"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std-surface")]
+    fn lowers_vec_growth_via_mind_realloc_preserving_old_contents() {
+        // The grow-and-preserve path: __mind_realloc(addr, new_bytes). Mirrors the
+        // std/vec.mind:85 vec_push doubling exactly — alloc a 4-element (cap 4)
+        // backing store, fill it, then __mind_realloc it to 8 elements (the 5th
+        // push's doubling). The realloc must COPY the original four i64s forward
+        // into the new block (the old block is abandoned — the arena is no-free),
+        // so reading element 0 back AFTER the grow proves the preservation. Writing
+        // a 5th element into the grown block and summing with element 0 proves the
+        // new region is usable and the copy did not clobber it.
+        //
+        // Front-end-lowered (not a hand-built IR toy): the realloc(addr, bytes) call
+        // shape is exactly what std/vec.mind emits (Instr::Call __mind_realloc with
+        // two args). Layout: cap4 = 32 bytes, cap8 = 64 bytes.
+        let src = "fn main() -> i64 { \
+                   let a0: i64 = __mind_alloc(32); \
+                   let s0: i64 = __mind_store_i64(a0, 11); \
+                   let s1: i64 = __mind_store_i64(a0 + 8, 22); \
+                   let s2: i64 = __mind_store_i64(a0 + 16, 33); \
+                   let s3: i64 = __mind_store_i64(a0 + 24, 4); \
+                   let a1: i64 = __mind_realloc(a0, 64); \
+                   let s4: i64 = __mind_store_i64(a1 + 32, 5); \
+                   let e0: i64 = __mind_load_i64(a1); \
+                   let e4: i64 = __mind_load_i64(a1 + 32); \
+                   return e0 + e4; }";
+        let module = crate::parser::parse(src).expect("parse");
+        let ir = crate::eval::lower::lower_to_ir(&module);
+        let elf = compile_to_elf(&ir).expect("native-lowers the vec-growth program");
+
+        // Byte-identity (the wedge): realloc codegen is a pure function of the IR
+        // (absolute movabs + frame-slot moves + a fixed 8-byte-stride copy loop, no
+        // host-varying bytes) — two builds of the same IR must be byte-for-byte
+        // identical. The header change shifts base addresses but is itself constant.
+        assert_eq!(
+            elf,
+            compile_to_elf(&ir).expect("lowers"),
+            "vec-growth ELF must be byte-identical (realloc emits no host-varying bytes)"
+        );
+
+        // RUN it: element 0 (11) must survive the realloc copy into the grown block,
+        // and the freshly-written element 4 (5) reads back from the new region.
+        // 11 + 5 = 16 (well within a valid exit code). A realloc that lost the old
+        // contents would read element 0 as 0 → exit(5); a copy that clobbered the
+        // new region would not read element 4 back as 5.
+        assert_eq!(
+            run(&elf, "mind_native_vec_realloc_exe"),
+            Some(16),
+            "realloc must PRESERVE element 0 (11) + new element 4 (5) = 16"
+        );
+
+        // A NULL-addr realloc is a fresh allocation (the cap-0 → first-push path):
+        // realloc(0, 24) === alloc(24). Store + read back proves the addr==0 branch
+        // skips the copy and returns a usable fresh block.
+        let src_null = "fn main() -> i64 { \
+                        let a: i64 = __mind_realloc(0, 24); \
+                        let s: i64 = __mind_store_i64(a + 8, 42); \
+                        return __mind_load_i64(a + 8); }";
+        let ir_null =
+            crate::eval::lower::lower_to_ir(&crate::parser::parse(src_null).expect("parse"));
+        let elf_null = compile_to_elf(&ir_null).expect("lowers");
+        assert_eq!(
+            elf_null,
+            compile_to_elf(&ir_null).expect("lowers"),
+            "NULL-realloc ELF must be byte-identical"
+        );
+        assert_eq!(
+            run(&elf_null, "mind_native_realloc_null_exe"),
+            Some(42),
+            "realloc(0, n) must behave as a fresh alloc(n): store 42 reads back 42"
         );
     }
 
