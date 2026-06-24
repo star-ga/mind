@@ -15428,6 +15428,134 @@ pub fn emit_mlir_block_ends_return(blk: i64) -> i64 {
     0
 }
 
+// RECURSIVE ID-SPAN (Rust-independence #14, PHASE 1.1) — the foundational fix for
+// NESTED control flow. The merge id `dst` (== the `^if_*_N` label suffix) is the
+// LAST numeric id an if-construct consumes; a nested if in a branch consumes MANY
+// ids, so a flat `then_result+2` formula shifts every inner id. These functions
+// compute, RECURSIVELY, how many NUMERIC SSA ids emitting a construct consumes.
+// Named SSA (%shm/%sha/%cond_i1) consume ZERO numeric ids. A value < 0 signals an
+// expr/stmt OUTSIDE this subset; callers then fall back to the flat formula so the
+// pre-existing flat cases never regress.
+//
+// mlir_expr_id_span: ident/param -> 0 ; int_lit -> 1 ; paren -> child ;
+//   arith/shift/comparison binop -> lhs_span + rhs_span + 1 ; value-if -> if_span.
+pub fn mlir_expr_id_span(expr: i64) -> i64 {
+    if expr == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(expr);
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_ident() {
+        return 0;
+    }
+    if k == ast_paren() {
+        return mlir_expr_id_span(ast_child0(expr));
+    }
+    if k == ast_binop() {
+        let ls: i64 = mlir_expr_id_span(ast_child0(expr));
+        if ls < 0 {
+            return 0 - 1;
+        }
+        let rs: i64 = mlir_expr_id_span(ast_child1(expr));
+        if rs < 0 {
+            return 0 - 1;
+        }
+        return ls + rs + 1;
+    }
+    if k == ast_if() {
+        return mlir_if_id_span(expr);
+    }
+    0 - 1
+}
+
+// mlir_cond_id_span: numeric ids the if-condition lowering consumes. A comparison
+// `x OP k` lowers via cmpi = lhs_span + rhs_span + 1 (the cmpi). A plain-i64 cond
+// lowers the value then a NAMED %cond_i1 (zero numeric) = expr_span only.
+pub fn mlir_cond_id_span(cond_node: i64) -> i64 {
+    if cond_is_comparison(cond_node) == 1 {
+        let ls: i64 = mlir_expr_id_span(ast_child0(cond_node));
+        if ls < 0 {
+            return 0 - 1;
+        }
+        let rs: i64 = mlir_expr_id_span(ast_child1(cond_node));
+        if rs < 0 {
+            return 0 - 1;
+        }
+        return ls + rs + 1;
+    }
+    mlir_expr_id_span(cond_node)
+}
+
+// mlir_stmt_id_span: a nested `if` -> if_span ; `return e` / `let _=e` -> expr_span ;
+// a trailing bare expr -> its span.
+pub fn mlir_stmt_id_span(stmt: i64) -> i64 {
+    if stmt == 0 {
+        return 0;
+    }
+    let k: i64 = ast_kind(stmt);
+    if k == ast_if() {
+        return mlir_if_id_span(stmt);
+    }
+    if k == ast_return() {
+        return mlir_expr_id_span(ast_child0(stmt));
+    }
+    if k == ast_let() {
+        return mlir_expr_id_span(ast_child2(stmt));
+    }
+    mlir_expr_id_span(stmt)
+}
+
+// mlir_branch_id_span: 1 (the dead placeholder every branch emits) + the sum of
+// each statement's span over the block. A 0 block (no else) contributes the
+// synthesized else of span 1 (the placeholder only) — handled by the caller.
+pub fn mlir_branch_id_span(blk: i64) -> i64 {
+    if blk == 0 {
+        return 1;
+    }
+    let stmts_addr: i64 = ast_child0(blk);
+    let stmts_len: i64 = ast_aux(blk);
+    let acc: i64 = mlir_branch_stmts_span(stmts_addr, stmts_len, 0, 0);
+    if acc < 0 {
+        return 0 - 1;
+    }
+    1 + acc
+}
+
+// Sum mlir_stmt_id_span over a block's statements; -1 (and short-circuit) if any
+// statement is outside the subset.
+pub fn mlir_branch_stmts_span(stmts_addr: i64, stmts_len: i64, i: i64, acc: i64) -> i64 {
+    if i >= stmts_len {
+        return acc;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let sp: i64 = mlir_stmt_id_span(stmt_node);
+    if sp < 0 {
+        return 0 - 1;
+    }
+    mlir_branch_stmts_span(stmts_addr, stmts_len, i + 1, acc + sp)
+}
+
+// mlir_if_id_span: cond_span + then_branch_span + else_branch_span + 1 (the merge
+// block-arg). A no-else if still has a synthesized else branch of span 1. Returns
+// -1 if any sub-span is outside the subset.
+pub fn mlir_if_id_span(if_node: i64) -> i64 {
+    let cs: i64 = mlir_cond_id_span(ast_child0(if_node));
+    if cs < 0 {
+        return 0 - 1;
+    }
+    let ts: i64 = mlir_branch_id_span(ast_child1(if_node));
+    if ts < 0 {
+        return 0 - 1;
+    }
+    let es: i64 = mlir_branch_id_span(ast_child2(if_node));
+    if es < 0 {
+        return 0 - 1;
+    }
+    cs + ts + es + 1
+}
+
 // VALUE-POSITION IF (Rust-independence #14, PHASE 1.1) — the SSA phi merge.
 // A `let r = if c { A } else { B };` / `return if c { A } else { B };` where the
 // COND is a comparison and EACH branch is a SINGLE simple expr (bare identifier
@@ -15628,10 +15756,35 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         // it is the lowered value id (the named %cond_i1_N is emitted textually).
         let cond_id: i64 = scw.last_id;
         // 2. cf.cond_br %cond, ^if_then_N, ^if_else_N
-        // then_result = next fresh id, else_result = next, dst = next ; N = dst.
+        // then_result = the then-branch's dead placeholder (first id after cond);
+        // the then-branch's NESTED instrs follow from then_result+1, so the else
+        // placeholder = then_result + then_branch_span, and dst (== N, the merge
+        // block-arg) = next_id + then_branch_span + else_branch_span. RECURSIVE so
+        // a nested if in either branch shifts the ids correctly. A span of -1
+        // (out-of-subset) falls back to the flat then_result+2 formula so the 15
+        // flat cases never regress.
         let then_result: i64 = scw.next_id;
-        let else_result: i64 = then_result + 1;
-        let dst: i64 = else_result + 1;
+        let then_span: i64 = mlir_branch_id_span(then_blk);
+        let else_span: i64 = mlir_branch_id_span(else_blk);
+        let spans_ok: i64 = if then_span < 0 {
+            0
+        } else {
+            if else_span < 0 {
+                0
+            } else {
+                1
+            }
+        };
+        let else_result: i64 = if spans_ok == 1 {
+            then_result + then_span
+        } else {
+            then_result + 1
+        };
+        let dst: i64 = if spans_ok == 1 {
+            then_result + then_span + else_span
+        } else {
+            else_result + 1
+        };
         let b1: EmitState = emit_mlir_cf_kw(scw);
         // `cond_br %`
         let b2: EmitState = es_push(b1, 99);
@@ -15669,7 +15822,10 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         let t7: EmitState = emit_mlir_constant_kw(t6);
         let t8: EmitState = es_push(t7, 48);
         let t9: EmitState = emit_mlir_i64_nl(t8);
-        let tb: EmitState = EmitState { buf: t9.buf, next_id: dst, last_id: then_result, lets: t9.lets };
+        // The then-branch's NESTED instrs follow its placeholder, so seed next_id
+        // at then_result+1 (the flat case emits no numeric ids, so it is unused
+        // there and stays byte-identical).
+        let tb: EmitState = EmitState { buf: t9.buf, next_id: then_result + 1, last_id: then_result, lets: t9.lets };
         let then_s: EmitState = emit_mlir_if_body(tb, buf, then_blk, params_addr, n_params);
         // then-edge cf.br only if the block did not already `return`.
         let then_ret: i64 = emit_mlir_block_ends_return(then_blk);
@@ -15700,7 +15856,8 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         let e7: EmitState = emit_mlir_constant_kw(e6);
         let e8: EmitState = es_push(e7, 48);
         let e9: EmitState = emit_mlir_i64_nl(e8);
-        let eb: EmitState = EmitState { buf: e9.buf, next_id: dst, last_id: else_result, lets: e9.lets };
+        // Likewise seed the else-branch's nested instrs at else_result+1.
+        let eb: EmitState = EmitState { buf: e9.buf, next_id: else_result + 1, last_id: else_result, lets: e9.lets };
         let else_s: EmitState = emit_mlir_if_body(eb, buf, else_blk, params_addr, n_params);
         let else_ret: i64 = emit_mlir_block_ends_return(else_blk);
         let after_else: EmitState = if else_ret == 1 {
