@@ -2,16 +2,16 @@
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
 
-//! Method-as-field brick — a zero-arg method whose name matches a field of
-//! the receiver's struct type lowers to the SAME `__mind_load_i64(base+idx*8)`
-//! field load that the `FieldAccess` arm emits for `s.len`.
+//! Zero-arg String accessor surface — a zero-arg method on a `String` receiver
+//! (`s.len()`, `s.addr()`, `s.cap()`) lowers via UFCS to its named std free
+//! function (`string_len` / `string_addr` / `string_cap`), each a thin wrapper
+//! over the underlying `s.<field>` load. The accessor NAME selects the function,
+//! so distinct names prove named-field selection (not a fixed offset). Methods
+//! with args desugar likewise (`v.push(x)` -> `vec_push(v, x)`); an unresolved
+//! method-with-args call fails loud rather than emitting const-0.
 //!
-//! `s.len()` on `struct String { addr, len, cap }` is `s.len` — the byte
-//! length stored at field index 1. Before this brick, every method call fell
-//! through to a const-0 placeholder; now zero-arg accessor methods resolve to
-//! the underlying field load. Methods that take args, or whose name is not a
-//! field, still fall through to const-0 (additive, keystone-safe — no method
-//! calls appear in the keystone or in std).
+//! (Non-String structs still take the inline `__mind_load_i64(base+idx*8)`
+//! field-load brick — only `String`/`string` receivers route to `string_*`.)
 //!
 //! Both receiver-resolution paths are covered:
 //!   * a local `let s = String { .. }` binding  -> Step 1 (`struct_env` Ident)
@@ -83,11 +83,11 @@ fn probe() -> i64 {
 "#;
     let module = must_parse(src);
     let ir = lower_to_ir(&module);
-    let loads = count_calls_named(&ir.instrs, "__mind_load_i64");
-    assert!(
-        loads >= 1,
-        "`s.len()` must lower to a __mind_load_i64 field load (the `len` field \
-         at index 1), not the const-0 placeholder; got {loads} loads.\nIR: {:?}",
+    let calls = count_calls_named(&ir.instrs, "string_len");
+    assert_eq!(
+        calls, 1,
+        "`s.len()` on a String receiver must lower to the named `string_len` \
+         std accessor (UFCS), not the const-0 placeholder; got {calls}.\nIR: {:?}",
         ir.instrs
     );
 }
@@ -106,11 +106,12 @@ fn probe(s: String) -> i64 {
 "#;
     let module = must_parse(src);
     let ir = lower_to_ir(&module);
-    let loads = count_calls_named(&ir.instrs, "__mind_load_i64");
-    assert!(
-        loads >= 1,
-        "`s.len()` on a String parameter must lower to a field load via the \
-         receiver_types side-table; got {loads} loads.\nIR: {:?}",
+    let calls = count_calls_named(&ir.instrs, "string_len");
+    assert_eq!(
+        calls, 1,
+        "`s.len()` on a String parameter must resolve its receiver type (via the \
+         receiver_types side-table) and lower to the `string_len` std accessor; \
+         got {calls}.\nIR: {:?}",
         ir.instrs
     );
 }
@@ -137,10 +138,16 @@ fn probe_cap() -> i64 {
 "#;
     let module = must_parse(src);
     let ir = lower_to_ir(&module);
-    let loads = count_calls_named(&ir.instrs, "__mind_load_i64");
-    assert!(
-        loads >= 2,
-        "each of s.addr() and s.cap() must emit its own field load; got {loads}.\nIR: {:?}",
+    // The accessor name selects the std function: `addr`->string_addr,
+    // `cap`->string_cap. Distinct names per field prove the lowering keys off
+    // the NAMED field, not a fixed offset or a name-agnostic catch-all.
+    let addr_calls = count_calls_named(&ir.instrs, "string_addr");
+    let cap_calls = count_calls_named(&ir.instrs, "string_cap");
+    assert_eq!(
+        (addr_calls, cap_calls),
+        (1, 1),
+        "s.addr() must lower to string_addr and s.cap() to string_cap (named-field \
+         selection, not a fixed offset); got addr={addr_calls}, cap={cap_calls}.\nIR: {:?}",
         ir.instrs
     );
 }

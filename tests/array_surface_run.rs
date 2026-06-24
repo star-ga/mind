@@ -26,7 +26,7 @@ const SRC: &str = r#"
 // capacity fits, so after push the length is 4): 20 + 4 + 10 = 34.
 pub fn mixed() -> i64 {
     let a: array<i64> = [10, 20, 30]
-    let _ = a.push(40)
+    a.push(40)
     return a[1] + a.length + a.get(0)
 }
 
@@ -49,11 +49,11 @@ pub fn sum_param() -> i64 {
 // Empty literal + push growth past the initial capacity (4 → 8): length 5.
 pub fn grow() -> i64 {
     let v: array<i64> = []
-    let _ = v.push(1)
-    let _ = v.push(2)
-    let _ = v.push(3)
-    let _ = v.push(4)
-    let _ = v.push(5)
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v.push(4)
+    v.push(5)
     return v.length
 }
 "#;
