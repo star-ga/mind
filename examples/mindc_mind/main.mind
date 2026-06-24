@@ -309,6 +309,30 @@ pub fn is_struct_kw(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// `const` is lexed as a plain identifier (no dedicated keyword token), so the
+// top-level item parser detects it by byte content, exactly like is_struct_kw.
+// A top-level `const NAME: TYPE = EXPR` declaration lowers (in mindc-Rust) to a
+// single `const.i64 0` / `output` placeholder — the value is inlined at each use
+// site, so the declaration itself is a unit no-op (parallels StructDef/EnumDef).
+// Detecting it here lets the parser consume the whole declaration as ONE stub
+// item instead of mis-splitting it into per-token leaves.
+pub fn is_const_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 5 {
+        if load_byte(buf, lo + 0) == 99 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 110 {
+                    if load_byte(buf, lo + 3) == 115 {
+                        if load_byte(buf, lo + 4) == 116 {
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
 // Advance past all tokens until (and including) the closing `}` of a struct body.
 pub fn skip_to_rbrace(toks: Vec, pos: i64) -> i64 {
     if at_eof(toks, pos) == 1 {
@@ -325,6 +349,62 @@ pub fn skip_to_rbrace(toks: Vec, pos: i64) -> i64 {
 pub fn parse_struct_def(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let lo: i64 = tok_lo(toks, pos);
     let after: i64 = skip_to_rbrace(toks, pos + 2);
+    let hi: i64 = tok_hi(toks, after - 1);
+    let n: i64 = ast_new_leaf(ast_struct_def(), lo, hi);
+    pr_new(after, n)
+}
+
+// True iff `pos` is the first token of a new top-level item: an item begins
+// with `use` / `pub` / `fn`, or an identifier whose bytes are `struct` / `const`
+// (which the lexer emits as plain idents). A top-level `const`'s value
+// expression never contains these item-leading tokens, so this is a safe
+// terminator for skip_const_decl. (Source-text type names like `i32`/`u32` are
+// idents but are neither `struct` nor `const`, so they do not stop the scan.)
+pub fn tok_is_item_start(toks: Vec, pos: i64, buf: i64) -> i64 {
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_kw_use() {
+        return 1;
+    }
+    if k == tk_kw_pub() {
+        return 1;
+    }
+    if k == tk_kw_fn() {
+        return 1;
+    }
+    if k == tk_ident() {
+        let lo: i64 = tok_lo(toks, pos);
+        let hi: i64 = tok_hi(toks, pos);
+        if is_struct_kw(buf, lo, hi) == 1 {
+            return 1;
+        }
+        if is_const_kw(buf, lo, hi) == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
+// Advance past the value tokens of a `const NAME: TYPE = EXPR` declaration: from
+// `pos` (the first token AFTER `const`) skip forward until the next top-level
+// item start or EOF. Mirrors skip_to_rbrace's "consume to boundary" shape.
+pub fn skip_const_decl(toks: Vec, pos: i64, buf: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    if tok_is_item_start(toks, pos, buf) == 1 {
+        return pos;
+    }
+    skip_const_decl(toks, pos + 1, buf)
+}
+
+// Parse a top-level `const NAME: TYPE = EXPR` as a single declaration item.
+// It lowers to one `const.i64 0` / `output` placeholder (emit_item_stub), exactly
+// as mindc-Rust lowers a scalar/string const declaration (the value is inlined at
+// each use site, so the declaration is a unit no-op). Reuses ast_struct_def as the
+// stub-leaf kind so emit_program_items emits exactly one stub for it.
+pub fn parse_const_decl(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let lo: i64 = tok_lo(toks, pos);
+    let after: i64 = skip_const_decl(toks, pos + 1, buf);
     let hi: i64 = tok_hi(toks, after - 1);
     let n: i64 = ast_new_leaf(ast_struct_def(), lo, hi);
     pr_new(after, n)
@@ -1631,6 +1711,9 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     if k == tk_ident() {
         if is_struct_kw(buf, lo, hi) == 1 {
             return parse_struct_def(toks, pos, buf);
+        }
+        if is_const_kw(buf, lo, hi) == 1 {
+            return parse_const_decl(toks, pos, buf);
         }
     }
     let n: i64 = ast_new_leaf(ast_ident(), lo, hi);
