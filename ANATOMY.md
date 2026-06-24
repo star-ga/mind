@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2938 | **Est. tokens:** ~7,042,540
-**Generated:** 2026-06-24 04:20 UTC
+**Files:** 2938 | **Est. tokens:** ~7,041,940
+**Generated:** 2026-06-24 05:51 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 246 | ~395,523 |
+| `tests/` | 246 | ~394,923 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4040,7 +4040,7 @@
 - `fmt_module_block_item_preserved.rs` (~926 tok, large) — Regression: `mindc fmt` must not drop item declarations nested inside a
 - `fmt_stdlib_stability.rs` (~2693 tok, huge) — Copyright 2025 STARGA Inc.
 - `for_each_run.rs` (~859 tok, large) — Copyright 2025 STARGA Inc.
-- `g2_differential_mlir.rs` (~6548 tok, huge) — Copyright 2025 STARGA Inc.
+- `g2_differential_mlir.rs` (~5948 tok, huge) — Copyright 2025 STARGA Inc.
 - `gather_preview.rs` (~288 tok, medium) — Copyright 2025 STARGA Inc.
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.

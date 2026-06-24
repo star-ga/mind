@@ -25,11 +25,12 @@
 //! Each fixture is classified as one of:
 //!   * `MATCH` — byte-identical (Rust and pure-MIND agree).
 //!   * `DIVERGE` — both produced output but they differ (real bug).
-//!   * `MIND_UNSUPPORTED` — fixture uses language features beyond the
-//!     pure-MIND self-host subset (extern "C" blocks,
-//!     `import`, `module NAME {}`, `enum`, bare
-//!     top-level expressions without any `fn`).
-//!     This is the expected "not yet ported" set.
+//!   * `MIND_UNSUPPORTED` — the pure-MIND `mindc_compile` returned a null
+//!     handle or panicked at runtime on a fixture the Rust path compiled.
+//!     There is no longer a source-level feature pre-filter: the front-end
+//!     lowers the whole corpus (fn / struct / enum / extern / module / use /
+//!     import / const items + bare const-folded expressions), so a construct
+//!     it cannot handle surfaces as `DIVERGE`, not a silent exclusion.
 //!   * `RUST_ONLY` — only the Rust path succeeds (Rust exit != 0
 //!     means the fixture itself is invalid for some
 //!     language feature the Rust path also lacks).
@@ -271,84 +272,19 @@ fn call_on_large_stack(lib: &Library, src_bytes: &[u8]) -> Option<Vec<u8>> {
 }
 
 // ---------------------------------------------------------------------------
-// Fixture classification: detect unsupported language features
+// Self-host coverage note
 // ---------------------------------------------------------------------------
-
-/// Returns `true` if the fixture source uses language features that the
-/// pure-MIND compiler (`examples/mindc_mind/main.mind`) does not yet handle:
-///
-///   * `extern "C" { ... }` blocks — the pure-MIND parser emits one stub
-///     per function inside the block; the Rust path emits one stub for the
-///     whole block.  Both produce output, but they disagree on count.
-///   * `import` statements — the pure-MIND parser skips these entirely.
-///   * `module NAME { ... }` blocks — not handled by the pure-MIND emitter.
-///   * `enum NAME { ... }` definitions — not handled by `emit_item_stub`.
-///   * Files with no top-level `fn` / `pub fn` — the pure-MIND emitter only
-///     handles fn_def, use, struct items; a bare-expression file produces an
-///     empty module while the Rust path may emit content.
-///
-/// Fixtures matching this predicate are classified as `MIND_UNSUPPORTED`.
-/// This is expected and does not fail the gate.
-fn uses_unsupported_features(src: &str) -> bool {
-    let has_extern_c = src
-        .lines()
-        .any(|l| l.trim_start().starts_with("extern \"C\"") && l.contains('{'));
-    let has_import = src.lines().any(|l| l.trim_start().starts_with("import "));
-    let has_module_block = src.lines().any(|l| {
-        let t = l.trim_start();
-        // `module IDENT {` — a named module block, not the IR `module {` header.
-        t.starts_with("module ") && t.split_whitespace().count() >= 3 && !t.starts_with("module {")
-    });
-    let has_enum = src.lines().any(|l| {
-        let t = l.trim_start();
-        t.starts_with("enum ") || t.starts_with("pub enum ")
-    });
-    let has_fn = src.lines().any(|l| {
-        let t = l.trim_start();
-        t.starts_with("fn ") || t.starts_with("pub fn ")
-    });
-    // A file with no fn declarations cannot produce meaningful output from
-    // the pure-MIND emitter (which only handles fn_def, use, struct items).
-    let no_fn = !has_fn;
-
-    has_extern_c || has_import || has_module_block || has_enum || no_fn
-}
-
-fn unsupported_reason(src: &str) -> String {
-    let mut reasons: Vec<&str> = Vec::new();
-    if src
-        .lines()
-        .any(|l| l.trim_start().starts_with("extern \"C\"") && l.contains('{'))
-    {
-        reasons.push("extern-C-block");
-    }
-    if src.lines().any(|l| l.trim_start().starts_with("import ")) {
-        reasons.push("import-keyword");
-    }
-    if src.lines().any(|l| {
-        let t = l.trim_start();
-        t.starts_with("module ") && t.split_whitespace().count() >= 3 && !t.starts_with("module {")
-    }) {
-        reasons.push("module-block");
-    }
-    if src.lines().any(|l| {
-        let t = l.trim_start();
-        t.starts_with("enum ") || t.starts_with("pub enum ")
-    }) {
-        reasons.push("enum-def");
-    }
-    let has_fn = src
-        .lines()
-        .any(|l| l.trim_start().starts_with("fn ") || l.trim_start().starts_with("pub fn "));
-    if !has_fn {
-        reasons.push("no-top-level-fn");
-    }
-    if reasons.is_empty() {
-        "unknown".to_string()
-    } else {
-        reasons.join(", ")
-    }
-}
+//
+// There is no longer a source-level "unsupported feature" pre-filter. The
+// pure-MIND front-end (examples/mindc_mind/main.mind) lowers EVERY top-level
+// construct in this corpus byte-identically to mindc-Rust `--emit-ir`: fn /
+// struct / enum / `extern "C"` blocks / `module NAME { }` blocks / use / import
+// / const (one stub per item), plus a bare top-level arithmetic expression
+// (`1 + 2 * 3`), which is const-folded to one `const.i64 <val>` exactly like
+// Rust. A fixture the front-end genuinely could not handle now surfaces as a
+// DIVERGE (gate failure) instead of being silently excluded — the honest,
+// strict posture. The only remaining `MIND_UNSUPPORTED` path is the runtime
+// valve in run_fixture (mindc_compile returned a null handle or panicked).
 
 // ---------------------------------------------------------------------------
 // Fixture corpus
@@ -454,7 +390,6 @@ fn run_fixture(bin: &Path, lib: &Library, fixture: &Path) -> Outcome {
             };
         }
     };
-    let src_str = String::from_utf8_lossy(&src_bytes);
 
     // --- Rust path ---
     let rust_result = Command::new(bin)
@@ -475,13 +410,6 @@ fn run_fixture(bin: &Path, lib: &Library, fixture: &Path) -> Outcome {
     // appends; the MIND IR text itself ends with `}  // next_id = N\n` so
     // after normalization both paths should end identically.
     let rust_out: Vec<u8> = normalize_rust_output(&rust_result.stdout).to_vec();
-
-    // --- MIND_UNSUPPORTED pre-check ---
-    if uses_unsupported_features(&src_str) {
-        return Outcome::MindUnsupported {
-            reason: unsupported_reason(&src_str),
-        };
-    }
 
     // --- Pure-MIND path (on a large-stack thread to handle deep recursion) ---
     let mind_raw = call_on_large_stack(lib, &src_bytes);

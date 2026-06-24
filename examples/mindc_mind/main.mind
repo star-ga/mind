@@ -333,6 +333,76 @@ pub fn is_const_kw(buf: i64, lo: i64, hi: i64) -> i64 {
     0
 }
 
+// `enum` is lexed as a plain identifier; detect it by byte content like
+// is_struct_kw. A top-level `enum Name { Variant, .. }` lowers (in mindc-Rust) to
+// a single `const.i64 0` / `output` stub item (parallels StructDef). It reuses
+// parse_struct_def (skip-to-rbrace, one ast_struct_def stub leaf). NOTE: enum
+// bodies here are flat variant lists (no nested `{}`), matching skip_to_rbrace's
+// naive first-`}` scan, same as struct.
+pub fn is_enum_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 4 {
+        if load_byte(buf, lo + 0) == 101 {
+            if load_byte(buf, lo + 1) == 110 {
+                if load_byte(buf, lo + 2) == 117 {
+                    if load_byte(buf, lo + 3) == 109 {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// `extern` is lexed as a plain identifier; detect it by byte content. A top-level
+// `extern "C" { unsafe fn a(..); unsafe fn b(..); }` block lowers (in mindc-Rust)
+// to a SINGLE stub item for the WHOLE block (one `const.i64 0` / `output`, no
+// `// fn` comment — verified: std/net.mind's 15-fn block emits exactly one
+// comment-less stub). The block holds only body-less `fn NAME(..);` declarations
+// (no nested braces), so skip_to_rbrace finds the block's closing `}` directly.
+pub fn is_extern_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 6 {
+        if load_byte(buf, lo + 0) == 101 {
+            if load_byte(buf, lo + 1) == 120 {
+                if load_byte(buf, lo + 2) == 116 {
+                    if load_byte(buf, lo + 3) == 101 {
+                        if load_byte(buf, lo + 4) == 114 {
+                            if load_byte(buf, lo + 5) == 110 {
+                                return 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
+// `module` is lexed as a plain identifier; detect it by byte content. A top-level
+// `module NAME { ... }` block lowers (in mindc-Rust) to a SINGLE stub item for the
+// whole block (verified on phase_10_5_module: `module governance { const .. }` →
+// one `const.i64 0` / `output`). It reuses parse_extern_block (skip-to-rbrace, one
+// stub leaf). The module body here has no nested `{}`, matching skip_to_rbrace.
+pub fn is_module_kw(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo == 6 {
+        if load_byte(buf, lo + 0) == 109 {
+            if load_byte(buf, lo + 1) == 111 {
+                if load_byte(buf, lo + 2) == 100 {
+                    if load_byte(buf, lo + 3) == 117 {
+                        if load_byte(buf, lo + 4) == 108 {
+                            if load_byte(buf, lo + 5) == 101 {
+                                return 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    0
+}
+
 // Advance past all tokens until (and including) the closing `}` of a struct body.
 pub fn skip_to_rbrace(toks: Vec, pos: i64) -> i64 {
     if at_eof(toks, pos) == 1 {
@@ -377,6 +447,15 @@ pub fn tok_is_item_start(toks: Vec, pos: i64, buf: i64) -> i64 {
         if is_struct_kw(buf, lo, hi) == 1 {
             return 1;
         }
+        if is_enum_kw(buf, lo, hi) == 1 {
+            return 1;
+        }
+        if is_extern_kw(buf, lo, hi) == 1 {
+            return 1;
+        }
+        if is_module_kw(buf, lo, hi) == 1 {
+            return 1;
+        }
         if is_const_kw(buf, lo, hi) == 1 {
             return 1;
         }
@@ -405,6 +484,18 @@ pub fn skip_const_decl(toks: Vec, pos: i64, buf: i64) -> i64 {
 pub fn parse_const_decl(toks: Vec, pos: i64, buf: i64) -> ParseResult {
     let lo: i64 = tok_lo(toks, pos);
     let after: i64 = skip_const_decl(toks, pos + 1, buf);
+    let hi: i64 = tok_hi(toks, after - 1);
+    let n: i64 = ast_new_leaf(ast_struct_def(), lo, hi);
+    pr_new(after, n)
+}
+
+// Parse `extern "C" { ... }` as ONE stub item. Scan from the `extern` token to the
+// block's closing `}` (the inner fn declarations are body-less, no nested braces),
+// and emit a single ast_struct_def leaf so emit_program_items emits exactly one
+// stub — matching mindc-Rust, which lowers a whole extern block to one placeholder.
+pub fn parse_extern_block(toks: Vec, pos: i64, buf: i64) -> ParseResult {
+    let lo: i64 = tok_lo(toks, pos);
+    let after: i64 = skip_to_rbrace(toks, pos);
     let hi: i64 = tok_hi(toks, after - 1);
     let n: i64 = ast_new_leaf(ast_struct_def(), lo, hi);
     pr_new(after, n)
@@ -1712,6 +1803,17 @@ pub fn parse_item(toks: Vec, pos: i64, buf: i64) -> ParseResult {
         if is_struct_kw(buf, lo, hi) == 1 {
             return parse_struct_def(toks, pos, buf);
         }
+        if is_enum_kw(buf, lo, hi) == 1 {
+            return parse_struct_def(toks, pos, buf);
+        }
+        if is_extern_kw(buf, lo, hi) == 1 {
+            return parse_extern_block(toks, pos, buf);
+        }
+        if is_module_kw(buf, lo, hi) == 1 {
+            // `module NAME { .. }` consumes the whole block to one stub, same
+            // block-skipping shape as an extern block.
+            return parse_extern_block(toks, pos, buf);
+        }
         if is_const_kw(buf, lo, hi) == 1 {
             return parse_const_decl(toks, pos, buf);
         }
@@ -1730,9 +1832,39 @@ pub fn parse_items_rest(toks: Vec, pos: i64, buf: i64, acc: Vec) -> ParseResult 
     parse_items_rest(toks, pr_pos(one), buf, new_acc)
 }
 
+// True iff the whole token stream is a single bare top-level EXPRESSION (no
+// items): it begins with an expression-start token (int literal, `(`, or unary
+// `-`). A real program begins with an item keyword (use/import/fn/struct/const/
+// enum/extern/module), so this never misfires — main.mind starts with `import`,
+// keeping its self-host flip byte-identical.
+pub fn is_bare_expr_program(toks: Vec) -> i64 {
+    if at_eof(toks, 0) == 1 {
+        return 0;
+    }
+    let k: i64 = tok_kind(toks, 0);
+    if k == tk_int() {
+        return 1;
+    }
+    if k == tk_lparen() {
+        return 1;
+    }
+    if k == tk_minus() {
+        return 1;
+    }
+    0
+}
+
 // ===== Public entry: parse =====
 
 pub fn parse(toks: Vec, buf: i64) -> i64 {
+    // A bare top-level expression (`1 + 2 * 3`) IS the whole program: parse it as
+    // one expression so lower_program const-folds it (emit_bare_expr), matching
+    // mindc-Rust. Otherwise parse a sequence of items as usual.
+    if is_bare_expr_program(toks) == 1 {
+        let e: ParseResult = parse_expr(toks, 0, buf);
+        let one: Vec = vec_push(vec_new(), pr_node(e));
+        return ast_new_program(0, 0, vec_addr(one), vec_len(one));
+    }
     let acc: Vec = vec_new();
     let res: ParseResult = parse_items_rest(toks, 0, buf, acc);
     let s: i64 = pr_node(res);
@@ -14660,6 +14792,90 @@ pub fn emit_item_stub(s: EmitState) -> EmitState {
     emit_lit_output(s4, id)
 }
 
+// ===== Bare top-level expression (const-folded) =====
+//
+// A file whose top level is a single arithmetic expression (e.g. `1 + 2 * 3`, no
+// items) lowers — in mindc-Rust — to ONE const-folded `const.i64 <val>` whose id
+// is (node_count - 1), with next_id = node_count (Rust reserves one SSA id per AST
+// node in post-order; parens are transparent). These helpers reproduce that
+// exactly for integer +,-,*,/ arithmetic. Verified byte-identical to `--emit-ir`
+// on 5 / 1+1 / 2*3 / 1+2*3 / 1+2+3 / 10-4 / (1+2)*3 / 7/2.
+
+pub fn is_bare_expr_kind(k: i64) -> i64 {
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_binop() {
+        return 1;
+    }
+    if k == ast_paren() {
+        return 1;
+    }
+    0
+}
+
+// Count AST nodes the way Rust reserves SSA ids: int-lit = 1, binop = 1 + both
+// operands, paren = transparent (no own id). The root gets id (count - 1).
+pub fn count_expr_nodes(node: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return 1;
+    }
+    if k == ast_paren() {
+        return count_expr_nodes(ast_child0(node));
+    }
+    if k == ast_binop() {
+        return 1 + count_expr_nodes(ast_child0(node)) + count_expr_nodes(ast_child1(node));
+    }
+    1
+}
+
+// Const-fold an integer arithmetic expression to its i64 value (+,-,*,/ with
+// truncating division, matching mindc-Rust / the i64 backend).
+pub fn eval_const_expr(node: i64, buf: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+    }
+    if k == ast_paren() {
+        return eval_const_expr(ast_child0(node), buf);
+    }
+    if k == ast_binop() {
+        let l: i64 = eval_const_expr(ast_child0(node), buf);
+        let r: i64 = eval_const_expr(ast_child1(node), buf);
+        let op: i64 = ast_aux(node);
+        if op == op_add() {
+            return l + r;
+        }
+        if op == op_sub() {
+            return l - r;
+        }
+        if op == op_mul() {
+            return l * r;
+        }
+        if op == op_div() {
+            return l / r;
+        }
+        return 0;
+    }
+    0
+}
+
+// Emit a bare top-level expression as one const-folded result:
+//   %<count-1> = const.i64 <val>
+//   output %<count-1>
+// and set next_id = count, matching the mindc-Rust module-level output.
+pub fn emit_bare_expr(s: EmitState, buf: i64, node: i64) -> EmitState {
+    let count: i64 = count_expr_nodes(node);
+    let val: i64 = eval_const_expr(node, buf);
+    let id: i64 = count - 1;
+    let s1: EmitState = emit_lit_const_i64_head(s, id);
+    let s2: EmitState = emit_i64(s1, val);
+    let s3: EmitState = es_push(s2, ch_newline());
+    let s4: EmitState = EmitState { buf: s3.buf, next_id: count, last_id: id, lets: s3.lets };
+    emit_lit_output(s4, id)
+}
+
 pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i64, i: i64) -> EmitState {
     if i >= items_len {
         return s;
@@ -14675,7 +14891,11 @@ pub fn emit_program_items(s: EmitState, buf: i64, items_addr: i64, items_len: i6
             if k == ast_struct_def() {
                 emit_item_stub(s)
             } else {
-                s
+                if is_bare_expr_kind(k) == 1 {
+                    emit_bare_expr(s, buf, item)
+                } else {
+                    s
+                }
             }
         }
     };
