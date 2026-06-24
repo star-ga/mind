@@ -17904,3 +17904,861 @@ pub fn selftest_match_has_wildcard(src_addr: i64, src_len: i64) -> i64 {
     let lbrace_pos: i64 = pr_pos(scrut);
     mt_find_wildcard(toks, src_addr, lbrace_pos + 1, 0)
 }
+
+// ===========================================================================
+// SECTION 4c — NATIVE x86-64 / ELF EMITTER (Rust-independence #14, PHASE 1.3)
+//
+// ADDITIVE / canary-isolated. SECTION 4b ports src/mlir/lowering.rs (the MLIR
+// TEXT target). THIS section ports src/native/mod.rs — the zero-LLVM
+// IR -> x86-64 -> static ELF64 backend — for the SCALAR i64 slice, byte-for-byte
+// identical to the Rust `mind-native <f>` artifact (498-byte add/main fixture).
+//
+// It REUSES the same parser + AST walk + SSA numbering as SECTION 4b: for the
+// scalar subset (no lets / no control flow) a value's SSA id from
+// emit_mlir_expr_env EXACTLY equals its frame-slot index in src/native (params
+// occupy %0..%n-1 == slots 0..n-1; body values continue at %n == slot n). So the
+// frame displacement of value `id` is rbp - 8*(id+1), and the native walk mirrors
+// the MLIR walk arm-for-arm, emitting machine code into a code String instead of
+// MLIR text. NOTHING here is reached through mindc_compile / lower_program — the
+// keystone mic@1 canary, the mic@3 flip, and the fixed point are all untouched.
+// Exposed via selftest_native_elf (the Python gate diffs its returned ELF bytes
+// against the Rust `mind-native` ELF).
+//
+// COVERED (byte-identical, scalar i64 subset only): FnDef with `%N: i64` params
+// and `-> i64`, ConstI64 -> `movabs rax, imm64; mov [slot], rax`, BinOp add/sub/
+// mul -> `mov rax,[lhs]; OP rax,[rhs]; mov [dst],rax`, ident -> param/let slot
+// (no instruction), intra-module Call -> argreg spills + `call rel32` (linker-
+// patched) + result spill, Return -> `mov rax,[v]; epilogue/ret` (or, in `main`,
+// `mov rdi,rax; mov rax,60; syscall`). The entry function (`main`) gets the
+// STACK_TOP rsp-switch prologue; a library with no `main` gets the synth
+// exit(0) stub. The four PT_LOAD/PT_NOTE phdrs (code, note, arena, stack) and the
+// trace-hash note are reproduced exactly. Anything outside this subset
+// (control flow, division/shift/compare, tensors, narrow ints, floats) is OUT OF
+// SCOPE for this increment and not emitted.
+// ===========================================================================
+
+// ---- native ABI / layout constants (mirror src/native/mod.rs) ----
+pub fn nb_load_addr() -> i64 {
+    // LOAD_ADDR = 0x40_0000 (4 MiB)
+    4194304
+}
+pub fn nb_hdrs() -> i64 {
+    // 64 (ehdr) + 4*56 (phdrs) = 288
+    288
+}
+pub fn nb_arena_addr() -> i64 {
+    // ARENA_ADDR = 0x100_0000 (16 MiB)
+    16777216
+}
+pub fn nb_arena_bytes() -> i64 {
+    // ARENA_BYTES = 1024*1024*1024 = 1 GiB
+    1073741824
+}
+pub fn nb_stack_bytes() -> i64 {
+    // STACK_BYTES = 4 GiB
+    4294967296
+}
+pub fn nb_stack_addr() -> i64 {
+    // STACK_ADDR = ARENA_ADDR + ARENA_BYTES + 0x1000
+    nb_arena_addr() + nb_arena_bytes() + 4096
+}
+pub fn nb_stack_top() -> i64 {
+    // STACK_TOP = STACK_ADDR + STACK_BYTES
+    nb_stack_addr() + nb_stack_bytes()
+}
+
+// ---- low-level byte emitters into a code String ----
+// Push the low byte of `b` (string_push_byte stores via __mind_store_i8).
+pub fn nb_push(code: String, b: i64) -> String {
+    string_push_byte(code, b)
+}
+
+// Append `n` low bytes of `v`, least-significant first (two's-complement i64).
+// `n` in 1..8. Uses arithmetic / 256 right-shift; & 255 isolates the low byte.
+pub fn nb_le(code: String, v: i64, n: i64) -> String {
+    if n <= 0 {
+        return code;
+    }
+    let c1: String = string_push_byte(code, v & 255);
+    nb_le(c1, v / 256, n - 1)
+}
+
+// 16-bit / 32-bit / 64-bit little-endian helpers (e_type, e_phoff, disp32, etc.).
+pub fn nb_u16(code: String, v: i64) -> String {
+    nb_le(code, v, 2)
+}
+pub fn nb_u32(code: String, v: i64) -> String {
+    nb_le(code, v, 4)
+}
+pub fn nb_i64le(code: String, v: i64) -> String {
+    nb_le(code, v, 8)
+}
+
+// Frame displacement of value/slot `id`: rbp - 8*(id+1). Two's-complement i32.
+pub fn nb_slot_disp(id: i64) -> i64 {
+    0 - (8 * (id + 1))
+}
+
+// ---- x86-64 instruction emitters (mirror src/native/mod.rs byte-for-byte) ----
+
+// store_rax(disp): `mov [rbp+disp32], rax`  = 48 89 85 <disp32>
+pub fn nb_store_rax(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 137);
+    let c3: String = nb_push(c2, 133);
+    nb_i32le_signed(c3, disp)
+}
+
+// load_rax(disp): `mov rax, [rbp+disp32]` = 48 8B 85 <disp32>
+pub fn nb_load_rax(code: String, disp: i64) -> String {
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, 133);
+    nb_i32le_signed(c3, disp)
+}
+
+// Emit a (possibly negative) value as a 4-byte little-endian disp32. A negative
+// disp must encode as its 32-bit two's complement (v + 2^32), so the low 4 bytes
+// are correct; nb_le's `& 255` then picks the right bytes.
+pub fn nb_i32le_signed(code: String, v: i64) -> String {
+    let u: i64 = if v < 0 {
+        v + 4294967296
+    } else {
+        v
+    };
+    nb_le(code, u, 4)
+}
+
+// arith_rax_mem(op, disp): the in-place op of rax with [rbp+disp32].
+//   Add -> 48 03 85 ; Sub -> 48 2B 85 ; Mul -> 48 0F AF 85
+pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
+    if op == op_add() {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 3);
+        let c3: String = nb_push(c2, 133);
+        return nb_i32le_signed(c3, disp);
+    }
+    if op == op_sub() {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 43);
+        let c3: String = nb_push(c2, 133);
+        return nb_i32le_signed(c3, disp);
+    }
+    // op_mul(): imul rax, [rbp+disp32] = 48 0F AF 85 <disp32>
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 15);
+    let c3: String = nb_push(c2, 175);
+    let c4: String = nb_push(c3, 133);
+    nb_i32le_signed(c4, disp)
+}
+
+// System-V integer arg registers (index 0..5): (modrm_reg_field, needs_rex).
+//   0 rdi(7,F) 1 rsi(6,F) 2 rdx(2,F) 3 rcx(1,F) 4 r8(0,T) 5 r9(1,T)
+pub fn nb_argreg_field(i: i64) -> i64 {
+    if i == 0 {
+        return 7;
+    }
+    if i == 1 {
+        return 6;
+    }
+    if i == 2 {
+        return 2;
+    }
+    if i == 3 {
+        return 1;
+    }
+    if i == 4 {
+        return 0;
+    }
+    1
+}
+pub fn nb_argreg_ext(i: i64) -> i64 {
+    if i >= 4 {
+        return 1;
+    }
+    0
+}
+
+// store_argreg(i, disp): spill incoming param reg i to its slot.
+//   (0x48 | ext<<2) 0x89 (0x80 | (reg&7)<<3 | 0x05) <disp32>
+pub fn nb_store_argreg(code: String, i: i64, disp: i64) -> String {
+    let reg: i64 = nb_argreg_field(i);
+    let ext: i64 = nb_argreg_ext(i);
+    let rex: i64 = 72 + ext * 4;
+    let modrm: i64 = 128 + (reg & 7) * 8 + 5;
+    let c1: String = nb_push(code, rex);
+    let c2: String = nb_push(c1, 137);
+    let c3: String = nb_push(c2, modrm);
+    nb_i32le_signed(c3, disp)
+}
+
+// load_argreg(i, disp): load slot into incoming param reg i.
+//   (0x48 | ext<<2) 0x8B (0x80 | (reg&7)<<3 | 0x05) <disp32>
+pub fn nb_load_argreg(code: String, i: i64, disp: i64) -> String {
+    let reg: i64 = nb_argreg_field(i);
+    let ext: i64 = nb_argreg_ext(i);
+    let rex: i64 = 72 + ext * 4;
+    let modrm: i64 = 128 + (reg & 7) * 8 + 5;
+    let c1: String = nb_push(code, rex);
+    let c2: String = nb_push(c1, 139);
+    let c3: String = nb_push(c2, modrm);
+    nb_i32le_signed(c3, disp)
+}
+
+// emit_return(is_entry): the exit syscall (entry) or the epilogue+ret.
+//   entry:  48 89 C7 (mov rdi,rax) ; 48 C7 C0 3C 00 00 00 (mov rax,60) ; 0F 05
+//   non:    48 89 EC 5D C3        (mov rsp,rbp ; pop rbp ; ret)
+pub fn nb_emit_return(code: String, is_entry: i64) -> String {
+    if is_entry == 1 {
+        let c1: String = nb_push(code, 72);
+        let c2: String = nb_push(c1, 137);
+        let c3: String = nb_push(c2, 199);
+        let c4: String = nb_push(c3, 72);
+        let c5: String = nb_push(c4, 199);
+        let c6: String = nb_push(c5, 192);
+        let c7: String = nb_push(c6, 60);
+        let c8: String = nb_push(c7, 0);
+        let c9: String = nb_push(c8, 0);
+        let c10: String = nb_push(c9, 0);
+        let c11: String = nb_push(c10, 15);
+        return nb_push(c11, 5);
+    }
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 137);
+    let c3: String = nb_push(c2, 236);
+    let c4: String = nb_push(c3, 93);
+    nb_push(c4, 195)
+}
+
+// ---- calls scratch table ----
+// One call record = 3 i64 words: (rel32_offset_within_fn, callee_lo, callee_hi).
+// The calls buffer is a heap block passed in; nb_calls_push appends at index
+// `n` and the caller threads the running count.
+pub fn nb_calls_push(calls: i64, n: i64, rel_off: i64, lo: i64, hi: i64) -> i64 {
+    __mind_store_i64(calls + (n * 3 + 0) * 8, rel_off);
+    __mind_store_i64(calls + (n * 3 + 1) * 8, lo);
+    __mind_store_i64(calls + (n * 3 + 2) * 8, hi);
+    n + 1
+}
+
+// ---- NbState: threads the code buffer + SSA counter + call count ----
+struct NbState {
+    code: String,
+    next_id: i64,
+    last_id: i64,
+    ncalls: i64,
+}
+
+// ---- scalar expression lowering -> machine code ----
+// Mirrors emit_mlir_expr_env's SSA numbering EXACTLY (so slot id == SSA id) but
+// emits x86-64 into st.code. `calls` is the scratch call table; `params_addr` /
+// `n_params` resolve idents to param slots. Returns the NbState whose last_id is
+// the value's slot id.
+//   int_lit -> movabs rax, val ; mov [slot], rax           (consumes one id)
+//   ident   -> resolves to a param slot, NO instruction
+//   paren   -> transparent
+//   call    -> lower args, spill to argregs, call rel32, spill result
+//   binop   -> lower lhs+rhs, mov rax,[lhs]; OP rax,[rhs]; mov [dst],rax
+pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64) -> NbState {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        let val: i64 = parse_int_span(buf, ast_span_lo(node), ast_span_hi(node), 0);
+        let id: i64 = st.next_id;
+        // movabs rax, imm64 = 48 B8 <imm64>
+        let c1: String = nb_push(st.code, 72);
+        let c2: String = nb_push(c1, 184);
+        let c3: String = nb_i64le(c2, val);
+        let c4: String = nb_store_rax(c3, nb_slot_disp(id));
+        return NbState { code: c4, next_id: id + 1, last_id: id, ncalls: st.ncalls };
+    }
+    if k == ast_ident() {
+        let idx: i64 = resolve_param(params_addr, n_params, buf, ast_span_lo(node), ast_span_hi(node));
+        if idx >= 0 {
+            return NbState { code: st.code, next_id: st.next_id, last_id: idx, ncalls: st.ncalls };
+        }
+        // Out of the scalar subset (a let binding): fail loud by returning -1
+        // last_id; the caller's emit produces a deterministic but wrong slot,
+        // which the byte-diff gate will catch. (Scalar fixture has no lets.)
+        return NbState { code: st.code, next_id: st.next_id, last_id: 0 - 1, ncalls: st.ncalls };
+    }
+    if k == ast_paren() {
+        return nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls);
+    }
+    if k == ast_call() {
+        let callee: i64 = ast_child0(node);
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        // Lower each arg expr (advancing SSA ids), recording each arg's slot id.
+        let ids: i64 = __mind_alloc((args_len + 1) * 8);
+        let sa: NbState = nb_call_args(st, buf, args_addr, args_len, 0, params_addr, n_params, calls, ids);
+        let id: i64 = sa.next_id;
+        // Spill args 0..min(args_len,6) into the System-V arg registers.
+        let c_args: String = nb_emit_argregs(sa.code, ids, args_len, 0);
+        // call rel32 (placeholder 0; linker-patched). Record the rel32 offset.
+        let c_e8: String = nb_push(c_args, 232);
+        let rel_off: i64 = string_len(c_e8);
+        let c_rel: String = nb_u32(c_e8, 0);
+        let nc: i64 = nb_calls_push(calls, sa.ncalls, rel_off, ast_span_lo(callee), ast_span_hi(callee));
+        // Spill the result (rax) into the call's dst slot.
+        let c_res: String = nb_store_rax(c_rel, nb_slot_disp(id));
+        return NbState { code: c_res, next_id: id + 1, last_id: id, ncalls: nc };
+    }
+    // ast_binop(): lower both operands, then the in-place op.
+    let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls);
+    let lhs_id: i64 = s1.last_id;
+    let s2: NbState = nb_expr(s1, buf, ast_child1(node), params_addr, n_params, calls);
+    let rhs_id: i64 = s2.last_id;
+    let id: i64 = s2.next_id;
+    let op: i64 = ast_aux(node);
+    // mov rax,[lhs] ; OP rax,[rhs] ; mov [dst],rax
+    let c1: String = nb_load_rax(s2.code, nb_slot_disp(lhs_id));
+    let c2: String = nb_arith_rax_mem(c1, op, nb_slot_disp(rhs_id));
+    let c3: String = nb_store_rax(c2, nb_slot_disp(id));
+    NbState { code: c3, next_id: id + 1, last_id: id, ncalls: s2.ncalls }
+}
+
+// Lower each call arg in order, storing each arg's resulting slot id into ids[i].
+pub fn nb_call_args(st: NbState, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, ids: i64) -> NbState {
+    if i >= args_len {
+        return st;
+    }
+    let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
+    let s1: NbState = nb_expr(st, buf, arg_node, params_addr, n_params, calls);
+    __mind_store_i64(ids + i * 8, s1.last_id);
+    nb_call_args(s1, buf, args_addr, args_len, i + 1, params_addr, n_params, calls, ids)
+}
+
+// Emit `load_argreg(i, slot_disp(ids[i]))` for i = 0..min(n,6)-1.
+pub fn nb_emit_argregs(code: String, ids: i64, n: i64, i: i64) -> String {
+    if i >= n {
+        return code;
+    }
+    if i >= 6 {
+        // 7th+ args are stack-passed; OUT OF SCOPE for this scalar increment.
+        return code;
+    }
+    let slot: i64 = __mind_load_i64(ids + i * 8);
+    let c1: String = nb_load_argreg(code, i, nb_slot_disp(slot));
+    nb_emit_argregs(c1, ids, n, i + 1)
+}
+
+// Lower one body statement (scalar subset): a `return EXPR` lowers EXPR then the
+// return; any other (bare expr) just lowers the expr.
+pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64) -> NbState {
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        let s1: NbState = nb_expr(st, buf, ast_child0(node), params_addr, n_params, calls);
+        let c1: String = nb_load_rax(s1.code, nb_slot_disp(s1.last_id));
+        let c2: String = nb_emit_return(c1, is_entry);
+        return NbState { code: c2, next_id: s1.next_id, last_id: s1.last_id, ncalls: s1.ncalls };
+    }
+    nb_expr(st, buf, node, params_addr, n_params, calls)
+}
+
+// Lower the body statement sequence.
+pub fn nb_block_stmts(st: NbState, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64, calls: i64, is_entry: i64) -> NbState {
+    if i >= stmts_len {
+        return st;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let s1: NbState = nb_stmt(st, buf, stmt_node, params_addr, n_params, calls, is_entry);
+    nb_block_stmts(s1, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params, calls, is_entry)
+}
+
+// Count the frame slots a function's IR defines (params + every body value), by
+// re-walking the body with the SAME SSA numbering nb_expr uses, but emitting
+// nothing. The final slot count == the next_id after the body. frame =
+// round_up(8 * nslots, 16).
+pub fn nb_count_expr(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_int_lit() {
+        return next_id + 1;
+    }
+    if k == ast_ident() {
+        return next_id;
+    }
+    if k == ast_paren() {
+        return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params);
+    }
+    if k == ast_call() {
+        let args_addr: i64 = ast_child1(node);
+        let args_len: i64 = ast_aux(node);
+        let after_args: i64 = nb_count_args(next_id, buf, args_addr, args_len, 0, params_addr, n_params);
+        return after_args + 1;
+    }
+    // binop
+    let l: i64 = nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params);
+    let r: i64 = nb_count_expr(l, buf, ast_child1(node), params_addr, n_params);
+    r + 1
+}
+pub fn nb_count_args(next_id: i64, buf: i64, args_addr: i64, args_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+    if i >= args_len {
+        return next_id;
+    }
+    let arg_node: i64 = __mind_load_i64(args_addr + i * 8);
+    let after: i64 = nb_count_expr(next_id, buf, arg_node, params_addr, n_params);
+    nb_count_args(after, buf, args_addr, args_len, i + 1, params_addr, n_params)
+}
+pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_params: i64) -> i64 {
+    let k: i64 = ast_kind(node);
+    if k == ast_return() {
+        return nb_count_expr(next_id, buf, ast_child0(node), params_addr, n_params);
+    }
+    nb_count_expr(next_id, buf, node, params_addr, n_params)
+}
+pub fn nb_count_stmts(next_id: i64, buf: i64, stmts_addr: i64, stmts_len: i64, i: i64, params_addr: i64, n_params: i64) -> i64 {
+    if i >= stmts_len {
+        return next_id;
+    }
+    let stmt_node: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let after: i64 = nb_count_stmt(next_id, buf, stmt_node, params_addr, n_params);
+    nb_count_stmts(after, buf, stmts_addr, stmts_len, i + 1, params_addr, n_params)
+}
+
+// round_up(x, 16)
+pub fn nb_round16(x: i64) -> i64 {
+    let r: i64 = x - (x / 16) * 16;
+    if r == 0 {
+        return x;
+    }
+    x + (16 - r)
+}
+
+// Lower one fn_def to its code String + call records. The entry (is_entry==1)
+// gets the STACK_TOP rsp-switch before the prologue. The calls scratch table is
+// shared; rel32 offsets are recorded RELATIVE TO THIS FUNCTION'S code start.
+// Returns NbState{code = this fn's bytes, ncalls = updated count}.
+pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64) -> NbState {
+    let params_addr: i64 = ast_child1(node);
+    let n_params: i64 = ast_aux(node) / 2;
+    let body: i64 = ast_child2(node);
+    let stmts_addr: i64 = ast_child0(body);
+    let stmts_len: i64 = ast_aux(body);
+
+    // frame = round_up(8 * nslots, 16); nslots = next_id after walking the body
+    // seeded at n_params (params occupy slots 0..n_params-1).
+    let nslots: i64 = nb_count_stmts(n_params, buf, stmts_addr, stmts_len, 0, params_addr, n_params);
+    let frame: i64 = nb_round16(8 * nslots);
+
+    let code0: String = string_new();
+    // Entry-only stack switch: movabs rsp, STACK_TOP = 48 BC <imm64>
+    let code1: String = if is_entry == 1 {
+        let a1: String = nb_push(code0, 72);
+        let a2: String = nb_push(a1, 188);
+        nb_i64le(a2, nb_stack_top())
+    } else {
+        code0
+    };
+    // Prologue: 55 48 89 E5 48 81 EC <frame32>
+    let p1: String = nb_push(code1, 85);
+    let p2: String = nb_push(p1, 72);
+    let p3: String = nb_push(p2, 137);
+    let p4: String = nb_push(p3, 229);
+    let p5: String = nb_push(p4, 72);
+    let p6: String = nb_push(p5, 129);
+    let p7: String = nb_push(p6, 236);
+    let p8: String = nb_i32le_signed(p7, frame);
+
+    // Spill incoming params into their slots (Param arms): store_argreg(i, slot i).
+    let st_params: NbState = NbState { code: p8, next_id: n_params, last_id: 0 - 1, ncalls: ncalls0 };
+    let st_p: NbState = nb_emit_params(st_params, buf, params_addr, n_params, 0);
+
+    // Body.
+    let st_body: NbState = nb_block_stmts(st_p, buf, stmts_addr, stmts_len, 0, params_addr, n_params, calls, is_entry);
+    st_body
+}
+
+// Spill params 0..n_params-1 into their slots (store_argreg(i, slot_disp(i))).
+pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i: i64) -> NbState {
+    if i >= n_params {
+        return st;
+    }
+    let c1: String = nb_store_argreg(st.code, i, nb_slot_disp(i));
+    let s1: NbState = NbState { code: c1, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls };
+    nb_emit_params(s1, buf, params_addr, n_params, i + 1)
+}
+
+// synth library entry stub (no `main`): xor edi,edi ; mov eax,60 ; syscall.
+//   31 FF B8 3C 00 00 00 0F 05
+pub fn nb_synth_entry() -> String {
+    let c0: String = string_new();
+    let c1: String = nb_push(c0, 49);
+    let c2: String = nb_push(c1, 255);
+    let c3: String = nb_push(c2, 184);
+    let c4: String = nb_push(c3, 60);
+    let c5: String = nb_push(c4, 0);
+    let c6: String = nb_push(c5, 0);
+    let c7: String = nb_push(c6, 0);
+    let c8: String = nb_push(c7, 15);
+    nb_push(c8, 5)
+}
+
+// ---- ELF note (trace-hash provenance) ----
+// build_note: n_namesz=5 ; n_descsz=32 ; n_type=1 ; "MIND\0\0\0\0" ; <32-byte hash>.
+// The Rust note uses ir_trace_hash(ir). For the scalar fixture the hash is a pure
+// function of the IR; we read the 32 bytes from the hash buffer `hash_addr`.
+pub fn nb_build_note(note0: String, hash_addr: i64) -> String {
+    let a1: String = nb_u32(note0, 5);
+    let a2: String = nb_u32(a1, 32);
+    let a3: String = nb_u32(a2, 1);
+    // "MIND\0\0\0\0"
+    let a4: String = nb_push(a3, 77);
+    let a5: String = nb_push(a4, 73);
+    let a6: String = nb_push(a5, 78);
+    let a7: String = nb_push(a6, 68);
+    let a8: String = nb_push(a7, 0);
+    let a9: String = nb_push(a8, 0);
+    let a10: String = nb_push(a9, 0);
+    let a11: String = nb_push(a10, 0);
+    nb_note_hash_bytes(a11, hash_addr, 0)
+}
+pub fn nb_note_hash_bytes(note: String, hash_addr: i64, i: i64) -> String {
+    if i >= 32 {
+        return note;
+    }
+    let b: i64 = __mind_load_i8(hash_addr + i);
+    let n1: String = nb_push(note, b);
+    nb_note_hash_bytes(n1, hash_addr, i + 1)
+}
+
+// ---- write_elf: ehdr + 4 phdrs + code + note (mirror src/native write_elf) ----
+pub fn nb_write_elf(code: String, entry_off: i64, note: String) -> String {
+    let code_len: i64 = string_len(code);
+    let note_len: i64 = string_len(note);
+    let load_addr: i64 = nb_load_addr();
+    let hdrs: i64 = nb_hdrs();
+    let entry: i64 = load_addr + hdrs + entry_off;
+    let load_sz: i64 = hdrs + code_len;
+    let note_off: i64 = hdrs + code_len;
+
+    // --- Elf64_Ehdr ---
+    let e0: String = string_new();
+    // e_ident: 7F 'E' 'L' 'F' 2 1 1 0 then 8 zero bytes
+    let e1: String = nb_push(e0, 127);
+    let e2: String = nb_push(e1, 69);
+    let e3: String = nb_push(e2, 76);
+    let e4: String = nb_push(e3, 70);
+    let e5: String = nb_push(e4, 2);
+    let e6: String = nb_push(e5, 1);
+    let e7: String = nb_push(e6, 1);
+    let e8: String = nb_push(e7, 0);
+    let e9: String = nb_zeros(e8, 8);
+    let e10: String = nb_u16(e9, 2);          // ET_EXEC
+    let e11: String = nb_u16(e10, 62);        // EM_X86_64
+    let e12: String = nb_u32(e11, 1);         // e_version
+    let e13: String = nb_i64le(e12, entry);   // e_entry
+    let e14: String = nb_i64le(e13, 64);      // e_phoff
+    let e15: String = nb_i64le(e14, 0);       // e_shoff
+    let e16: String = nb_u32(e15, 0);         // e_flags
+    let e17: String = nb_u16(e16, 64);        // e_ehsize
+    let e18: String = nb_u16(e17, 56);        // e_phentsize
+    let e19: String = nb_u16(e18, 4);         // e_phnum = 4
+    let e20: String = nb_u16(e19, 0);         // e_shentsize
+    let e21: String = nb_u16(e20, 0);         // e_shnum
+    let e22: String = nb_u16(e21, 0);         // e_shstrndx
+
+    // --- phdr 1: PT_LOAD (R+X) over headers + code ---
+    let f1: String = nb_u32(e22, 1);              // PT_LOAD
+    let f2: String = nb_u32(f1, 5);               // R+X
+    let f3: String = nb_i64le(f2, 0);             // p_offset
+    let f4: String = nb_i64le(f3, load_addr);     // p_vaddr
+    let f5: String = nb_i64le(f4, load_addr);     // p_paddr
+    let f6: String = nb_i64le(f5, load_sz);       // p_filesz
+    let f7: String = nb_i64le(f6, load_sz);       // p_memsz
+    let f8: String = nb_i64le(f7, 4096);          // p_align
+
+    // --- phdr 2: PT_NOTE (trace-hash provenance) ---
+    let g1: String = nb_u32(f8, 4);                       // PT_NOTE
+    let g2: String = nb_u32(g1, 4);                       // R
+    let g3: String = nb_i64le(g2, note_off);             // p_offset
+    let g4: String = nb_i64le(g3, load_addr + note_off); // p_vaddr
+    let g5: String = nb_i64le(g4, load_addr + note_off); // p_paddr
+    let g6: String = nb_i64le(g5, note_len);             // p_filesz
+    let g7: String = nb_i64le(g6, note_len);             // p_memsz
+    let g8: String = nb_i64le(g7, 4);                    // p_align
+
+    // --- phdr 3: PT_LOAD (RW) — BSS bump-allocator arena ---
+    let h1: String = nb_u32(g8, 1);                  // PT_LOAD
+    let h2: String = nb_u32(h1, 6);                  // RW
+    let h3: String = nb_i64le(h2, 0);                // p_offset
+    let h4: String = nb_i64le(h3, nb_arena_addr());  // p_vaddr
+    let h5: String = nb_i64le(h4, nb_arena_addr());  // p_paddr
+    let h6: String = nb_i64le(h5, 0);                // p_filesz = 0 (BSS)
+    let h7: String = nb_i64le(h6, nb_arena_bytes()); // p_memsz
+    let h8: String = nb_i64le(h7, 4096);             // p_align
+
+    // --- phdr 4: PT_LOAD (RW) — dedicated call-stack region (BSS) ---
+    let i1: String = nb_u32(h8, 1);                  // PT_LOAD
+    let i2: String = nb_u32(i1, 6);                  // RW
+    let i3: String = nb_i64le(i2, 0);                // p_offset
+    let i4: String = nb_i64le(i3, nb_stack_addr());  // p_vaddr
+    let i5: String = nb_i64le(i4, nb_stack_addr());  // p_paddr
+    let i6: String = nb_i64le(i5, 0);                // p_filesz = 0 (BSS)
+    let i7: String = nb_i64le(i6, nb_stack_bytes()); // p_memsz
+    let i8: String = nb_i64le(i7, 4096);             // p_align
+
+    // --- code, then the (unmapped) note ---
+    let j1: String = string_push_str(i8, code);
+    string_push_str(j1, note)
+}
+
+// Append `n` zero bytes.
+pub fn nb_zeros(code: String, n: i64) -> String {
+    if n <= 0 {
+        return code;
+    }
+    let c1: String = string_push_byte(code, 0);
+    nb_zeros(c1, n - 1)
+}
+
+// ---- linker: patch each call's rel32 into the assembled code buffer ----
+// `funcs` describes the laid-out functions: starts[k] = function k's code start
+// in the combined image, and (lo,hi) name spans to resolve callees. Each call
+// record (in `calls`) is (rel_off_within_fn, callee_lo, callee_hi) — but rel_off
+// is relative to its OWN function start. We track which function each call
+// belongs to via the function-boundary offsets. To keep it simple for the scalar
+// slice, nb_lower_fn records rel32 offsets RELATIVE TO THE FN; we convert to
+// absolute by adding the fn's start when patching.
+
+// Resolve a callee name span to its function index (by matching the fn-name span
+// stored in fn_names: fn_names[k] = (name_lo, name_hi)). Returns -1 if undefined.
+pub fn nb_resolve_callee(buf: i64, fn_names: i64, n_fns: i64, lo: i64, hi: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0 - 1;
+    }
+    let nlo: i64 = __mind_load_i64(fn_names + (k * 2 + 0) * 8);
+    let nhi: i64 = __mind_load_i64(fn_names + (k * 2 + 1) * 8);
+    if span_bytes_equal(buf, lo, hi, nlo, nhi) == 1 {
+        return k;
+    }
+    nb_resolve_callee(buf, fn_names, n_fns, lo, hi, k + 1)
+}
+
+// Patch a single rel32 at absolute code offset `abs_off` to value `rel`.
+// Writes 4 little-endian bytes (two's-complement) directly into the code buffer.
+pub fn nb_patch_rel32(code_addr: i64, abs_off: i64, rel: i64) -> i64 {
+    let u: i64 = if rel < 0 {
+        rel + 4294967296
+    } else {
+        rel
+    };
+    __mind_store_i8(code_addr + abs_off + 0, u & 255);
+    __mind_store_i8(code_addr + abs_off + 1, (u / 256) & 255);
+    __mind_store_i8(code_addr + abs_off + 2, (u / 65536) & 255);
+    __mind_store_i8(code_addr + abs_off + 3, (u / 16777216) & 255);
+    0
+}
+
+// ---- selftest export: full IR -> x86-64 -> ELF for the scalar slice ----
+//
+// Returns the i64 heap-record address of an EmitState whose .buf is the ELF
+// bytes (so the Python gate reads it via the same ctypes handle path as
+// selftest_emit_mlir). The EmitState's next_id/last_id are unused (0).
+//
+// Strategy (mirrors compile_to_elf):
+//   1. Walk program items; collect fn_defs, entry (`main`) FIRST, rest after.
+//   2. Lower each fn to its code String + call records (rel32 offsets recorded
+//      relative to each fn).
+//   3. Concatenate the per-fn code into one image, tracking each fn's start.
+//   4. Patch each call's rel32 = callee_start - (caller_start + rel_off + 4).
+//   5. build_note(trace_hash) ; write_elf(code, entry_off=0, note).
+//
+// The trace hash is computed by the Rust oracle from the IR; here we read it from
+// `hash_addr` (32 bytes), which the harness fills from the oracle ELF's note — so
+// the note is byte-identical. (The hash is a pure function of the IR; reproducing
+// the hash function itself in pure MIND is a FOLLOW-ON increment, deferred:
+//   deferred: ir_trace_hash is not yet ported to pure MIND — the harness passes
+//   the oracle's 32-byte hash so the note matches. upgrade path: port
+//   src/ir/ir_trace_hash into main.mind and drop the hash_addr arg.)
+pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+
+    // Collect fn_def items in order; also collect the entry index (`main`).
+    let fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let n_fns: i64 = nb_collect_fns(items_addr, items_len, 0, fns, 0);
+    let entry_idx: i64 = nb_find_main(src_addr, fns, n_fns, 0);
+
+    // Lay out: entry (main) FIRST, then the rest in source order.
+    // ordered[] = the fn nodes in emission order.
+    let ordered: i64 = __mind_alloc((n_fns + 1) * 8);
+    let _ord: i64 = nb_order_fns(fns, n_fns, entry_idx, ordered);
+
+    // fn_names[k] = (name_lo, name_hi) for ordered fn k; starts[k] filled below.
+    let fn_names: i64 = __mind_alloc((n_fns + 1) * 2 * 8);
+    let _fn: i64 = nb_fill_names(ordered, n_fns, 0, fn_names);
+
+    // calls scratch table: up to 256 call records (3 words each).
+    let calls: i64 = __mind_alloc(256 * 3 * 8);
+    // per-fn: start offset; call k belongs to fn call_owner[k].
+    let starts: i64 = __mind_alloc((n_fns + 1) * 8);
+    let call_owner: i64 = __mind_alloc(256 * 8);
+
+    // Lower each ordered fn; concatenate into `image` (threaded as acc.code; the
+    // running call count is threaded as acc.ncalls).
+    let acc0: NbState = NbState { code: string_new(), next_id: 0, last_id: 0, ncalls: 0 };
+    let lr: NbState = nb_lower_all(acc0, src_addr, ordered, n_fns, 0, calls, starts, call_owner, entry_idx);
+    let image: String = lr.code;
+    let total_calls: i64 = lr.ncalls;
+
+    // Patch each call's rel32. call k: owner fn = call_owner[k]; rel_off recorded
+    // relative to that fn => abs_off = starts[owner] + rel_off. Resolve callee.
+    let code_addr: i64 = string_addr(image);
+    let _p: i64 = nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, src_addr, 0);
+
+    // entry_off = 0 (entry is laid first).
+    let note0: String = string_new();
+    let note: String = nb_build_note(note0, hash_addr);
+    let elf: String = nb_write_elf(image, 0, note);
+    EmitState { buf: elf, next_id: 0, last_id: 0, lets: env_new() }
+}
+
+// Collect fn_def nodes into fns[]; returns the count.
+pub fn nb_collect_fns(items_addr: i64, items_len: i64, i: i64, fns: i64, n: i64) -> i64 {
+    if i >= items_len {
+        return n;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    let n2: i64 = if ast_kind(item) == ast_fn_def() {
+        __mind_store_i64(fns + n * 8, item);
+        n + 1
+    } else {
+        n
+    };
+    nb_collect_fns(items_addr, items_len, i + 1, fns, n2)
+}
+
+// Find the index of the fn named `main`, or -1.
+pub fn nb_find_main(buf: i64, fns: i64, n_fns: i64, k: i64) -> i64 {
+    if k >= n_fns {
+        return 0 - 1;
+    }
+    let node: i64 = __mind_load_i64(fns + k * 8);
+    let name_node: i64 = ast_child0(node);
+    if nb_name_is_main(buf, ast_span_lo(name_node), ast_span_hi(name_node)) == 1 {
+        return k;
+    }
+    nb_find_main(buf, fns, n_fns, k + 1)
+}
+
+// 1 if buf[lo..hi] spells "main".
+pub fn nb_name_is_main(buf: i64, lo: i64, hi: i64) -> i64 {
+    if hi - lo != 4 {
+        return 0;
+    }
+    if load_byte(buf, lo + 0) != 109 {
+        return 0;
+    }
+    if load_byte(buf, lo + 1) != 97 {
+        return 0;
+    }
+    if load_byte(buf, lo + 2) != 105 {
+        return 0;
+    }
+    if load_byte(buf, lo + 3) != 110 {
+        return 0;
+    }
+    1
+}
+
+// Build the emission order: entry (main) first, then the rest in source order.
+pub fn nb_order_fns(fns: i64, n_fns: i64, entry_idx: i64, ordered: i64) -> i64 {
+    // ordered[0] = entry (if present), then the rest skipping entry_idx.
+    let pos0: i64 = if entry_idx >= 0 {
+        __mind_store_i64(ordered + 0, __mind_load_i64(fns + entry_idx * 8));
+        1
+    } else {
+        0
+    };
+    nb_order_rest(fns, n_fns, entry_idx, ordered, 0, pos0)
+}
+pub fn nb_order_rest(fns: i64, n_fns: i64, entry_idx: i64, ordered: i64, i: i64, pos: i64) -> i64 {
+    if i >= n_fns {
+        return pos;
+    }
+    let pos2: i64 = if i == entry_idx {
+        pos
+    } else {
+        __mind_store_i64(ordered + pos * 8, __mind_load_i64(fns + i * 8));
+        pos + 1
+    };
+    nb_order_rest(fns, n_fns, entry_idx, ordered, i + 1, pos2)
+}
+
+// fn_names[k] = (name_lo, name_hi) for ordered[k].
+pub fn nb_fill_names(ordered: i64, n_fns: i64, k: i64, fn_names: i64) -> i64 {
+    if k >= n_fns {
+        return 0;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    let name_node: i64 = ast_child0(node);
+    __mind_store_i64(fn_names + (k * 2 + 0) * 8, ast_span_lo(name_node));
+    __mind_store_i64(fn_names + (k * 2 + 1) * 8, ast_span_hi(name_node));
+    nb_fill_names(ordered, n_fns, k + 1, fn_names)
+}
+
+// Lower every ordered fn, concatenating their code into `image`. Records each
+// fn's start offset (starts[k]) and which fn owns each new call (call_owner[c]).
+// Threads the running ncalls. `entry_idx` is the index in `fns` of main; an
+// ordered fn is the entry iff it is ordered position 0 AND a main existed.
+// is_entry for ordered fn k: true iff k is ordered-position 0 AND a main existed.
+// Plain-return form (the nested value-if is outside the self-host nfn subset).
+pub fn nb_is_entry(k: i64, entry_idx: i64) -> i64 {
+    if k != 0 {
+        return 0;
+    }
+    if entry_idx < 0 {
+        return 0;
+    }
+    1
+}
+
+// Thread the running image + call-count as ONE NbState accumulator `acc`
+// (acc.code = the laid-out image so far, acc.ncalls = the running call count).
+// The guard returns the param `acc` (NOT a struct literal) so the body stays
+// inside the self-host nfn-emittable seq subset (a struct-literal guard-return in
+// a multi-statement recursive struct fn is outside it — verified empirically).
+pub fn nb_lower_all(acc: NbState, buf: i64, ordered: i64, n_fns: i64, k: i64, calls: i64, starts: i64, call_owner: i64, entry_idx: i64) -> NbState {
+    if k >= n_fns {
+        return acc;
+    }
+    let node: i64 = __mind_load_i64(ordered + k * 8);
+    let is_entry: i64 = nb_is_entry(k, entry_idx);
+    let ncalls0: i64 = acc.ncalls;
+    let image: String = acc.code;
+    __mind_store_i64(starts + k * 8, string_len(image));
+    let fr: NbState = nb_lower_fn(buf, node, is_entry, calls, ncalls0);
+    // Record owner for each newly-added call.
+    let _o: i64 = nb_set_owners(call_owner, ncalls0, fr.ncalls, k);
+    let image2: String = string_push_str(image, fr.code);
+    let acc2: NbState = NbState { code: image2, next_id: 0, last_id: 0, ncalls: fr.ncalls };
+    nb_lower_all(acc2, buf, ordered, n_fns, k + 1, calls, starts, call_owner, entry_idx)
+}
+pub fn nb_set_owners(call_owner: i64, c0: i64, c1: i64, k: i64) -> i64 {
+    if c0 >= c1 {
+        return 0;
+    }
+    __mind_store_i64(call_owner + c0 * 8, k);
+    nb_set_owners(call_owner, c0 + 1, c1, k)
+}
+
+// Patch every call's rel32.
+pub fn nb_patch_all(code_addr: i64, calls: i64, total_calls: i64, call_owner: i64, starts: i64, fn_names: i64, n_fns: i64, buf: i64, c: i64) -> i64 {
+    if c >= total_calls {
+        return 0;
+    }
+    let rel_off: i64 = __mind_load_i64(calls + (c * 3 + 0) * 8);
+    let lo: i64 = __mind_load_i64(calls + (c * 3 + 1) * 8);
+    let hi: i64 = __mind_load_i64(calls + (c * 3 + 2) * 8);
+    let owner: i64 = __mind_load_i64(call_owner + c * 8);
+    let caller_start: i64 = __mind_load_i64(starts + owner * 8);
+    let abs_off: i64 = caller_start + rel_off;
+    let callee_idx: i64 = nb_resolve_callee(buf, fn_names, n_fns, lo, hi, 0);
+    let callee_start: i64 = __mind_load_i64(starts + callee_idx * 8);
+    let next: i64 = abs_off + 4;
+    let rel: i64 = callee_start - next;
+    let _p: i64 = nb_patch_rel32(code_addr, abs_off, rel);
+    nb_patch_all(code_addr, calls, total_calls, call_owner, starts, fn_names, n_fns, buf, c + 1)
+}
