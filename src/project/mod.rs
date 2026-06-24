@@ -881,7 +881,7 @@ fn build_cdylib_from_entry(
         mlir_build::resolve_tools().map_err(|e| anyhow!("MLIR build tools unavailable: {e}"))?;
 
     let build_opts = mlir_build::BuildOptions {
-        preset: "core",
+        preset: mlir_build::preset_for_mlir(&mlir.primal_mlir),
         emit_mlir_file: None,
         emit_llvm_file: None,
         emit_obj_file: None,
@@ -996,7 +996,7 @@ fn build_cdylib_from_entry(
                     let short = modname.rsplit('.').next().unwrap_or(modname);
                     let obj_path = obj_dir.join(format!("__std_{short}.o"));
                     let sub_bo = mlir_build::BuildOptions {
-                        preset: "core",
+                        preset: mlir_build::preset_for_mlir(&sub_mlir.primal_mlir),
                         emit_mlir_file: None,
                         emit_llvm_file: None,
                         emit_obj_file: Some(&obj_path),
