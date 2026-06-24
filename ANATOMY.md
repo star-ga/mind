@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2940 | **Est. tokens:** ~7,037,124
-**Generated:** 2026-06-24 16:30 UTC
+**Files:** 2942 | **Est. tokens:** ~7,038,201
+**Generated:** 2026-06-24 16:35 UTC
 
 ## Token Budget Guide
 
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 28 | ~61,465 |
+| `examples/mindc_mind/` | 30 | ~62,542 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -760,10 +760,12 @@
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22299 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `multi_let_smoke.py` (~1499 tok, large)
+- `native_self_host_smoke.sh` (~800 tok, large) — native_self_host_smoke.sh — the NATIVE BOOTSTRAP FIXED POINT gate (#14).
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
+- `self_host_native_driver_main.frag.mind` (~277 tok, medium) — ===== Native self-host driver (appended; NOT part of canonical main.mind) =====
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
