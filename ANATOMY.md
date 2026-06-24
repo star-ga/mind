@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2940 | **Est. tokens:** ~7,046,099
-**Generated:** 2026-06-24 12:36 UTC
+**Files:** 2941 | **Est. tokens:** ~7,047,021
+**Generated:** 2026-06-24 13:15 UTC
 
 ## Token Budget Guide
 
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 27 | ~60,543 |
+| `examples/mindc_mind/` | 28 | ~61,465 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -747,6 +747,7 @@
 - `collect_field_strings_smoke.py` (~1161 tok, large)
 - `cutover_coverage_measure.py` (~2238 tok, huge)
 - `EXPECTED.md` (~773 tok, large) — Phase 6.5 Stage 5 — Expected IR Text (APEX)
+- `fast_keystone.sh` (~922 tok, large) — fast_keystone.sh — fast LOCAL front-end keystone gate for the pure-MIND self-host
 - `FIXED_POINT_REPORT.md` (~1770 tok, huge) — Phase 6.5 — Bootstrap Fixed-Point Report
 - `fixed_point_smoke.py` (~3275 tok, huge)
 - `fixture.mind` (~183 tok, small) — Phase 6.4 emit_ir smoke fixture.
