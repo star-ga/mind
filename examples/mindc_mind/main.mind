@@ -15319,6 +15319,178 @@ pub fn emit_mlir_block_ends_return(blk: i64) -> i64 {
     0
 }
 
+// VALUE-POSITION IF (Rust-independence #14, PHASE 1.1) — the SSA phi merge.
+// A `let r = if c { A } else { B };` / `return if c { A } else { B };` where the
+// COND is a comparison and EACH branch is a SINGLE simple expr (bare identifier
+// or integer literal). Lowered byte-identical to `mindc --emit-mlir`:
+//   cf.cond_br %cond, ^if_then_N, ^if_else_N
+//   ^if_then_N:  %tr = arith.constant 0 : i64   (dead placeholder, oracle emits it)
+//                <opt const for a literal branch value>
+//                cf.br ^if_after_N(%<then value> : i64)
+//   ^if_else_N:  %er = arith.constant 0 : i64
+//                <opt const for a literal branch value>
+//                cf.br ^if_after_N(%<else value> : i64)
+//   ^if_after_N(%dst : i64):    <-- %dst IS the merged result (last_id)
+// SSA numbering is sequential: cond .. then-placeholder .. [then value] ..
+// else-placeholder .. [else value] .. dst. The branch-value id-extra is 0 for a
+// bare ident (resolves to a param/let id, no instr) or 1 for an int literal (a
+// fresh `arith.constant`). N (the label) == dst, computed up front.
+// ADDITIVE: only the let/return arms detecting a value-if route here.
+
+// Id-extra a simple branch value consumes when emitted: 0 for ident/param,
+// 1 for an int literal (one `arith.constant`). Branches are guaranteed simple
+// by the caller's value-if guard.
+pub fn emit_mlir_branch_value_extra(expr: i64) -> i64 {
+    if ast_kind(expr) == ast_int_lit() {
+        return 1;
+    }
+    0
+}
+
+// True iff `node` is a value-position if-expr in this increment's subset: an
+// ast_if with a comparison cond, an else block, and BOTH branches a single
+// simple expr (bare ident or int literal).
+pub fn is_mlir_value_if(node: i64) -> i64 {
+    if node == 0 {
+        return 0;
+    }
+    if ast_kind(node) != ast_if() {
+        return 0;
+    }
+    let cond_node: i64 = ast_child0(node);
+    if cond_is_comparison(cond_node) != 1 {
+        return 0;
+    }
+    let then_blk: i64 = ast_child1(node);
+    let else_blk: i64 = ast_child2(node);
+    if else_blk == 0 {
+        return 0;
+    }
+    let then_expr: i64 = branch_single_expr(then_blk);
+    let else_expr: i64 = branch_single_expr(else_blk);
+    if then_expr < 0 {
+        return 0;
+    }
+    if else_expr < 0 {
+        return 0;
+    }
+    let tk: i64 = ast_kind(then_expr);
+    let ek: i64 = ast_kind(else_expr);
+    if tk != ast_ident() {
+        if tk != ast_int_lit() {
+            return 0;
+        }
+    }
+    if ek != ast_ident() {
+        if ek != ast_int_lit() {
+            return 0;
+        }
+    }
+    1
+}
+
+// Emit one branch of a value-if: the dead `%<placeholder> = arith.constant 0`,
+// then the branch value, then `cf.br ^if_after_N(%<value> : i64)`. `placeholder`
+// is the dead const's SSA id; `value_seed` is the next_id from which the branch
+// VALUE is emitted (so a literal lands on the oracle id). `which` = 0 (then) /
+// 1 (else) labels the block header. Returns the EmitState after the cf.br.
+pub fn emit_mlir_value_if_branch(s: EmitState, buf: i64, which: i64, dst: i64, placeholder: i64, value_seed: i64, val_expr: i64, params_addr: i64, n_params: i64) -> EmitState {
+    // `  ^if_WHICH_N:`
+    let h0: EmitState = es_push(s, ch_space());
+    let h0b: EmitState = es_push(h0, ch_space());
+    let h1: EmitState = emit_mlir_if_label(h0b, which, dst);
+    let h2: EmitState = es_push(h1, 58);
+    let h3: EmitState = es_push(h2, ch_newline());
+    // dead placeholder `    %placeholder = arith.constant 0 : i64`
+    let p0: EmitState = emit_mlir_indent_pct(h3);
+    let p1: EmitState = emit_i64(p0, placeholder);
+    let p2: EmitState = emit_mlir_eq_arith(p1);
+    let p3: EmitState = emit_mlir_constant_kw(p2);
+    let p4: EmitState = es_push(p3, 48);
+    let p5: EmitState = emit_mlir_i64_nl(p4);
+    // branch value: ident emits nothing (last_id = param/let), literal emits a
+    // const. Seed next_id at value_seed so a literal lands on the oracle id.
+    let vstate: EmitState = EmitState { buf: p5.buf, next_id: value_seed, last_id: p5.last_id, lets: p5.lets };
+    let vs: EmitState = emit_mlir_expr_env(vstate, buf, val_expr, params_addr, n_params);
+    let val_id: i64 = vs.last_id;
+    // `    cf.br ^if_after_N(%val_id : i64)`
+    let z1: EmitState = emit_mlir_cf_kw(vs);
+    let z2: EmitState = es_push(z1, 98);
+    let z3: EmitState = es_push(z2, 114);
+    let z4: EmitState = es_push(z3, ch_space());
+    let z5: EmitState = emit_mlir_if_label(z4, 2, dst);
+    let z6: EmitState = es_push(z5, 40);
+    let z7: EmitState = es_push(z6, ch_percent());
+    let z8: EmitState = emit_i64(z7, val_id);
+    let z9: EmitState = emit_mlir_i64_close(z8);
+    es_push(z9, ch_newline())
+}
+
+// Emit a value-position if-expr (cond_br + both cf.br branches + the phi after-
+// block), byte-identical to the Rust oracle. Returns the EmitState whose last_id
+// is the merged phi `dst`; next_id is dst + 1. The caller (let/return arm) uses
+// `dst` as the bound value / returned id. Guarded by is_mlir_value_if.
+pub fn emit_mlir_value_if(s: EmitState, buf: i64, if_node: i64, params_addr: i64, n_params: i64) -> EmitState {
+    let cond_node: i64 = ast_child0(if_node);
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    let then_expr: i64 = branch_single_expr(then_blk);
+    let else_expr: i64 = branch_single_expr(else_blk);
+    // 1. condition (comparison cmpi). scw.last_id = the i1 cond id; scw.next_id
+    // is the first fresh id (the then-placeholder).
+    let scw: EmitState = emit_mlir_if_cond(s, buf, cond_node, params_addr, n_params);
+    let cond_id: i64 = scw.last_id;
+    // SSA numbering: then-placeholder, [then value extra], else-placeholder,
+    // [else value extra], dst. Computed up front because N (label) == dst.
+    let then_placeholder: i64 = scw.next_id;
+    let then_extra: i64 = emit_mlir_branch_value_extra(then_expr);
+    let then_value_seed: i64 = then_placeholder + 1;
+    let else_placeholder: i64 = then_value_seed + then_extra;
+    let else_extra: i64 = emit_mlir_branch_value_extra(else_expr);
+    let else_value_seed: i64 = else_placeholder + 1;
+    let dst: i64 = else_value_seed + else_extra;
+    // 2. cf.cond_br %cond, ^if_then_N, ^if_else_N
+    let b1: EmitState = emit_mlir_cf_kw(scw);
+    let b2: EmitState = es_push(b1, 99);
+    let b3: EmitState = es_push(b2, 111);
+    let b4: EmitState = es_push(b3, 110);
+    let b5: EmitState = es_push(b4, 100);
+    let b6: EmitState = es_push(b5, 95);
+    let b7: EmitState = es_push(b6, 98);
+    let b8: EmitState = es_push(b7, 114);
+    let b9: EmitState = es_push(b8, ch_space());
+    let b10: EmitState = es_push(b9, ch_percent());
+    let b11: EmitState = emit_i64(b10, cond_id);
+    let b12: EmitState = es_push(b11, ch_comma());
+    let b13: EmitState = es_push(b12, ch_space());
+    let b14: EmitState = emit_mlir_if_label(b13, 0, dst);
+    let b15: EmitState = es_push(b14, ch_comma());
+    let b16: EmitState = es_push(b15, ch_space());
+    let b17: EmitState = emit_mlir_if_label(b16, 1, dst);
+    let b18: EmitState = es_push(b17, ch_newline());
+    let bb: EmitState = EmitState { buf: b18.buf, next_id: dst, last_id: cond_id, lets: b18.lets };
+    // 3. then-branch + 4. else-branch
+    let then_s: EmitState = emit_mlir_value_if_branch(bb, buf, 0, dst, then_placeholder, then_value_seed, then_expr, params_addr, n_params);
+    let else_s: EmitState = emit_mlir_value_if_branch(then_s, buf, 1, dst, else_placeholder, else_value_seed, else_expr, params_addr, n_params);
+    // 5. ^if_after_N(%dst : i64):
+    let a0: EmitState = es_push(else_s, ch_space());
+    let a0b: EmitState = es_push(a0, ch_space());
+    let a1: EmitState = emit_mlir_if_label(a0b, 2, dst);
+    let a2: EmitState = es_push(a1, 40);
+    let a3: EmitState = es_push(a2, ch_percent());
+    let a4: EmitState = emit_i64(a3, dst);
+    let a5: EmitState = es_push(a4, ch_space());
+    let a6: EmitState = es_push(a5, 58);
+    let a7: EmitState = es_push(a6, ch_space());
+    let a8: EmitState = es_push(a7, 105);
+    let a9: EmitState = es_push(a8, 54);
+    let a10: EmitState = es_push(a9, 52);
+    let a11: EmitState = es_push(a10, 41);
+    let a12: EmitState = es_push(a11, 58);
+    let a13: EmitState = es_push(a12, ch_newline());
+    EmitState { buf: a13.buf, next_id: dst + 1, last_id: dst, lets: a13.lets }
+}
+
 // MLIR statement lowering, scalar i64 subset. `let` binds the value's SSA id;
 // `return` emits `    return %k : i64`. A trailing bare expression just lowers.
 //
@@ -15455,12 +15627,38 @@ pub fn emit_mlir_stmt_env(s: EmitState, buf: i64, node: i64, params_addr: i64, n
         return EmitState { buf: a13.buf, next_id: dst + 1, last_id: dst, lets: a13.lets };
     }
     if k == ast_let() {
-        let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child2(node), params_addr, n_params);
+        let init: i64 = ast_child2(node);
+        if is_mlir_value_if(init) == 1 {
+            let vif: EmitState = emit_mlir_value_if(s, buf, init, params_addr, n_params);
+            let nl: i64 = ast_child0(node);
+            let vlets: Map = env_bind(vif.lets, buf, ast_span_lo(nl), ast_span_hi(nl), vif.last_id + 1);
+            return EmitState { buf: vif.buf, next_id: vif.next_id, last_id: vif.last_id, lets: vlets };
+        }
+        let s1: EmitState = emit_mlir_expr_env(s, buf, init, params_addr, n_params);
         let name_leaf: i64 = ast_child0(node);
         let new_lets: Map = env_bind(s1.lets, buf, ast_span_lo(name_leaf), ast_span_hi(name_leaf), s1.last_id + 1);
         return EmitState { buf: s1.buf, next_id: s1.next_id, last_id: s1.last_id, lets: new_lets };
     }
     if k == ast_return() {
+        let ret_val: i64 = ast_child0(node);
+        if is_mlir_value_if(ret_val) == 1 {
+            let vif: EmitState = emit_mlir_value_if(s, buf, ret_val, params_addr, n_params);
+            let rid0: i64 = vif.last_id;
+            let r1: EmitState = es_push(vif, ch_space());
+            let r2: EmitState = es_push(r1, ch_space());
+            let r3: EmitState = es_push(r2, ch_space());
+            let r4: EmitState = es_push(r3, ch_space());
+            let r5: EmitState = es_push(r4, 114);
+            let r6: EmitState = es_push(r5, 101);
+            let r7: EmitState = es_push(r6, 116);
+            let r8: EmitState = es_push(r7, 117);
+            let r9: EmitState = es_push(r8, 114);
+            let r10: EmitState = es_push(r9, 110);
+            let r11: EmitState = es_push(r10, ch_space());
+            let r12: EmitState = es_push(r11, ch_percent());
+            let r13: EmitState = emit_i64(r12, rid0);
+            return emit_mlir_i64_nl(r13);
+        }
         let s1: EmitState = emit_mlir_expr_env(s, buf, ast_child0(node), params_addr, n_params);
         let rid: i64 = s1.last_id;
         let s2: EmitState = es_push(s1, ch_space());

@@ -44,6 +44,8 @@ CASES = [
     ("call", "fn g(x: i64) -> i64 { return x; }\nfn h() -> i64 { return g(5); }\n"),
     ("if_ret", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    if c == 0 {\n        return a;\n    }\n    return b;\n}\n"),
     ("if_val", "fn f(x: i64, a: i64, b: i64) -> i64 { if x { return a; } return b; }\n"),
+    ("if_phi", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    let r: i64 = if c == 0 { a } else { b };\n    return r;\n}\n"),
+    ("if_phi_ret", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    return if c == 0 { a } else { b };\n}\n"),
 ]
 
 # Hard-coded golden (verified vs `mindc --emit-mlir` 2026-06-24) for `add` — a
