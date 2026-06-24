@@ -26,10 +26,11 @@ It is also a Rust-first language and runtime for building intelligent systems wi
 
 The compiler produces deterministic binaries that execute inside the [Cognitive Kernel](https://mindlang.dev/docs/cognitive-kernel), MIND's microkernel runtime architecture with Control, Memory, and Verification planes.
 
-**MIND self-hosts.** The pure-MIND bootstrap front-end reproduces the canonical `mic@3`
-binary IR of its own source byte-for-byte against the Rust reference — the layer the evidence
-chain's `trace_hash` anchors on — so the Rust front-end is decorative at the layer that
-matters for provenance. See [`docs/roadmap.md`](docs/roadmap.md).
+**MIND self-hosts the front-end.** The pure-MIND bootstrap front-end reproduces the canonical `mic@3`
+binary IR of its own ~15k-line source byte-for-byte against the Rust reference — the layer the evidence
+chain's `trace_hash` anchors on (commit 1ec580a, keystone gate 7/7). The front-end is now decorative at the canonical-binary-IR layer;
+the backend (mic@3 → MLIR → ELF) remains Rust-based. Full self-hosting of the entire pipeline (Phase 15) is on the roadmap.
+See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Open-core vs proprietary runtime
 

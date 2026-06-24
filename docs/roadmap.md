@@ -19,6 +19,13 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   zero (`x / 0 = 0`), oversized shifts, and condition truthiness (`if c` tests
   non-zero, not the low bit) all lower deterministically; the narrow-int call
   ABI (i32/u32 across call boundaries) and struct narrow-field ABI are sound.
+- ✅ **Tensor operations tier 1: in-function + return** (v0.10.0) – dense tensor
+  literals (`[1.0, 2.0, 3.0]`), elementwise ops, and tensor-returning functions
+  now compile to ELF via the bufferization preset (commits 9f807bd, cb43c90).
+  **Scope note:** inter-function tensor-arg calls and deterministic intrinsics
+  (`zeros`, `ones`, `matmul`, `softmax`, `randn`, `transpose`) follow in Phase 11.
+  f32 tensor results are reproducible within a single substrate (x86 or ARM);
+  int/Q16 results are byte-identical across substrates (cross_substrate gate 12/12).
 
 ## Shipped (v0.7.1)
 
@@ -64,6 +71,11 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## In Progress
 
+- 🚧 **Phase 11: Complete Tensor System** – inter-function tensor-arg calls
+  (cross-function tensor ABI), deterministic intrinsics (`zeros`, `ones`,
+  `matmul`, `softmax`, `randn`, `transpose`), and full cross-substrate bit-identity
+  for int/Q16/f32 tensor results (f32 determinism requires ordered reductions,
+  see Phase 13.6).
 - 🚧 **Phase 10.6: Surface Syntax & Library Output** – tuple types,
   references, generics, slices, fixed-size arrays, struct literals,
   indexed/field assignment, multi-line arithmetic, RFC 0002 C-ABI export
