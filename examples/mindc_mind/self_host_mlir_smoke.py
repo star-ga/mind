@@ -42,6 +42,7 @@ CASES = [
     ("c", "fn c() -> i64 {\n    return 5;\n}\n"),
     ("two", "fn two(a: i64, b: i64) -> i64 {\n    let x: i64 = a + b;\n    return x * b;\n}\n"),
     ("call", "fn g(x: i64) -> i64 { return x; }\nfn h() -> i64 { return g(5); }\n"),
+    ("if_ret", "fn f(c: i64, a: i64, b: i64) -> i64 {\n    if c == 0 {\n        return a;\n    }\n    return b;\n}\n"),
 ]
 
 # Hard-coded golden (verified vs `mindc --emit-mlir` 2026-06-24) for `add` — a
