@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2938 | **Est. tokens:** ~7,042,427
-**Generated:** 2026-06-24 03:24 UTC
+**Files:** 2938 | **Est. tokens:** ~7,042,540
+**Generated:** 2026-06-24 03:42 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 23 | ~109,905 |
-| `tests/` | 246 | ~395,410 |
+| `tests/` | 246 | ~395,523 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3883,7 +3883,7 @@
 ### `tests/`
 
 - `array_ctor_push_get_run.rs` (~907 tok, large) — Copyright 2025 STARGA Inc.
-- `array_surface_run.rs` (~887 tok, large) — Copyright 2025 STARGA Inc.
+- `array_surface_run.rs` (~875 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
 
 - `matmul_gradient.mind` (~167 tok, small) — Autodiff test: MatMul gradient computation
@@ -4366,7 +4366,7 @@
 - `std_surface_json.rs` (~4343 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_logical_ops.rs` (~1187 tok, large) — Copyright 2026 STARGA Inc.
 - `std_surface_map_module.rs` (~2015 tok, huge) — Copyright 2025 STARGA Inc.
-- `std_surface_method_call.rs` (~2814 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_method_call.rs` (~2939 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_net_fs_process.rs` (~7308 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_c_stdlib_bundle.rs` (~1463 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
