@@ -624,7 +624,10 @@ fn validate_operands(
     };
 
     match instr {
-        Instr::ConstI64(_, _) | Instr::ConstF64(_, _) | Instr::ConstTensor(_, _, _, _) => {}
+        Instr::ConstI64(_, _)
+        | Instr::ConstF64(_, _)
+        | Instr::ConstTensor(_, _, _, _)
+        | Instr::ConstDenseTensor { .. } => {}
         Instr::BinOp { lhs, rhs, .. } => {
             check_defined(*lhs)?;
             check_defined(*rhs)?;
