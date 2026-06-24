@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Pure-MIND front-end self-hosts the full G2 differential corpus (0
+  unsupported).** The pure-MIND compiler (`examples/mindc_mind/main.mind`) now
+  lowers every top-level construct in the differential corpus byte-identically
+  to the Rust `--emit-ir` oracle. `enum NAME { .. }`, `extern "C" { .. }`
+  blocks, and `module NAME { .. }` blocks each lower to one item stub (the same
+  shape as `struct`/`const`), and a bare top-level arithmetic expression
+  (`1 + 2 * 3`) is const-folded to a single `const.i64 <val>` with Rust's exact
+  SSA numbering (root id = node count − 1, next_id = node count; parens
+  transparent; truncating integer division). The G2 differential harness drops
+  its stale source-level exclusions — `import` was already byte-identical (lexed
+  as `use`), and enum/extern/module/bare-expr are now ported — so a fixture the
+  front-end cannot handle surfaces as a `DIVERGE` rather than a silent
+  exclusion. Differential coverage rises from 38 to 67 MATCH / 0 DIVERGE /
+  0 MIND_UNSUPPORTED. Keystone 7/7 byte-identical, gap corpus 66/66, and
+  cross-substrate 12/12 are all preserved.
+
 - **`map<K,V>` same-name rebind now compiles and runs.** The idiomatic
   `let m = m.insert(k, v)` pattern (functional-update form with the map
   shadowing its previous binding) now compiles and executes correctly.
