@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2943 | **Est. tokens:** ~7,042,616
-**Generated:** 2026-06-25 11:44 UTC
+**Files:** 2943 | **Est. tokens:** ~7,042,769
+**Generated:** 2026-06-25 12:32 UTC
 
 ## Token Budget Guide
 
@@ -52,7 +52,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 31 | ~66,957 |
+| `examples/mindc_mind/` | 31 | ~67,110 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -766,7 +766,7 @@
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_native_driver_main.frag.mind` (~277 tok, medium) — ===== Native self-host driver (appended; NOT part of canonical main.mind) =====
-- `self_host_native_elf_smoke.py` (~4415 tok, huge)
+- `self_host_native_elf_smoke.py` (~4568 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
