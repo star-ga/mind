@@ -202,11 +202,33 @@ _STDLIB_MODULES = [
 # sequence (emit_div_mod_guarded, src/native 218+) so `vec_len(toks) / 3` in tok_count
 # emits idiv, not imul; (3) nb_emit_params copies the 7th+ stack-passed parameter from
 # `[rbp + 16 + 8*(i-6)]` instead of dropping it. Together these pushed the floor to
-# 61282. The NEXT blocker is at 0xf082 (a call-rel32 displacement shift): a downstream
-# fn (oracle 0x12dfc, frame 0x170) emits a `movabs rax, imm64` whose immediate (an
-# interned string-table / id offset) differs by 19 from the oracle — an upstream
-# count/ordering divergence distinct from the merge/div/stack-arg gaps. Raise this as
-# the blocker is pushed deeper; never lower it (a drop is a real regression).
+# 61282. PHASE 1.3 #14 then ported the CALLER-side System-V stack-arg sequence
+# (nb_emit_stack_pad / nb_emit_stackargs / nb_emit_stack_cleanup, mirroring
+# src/native/mod.rs Call arm 935-954): a call with >6 args now emits `sub rsp,8`
+# (odd-pad), pushes args[6:] right-to-left, then `add rsp,cleanup` — recovering
+# ~29855 B of the prior 30603 B shortfall (the whole-image delta dropped from
+# -30603 B to -748 B). The seeded ELF's `add rsp,imm32` cleanup distribution and
+# `sub rsp,8` pad count are now byte-for-byte identical to the oracle.
+#
+# The floor stays at 61282 because the byte-identical PREFIX is still capped at
+# 0xf082 — a FORWARD call-rel32 to a callee placed 748 B earlier in the mind image
+# than in the oracle. That residual -748 B is NOT a stack-arg or string-table/id
+# gap (the prompt's "movabs imm differs by 19 at 0x12dfc" was a misattribution).
+# It is the F2 value-if MERGE-PLACEHOLDER gap: in exactly 7 downstream fns (each
+# short by a multiple of 17 B = one elided `movabs rax,0 ; mov [slot],rax`
+# const0), the oracle emits THEN-side placeholder ConstI64(0)s for merged names
+# that the branch only carries through a NESTED `if` tail's branch_bindings, while
+# the pure-MIND nb_* native backend treats them as branch-DEFINED and resolves the
+# then-edge value to a let-env slot that misses to slot 0 ([rbp-8]). The first
+# occurrence is at oracle 0x3b43e (3 placeholders + 4 merge stores). The rule is
+# CONTEXT-DEPENDENT (a blanket "nested-export -> placeholder" narrowing regressed
+# `scan` back to 0x5d75), so it needs a per-edge analysis of lower.rs's join-block
+# phi predecessors before nb_merge_fill_defs can mirror it byte-exact.
+# deferred: port lower.rs's exact then/else-edge "name defined at this merge
+# predecessor?" predicate into nb_merge_fill_defs so the placeholder/value choice
+# for nested-if-exported merged names matches the oracle; that closes the last
+# 748 B and lets 0xf082 advance. Raise the floor as the blocker is pushed deeper;
+# never lower it (a drop is a real regression).
 _SEEDED_CODE_PREFIX_FLOOR = 61282
 # Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
 _ELF_CODE_START = 0x120
