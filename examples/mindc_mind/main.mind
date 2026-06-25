@@ -18249,11 +18249,30 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
     if op == op_div() {
         return nb_div_guarded(code, disp);
     }
+    // op_shl/op_shr: x86 variable shift takes the count in cl (src/native 760-766).
+    //   mov rcx, [rbp+disp32]   = 48 8B 8D <disp32>
+    //   shl rax, cl (D3 /4 = E0) | shr is ARITHMETIC: sar rax, cl (/7 = F8) = 48 D3 mod
+    // Ported for the SHA-256 trace-hash leg (nb_rotr32 / nb_shr32 / BE byte packing /
+    // digest serialise all use `<<`/`>>`). Byte-for-byte with the oracle's mind-native.
+    if op == op_shl() {
+        let s1: String = nb_push(code, 72);
+        let s2: String = nb_push(s1, 139);
+        let s3: String = nb_push(s2, 141);
+        let s4: String = nb_i32le_signed(s3, disp);
+        let s5: String = nb_push(s4, 72);
+        let s6: String = nb_push(s5, 211);
+        return nb_push(s6, 224);
+    }
+    if op == op_shr() {
+        let s1: String = nb_push(code, 72);
+        let s2: String = nb_push(s1, 139);
+        let s3: String = nb_push(s2, 141);
+        let s4: String = nb_i32le_signed(s3, disp);
+        let s5: String = nb_push(s4, 72);
+        let s6: String = nb_push(s5, 211);
+        return nb_push(s6, 248);
+    }
     // op_mul(): imul rax, [rbp+disp32] = 48 0F AF 85 <disp32>
-    // deferred: op_shl/op_shr use cl-based variable shifts (src/native 760-766) — not
-    // yet ported, so a shift binop still falls through to imul here. The self-host
-    // source uses no `<<`/`>>` in a native-emitted fn, so it never fires before the
-    // fixed point. upgrade path: port the `mov rcx,[rhs]; sh{l,r} rax,cl` form.
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 15);
     let c3: String = nb_push(c2, 175);
@@ -21569,7 +21588,353 @@ pub fn nb_shift_starts(starts: i64, n_fns: i64, delta: i64, k: i64) -> i64 {
     nb_shift_starts(starts, n_fns, delta, k + 1)
 }
 
-// ---- ELF note (trace-hash provenance) ----
+// ---- SHA-256 (trace-hash leg) — pure MIND, FIPS 180-4 ----
+//
+// SELF-COMPUTED trace hash (Rust-independence #14, PHASE 1.3 — TRACE-HASH).
+// The Rust oracle's note is `ir_trace_hash(ir) = mini_sha256(emit_mic3(ir))`
+// (src/ir/evidence.rs:72) over the SEEDED+PRUNED combined IR. This block ports
+// `src/deps::mini_sha256` / `sha256_compress` byte-for-byte (it is also the exact
+// twin of std/sha256.mind). It is INLINED here — rather than calling std.sha256 —
+// because main.mind is a single-file cdylib: only its own lowered bodies and the
+// `runtime-support/mind_intrinsics.c` weak shims link, and std.sha256's body is a
+// substrate module that is NOT one of those C shims, so a `sha256(...)` call would
+// stay an undefined symbol. `nb_*` prefixes keep these inside SECTION 4c and clear
+// of every existing name (first-seen dedup contract preserved).
+//
+// 32-bit-on-i64 discipline (REQUIRED in an i64 language, and the reason the new
+// path is self-flip-clean): every intermediate is masked with `& 4294967295`
+// (= 0xFFFFFFFF); logical right shift is `(x >> n) & 0xffffffff`; right-rotate is
+// `((x >> n) | (x << (32 - n))) & 0xffffffff`. Pure i64 +/&/^/<<,>> + mask — no
+// float, no wrapping-u32 type — so it emits byte-identically under the mic@3 flip.
+
+// mask32 — discard bits above bit 31. 4294967295 = 0xFFFF_FFFF.
+pub fn nb_mask32(x: i64) -> i64 {
+    x & 4294967295
+}
+// rotr32 — right-rotate in the 32-bit domain (shift-based, NOT subtraction).
+pub fn nb_rotr32(x: i64, n: i64) -> i64 {
+    ((x >> n) | (x << (32 - n))) & 4294967295
+}
+// shr32 — logical right-shift in the 32-bit domain.
+pub fn nb_shr32(x: i64, n: i64) -> i64 {
+    (x >> n) & 4294967295
+}
+// ch(x,y,z) = (x AND y) XOR (NOT x AND z); NOT x = 0xffffffff - (x & 0xffffffff).
+pub fn nb_ch(x: i64, y: i64, z: i64) -> i64 {
+    let notx: i64 = 4294967295 - (x & 4294967295);
+    nb_mask32((x & y) ^ (notx & z))
+}
+// maj(x,y,z) = (x AND y) XOR (x AND z) XOR (y AND z).
+pub fn nb_maj(x: i64, y: i64, z: i64) -> i64 {
+    nb_mask32((x & y) ^ (x & z) ^ (y & z))
+}
+// Σ0(a) = ROTR2 ^ ROTR13 ^ ROTR22 ; Σ1(e) = ROTR6 ^ ROTR11 ^ ROTR25.
+pub fn nb_bsig0(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 2) ^ nb_rotr32(x, 13) ^ nb_rotr32(x, 22))
+}
+pub fn nb_bsig1(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 6) ^ nb_rotr32(x, 11) ^ nb_rotr32(x, 25))
+}
+// σ0(w) = ROTR7 ^ ROTR18 ^ SHR3 ; σ1(w) = ROTR17 ^ ROTR19 ^ SHR10.
+pub fn nb_ssig0(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 7) ^ nb_rotr32(x, 18) ^ nb_shr32(x, 3))
+}
+pub fn nb_ssig1(x: i64) -> i64 {
+    nb_mask32(nb_rotr32(x, 17) ^ nb_rotr32(x, 19) ^ nb_shr32(x, 10))
+}
+
+// K[0..63] — FIPS 180-4 §4.2.2 cube-root constants (Rust SHA256_K, decimal).
+pub fn nb_k_word(i: i64) -> i64 {
+    if i == 0 { return 1116352408; }
+    if i == 1 { return 1899447441; }
+    if i == 2 { return 3049323471; }
+    if i == 3 { return 3921009573; }
+    if i == 4 { return 961987163; }
+    if i == 5 { return 1508970993; }
+    if i == 6 { return 2453635748; }
+    if i == 7 { return 2870763221; }
+    if i == 8 { return 3624381080; }
+    if i == 9 { return 310598401; }
+    if i == 10 { return 607225278; }
+    if i == 11 { return 1426881987; }
+    if i == 12 { return 1925078388; }
+    if i == 13 { return 2162078206; }
+    if i == 14 { return 2614888103; }
+    if i == 15 { return 3248222580; }
+    if i == 16 { return 3835390401; }
+    if i == 17 { return 4022224774; }
+    if i == 18 { return 264347078; }
+    if i == 19 { return 604807628; }
+    if i == 20 { return 770255983; }
+    if i == 21 { return 1249150122; }
+    if i == 22 { return 1555081692; }
+    if i == 23 { return 1996064986; }
+    if i == 24 { return 2554220882; }
+    if i == 25 { return 2821834349; }
+    if i == 26 { return 2952996808; }
+    if i == 27 { return 3210313671; }
+    if i == 28 { return 3336571891; }
+    if i == 29 { return 3584528711; }
+    if i == 30 { return 113926993; }
+    if i == 31 { return 338241895; }
+    if i == 32 { return 666307205; }
+    if i == 33 { return 773529912; }
+    if i == 34 { return 1294757372; }
+    if i == 35 { return 1396182291; }
+    if i == 36 { return 1695183700; }
+    if i == 37 { return 1986661051; }
+    if i == 38 { return 2177026350; }
+    if i == 39 { return 2456956037; }
+    if i == 40 { return 2730485921; }
+    if i == 41 { return 2820302411; }
+    if i == 42 { return 3259730800; }
+    if i == 43 { return 3345764771; }
+    if i == 44 { return 3516065817; }
+    if i == 45 { return 3600352804; }
+    if i == 46 { return 4094571909; }
+    if i == 47 { return 275423344; }
+    if i == 48 { return 430227734; }
+    if i == 49 { return 506948616; }
+    if i == 50 { return 659060556; }
+    if i == 51 { return 883997877; }
+    if i == 52 { return 958139571; }
+    if i == 53 { return 1322822218; }
+    if i == 54 { return 1537002063; }
+    if i == 55 { return 1747873779; }
+    if i == 56 { return 1955562222; }
+    if i == 57 { return 2024104815; }
+    if i == 58 { return 2227730452; }
+    if i == 59 { return 2361852424; }
+    if i == 60 { return 2428436474; }
+    if i == 61 { return 2756734187; }
+    if i == 62 { return 3204031479; }
+    3329325298
+}
+// H0..H7 — FIPS 180-4 §5.3.3 square-root constants (Rust SHA256_H0, decimal).
+pub fn nb_h_init(i: i64) -> i64 {
+    if i == 0 { return 1779033703; }
+    if i == 1 { return 3144134277; }
+    if i == 2 { return 1013904242; }
+    if i == 3 { return 2773480762; }
+    if i == 4 { return 1359893119; }
+    if i == 5 { return 2600822924; }
+    if i == 6 { return 528734635; }
+    1541459225
+}
+// W schedule helpers — 64 words stored stride-8 (like a Vec element).
+pub fn nb_w_get(w_addr: i64, i: i64) -> i64 {
+    __mind_load_i64(w_addr + i * 8)
+}
+pub fn nb_w_set(w_addr: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(w_addr + i * 8, v)
+}
+
+// compress_block — process one 64-byte block at `block_addr` (stride-1 bytes)
+// into the 8-word H state at `h_addr` (stride-8). Mirrors sha256_compress.
+// One round of compression. Working vars a..h live in the stride-8 scratch `v`
+// (v[0]=a..v[7]=h); state stays in MEMORY so the 64-round driver carries ONLY its
+// loop counter (single-carry while — the nfn-emittable subset; an 8-`let mut`
+// loop-carry is out of subset and fails the flip). Pure i64 + &0xffffffff masks.
+pub fn nb_sha256_round(v: i64, w_addr: i64, rnd: i64) -> i64 {
+    let va: i64 = __mind_load_i64(v + 0 * 8);
+    let vb: i64 = __mind_load_i64(v + 1 * 8);
+    let vc: i64 = __mind_load_i64(v + 2 * 8);
+    let vd: i64 = __mind_load_i64(v + 3 * 8);
+    let ve: i64 = __mind_load_i64(v + 4 * 8);
+    let vf: i64 = __mind_load_i64(v + 5 * 8);
+    let vg: i64 = __mind_load_i64(v + 6 * 8);
+    let vh: i64 = __mind_load_i64(v + 7 * 8);
+    let t1: i64 = nb_mask32(vh + nb_bsig1(ve) + nb_ch(ve, vf, vg) + nb_k_word(rnd) + nb_w_get(w_addr, rnd));
+    let t2: i64 = nb_mask32(nb_bsig0(va) + nb_maj(va, vb, vc));
+    __mind_store_i64(v + 7 * 8, vg);
+    __mind_store_i64(v + 6 * 8, vf);
+    __mind_store_i64(v + 5 * 8, ve);
+    __mind_store_i64(v + 4 * 8, nb_mask32(vd + t1));
+    __mind_store_i64(v + 3 * 8, vc);
+    __mind_store_i64(v + 2 * 8, vb);
+    __mind_store_i64(v + 1 * 8, va);
+    __mind_store_i64(v + 0 * 8, nb_mask32(t1 + t2));
+    0
+}
+
+// Pack one big-endian message word W[wi] from 4 stride-1 bytes at block_addr.
+pub fn nb_sha256_w0(block_addr: i64, w_addr: i64, wi: i64) -> i64 {
+    let base: i64 = wi * 4;
+    let b0: i64 = __mind_load_i8(block_addr + base + 0);
+    let b1: i64 = __mind_load_i8(block_addr + base + 1);
+    let b2: i64 = __mind_load_i8(block_addr + base + 2);
+    let b3: i64 = __mind_load_i8(block_addr + base + 3);
+    let word: i64 = (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    nb_w_set(w_addr, wi, word)
+}
+
+// ---- recursion-form loops (the nfn mic@3 emitter has NO `while` arm; main.mind
+// is written recursion-only, so each sha256 "loop" is a tail-recursive helper). ----
+
+// W[0..15]: big-endian pack, indices wi..15.
+pub fn nb_sha256_w0_loop(block_addr: i64, w_addr: i64, wi: i64) -> i64 {
+    if wi >= 16 {
+        return 0;
+    }
+    let _s: i64 = nb_sha256_w0(block_addr, w_addr, wi);
+    nb_sha256_w0_loop(block_addr, w_addr, wi + 1)
+}
+// W[16..63]: schedule extension, indices wj..63.
+pub fn nb_sha256_wsched_loop(w_addr: i64, wj: i64) -> i64 {
+    if wj >= 64 {
+        return 0;
+    }
+    let s0: i64 = nb_ssig0(nb_w_get(w_addr, wj - 15));
+    let s1: i64 = nb_ssig1(nb_w_get(w_addr, wj - 2));
+    let val: i64 = nb_mask32(nb_w_get(w_addr, wj - 16) + s0 + nb_w_get(w_addr, wj - 7) + s1);
+    let _s2: i64 = nb_w_set(w_addr, wj, val);
+    nb_sha256_wsched_loop(w_addr, wj + 1)
+}
+// Copy 8 H words into the working-var scratch `v`, indices vi..7.
+pub fn nb_sha256_vinit_loop(v: i64, h_addr: i64, vi: i64) -> i64 {
+    if vi >= 8 {
+        return 0;
+    }
+    __mind_store_i64(v + vi * 8, __mind_load_i64(h_addr + vi * 8));
+    nb_sha256_vinit_loop(v, h_addr, vi + 1)
+}
+// 64 rounds, indices rnd..63 (state is memory-backed so this carries only rnd).
+pub fn nb_sha256_round_loop(v: i64, w_addr: i64, rnd: i64) -> i64 {
+    if rnd >= 64 {
+        return 0;
+    }
+    let _r: i64 = nb_sha256_round(v, w_addr, rnd);
+    nb_sha256_round_loop(v, w_addr, rnd + 1)
+}
+// Fold the working vars back into H, indices fi..7.
+pub fn nb_sha256_fold_loop(h_addr: i64, v: i64, fi: i64) -> i64 {
+    if fi >= 8 {
+        return 0;
+    }
+    __mind_store_i64(h_addr + fi * 8, nb_mask32(__mind_load_i64(h_addr + fi * 8) + __mind_load_i64(v + fi * 8)));
+    nb_sha256_fold_loop(h_addr, v, fi + 1)
+}
+
+pub fn nb_sha256_compress(block_addr: i64, h_addr: i64) -> i64 {
+    let w_addr: i64 = __mind_alloc(512);
+    let _w0: i64 = nb_sha256_w0_loop(block_addr, w_addr, 0);
+    let _ws: i64 = nb_sha256_wsched_loop(w_addr, 16);
+    // Working vars a..h in a stride-8 scratch (memory-backed, single-carry round).
+    let v: i64 = __mind_alloc(64);
+    let _vi: i64 = nb_sha256_vinit_loop(v, h_addr, 0);
+    let _rl: i64 = nb_sha256_round_loop(v, w_addr, 0);
+    nb_sha256_fold_loop(h_addr, v, 0)
+}
+
+// Copy in_len input bytes into the pad buffer, indices ci..in_len-1.
+pub fn nb_sha256_copyin_loop(buf: i64, in_addr: i64, in_len: i64, ci: i64) -> i64 {
+    if ci >= in_len {
+        return 0;
+    }
+    __mind_store_i8(buf + ci, __mind_load_i8(in_addr + ci));
+    nb_sha256_copyin_loop(buf, in_addr, in_len, ci + 1)
+}
+// Zero-fill the padding region [zi, end).
+pub fn nb_sha256_zero_loop(buf: i64, zi: i64, end: i64) -> i64 {
+    if zi >= end {
+        return 0;
+    }
+    __mind_store_i8(buf + zi, 0);
+    nb_sha256_zero_loop(buf, zi + 1, end)
+}
+// Init the 8 H words from nb_h_init, indices hi..7.
+pub fn nb_sha256_hinit_loop(h_addr: i64, hi: i64) -> i64 {
+    if hi >= 8 {
+        return 0;
+    }
+    __mind_store_i64(h_addr + hi * 8, nb_h_init(hi));
+    nb_sha256_hinit_loop(h_addr, hi + 1)
+}
+// Process each 64-byte block, indices blk..num_blocks-1.
+pub fn nb_sha256_blocks_loop(buf: i64, h_addr: i64, blk: i64, num_blocks: i64) -> i64 {
+    if blk >= num_blocks {
+        return 0;
+    }
+    let _c: i64 = nb_sha256_compress(buf + blk * 64, h_addr);
+    nb_sha256_blocks_loop(buf, h_addr, blk + 1, num_blocks)
+}
+// Serialise the 8-word digest big-endian, indices di..7.
+pub fn nb_sha256_out_loop(h_addr: i64, out_addr: i64, di: i64) -> i64 {
+    if di >= 8 {
+        return 0;
+    }
+    let word: i64 = __mind_load_i64(h_addr + di * 8);
+    __mind_store_i8(out_addr + di * 4 + 0, (word >> 24) & 255);
+    __mind_store_i8(out_addr + di * 4 + 1, (word >> 16) & 255);
+    __mind_store_i8(out_addr + di * 4 + 2, (word >> 8) & 255);
+    __mind_store_i8(out_addr + di * 4 + 3, word & 255);
+    nb_sha256_out_loop(h_addr, out_addr, di + 1)
+}
+
+// nb_sha256 — FIPS 180-4 SHA-256 over `in_len` stride-1 bytes at `in_addr`,
+// writing the 32-byte big-endian digest to `out_addr` (stride-1, H0 high byte
+// first). Mirrors `mini_sha256` / std/sha256.mind's `sha256` byte-for-byte.
+pub fn nb_sha256(in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    // Padding length (FIPS §5.1.1): 0x80, zeros to ≡56 (mod 64), 8-byte BE bitlen.
+    // `in_len % 64` == `in_len & 63` for in_len >= 0 (mind_sha256/std.sha256 use
+    // `% 64`; the nfn mic@3 emitter has no `%` arm, and the bitmask is the exact
+    // same value for a non-negative length — and stays self-flip-clean i64-only).
+    let tail: i64 = in_len & 63;
+    let pad_zeros: i64 = if tail < 56 {
+        55 - tail
+    } else {
+        119 - tail
+    };
+    let padded_len: i64 = in_len + 1 + pad_zeros + 8;
+    let buf: i64 = __mind_alloc(padded_len);
+    let _ci: i64 = nb_sha256_copyin_loop(buf, in_addr, in_len, 0);
+    __mind_store_i8(buf + in_len, 128);
+    let _zi: i64 = nb_sha256_zero_loop(buf, in_len + 1, in_len + 1 + pad_zeros);
+    // 64-bit big-endian bit-length.
+    let bit_len: i64 = in_len * 8;
+    let len_off: i64 = padded_len - 8;
+    let blen_hi: i64 = (bit_len >> 32) & 4294967295;
+    let blen_lo: i64 = bit_len & 4294967295;
+    __mind_store_i8(buf + len_off + 0, (blen_hi >> 24) & 255);
+    __mind_store_i8(buf + len_off + 1, (blen_hi >> 16) & 255);
+    __mind_store_i8(buf + len_off + 2, (blen_hi >> 8) & 255);
+    __mind_store_i8(buf + len_off + 3, blen_hi & 255);
+    __mind_store_i8(buf + len_off + 4, (blen_lo >> 24) & 255);
+    __mind_store_i8(buf + len_off + 5, (blen_lo >> 16) & 255);
+    __mind_store_i8(buf + len_off + 6, (blen_lo >> 8) & 255);
+    __mind_store_i8(buf + len_off + 7, blen_lo & 255);
+    // H state, stride-8.
+    let h_addr: i64 = __mind_alloc(64);
+    let _hi: i64 = nb_sha256_hinit_loop(h_addr, 0);
+    // Process each 64-byte block, then serialise the digest big-endian.
+    let num_blocks: i64 = padded_len / 64;
+    let _bl: i64 = nb_sha256_blocks_loop(buf, h_addr, 0, num_blocks);
+    nb_sha256_out_loop(h_addr, out_addr, 0)
+}
+
+// nb_sha256_note(mic3_addr, mic3_len) — sha256 the pure-MIND mic@3 EmitState.buf
+// bytes (stride-1 String storage == the stride-1 byte view nb_sha256 reads) into
+// a fresh 32-byte out buffer; returns its address, or 0 on a degenerate empty
+// input so the caller FAILS CLOSED (refuses to emit a wrong note) rather than
+// hashing nothing. The mic@3 bytes for the SEEDED+PRUNED combined IR are the one
+// open port-feasibility item; see nb_trace_hash + the deferred marker below.
+pub fn nb_sha256_note(mic3_addr: i64, mic3_len: i64) -> i64 {
+    if mic3_len <= 0 {
+        return 0;
+    }
+    let out32: i64 = __mind_alloc(32);
+    let _r: i64 = nb_sha256(mic3_addr, mic3_len, out32);
+    out32
+}
+
+// Verification export: nb_sha256(in_addr, in_len) -> 32-byte digest buffer addr.
+// Lets the smoke prove the pure-MIND SHA-256 is byte-identical to the Rust
+// mini_sha256 by hashing the SAME oracle mic@3 bytes and comparing the digest
+// against the oracle ELF note's 32 bytes (the load-bearing sha256 round-trip).
+pub fn selftest_sha256(in_addr: i64, in_len: i64) -> i64 {
+    nb_sha256_note(in_addr, in_len)
+}
+
 // build_note: n_namesz=5 ; n_descsz=32 ; n_type=1 ; "MIND\0\0\0\0" ; <32-byte hash>.
 // The Rust note uses ir_trace_hash(ir). For the scalar fixture the hash is a pure
 // function of the IR; we read the 32 bytes from the hash buffer `hash_addr`.
@@ -21967,18 +22332,81 @@ pub fn nb_patch_rel32(code_addr: i64, abs_off: i64, rel: i64) -> i64 {
 //   4. Patch each call's rel32 = callee_start - (caller_start + rel_off + 4).
 //   5. build_note(trace_hash) ; write_elf(code, entry_off=0, note).
 //
-// The trace hash is computed by the Rust oracle from the IR; here we read it from
-// `hash_addr` (32 bytes), which the harness fills from the oracle ELF's note — so
-// the note is byte-identical. (The hash is a pure function of the IR; reproducing
-// the hash function itself in pure MIND is a FOLLOW-ON increment, deferred:
-//   deferred: ir_trace_hash is not yet ported to pure MIND — the harness passes
-//   the oracle's 32-byte hash so the note matches. upgrade path: port
-//   src/ir/ir_trace_hash into main.mind and drop the hash_addr arg.)
+// The trace hash is `ir_trace_hash(ir) = mini_sha256(emit_mic3(ir))` over the
+// SEEDED+PRUNED combined IR (src/ir/evidence.rs:72). The SHA-256 leg is now ported
+// in pure MIND (nb_sha256 above, proven byte-identical to the oracle on the real
+// mic@3 bytes). The remaining leg is reproducing emit_mic3(pruned-combined IR) in
+// pure MIND (nb_trace_hash below) — the one open port-feasibility item:
+//   deferred: nb_trace_hash's pruned-combined mic@3 emitter is not yet byte-exact,
+//   so it fails closed (returns 0) and the _h/_hb shims still take the oracle's
+//   32-byte hash via hash_addr to keep the ladder byte-identical. The sha256 half
+//   is DONE (nb_sha256_note). upgrade path: drive emit_mic3_header/strtab/items-
+//   loop over the pruned kept item set with the combined-lowering numbering, hand
+//   its .buf addr/len to nb_sha256_note, then reimplement these _h/_hb shims to
+//   call the no-hash selftest_native_elf(_u) and drop the hash_addr arg.
 // 3-arg entry: single-file form (no bundled stdlib). user_lo=0 -> every fn is a
 // reachability root, so the prune is a no-op and the native ladder fixtures stay
 // byte-identical. The stdlib-bundling path uses the 4-arg variant below.
 pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> EmitState {
     selftest_native_elf_hb(src_addr, src_len, hash_addr, 0)
+}
+
+// ---- SELF-COMPUTED trace hash (no oracle feed) ----
+//
+// nb_trace_hash builds the pruned-combined mic@3 bytes in pure MIND and runs
+// nb_sha256 over them, returning the 32-byte digest buffer address — or 0 (FAIL
+// CLOSED) so the caller refuses rather than emit a wrong note. The mic@3 emit over
+// the seeded+pruned combined IR is the open port item; until it is byte-exact this
+// returns 0 (never a fake hash). The sha256 leg it depends on is proven correct.
+// deferred: emit_mic3 over the seeded+pruned combined IR is not yet reproduced in
+//   pure MIND — lower_to_ir's whole-module top-level instr stream (~1305 instrs for
+//   the `add` fixture, ~4358 for main.mind: every std OP_OUTPUT / OP_EXTERN_FN_DECL
+//   placeholder the prune RETAINS, plus the combined next_id/strtab numbering) is
+//   not yet driven by the nfn machinery (which fails closed over the full std
+//   surface). Once it is, feed mic3.buf addr/len to nb_sha256_note here.
+pub fn nb_trace_hash(src_addr: i64, src_len: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
+    // deferred: pruned-combined mic@3 EmitState not yet built — see marker above.
+    // Passing mic3_len=0 makes nb_sha256_note return 0 (fail-closed), so the
+    // no-hash entries below refuse to emit a wrong note rather than guess.
+    let _u: i64 = user_lo;
+    let _s: i64 = src_addr;
+    let _l: i64 = src_len;
+    let _f: i64 = fns;
+    let _n: i64 = n_fns;
+    nb_sha256_note(0, 0)
+}
+
+// No-hash native-ELF entries (Rust-independence #14, PHASE 1.3 — TRACE-HASH). These
+// mirror selftest_native_elf_h / selftest_native_elf_hb EXACTLY except the note is
+// SELF-COMPUTED via nb_trace_hash (no hash_addr fed). When nb_trace_hash fails
+// closed (the open mic@3 port), nb_build_note copies from address 0 — which would
+// be a wrong note — so the entry instead returns the empty es_new() to FAIL LOUD;
+// the smoke's no-feed rung then sees a zero-length ELF and reports the gap rather
+// than a fake pass. Once nb_trace_hash is byte-exact, these become the canonical
+// path and the _h/_hb shims call them.
+pub fn selftest_native_elf(src_addr: i64, src_len: i64) -> EmitState {
+    selftest_native_elf_u(src_addr, src_len, 0)
+}
+pub fn selftest_native_elf_u(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
+    let reach: i64 = __mind_alloc((nb_all + 1) * 8);
+    let _r0: i64 = nb_mark_roots(src_addr, all_fns, nb_all, user_lo, reach, 0);
+    let _rf: i64 = nb_reach_fixpoint(src_addr, all_fns, nb_all, reach, nb_all + 1);
+    let fns: i64 = __mind_alloc((nb_all + 1) * 8);
+    let n_fns: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, fns, 0, 0);
+    // Self-compute the note hash (no oracle feed). 0 => fail closed.
+    let h32: i64 = nb_trace_hash(src_addr, src_len, user_lo, fns, n_fns);
+    if h32 == 0 {
+        // Open mic@3 port: refuse to emit a note we cannot self-compute. Return the
+        // empty EmitState so the smoke's no-feed rung fails LOUD (no fake win).
+        return es_new();
+    }
+    selftest_native_elf_hb(src_addr, src_len, h32, user_lo)
 }
 
 // 4-arg form: `user_lo` is the offset in `src_addr` where the USER file begins
