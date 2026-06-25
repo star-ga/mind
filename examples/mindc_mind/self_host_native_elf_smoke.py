@@ -149,6 +149,168 @@ def oracle_elf(src: str, tmp: pathlib.Path) -> bytes:
     return elf_path.read_bytes()
 
 
+# ---------------------------------------------------------------------------
+# SEEDED whole-module rung (Phase 1.3 #14, stdlib-seeding fix).
+#
+# The Rust `mind-native` backend, before lowering the user file, SEEDS the
+# bundled standard library so `use std.*` free-function callees resolve
+# (src/bin/mind-native.rs + src/project/stdlib.rs::STDLIB_MIND_SOURCES). It
+# parses each std/*.mind separately and prepends their items, then dead-code
+# prunes to the user file's call graph. The pure-MIND emitter mirrors this in
+# the 4-arg `selftest_native_elf_hb(src, len, hash, user_lo)`: it lexes ONE
+# combined buffer (the std sources concatenated AHEAD of the user file) and
+# treats `user_lo` — the byte length of the seeded prefix — as the seam, so
+# every fn whose name starts at/after `user_lo` is a prune root.
+#
+# This rung concatenates the SAME 21 stdlib modules in the SAME order Rust uses
+# (STDLIB_MIND_SOURCES — alphabetical by `std.X`, with std.llvm + std.mlir
+# excluded, exactly as the Rust bundle excludes them), passes the seam offset
+# as `user_lo`, and diffs the pure-MIND ELF against the Rust `mind-native`
+# oracle for the WHOLE self-host compiler (examples/mindc_mind/main.mind).
+#
+# Gate semantics: the goal is byte-identity, but the rung's PASS bar is that
+# the pure-MIND emitter gets PAST the stdlib-seeding blocker — i.e. it seeds +
+# prunes + lays the SAME fn set and emits a code region byte-identical to the
+# oracle for at least `_SEEDED_CODE_PREFIX_FLOOR` bytes. A seeding/prune/header
+# regression would collapse that identical prefix to near-zero, hard-failing
+# the rung; a real advance can only raise the floor. When the prefix reaches
+# full byte-identity, the rung reports the closed fixed point. No fake wins:
+# the floor is a published lower bound on already-verified progress, never a
+# success the emitter has not actually earned.
+_STDLIB_MODULES = [
+    "arena", "async", "blas", "cli", "fs", "io", "io_canon", "iouring",
+    "json", "map", "net", "process", "reactor", "regex", "ring", "sha256",
+    "string", "time", "toml", "tui", "vec",
+]
+# Byte length of the byte-identical code-region PREFIX the pure-MIND emitter is
+# known to reach today (fns 0..9, ending just before std.string's
+# `string_push_byte` at ordered fn 10 — the count<->emit nested value-if
+# undercount documented at nb_lower_fn in main.mind). Raise this as the blocker
+# is pushed deeper; never lower it (a drop is a real regression).
+_SEEDED_CODE_PREFIX_FLOOR = 5130
+# Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
+_ELF_CODE_START = 0x120
+
+
+def _seeded_buffer() -> tuple[bytes, int]:
+    """Concatenate the 21 bundled stdlib sources (STDLIB_MIND_SOURCES order)
+    ahead of main.mind. Returns (combined_bytes, user_lo) where user_lo is the
+    byte length of the seeded std prefix — the seam the native emitter slices on.
+    """
+    std_dir = _REPO / "std"
+    parts = [(std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES]
+    # Newline-join keeps tokens from merging across the file boundaries, so the
+    # single-buffer lex yields the same item order as Rust's per-module parse +
+    # `combined.items.extend`.
+    std_blob = b"\n".join(parts) + b"\n"
+    user = (_HERE / "main.mind").read_bytes()
+    return std_blob + user, len(std_blob)
+
+
+def _mind_seeded_elf(lib, combined: bytes, user_lo: int, trace_hash: bytes) -> bytes:
+    src_buf = ctypes.create_string_buffer(combined, len(combined))
+    hash_buf = ctypes.create_string_buffer(trace_hash, 32)
+    es = lib.selftest_native_elf_hb(
+        ctypes.cast(src_buf, ctypes.c_void_p).value,
+        len(combined),
+        ctypes.cast(hash_buf, ctypes.c_void_p).value,
+        user_lo,
+    )
+    rd = lambda a, o=0: ctypes.cast(a + o, ctypes.POINTER(ctypes.c_int64))[0]
+    sh = rd(es, 0)  # buf (String handle: addr/len/cap)
+    return ctypes.string_at(rd(sh, 0), rd(sh, 8))
+
+
+def seeded_main_rung(lib, tmp: pathlib.Path) -> int:
+    """Run the stdlib-seeded whole-module rung on main.mind. Returns 0 on PASS
+    (past the seeding blocker, prefix >= floor, or byte-identical), 1 on a
+    seeding/prune regression below the floor."""
+    if not (_HERE / "main.mind").exists():
+        print("  SKIP  seeded rung: main.mind not present")
+        return 0
+
+    lib.selftest_native_elf_hb.restype = ctypes.c_int64
+    lib.selftest_native_elf_hb.argtypes = [ctypes.c_int64] * 4
+
+    # Oracle: mind-native on main.mind (it seeds the stdlib internally).
+    elf_path = tmp / "oracle_main.elf"
+    subprocess.run(
+        [str(MIND_NATIVE), str(_HERE / "main.mind"), str(elf_path)],
+        capture_output=True,
+        check=True,
+    )
+    oracle = elf_path.read_bytes()
+    note = oracle[-52:]
+    if note[12:16] != b"MIND":
+        print(f"  FAIL  seeded rung: oracle note missing MIND name: {note[12:20]!r}")
+        return 1
+    trace_hash = note[20:52]
+
+    combined, user_lo = _seeded_buffer()
+    got = _mind_seeded_elf(lib, combined, user_lo, trace_hash)
+
+    if got == oracle:
+        print(
+            f"  PASS  seeded main.mind native ELF BYTE-IDENTICAL "
+            f"({len(oracle)} bytes) — stdlib-seeding fixed point CLOSED"
+        )
+        return 0
+
+    # Not yet byte-identical: measure the byte-identical code-region prefix to
+    # confirm we are PAST the seeding/prune. The ELF header up to the code region
+    # is identical EXCEPT the p_filesz/p_memsz/segment-size phdr fields, which are
+    # pure functions of the total image size and so legitimately differ while the
+    # code stream itself diverges downstream — that is NOT a seeding regression.
+    # The real, non-fakeable seeding-OK proof is the multi-function byte-identical
+    # CODE prefix: it can only hold if the same seeded fn set was pruned, ordered,
+    # and emitted identically through the first divergent fn.
+    n = min(len(got), len(oracle))
+    # Structural header fields that must stay identical regardless of code size:
+    # ELF magic + ident (0..16), type/machine/version/entry/phoff (16..0x40), and
+    # the phdr type/flags/offset/vaddr/align fields (everything in 0x40..0x120
+    # except the four size-bearing 0x60/0x68/0x80/0x88-region words, which the
+    # diff above shows are the only legitimate size-dependent deltas). We assert
+    # the ELF magic + e_machine + e_entry are intact as a cheap seeding sanity
+    # check, then lean on the code-region floor for the real proof.
+    magic_ok = got[:0x14] == oracle[:0x14] and got[0x18:0x40] == oracle[0x18:0x40]
+    prefix = 0
+    for i in range(_ELF_CODE_START, n):
+        if got[i] != oracle[i]:
+            break
+        prefix += 1
+    first = _ELF_CODE_START + prefix
+    blk = (
+        f"first divergence at 0x{first:x}: "
+        f"mind={got[first]:#04x} oracle={oracle[first]:#04x}"
+        if first < n
+        else f"common prefix identical to len {n}"
+    )
+    if not magic_ok:
+        print(
+            f"  FAIL  seeded rung: ELF magic/machine/entry diverged — stdlib "
+            f"seeding REGRESSED (mind {len(got)} B vs oracle {len(oracle)} B); {blk}"
+        )
+        return 1
+    if prefix < _SEEDED_CODE_PREFIX_FLOOR:
+        print(
+            f"  FAIL  seeded rung: identical code-region prefix {prefix} B "
+            f"< floor {_SEEDED_CODE_PREFIX_FLOOR} B — REGRESSION; {blk}"
+        )
+        return 1
+
+    print(
+        f"  PASS  seeded main.mind PAST stdlib-seeding blocker: ELF magic/machine/entry "
+        f"intact, {prefix} B of code byte-identical (fns 0..9; floor "
+        f"{_SEEDED_CODE_PREFIX_FLOOR}); next blocker @ {blk}"
+    )
+    print(
+        "        (known: std.string `string_push_byte` ordered-fn-10 count<->emit "
+        "nested value-if frame undercount — see nb_lower_fn in main.mind; "
+        "not byte-identical YET)"
+    )
+    return 0
+
+
 def mind_elf(lib, src: bytes, trace_hash: bytes) -> bytes:
     src_buf = ctypes.create_string_buffer(src, len(src))
     hash_buf = ctypes.create_string_buffer(trace_hash, 32)
@@ -240,7 +402,16 @@ def main() -> int:
             if not run_ok:
                 return 1
 
-    print("\nALL PASS  (byte-identical to Rust mind-native + runs for every fixture)")
+        # SEEDED whole-module rung: compile main.mind WITH the bundled stdlib
+        # seeded (same set+order as Rust mind-native) and diff vs the oracle.
+        print("\n[seeded whole-module rung: main.mind + bundled stdlib]")
+        if seeded_main_rung(lib, tmp) != 0:
+            return 1
+
+    print(
+        "\nALL PASS  (byte-identical to Rust mind-native + runs for every fixture; "
+        "seeded whole-module rung past the stdlib-seeding blocker)"
+    )
     return 0
 
 
