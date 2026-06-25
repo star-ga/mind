@@ -19364,15 +19364,28 @@ pub fn nb_expr(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
             let c_intr: String = nb_emit_intrinsic(sa.code, intr, ids, id);
             return NbState { code: c_intr, next_id: id + 1, last_id: id, ncalls: sa.ncalls };
         }
-        // Spill args 0..min(args_len,6) into the System-V arg registers.
-        let c_args: String = nb_emit_argregs(sa.code, ids, args_len, 0);
+        // Caller-side System-V sequence for args_len args (mirror src/native/mod.rs
+        // Call arm, lines 929-955), in EXACT byte order:
+        //   1. `sub rsp,8` pad when an odd count of 7th+ args would misalign rsp;
+        //   2. push args[6:] right-to-left (mov rax,[slot] ; push rax);
+        //   3. load args[0..6] into the arg registers;
+        //   4. `call` opcode + rel32 placeholder (recorded for the linker);
+        //   5. `add rsp,cleanup` to pop the stack args + pad;
+        //   6. spill the result (rax) into the call's dst slot.
+        // For <=6 args this is byte-identical to the prior register-only path
+        // (pad/push/cleanup all no-op).
+        let c_pad: String = nb_emit_stack_pad(sa.code, args_len);
+        let c_stk: String = nb_emit_stackargs(c_pad, ids, args_len - 1);
+        let c_args: String = nb_emit_argregs(c_stk, ids, args_len, 0);
         // call rel32 (placeholder 0; linker-patched). Record the rel32 offset.
         let c_e8: String = nb_push(c_args, 232);
         let rel_off: i64 = string_len(c_e8);
         let c_rel: String = nb_u32(c_e8, 0);
         let nc: i64 = nb_calls_push(calls, sa.ncalls, rel_off, ast_span_lo(callee), ast_span_hi(callee));
+        // Pop the stack args + alignment pad before reading the result.
+        let c_clean: String = nb_emit_stack_cleanup(c_rel, args_len);
         // Spill the result (rax) into the call's dst slot.
-        let c_res: String = nb_store_rax(c_rel, nb_slot_disp(id));
+        let c_res: String = nb_store_rax(c_clean, nb_slot_disp(id));
         return NbState { code: c_res, next_id: id + 1, last_id: id, ncalls: nc };
     }
     // ast_binop(): lower both operands, then the in-place op.
@@ -19545,13 +19558,66 @@ pub fn nb_emit_argregs(code: String, ids: i64, n: i64, i: i64) -> String {
         return code;
     }
     if i >= 6 {
-        // 7th+ CALL args are stack-passed (push), not register-loaded; OUT OF SCOPE
-        // here. deferred: port the caller-side stack-arg push (src/native call arm).
+        // 7th+ CALL args are stack-passed (push) by nb_emit_stackargs at the CALL
+        // SITE (mirrors src/native/mod.rs Call arm), not register-loaded here.
         return code;
     }
     let slot: i64 = __mind_load_i64(ids + i * 8);
     let c1: String = nb_load_argreg(code, i, nb_slot_disp(slot));
     nb_emit_argregs(c1, ids, n, i + 1)
+}
+
+// Caller-side System-V stack-arg PAD (mirror src/native/mod.rs Call arm 935-939):
+//   n_stack = max(n-6, 0) ; pad = (n_stack % 2) * 8.
+// When pad>0 the 7th+ pushes would leave rsp 8-off-16; emit `sub rsp,8`
+// (48 83 EC 08) FIRST to keep rsp 16-aligned at the `call`. n_stack even -> no-op.
+pub fn nb_emit_stack_pad(code: String, n: i64) -> String {
+    let n_stack: i64 = if n > 6 {
+        n - 6
+    } else {
+        0
+    };
+    if n_stack - (n_stack / 2) * 2 == 0 {
+        return code;
+    }
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 131);
+    let c3: String = nb_push(c2, 236);
+    nb_push(c3, 8)
+}
+
+// Push the 7th+ args RIGHT-TO-LEFT (mirror src/native Call arm 940-943:
+// `for a in args.iter().skip(6).rev()`), so [rsp]=arg6 at the call. Each push is
+// `mov rax,[slot]` (load_rax) + `push rax` (0x50). `j` walks DOWN from n-1 to 6;
+// an if-STATEMENT recursion (no value-if phi) keeps it in the self-host subset.
+pub fn nb_emit_stackargs(code: String, ids: i64, j: i64) -> String {
+    if j < 6 {
+        return code;
+    }
+    let slot: i64 = __mind_load_i64(ids + j * 8);
+    let c1: String = nb_load_rax(code, nb_slot_disp(slot));
+    let c2: String = nb_push(c1, 80);
+    nb_emit_stackargs(c2, ids, j - 1)
+}
+
+// Caller-side stack cleanup AFTER the call (mirror src/native Call arm 950-954):
+//   cleanup = 8*n_stack + pad ; if cleanup>0 emit `add rsp,imm32` (48 81 C4 <le32>).
+// pad = (n_stack % 2) * 8. n<=6 -> n_stack=0 -> no-op (byte-identical to today).
+pub fn nb_emit_stack_cleanup(code: String, n: i64) -> String {
+    let n_stack: i64 = if n > 6 {
+        n - 6
+    } else {
+        0
+    };
+    if n_stack <= 0 {
+        return code;
+    }
+    let pad: i64 = (n_stack - (n_stack / 2) * 2) * 8;
+    let cleanup: i64 = 8 * n_stack + pad;
+    let c1: String = nb_push(code, 72);
+    let c2: String = nb_push(c1, 129);
+    let c3: String = nb_push(c2, 196);
+    nb_u32(c3, cleanup)
 }
 
 // Emit a synthetic `ConstI64(next_id, 0)` (a branch's leading then_result /
