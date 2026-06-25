@@ -183,11 +183,15 @@ _STDLIB_MODULES = [
     "string", "time", "toml", "tui", "vec",
 ]
 # Byte length of the byte-identical code-region PREFIX the pure-MIND emitter is
-# known to reach today (fns 0..9, ending just before std.string's
-# `string_push_byte` at ordered fn 10 — the count<->emit nested value-if
-# undercount documented at nb_lower_fn in main.mind). Raise this as the blocker
-# is pushed deeper; never lower it (a drop is a real regression).
-_SEEDED_CODE_PREFIX_FLOOR = 5130
+# known to reach today. The PHASE 1.3 WHILE-loop + Assign + Break/Continue port
+# (nb_emit_while / nb_if_*_merged / the merge-phi machinery in main.mind SECTION 4c)
+# pushed this from 5130 (which ended just before std.string's first loop-bearing fn)
+# to 11703 — string_push_str and every now-supported while/assign/value-if-merge fn
+# emit byte-identically to the Rust `mind-native` oracle. The NEXT blocker is fn#53's
+# nested-region (F2) merge + the div/mod/shift binops (still unported — see the
+# deferred markers at nb_arith_rax_mem and nb_count_carried). Raise this as the
+# blocker is pushed deeper; never lower it (a drop is a real regression).
+_SEEDED_CODE_PREFIX_FLOOR = 11703
 # Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
 _ELF_CODE_START = 0x120
 
@@ -300,13 +304,13 @@ def seeded_main_rung(lib, tmp: pathlib.Path) -> int:
 
     print(
         f"  PASS  seeded main.mind PAST stdlib-seeding blocker: ELF magic/machine/entry "
-        f"intact, {prefix} B of code byte-identical (fns 0..9; floor "
-        f"{_SEEDED_CODE_PREFIX_FLOOR}); next blocker @ {blk}"
+        f"intact, {prefix} B of code byte-identical (through the while/assign/merge "
+        f"loop-bearing fns; floor {_SEEDED_CODE_PREFIX_FLOOR}); next blocker @ {blk}"
     )
     print(
-        "        (known: std.string `string_push_byte` ordered-fn-10 count<->emit "
-        "nested value-if frame undercount — see nb_lower_fn in main.mind; "
-        "not byte-identical YET)"
+        "        (known next gaps: a nested-region (F2) merge + the div/mod/shift "
+        "binops — see the deferred markers at nb_arith_rax_mem / nb_count_carried in "
+        "main.mind; not fully byte-identical YET)"
     )
     return 0
 
