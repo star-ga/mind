@@ -224,12 +224,24 @@ _STDLIB_MODULES = [
 # CONTEXT-DEPENDENT (a blanket "nested-export -> placeholder" narrowing regressed
 # `scan` back to 0x5d75), so it needs a per-edge analysis of lower.rs's join-block
 # phi predecessors before nb_merge_fill_defs can mirror it byte-exact.
-# deferred: port lower.rs's exact then/else-edge "name defined at this merge
-# predecessor?" predicate into nb_merge_fill_defs so the placeholder/value choice
-# for nested-if-exported merged names matches the oracle; that closes the last
-# 748 B and lets 0xf082 advance. Raise the floor as the blocker is pushed deeper;
-# never lower it (a drop is a real regression).
-_SEEDED_CODE_PREFIX_FLOOR = 61282
+#
+# CLOSED 2026-06-25 (#14 Phase 1.3 FINAL-NUT): the per-edge merge-placeholder
+# predicate is now byte-exact. The last 748 B (44 elided ConstI64(0) placeholders
+# across 7 fns) came from let-env POLLUTION, not a wrong predicate: nb shares ONE
+# monotonically-growing let-env across branch scopes, whereas eval/lower.rs lowers
+# each branch in a sub-IR with a CLONED env. A branch-local `let` (or a value-if's
+# internal merge phi used as a let-INIT) therefore leaked into the shared env, and
+# a later SIBLING/INNER merge's `in_outer` test wrongly saw it as carried-from-outer
+# and elided the placeholder. Fix = scope the let-env exactly like lower.rs:
+#   (1) dst-id pre-walks restore lcell (count-only, transient);
+#   (2) merged emitters restore to outer_n before nb_rebind_merges (post-if env =
+#       incoming + branch_bindings only);
+#   (3) a value-if-EXPRESSION let-INIT restores after the init (only X = dst escapes,
+#       never the if's internal phis), in BOTH the emit let-arm and nb_count_stmt;
+#   (4) nb_count_stmt's if-arm truncates branch-locals + re-binds merged names.
+# The whole seeded image is now byte-identical (the `got == oracle` branch fires);
+# the floor below is a regression backstop — raise it, never lower it.
+_SEEDED_CODE_PREFIX_FLOOR = 1031503
 # Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
 _ELF_CODE_START = 0x120
 

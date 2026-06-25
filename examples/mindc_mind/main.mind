@@ -19943,6 +19943,21 @@ pub fn nb_merged_names(buf: i64, then_sa: i64, then_sl: i64, else_sa: i64, else_
     nb_branch_writes(buf, else_sa, else_sl, 0, names, after_then)
 }
 
+// Re-bind an if's merged names into the count-lets after the branch-local lets are
+// truncated away (nb_count_stmt if-arm). Mirrors eval/lower.rs's post-`if` env =
+// outer env + branch_bindings: each merged name becomes visible (slot 0 / desc 0 —
+// only its PRESENCE matters for an enclosing merge's `in_outer` prefix test; the
+// dst-id count is independent of the bound slot/descriptor).
+pub fn nb_count_bind_merged(clets: i64, clcell: i64, names: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0;
+    }
+    let lo: i64 = __mind_load_i64(names + (i * 2 + 0) * 8);
+    let hi: i64 = __mind_load_i64(names + (i * 2 + 1) * 8);
+    let _b: i64 = nb_lets_bind(clets, clcell, lo, hi, 0, 0);
+    nb_count_bind_merged(clets, clcell, names, n, i + 1)
+}
+
 // Does a branch block DEFINE (let/assign/while-carry) the name at [lo,hi)?
 pub fn nb_branch_defines(buf: i64, sa: i64, sl: i64, lo: i64, hi: i64) -> i64 {
     let tmp: i64 = __mind_alloc(256 * 2 * 8);
@@ -20136,7 +20151,14 @@ pub fn nb_stmt(st: NbState, buf: i64, node: i64, params_addr: i64, n_params: i64
         // through nb_lower_let_init (a tail-return helper) so it reads cleanly.
         let name_leaf: i64 = ast_child0(node);
         let init: i64 = ast_child2(node);
+        // Snapshot the let-env BEFORE the init: a value-if-EXPRESSION init
+        // (nb_if_value_merged) rebinds its internal merged names into the shared
+        // let-env, but for an if-expr used as a let-INIT eval/lower.rs threads NONE of
+        // them upward (only the bound name X = dst). Restore after the init so those
+        // internal phi names do not leak and pollute a later sibling's `in_outer`.
+        let pre_init_n: i64 = __mind_load_i64(lcell);
         let s1: NbState = nb_lower_let_init(st, buf, init, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+        __mind_store_i64(lcell, pre_init_n);
         // Record the struct descriptor (struct-LITERAL init OR a struct-typed
         // annotation, else 0) so a later `name.field` read recovers the field's
         // declared index (8*index byte offset). The pick is a helper (if-statement
@@ -20279,7 +20301,12 @@ pub fn nb_if_stmt_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     // time let-env (lets/lcell) is the count env so any struct field-read offset in
     // the else-block counts the same as it emits.
     let else_const0_id: i64 = s_tb.next_id;
+    // dst-id pre-walk is count-only: snapshot/restore lcell so its transient name
+    // bindings don't leak into the shared let-env (would pollute an enclosing merge's
+    // `in_outer`); the real else-lowering below rebuilds the env.
+    let prewalk_n_s: i64 = __mind_load_i64(lcell);
     let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell, srt);
+    __mind_store_i64(lcell, prewalk_n_s);
     let dst_id: i64 = after_else;
 
     // then fall-through emit (dst copy + join jmp) — only when not diverging.
@@ -20374,7 +20401,13 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     // Physical slot layout (walk order).
     let then_ph_base: i64 = s_tb.next_id;
     let p_t: i64 = then_ph_base + n_then_ph;
+    // The dst-id pre-walk is COUNTING only; its let-env mutations must be fully
+    // transient — the real else-lowering below rebuilds the env. Snapshot/restore
+    // lcell around it so the pre-walk's branch-local (and merged) name bindings do
+    // NOT leak into the shared let-env and pollute an INNER else-merge's `in_outer`.
+    let prewalk_n_t: i64 = __mind_load_i64(lcell);
     let after_else_stmts: i64 = nb_count_stmts(p_t + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell, srt);
+    __mind_store_i64(lcell, prewalk_n_t);
     let else_ph_base: i64 = after_else_stmts;
     let dst_id: i64 = after_else_stmts + n_else_ph;
     let merge_base: i64 = dst_id + 1;
@@ -20402,6 +20435,12 @@ pub fn nb_if_stmt_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
     let end_at: i64 = string_len(c_ej);
     let _pe: i64 = nb_maybe_set_jmp(jmp_which, jmps, jcell, end_at);
 
+    // Restore the let-env to its PRE-IF size before rebinding the merged names, so the
+    // post-`if` env = incoming env + branch_bindings ONLY (the branches' own lets are
+    // lexically scoped out, matching eval/lower.rs's per-branch sub-IR cloned env).
+    // Prevents a later sibling if's `in_outer` from seeing this if's branch-local
+    // names (which would elide the oracle's ConstI64(0) placeholders).
+    __mind_store_i64(lcell, outer_n);
     let _rb: i64 = nb_rebind_merges(mt, nmerged, 0, lets, lcell);
     NbState { code: c_ej, next_id: merge_base + nmerged, last_id: dst_id, ncalls: s_eb.ncalls }
 }
@@ -20515,7 +20554,10 @@ pub fn nb_if_value_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     // (a pure function of the IR id-numbering, independent of emitted bytes). next
     // after then = s_tb.next_id; else adds 1 (leading const0) + else-stmt ids.
     let else_const0_id: i64 = s_tb.next_id;
+    // dst-id pre-walk is count-only: snapshot/restore lcell (see nb_if_stmt_simple).
+    let prewalk_n_vs: i64 = __mind_load_i64(lcell);
     let after_else: i64 = nb_count_stmts(else_const0_id + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell, srt);
+    __mind_store_i64(lcell, prewalk_n_vs);
     let dst_id: i64 = after_else;
 
     // then fall-through: load then_result; store dst; jmp(join).
@@ -20603,7 +20645,10 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     //   merge slots = [dst+1, +nmerged)
     let then_ph_base: i64 = s_tb.next_id;
     let p_t: i64 = then_ph_base + n_then_ph;
+    // dst-id pre-walk is count-only: snapshot/restore lcell (see nb_if_stmt_merged).
+    let prewalk_n_vm: i64 = __mind_load_i64(lcell);
     let after_else_stmts: i64 = nb_count_stmts(p_t + 1, buf, else_sa, else_sl, 0, params_addr, n_params, lets, lcell, srt);
+    __mind_store_i64(lcell, prewalk_n_vm);
     let else_ph_base: i64 = after_else_stmts;
     let dst_id: i64 = after_else_stmts + n_else_ph;
     let merge_base: i64 = dst_id + 1;
@@ -20643,8 +20688,16 @@ pub fn nb_if_value_merged(st: NbState, buf: i64, node: i64, params_addr: i64, n_
     let end_at: i64 = string_len(c_ej);
     let _pe: i64 = nb_jmp_set_target(jmps, jcell, jmp_which, end_at);
 
-    // Post-if: rebind each merged name's let-env to its merge slot (branch_bindings
-    // thread the dominating merge value upward, lower.rs 4289/3645).
+    // Post-if: restore the let-env to its PRE-IF size, then rebind each merged name
+    // to its merge slot. This mirrors eval/lower.rs EXACTLY: the post-`if` env =
+    // incoming env + the if's branch_bindings (merged names) — the branches' OWN
+    // branch-local lets are scoped OUT (lower.rs lowers each branch in a sub-IR with
+    // a cloned env). Without the restore, a value-if's branch-local lets (e.g. an
+    // else-branch's `z1..z9`) leak into the shared let-env; a SIBLING value-if that
+    // happens to reuse the same names then sees them as carried-from-outer and elides
+    // the ConstI64(0) placeholders the oracle emits. The merge stores above already
+    // consumed the branch-exit slots, so truncating here is safe.
+    __mind_store_i64(lcell, outer_n);
     let _rb: i64 = nb_rebind_merges(mt, nmerged, 0, lets, lcell);
 
     // The value-if's VALUE is dst_id, but the frame also holds the nmerged merge
@@ -21004,7 +21057,16 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
         // count is exactly INIT's. Record the count-time name->struct-descriptor
         // binding (struct-literal init OR a struct-typed annotation, else 0) so a
         // later `X.field` read counts the same offset emission does.
+        // Snapshot the count-lets BEFORE the init: a value-if-EXPRESSION init rebinds
+        // its internal merged names (the `ast_if` arm below), but those are the if's
+        // own phis — for an if-expr used as a let-INIT, eval/lower.rs threads NONE of
+        // them into the enclosing env (only the bound name X = dst). Restoring here
+        // drops that leak so a later sibling's `in_outer` never sees the if-expr's
+        // internal merge names. (A statement-if reaches the `ast_if` arm directly and
+        // KEEPS its rebound branch_bindings — the threaded post-if env.)
+        let pre_init_n: i64 = __mind_load_i64(clcell);
         let after_init: i64 = nb_count_stmt(next_id, buf, ast_child2(node), params_addr, n_params, clets, clcell, srt);
+        __mind_store_i64(clcell, pre_init_n);
         let name_leaf: i64 = ast_child0(node);
         let init: i64 = ast_child2(node);
         let _b: i64 = nb_lets_bind(clets, clcell, ast_span_lo(name_leaf), ast_span_hi(name_leaf), 0, nb_let_descriptor(init, ast_child1(node), buf, srt));
@@ -21051,6 +21113,22 @@ pub fn nb_count_stmt(next_id: i64, buf: i64, node: i64, params_addr: i64, n_para
             1
         };
         let merge_ids: i64 = nb_merge_ids_count(buf, then_sa, then_sl, else_sa, else_sl, then_falls, else_falls, clets, outer_n);
+        // Restore the count-lets to its PRE-IF size, then re-bind ONLY this if's
+        // merged names (its branch_bindings). This mirrors eval/lower.rs's post-`if`
+        // env exactly: the enclosing block's env = the incoming env + the if's
+        // branch_bindings (lower.rs 4289 pushes one per merged name). WITHOUT this
+        // restore the branch-LOCAL lets (e.g. an inner-if's `c`/`then_blk` that are
+        // NOT exported) leak into the shared count-lets; when this if is the ELSE arm
+        // of an enclosing if, the enclosing pre-walk leaves them behind and a
+        // subsequent INNER merge's `in_outer` test (nb_merge_fill_defs / the count's
+        // nb_merge_ids_rest, both over the outer prefix) then wrongly treats them as
+        // carried-from-outer, eliding the ConstI64(0) placeholder the oracle emits.
+        // Re-binding the merged names (not the raw branch-local lets) keeps case-(c)
+        // tail-region threading visible while dropping the non-exported leakage.
+        __mind_store_i64(clcell, outer_n);
+        let cmn: i64 = __mind_alloc(256 * 2 * 8);
+        let ncmn: i64 = nb_merged_names(buf, then_sa, then_sl, else_sa, else_sl, cmn);
+        let _rb: i64 = nb_count_bind_merged(clets, clcell, cmn, ncmn, 0);
         return after_else + merge_ids + 1;
     }
     if k == ast_while() {
