@@ -19695,8 +19695,7 @@ pub fn nb_branch_writes(buf: i64, sa: i64, sl: i64, i: i64, names: i64, n: i64) 
             nb_writes_add(buf, names, n, ast_child0(stmt))
         } else {
             if k == ast_while() {
-                let body_blk: i64 = ast_child1(stmt);
-                nb_while_live_writes(buf, ast_child0(body_blk), ast_aux(body_blk), 0, names, n)
+                nb_while_live_writes(buf, ast_child0(ast_child1(stmt)), ast_aux(ast_child1(stmt)), 0, names, n)
             } else {
                 n
             }
@@ -20041,8 +20040,18 @@ pub fn nb_if_stmt_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
 
     // then-block: leading const0, then the then-stmts.
     let s_t0: NbState = nb_emit_const0(s_je);
-    let then_result: i64 = s_t0.last_id;
     let s_tb: NbState = nb_block_stmts(s_t0, buf, then_sa, then_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // then_result = the value of the LAST statement in the then-block (lower.rs
+    // 3915-4015: then_result starts at the leading ConstI64(0) and is re-set to
+    // each statement's value as the loop walks; for a then-block whose tail is a
+    // NESTED `if`/`while`/call statement-expression the `other =>` arm sets
+    // then_result = lower_expr(other) = that nested region's EXIT/dst id). An EMPTY
+    // then-block keeps the leading const0 (s_tb == s_t0 ⇒ s_tb.last_id == the
+    // const0), so this is byte-identical for the empty/diverging-then subset the
+    // earlier rungs covered, and now threads the nested-if exit id for
+    // `if cond { if inner { return } } …` (is_digit @ fn#53). The merge-bearing
+    // case (a let/assign tail) routes through nb_if_stmt_merged, never here.
+    let then_result: i64 = s_tb.last_id;
     let then_diverges: i64 = nb_block_diverges(then_sa, then_sl);
     // If the then-branch falls through: copy then_result -> dst, then jmp to end.
     // The dst id is fresh AFTER the else-block is laid out; we therefore defer the
@@ -20080,8 +20089,11 @@ pub fn nb_if_stmt_simple(st: NbState, buf: i64, node: i64, params_addr: i64, n_p
 
     // else-block: leading const0, then the else-stmts.
     let s_e0: NbState = nb_emit_const0(s_tj);
-    let else_result: i64 = s_e0.last_id;
     let s_eb: NbState = nb_block_stmts(s_e0, buf, else_sa, else_sl, 0, params_addr, n_params, calls, is_entry, jmps, jcell, lets, lcell, srt, loops, lpcell);
+    // else_result = the value of the LAST statement in the else-block, the exact
+    // dual of then_result (lower.rs 4031-4147). Empty else keeps the leading
+    // const0 (s_eb == s_e0), so byte-identical for the synthetic-else subset.
+    let else_result: i64 = s_eb.last_id;
     let else_diverges: i64 = nb_block_diverges(else_sa, else_sl);
     // else fall-through: copy else_result -> dst (no jmp; it falls to end).
     let s_ej: NbState = nb_if_else_join(s_eb, else_diverges, else_result, dst_id);
@@ -21128,13 +21140,24 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // earlier "ordered fn 10 frame undercount" was the missing ast_while count arm
     // (the count walked the 3 whiles + their value-if-nested whiles as bare exprs,
     // counting 0 slots) PLUS the un-counted merge-phi ids of the value-ifs whose
-    // branches carry a `while`-mutated body-let — both now ported. The remaining
-    // seeded-prefix blocker is a nested-region (F2) merge + the div/mod/shift binops.
-    // deferred (next gaps): (1) F2 — a while/if NESTED in a loop or branch body that
-    // mutates an OUTER carried var (lower.rs 4737-4777, last_region_exit_rebindings)
-    // is not yet threaded by nb_while_carry / nb_branch_writes; upgrade path: after a
-    // nested region, scan its tail for an Assign to an outer-env name and record it.
-    // (2) div/mod/shift binops still fall through to imul in nb_arith_rax_mem (the
+    // branches carry a `while`-mutated body-let — both now ported. The F2 nested-
+    // region exit-MERGE floor (fn#53 is_digit, `if cond { if inner { return } } 0` @
+    // 0x2ed7) is now cleared too: nb_if_stmt_simple threads the nested if/while's
+    // EXIT/dst id up as the branch then_result/else_result (the value side of
+    // lower.rs's `then_result = lower_expr(other)` in the `other =>` arm), so the
+    // outer then-edge loads the inner if's merge slot, not the stale leading-const0.
+    // Seeded whole-module prefix now reaches 23637 B. The remaining seeded-prefix
+    // blocker is a downstream frame-size (slot-count) under-count @ ~0x781b.
+    // deferred (next gaps): (1) F2 outer-var MUTATION — a while/if NESTED in a loop or
+    // branch body that MUTATES an OUTER carried var (lower.rs 4737-4777,
+    // last_region_exit_rebindings) is still not threaded by nb_while_carry /
+    // nb_branch_writes (is_digit's nested if only `return`s, mutating nothing, so the
+    // value-side fix above suffices for it); upgrade path: after a nested region, scan
+    // its tail for an Assign to an outer-env name and record it as a branch write.
+    // (2) the next frame undercount — nb_count_stmt does not yet count every SSA id of
+    // some downstream fn (oracle `sub rsp,0x920` vs mind `0x890`, an 18-slot gap);
+    // upgrade path: diff nb_count_stmt vs the fn's actual emitted slot walk.
+    // (3) div/mod/shift binops still fall through to imul in nb_arith_rax_mem (the
     // marker there spells out the emit_div_mod_guarded + cl-shift port).
     let clets0: i64 = __mind_alloc(512 * 4 * 8);
     let clcell0: i64 = __mind_alloc(8);

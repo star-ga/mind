@@ -187,11 +187,17 @@ _STDLIB_MODULES = [
 # (nb_emit_while / nb_if_*_merged / the merge-phi machinery in main.mind SECTION 4c)
 # pushed this from 5130 (which ended just before std.string's first loop-bearing fn)
 # to 11703 — string_push_str and every now-supported while/assign/value-if-merge fn
-# emit byte-identically to the Rust `mind-native` oracle. The NEXT blocker is fn#53's
-# nested-region (F2) merge + the div/mod/shift binops (still unported — see the
-# deferred markers at nb_arith_rax_mem and nb_count_carried). Raise this as the
-# blocker is pushed deeper; never lower it (a drop is a real regression).
-_SEEDED_CODE_PREFIX_FLOOR = 11703
+# emit byte-identically to the Rust `mind-native` oracle. PHASE 1.3 then cleared the
+# fn#53 (is_digit) F2 nested-region exit-merge floor @ 0x2ed7: an if-STATEMENT whose
+# then/else block tail is a NESTED `if`/`while` statement-expression now threads that
+# nested region's EXIT/dst id up as the branch's then_result/else_result (mirroring
+# lower.rs 3915-4015's `then_result = lower_expr(other)` in the `other =>` arm),
+# instead of reusing the stale leading-const0 placeholder. That pushed the floor to
+# 23637. The NEXT blocker is a frame-size (slot-count) under-count @ ~0x781b (oracle
+# `sub rsp,0x920` vs mind `0x890`, an 18-slot gap) — a downstream fn whose SSA-id
+# count nb_count_stmt does not yet fully mirror. Raise this as the blocker is pushed
+# deeper; never lower it (a drop is a real regression).
+_SEEDED_CODE_PREFIX_FLOOR = 23637
 # Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
 _ELF_CODE_START = 0x120
 
@@ -308,9 +314,10 @@ def seeded_main_rung(lib, tmp: pathlib.Path) -> int:
         f"loop-bearing fns; floor {_SEEDED_CODE_PREFIX_FLOOR}); next blocker @ {blk}"
     )
     print(
-        "        (known next gaps: a nested-region (F2) merge + the div/mod/shift "
-        "binops — see the deferred markers at nb_arith_rax_mem / nb_count_carried in "
-        "main.mind; not fully byte-identical YET)"
+        "        (known next gaps: a downstream frame-size/slot-count under-count "
+        "(oracle `sub rsp,0x920` vs mind `0x890`) + the F2 outer-var-MUTATION rebind "
+        "+ the div/mod/shift binops — see the deferred markers at nb_lower_fn / "
+        "nb_branch_writes / nb_arith_rax_mem in main.mind; not fully byte-identical YET)"
     )
     return 0
 
