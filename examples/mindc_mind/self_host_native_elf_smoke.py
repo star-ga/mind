@@ -193,11 +193,21 @@ _STDLIB_MODULES = [
 # nested region's EXIT/dst id up as the branch's then_result/else_result (mirroring
 # lower.rs 3915-4015's `then_result = lower_expr(other)` in the `other =>` arm),
 # instead of reusing the stale leading-const0 placeholder. That pushed the floor to
-# 23637. The NEXT blocker is a frame-size (slot-count) under-count @ ~0x781b (oracle
-# `sub rsp,0x920` vs mind `0x890`, an 18-slot gap) — a downstream fn whose SSA-id
-# count nb_count_stmt does not yet fully mirror. Raise this as the blocker is pushed
-# deeper; never lower it (a drop is a real regression).
-_SEEDED_CODE_PREFIX_FLOOR = 23637
+# 23637. PHASE 1.3 #14 then cleared the `scan` (main.mind:599) F2 outer-var-through-
+# NESTED-region merge floor @ 0x5d75 — three fixes that compound on the same call
+# path: (1) nb_branch_writes now records a nested `if`-STATEMENT tail's branch_bindings
+# (its merged_names) as writes of the ENCLOSING branch, so each enclosing `if`
+# allocates the merge phi the oracle does (scan's frame 0x890 -> the byte-identical
+# 0x920, +18 slots); (2) nb_arith_rax_mem ports the branchless guarded signed `/`
+# sequence (emit_div_mod_guarded, src/native 218+) so `vec_len(toks) / 3` in tok_count
+# emits idiv, not imul; (3) nb_emit_params copies the 7th+ stack-passed parameter from
+# `[rbp + 16 + 8*(i-6)]` instead of dropping it. Together these pushed the floor to
+# 61282. The NEXT blocker is at 0xf082 (a call-rel32 displacement shift): a downstream
+# fn (oracle 0x12dfc, frame 0x170) emits a `movabs rax, imm64` whose immediate (an
+# interned string-table / id offset) differs by 19 from the oracle — an upstream
+# count/ordering divergence distinct from the merge/div/stack-arg gaps. Raise this as
+# the blocker is pushed deeper; never lower it (a drop is a real regression).
+_SEEDED_CODE_PREFIX_FLOOR = 61282
 # Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
 _ELF_CODE_START = 0x120
 
