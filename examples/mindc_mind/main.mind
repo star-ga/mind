@@ -18240,17 +18240,122 @@ pub fn nb_arith_rax_mem(code: String, op: i64, disp: i64) -> String {
         let c3: String = nb_push(c2, 133);
         return nb_i32le_signed(c3, disp);
     }
+    // op_div(): the branchless guarded signed-division sequence (lhs already in
+    // rax). Byte-for-byte src/native::emit_div_mod_guarded(is_mod=false): substitute
+    // divisor 1 when rhs==0 OR (rax==INT_MIN && rcx==-1) so idiv never traps, then
+    // force the result to 0 when rhs==0 — giving MIND's defined edges x/0=0,
+    // INT_MIN/-1=INT_MIN. (tk_to_op never yields op_mod, so the is_mod `mov rax,rdx`
+    // tail is unreachable in self-host; the self-host source uses `/` only.)
+    if op == op_div() {
+        return nb_div_guarded(code, disp);
+    }
     // op_mul(): imul rax, [rbp+disp32] = 48 0F AF 85 <disp32>
-    // deferred: op_div/op_mod use the branchless emit_div_mod_guarded cmov sequence
-    // (src/native 218+) and op_shl/op_shr use cl-based shifts — both multi-instr;
-    // not yet ported, so a div/mod/shift binop still falls through to imul here and
-    // diverges from the oracle. upgrade path: port emit_div_mod_guarded + the shift
-    // forms. (The all-i64 string_push_str floor target uses only +,-,*,&,|,^.)
+    // deferred: op_shl/op_shr use cl-based variable shifts (src/native 760-766) — not
+    // yet ported, so a shift binop still falls through to imul here. The self-host
+    // source uses no `<<`/`>>` in a native-emitted fn, so it never fires before the
+    // fixed point. upgrade path: port the `mov rcx,[rhs]; sh{l,r} rax,cl` form.
     let c1: String = nb_push(code, 72);
     let c2: String = nb_push(c1, 15);
     let c3: String = nb_push(c2, 175);
     let c4: String = nb_push(c3, 133);
     nb_i32le_signed(c4, disp)
+}
+// Emit `emit_div_mod_guarded(is_mod=false, rhs=disp)` — the 60-byte branchless
+// guarded signed div with the dividend already in rax. Flat sequential `nb_push`
+// chain (one let per byte-group, no value-if-expr) to stay self-flip-clean.
+// INT_MIN is emitted as its raw 8 LE bytes (00*7, 0x80) so no i64 literal is needed.
+pub fn nb_div_guarded(code: String, disp: i64) -> String {
+    // mov rcx, [rbp+rhs]  = 48 8B 8D <disp32>
+    let a1: String = nb_push(code, 72);
+    let a2: String = nb_push(a1, 139);
+    let a3: String = nb_push(a2, 141);
+    let a4: String = nb_i32le_signed(a3, disp);
+    // xor r8,r8 = 4D 31 C0 ; test rcx,rcx = 48 85 C9 ; sete r8b = 41 0F 94 C0
+    let b1: String = nb_push(a4, 77);
+    let b2: String = nb_push(b1, 49);
+    let b3: String = nb_push(b2, 192);
+    let b4: String = nb_push(b3, 72);
+    let b5: String = nb_push(b4, 133);
+    let b6: String = nb_push(b5, 201);
+    let b7: String = nb_push(b6, 65);
+    let b8: String = nb_push(b7, 15);
+    let b9: String = nb_push(b8, 148);
+    let b10: String = nb_push(b9, 192);
+    // movabs r10, INT_MIN = 49 BA 00 00 00 00 00 00 00 80
+    let c1: String = nb_push(b10, 73);
+    let c2: String = nb_push(c1, 186);
+    let c3: String = nb_push(c2, 0);
+    let c4: String = nb_push(c3, 0);
+    let c5: String = nb_push(c4, 0);
+    let c6: String = nb_push(c5, 0);
+    let c7: String = nb_push(c6, 0);
+    let c8: String = nb_push(c7, 0);
+    let c9: String = nb_push(c8, 0);
+    let c10: String = nb_push(c9, 128);
+    // xor r9,r9 = 4D 31 C9 ; cmp rax,r10 = 4C 39 D0 ; sete r9b = 41 0F 94 C1
+    let d1: String = nb_push(c10, 77);
+    let d2: String = nb_push(d1, 49);
+    let d3: String = nb_push(d2, 201);
+    let d4: String = nb_push(d3, 76);
+    let d5: String = nb_push(d4, 57);
+    let d6: String = nb_push(d5, 208);
+    let d7: String = nb_push(d6, 65);
+    let d8: String = nb_push(d7, 15);
+    let d9: String = nb_push(d8, 148);
+    let d10: String = nb_push(d9, 193);
+    // xor r11,r11 = 4D 31 DB ; cmp rcx,-1 = 48 83 F9 FF ; sete r11b = 41 0F 94 C3
+    let e1: String = nb_push(d10, 77);
+    let e2: String = nb_push(e1, 49);
+    let e3: String = nb_push(e2, 219);
+    let e4: String = nb_push(e3, 72);
+    let e5: String = nb_push(e4, 131);
+    let e6: String = nb_push(e5, 249);
+    let e7: String = nb_push(e6, 255);
+    let e8: String = nb_push(e7, 65);
+    let e9: String = nb_push(e8, 15);
+    let e10: String = nb_push(e9, 148);
+    let e11: String = nb_push(e10, 195);
+    // and r9,r11 = 4D 21 D9 ; or r9,r8 = 4D 09 C1
+    let f1: String = nb_push(e11, 77);
+    let f2: String = nb_push(f1, 33);
+    let f3: String = nb_push(f2, 217);
+    let f4: String = nb_push(f3, 77);
+    let f5: String = nb_push(f4, 9);
+    let f6: String = nb_push(f5, 193);
+    // mov r10,1 = 49 C7 C2 01 00 00 00
+    let g1: String = nb_push(f6, 73);
+    let g2: String = nb_push(g1, 199);
+    let g3: String = nb_push(g2, 194);
+    let g4: String = nb_push(g3, 1);
+    let g5: String = nb_push(g4, 0);
+    let g6: String = nb_push(g5, 0);
+    let g7: String = nb_push(g6, 0);
+    // test r9,r9 = 4D 85 C9 ; cmovnz rcx,r10 = 49 0F 45 CA
+    let h1: String = nb_push(g7, 77);
+    let h2: String = nb_push(h1, 133);
+    let h3: String = nb_push(h2, 201);
+    let h4: String = nb_push(h3, 73);
+    let h5: String = nb_push(h4, 15);
+    let h6: String = nb_push(h5, 69);
+    let h7: String = nb_push(h6, 202);
+    // cqo = 48 99 ; idiv rcx = 48 F7 F9
+    let i1: String = nb_push(h7, 72);
+    let i2: String = nb_push(i1, 153);
+    let i3: String = nb_push(i2, 72);
+    let i4: String = nb_push(i3, 247);
+    let i5: String = nb_push(i4, 249);
+    // result = (rhs==0) ? 0 : result:
+    // xor r10,r10 = 4D 31 D2 ; test r8,r8 = 4D 85 C0 ; cmovnz rax,r10 = 49 0F 45 C2
+    let j1: String = nb_push(i5, 77);
+    let j2: String = nb_push(j1, 49);
+    let j3: String = nb_push(j2, 210);
+    let j4: String = nb_push(j3, 77);
+    let j5: String = nb_push(j4, 133);
+    let j6: String = nb_push(j5, 192);
+    let j7: String = nb_push(j6, 73);
+    let j8: String = nb_push(j7, 15);
+    let j9: String = nb_push(j8, 69);
+    nb_push(j9, 194)
 }
 
 // The `setcc` second opcode byte for a comparison BinOp, or -1 for a
@@ -19440,7 +19545,8 @@ pub fn nb_emit_argregs(code: String, ids: i64, n: i64, i: i64) -> String {
         return code;
     }
     if i >= 6 {
-        // 7th+ args are stack-passed; OUT OF SCOPE for this scalar increment.
+        // 7th+ CALL args are stack-passed (push), not register-loaded; OUT OF SCOPE
+        // here. deferred: port the caller-side stack-arg push (src/native call arm).
         return code;
     }
     let slot: i64 = __mind_load_i64(ids + i * 8);
@@ -19697,11 +19803,45 @@ pub fn nb_branch_writes(buf: i64, sa: i64, sl: i64, i: i64, names: i64, n: i64) 
             if k == ast_while() {
                 nb_while_live_writes(buf, ast_child0(ast_child1(stmt)), ast_aux(ast_child1(stmt)), 0, names, n)
             } else {
-                n
+                if k == ast_if() {
+                    // F2 outer-var-through-nested-region (lower.rs 4003-4013 `other =>`
+                    // arm + last_region_exit_rebindings): a branch statement that is
+                    // itself a nested `if` threads that if's branch_bindings — i.e. its
+                    // own merged_names (lower.rs 4289 pushes one branch_binding per
+                    // merged name) — up as writes of the ENCLOSING branch, so each
+                    // enclosing `if` allocates a merge phi for them too. Add those names
+                    // (deduped) to the enclosing names table. Recurses through
+                    // nb_if_branch_merged_writes -> nb_branch_writes for nested-if tails.
+                    nb_if_branch_merged_writes(buf, stmt, names, n)
+                } else {
+                    n
+                }
             }
         }
     };
     nb_branch_writes(buf, sa, sl, i + 1, names, new_n)
+}
+// A nested `if` statement (the tail of an enclosing branch) exports its
+// merged_names as the enclosing branch's writes (its branch_bindings, lower.rs
+// 4289). merged_names = then-block writes UNION else-block writes (lower.rs
+// 4203-4208), exactly nb_merged_names' union but appended (deduped) at offset `n`
+// of the EXISTING enclosing names table. Both branch walks reuse nb_branch_writes,
+// so a nested-if tail recurses to arbitrary depth.
+pub fn nb_if_branch_merged_writes(buf: i64, ifnode: i64, names: i64, n: i64) -> i64 {
+    let then_blk: i64 = ast_child1(ifnode);
+    let after_then: i64 = nb_branch_writes(buf, ast_child0(then_blk), ast_aux(then_blk), 0, names, n);
+    let else_blk: i64 = ast_child2(ifnode);
+    let else_sa: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_child0(else_blk)
+    };
+    let else_sl: i64 = if else_blk == 0 {
+        0
+    } else {
+        ast_aux(else_blk)
+    };
+    nb_branch_writes(buf, else_sa, else_sl, 0, names, after_then)
 }
 // Add a name leaf (its span) to the names table if not already present; return
 // the new count.
@@ -21239,7 +21379,17 @@ pub fn nb_emit_params(st: NbState, buf: i64, params_addr: i64, n_params: i64, i:
     if i >= n_params {
         return st;
     }
-    let c1: String = nb_store_argreg(st.code, i, nb_slot_disp(i));
+    // Spill param i into slot i. Args 0..5 come from their SysV registers
+    // (store_argreg); args 6+ arrive on the stack at `[rbp + 16 + 8*(i-6)]` (above
+    // the saved rbp + return address) and are copied via rax — mirror
+    // src/native::lower_fn's Instr::Param arm (mod.rs 740-744): off = 16 + 8*(i-6),
+    // `load_rax(off); store_rax(slot)`.
+    let c1: String = if i >= 6 {
+        let load_stack: String = nb_load_rax(st.code, 16 + 8 * (i - 6));
+        nb_store_rax(load_stack, nb_slot_disp(i))
+    } else {
+        nb_store_argreg(st.code, i, nb_slot_disp(i))
+    };
     let s1: NbState = NbState { code: c1, next_id: st.next_id, last_id: st.last_id, ncalls: st.ncalls };
     nb_emit_params(s1, buf, params_addr, n_params, i + 1)
 }
