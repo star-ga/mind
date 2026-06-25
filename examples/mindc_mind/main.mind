@@ -19918,6 +19918,25 @@ pub fn nb_lower_fn(buf: i64, node: i64, is_entry: i64, calls: i64, ncalls0: i64,
     // frame = round_up(8 * nslots, 16); nslots = next_id after walking the body
     // seeded at n_params (params occupy slots 0..n_params-1). A count-time let-env
     // (name -> struct-lit) lets the field-access count recover each field's offset.
+    //
+    // deferred: the stdlib-SEEDED whole-module build (selftest_native_elf_hb with
+    // real std prepended + prune to main.mind's call graph) is now byte-identical to
+    // the Rust mind-native oracle for fns 0..9 (968==968 prologues — the seed+prune
+    // blocker IS resolved), but DIVERGES at ordered fn 10 = std/string.mind's
+    // `string_push_byte`: the count pass here computes frame=320 (40 slots) where the
+    // oracle assigns 752 (94 slots), so the emitter lays a TRUNCATED body that reads
+    // `[rbp+0x0]` (a last_id==-1 slot) for the nested value-if result. The SAME fn
+    // lowers byte-identically in ISOLATION (1499 B, frame 480) and with all 11 sibling
+    // struct decls prepended — the undercount is triggered ONLY by the full
+    // 1.3 MB combined buffer, and the srt registry + String descriptor (addr/len/cap
+    // at 0/8/16) are both verified CORRECT in that context. So the divergence is NOT
+    // field-offset resolution: it is a context-sensitive count↔emit disagreement on
+    // the nested value-if-expr (`let new_cap = if .. { 16 } else { if .. {..} else {..} }`)
+    // whose root cause is still open. upgrade path: make nb_count_stmt's ast_if arm
+    // mirror nb_if_value's id consumption for a NESTED value-if branch exactly (the
+    // count must consume the same leading-const0 + branch-value + dst ids the emit
+    // does at every nesting depth), then re-run the seeded whole-module probe to
+    // byte-identity. Until then ordered fn 10 is the first byte divergence.
     let clets0: i64 = __mind_alloc(512 * 4 * 8);
     let clcell0: i64 = __mind_alloc(8);
     __mind_store_i64(clcell0, 0);
