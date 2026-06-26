@@ -1,6 +1,6 @@
 # MIND Ecosystem — Version Matrix
 
-> **Last Updated:** 2026-05-29
+> **Last Updated:** 2026-06-25
 > **Purpose:** Version-of-record for all MIND-ecosystem repos, with drift flags
 > that require attention. Canonical source: grep of each repo's manifest files
 > (Cargo.toml, Mind.toml, pyproject.toml, package.json). Update this file
@@ -12,7 +12,7 @@
 
 | Repo | Path | Manifest | Version | mindc target | IR format | Notes |
 |---|---|---|---|---|---|---|
-| **mind** | `~/mind` | `Cargo.toml` | **0.7.0** | self (the compiler) | mic@1 (text), mic@3 (binary, post-0.7.0) | Public repo `star-ga/mind`. Cargo.toml `version = "0.7.0"`. `Mind.toml` reads `0.6.8` — see drift flag below. |
+| **mind** | `~/mind` | `Cargo.toml` | **0.10.0** | self (the compiler) | mic@1 (text), mic@3 (binary); NATIVE-ELF (normative self-host, `src/native`) | Public repo `star-ga/mind`. Native-ELF self-host fixed point closed 2026-06-25. |
 | **mind-mem** | `~/mind-mem` | `pyproject.toml` | **4.0.15** | n/a (Python package) | uses `mic_map.py` (MICB_VERSION=0x02 / mic@2) | PyPI `mind-mem 4.0.15`. `__version__ = "4.0.15"`. MICB_VERSION pin is mic@2 — see drift flag. |
 | **mind-nerve** | `~/mind-nerve` | `Mind.toml` | **0.1.0-alpha.2** | mindc ≥0.5.0, <0.8.0 | mic@1 (ir-format = "mic@1") | Python package: `pyproject.toml` uses dynamic version via `mind_nerve.__version__`; `__version__ = "0.3.0b8"`. See drift flag. |
 | **mind-inference** | `~/mind-inference` | `Mind.toml` | **0.2.0** | not pinned (see drift flag) | mic@1 (standard pipeline) | STARGA Commercial license. No CI verified as of last audit. |
@@ -27,15 +27,15 @@
 
 | File | Value |
 |---|---|
-| `~/mind/Cargo.toml` | `version = "0.7.0"` |
-| `~/mind/Mind.toml` | `version = "0.6.8"` |
+| `~/mind/Cargo.toml` | `version = "0.10.0"` |
+| `~/mind/Mind.toml` | `version = "0.6.8"` (stale — needs bump to 0.10.0) |
 
 **Assessment:** The Cargo-hosted Rust compiler and the pure-MIND `Mind.toml`
 manifest track different version numbers. `Cargo.toml` is the authoritative release
-version (the compiler binary, `mindc`, is built from it). `Mind.toml` appears not to
-have been bumped when the Cargo version advanced from 0.6.8 to 0.7.0.
+version (the compiler binary, `mindc`, is built from it). `Mind.toml` was not bumped
+when the Cargo version advanced.
 
-**Action:** Bump `Mind.toml` `version` to `0.7.0` to match `Cargo.toml`. Low-risk
+**Action:** Bump `Mind.toml` `version` to `0.10.0` to match `Cargo.toml`. Low-risk
 one-line change; no functional impact. Tracked as part of #308 / RFC 0021 step 5
 (cross-repo version alignment).
 
@@ -125,7 +125,7 @@ with the range used in mind-nerve (`0.5.0` ≤ mindc < `0.8.0`). Low-cost hygien
 
 | Property | Value | Source |
 |---|---|---|
-| Current mindc release | 0.7.0 | `~/mind/Cargo.toml` |
+| Current mindc release | 0.10.0 | `~/mind/Cargo.toml` |
 | mic@1 (canonical IR text) | stable since 0.2.5 | `docs/ir-stability.md` |
 | mic@3 (binary codec) | post-0.7.0 (unreleased) | RFC 0021 step 1, mind@5c29f0d |
 | Evidence chain (Phase A/B) | post-0.7.0 (unreleased) | RFC 0016, mind@e7c8c28/cadca87 |

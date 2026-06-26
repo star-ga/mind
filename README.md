@@ -26,11 +26,21 @@ It is also a Rust-first language and runtime for building intelligent systems wi
 
 The compiler produces deterministic binaries that execute inside the [Cognitive Kernel](https://mindlang.dev/docs/cognitive-kernel), MIND's microkernel runtime architecture with Control, Memory, and Verification planes.
 
-**MIND self-hosts the front-end.** The pure-MIND bootstrap front-end reproduces the canonical `mic@3`
-binary IR of its own ~15k-line source byte-for-byte against the Rust reference — the layer the evidence
-chain's `trace_hash` anchors on (commit 1ec580a, keystone gate 7/7). The front-end is now decorative at the canonical-binary-IR layer;
-the backend (mic@3 → MLIR → ELF) remains Rust-based. Full self-hosting of the entire pipeline (Phase 15) is on the roadmap.
-See [`docs/roadmap.md`](docs/roadmap.md).
+**MIND self-hosts the full native-ELF fixed point.** The pure-MIND front-end (a) reproduces the
+canonical `mic@3` binary IR of its own source byte-for-byte (the layer the evidence chain's `trace_hash`
+anchors on), (b) reproduces the `mic@1` IR-text bootstrap fixed point, and (c) emits the NATIVE x86-64/ELF
+of the entire seeded module (21 stdlib modules + main.mind, 1 055 777 B) byte-identically against the Rust
+reference — the native-ELF self-host fixed point is closed. This is the core of Rust-independence.
+
+**Backend architecture:** the NATIVE-ELF backend (`src/native`) is the normative self-host target —
+determinism-by-construction (the native ELF is a pure function of the IR). MLIR-text is a
+downstream-interchange and exotic-chip-reach backend, demoted from the self-host path but not removed.
+"Target any chip" is implemented via a pluggable backend trait plus commercial backends in the private
+`mind-runtime`.
+
+What remains: (1) the 32-byte `ir_trace_hash` PT\_NOTE is still fed from the Rust oracle (a pure-MIND
+SHA-256 is implemented but not yet wired to the pruned-combined mic@3 emit); (2) the Rust `src/native`
+backend is not yet deleted. See [`docs/roadmap.md`](docs/roadmap.md).
 
 ## Open-core vs proprietary runtime
 

@@ -26,6 +26,15 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   (`zeros`, `ones`, `matmul`, `softmax`, `randn`, `transpose`) follow in Phase 11.
   f32 tensor results are reproducible within a single substrate (x86 or ARM);
   int/Q16 results are byte-identical across substrates (cross_substrate gate 12/12).
+- ✅ **Native-ELF self-host fixed-point closed** (v0.10.0) – the pure-MIND
+  front-end now emits the NATIVE x86-64/ELF of the entire seeded module (21 stdlib
+  modules + main.mind, 1 055 777 B) byte-identically against the Rust reference —
+  all three self-host gates pass: mic@1 IR-text bootstrap fixed point, mic@3
+  canonical-binary-IR flip, and the native-ELF fixed point. This is the core of
+  Rust-independence. The NATIVE-ELF backend (`src/native`) is the normative self-host
+  target; MLIR-text is demoted to downstream-interchange. What remains before full
+  Rust-independence: wiring the pure-MIND SHA-256 to the `ir_trace_hash` PT\_NOTE
+  emit, and deleting the Rust `src/native` backend.
 
 ## Shipped (v0.7.1)
 
@@ -53,9 +62,11 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## Roadmap
 
-- **Full real-codegen self-host** – the front-end **and the canonical `mic@3`
-  binary-IR** fixed-points are both reached byte-identically; the remaining
-  frontier is self-hosting the full MLIR→ELF codegen path (Phase 15).
+- **Full Rust-independent pipeline (in progress)** – the native-ELF self-host fixed point is
+  closed (v0.10.0): the pure-MIND front-end emits the full seeded module
+  byte-identically against the Rust reference. What remains: wiring the pure-MIND
+  SHA-256 to the `ir_trace_hash` PT\_NOTE emit, and deleting the Rust `src/native`
+  backend (Phase 15). See the README for the precise what-remains list.
 - **Ed25519-signed evidence chain** – cryptographic signing of the
   already-emitted evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
@@ -792,12 +803,14 @@ discipline already in force (a speedup never trips it).
    compiles a MIND-sourced `mindc.mind` (stage-1); stage-1 compiles
    itself (stage-2). `stage1 == stage2` byte-identical is the
    self-hosting acceptance gate. Rust leaves the build path on pass.
-2. **`IRModule → LLVM IR text` backend.** The self-hosted compiler
-   emits textual LLVM IR (`.ll`) and shells out to `llc`/`clang` —
-   the C-ABI emitted by RFC 0002/0003 is the shell-out seam. MLIR
-   stays a stage-0 / multi-backend concern; the bootstrap path skips
-   it to minimise dependencies. `IRModule` is the fixed point shared
-   by both stages — it is not redesigned for self-hosting.
+2. **Native-ELF backend (NORMATIVE self-host path — `src/native`).** The
+   pure-MIND front-end emits native ELF directly; the native-ELF fixed point
+   is closed as of v0.10.0 (1 055 777 B, byte-identical). MLIR stays a
+   downstream-interchange / exotic-chip-reach concern; the self-host bootstrap
+   path uses the native-ELF backend. `IRModule` is the fixed point shared by
+   both stages — it is not redesigned for self-hosting. Remaining: wire the
+   pure-MIND SHA-256 to the `ir_trace_hash` PT\_NOTE emit, then delete
+   `src/native` Rust backend.
 3. **Pure-MIND std surface.** Growable `Vec`, `String` operations,
    order-deterministic `Map`, evidence-emitting file I/O. This is the
    long pole: a lexer/parser/symbol-table cannot be written without
