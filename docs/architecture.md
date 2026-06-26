@@ -45,4 +45,19 @@ Key invariants:
 - **Backend Plugins** – Trait-based executors allow embedding custom accelerators via the `Runtime` trait.
 - **Pass Pipelines** – Pass managers can be configured per target, making it safe to ship experimental transformations behind feature flags.
 
+## Backend Architecture
+
+The **NATIVE-ELF backend** (`src/native`) is the normative self-host target.
+It is determinism-by-construction: the native ELF is a pure function of the IR,
+with no MLIR-text intermediate required on the self-host path. The pure-MIND
+front-end emits the full seeded module (21 stdlib modules + main.mind, 1 055 777 B)
+byte-identically against the Rust reference — the native-ELF self-host fixed point
+is closed as of v0.10.0.
+
+The **MLIR-text backend** (`src/mlir/`) is a downstream-interchange and
+exotic-chip-reach backend. It is demoted from the self-host path but retained for
+debugging, inspection, and future pluggable commercial backends targeting exotic
+chips. "Target any chip" is implemented via a pluggable `Backend` trait; production
+GPU and accelerator backends live in the private `mind-runtime`.
+
 For detailed discussions of the intermediate representation see [`ir-mlir.md`](ir-mlir.md); for runtime integration details refer to [`ffi-runtime.md`](ffi-runtime.md).

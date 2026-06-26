@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Native-ELF self-host fixed-point closed.** The pure-MIND front-end
+  (`examples/mindc_mind/main.mind`) now passes all three self-host gates
+  byte-identically against the Rust reference: (a) the `mic@1` IR-text bootstrap
+  fixed point, (b) the `mic@3` canonical-binary-IR flip, and (c) the NATIVE
+  x86-64/ELF emit of the entire seeded module (21 stdlib modules + main.mind,
+  1 055 777 B). Gate (c) is new — the native-ELF emit was the last open frontier.
+  The NATIVE-ELF backend (`src/native`) is now the normative self-host target;
+  MLIR-text is demoted to downstream-interchange / exotic-chip-reach. This is the
+  core of Rust-independence. What remains before full independence: wiring the
+  pure-MIND SHA-256 (see below) to the `ir_trace_hash` PT\_NOTE emit in the
+  pruned-combined mic@3 path, and deleting the Rust `src/native` backend.
+
+- **`while` / assign port to pure-MIND front-end.** The pure-MIND front-end now
+  lowers `while` loops and compound-assignment statements (`+=`, `-=`, etc.)
+  byte-identically to the Rust oracle, closing the last major control-flow gap in
+  the G2 differential corpus and enabling the full seeded-module native-ELF emit.
+
+- **`mic@3`-flip regression fix.** A regression introduced in the mic@3 canonical
+  binary-IR flip (gate b above) — where the fn#10 body silently produced a wrong
+  `mic@3` flip outcome — was caught by the U1 bisect and fixed. The self-host gate
+  now enforces all three fixed points together so a regression in any one is
+  immediately visible; gate (b) and gate (c) cannot silently diverge.
+
+- **`std.sha256` pure-MIND SHA-256 building block (FIPS 180-4).** A pure-MIND
+  SHA-256 implementation is now present in the stdlib, providing the cryptographic
+  primitive needed to wire `trace_hash` computation into the pure-MIND emit path.
+  Bit-identical to the reference on all three self-host gates. (Wiring to the
+  `ir_trace_hash` PT\_NOTE emit is the remaining step before the SHA-256 path
+  replaces the Rust oracle feed.)
+
 - **Tensor-returning functions build (RUNS bufferization path).** A function that
   returns a tensor — `fn f() -> tensor<f32[3]> { ... }` — now compiles + links to
   a valid ELF cdylib. The MLIR `func.func` signature and the `return` are typed as
