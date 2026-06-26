@@ -13,6 +13,15 @@
 - Feature gates: `cpu-exec`, `cpu-conv`, `mlir-*`, `pkg`, `ffi-c`
 - Tests prefer integration tests in `tests/`
 
+### Backend architecture (v0.10.0+)
+
+The **NATIVE-ELF backend** (`src/native`) is the normative self-host target —
+determinism-by-construction (the native ELF is a pure function of the IR). The
+**MLIR-text backend** is a downstream-interchange and exotic-chip-reach backend,
+demoted from the self-host path but retained for broader chip targets. "Target any
+chip" is implemented via a pluggable `Backend` trait plus commercial backends in
+the private `mind-runtime`.
+
 ### Stability
-The architecture is frozen for v0.7.1.  
+The architecture is stable for v0.10.0.  
 Breaking changes will only occur in v1.0 once SDK bindings and developer docs are added.

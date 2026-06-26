@@ -1,7 +1,12 @@
 ## MLIR lowering pipeline (public)
 
+> **Backend role (v0.10.0+):** MLIR-text is a **downstream-interchange and
+> exotic-chip-reach** backend. It is demoted from the normative self-host path
+> (which uses the NATIVE-ELF backend, `src/native`) but is retained for
+> debugging, inspection, and pluggable commercial backends targeting exotic chips.
+
 MIND can lower its deterministic IR into MLIR textual form for debugging and
-future backend integration. The pipeline is intentionally lightweight and does
+backend integration. The pipeline is intentionally lightweight and does
 not invoke any private runtime code.
 
 - Entry point: `compile_ir_to_mlir_text` (behind the `mlir-lowering` feature)

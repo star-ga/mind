@@ -41,7 +41,7 @@ The market for AI development platforms and compilers is poised for multi-billio
 
 ### Compiler Architecture
 
-MIND source code is parsed by a Rust-based front-end into a dedicated MLIR dialect optimized for tensor computations. High-level optimizations such as kernel fusion occur at this stage before lowering to LLVM IR for target-specific code generation. This multi-level pipeline enables deterministic builds, portability across hardware, and compatibility with emerging accelerator backends that adopt MLIR.
+MIND source code is parsed and lowered by the compiler front-end into a deterministic IR. The front-end self-hosts: the pure-MIND bootstrap reproduces native x86-64/ELF output byte-identically against the reference implementation, with the NATIVE-ELF backend as the normative self-host path. For exotic-chip reach and inspection, the compiler also emits MLIR textual form, which lowers to LLVM IR for target-specific code generation. This multi-level pipeline enables deterministic builds, portability across hardware, and compatibility with emerging accelerator backends that adopt MLIR.
 
 ### Runtime and Execution
 

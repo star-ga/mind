@@ -1,11 +1,11 @@
 # MIND Compiler Status
 
-> **Last Updated:** 2026-05-29
-> **Version:** 0.7.1
+> **Last Updated:** 2026-06-25
+> **Version:** 0.10.0
 
 ## Overview
 
-MIND is a deterministic AI compiler and statically-typed tensor programming language designed for certified AI systems in regulated industries. The compiler self-hosts: the pure-MIND `libmindc_mind.so` compiles its own source byte-identically to the Rust reference implementation (bootstrap fixed-point, v0.6.1). v0.7.0 is the credibility-ladder rung 3 graduation marker: Mindcraft fully shipped (RFC 0007), RFC 0008 KEYSTONE (cargo retired from the pure-MIND compile loop), RFC 0010 extern "C" foundations (Phases A/B/C shipped), 13 stdlib modules, `mindc doc`, and standalone binary releases.
+MIND is a deterministic AI compiler and statically-typed tensor programming language designed for certified AI systems in regulated industries. The compiler self-hosts: the pure-MIND front-end reproduces (a) the canonical `mic@3` binary IR of its own source byte-for-byte, (b) the `mic@1` IR-text bootstrap fixed point, and (c) the NATIVE x86-64/ELF of the entire seeded module (1 055 777 B) byte-identically against the Rust reference — the native-ELF self-host fixed point is closed (2026-06-25). The NATIVE-ELF backend (`src/native`) is the normative self-host target; MLIR-text is a downstream-interchange backend. v0.7.0 was the credibility-ladder rung 3 graduation marker: Mindcraft fully shipped (RFC 0007), RFC 0008 KEYSTONE (cargo retired from the pure-MIND compile loop), RFC 0010 extern "C" foundations (Phases A/B/C shipped), 13 stdlib modules, `mindc doc`, and standalone binary releases. v0.10.0 adds full enum/payload lowering, integer-determinism cluster, tensor-tier-1, and the native-ELF self-host fixed-point closure.
 
 ## Feature Status
 
@@ -22,7 +22,7 @@ MIND is a deterministic AI compiler and statically-typed tensor programming lang
 | Language profiles (`default` / `systems` / `embedded`) | ✅ Complete | v0.2.8 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Match expressions, `&expr`, REAP MoE, sparse tensors | ✅ Complete | v0.2.11 | [`docs/roadmap.md`](docs/roadmap.md) |
 | Pure-MIND standard library RFC 0005 (std.vec/string/map/io) | ✅ Complete | v0.4.0–v0.4.4 | [`docs/rfcs/0005-pure-mind-stdlib.md`](docs/rfcs/) |
-| Self-hosted compiler — **front-end** byte-exact on 66/66 of the gap corpus (not just its own source; 0 wrong-bytes, 0 fail-closed; CI-gated by `gap_corpus_smoke.py` at FLOOR 66; real-codegen self-host still in progress) | ✅ Complete | v0.6.1 | `examples/mindc_mind/` |
+| Self-hosted compiler — **native-ELF fixed-point closed** (mic@3 binary-IR flip + mic@1 text fixed point + native x86-64/ELF of full seeded module 1 055 777 B, byte-identical to Rust reference; front-end byte-exact on 66/66 gap corpus; CI-gated; what remains: ir_trace_hash PT\_NOTE wiring + Rust src/native removal) | ✅ Complete | v0.10.0 | `examples/mindc_mind/` |
 | mind-blas (RFC 0006) Track A + Track B inc 1–4 | ✅ Complete | v0.6.3–v0.6.7 | [`docs/rfcs/0006-mind-blas.md`](docs/rfcs/0006-mind-blas.md) |
 | **Mindcraft RFC 0007 — all 6 phases + MINDCRAFT-001** | ✅ **Fully Shipped** | **v0.6.8** | [`docs/rfcs/0007-mindcraft.md`](docs/rfcs/0007-mindcraft.md) |
 | **RFC 0008 — all 7 phases shipped (`mindc build` + `mindc test` + KEYSTONE)** | ✅ **7/7 phases** | **v0.7.0** | [`docs/rfcs/0008-mindc-build.md`](docs/rfcs/0008-mindc-build.md) |
@@ -150,13 +150,18 @@ of the full `IRModule` (all 37 `Instr` variants including control flow, function
 and SIMD) with an embedded mic@2.1 MAP epilogue carrying the `evidence_chain.*`
 and `verify.*` namespaces.
 
+The `trace_hash` is anchored on the canonical **mic@3** binary bytes (re-anchored
+from mic@1 text on 2026-05-31 after a collision audit — mic@1 text can drop
+function-body semantics; mic@3 binary commits the full `IRModule`; supersedes RFC
+0016 GAP-1 mic@1-text rule).
+
 | Layer | Format | Status |
 |---|---|---|
-| mic@1 text (human-readable, round-trip stable) | `ir::save` / `ir::load` | ✅ Stable — the anchor for `trace_hash` |
+| mic@1 text (human-readable, round-trip stable) | `ir::save` / `ir::load` | ✅ Stable — documented public contract |
 | mic@3 binary `IRModule` codec | `src/ir/compact/v3/` | ✅ Shipped (RFC 0021 step 1, mind@5c29f0d) |
 | Evidence MAP epilogue on mic@3 | `src/ir/compact/v3/evidence.rs` | ✅ Shipped (RFC 0021 step 2, mind@c64bd0b) |
 | `mindc --emit-mic3` / `--emit-evidence` CLI | `src/bin/mindc.rs` | ✅ Shipped (RFC 0021 step 3, mind@7fc10d2) |
-| `trace_hash` anchored on canonical mic@1 IR | `src/ir/evidence.rs::ir_trace_hash` | ✅ Shipped (RFC 0016 GAP-1, mind@db5cb76) |
+| `trace_hash` anchored on canonical mic@3 binary bytes (re-anchored 2026-05-31, supersedes RFC 0016 GAP-1 mic@1-text rule) | `src/ir/evidence.rs::ir_trace_hash` | ✅ Shipped |
 | RFC 0016 Phase A evidence emit (inert, unsigned) | `src/ir/compact/v2/evidence.rs` | ✅ Shipped (mind@e7c8c28 / cadca87) |
 | RFC 0016 Phase B verifier core | `src/ir/compact/v2/evidence.rs::verify_evidence_chain` | ✅ Shipped (mind@cadca87) |
 | `mindc verify` CLI subcommand (RFC 0017) | pending | 🚧 In progress (RFC 0021 step 4) |
@@ -171,8 +176,9 @@ and `verify.*` namespaces.
 ### Evidence chain
 
 A compiled MIND artifact carries a `evidence_chain.*` MAP block that attests:
-- **`trace_hash`**: SHA-256 (FIPS 180-4) of the canonical mic@1 IR bytes — the
-  artifact's deterministic production hash, reproducible by any verifier.
+- **`trace_hash`**: SHA-256 (FIPS 180-4) of the canonical mic@3 binary bytes — the
+  artifact's deterministic production hash, reproducible by any verifier. (Re-anchored
+  from mic@1 text on 2026-05-31; mic@3 binary commits the full `IRModule`.)
 - **`substrate`**: the RFC 0014 canonical lowering-tier ID (`x86_avx2`, `arm_neon`, …).
 - **`parent`**: `trace_hash` of the predecessor step in the transformation DAG.
 - **`determinism`**: `"deterministic"` or `"nondeterministic"` (never a bare artifact).
@@ -194,9 +200,9 @@ to carry the full `IRModule` data model. Key properties:
 - `save→load→save` fixed-point verified by differential-fuzz test suite.
 - Additive alongside mic@1 — mic@1 text output is unchanged; `mic@3` is a new emit
   target (`--emit-mic3`, `--emit-evidence`).
-- `trace_hash` in the MAP epilogue is SHA-256 of the canonical mic@1 IR bytes
-  (not the binary body), so the same hash appears whether verifying via mic@1 text
-  or mic@3 binary.
+- `trace_hash` in the MAP epilogue is SHA-256 of the canonical mic@3 binary bytes,
+  so the same hash appears whether the artifact is inspected via mic@3 binary or
+  reproduced from source. (Re-anchored from mic@1 text 2026-05-31.)
 
 ### RFC 0021 migration progress
 

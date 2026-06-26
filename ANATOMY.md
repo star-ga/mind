@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2943 | **Est. tokens:** ~7,045,165
-**Generated:** 2026-06-25 16:49 UTC
+**Files:** 2943 | **Est. tokens:** ~7,046,335
+**Generated:** 2026-06-26 03:17 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~26,647 |
+| `./` | 34 | ~27,189 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -39,7 +39,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 28 | ~53,058 |
+| `docs/` | 28 | ~53,686 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -452,7 +452,7 @@
 ### `./`
 
 - `a.out` (~3774 tok, huge) — ELF>@x4@8
-- `ARCHITECTURE.md` (~182 tok, small) — MIND Architecture (high level)
+- `ARCHITECTURE.md` (~300 tok, medium) — MIND Architecture (high level)
 - `AUDIT_REPORT.md` (~1151 tok, large) — Audit Report
 - `.bench-baseline-2026-04-27.txt` (~531 tok, large) —    Compiling mind v0.2.3 (.)
 - `.bench-baseline-2026-04-28-pratt.txt` (~185 tok, small) — === Pratt parser baseline (mindc 0.2.5, 2026-04-28) ===
@@ -478,12 +478,12 @@
 - `LICENSE-COMMERCIAL` (~399 tok, medium) — COMMERCIAL LICENSE NOTICE – MIND (Enterprise & SaaS)
 - `Mind.toml` (~108 tok, small) — [package]
 - `plugin.json` (~62 tok, small) — Keys: name, description, version, skills, agents
-- `README.md` (~5191 tok, huge) — MIND — Machine Intelligence Native Design
+- `README.md` (~5364 tok, huge) — MIND — Machine Intelligence Native Design
 - `RELEASING.md` (~131 tok, small) — Release checklist (as of v0.2.1)
 - `rustfmt.toml` (~23 tok, tiny) — max_width = 100
 - `SECURITY.md` (~614 tok, large) — Security Policy
 - `.sembleignore` (~72 tok, small) — # semble code-search ignore list
-- `STATUS.md` (~3568 tok, huge) — MIND Compiler Status
+- `STATUS.md` (~3819 tok, huge) — MIND Compiler Status
 - `test_real_compile_time.py` (~265 tok, medium) — Quick test of real MIND compilation time using Python bindings."""
 ### `agents/`
 
@@ -605,7 +605,7 @@
 - `capabilities.toml` (~1163 tok, large) — [ir]
 ### `docs/`
 
-- `architecture.md` (~755 tok, large) — Architecture
+- `architecture.md` (~965 tok, large) — Architecture
 - `autodiff.md` (~595 tok, large) — Static autodiff (public)
 ### `docs/backends/`
 
@@ -648,9 +648,9 @@
 - `rfc0010-phase-ghi-migration-plan.md` (~2528 tok, huge) — RFC 0010 Phase G/H/I — Migration Plan (corrected against real architecture)
 ### `docs/`
 
-- `mlir-lowering.md` (~210 tok, medium) — MLIR lowering pipeline (public)
+- `mlir-lowering.md` (~286 tok, medium) — MLIR lowering pipeline (public)
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
-- `optimization-frontier.md` (~11233 tok, huge) — MIND Optimization Frontier
+- `optimization-frontier.md` (~11269 tok, huge) — MIND Optimization Frontier
 - `performance.md` (~742 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
@@ -689,7 +689,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~14107 tok, huge) — Roadmap
+- `roadmap.md` (~14366 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3176 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1331 tok, large) — Security Guide
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
@@ -702,8 +702,8 @@
 
 - `type-system.md` (~947 tok, large) — Type System
 - `versioning.md` (~804 tok, large) — MIND Core Stability & Versioning
-- `version-matrix.md` (~1795 tok, huge) — MIND Ecosystem — Version Matrix
-- `whitepaper.md` (~2742 tok, huge) — MIND: The Native Language for Intelligent Systems
+- `version-matrix.md` (~1796 tok, huge) — MIND Ecosystem — Version Matrix
+- `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems
 ### `examples/`
 
 - `autodiff_demo.mind` (~1715 tok, huge) — Autodiff Demonstration
