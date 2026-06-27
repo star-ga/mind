@@ -5457,6 +5457,23 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
     if k == ast_return() {
         return collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
     }
+    if k == ast_while() {
+        // Mirror Rust collect_instr_strings Instr::While: cond strings, then body
+        // strings (each stmt in source order), then the loop-carried (live_var) NAMES.
+        let rc: i64 = collect_expr_strings(strbuf, offs, ccell, src, ast_child0(node));
+        let body_blk: i64 = ast_child1(node);
+        let body_sa: i64 = ast_child0(body_blk);
+        let body_sl: i64 = ast_aux(body_blk);
+        let rb: i64 = collect_block_strings(strbuf, offs, ccell, src, body_sa, body_sl, 0);
+        // live_var names = assign-targets NOT declared by a `let` earlier in this body
+        // (loop-carried = pre-loop vars), in first-assign source order.
+        return intern_while_live_names(strbuf, offs, ccell, src, body_sa, body_sl, 0);
+    }
+    if k == ast_assign() {
+        // An assign statement's RHS supplies its strings (the target name is interned by
+        // the enclosing while's live_var pass, not here).
+        return collect_expr_strings(strbuf, offs, ccell, src, ast_child2(node));
+    }
     if k == ast_struct_lit() {
         // Mirror flatten_struct_lit_lv's emit order so the oracle strtab matches: intern
         // __mind_alloc once, then PER FIELD (declared order) [field value's strings, then
@@ -5511,6 +5528,53 @@ pub fn intern_leading_let_names(strbuf: i64, offs: i64, ccell: i64, src: i64, st
     let name: i64 = ast_child0(stmt);
     let ni: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(name), ast_span_hi(name));
     intern_leading_let_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+}
+
+// Intern the loop-carried (live_var) NAMES of a while body: each Assign target that is
+// NOT declared by a `let` earlier in the SAME body (so it is a pre-loop var), in
+// first-assign source order, deduped against an earlier assign of the same name and
+// against body-local lets. Mirrors Rust collect_instr_strings's While live_vars pass.
+pub fn intern_while_live_names(strbuf: i64, offs: i64, ccell: i64, src: i64, stmts_addr: i64, stmts_len: i64, i: i64) -> i64 {
+    if i >= stmts_len {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    if ast_kind(stmt) != ast_assign() {
+        return intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1);
+    }
+    let name: i64 = ast_child0(stmt);
+    let lo: i64 = ast_span_lo(name);
+    let hi: i64 = ast_span_hi(name);
+    // Skip if a body-local `let` declares this name earlier (then it is NOT loop-carried),
+    // or an earlier assign of the same name already interned it (dedup -> first sight only).
+    if while_name_let_or_assigned_before(src, stmts_addr, lo, hi, i, 0) == 1 {
+        return intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1);
+    }
+    let _ni: i64 = intern_span(strbuf, offs, ccell, src, lo, hi);
+    intern_while_live_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+}
+
+// 1 if NAME (lo,hi) is declared by a body-local `let` OR assigned by an earlier Assign in
+// stmts[0..before). Used to dedup/skip non-loop-carried (let-shadowed) and repeat assigns.
+pub fn while_name_let_or_assigned_before(src: i64, stmts_addr: i64, lo: i64, hi: i64, before: i64, i: i64) -> i64 {
+    if i >= before {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal2(src, lo, hi, src, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    if k == ast_assign() {
+        let nm: i64 = ast_child0(stmt);
+        if span_bytes_equal2(src, lo, hi, src, ast_span_lo(nm), ast_span_hi(nm)) == 1 {
+            return 1;
+        }
+    }
+    while_name_let_or_assigned_before(src, stmts_addr, lo, hi, before, i + 1)
 }
 
 pub fn collect_args_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, args_addr: i64, args_len: i64, i: i64) -> i64 {
@@ -6469,6 +6533,11 @@ pub fn measure_mixed_instrs(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_
         return 0;
     }
     let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
+    if ast_kind(stmt) == ast_while() {
+        // A statement while lowers to OP_WHILE + a trailing unit ConstI64 = 2 top-level
+        // instrs. It rebinds (does not introduce) loop-carried names, so no lvbuf growth.
+        return 2 + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell);
+    }
     if ast_kind(stmt) == ast_if() {
         // An if-segment lowers to a single OP_IF instruction.
         return 1 + measure_mixed_instrs(stmts_addr, n, idx + 1, buf, params_addr, n_params, lvbuf, nlv_cell);
@@ -6510,6 +6579,35 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
     let nlv: i64 = __mind_load_i64(nlv_cell);
     let cur_base: i64 = __mind_load_i64(base_cell);
+    if ast_kind(stmt) == ast_while() {
+        // WHILE statement inside a value-if branch / mixed block. Emit one OP_WHILE (via
+        // emit_mic3_while_general) at the threaded base, then the trailing unit ConstI64.
+        // REBIND each loop-carried var -> its exit_id in `lvbuf` so a later read AND the
+        // branch trailing value resolve to the dominating exit id (lower.rs F2 exit-rebind).
+        // The carried vars are pre-existing lvbuf bindings (an outer let or an earlier
+        // branch-local let), so this is a pure overlay — no new acc/merge entry of its own.
+        let w_merge: i64 = __mind_alloc(64 * 24);
+        let w_nm: i64 = __mind_alloc(8);
+        __mind_store_i64(w_nm, 0);
+        let w_end: i64 = __mind_alloc(8);
+        __mind_store_i64(w_end, 0 - 1);
+        let w_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(w_ok, 1);
+        let sw: EmitState = emit_mic3_while_general(s, stmt, buf, params_addr, n_params, cur_base, lvbuf, nlv, strbuf, offs, ncount, w_merge, w_nm, w_end, w_ok);
+        if __mind_load_i64(w_ok) == 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        // trailing unit ConstI64 at endbase (= one past the exit_ids).
+        let sw2: EmitState = emit_mic3_const_i64(sw, __mind_load_i64(w_end), 0);
+        // Overlay each carried var name -> exit_id into lvbuf (innermost binding).
+        let _ov: i64 = mixed_while_rebind(buf, lvbuf, nlv, w_merge, __mind_load_i64(w_nm), 0);
+        // Mirror the rebind into acc (the binding's then-value for a poison/merge tail).
+        let _ova: i64 = mixed_while_rebind_acc(buf, acc, __mind_load_i64(acc_cell), w_merge, __mind_load_i64(w_nm), 0);
+        // base advances past OP_WHILE vids + the trailing unit (endbase + 1).
+        __mind_store_i64(base_cell, __mind_load_i64(w_end) + 1);
+        return emit_mixed_walk(sw2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv);
+    }
     if ast_kind(stmt) == ast_if() {
         let seg_cell: i64 = __mind_alloc(8);
         __mind_store_i64(seg_cell, 0 - 1);
@@ -6598,6 +6696,39 @@ pub fn emit_mixed_walk(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     __mind_store_i64(acc + at * 24 + 16, __mind_load_i64(lvbuf + nlv * 24 + 16));
     __mind_store_i64(acc_cell, at + 1);
     emit_mixed_walk(s2, stmts_addr, n, idx + 1, buf, params_addr, n_params, nodes, cursor, vidbuf, base_cell, lvbuf, nlv_cell, acc, acc_cell, okcell, strbuf, offs, ncount, esc_to_lv)
+}
+
+// Overlay each loop-carried var (name -> exit_id from `merge`) into the INNERMOST `lvbuf`
+// binding of that name, so a post-while read/value resolves to the dominating exit id.
+pub fn mixed_while_rebind(src: i64, lvbuf: i64, nlv: i64, merge: i64, nm: i64, i: i64) -> i64 {
+    if i >= nm {
+        return nm;
+    }
+    let lo: i64 = __mind_load_i64(merge + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(merge + i * 24 + 8);
+    let exit_id: i64 = __mind_load_i64(merge + i * 24 + 16);
+    let pos: i64 = lvenv_index_of(src, lo, hi, lvbuf, nlv);
+    if pos >= 0 {
+        __mind_store_i64(lvbuf + pos * 24 + 16, exit_id)
+    }
+    mixed_while_rebind(src, lvbuf, nlv, merge, nm, i + 1)
+}
+
+// Mirror the exit-id rebind into the acc accumulator's then-value slot (+16), so a
+// fall-through poison/merge tail reads the carried var's post-loop value. No-op if the
+// name is not in acc (a body-local-only carried var that never reached the merge set).
+pub fn mixed_while_rebind_acc(src: i64, acc: i64, nacc: i64, merge: i64, nm: i64, i: i64) -> i64 {
+    if i >= nm {
+        return nm;
+    }
+    let lo: i64 = __mind_load_i64(merge + i * 24 + 0);
+    let hi: i64 = __mind_load_i64(merge + i * 24 + 8);
+    let exit_id: i64 = __mind_load_i64(merge + i * 24 + 16);
+    let pos: i64 = lv_find(acc, nacc, src, lo, hi);
+    if pos >= 0 {
+        __mind_store_i64(acc + pos * 24 + 16, exit_id)
+    }
+    mixed_while_rebind_acc(src, acc, nacc, merge, nm, i + 1)
 }
 
 // Fill 32-byte bind records from the ordered NAME accumulator (acc), all POISON.
@@ -9538,6 +9669,35 @@ pub fn flatten_stmt_seq(src: i64, stmts_addr: i64, stmts_len: i64, params_addr: 
         __mind_store_i64(nplan_cell, p + 1);
         return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
     }
+    // (type 10) TOP-LEVEL STATEMENT WHILE `while C { body }`. Lowers to ONE OP_WHILE
+    // (+ trailing unit ConstI64). Probe emit_mic3_while_general (base0=n_params, empty
+    // probe lv-env carrying the seq lets by NAME) to learn the vid delta; store the
+    // node + params. Pass B advances base by the delta; emit calls the general emitter.
+    if ast_kind(stmt) == ast_while() {
+        let w_probe_lv: i64 = __mind_alloc((nlets + 1) * 24);
+        let _wpl: i64 = seq_env_to_lvenv(env, nlets, 0, w_probe_lv, 0, 0);
+        let w_merge: i64 = __mind_alloc(64 * 24);
+        let w_nm: i64 = __mind_alloc(8);
+        __mind_store_i64(w_nm, 0);
+        let w_end: i64 = __mind_alloc(8);
+        __mind_store_i64(w_end, 0 - 1);
+        let w_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(w_ok, 1);
+        let _wp: EmitState = emit_mic3_while_general(es_new(), stmt, src, params_addr, n_params, n_params, w_probe_lv, nlets, 0, 0, 0, w_merge, w_nm, w_end, w_ok);
+        if __mind_load_i64(w_ok) == 1 {
+            // vid delta = (endbase - n_params) + 1: endbase is the trailing-unit vid, +1
+            // for the unit itself. Base-relative, recomputed at emit time too.
+            let w_delta: i64 = __mind_load_i64(w_end) - n_params + 1;
+            __mind_store_i64(plan + p * 64 + 0, 10);
+            __mind_store_i64(plan + p * 64 + 8, stmt);
+            __mind_store_i64(plan + p * 64 + 16, w_delta);
+            __mind_store_i64(plan + p * 64 + 24, params_addr);
+            __mind_store_i64(plan + p * 64 + 32, n_params);
+            __mind_store_i64(plan + p * 64 + 48, 0);
+            __mind_store_i64(nplan_cell, p + 1);
+            return flatten_stmt_seq(src, stmts_addr, stmts_len, params_addr, n_params, nodes, cursor, env, nlets_cell, plan, nplan_cell, i + 1);
+        }
+    }
     // BARE EXPRESSION STATEMENT (a call/expr emitted for side-effect; its result vid
     // is allocated then discarded, e.g. `__mind_store_i64(n, kind);` in ast_new_leaf).
     // Flatten it like a let-init but bind NO name — Pass B/C treat it as a type-0
@@ -9765,6 +9925,36 @@ pub fn seq_fix_deltas(src: i64, plan: i64, nplan: i64, env: i64, names_buf: i64,
         __mind_store_i64(plan + i * 64 + 48, 0);
         return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
     }
+    if ty == 10 {
+        // top-level statement while: re-probe at base0=0 against the position-aware lv-env
+        // to learn (a) its vid delta and (b) the loop-carried EXIT-id overlay. Each carried
+        // var's post-loop value is its exit_id; append the (name, exit_id_rel) overlay (a
+        // SHADOW of the earlier seq let) + synth rebind slots so a later read / the trailing
+        // value resolves to the dominating exit id. Mirrors the type-8 escape handling.
+        let w_node10: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let pa10: i64 = __mind_load_i64(plan + i * 64 + 24);
+        let np10: i64 = __mind_load_i64(plan + i * 64 + 32);
+        let w_mo: i64 = __mind_alloc(64 * 24);
+        let w_nm: i64 = __mind_alloc(8);
+        __mind_store_i64(w_nm, 0);
+        let w_eb: i64 = __mind_alloc(8);
+        __mind_store_i64(w_eb, 0 - 1);
+        let w_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(w_ok, 1);
+        let _w10: EmitState = emit_mic3_while_general(es_new(), w_node10, src, pa10, np10, 0, names_buf, nnames, 0, 0, 0, w_mo, w_nm, w_eb, w_ok);
+        if __mind_load_i64(w_ok) == 1 {
+            __mind_store_i64(plan + i * 64 + 16, __mind_load_i64(w_eb) + 1);
+            let nb10: i64 = __mind_load_i64(w_nm);
+            let _ap10: i64 = lvenv_append_escapes(names_buf, nnames, w_mo, nb10, 0);
+            let w_slots: i64 = __mind_alloc((nb10 + 1) * 32);
+            let _ws10: i64 = synth_rebind_slots(w_mo, nb10, nodes, cursor, w_slots, 0);
+            __mind_store_i64(plan + i * 64 + 48, nb10);
+            __mind_store_i64(plan + i * 64 + 56, w_slots);
+            return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames + nb10, env_k, i + 1, nodes, cursor);
+        }
+        __mind_store_i64(plan + i * 64 + 48, 0);
+        return seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor);
+    }
     seq_fix_deltas(src, plan, nplan, env, names_buf, nnames, env_k, i + 1, nodes, cursor)
 }
 
@@ -9825,6 +10015,14 @@ pub fn seq_assign_vids(nodes: i64, vidbuf: i64, plan: i64, nplan: i64, base: i64
         let next_delta9: i64 = __mind_load_i64(plan + i * 64 + 16);
         let _rv9: i64 = seq_set_rebind_vids(vidbuf, __mind_load_i64(plan + i * 64 + 56), __mind_load_i64(plan + i * 64 + 48), base, 0);
         return seq_assign_vids(nodes, vidbuf, plan, nplan, base + next_delta9, i + 1);
+    }
+    if ty == 10 {
+        // top-level statement while. Base-relative vid delta (OP_WHILE vids + trailing
+        // unit). Set each loop-carried var's rebind slot vid = base + exit_id_rel so a
+        // post-loop read of that name resolves to the dominating exit id (Pass-B).
+        let w_delta10: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let _rv10: i64 = seq_set_rebind_vids(vidbuf, __mind_load_i64(plan + i * 64 + 56), __mind_load_i64(plan + i * 64 + 48), base, 0);
+        return seq_assign_vids(nodes, vidbuf, plan, nplan, base + w_delta10, i + 1);
     }
     if ty == 2 {
         // NESTED if-return segment. Same vid layout as emit_mic3_nested_if_instr,
@@ -9999,6 +10197,9 @@ pub fn seq_ty_escapes(ty: i64) -> i64 {
     if ty == 9 {
         return 1;
     }
+    if ty == 10 {
+        return 1;
+    }
     0
 }
 
@@ -10160,6 +10361,25 @@ pub fn emit_stmt_seq(s: EmitState, nodes: i64, vidbuf: i64, src: i64, strbuf: i6
         let e9_n: i64 = __mind_load_i64(e9_nb);
         let _ap9: i64 = lvenv_append_escapes(seq_lvbuf, seq_nlv, e9_bo, e9_n, 0);
         return emit_stmt_seq(s9i, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + next_delta9, i + 1, seq_lvbuf, seq_nlv + e9_n, seqr, envk);
+    }
+    if ty == 10 {
+        // top-level statement while -> OP_WHILE (via emit_mic3_while_general) + trailing
+        // unit ConstI64. base-threaded; the seq lv-env resolves cond/body refs to seq lets.
+        let w_node: i64 = __mind_load_i64(plan + i * 64 + 8);
+        let w_delta: i64 = __mind_load_i64(plan + i * 64 + 16);
+        let pa10: i64 = __mind_load_i64(plan + i * 64 + 24);
+        let np10: i64 = __mind_load_i64(plan + i * 64 + 32);
+        let w_merge: i64 = __mind_alloc(64 * 24);
+        let w_nm: i64 = __mind_alloc(8);
+        __mind_store_i64(w_nm, 0);
+        let w_end: i64 = __mind_alloc(8);
+        __mind_store_i64(w_end, 0 - 1);
+        let w_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(w_ok, 1);
+        let sw: EmitState = emit_mic3_while_general(s, w_node, src, pa10, np10, base, seq_lvbuf, seq_nlv, strbuf, offs, ncount, w_merge, w_nm, w_end, w_ok);
+        // trailing unit ConstI64 at endbase (= one past the exit_ids).
+        let sw2: EmitState = emit_mic3_const_i64(sw, __mind_load_i64(w_end), 0);
+        return emit_stmt_seq(sw2, nodes, vidbuf, src, strbuf, offs, ncount, plan, nplan, base + w_delta, i + 1, seq_lvbuf, seq_nlv, seqr, envk);
     }
     if ty == 2 {
         // NESTED if-return segment -> ONE outer OP_IF whose then-branch is `synth +
@@ -10413,6 +10633,10 @@ pub fn seq_body_len(nodes: i64, plan: i64, nplan: i64, i: i64) -> i64 {
         let start: i64 = __mind_load_i64(plan + i * 64 + 8);
         let end: i64 = __mind_load_i64(plan + i * 64 + 16);
         return count_descriptor_nonparam_range(nodes, start, end) + seq_body_len(nodes, plan, nplan, i + 1);
+    }
+    // (type 10) top-level statement while: OP_WHILE + trailing unit ConstI64 = 2 instrs.
+    if ty == 10 {
+        return 2 + seq_body_len(nodes, plan, nplan, i + 1);
     }
     1 + seq_body_len(nodes, plan, nplan, i + 1)
 }
@@ -10698,8 +10922,24 @@ pub fn field_rewrite_stmts(stmts_addr: i64, stmts_len: i64, i: i64, src: i64, sr
                     }
                 }
             } else {
-                let e: i64 = field_rewrite_expr(stmt, src, srt, fn_node, load_lo, load_hi);
-                __mind_store_i64(stmts_addr + i * 8, e)
+                if k == ast_while() {
+                    // while: fold field-reads in the COND (child0/+24) + recurse the BODY block.
+                    let wc: i64 = field_rewrite_expr(ast_child0(stmt), src, srt, fn_node, load_lo, load_hi);
+                    __mind_store_i64(stmt + 24, wc);
+                    let wbody: i64 = ast_child1(stmt);
+                    if ast_kind(wbody) == ast_block() {
+                        let _wb: i64 = field_rewrite_stmts(ast_child0(wbody), ast_aux(wbody), 0, src, srt, fn_node, load_lo, load_hi);
+                    }
+                } else {
+                    if k == ast_assign() {
+                        // assign: fold field-reads in the RHS value (child2/+40).
+                        let av: i64 = field_rewrite_expr(ast_child2(stmt), src, srt, fn_node, load_lo, load_hi);
+                        __mind_store_i64(stmt + 40, av)
+                    } else {
+                        let e: i64 = field_rewrite_expr(stmt, src, srt, fn_node, load_lo, load_hi);
+                        __mind_store_i64(stmts_addr + i * 8, e)
+                    }
+                }
             }
         }
     }
@@ -17891,6 +18131,382 @@ pub fn emit_mic3_while_count_module(s: EmitState, buf: i64, offs: i64, op_byte: 
 
 pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -> EmitState {
     emit_mic3_while_count_module(es_new(), buf, offs, op_byte, incr)
+}
+
+// ===========================================================================
+// SECTION 11b — GENERAL WHILE-LOOP mic@3 EMISSION (descriptor/vid-driven)
+//
+// Generalises emit_mic3_while_counter to ARBITRARY cond trees, arbitrary body
+// statement sequences (bare side-effect stores/calls + multiple loop-carried
+// assigns + body-local lets), MULTIPLE loop-carried vars, byte-identical to the
+// Rust `compact::v3::emit_mic3` OP_WHILE arm (src/ir/compact/v3/emit.rs:1080) with
+// loop-carried merge semantics mirroring src/eval/lower.rs Node::While (4565-4818).
+//
+// Wire format (OP_WHILE = 27):
+//   es_push(27) || uleb(cond_id) || uleb(cond_instrs.len) || cond_instrs...
+//     || uleb(body.len) || body... || encode_named_vids(live_vars)
+//     || encode_vid_vec(init_ids) || encode_vid_vec(exit_ids)
+//
+// The body walk threads a body lv-env clone; for each statement (lower.rs
+// 4632-4779):
+//   Let   -> new body-local SSA binding (flatten init, bind name). NOT loop-carried.
+//   Assign NAME=RHS -> flatten RHS, rebind body-env[NAME]; on FIRST sight of a
+//                      PRE-LOOP var record init_id<-pre-loop vid + live_var<-(NAME,
+//                      post_vid); on later sight just update live_var post_vid.
+//   bare call/expr   -> emit as a side-effect instr (no binding, no merge).
+// exit_ids = one FRESH id per live_var, allocated AFTER cond+body (lower.rs 4801).
+// After the loop the enclosing env REBINDS each live_var name -> exit_ids[k] so a
+// post-loop read (incl. a value-if else-branch trailing value) resolves to the
+// loop EXIT id, guaranteeing SSA dominance (lower.rs region_exit_rebindings).
+// ===========================================================================
+
+// Walk one while-body statement, threading the body lv-env + base + (in emit mode)
+// the EmitState. `mode`: 0 = MEASURE (no bytes; learn live_vars/body_len/post-vids),
+// 1 = EMIT. Records loop-carried vars into the 24-byte `lv` buffer (name_lo, name_hi,
+// post_vid) keyed by FIRST sight; `init` (parallel) holds each carried var's pre-loop
+// vid. `nlv_w_cell` = count of live_vars. `body_len_cell` accumulates emitted body
+// instrs. `pre_nlv` = the number of OUTER (pre-loop) lv-env entries — a var bound at
+// index < pre_nlv in `wenv` is a loop-carried candidate; a body-local let appends at
+// index >= pre_nlv and is NOT carried. Fails closed via okcell on any unsupported stmt.
+// MEASURE pass (pure i64, no EmitState): walk the while body, threading the body
+// lv-env + base, learning the loop-carried live_vars (lv/init), body_len, and the
+// final base. Self-flip-clean: straight i64 recursion, no value-if-EmitState lets.
+// `mode`-free — emission is a separate function (while_body_emit). Returns 0/1 ok via
+// okcell. For each statement (lower.rs 4632-4779):
+//   Assign NAME=RHS -> flatten RHS, rebind body-env[NAME]; first sight of a PRE-LOOP var
+//                      records init_id + live_var; later just updates post.
+//   Let            -> body-local SSA binding (NOT carried).
+//   bare call/expr -> side-effect instr (no binding).
+pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, wenv: i64, wnlv_cell: i64, pre_nlv: i64, lv: i64, init: i64, nlv_w_cell: i64, body_len_cell: i64, okcell: i64) -> i64 {
+    if idx >= n {
+        return 1;
+    }
+    if __mind_load_i64(okcell) == 0 {
+        return 0;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
+    let wnlv: i64 = __mind_load_i64(wnlv_cell);
+    let cur_base: i64 = __mind_load_i64(base_cell);
+    if ast_kind(stmt) == ast_assign() {
+        let name: i64 = ast_child0(stmt);
+        let rhs: i64 = ast_child2(stmt);
+        // pre_vid = NAME's binding BEFORE this assign (loop-carried init OR prior post).
+        let pre_vid: i64 = lvenv_lookup(buf, ast_span_lo(name), ast_span_hi(name), wenv, wnlv, 0);
+        if pre_vid < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let root: i64 = flatten_branch_lv(rhs, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+        if root < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let nn: i64 = count_nonparam_nodes_lv(rhs, buf, params_addr, n_params, wenv, wnlv);
+        if nn < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        // Rebind NAME -> root in the body env (the assign target is always already bound —
+        // outer carried var or earlier body-local let).
+        let slot_i: i64 = lvenv_index_of(buf, ast_span_lo(name), ast_span_hi(name), wenv, wnlv);
+        __mind_store_i64(wenv + slot_i * 24 + 16, root);
+        // A PRE-LOOP var (index < pre_nlv) becomes loop-carried. Record on FIRST sight.
+        let _rec: i64 = while_record_carry(slot_i, pre_nlv, lv, init, nlv_w_cell, buf, ast_span_lo(name), ast_span_hi(name), root, pre_vid);
+        __mind_store_i64(base_cell, cur_base + nn);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + nn);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
+    if ast_kind(stmt) == ast_let() {
+        let name: i64 = ast_child0(stmt);
+        let linit: i64 = ast_child2(stmt);
+        let root: i64 = flatten_branch_lv(linit, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+        if root < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let nn: i64 = count_nonparam_nodes_lv(linit, buf, params_addr, n_params, wenv, wnlv);
+        if nn < 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        // Body-local let: append a NEW lv-env binding (NOT loop-carried).
+        __mind_store_i64(wenv + wnlv * 24 + 0, ast_span_lo(name));
+        __mind_store_i64(wenv + wnlv * 24 + 8, ast_span_hi(name));
+        __mind_store_i64(wenv + wnlv * 24 + 16, root);
+        __mind_store_i64(wnlv_cell, wnlv + 1);
+        __mind_store_i64(base_cell, cur_base + nn);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + nn);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
+    // BARE side-effect statement (call/store): flatten, advance base, bind NO name.
+    let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+    if be_root < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    let be_nn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, wenv, wnlv);
+    if be_nn < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0;
+    }
+    __mind_store_i64(base_cell, cur_base + be_nn);
+    __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + be_nn);
+    while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell)
+}
+
+// Record an assign target as loop-carried IF it is a pre-loop var (slot < pre_nlv).
+// First sight -> append (name, post=root) + init_id=pre_vid; later -> update post.
+pub fn while_record_carry(slot_i: i64, pre_nlv: i64, lv: i64, init: i64, nlv_w_cell: i64, buf: i64, lo: i64, hi: i64, root: i64, pre_vid: i64) -> i64 {
+    if slot_i >= pre_nlv {
+        return 0;
+    }
+    let lvpos: i64 = lv_find(lv, __mind_load_i64(nlv_w_cell), buf, lo, hi);
+    if lvpos >= 0 {
+        __mind_store_i64(lv + lvpos * 24 + 16, root);
+        return 0;
+    }
+    let at: i64 = __mind_load_i64(nlv_w_cell);
+    __mind_store_i64(lv + at * 24 + 0, lo);
+    __mind_store_i64(lv + at * 24 + 8, hi);
+    __mind_store_i64(lv + at * 24 + 16, root);
+    __mind_store_i64(init + at * 8, pre_vid);
+    __mind_store_i64(nlv_w_cell, at + 1);
+    1
+}
+
+// EMIT pass: walk the while body, emitting each statement's instr tree. Threads the
+// body lv-env + base identically to the measure pass (deterministic), so the emitted
+// vids match the measured layout. Straight EmitState recursion — self-flip-clean (no
+// value-if-EmitState, no leading-let branch). Sets okcell=0 on a wall.
+pub fn while_body_emit(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, wenv: i64, wnlv_cell: i64, strbuf: i64, offs: i64, ncount: i64, okcell: i64) -> EmitState {
+    if idx >= n {
+        return s;
+    }
+    if __mind_load_i64(okcell) == 0 {
+        return s;
+    }
+    let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
+    let wnlv: i64 = __mind_load_i64(wnlv_cell);
+    let cur_base: i64 = __mind_load_i64(base_cell);
+    if ast_kind(stmt) == ast_assign() {
+        let name: i64 = ast_child0(stmt);
+        let rhs: i64 = ast_child2(stmt);
+        let root: i64 = flatten_branch_lv(rhs, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+        if root < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let nn: i64 = count_nonparam_nodes_lv(rhs, buf, params_addr, n_params, wenv, wnlv);
+        let nodes_n: i64 = __mind_load_i64(wcursor);
+        let s1: EmitState = emit_mic3_tree_body(s, wnodes, nodes_n, wvidbuf, buf, strbuf, offs, ncount, 0);
+        let slot_i: i64 = lvenv_index_of(buf, ast_span_lo(name), ast_span_hi(name), wenv, wnlv);
+        __mind_store_i64(wenv + slot_i * 24 + 16, root);
+        __mind_store_i64(base_cell, cur_base + nn);
+        return while_body_emit(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    if ast_kind(stmt) == ast_let() {
+        let name: i64 = ast_child0(stmt);
+        let linit: i64 = ast_child2(stmt);
+        let root: i64 = flatten_branch_lv(linit, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+        if root < 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let nn: i64 = count_nonparam_nodes_lv(linit, buf, params_addr, n_params, wenv, wnlv);
+        let nodes_n: i64 = __mind_load_i64(wcursor);
+        let s1: EmitState = emit_mic3_tree_body(s, wnodes, nodes_n, wvidbuf, buf, strbuf, offs, ncount, 0);
+        __mind_store_i64(wenv + wnlv * 24 + 0, ast_span_lo(name));
+        __mind_store_i64(wenv + wnlv * 24 + 8, ast_span_hi(name));
+        __mind_store_i64(wenv + wnlv * 24 + 16, root);
+        __mind_store_i64(wnlv_cell, wnlv + 1);
+        __mind_store_i64(base_cell, cur_base + nn);
+        return while_body_emit(s1, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
+    let be_root: i64 = flatten_branch_lv(stmt, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur_base, wenv, wnlv);
+    if be_root < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let be_nn: i64 = count_nonparam_nodes_lv(stmt, buf, params_addr, n_params, wenv, wnlv);
+    let be_nodes_n: i64 = __mind_load_i64(wcursor);
+    let be_s: EmitState = emit_mic3_tree_body(s, wnodes, be_nodes_n, wvidbuf, buf, strbuf, offs, ncount, 0);
+    __mind_store_i64(base_cell, cur_base + be_nn);
+    while_body_emit(be_s, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell)
+}
+
+// Find the index of NAME (lo,hi span) in a 24-byte lv-env, INNERMOST (highest) first
+// so a body-local shadow rebinds itself, not an outer carried var. -1 if absent.
+pub fn lvenv_index_of(src: i64, lo: i64, hi: i64, lvenv: i64, nlv: i64) -> i64 {
+    lvenv_index_of_loop(src, lo, hi, lvenv, nlv, nlv - 1)
+}
+pub fn lvenv_index_of_loop(src: i64, lo: i64, hi: i64, lvenv: i64, nlv: i64, i: i64) -> i64 {
+    if i < 0 {
+        return 0 - 1;
+    }
+    let nlo: i64 = __mind_load_i64(lvenv + i * 24 + 0);
+    let nhi: i64 = __mind_load_i64(lvenv + i * 24 + 8);
+    if span_bytes_equal2(src, lo, hi, src, nlo, nhi) == 1 {
+        return i;
+    }
+    lvenv_index_of_loop(src, lo, hi, lvenv, nlv, i - 1)
+}
+
+// Find NAME (lo,hi) in the live_var accumulator `lv` (24-byte records); -1 if absent.
+pub fn lv_find(lv: i64, nlv_w: i64, src: i64, lo: i64, hi: i64) -> i64 {
+    lv_find_loop(lv, nlv_w, src, lo, hi, 0)
+}
+pub fn lv_find_loop(lv: i64, nlv_w: i64, src: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= nlv_w {
+        return 0 - 1;
+    }
+    let nlo: i64 = __mind_load_i64(lv + i * 24 + 0);
+    let nhi: i64 = __mind_load_i64(lv + i * 24 + 8);
+    if span_bytes_equal2(src, lo, hi, src, nlo, nhi) == 1 {
+        return i;
+    }
+    lv_find_loop(lv, nlv_w, src, lo, hi, i + 1)
+}
+
+// Emit encode_named_vids(live_vars): uleb(count) || (string_idx(name), uleb(post_vid))*.
+pub fn emit_while_live_vars(s: EmitState, lv: i64, nlv_w: i64, strbuf: i64, offs: i64, ncount: i64, src: i64, i: i64) -> EmitState {
+    if i >= nlv_w {
+        return s;
+    }
+    let nidx: i64 = intern_find(strbuf, offs, ncount, src, __mind_load_i64(lv + i * 24 + 0), __mind_load_i64(lv + i * 24 + 8), 0);
+    let s1: EmitState = emit_uleb128(s, nidx);
+    let s2: EmitState = emit_uleb128(s1, __mind_load_i64(lv + i * 24 + 16));
+    emit_while_live_vars(s2, lv, nlv_w, strbuf, offs, ncount, src, i + 1)
+}
+
+// Emit encode_vid_vec from a packed i64 array `vec` of length `n`: uleb(n) || uleb(v)*.
+pub fn emit_while_vid_vec(s: EmitState, vec: i64, n: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let s1: EmitState = emit_uleb128(s, __mind_load_i64(vec + i * 8));
+    emit_while_vid_vec(s1, vec, n, i + 1)
+}
+
+// GENERAL OP_WHILE emitter. Emits one while-loop node byte-identical to the oracle,
+// starting vids at `base0` (the cond root resolves first). Threads the loop-carried
+// merge: writes the merge bindings (name_lo, name_hi, exit_id) into `merge_out` (24-
+// byte records), their count into `nmerge_cell`, and the FINAL base (one past the
+// trailing-unit const) into `endbase_cell`. The enclosing emitter binds each merged
+// name -> exit_id in its env so post-loop reads hit the dominating exit id. The body
+// env starts as a clone of `lvenv[0..nlv]`; loop-carried vars are those rebound at an
+// index < nlv. Fails closed via okcell (set to 0) on any wall. okcell unchanged on ok.
+pub fn emit_mic3_while_general(s: EmitState, while_node: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, lvenv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> EmitState {
+    let cond_expr: i64 = ast_child0(while_node);
+    let body_blk: i64 = ast_child1(while_node);
+    let body_sa: i64 = ast_child0(body_blk);
+    let body_sl: i64 = ast_aux(body_blk);
+    // --- cond: flatten + resolve from base0; cond_id = cond root vid. ---
+    let cnodes: i64 = __mind_alloc(256 * 32);
+    let ccursor: i64 = __mind_alloc(8);
+    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, lvenv, nlv);
+    if cond_id < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let cond_n: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, lvenv, nlv);
+    if cond_n < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let after_cond: i64 = base0 + cond_n;
+    // --- MEASURE pass: learn body_len, live_vars, post-vids (no bytes). The body env is
+    // a fresh clone; loop-carried vars rebound at index < nlv. wnodes/wvidbuf scratch. ---
+    let wenv: i64 = __mind_alloc((nlv + body_sl + 64) * 24);
+    let _cp: i64 = lvenv_copy(wenv, lvenv, nlv, 0);
+    let wnodes: i64 = __mind_alloc(1024 * 32);
+    let wcursor: i64 = __mind_alloc(8);
+    let wvidbuf: i64 = __mind_alloc(1024 * 8);
+    let m_wnlv: i64 = __mind_alloc(8);
+    __mind_store_i64(m_wnlv, nlv);
+    let m_base: i64 = __mind_alloc(8);
+    __mind_store_i64(m_base, after_cond);
+    let lv: i64 = __mind_alloc((body_sl + 8) * 24);
+    let init: i64 = __mind_alloc((body_sl + 8) * 8);
+    let nlv_w: i64 = __mind_alloc(8);
+    __mind_store_i64(nlv_w, 0);
+    let body_len: i64 = __mind_alloc(8);
+    __mind_store_i64(body_len, 0);
+    let m_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(m_ok, 1);
+    let _m: i64 = while_body_measure(body_sa, body_sl, 0, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, m_base, wenv, m_wnlv, nlv, lv, init, nlv_w, body_len, m_ok);
+    if __mind_load_i64(m_ok) == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let nmerge: i64 = __mind_load_i64(nlv_w);
+    let blen: i64 = __mind_load_i64(body_len);
+    let body_end: i64 = __mind_load_i64(m_base);
+    // exit_ids: one fresh id per live_var, allocated AFTER cond+body (lower.rs 4801).
+    let exit_ids: i64 = __mind_alloc((nmerge + 1) * 8);
+    let _ei: i64 = while_alloc_exit_ids(exit_ids, nmerge, body_end, 0);
+    // --- EMIT pass: OP_WHILE header + cond + body (re-walk a FRESH body env) + tails. ---
+    let s1: EmitState = es_push(s, 27);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_n);
+    let cond_emit_n: i64 = __mind_load_i64(ccursor);
+    let s4: EmitState = emit_mic3_tree_body(s3, cnodes, cond_emit_n, cvidbuf, buf, strbuf, offs, ncount, 0);
+    let s5: EmitState = emit_uleb128(s4, blen);
+    // Re-clone the env + reset scratch for the byte-emitting walk.
+    let wenv2: i64 = __mind_alloc((nlv + body_sl + 64) * 24);
+    let _cp2: i64 = lvenv_copy(wenv2, lvenv, nlv, 0);
+    let wnodes2: i64 = __mind_alloc(1024 * 32);
+    let wcursor2: i64 = __mind_alloc(8);
+    let wvidbuf2: i64 = __mind_alloc(1024 * 8);
+    let e_wnlv: i64 = __mind_alloc(8);
+    __mind_store_i64(e_wnlv, nlv);
+    let e_base: i64 = __mind_alloc(8);
+    __mind_store_i64(e_base, after_cond);
+    let e_ok: i64 = __mind_alloc(8);
+    __mind_store_i64(e_ok, 1);
+    let s6: EmitState = while_body_emit(s5, body_sa, body_sl, 0, buf, params_addr, n_params, wnodes2, wcursor2, wvidbuf2, e_base, wenv2, e_wnlv, strbuf, offs, ncount, e_ok);
+    if __mind_load_i64(e_ok) == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    // live_vars || init_ids || exit_ids.
+    let s7: EmitState = emit_uleb128(s6, nmerge);
+    let s8: EmitState = emit_while_live_vars(s7, lv, nmerge, strbuf, offs, ncount, buf, 0);
+    let s9: EmitState = emit_uleb128(s8, nmerge);
+    let s10: EmitState = emit_while_vid_vec(s9, init, nmerge, 0);
+    let s11: EmitState = emit_uleb128(s10, nmerge);
+    let s12: EmitState = emit_while_vid_vec(s11, exit_ids, nmerge, 0);
+    // Record the merge overlay (name -> exit_id) for the enclosing scope.
+    if merge_out != 0 {
+        let _mo: i64 = while_fill_merge_out(merge_out, lv, exit_ids, nmerge, 0);
+        __mind_store_i64(nmerge_cell, nmerge)
+    }
+    // A statement-level while pushes a trailing unit ConstI64 AFTER the While node
+    // (lower.rs 4815). It occupies vid body_end + nmerge (one past the exit_ids). The
+    // CALLER emits that const (it varies: a top-level seq const vs a branch's synth).
+    // endbase = first vid AFTER the exit_ids (the trailing-unit vid).
+    __mind_store_i64(endbase_cell, body_end + nmerge);
+    s12
+}
+
+// Allocate exit_ids[k] = body_end + k (one fresh dominating id per live_var).
+pub fn while_alloc_exit_ids(exit_ids: i64, nmerge: i64, body_end: i64, i: i64) -> i64 {
+    if i >= nmerge {
+        return nmerge;
+    }
+    __mind_store_i64(exit_ids + i * 8, body_end + i);
+    while_alloc_exit_ids(exit_ids, nmerge, body_end, i + 1)
+}
+
+// Copy (name_lo, name_hi, exit_id) into the 24-byte merge_out overlay for each carried var.
+pub fn while_fill_merge_out(merge_out: i64, lv: i64, exit_ids: i64, nmerge: i64, i: i64) -> i64 {
+    if i >= nmerge {
+        return nmerge;
+    }
+    __mind_store_i64(merge_out + i * 24 + 0, __mind_load_i64(lv + i * 24 + 0));
+    __mind_store_i64(merge_out + i * 24 + 8, __mind_load_i64(lv + i * 24 + 8));
+    __mind_store_i64(merge_out + i * 24 + 16, __mind_load_i64(exit_ids + i * 8));
+    while_fill_merge_out(merge_out, lv, exit_ids, nmerge, i + 1)
 }
 
 // ===========================================================================
