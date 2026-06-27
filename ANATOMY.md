@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2943 | **Est. tokens:** ~7,046,335
-**Generated:** 2026-06-26 03:17 UTC
+**Files:** 2949 | **Est. tokens:** ~7,054,068
+**Generated:** 2026-06-27 06:57 UTC
 
 ## Token Budget Guide
 
@@ -32,6 +32,7 @@
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
+| `benchmarks/cupy_comparison/` | 6 | ~7,733 |
 | `benchmarks/determinism/` | 3 | ~4,601 |
 | `benchmarks/inference/` | 4 | ~4,008 |
 | `benchmarks/jax_comparison/` | 5 | ~4,642 |
@@ -542,6 +543,14 @@
 ### `benchmarks/`
 
 - `BENCHMARK_RESULTS.md` (~4311 tok, huge) — MIND Benchmark Results
+### `benchmarks/cupy_comparison/`
+
+- `leg1_determinism.py` (~2586 tok, huge)
+- `leg1_determinism_results.json` (~1451 tok, large) — Keys: leg, host, mind, cupy
+- `leg2_perf.py` (~1510 tok, huge)
+- `leg2_perf_results.json` (~473 tok, medium) — Keys: leg, host, config, mind, status
+- `README.md` (~1619 tok, huge) — CuPy Comparison Benchmark
+- `requirements.txt` (~94 tok, small) — # Leg 1 (determinism) + Leg 2 (perf) foil dependencies.
 ### `benchmarks/determinism/`
 
 - `benchmark_determinism.py` (~2187 tok, huge)

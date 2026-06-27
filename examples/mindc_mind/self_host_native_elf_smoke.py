@@ -249,7 +249,7 @@ _STDLIB_MODULES = [
 # shift-using sha256 fns lower byte-identically. The seeded whole-module native ELF
 # is still byte-identical, now 1055777 B (was 1031503; the delta is the new sha256
 # bodies + their cl-shift sequences). The `got == oracle` branch still fires.
-_SEEDED_CODE_PREFIX_FLOOR = 1055777
+_SEEDED_CODE_PREFIX_FLOOR = 1092806
 # Where the ELF code image begins: 64-byte ehdr + 4 * 56-byte phdrs.
 _ELF_CODE_START = 0x120
 
