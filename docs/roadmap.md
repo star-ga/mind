@@ -422,6 +422,24 @@ Introduce language-level support for observation-dependent computation. MIND alr
 - **Determinism certificates** — compiler emits proof that a code path is:
   - `axis_independent` — fully deterministic, same result regardless of observation basis
   - `axis_dependent` — result varies with declared axis (must be explicitly declared)
+  - **Generalization — property certificates (proof-carrying artifact).**
+    The determinism certificate is the first instance of a broader class:
+    a machine-checkable witness, emitted at compile time and travelling in
+    the bundle next to the evidence chain, that a small trusted checker
+    (re-run by `mindc verify` / the loader) can accept or reject. Where the
+    evidence chain proves *provenance* ("this artifact came from this trace,
+    bit-identically"), a property certificate proves a *property* ("this
+    code path stays within its declared Q16.16 bound / halts / is
+    axis_independent"). This is tractable here precisely because the forward
+    is deterministic integer arithmetic, not floating-point — decidable
+    refinement / bounded-SMT over Q16.16 integers, checked by a *small*
+    kernel, not an imported prover. Direction only — adopt the lesson of the
+    proof-assistant program (small checkable kernel; properties carried in
+    the artifact) without adopting a dependent-type rewrite or a Lean/Coq
+    dependency. Downstream consumer + falsifiable-promotion criteria are
+    tracked in `rfn-mind/docs/roadmap.md` → Research watch → *Proof-carrying
+    artifact*; the certificate-generation machinery is owned here (compiler)
+    because that is where the evidence chain lives.
 - **`observe` keyword** — explicit measurement operator for superposition states
   ```mind
   let candidates = speculate(draft_model, context)  // superposition
