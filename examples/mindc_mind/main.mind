@@ -22980,6 +22980,21 @@ pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> Emi
 //   placeholder the prune RETAINS, plus the combined next_id/strtab numbering) is
 //   not yet driven by the nfn machinery (which fails closed over the full std
 //   surface). Once it is, feed mic3.buf addr/len to nb_sha256_note here.
+//   GATE/DECODE (2026-06-30): the authoritative target bytes are dumpable via the
+//   `MIND_DUMP_MIC3=<path> mind-native <fixture> <elf>` debug hook (src/bin/mind-native.rs)
+//   — sha256(that file) == the ELF PT_NOTE (verified: `add` fixture → 5447 B, sha
+//   e912443707c23b57…). DECODED add target: MIC3 v2 | string_table 84 entries (extern
+//   names open/close/read/write/lseek/unlink/… + type strings i64/!llvm.ptr + fn names,
+//   in combined-lowering first-seen order) | next_id 618 | exports 0 | instr_count 1305
+//   (~618 ConstI64+Output per-top-level-item placeholders + 67 ExternFnDecl + the 2 real
+//   add/main bodies) | then struct_defs/const_array/repr_c registries. INCREMENTAL PORT
+//   PLAN, gate each prefix byte-for-byte against the dump: (1) header MIC3+ver; (2) the
+//   84-entry string table in combined first-seen interning order; (3) next_id+exports;
+//   (4) the 1305-instr top-level stream (placeholder per non-main item + ExternFnDecl per
+//   extern + kept fn bodies — mirror src/eval/lower.rs lower_to_ir top-level item lowering
+//   @lower.rs:846-921); (5) struct_defs registry. The emit_instr/strtab machinery already
+//   exists in the nfn path (emit_mic3_module_fndef etc.); the missing piece is driving it
+//   over the COMBINED+PRUNED item set with lower_to_ir's numbering, NOT a single file.
 pub fn nb_trace_hash(src_addr: i64, src_len: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
     // deferred: pruned-combined mic@3 EmitState not yet built — see marker above.
     // Passing mic3_len=0 makes nb_sha256_note return 0 (fail-closed), so the
