@@ -102,6 +102,12 @@ fn main() -> ExitCode {
 
     let ir = ir;
 
+    // debug (#17 decode): dump emit_mic3(pruned-combined IR) — the exact bytes the
+    // PT_NOTE hashes — so the pure-MIND port can be gated against the authoritative target.
+    if let Ok(p) = std::env::var("MIND_DUMP_MIC3") {
+        let _ = std::fs::write(&p, libmind::ir::compact::emit_mic3(&ir));
+    }
+
     let elf = match libmind::native::compile_to_elf(&ir) {
         Ok(bytes) => bytes,
         Err(e) => {
