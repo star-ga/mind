@@ -23152,6 +23152,230 @@ pub fn selftest_nb_trace_counts(src_addr: i64, src_len: i64, user_lo: i64, out: 
     next_id
 }
 
+// ---- #17 sub-milestone 2: STRING TABLE for the pruned-combined item stream ----
+//
+// Reproduce emit_mic3's string table (src/ir/compact/v3/emit.rs:717-742) for the
+// pruned-combined IR, byte-exact vs /tmp/add_combined.mic3's 84 entries. The oracle
+// interns strings first-seen across three passes, in this exact order:
+//   1. collect_strings over the RETAINED instrs (source/item order): each retained
+//      ExternFnDecl -> name, then each param type spelling, then the ret type; each
+//      KEPT FnDef -> name, params, then body CALL callee names. Pruned FnDefs are
+//      gone (contribute nothing); Const/Output placeholders carry no strings.
+//   2. exports (sorted) — 0 for the add fixture.
+//   3. struct_defs (BTreeMap-sorted by name) -> type name + field names.
+// Extern param/return TYPE spellings lower to mic@3 strings via extern_type_to_mlir
+// (lower.rs 7171): raw pointer / fn-ptr -> "!llvm.ptr"; f32/f64 -> "f32"/"f64";
+// every integer/bool -> "i64". The pure-MIND parser collapses each extern block to a
+// span-only ast_struct_def stub, so this SPAN-SCANS the block (re-lexing its source
+// span) to recover per-decl names + param/return categories rather than walking a
+// real ExternFnDecl AST (which does not exist here).
+
+// Synthetic mic@3 type-string constants buffer: bytes "!llvm.ptr" [0,9) || "i64"
+// [9,12) || "f32" [12,15) || "f64" [15,18). "!llvm.ptr" never appears verbatim in
+// source, so type strings are interned from this buffer (dedup is by byte value, so
+// an "i64" that also appears in source shares the one slot).
+pub fn nb_type_consts() -> i64 {
+    let b: i64 = __mind_alloc(24);
+    __mind_store_i8(b + 0, 33);
+    __mind_store_i8(b + 1, 108);
+    __mind_store_i8(b + 2, 108);
+    __mind_store_i8(b + 3, 118);
+    __mind_store_i8(b + 4, 109);
+    __mind_store_i8(b + 5, 46);
+    __mind_store_i8(b + 6, 112);
+    __mind_store_i8(b + 7, 116);
+    __mind_store_i8(b + 8, 114);
+    __mind_store_i8(b + 9, 105);
+    __mind_store_i8(b + 10, 54);
+    __mind_store_i8(b + 11, 52);
+    __mind_store_i8(b + 12, 102);
+    __mind_store_i8(b + 13, 51);
+    __mind_store_i8(b + 14, 50);
+    __mind_store_i8(b + 15, 102);
+    __mind_store_i8(b + 16, 54);
+    __mind_store_i8(b + 17, 52);
+    b
+}
+
+// Categorize an extern param/return type from its leading token: 0="!llvm.ptr"
+// (raw pointer `*..`/reference `&..`), 2="f32", 3="f64", 1="i64" (every integer/bool
+// and anything else — mirrors extern_type_to_mlir's default). `subbase` is the base
+// address the block's tokens are offset from; `tpos` is the token index of the type's
+// first token (the one right after the `:` or `->`).
+pub fn nb_type_cat(subbase: i64, toks: Vec, tpos: i64) -> i64 {
+    let k: i64 = tok_kind(toks, tpos);
+    if k == tk_star() {
+        return 0;
+    }
+    if k == tk_amp() {
+        return 0;
+    }
+    if k == tk_ident() {
+        let lo: i64 = tok_lo(toks, tpos);
+        let hi: i64 = tok_hi(toks, tpos);
+        if hi - lo == 3 {
+            if load_byte(subbase, lo) == 102 {
+                let c1: i64 = load_byte(subbase, lo + 1);
+                let c2: i64 = load_byte(subbase, lo + 2);
+                if c1 == 51 {
+                    if c2 == 50 {
+                        return 2;
+                    }
+                }
+                if c1 == 54 {
+                    if c2 == 52 {
+                        return 3;
+                    }
+                }
+            }
+        }
+        return 1;
+    }
+    1
+}
+
+// Intern the mic@3 type string for category `cat` from the constants buffer.
+pub fn nb_intern_tcat(strbuf: i64, offs: i64, ccell: i64, tconst: i64, cat: i64) -> i64 {
+    if cat == 0 {
+        return intern_span(strbuf, offs, ccell, tconst, 0, 9);
+    }
+    if cat == 2 {
+        return intern_span(strbuf, offs, ccell, tconst, 12, 15);
+    }
+    if cat == 3 {
+        return intern_span(strbuf, offs, ccell, tconst, 15, 18);
+    }
+    intern_span(strbuf, offs, ccell, tconst, 9, 12)
+}
+
+// Walk an extern block's param-list tokens from `pos`, interning one type string per
+// param (at each top-level `:`) in left-to-right order. Returns the token index of the
+// closing `)`. Param types have no inner `:`, so one colon == one param type.
+pub fn nb_extern_params(strbuf: i64, offs: i64, ccell: i64, subbase: i64, toks: Vec, tconst: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_rparen() {
+        return pos;
+    }
+    if k == tk_colon() {
+        let cat: i64 = nb_type_cat(subbase, toks, pos + 1);
+        let _t: i64 = nb_intern_tcat(strbuf, offs, ccell, tconst, cat);
+        return nb_extern_params(strbuf, offs, ccell, subbase, toks, tconst, pos + 1);
+    }
+    nb_extern_params(strbuf, offs, ccell, subbase, toks, tconst, pos + 1)
+}
+
+// Advance past the next `;` token; returns the index just after it (or eof position).
+pub fn nb_skip_to_semi(toks: Vec, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    if tok_kind(toks, pos) == tk_semi() {
+        return pos + 1;
+    }
+    nb_skip_to_semi(toks, pos + 1)
+}
+
+// Scan an extern block's tokens: for each `fn NAME(params) -> ret;` decl, intern the
+// name, then each param type, then the return type — mirroring collect_instr_strings'
+// ExternFnDecl arm (name, param_types.., ret_type). Non-`fn` tokens (extern/"C"/{/}/
+// unsafe/pub) are skipped. `subbase` is the block-span base the tokens offset from.
+pub fn nb_extern_scan(strbuf: i64, offs: i64, ccell: i64, subbase: i64, toks: Vec, tconst: i64, pos: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return 0;
+    }
+    if tok_kind(toks, pos) == tk_kw_fn() {
+        let _n: i64 = intern_span(strbuf, offs, ccell, subbase, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1));
+        // params start after `NAME (` (pos+1 = name, pos+2 = `(`, pos+3 = first tok).
+        let rp: i64 = nb_extern_params(strbuf, offs, ccell, subbase, toks, tconst, pos + 3);
+        let nafter: i64 = if tok_kind(toks, rp + 1) == tk_arrow() {
+            let cat: i64 = nb_type_cat(subbase, toks, rp + 2);
+            let _r: i64 = nb_intern_tcat(strbuf, offs, ccell, tconst, cat);
+            nb_skip_to_semi(toks, rp + 2)
+        } else {
+            nb_skip_to_semi(toks, rp + 1)
+        };
+        return nb_extern_scan(strbuf, offs, ccell, subbase, toks, tconst, nafter);
+    }
+    nb_extern_scan(strbuf, offs, ccell, subbase, toks, tconst, pos + 1)
+}
+
+// Re-lex an extern block's source span [lo,hi) and intern its decls' strings.
+pub fn nb_extern_intern_block(strbuf: i64, offs: i64, ccell: i64, src: i64, tconst: i64, lo: i64, hi: i64) -> i64 {
+    let toks: Vec = lex(src + lo, hi - lo);
+    nb_extern_scan(strbuf, offs, ccell, src + lo, toks, tconst, 0)
+}
+
+// 1 iff `node` is in the kept-fn array kept[0..n_kept).
+pub fn nb_is_kept(node: i64, kept: i64, n_kept: i64, k: i64) -> i64 {
+    if k >= n_kept {
+        return 0;
+    }
+    if __mind_load_i64(kept + k * 8) == node {
+        return 1;
+    }
+    nb_is_kept(node, kept, n_kept, k + 1)
+}
+
+// Build the instruction-string half of the strtab in item order: extern blocks scan
+// their decls; KEPT fn defs intern name+params+body-call-names via collect_fn_strings;
+// pruned fns and struct/enum/const/use items contribute nothing here (struct names come
+// later via the sorted registry pass).
+pub fn nb_strtab_build(strbuf: i64, offs: i64, ccell: i64, src: i64, tconst: i64, items_addr: i64, items_len: i64, kept: i64, n_kept: i64, i: i64) -> i64 {
+    if i >= items_len {
+        return 0;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    if ast_kind(item) == ast_fn_def() {
+        if nb_is_kept(item, kept, n_kept, 0) == 1 {
+            let _f: i64 = collect_fn_strings(strbuf, offs, ccell, src, item);
+        }
+    } else {
+        if nb_item_is_extern(src, item) == 1 {
+            let _e: i64 = nb_extern_intern_block(strbuf, offs, ccell, src, tconst, ast_span_lo(item), ast_span_hi(item));
+        }
+    }
+    nb_strtab_build(strbuf, offs, ccell, src, tconst, items_addr, items_len, kept, n_kept, i + 1)
+}
+
+// Debug/verify export (sub-milestone 2): build the pruned-combined string table and
+// expose it so a harness can diff every entry against the authoritative target. Writes
+//   out[0] = ncount (number of interned strings)
+//   out[1] = strbuf address     out[2] = offs address (ncount+1 cumulative offsets)
+// and returns ncount. No mic@3 header/instr bytes are emitted.
+// deferred: temporary strtab-verify harness for #17 sub-milestone 2 (string table only).
+//   upgrade path: sub-milestone 3 materializes the pruned instr stream + registries and
+//   drives emit_mic3_header/strtab/instr/registry over it, feeding .buf to nb_sha256_note.
+pub fn selftest_nb_strtab(src_addr: i64, src_len: i64, user_lo: i64, out: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
+    let reach: i64 = __mind_alloc((nb_all + 1) * 8);
+    let _r0: i64 = nb_mark_roots(src_addr, all_fns, nb_all, user_lo, reach, 0);
+    let _rf: i64 = nb_reach_fixpoint(src_addr, all_fns, nb_all, reach, nb_all + 1);
+    let kept: i64 = __mind_alloc((nb_all + 1) * 8);
+    let n_kept: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, kept, 0, 0);
+    let tconst: i64 = nb_type_consts();
+    let srt: i64 = srt_build(src_addr, src_len);
+    let strbuf: i64 = __mind_alloc(65536);
+    let offs: i64 = __mind_alloc(1024 * 8);
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let _b: i64 = nb_strtab_build(strbuf, offs, ccell, src_addr, tconst, items_addr, items_len, kept, n_kept, 0);
+    let _s: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
+    let ncount: i64 = __mind_load_i64(ccell);
+    __mind_store_i64(out + 0, ncount);
+    __mind_store_i64(out + 8, strbuf);
+    __mind_store_i64(out + 16, offs);
+    ncount
+}
+
 // No-hash native-ELF entries (Rust-independence #14, PHASE 1.3 — TRACE-HASH). These
 // mirror selftest_native_elf_h / selftest_native_elf_hb EXACTLY except the note is
 // SELF-COMPUTED via nb_trace_hash (no hash_addr fed). When nb_trace_hash fails
