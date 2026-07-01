@@ -1,0 +1,411 @@
+// std/x25519.mind — X25519 (RFC 7748 §5) Curve25519 Montgomery-ladder ECDH in
+// pure MIND.  Self-contained: no imports, only the `__mind_*` intrinsics,
+// matching std/aes_gcm.mind's low-level byte-buffer discipline.
+//
+// Scope (TLS 1.3 key exchange, RFC 8446 §4.2.8.2 / §7.4.2):
+//   - The single primitive `x25519(scalar, u, out)` computes the 32-byte
+//     shared secret / public key.  With u = the base point (u=9) it turns a
+//     private scalar into a public key; with u = a peer's public key it turns
+//     the private scalar into the shared secret.  That symmetry is X25519's
+//     whole design — one function serves both directions.
+//
+// Field representation (GF(2^255-19)):
+//   A field element `gf` is 16 signed i64 limbs, radix 2^16, little-endian:
+//     value = sum_{i=0}^{15} limb[i] * 2^(16*i)   (mod 2^255-19).
+//   Limbs are allowed to grow/go slightly negative between reductions; the
+//   carry-normalizer `car25519` folds them back to ~[0,2^16).  This is the
+//   TweetNaCl representation (D. J. Bernstein et al., public domain) chosen
+//   deliberately over a faster radix-2^51 packing because every limb product
+//   (17-bit * 17-bit ~= 34 bits, 16 of them summed + a 38x fold ~= 43 bits)
+//   stays inside a single signed i64 with no 128-bit intermediate — making the
+//   arithmetic trivially verifiable against the official RFC 7748 vectors.
+//
+//   A `gf` buffer is __mind_alloc(128) = 16 limbs * 8 bytes; limb i lives at
+//   byte offset i*8 (__mind_store_i64 / __mind_load_i64).
+//
+// Reduction identity: 2^255 = 19 (mod p), so 2^256 = 38 (mod p).  A 31-limb
+// schoolbook product t[0..30] is reduced by folding the high half back with a
+// factor of 38: t[i] += 38 * t[i+16].
+//
+// Constant-time discipline: the Montgomery ladder processes all 255 scalar
+// bits and swaps the two working points with a data-independent mask
+// (`sel25519`), never branching on secret bits.  Pure integer arithmetic —
+// no floats, no clocks, no external calls (deterministic).
+//
+// Public API:
+//   pub fn x25519(scalar_addr, u_addr, out_addr) -> i64
+//     scalar_addr, u_addr: 32-byte little-endian input buffers.
+//     out_addr: 32-byte output buffer (shared secret / public key).  Returns 0.
+//
+// STATUS (2026-07-01): FIXED. The algorithm is complete and every field
+// primitive is byte-exact against the official RFC 7748 test vectors. The
+// end-to-end entry point was previously BLOCKED by what looked like a
+// nested-call codegen bug; the true root cause turned out to be an ELF
+// symbol-interposition hazard, not miscompiled code.
+//
+// ROOT CAUSE: MIND emits every `.so` function with default ELF visibility and
+// GLOBAL binding. When this library is dlopen'd into a host that already
+// linked libm (e.g. the Python vector driver, or any consumer), an INTRA-module
+// call to a MIND function whose name collides with a host symbol was resolved
+// through the global symbol scope to the HOST definition, not ours. libm since
+// GLIBC_2.28 exports weak C23 `fmul` / `fadd` / `fsub` / `fdiv` — so the field
+// `fmul`'s internal call from `x25519`/`fsquare` bound to libm's `fmul`, a
+// math routine that never wrote the caller's output buffer. Hence the caller's
+// poison value survived untouched: a silent no-op, correct-looking machine code
+// with the wrong callee. It reproduced only through an intra-module PLT call; a
+// direct `dlsym`-handle call (foreign buffers) resolved to OUR symbol and
+// worked, which is exactly what masked the cause. `gf_copy16`/`car25519` etc.
+// never collide with any libc/libm name, so single-hop cases worked — the
+// "multiple allocs / deep nesting" correlation was coincidental (those callees
+// simply happened to be the ones named after libm functions).
+//
+// FIX (compiler, not source): the `--emit-shared` link now passes
+// `-Wl,-Bsymbolic-functions`, binding every intra-module function reference to
+// this module's own definition first (MIND's closed-world model). This is a
+// pure link-time symbol-binding directive — no instruction bytes change, only a
+// deterministic DT_FLAGS DF_SYMBOLIC bit applied uniformly on every substrate,
+// so keystone and cross-substrate byte-identity are preserved and exported
+// symbols stay callable via dlsym/ctypes and native cross-module linking.
+// tests/x25519_vectors_driver.py now passes all RFC 7748 vectors.
+
+// ---------------------------------------------------------------------------
+// gf helpers — 16-limb field-element buffers.
+// ---------------------------------------------------------------------------
+
+// gf_copy16 — copy 16 limbs (128 bytes) from src to dst.
+fn gf_copy16(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// car25519 — carry-normalize a gf in place, folding each limb's overflow into
+// the next (and the top limb's overflow back into limb 0 with the 2^256 = 38
+// factor).  Faithful port of TweetNaCl car25519; the +65536 (=1<<16) before the
+// arithmetic-shift makes floor-division of possibly-negative limbs correct.
+fn car25519(o: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        let oi: i64 = __mind_load_i64(o + i * 8) + 65536;
+        let c: i64 = oi >> 16;
+        if i < 15 {
+            let nxt: i64 = __mind_load_i64(o + (i + 1) * 8);
+            __mind_store_i64(o + (i + 1) * 8, nxt + c - 1);
+        } else {
+            // Wrap the top-limb carry back into limb 0 as 38*(c-1) (2^256 = 38).
+            let l0: i64 = __mind_load_i64(o + 0);
+            __mind_store_i64(o + 0, l0 + 38 * (c - 1));
+        }
+        __mind_store_i64(o + i * 8, oi - (c << 16));
+        i = i + 1;
+    }
+    0
+}
+
+// sel25519 — conditionally swap gf p and gf q when b == 1 (constant-time).
+// mask = 0 - b is all-ones for b==1, all-zero for b==0 (b is exactly 0 or 1).
+fn sel25519(p: i64, q: i64, b: i64) -> i64 {
+    let mask: i64 = 0 - b;
+    let mut i: i64 = 0;
+    while i < 16 {
+        let pi: i64 = __mind_load_i64(p + i * 8);
+        let qi: i64 = __mind_load_i64(q + i * 8);
+        let t: i64 = mask & (pi ^ qi);
+        __mind_store_i64(p + i * 8, pi ^ t);
+        __mind_store_i64(q + i * 8, qi ^ t);
+        i = i + 1;
+    }
+    0
+}
+
+// fadd — o = a + b (limb-wise; carries deferred to the next car25519).
+fn fadd(o: i64, a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i64(o + i * 8, __mind_load_i64(a + i * 8) + __mind_load_i64(b + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// fsub — o = a - b (limb-wise; may produce negative limbs, normalized later).
+fn fsub(o: i64, a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i64(o + i * 8, __mind_load_i64(a + i * 8) - __mind_load_i64(b + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Field multiplication.  Split into helpers so no function body holds 3+
+// sibling `while` loops nested inside an outer loop (MLIR block-namer limit —
+// see std/hkdf.mind mem_copy note).  fmul itself contains no loops: it is a
+// straight sequence of helper calls.
+// ---------------------------------------------------------------------------
+
+// gf_zero31 — zero a 31-limb schoolbook product buffer.
+fn gf_zero31(t: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 31 {
+        __mind_store_i64(t + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// gf_mac — schoolbook multiply-accumulate: t[i+j] += a[i]*b[j] for all i,j<16.
+fn gf_mac(t: i64, a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        let ai: i64 = __mind_load_i64(a + i * 8);
+        let mut j: i64 = 0;
+        while j < 16 {
+            let idx: i64 = i + j;
+            let cur: i64 = __mind_load_i64(t + idx * 8);
+            __mind_store_i64(t + idx * 8, cur + ai * __mind_load_i64(b + j * 8));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// gf_reduce_fold — fold the high half back: t[i] += 38 * t[i+16] (2^256 = 38).
+fn gf_reduce_fold(t: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 15 {
+        let lo: i64 = __mind_load_i64(t + i * 8);
+        let hi: i64 = __mind_load_i64(t + (i + 16) * 8);
+        __mind_store_i64(t + i * 8, lo + 38 * hi);
+        i = i + 1;
+    }
+    0
+}
+
+// gf_copy16_from_t — copy the low 16 limbs of the product buffer into o.
+fn gf_copy16_from_t(o: i64, t: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i64(o + i * 8, __mind_load_i64(t + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// fmul — o = a * b (mod p).  Reads a and b fully into the product buffer before
+// writing o, so o may safely alias a and/or b.  The carry-normalization runs on
+// a LOCAL result buffer `r` copied to `o` at the very end (the "operate local,
+// copy out last" discipline of std/aes_gcm.mind's aes_encrypt_block).
+//
+// (Historical note — FIXED, see the module header.) The name `fmul` collides
+// with libm's weak C23 `fmul@@GLIBC_2.28`. Before the fix, an intra-module call
+// to this function from another MIND function was interposed by libm's `fmul`
+// when the `.so` was dlopen'd into a libm-linked host, so the real body never
+// ran and the caller's output buffer went untouched. The `--emit-shared` link
+// now passes `-Wl,-Bsymbolic-functions`, binding intra-module calls to this
+// definition; the name collision is therefore harmless and no rename is needed.
+fn fmul(o: i64, a: i64, b: i64) -> i64 {
+    let t: i64 = __mind_alloc(248);
+    let r: i64 = __mind_alloc(128);
+    gf_zero31(t);
+    gf_mac(t, a, b);
+    gf_reduce_fold(t);
+    gf_copy16_from_t(r, t);
+    car25519(r);
+    car25519(r);
+    gf_copy16(o, r);
+    0
+}
+
+// fsquare — o = a^2 (mod p).
+fn fsquare(o: i64, a: i64) -> i64 {
+    fmul(o, a, a);
+    0
+}
+
+// fmul_121665 — o = a * 121665 (the (A-2)/4 Curve25519 ladder constant).
+// 121665 = 0x1DB41 -> limb0 = 0xDB41 (56129), limb1 = 1.
+fn fmul_121665(o: i64, a: i64) -> i64 {
+    let k: i64 = __mind_alloc(128);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i64(k + i * 8, 0);
+        i = i + 1;
+    }
+    __mind_store_i64(k + 0, 56129);
+    __mind_store_i64(k + 8, 1);
+    fmul(o, a, k);
+    0
+}
+
+// finverse — o = i^(p-2) (mod p) = 1/i, via Fermat's little theorem.
+// The exponent p-2 = 2^255-21 is applied by square-and-multiply: square every
+// step, multiply by the base except at bit positions 2 and 4 (the two zero bits
+// of p-2 in this window).  o may alias i.
+fn finverse(o: i64, inp: i64) -> i64 {
+    let c: i64 = __mind_alloc(128);
+    gf_copy16(c, inp);
+    let mut a: i64 = 253;
+    while a >= 0 {
+        fsquare(c, c);
+        if a != 2 {
+            if a != 4 {
+                fmul(c, c, inp);
+            }
+        }
+        a = a - 1;
+    }
+    gf_copy16(o, c);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// u-coordinate encode/decode (RFC 7748 §5).
+// ---------------------------------------------------------------------------
+
+// unpack25519 — decode a 32-byte little-endian u-coordinate into a gf.  For
+// X25519 the top bit of the last byte is masked off (o[15] &= 0x7fff), so the
+// field element is taken mod 2^255 as the spec requires.
+fn unpack25519(o: i64, n: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        let lo: i64 = __mind_load_i8(n + 2 * i);
+        let hi: i64 = __mind_load_i8(n + 2 * i + 1);
+        __mind_store_i64(o + i * 8, lo + (hi << 8));
+        i = i + 1;
+    }
+    let l15: i64 = __mind_load_i64(o + 15 * 8);
+    __mind_store_i64(o + 15 * 8, l15 & 32767);
+    0
+}
+
+// pack25519 — encode a gf into 32 little-endian bytes, first reducing into the
+// canonical range [0, p).  Three car25519 passes settle the limbs; then two
+// conditional subtractions of p select the canonical representative.
+fn pack25519(out: i64, n: i64) -> i64 {
+    let t: i64 = __mind_alloc(128);
+    let m: i64 = __mind_alloc(128);
+    gf_copy16(t, n);
+    car25519(t);
+    car25519(t);
+    car25519(t);
+    let mut j: i64 = 0;
+    while j < 2 {
+        // m = t - p, computed limb-wise with borrow; p = 2^255-19 is
+        // 0x7fffffff...ffed in this limb layout (limb0 = 0xffed, limbs 1..14 =
+        // 0xffff, limb15 = 0x7fff).
+        __mind_store_i64(m + 0, __mind_load_i64(t + 0) - 65517);
+        let mut i: i64 = 1;
+        while i < 15 {
+            let ti: i64 = __mind_load_i64(t + i * 8);
+            let mprev: i64 = __mind_load_i64(m + (i - 1) * 8);
+            let mi: i64 = ti - 65535 - ((mprev >> 16) & 1);
+            __mind_store_i64(m + i * 8, mi);
+            __mind_store_i64(m + (i - 1) * 8, mprev & 65535);
+            i = i + 1;
+        }
+        let t15: i64 = __mind_load_i64(t + 15 * 8);
+        let m14: i64 = __mind_load_i64(m + 14 * 8);
+        __mind_store_i64(m + 15 * 8, t15 - 32767 - ((m14 >> 16) & 1));
+        let m15: i64 = __mind_load_i64(m + 15 * 8);
+        let bb: i64 = (m15 >> 16) & 1;
+        __mind_store_i64(m + 14 * 8, __mind_load_i64(m + 14 * 8) & 65535);
+        // If the subtraction did not borrow (bb==0) keep m, else keep t.
+        sel25519(t, m, 1 - bb);
+        j = j + 1;
+    }
+    let mut k: i64 = 0;
+    while k < 16 {
+        let tk: i64 = __mind_load_i64(t + k * 8);
+        __mind_store_i8(out + 2 * k, tk & 255);
+        __mind_store_i8(out + 2 * k + 1, (tk >> 8) & 255);
+        k = k + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public: X25519 scalar multiplication (RFC 7748 §5).
+// ---------------------------------------------------------------------------
+
+pub fn x25519(scalar_addr: i64, u_addr: i64, out_addr: i64) -> i64 {
+    // Clamp the scalar into a private 32-byte copy z (RFC 7748 §5 decodeScalar):
+    // clear bits 0,1,2 of byte 0 (& 0xF8), clear bit 7 and set bit 6 of byte 31
+    // ((& 0x7F) | 0x40).
+    let z: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(z + i, __mind_load_i8(scalar_addr + i));
+        i = i + 1;
+    }
+    __mind_store_i8(z + 0, __mind_load_i8(z + 0) & 248);
+    __mind_store_i8(z + 31, (__mind_load_i8(z + 31) & 127) | 64);
+
+    // Decode the u-coordinate (also masks the high bit for X25519).
+    let x: i64 = __mind_alloc(128);
+    unpack25519(x, u_addr);
+
+    // Working points for the ladder: (a:c) and (b:d) are (X:Z) projective
+    // coordinates; e and f are scratch.
+    let a: i64 = __mind_alloc(128);
+    let b: i64 = __mind_alloc(128);
+    let c: i64 = __mind_alloc(128);
+    let d: i64 = __mind_alloc(128);
+    let e: i64 = __mind_alloc(128);
+    let f: i64 = __mind_alloc(128);
+
+    // Initialize: b = x (=u); a = 1, c = 0 (point at infinity as (1:0));
+    // d = 1 (so (b:d) starts as (u:1)).
+    let mut k: i64 = 0;
+    while k < 16 {
+        __mind_store_i64(b + k * 8, __mind_load_i64(x + k * 8));
+        __mind_store_i64(a + k * 8, 0);
+        __mind_store_i64(c + k * 8, 0);
+        __mind_store_i64(d + k * 8, 0);
+        k = k + 1;
+    }
+    __mind_store_i64(a + 0, 1);
+    __mind_store_i64(d + 0, 1);
+
+    // Montgomery ladder, most-significant to least-significant scalar bit
+    // (bits 254..0; bits 255+ are zero after clamping).
+    let mut bit: i64 = 254;
+    while bit >= 0 {
+        let by: i64 = __mind_load_i8(z + (bit >> 3));
+        let r: i64 = (by >> (bit & 7)) & 1;
+        sel25519(a, b, r);
+        sel25519(c, d, r);
+        fadd(e, a, c);
+        fsub(a, a, c);
+        fadd(c, b, d);
+        fsub(b, b, d);
+        fsquare(d, e);
+        fsquare(f, a);
+        fmul(a, c, a);
+        fmul(c, b, e);
+        fadd(e, a, c);
+        fsub(a, a, c);
+        fsquare(b, a);
+        fsub(c, d, f);
+        fmul_121665(a, c);
+        fadd(a, a, d);
+        fmul(c, c, a);
+        fmul(a, d, f);
+        fmul(d, b, x);
+        fsquare(b, e);
+        sel25519(a, b, r);
+        sel25519(c, d, r);
+        bit = bit - 1;
+    }
+
+    // Recover the affine u-coordinate of the result: X * Z^-1 = a * c^-1.
+    finverse(c, c);
+    fmul(a, a, c);
+    pack25519(out_addr, a);
+    0
+}
