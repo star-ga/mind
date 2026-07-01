@@ -23022,6 +23022,136 @@ pub fn nb_trace_hash(src_addr: i64, src_len: i64, user_lo: i64, fns: i64, n_fns:
     nb_sha256_note(0, 0)
 }
 
+// ---- #17 sub-milestone 1: MATERIALIZE + PRUNE COUNTS (next_id + instr_count) ----
+//
+// Reproduce the two anchor numbers of emit_mic3(pruned-combined IR) WITHOUT yet
+// building the byte stream: `next_id` and `instr_count`. Decoded from
+// /tmp/add_combined.mic3 (the authoritative `add`-fixture target, 5447 B) the
+// pruned-combined instr stream is EXACTLY:
+//   618 ConstI64 + 618 Output + 2 FnDef + 67 ExternFnDecl = 1305 ; next_id = 618.
+// Model (mirrors src/eval/lower.rs:676-925 + the extern arm @5420 + the FnDef
+// module-level placeholder @ir/print + prune_unreachable_fns @bin/mind-native.rs):
+//   * EVERY top-level item pushes a value-placeholder `ConstI64(id,0)` + `Output(id)`
+//     and allocates ONE fresh id  =>  next_id == item-count, and 1 ConstI64 + 1
+//     Output per item survive the prune (both are non-FnDef, always RETAINED).
+//   * a FnDef item ADDITIONALLY pushes its real `FnDef` instr BEFORE the placeholder;
+//     the prune drops that FnDef instr for every UNREACHABLE fn (the placeholder pair
+//     stays) — so only the KEPT fns contribute a FnDef instr.
+//   * an `extern "C" { .. }` block ADDITIONALLY pushes one `ExternFnDecl` per declared
+//     fn (never pruned) BEFORE its placeholder.
+// Hence:  next_id      = items_len
+//         instr_count  = 2*items_len + kept_fns + total_extern_fn_decls
+// The pure-MIND parser collapses each extern block to a single ast_struct_def stub,
+// so the per-block fn-decl count is recovered by scanning the block's source span for
+// standalone `fn` words (nb_count_fn_words). kept_fns is the reachable+last-def set
+// already computed by nb_build_kept.
+
+// 1 iff byte `b` is an identifier char (alnum or `_`) — the word-boundary test for
+// isolating a standalone `fn` keyword inside an extern block's source span.
+pub fn nb_is_word_byte(b: i64) -> i64 {
+    if is_alnum(b) == 1 {
+        return 1;
+    }
+    if b == 95 {
+        return 1;
+    }
+    0
+}
+
+// Count standalone `fn` word occurrences in buf[lo..hi] — one per extern fn-decl.
+// A match is bytes `f`,`n` with a non-word char (or start-of-span) before and a
+// non-word char after, so identifiers that merely contain `fn` do not miscount.
+pub fn nb_count_fn_words(buf: i64, lo: i64, hi: i64, span_lo: i64, acc: i64) -> i64 {
+    if lo + 2 > hi {
+        return acc;
+    }
+    let hit: i64 = if load_byte(buf, lo) == 102 {
+        if load_byte(buf, lo + 1) == 110 {
+            let pre_ok: i64 = if lo <= span_lo {
+                1
+            } else {
+                if nb_is_word_byte(load_byte(buf, lo - 1)) == 1 {
+                    0
+                } else {
+                    1
+                }
+            };
+            let post_ok: i64 = if nb_is_word_byte(load_byte(buf, lo + 2)) == 1 {
+                0
+            } else {
+                1
+            };
+            if pre_ok == 1 {
+                post_ok
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    nb_count_fn_words(buf, lo + 1, hi, span_lo, acc + hit)
+}
+
+// 1 iff the item's source span begins with the `extern` keyword (an extern block
+// stub — the pure-MIND parser lowers struct/enum/const/module/extern all to an
+// ast_struct_def leaf, distinguished here by the first 6 span bytes).
+pub fn nb_item_is_extern(buf: i64, node: i64) -> i64 {
+    let lo: i64 = ast_span_lo(node);
+    is_extern_kw(buf, lo, lo + 6)
+}
+
+// Sum the extern fn-decls over EVERY top-level item (0 for non-extern items).
+pub fn nb_sum_extern_fns(buf: i64, items_addr: i64, items_len: i64, i: i64, acc: i64) -> i64 {
+    if i >= items_len {
+        return acc;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    let add: i64 = if nb_item_is_extern(buf, item) == 1 {
+        nb_count_fn_words(buf, ast_span_lo(item), ast_span_hi(item), ast_span_lo(item), 0)
+    } else {
+        0
+    };
+    nb_sum_extern_fns(buf, items_addr, items_len, i + 1, acc + add)
+}
+
+// Debug/count export (sub-milestone 1 verification): lex+parse the combined src,
+// build the reachable+last-def kept-fn set (reusing the native-ELF prune machinery),
+// then compute next_id + instr_count per the materialize+prune model above. Writes
+// diagnostics to out[0..5] and returns next_id. No mic@3 bytes are built.
+//   out[0] = items_len (== next_id)   out[1] = total fn_defs (pre-prune)
+//   out[2] = kept fns                 out[3] = total extern fn-decls
+//   out[4] = instr_count
+// deferred: temporary counting harness for #17 sub-milestone 1 (materialize+prune
+//   COUNT only). upgrade path: sub-milestone 2 drives emit_mic3 header/strtab/instr
+//   machinery over this same materialized+pruned stream and feeds .buf to nb_sha256_note.
+pub fn selftest_nb_trace_counts(src_addr: i64, src_len: i64, user_lo: i64, out: i64) -> i64 {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    // Kept fn set (reachable from user_lo roots, last-def-per-name), reusing the
+    // exact prune machinery selftest_native_elf_hb lays the fn set with.
+    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
+    let reach: i64 = __mind_alloc((nb_all + 1) * 8);
+    let _r0: i64 = nb_mark_roots(src_addr, all_fns, nb_all, user_lo, reach, 0);
+    let _rf: i64 = nb_reach_fixpoint(src_addr, all_fns, nb_all, reach, nb_all + 1);
+    let fns: i64 = __mind_alloc((nb_all + 1) * 8);
+    let n_fns: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, fns, 0, 0);
+    let total_externs: i64 = nb_sum_extern_fns(src_addr, items_addr, items_len, 0, 0);
+    let next_id: i64 = items_len;
+    let instr_count: i64 = items_len + items_len + n_fns + total_externs;
+    __mind_store_i64(out + 0, items_len);
+    __mind_store_i64(out + 8, nb_all);
+    __mind_store_i64(out + 16, n_fns);
+    __mind_store_i64(out + 24, total_externs);
+    __mind_store_i64(out + 32, instr_count);
+    next_id
+}
+
 // No-hash native-ELF entries (Rust-independence #14, PHASE 1.3 — TRACE-HASH). These
 // mirror selftest_native_elf_h / selftest_native_elf_hb EXACTLY except the note is
 // SELF-COMPUTED via nb_trace_hash (no hash_addr fed). When nb_trace_hash fails
