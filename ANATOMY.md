@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2953 | **Est. tokens:** ~7,069,385
-**Generated:** 2026-07-01 11:43 UTC
+**Files:** 2956 | **Est. tokens:** ~7,066,551
+**Generated:** 2026-07-01 12:59 UTC
 
 ## Token Budget Guide
 
@@ -22,7 +22,7 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,189 |
+| `./` | 34 | ~26,967 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~550 |
@@ -53,7 +53,8 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 31 | ~70,551 |
+| `examples/mindc_mind/` | 29 | ~69,657 |
+| `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -62,7 +63,7 @@
 | `.githooks/` | 1 | ~255 |
 | `.github/` | 3 | ~148 |
 | `.github/ISSUE_TEMPLATE/` | 3 | ~440 |
-| `.github/workflows/` | 8 | ~9,040 |
+| `.github/workflows/` | 8 | ~8,905 |
 | `mind/std/cognitive/` | 4 | ~3,529 |
 | `runtime-support/` | 1 | ~16,548 |
 | `scripts/` | 7 | ~9,074 |
@@ -369,10 +370,10 @@
 | `sdk/ts/mic-map/test/` | 4 | ~7,843 |
 | `sdk/ts/mic-map/test/fixtures/` | 2 | ~96 |
 | `skills/write-mind/` | 1 | ~6,002 |
-| `src/` | 7 | ~17,517 |
+| `src/` | 7 | ~17,449 |
 | `src/ast/` | 1 | ~7,430 |
 | `src/autodiff/` | 3 | ~6,624 |
-| `src/bin/` | 3 | ~27,510 |
+| `src/bin/` | 2 | ~25,080 |
 | `src/build/` | 2 | ~11,359 |
 | `src/cache/` | 4 | ~3,525 |
 | `src/check/` | 3 | ~9,753 |
@@ -464,7 +465,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1686 tok, huge) — [package]
+- `Cargo.toml` (~1464 tok, large) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -771,16 +772,24 @@
 - `mic3_oracle_smoke.py` (~764 tok, large) — mic@3 self-host convergence — Phase 0 gate: the Rust oracle.
 - `mic3_primitives_smoke.py` (~22299 tok, huge) — mic@3 self-host convergence — Phase 1 gate: pure-MIND ULEB128 / zigzag.
 - `multi_let_smoke.py` (~1499 tok, large)
-- `native_self_host_smoke.sh` (~800 tok, large) — native_self_host_smoke.sh — the NATIVE BOOTSTRAP FIXED POINT gate (#14).
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
-- `self_host_native_driver_main.frag.mind` (~277 tok, medium) — ===== Native self-host driver (appended; NOT part of canonical main.mind) =====
-- `self_host_native_elf_smoke.py` (~8009 tok, huge)
+- `self_host_native_elf_smoke.py` (~8192 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
+### `examples/mindc_mind/testdata/native_elf_oracle/`
+
+- `add.elf` (~125 tok, small) — ELF> @@@8
+- `if_ret.elf` (~150 tok, small) — ELF> @@@8
+- `MANIFEST.txt` (~152 tok, small) — # Frozen native-ELF oracle references, captured before #15 deletes src/native.
+- `recursion.elf` (~175 tok, small) — ELF> @@@8
+- `struct_field.elf` (~166 tok, small) — ELF> @@@8
+- `value_if.elf` (~147 tok, small) — ELF> @@@8
+### `examples/mindc_mind/`
+
 - `unified_dispatch_smoke.py` (~1553 tok, huge)
 - `validate_real_fns_smoke.py` (~2674 tok, huge)
 - `while_struct_smoke.py` (~1031 tok, large)
@@ -852,7 +861,7 @@
 
 - `bench-gate.yml` (~1432 tok, large) — name: Bench gate
 - `cargo-deny.yml` (~222 tok, medium) — name: Cargo Deny
-- `ci.yml` (~4409 tok, huge) — name: CI
+- `ci.yml` (~4274 tok, huge) — name: CI
 - `docs-claims.yml` (~364 tok, medium) — name: Docs Claims
 - `link-check.yml` (~221 tok, medium) — name: Link Check
 - `mindcraft.yml` (~545 tok, large) — name: Mindcraft Check
@@ -3681,7 +3690,6 @@
 
 - `mind-ai.rs` (~9805 tok, huge) — Copyright 2025 STARGA Inc.
 - `mindc.rs` (~15275 tok, huge) — Copyright 2025 STARGA Inc.
-- `mind-native.rs` (~2430 tok, huge) — Copyright 2026 STARGA Inc.
 ### `src/build/`
 
 - `cache.rs` (~5282 tok, huge) — Copyright 2025 STARGA Inc.
@@ -3783,7 +3791,7 @@
 - `verify.rs` (~10698 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
-- `lib.rs` (~1006 tok, large) — Copyright 2025 STARGA Inc.
+- `lib.rs` (~938 tok, large) — Copyright 2025 STARGA Inc.
 - `linalg.rs` (~2025 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/lint/`
 

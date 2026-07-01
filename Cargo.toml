@@ -52,13 +52,6 @@ path = "src/main.rs"
 name = "mindc"
 path = "src/bin/mindc.rs"
 
-# Experimental zero-LLVM native compiler driver. Built only with
-# `--features native-backend`; never part of a default build.
-[[bin]]
-name = "mind-native"
-path = "src/bin/mind-native.rs"
-required-features = ["native-backend"]
-
 [[bench]]
 name = "compiler"
 harness = false
@@ -166,15 +159,6 @@ mlir-exec = ["mlir-subprocess"]
 mlir-jit = ["libloading"]
 mlir-gpu = []
 mlir-build = ["mlir-subprocess"]
-# Experimental MIND-native backend (src/native/): IRModule -> x86-64 -> static
-# ELF64 with ZERO LLVM/MLIR/clang/linker. OFF by default and fully cfg-gated, so
-# the shipping `mic@3 -> MLIR -> ELF` path, the keystone byte-identity, and the
-# default/no-default build surfaces are all untouched. Determinism-by-
-# construction (fixed encoder + fixed ValueId->slot map). Pulls in `std-surface`
-# because it targets the real language IR — control flow (`Instr::If`) and the
-# other high-level constructs are std-surface-gated. Scope today: the scalar-i64
-# slice + if-expressions; see src/native/mod.rs for the deferred roadmap.
-native-backend = ["std-surface"]
 ffi-c = ["libc"]
 ffi-c-user = []  # RFC 0002 deliverable 2+: emit `mind_fn_<name>_invoke` C-ABI wrappers for IRModule.exports
 # `cross-module-imports` bundles the real std/*.mind sources (see

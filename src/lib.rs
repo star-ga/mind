@@ -87,12 +87,6 @@ pub use mlir::{MlirLowerError, compile_ir_to_mlir_text};
 #[cfg(feature = "ffi-c")]
 pub mod ffi;
 
-/// Experimental MIND-native backend: `IRModule → x86-64 → static ELF64`, zero
-/// LLVM. Opt-in (`--features native-backend`); not wired into the default
-/// compile pipeline. See the module docs for scope + roadmap.
-#[cfg(feature = "native-backend")]
-pub mod native;
-
 #[cfg(feature = "pkg")]
 pub mod package;
 
