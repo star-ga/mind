@@ -6902,7 +6902,6 @@ fn lower_lettuple_stmt(
 
 /// Extract a compile-time i64 value from a literal expression node.
 /// Returns `None` for non-literal (runtime) expressions.
-#[cfg(feature = "std-surface")]
 fn extract_const_i64(node: &ast::Node) -> Option<i64> {
     match node {
         ast::Node::Lit(Literal::Int(n), _) => Some(*n),
