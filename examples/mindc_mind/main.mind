@@ -23530,6 +23530,59 @@ pub fn nb_build_mic3(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let ast_root: i64 = parse(tokens, src_addr);
     let items_addr: i64 = ast_child0(ast_root);
     let items_len: i64 = ast_aux(ast_root);
+    let srt: i64 = srt_build(src_addr, src_len);
+    let n_structs: i64 = srt_count(srt);
+    // STRUCT-LIT preprocessing (mirror selftest_mic3_module_nfn ~L12026): desugar
+    // struct-literal ctors -> __mind_alloc + ordered __mind_store_i64 + ptr-result,
+    // pre-fold resolvable field reads -> __mind_load_i64, then annotate — in THIS
+    // order, over the SAME combined items, BEFORE the kept-set / strtab / emit passes.
+    // No-op for a fn with no struct lit: the 4 struct-less fixtures are unaffected
+    // because their kept mains carry no literal and every pruned stdlib body is
+    // dropped to a placeholder pair (strtab collects + emit lowers KEPT fns only).
+    // The combined buffer always contains __mind_alloc/__mind_store_i64 (stdlib uses
+    // both), so have_spans==1, src_use==src_addr, and the real found spans are used.
+    let slit_acell: i64 = __mind_alloc(16);
+    let slit_scell: i64 = __mind_alloc(16);
+    let alloc_found: i64 = find_alloc_name_span(src_addr, src_len, 0, slit_acell);
+    let store_found: i64 = find_store_name_span(src_addr, src_len, 0, slit_scell);
+    let have_spans: i64 = if alloc_found == 1 {
+        store_found
+    } else {
+        0
+    };
+    let src_use: i64 = if have_spans == 1 {
+        src_addr
+    } else {
+        build_src_intrinsics(src_addr, src_len)
+    };
+    let alo: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_acell + 0)
+    } else {
+        src_len
+    };
+    let ahi: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_acell + 8)
+    } else {
+        src_len + 12
+    };
+    let slo: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_scell + 0)
+    } else {
+        src_len + 12
+    };
+    let shi: i64 = if have_spans == 1 {
+        __mind_load_i64(slit_scell + 8)
+    } else {
+        src_len + 28
+    };
+    let _sl: i64 = slit_desugar_module(src_use, src_len, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
+    let prefold_len: i64 = if have_spans == 1 {
+        src_len
+    } else {
+        src_len + 43
+    };
+    let _pf: i64 = field_prefold_module(src_use, prefold_len, items_addr, items_len, 0, srt);
+    let _an: i64 = slit_annotate_module(src_use, items_addr, items_len, srt, alo, ahi, slo, shi, 0);
     let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
     let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
     let reach: i64 = __mind_alloc((nb_all + 1) * 8);
@@ -23538,8 +23591,6 @@ pub fn nb_build_mic3(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
     let kept: i64 = __mind_alloc((nb_all + 1) * 8);
     let n_kept: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, kept, 0, 0);
     let tconst: i64 = nb_type_consts();
-    let srt: i64 = srt_build(src_addr, src_len);
-    let n_structs: i64 = srt_count(srt);
     let strbuf: i64 = __mind_alloc(65536);
     let offs: i64 = __mind_alloc(1024 * 8);
     let ccell: i64 = __mind_alloc(8);
