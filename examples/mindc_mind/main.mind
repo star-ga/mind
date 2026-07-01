@@ -22995,6 +22995,21 @@ pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> Emi
 //   @lower.rs:846-921); (5) struct_defs registry. The emit_instr/strtab machinery already
 //   exists in the nfn path (emit_mic3_module_fndef etc.); the missing piece is driving it
 //   over the COMBINED+PRUNED item set with lower_to_ir's numbering, NOT a single file.
+//   MECHANISM (decoded from src/eval/lower.rs 780-925, 2026-06-30): lower_to_ir walks
+//   EVERY top-level item in order; each allocates a fresh id and pushes {value-instr +
+//   Output(id)}: StructDef/EnumDef → ConstI64(id,0)+Output (metadata to registries);
+//   Const[array] → ConstArray+Output; FnDef → the real FnDef body+Output; extern → an
+//   ExternFnDecl; Export → exports set (no instr). So next_id ≈ item-count (618) and the
+//   1305-instr stream ≈ one {value,Output} pair per item. prune_unreachable_fns RETAINS
+//   every placeholder + ExternFnDecl, only dropping unreachable FnDef bodies. KEY
+//   STRATEGY NOTE: the string table is collected FROM the built instr stream
+//   (collect_strings over module.instrs), so this port is NOT prefix-gatable — nb_trace_hash
+//   must build the WHOLE pruned-combined IR (all instrs + registries) FIRST, then run the
+//   existing emit_mic3 header/strtab/instr machinery over it. The nfn already lowers
+//   struct/enum/const/fn top-level items (the main.mind flip proves it); the remaining gaps
+//   are: extern-decl items, the seeded stdlib items, the prune, and matching next_id/order.
+//   This is a build-whole-module port (multi-session), fully de-risked: target dumpable +
+//   sha-confirmed, mechanism known, machinery mostly present.
 pub fn nb_trace_hash(src_addr: i64, src_len: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
     // deferred: pruned-combined mic@3 EmitState not yet built — see marker above.
     // Passing mic3_len=0 makes nb_sha256_note return 0 (fail-closed), so the
