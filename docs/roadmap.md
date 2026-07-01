@@ -28,13 +28,20 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   int/Q16 results are byte-identical across substrates (cross_substrate gate 12/12).
 - ✅ **Native-ELF self-host fixed-point closed** (v0.10.0) – the pure-MIND
   front-end now emits the NATIVE x86-64/ELF of the entire seeded module (21 stdlib
-  modules + main.mind, 1 055 777 B) byte-identically against the Rust reference —
+  modules + main.mind, 1 156 476 B) byte-identically against the Rust reference —
   all three self-host gates pass: mic@1 IR-text bootstrap fixed point, mic@3
   canonical-binary-IR flip, and the native-ELF fixed point. This is the core of
-  Rust-independence. The NATIVE-ELF backend (`src/native`) is the normative self-host
-  target; MLIR-text is demoted to downstream-interchange. What remains before full
-  Rust-independence: wiring the pure-MIND SHA-256 to the `ir_trace_hash` PT\_NOTE
-  emit, and deleting the Rust `src/native` backend.
+  Rust-independence.
+- ✅ **Self-computed PT\_NOTE trace-hash + `src/native` deleted** (2026-07-01) –
+  the pure-MIND front-end self-computes the `ir_trace_hash` PT\_NOTE byte-identically
+  at full main.mind scale (~1.5 MB combined stdlib+main.mind source), zero Rust
+  oracle bytes fed anywhere in the loop (the no-feed rung in
+  `self_host_native_elf_smoke.py`). This closed the last oracle tie in the
+  native-ELF self-host (#17), which made the Rust `src/native` backend (2441
+  lines) fully redundant — deleted (Phase 1.4 / #15), after freezing its current
+  output as permanent test fixtures
+  (`examples/mindc_mind/testdata/native_elf_oracle/`). Full Rust-independence
+  for the native-ELF path is complete.
 
 ## Shipped (v0.7.1)
 
@@ -62,11 +69,12 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 
 ## Roadmap
 
-- **Full Rust-independent pipeline (in progress)** – the native-ELF self-host fixed point is
-  closed (v0.10.0): the pure-MIND front-end emits the full seeded module
-  byte-identically against the Rust reference. What remains: wiring the pure-MIND
-  SHA-256 to the `ir_trace_hash` PT\_NOTE emit, and deleting the Rust `src/native`
-  backend (Phase 15). See the README for the precise what-remains list.
+- ✅ **Full Rust-independent native-ELF pipeline** (2026-07-01) – the native-ELF
+  self-host fixed point is closed and the pure-MIND front-end self-computes its
+  own `ir_trace_hash` PT\_NOTE byte-identically at full scale; the Rust
+  `src/native` backend (Phase 15) has been deleted. See the README for what
+  remains on the broader Rust-independence effort (MLIR/mindc itself is still
+  Rust — this closes the native-ELF track specifically).
 - **Ed25519-signed evidence chain** – cryptographic signing of the
   already-emitted evidence chain.
 - **GPU / accelerator backends** – the open-source `mindc` compiler in this repo
