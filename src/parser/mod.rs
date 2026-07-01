@@ -3443,6 +3443,15 @@ impl<'a> P<'a> {
         if self.at(b'{') {
             return self.parse_map_lit();
         }
+        // Byte-string literal `b"..."` (#5): the `b` prefix marks a raw byte-slice
+        // literal. The bytes are identical to a plain string literal, so consume the
+        // `b` and reuse parse_string_lit (which yields `Literal::Str`, already a byte
+        // sequence). `b"` is unambiguous — no valid expression has an ident `b`
+        // immediately followed by `"`.
+        if self.at(b'b') && self.pos + 1 < self.b.len() && self.b[self.pos + 1] == b'"' {
+            self.pos += 1;
+            return self.parse_string_lit();
+        }
         if self.at(b'"') {
             return self.parse_string_lit();
         }
