@@ -23011,15 +23011,20 @@ pub fn selftest_native_elf_h(src_addr: i64, src_len: i64, hash_addr: i64) -> Emi
 //   This is a build-whole-module port (multi-session), fully de-risked: target dumpable +
 //   sha-confirmed, mechanism known, machinery mostly present.
 pub fn nb_trace_hash(src_addr: i64, src_len: i64, user_lo: i64, fns: i64, n_fns: i64) -> i64 {
-    // deferred: pruned-combined mic@3 EmitState not yet built — see marker above.
-    // Passing mic3_len=0 makes nb_sha256_note return 0 (fail-closed), so the
-    // no-hash entries below refuse to emit a wrong note rather than guess.
-    let _u: i64 = user_lo;
-    let _s: i64 = src_addr;
-    let _l: i64 = src_len;
+    // SELF-COMPUTE the note (#17 sub-milestone 3): build the SEEDED+PRUNED combined
+    // mic@3 in pure MIND (nb_build_mic3 — byte-exact vs emit_mic3, gated to
+    // /tmp/add_combined.mic3 at 5447 B / sha e912443707c23b57) and run the ported
+    // SHA-256 over its .buf bytes. fns/n_fns are recomputed inside nb_build_mic3 from
+    // (src, user_lo) — the caller already laid the same kept set — so they are unused.
+    // nb_build_mic3 fails closed (empty .buf) on any unmatched fn shape => len 0 =>
+    // nb_sha256_note returns 0 => the no-hash entries refuse to emit a wrong note.
     let _f: i64 = fns;
     let _n: i64 = n_fns;
-    nb_sha256_note(0, 0)
+    let mic3: EmitState = nb_build_mic3(src_addr, src_len, user_lo);
+    let bufstr: String = mic3.buf;
+    let addr: i64 = string_addr(bufstr);
+    let ln: i64 = string_len(bufstr);
+    nb_sha256_note(addr, ln)
 }
 
 // ---- #17 sub-milestone 1: MATERIALIZE + PRUNE COUNTS (next_id + instr_count) ----
@@ -23374,6 +23379,200 @@ pub fn selftest_nb_strtab(src_addr: i64, src_len: i64, user_lo: i64, out: i64) -
     __mind_store_i64(out + 8, strbuf);
     __mind_store_i64(out + 16, offs);
     ncount
+}
+
+// ---- #17 sub-milestone 3: MATERIALIZE the pruned-combined instr stream + ----
+// registries and drive the FULL mic@3 emit, byte-exact vs /tmp/add_combined.mic3.
+//
+// Model (decoded from /tmp/add_combined.mic3, gate-proven): each of the 618 combined
+// items emits ConstI64(i,0)+Output(i) at its own fresh id i (== item index), EXCEPT a
+// KEPT FnDef item PREPENDS its real FnDef body and an EXTERN block item PREPENDS one
+// ExternFnDecl per declared symbol (a PRUNED FnDef item drops its FnDef instr, leaving
+// only the placeholder pair). next_id == items_len; instr_count == 2*items_len +
+// n_kept + total_extern_decls. Registries: struct_defs (BTreeMap-sorted, reused
+// srt_emit_registry_sorted_interned), then const_array_defs (0) and repr_c_structs (0).
+
+// Strtab index for an extern type category (parallel to nb_intern_tcat but READ-ONLY):
+// 0=!llvm.ptr [0,9), 2=f32 [12,15), 3=f64 [15,18), else i64 [9,12) — indices INTO the
+// already-built 84-entry strtab (intern_find over the tconst constants buffer).
+pub fn nb_tcat_index(strbuf: i64, offs: i64, ncount: i64, tconst: i64, cat: i64) -> i64 {
+    if cat == 0 {
+        return intern_find(strbuf, offs, ncount, tconst, 0, 9, 0);
+    }
+    if cat == 2 {
+        return intern_find(strbuf, offs, ncount, tconst, 12, 15, 0);
+    }
+    if cat == 3 {
+        return intern_find(strbuf, offs, ncount, tconst, 15, 18, 0);
+    }
+    intern_find(strbuf, offs, ncount, tconst, 9, 12, 0)
+}
+
+// Collect an extern decl's param-type categories into catbuf[0..], one per top-level
+// `:`; write the count to ncell and return the token index of the closing `)`. Mirrors
+// nb_extern_params' walk (one colon == one param type; no inner colons).
+pub fn nb_ecoll_params(subbase: i64, toks: Vec, pos: i64, catbuf: i64, ncell: i64) -> i64 {
+    if at_eof(toks, pos) == 1 {
+        return pos;
+    }
+    let k: i64 = tok_kind(toks, pos);
+    if k == tk_rparen() {
+        return pos;
+    }
+    if k == tk_colon() {
+        let cat: i64 = nb_type_cat(subbase, toks, pos + 1);
+        let n: i64 = __mind_load_i64(ncell);
+        __mind_store_i64(catbuf + n * 8, cat);
+        __mind_store_i64(ncell, n + 1);
+        return nb_ecoll_params(subbase, toks, pos + 1, catbuf, ncell);
+    }
+    nb_ecoll_params(subbase, toks, pos + 1, catbuf, ncell)
+}
+
+// Emit the param-type string indices for catbuf[0..ncat) as uleb strtab-idxs.
+pub fn nb_emit_cat_idxs(s: EmitState, strbuf: i64, offs: i64, ncount: i64, tconst: i64, catbuf: i64, ncat: i64, i: i64) -> EmitState {
+    if i >= ncat {
+        return s;
+    }
+    let cat: i64 = __mind_load_i64(catbuf + i * 8);
+    let idx: i64 = nb_tcat_index(strbuf, offs, ncount, tconst, cat);
+    let s1: EmitState = emit_uleb128(s, idx);
+    nb_emit_cat_idxs(s1, strbuf, offs, ncount, tconst, catbuf, ncat, i + 1)
+}
+
+// Emit OP_EXTERN_FN_DECL (0x25) for each `fn NAME(params) -> ret;` in an extern block's
+// tokens, mirroring nb_extern_scan's structure but WRITING bytes: uleb(name_idx),
+// uleb(nparams), each param type idx, opt ret (0 | 1+idx), varargs=0, uleb(hints=0),
+// callconv=1 (SysV — resolve_callconv(C) on Linux). Threads EmitState.
+pub fn nb_emit_extern_scan(s: EmitState, strbuf: i64, offs: i64, ncount: i64, subbase: i64, toks: Vec, tconst: i64, pos: i64) -> EmitState {
+    if at_eof(toks, pos) == 1 {
+        return s;
+    }
+    if tok_kind(toks, pos) == tk_kw_fn() {
+        let nidx: i64 = intern_find(strbuf, offs, ncount, subbase, tok_lo(toks, pos + 1), tok_hi(toks, pos + 1), 0);
+        let s0: EmitState = es_push(s, 37);
+        let s1: EmitState = emit_uleb128(s0, nidx);
+        let catbuf: i64 = __mind_alloc(64 * 8);
+        let ncell: i64 = __mind_alloc(8);
+        __mind_store_i64(ncell, 0);
+        let rp: i64 = nb_ecoll_params(subbase, toks, pos + 3, catbuf, ncell);
+        let ncat: i64 = __mind_load_i64(ncell);
+        let s2: EmitState = emit_uleb128(s1, ncat);
+        let s3: EmitState = nb_emit_cat_idxs(s2, strbuf, offs, ncount, tconst, catbuf, ncat, 0);
+        if tok_kind(toks, rp + 1) == tk_arrow() {
+            let rcat: i64 = nb_type_cat(subbase, toks, rp + 2);
+            let ridx: i64 = nb_tcat_index(strbuf, offs, ncount, tconst, rcat);
+            let s4: EmitState = es_push(s3, 1);
+            let s5: EmitState = emit_uleb128(s4, ridx);
+            let s6: EmitState = es_push(s5, 0);
+            let s7: EmitState = emit_uleb128(s6, 0);
+            let s8: EmitState = es_push(s7, 1);
+            let nafter: i64 = nb_skip_to_semi(toks, rp + 2);
+            return nb_emit_extern_scan(s8, strbuf, offs, ncount, subbase, toks, tconst, nafter);
+        }
+        let s4b: EmitState = es_push(s3, 0);
+        let s5b: EmitState = es_push(s4b, 0);
+        let s6b: EmitState = emit_uleb128(s5b, 0);
+        let s7b: EmitState = es_push(s6b, 1);
+        let nafter2: i64 = nb_skip_to_semi(toks, rp + 1);
+        return nb_emit_extern_scan(s7b, strbuf, offs, ncount, subbase, toks, tconst, nafter2);
+    }
+    nb_emit_extern_scan(s, strbuf, offs, ncount, subbase, toks, tconst, pos + 1)
+}
+
+// Re-lex an extern block's source span [lo,hi) and emit its ExternFnDecls.
+pub fn nb_emit_extern_block(s: EmitState, strbuf: i64, offs: i64, ncount: i64, src: i64, tconst: i64, lo: i64, hi: i64) -> EmitState {
+    let toks: Vec = lex(src + lo, hi - lo);
+    nb_emit_extern_scan(s, strbuf, offs, ncount, src + lo, toks, tconst, 0)
+}
+
+// Emit one combined item's instrs: KEPT FnDef -> real body + placeholder pair; extern
+// block -> ExternFnDecl(s) + placeholder pair; everything else (pruned fn, struct/enum/
+// const/other) -> placeholder pair only. `i` is BOTH the item index and its fresh id.
+pub fn nb_emit_one_item(s: EmitState, src: i64, item: i64, i: i64, strbuf: i64, offs: i64, ncount: i64, tconst: i64, kept: i64, n_kept: i64, ok_cell: i64) -> EmitState {
+    if ast_kind(item) == ast_fn_def() {
+        if nb_is_kept(item, kept, n_kept, 0) == 1 {
+            let s1: EmitState = emit_mic3_module_fndef(s, src, item, strbuf, offs, ncount, ok_cell);
+            let s2: EmitState = emit_mic3_const_i64(s1, i, 0);
+            return emit_mic3_output(s2, i);
+        }
+        let s1b: EmitState = emit_mic3_const_i64(s, i, 0);
+        return emit_mic3_output(s1b, i);
+    }
+    if nb_item_is_extern(src, item) == 1 {
+        let s1c: EmitState = nb_emit_extern_block(s, strbuf, offs, ncount, src, tconst, ast_span_lo(item), ast_span_hi(item));
+        let s2c: EmitState = emit_mic3_const_i64(s1c, i, 0);
+        return emit_mic3_output(s2c, i);
+    }
+    let s1d: EmitState = emit_mic3_const_i64(s, i, 0);
+    emit_mic3_output(s1d, i)
+}
+
+// Walk items in declaration order, emitting each item's instrs; fail closed via ok_cell.
+pub fn nb_emit_items(s: EmitState, src: i64, items_addr: i64, items_len: i64, strbuf: i64, offs: i64, ncount: i64, tconst: i64, kept: i64, n_kept: i64, ok_cell: i64, i: i64) -> EmitState {
+    if i >= items_len {
+        return s;
+    }
+    let item: i64 = __mind_load_i64(items_addr + i * 8);
+    let s1: EmitState = nb_emit_one_item(s, src, item, i, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell);
+    if __mind_load_i64(ok_cell) == 0 {
+        return s1;
+    }
+    nb_emit_items(s1, src, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, i + 1)
+}
+
+// FULL pruned-combined mic@3 build. Returns the EmitState whose .buf is the byte-exact
+// mic@3 stream (== /tmp/add_combined.mic3 for the seeded add fixture), or es_new()
+// (empty) on any unmatched fn shape (fail closed). Reuses sub-milestone 2's strtab
+// machinery verbatim, then materializes the instr stream + struct registry.
+pub fn nb_build_mic3(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
+    let tokens: Vec = lex(src_addr, src_len);
+    let ast_root: i64 = parse(tokens, src_addr);
+    let items_addr: i64 = ast_child0(ast_root);
+    let items_len: i64 = ast_aux(ast_root);
+    let all_fns: i64 = __mind_alloc((items_len + 1) * 8);
+    let nb_all: i64 = nb_collect_fns(items_addr, items_len, 0, all_fns, 0);
+    let reach: i64 = __mind_alloc((nb_all + 1) * 8);
+    let _r0: i64 = nb_mark_roots(src_addr, all_fns, nb_all, user_lo, reach, 0);
+    let _rf: i64 = nb_reach_fixpoint(src_addr, all_fns, nb_all, reach, nb_all + 1);
+    let kept: i64 = __mind_alloc((nb_all + 1) * 8);
+    let n_kept: i64 = nb_build_kept(src_addr, all_fns, nb_all, reach, kept, 0, 0);
+    let tconst: i64 = nb_type_consts();
+    let srt: i64 = srt_build(src_addr, src_len);
+    let n_structs: i64 = srt_count(srt);
+    let strbuf: i64 = __mind_alloc(65536);
+    let offs: i64 = __mind_alloc(1024 * 8);
+    let ccell: i64 = __mind_alloc(8);
+    __mind_store_i64(ccell, 0);
+    __mind_store_i64(offs + 0, 0);
+    let _sb: i64 = nb_strtab_build(strbuf, offs, ccell, src_addr, tconst, items_addr, items_len, kept, n_kept, 0);
+    let _si: i64 = srt_intern_all_sorted(strbuf, offs, ccell, src_addr, srt, 0);
+    let ncount: i64 = __mind_load_i64(ccell);
+    let total_externs: i64 = nb_sum_extern_fns(src_addr, items_addr, items_len, 0, 0);
+    let s1: EmitState = emit_mic3_header(es_new());
+    let s2: EmitState = emit_mic3_strtab(s1, strbuf, offs, ncount);
+    let s3: EmitState = emit_uleb128(s2, items_len);
+    let s4: EmitState = emit_uleb128(s3, 0);
+    let s5: EmitState = emit_uleb128(s4, items_len + items_len + n_kept + total_externs);
+    let ok_cell: i64 = __mind_alloc(8);
+    __mind_store_i64(ok_cell, 1);
+    let s6: EmitState = nb_emit_items(s5, src_addr, items_addr, items_len, strbuf, offs, ncount, tconst, kept, n_kept, ok_cell, 0);
+    if __mind_load_i64(ok_cell) == 0 {
+        return es_new();
+    }
+    if n_structs == 0 {
+        return emit_mic3_empty_registries(s6);
+    }
+    let s7: EmitState = emit_uleb128(s6, n_structs);
+    let s8: EmitState = srt_emit_registry_sorted_interned(s7, strbuf, offs, ccell, src_addr, srt, 0);
+    let s9: EmitState = emit_uleb128(s8, 0);
+    emit_uleb128(s9, 0)
+}
+
+// Verify export (sub-milestone 3): build the full pruned-combined mic@3 and return its
+// EmitState so a harness can diff .buf against /tmp/add_combined.mic3 (5447 B).
+pub fn selftest_nb_mic3(src_addr: i64, src_len: i64, user_lo: i64) -> EmitState {
+    nb_build_mic3(src_addr, src_len, user_lo)
 }
 
 // No-hash native-ELF entries (Rust-independence #14, PHASE 1.3 — TRACE-HASH). These

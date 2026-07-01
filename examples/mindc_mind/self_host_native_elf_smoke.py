@@ -466,15 +466,30 @@ def no_feed_native_rung(lib, tmp: pathlib.Path) -> int:
     nb_trace_hash returns 0 -> the entry returns es_new() (empty) -> this rung reports
     the open gap. Once the mic@3 emit lands, this rung becomes a full self-computed
     byte-for-byte ELF compare (the note is self-computed, never fed)."""
-    lib.selftest_native_elf.restype = ctypes.c_int64
-    lib.selftest_native_elf.argtypes = [ctypes.c_int64, ctypes.c_int64]
+    # The note = ir_trace_hash(SEEDED+PRUNED combined IR); mind-native seeds the 21
+    # bundled stdlib modules internally even for a tiny fixture (verified: the add
+    # fixture's ELF note == sha256 of the 5447-byte combined mic@3). So the pure-MIND
+    # no-hash entry must self-compute the note over the SAME combined source — we feed
+    # it the std blob concatenated ahead of the fixture (user_lo = the seam), EXACTLY as
+    # the seeded main.mind rung and Rust mind-native do. No oracle HASH is fed; the note
+    # is computed purely in-MIND. The 3-arg selftest_native_elf_u prunes CODE to the
+    # fixture's reachable fns (add/main) while the note covers all 618 combined items.
+    lib.selftest_native_elf_u.restype = ctypes.c_int64
+    lib.selftest_native_elf_u.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
     rd = lambda a, o=0: ctypes.cast(a + o, ctypes.POINTER(ctypes.c_int64))[0]
+
+    std_dir = _REPO / "std"
+    std_parts = [(std_dir / f"{m}.mind").read_bytes() for m in _STDLIB_MODULES]
+    std_blob = b"\n".join(std_parts) + b"\n"
 
     for name, fixture, _exit in FIXTURES:
         oracle = oracle_elf(fixture, tmp)
-        src = fixture.encode()
-        sb = ctypes.create_string_buffer(src, len(src))
-        es = lib.selftest_native_elf(ctypes.cast(sb, ctypes.c_void_p).value, len(src))
+        combined = std_blob + fixture.encode()
+        user_lo = len(std_blob)
+        sb = ctypes.create_string_buffer(combined, len(combined))
+        es = lib.selftest_native_elf_u(
+            ctypes.cast(sb, ctypes.c_void_p).value, len(combined), user_lo
+        )
         sh = rd(es, 0)
         got = ctypes.string_at(rd(sh, 0), rd(sh, 8)) if rd(sh, 8) > 0 else b""
         if got == oracle:
