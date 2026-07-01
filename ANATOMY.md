@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2951 | **Est. tokens:** ~7,057,865
-**Generated:** 2026-07-01 10:53 UTC
+**Files:** 2953 | **Est. tokens:** ~7,069,275
+**Generated:** 2026-07-01 11:19 UTC
 
 ## Token Budget Guide
 
@@ -53,7 +53,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 31 | ~69,746 |
+| `examples/mindc_mind/` | 31 | ~70,551 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
 | `examples/typecheck/` | 5 | ~14,553 |
@@ -404,8 +404,8 @@
 | `src/type_checker/` | 1 | ~8,655 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 23 | ~109,905 |
-| `tests/` | 247 | ~396,019 |
+| `std/` | 24 | ~116,587 |
+| `tests/` | 248 | ~399,942 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -777,7 +777,7 @@
 - `self_host_body_smoke.py` (~2995 tok, huge)
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_native_driver_main.frag.mind` (~277 tok, medium) — ===== Native self-host driver (appended; NOT part of canonical main.mind) =====
-- `self_host_native_elf_smoke.py` (~7204 tok, huge)
+- `self_host_native_elf_smoke.py` (~8009 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
 - `struct_fields_smoke.py` (~1076 tok, large)
 - `struct_lit_smoke.py` (~1923 tok, huge)
@@ -3874,6 +3874,7 @@
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
+- `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
 - `iouring.mind` (~18593 tok, huge) — std.iouring — minimal io_uring binding (Linux). The physical-I/O reap source
@@ -4369,6 +4370,7 @@
 - `std_surface_field_access.rs` (~2912 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3401 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
+- `std_surface_http.rs` (~3923 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_i32_intrinsics.rs` (~808 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_if_statement.rs` (~3282 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2350 tok, huge) — Copyright 2025 STARGA Inc.

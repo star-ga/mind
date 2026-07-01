@@ -374,6 +374,68 @@ def seeded_main_rung(lib, tmp: pathlib.Path) -> int:
     return 0
 
 
+def no_feed_seeded_main_rung(lib, tmp: pathlib.Path) -> int:
+    """DECISIVE no-feed FULL-SCALE rung (#17 CLOSED): run the NO-HASH native entry
+    selftest_native_elf_u(src, len, user_lo) — 3 args, NO hash buffer — over the WHOLE
+    stdlib-seeded main.mind combined buffer, and assert the resulting ELF (INCLUDING its
+    32-byte self-computed PT_NOTE) is byte-identical to the Rust mind-native oracle.
+
+    This is strictly stronger than the FED `seeded_main_rung` above (which feeds the
+    oracle's trace_hash): here NO oracle byte is fed. The PT_NOTE = mini_sha256(
+    emit_mic3(seeded+pruned combined IR)) is self-computed entirely in pure MIND
+    (nb_trace_hash -> nb_build_mic3 -> nb_sha256_note). A byte-identical full ELF here
+    proves the pure-MIND front-end reproduces the native artifact for its OWN source with
+    zero Rust assistance — the real, final proof that deleting src/native (#15) is safe.
+    It CANNOT silently pass with a wrong note (SHA-256 is collision-resistant; a single
+    wrong mic@3 byte flips the note) and the entry fails LOUD (empty ELF) on any wall."""
+    if not (_HERE / "main.mind").exists():
+        print("  SKIP  no-feed seeded rung: main.mind not present")
+        return 0
+
+    lib.selftest_native_elf_u.restype = ctypes.c_int64
+    lib.selftest_native_elf_u.argtypes = [ctypes.c_int64, ctypes.c_int64, ctypes.c_int64]
+    rd = lambda a, o=0: ctypes.cast(a + o, ctypes.POINTER(ctypes.c_int64))[0]
+
+    elf_path = tmp / "oracle_main_nofeed.elf"
+    subprocess.run(
+        [str(MIND_NATIVE), str(_HERE / "main.mind"), str(elf_path)],
+        capture_output=True,
+        check=True,
+    )
+    oracle = elf_path.read_bytes()
+
+    combined, user_lo = _seeded_buffer()
+    sb = ctypes.create_string_buffer(combined, len(combined))
+    es = lib.selftest_native_elf_u(
+        ctypes.cast(sb, ctypes.c_void_p).value, len(combined), user_lo
+    )
+    sh = rd(es, 0)
+    got = ctypes.string_at(rd(sh, 0), rd(sh, 8)) if rd(sh, 8) > 0 else b""
+
+    if len(got) == 0:
+        print(
+            "  FAIL  no-feed seeded main.mind: no-hash entry failed closed (empty ELF) — "
+            "nb_trace_hash could not self-compute the note for full main.mind"
+        )
+        return 1
+    if got != oracle:
+        print(
+            f"  FAIL  no-feed seeded main.mind: self-computed ELF diverged from oracle "
+            f"(mind {len(got)} B vs oracle {len(oracle)} B)"
+        )
+        print(first_diverge(got, oracle))
+        return 1
+    if got[-32:] != oracle[-32:]:
+        print("  FAIL  no-feed seeded main.mind: ELF matched but note bytes differ?!")
+        return 1
+    print(
+        f"  PASS  no-feed seeded main.mind FULL native ELF BYTE-IDENTICAL "
+        f"({len(oracle)} B incl. SELF-COMPUTED PT_NOTE) — note self-computed, ZERO feeding; "
+        f"full-scale no-feed self-host CLOSED (#17)"
+    )
+    return 0
+
+
 def mind_elf(lib, src: bytes, trace_hash: bytes) -> bytes:
     src_buf = ctypes.create_string_buffer(src, len(src))
     hash_buf = ctypes.create_string_buffer(trace_hash, 32)
@@ -597,6 +659,12 @@ def main() -> int:
         # seeded (same set+order as Rust mind-native) and diff vs the oracle.
         print("\n[seeded whole-module rung: main.mind + bundled stdlib]")
         if seeded_main_rung(lib, tmp) != 0:
+            return 1
+
+        # NO-FEED FULL-SCALE rung: same whole-module main.mind, but via the NO-HASH
+        # entry so the 32-byte PT_NOTE is SELF-COMPUTED (nb_trace_hash) — zero feeding.
+        print("\n[no-feed full-scale rung: main.mind + bundled stdlib, self-computed note]")
+        if no_feed_seeded_main_rung(lib, tmp) != 0:
             return 1
 
     print(
