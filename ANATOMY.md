@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2956 | **Est. tokens:** ~7,066,666
-**Generated:** 2026-07-01 13:01 UTC
+**Files:** 2959 | **Est. tokens:** ~7,075,721
+**Generated:** 2026-07-01 14:49 UTC
 
 ## Token Budget Guide
 
@@ -405,8 +405,8 @@
 | `src/type_checker/` | 1 | ~8,655 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 24 | ~116,587 |
-| `tests/` | 248 | ~399,942 |
+| `std/` | 26 | ~122,989 |
+| `tests/` | 249 | ~402,595 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3877,11 +3877,13 @@
 - `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
+- `aes_gcm.mind` (~4847 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
 - `arena.mind` (~1323 tok, large) — std.arena — bump-pointer region allocator.
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
+- `hkdf.mind` (~1555 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
@@ -4028,6 +4030,7 @@
 - `xnode_driver.c` (~2833 tok, huge)
 ### `tests/`
 
+- `crypto_vectors_driver.py` (~2653 tok, huge) — # Official-vector driver for std/aes_gcm.mind + std/hkdf.mind (pure-MIND crypto).
 - `diagnostics_parse.rs` (~359 tok, medium) — Copyright 2025 STARGA Inc.
 - `diagnostics.rs` (~688 tok, large) — Copyright 2025 STARGA Inc.
 - `digit_separator_run.rs` (~651 tok, large) — Copyright 2025 STARGA Inc.
