@@ -1,0 +1,228 @@
+// std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
+// in pure MIND.
+//
+// Phase 1.2 of the HTTP-provable-stack.  COMPOSES two verified modules —
+// nothing cryptographic is reimplemented here:
+//   - std/aes_gcm.mind: aes128_gcm_encrypt / aes128_gcm_decrypt (AEAD seal/open,
+//     fail-closed tag verification).
+//   - std/tls13_keyschedule.mind (Phase 1.1): tls13_derive_key / tls13_derive_iv
+//     produce the 16-byte record key and 12-byte write_iv consumed here.
+//
+// Wire format (RFC 8446 §5.2, TLSCiphertext):
+//   opaque_type            = 0x17 (application_data, always, for protected records)
+//   legacy_record_version  = 0x03 0x03
+//   length                 = uint16 BE = len(encrypted_record)
+//                          = inner_content_len + 1 (inner type byte) + 16 (GCM tag)
+//   encrypted_record       = AEAD ciphertext || 16-byte tag
+// The 5 header bytes are BOTH the on-the-wire record header AND the AEAD
+// additional_data — exactly those 5 bytes, nothing else.
+//
+// Per-record nonce (RFC 8446 §5.3): the 64-bit record sequence number (starting
+// at 0 under each key, +1 per record) is encoded as 8 bytes big-endian,
+// LEFT-padded with zeros to the 12-byte iv length, then XORed with write_iv:
+//   nonce[0..3]  = iv[0..3]                     (padding region, unchanged)
+//   nonce[4..11] = iv[4..11] ^ seq_be8[0..7]
+//
+// TLSInnerPlaintext (RFC 8446 §5.2): content || content_type(1) || zeros(pad).
+// Seal here emits zero-length padding (KAT-exact for RFC 8448); open strips any
+// number of trailing zero bytes — the LAST non-zero byte is the inner type.
+//
+// Public API:
+//   pub fn tls13_record_nonce(iv_addr, seq, nonce_out) -> i64
+//     Writes the 12-byte per-record nonce.  Returns 0.
+//   pub fn tls13_record_seal(key, iv, seq, content, content_len, inner_type, out) -> i64
+//     Writes the COMPLETE wire record (5-byte header || ciphertext || tag) to
+//     out (content_len + 22 bytes total).  Returns the TOTAL record length
+//     (header included) = content_len + 22.
+//   pub fn tls13_record_open(key, iv, seq, record, record_len, out_content) -> i64
+//     record must be the complete wire record (header included).  On success
+//     writes the recovered content to out_content and returns
+//     (content_len << 8) | inner_content_type — non-negative; low 8 bits are
+//     the inner type (e.g. 0x16 handshake), the rest is the content length.
+//     Returns -1 on a malformed record (bad header/length/all-zero inner) and
+//     -2 on AEAD authentication failure.  FAIL CLOSED: on any failure nothing
+//     authenticated-looking is written to out_content (aes128_gcm_decrypt
+//     already zeroes its output on tag mismatch and this wrapper releases
+//     nothing).
+//
+// Naming: every symbol is tls13_record_/tls13_rec_-prefixed — never shadow a
+// libc/libm symbol (ELF interposition footgun) or an existing module fn.
+// Buffer layout: one byte per offset, matching std/aes_gcm.mind.
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+import std.aes_gcm;
+
+// tls13_rec_copy — byte copy (private; NOT hkdf's mem_copy, so this file has no
+// hkdf dependency of its own).
+fn tls13_rec_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Per-record nonce (RFC 8446 §5.3): write_iv XOR left-zero-padded seq_be8.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_record_nonce(iv_addr: i64, seq: i64, nonce_out: i64) -> i64 {
+    // Bytes 0..3: iv unchanged (the zero-pad region of the 8-byte seq).
+    let mut i: i64 = 0;
+    while i < 4 {
+        __mind_store_i8(nonce_out + i, __mind_load_i8(iv_addr + i));
+        i = i + 1;
+    }
+    // Bytes 4..11: iv[4+k] ^ byte k of the big-endian 64-bit sequence number.
+    let mut k: i64 = 0;
+    while k < 8 {
+        let sb: i64 = (seq >> (56 - 8 * k)) & 255;
+        __mind_store_i8(nonce_out + 4 + k, __mind_load_i8(iv_addr + 4 + k) ^ sb);
+        k = k + 1;
+    }
+    0
+}
+
+// tls13_rec_header — write the 5 TLSCiphertext header bytes (= the AEAD
+// additional_data, RFC 8446 §5.2): 0x17 || 0x03 0x03 || uint16 BE enc_len.
+fn tls13_rec_header(enc_len: i64, out: i64) -> i64 {
+    __mind_store_i8(out + 0, 23);   // opaque_type = application_data (0x17)
+    __mind_store_i8(out + 1, 3);    // legacy_record_version = 0x0303
+    __mind_store_i8(out + 2, 3);
+    __mind_store_i8(out + 3, (enc_len >> 8) & 255);
+    __mind_store_i8(out + 4, enc_len & 255);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Seal (RFC 8446 §5.2 record protection).
+// out_record_addr receives the COMPLETE wire record:
+//   [0..4]                 header (also the AAD)
+//   [5..5+enc_len)         encrypted_record = ciphertext(content_len+1) || tag(16)
+// Returns the TOTAL record length = 5 + content_len + 1 + 16 = content_len + 22.
+// Zero-length inner padding is emitted (matches the RFC 8448 KAT).
+// ---------------------------------------------------------------------------
+
+pub fn tls13_record_seal(
+    key_addr: i64,
+    iv_addr: i64,
+    seq: i64,
+    content_addr: i64,
+    content_len: i64,
+    inner_type: i64,
+    out_record_addr: i64,
+) -> i64 {
+    // TLSInnerPlaintext = content || content_type (no padding).
+    let inner_len: i64 = content_len + 1;
+    let inner: i64 = __mind_alloc(inner_len);
+    tls13_rec_copy(inner, content_addr, content_len);
+    __mind_store_i8(inner + content_len, inner_type & 255);
+
+    // Header/AAD over the encrypted length (inner + 16-byte tag).
+    let enc_len: i64 = inner_len + 16;
+    tls13_rec_header(enc_len, out_record_addr);
+
+    // Per-record nonce.
+    let nonce: i64 = __mind_alloc(12);
+    tls13_record_nonce(iv_addr, seq, nonce);
+
+    // AEAD seal: ciphertext at out+5, tag right after the ciphertext.
+    aes128_gcm_encrypt(
+        key_addr,
+        nonce,
+        inner,
+        inner_len,
+        out_record_addr,
+        5,
+        out_record_addr + 5,
+        out_record_addr + 5 + inner_len,
+    );
+    5 + enc_len
+}
+
+// ---------------------------------------------------------------------------
+// Open (RFC 8446 §5.2 record deprotection).  Fail closed.
+// Returns (content_len << 8) | inner_type on success; -1 malformed; -2 on
+// AEAD authentication failure (tampered ciphertext, tag, or header/AAD).
+// ---------------------------------------------------------------------------
+
+pub fn tls13_record_open(
+    key_addr: i64,
+    iv_addr: i64,
+    seq: i64,
+    record_addr: i64,
+    record_len: i64,
+    out_content_addr: i64,
+) -> i64 {
+    // Minimum record: 5 header + 1 inner-type byte + 16 tag.
+    if record_len < 22 {
+        return 0 - 1;
+    }
+    // Header must be 0x17 0x03 0x03 (protected records only).
+    if __mind_load_i8(record_addr + 0) != 23 {
+        return 0 - 1;
+    }
+    if __mind_load_i8(record_addr + 1) != 3 {
+        return 0 - 1;
+    }
+    if __mind_load_i8(record_addr + 2) != 3 {
+        return 0 - 1;
+    }
+    // Declared length must cover exactly the rest of the record.
+    let enc_len: i64 = (__mind_load_i8(record_addr + 3) << 8) | __mind_load_i8(record_addr + 4);
+    if enc_len != record_len - 5 {
+        return 0 - 1;
+    }
+    if enc_len < 17 {
+        return 0 - 1;
+    }
+    let ct_len: i64 = enc_len - 16;
+
+    // Per-record nonce.
+    let nonce: i64 = __mind_alloc(12);
+    tls13_record_nonce(iv_addr, seq, nonce);
+
+    // AEAD open into a scratch buffer.  AAD = the record's own 5 header bytes.
+    // aes128_gcm_decrypt verifies the tag FIRST and zeroes its output + returns
+    // 1 on mismatch — no unauthenticated plaintext ever reaches out_content.
+    let inner: i64 = __mind_alloc(ct_len);
+    let rc: i64 = aes128_gcm_decrypt(
+        key_addr,
+        nonce,
+        record_addr + 5,
+        ct_len,
+        record_addr,
+        5,
+        record_addr + 5 + ct_len,
+        inner,
+    );
+    if rc != 0 {
+        return 0 - 2;
+    }
+
+    // Strip TLSInnerPlaintext zero padding: last non-zero byte = inner type.
+    let mut idx: i64 = ct_len - 1;
+    let mut stop: i64 = 0;
+    while stop == 0 {
+        if idx < 0 {
+            stop = 1;
+        } else {
+            if __mind_load_i8(inner + idx) != 0 {
+                stop = 1;
+            } else {
+                idx = idx - 1;
+            }
+        }
+    }
+    if idx < 0 {
+        // All-zero inner plaintext: no content type — illegal (§5.4:
+        // "unexpected_message" alert territory).  Malformed, not released.
+        return 0 - 1;
+    }
+
+    let inner_type: i64 = __mind_load_i8(inner + idx);
+    let content_len: i64 = idx;
+    tls13_rec_copy(out_content_addr, inner, content_len);
+    (content_len << 8) | inner_type
+}
