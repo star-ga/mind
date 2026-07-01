@@ -4722,7 +4722,21 @@ fn lower_expr(
                         #[cfg(feature = "std-surface")]
                         let new_id = mask_narrow_assign(&mut body_ir, name, new_id);
                         body_env.insert(name.clone(), new_id);
-                        record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
+                        // Only record as loop-carried (crossing the back-edge) when
+                        // `name` is a genuine outer-scope variable present in the
+                        // pre-loop env. A body-local `let mut` reassigned inside the
+                        // body (e.g. a byte-copy counter `j` reset between sibling
+                        // inner loops) is re-initialised each iteration and must NOT
+                        // cross the back-edge — mirroring the guard in the nested-
+                        // region (`other =>`) arm below. Without this guard, `j`'s
+                        // pre_init could be an id defined DEEP in the body (a prior
+                        // sibling loop's exit arg), which becomes a non-dominating
+                        // outer-loop init and drives substitute_ids to rewrite that
+                        // inner after-block arg into the outer `%wbod_0_0`, tripping
+                        // `redefinition of SSA value '%wbod_0_0'` at mlir-opt.
+                        if env.contains_key(name.as_str()) {
+                            record_loop_mut(name, new_id, &mut mutated, &mut init_ids, pre_init);
+                        }
                     }
                     ast::Node::LetTuple { names, value, .. } => {
                         lower_lettuple_stmt(
