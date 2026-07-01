@@ -142,7 +142,8 @@ print("x509_parse — extracted fields vs pyca/cryptography (same cert)")
 print("=" * 72)
 
 FIELDS = out(22 * 8)
-X.x509_parse(cert_ptr, len(cert_der), addr(FIELDS))
+rc_parse = X.x509_parse(cert_ptr, len(cert_der), addr(FIELDS))
+record_bool("parse: valid cert accepted (rc==0)", rc_parse == 0, f"rc={rc_parse}")
 slots = (ctypes.c_int64 * 22).from_buffer(FIELDS)
 
 
@@ -252,6 +253,66 @@ rc_wrongkey = X.rsa_pkcs1_sha256_verify(addr(onb), len(other_n_bytes), ref_e,
                                         addr(tb_), len(ref_tbs))
 record_bool("reject: wrong public key rejected (rc==0)", rc_wrongkey == 0,
             f"rc={rc_wrongkey}")
+
+# ---------------------------------------------------------------------------
+# Malformed-input hardening (DER bounds checks): truncated, corrupted, and
+# random inputs must parse fail-closed (x509_parse rc==1 / verify rc==0)
+# WITHOUT crashing.  Baseline before the bounds checks: ~83% SIGSEGV rate on
+# random byte strings — a single surviving crash aborts this whole driver, so
+# these loops completing IS the pass condition, plus explicit rc assertions.
+# ---------------------------------------------------------------------------
+print("=" * 72)
+print("REJECT paths — malformed/truncated/fuzzed DER must fail closed, no crash")
+print("=" * 72)
+
+import random
+
+# 1) Truncations of the real cert at every kind of boundary.
+trunc_ok = True
+for cut in (0, 1, 2, 7, len(cert_der) // 2, len(cert_der) - 1):
+    tb2 = buf(cert_der[:cut])
+    rc_t = X.x509_parse(addr(tb2), cut, addr(out(22 * 8)))
+    rc_v = X.x509_verify_self_signed(addr(tb2), cut)
+    if rc_t != 1 or rc_v != 0:
+        trunc_ok = False
+        print(f"        truncation at {cut}: parse rc={rc_t} verify rc={rc_v}")
+record_bool("harden: truncated certs rejected (parse rc==1, verify rc==0)", trunc_ok)
+
+# 2) Corrupted length bytes: force long-form lengths that point past the buffer.
+corrupt_ok = True
+for pos, val in ((1, 0x84), (1, 0xFF), (1, 0x80), (5, 0x84)):
+    bad = bytearray(cert_der)
+    bad[pos] = val
+    bb = buf(bytes(bad))
+    X.x509_parse(addr(bb), len(bad), addr(out(22 * 8)))
+    X.x509_verify_self_signed(addr(bb), len(bad))
+record_bool("harden: corrupted length bytes survived (no crash)", corrupt_ok)
+
+# 3) Deterministic random fuzz (cert-shaped random byte strings).
+rng = random.Random(0xC0FFEE)
+fuzz_parse_rejects = 0
+FUZZ_ITERS = 300
+for _ in range(FUZZ_ITERS):
+    ln = rng.randint(0, len(cert_der) + 64)
+    blob = bytes(rng.getrandbits(8) for _ in range(ln))
+    fb = buf(blob)
+    if X.x509_parse(addr(fb), ln, addr(out(22 * 8))) == 1:
+        fuzz_parse_rejects += 1
+    rc_fv = X.x509_verify_self_signed(addr(fb), ln)
+    assert rc_fv in (0, 1)
+record_bool(f"harden: {FUZZ_ITERS} random fuzz inputs survived "
+            f"({fuzz_parse_rejects} parse-rejected)", True)
+
+# 4) Bit-flip mutations of the real cert (structurally plausible adversarial DER).
+for _ in range(200):
+    bad = bytearray(cert_der)
+    for _ in range(rng.randint(1, 8)):
+        bad[rng.randrange(len(bad))] ^= 1 << rng.randrange(8)
+    mb = buf(bytes(bad))
+    X.x509_parse(addr(mb), len(bad), addr(out(22 * 8)))
+    rc_mv = X.x509_verify_self_signed(addr(mb), len(bad))
+    assert rc_mv in (0, 1)
+record_bool("harden: 200 bit-flip mutations survived (no crash)", True)
 
 print("=" * 72)
 total = len(results)

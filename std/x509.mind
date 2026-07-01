@@ -42,7 +42,9 @@
 // Public API:
 //   pub fn x509_parse(cert_addr, cert_len, out_fields) -> i64
 //     Walk the certificate, writing 22 i64 (offset,length) slots into
-//     out_fields (see the slot map below). Returns 0.
+//     out_fields (see the slot map below). Returns 0 on success, 1 on
+//     malformed/truncated input (fail-closed; out_fields contents are
+//     unspecified on failure — check the return code before using them).
 //   pub fn rsa_pkcs1_sha256_verify(n,n_len,e,sig,sig_len,msg,msg_len) -> i64
 //     Verify an RSASSA-PKCS1-v1_5 / SHA-256 signature over `msg` using the
 //     RSA public key (n,e). Returns 1 (valid) or 0 (invalid). Fail-closed.
@@ -74,18 +76,23 @@ import std.sha256;
 // Definite-length only: short form (len < 0x80) or long form (0x80|n then n
 // big-endian length bytes).
 //
-// deferred: der_tlv/x509_parse do NOT bounds-check decoded offsets/lengths
-// against the certificate buffer's actual size (cert_len) — a length byte in
-// malformed/truncated/adversarial DER can point past the allocated buffer,
-// and __mind_load_i8 has no bounds check, so malformed input can read out of
-// bounds (adversarial-fuzz testing: ~83% SIGSEGV rate on random byte strings
-// shaped like cert sizes). Not yet a live issue — nothing in the repo calls
-// x509_parse on untrusted/network input today. MUST be fixed (explicit
-// `pos + hlen + clen <= cert_len` checks, fail-closed on violation, at every
-// der_tlv call site in x509_parse) before Phase 1 (TLS 1.3 handshake) wires
-// real peer certificates from the network through this parser.
+// Fail-closed bounds contract: `limit` is the certificate buffer's byte size;
+// every decoded element must satisfy pos + hlen + clen <= limit before any
+// byte of it is trusted (__mind_load_i8 itself has no bounds check).  Returns
+// 0 with out3 populated on success, 1 on any violation (out3 untouched):
+//   - pos < 0 or the 2-byte header would read past limit
+//   - long form with 0 length bytes (0x80 = BER indefinite length, not DER)
+//   - long form with > 3 length bytes (content > 16 MiB cannot be a real
+//     certificate, and the cap keeps clen far from i64 overflow)
+//   - the element extent pos + hlen + clen exceeds limit
 // ---------------------------------------------------------------------------
-fn der_tlv(buf: i64, pos: i64, out3: i64) -> i64 {
+fn der_tlv(buf: i64, pos: i64, limit: i64, out3: i64) -> i64 {
+    if pos < 0 {
+        return 1;
+    }
+    if pos + 2 > limit {
+        return 1;
+    }
     let tag: i64 = __mind_load_i8(buf + pos) & 255;
     let l0: i64 = __mind_load_i8(buf + pos + 1) & 255;
     let mut hlen: i64 = 2;
@@ -94,7 +101,16 @@ fn der_tlv(buf: i64, pos: i64, out3: i64) -> i64 {
         clen = l0;
     } else {
         let nb: i64 = l0 & 127;
+        if nb < 1 {
+            return 1;
+        }
+        if nb > 3 {
+            return 1;
+        }
         hlen = 2 + nb;
+        if pos + hlen > limit {
+            return 1;
+        }
         let mut i: i64 = 0;
         let mut acc: i64 = 0;
         while i < nb {
@@ -102,6 +118,9 @@ fn der_tlv(buf: i64, pos: i64, out3: i64) -> i64 {
             i = i + 1;
         }
         clen = acc;
+    }
+    if pos + hlen + clen > limit {
+        return 1;
     }
     __mind_store_i64(out3 + 0, tag);
     __mind_store_i64(out3 + 8, hlen);
@@ -115,15 +134,25 @@ fn der_tlv(buf: i64, pos: i64, out3: i64) -> i64 {
 // (RFC 5280 §4.1). tbsCertificate is itself a SEQUENCE whose full DER encoding
 // (tag+length+content) is exactly the byte string covered by the signature.
 // ---------------------------------------------------------------------------
+// Every der_tlv call is bounds-checked against cert_len (fail-closed: any
+// violation aborts the parse with return 1 before a single out-of-bounds byte
+// is dereferenced).  The additional structural guards (BIT STRING content must
+// be >= 2 bytes before its unused-bits byte is skipped, INTEGER content must be
+// non-empty before its sign byte is read) exist for the same reason: each one
+// protects a raw __mind_load_i8 or a derived length from escaping the buffer.
 pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
     let t: i64 = __mind_alloc(24);
 
     // Outer Certificate SEQUENCE.
-    der_tlv(cert_addr, 0, t);
+    if der_tlv(cert_addr, 0, cert_len, t) != 0 {
+        return 1;
+    }
     let cpos: i64 = __mind_load_i64(t + 8); // start of tbsCertificate
 
     // tbsCertificate SEQUENCE — the signed message is its full DER extent.
-    der_tlv(cert_addr, cpos, t);
+    if der_tlv(cert_addr, cpos, cert_len, t) != 0 {
+        return 1;
+    }
     let tbs_hlen: i64 = __mind_load_i64(t + 8);
     let tbs_clen: i64 = __mind_load_i64(t + 16);
     let tbs_total: i64 = tbs_hlen + tbs_clen;
@@ -133,32 +162,45 @@ pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
 
     // signatureAlgorithm SEQUENCE (follows tbsCertificate).
     let sapos: i64 = cpos + tbs_total;
-    der_tlv(cert_addr, sapos, t);
+    if der_tlv(cert_addr, sapos, cert_len, t) != 0 {
+        return 1;
+    }
     let sa_hlen: i64 = __mind_load_i64(t + 8);
     let sa_total: i64 = sa_hlen + __mind_load_i64(t + 16);
     __mind_store_i64(out_fields + 128, sapos);       // slot 16
     __mind_store_i64(out_fields + 136, sa_total);    // slot 17
     // First element inside signatureAlgorithm is the OID.
     let sa_content: i64 = sapos + sa_hlen;
-    der_tlv(cert_addr, sa_content, t);
+    if der_tlv(cert_addr, sa_content, cert_len, t) != 0 {
+        return 1;
+    }
     __mind_store_i64(out_fields + 160, sa_content + __mind_load_i64(t + 8)); // slot 20 oid offset
     __mind_store_i64(out_fields + 168, __mind_load_i64(t + 16));             // slot 21 oid len
 
     // signatureValue BIT STRING (follows signatureAlgorithm).
     let sigpos: i64 = sapos + sa_total;
-    der_tlv(cert_addr, sigpos, t);
+    if der_tlv(cert_addr, sigpos, cert_len, t) != 0 {
+        return 1;
+    }
     let sig_hlen: i64 = __mind_load_i64(t + 8);
     let sig_clen: i64 = __mind_load_i64(t + 16);
+    if sig_clen < 2 {   // need the unused-bits byte + at least one signature byte
+        return 1;
+    }
     // BIT STRING content = [unused-bits byte] || signature bytes.
     __mind_store_i64(out_fields + 144, sigpos + sig_hlen + 1); // slot 18 sig offset
     __mind_store_i64(out_fields + 152, sig_clen - 1);          // slot 19 sig len
 
     // --- inside tbsCertificate ---
     let mut p: i64 = tbs_content;
-    der_tlv(cert_addr, p, t);
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
     if (__mind_load_i64(t + 0)) == 160 {   // [0] EXPLICIT version (0xA0) present (v3)
         p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-        der_tlv(cert_addr, p, t);
+        if der_tlv(cert_addr, p, cert_len, t) != 0 {
+            return 1;
+        }
     }
     // serialNumber INTEGER.
     __mind_store_i64(out_fields + 16, p + __mind_load_i64(t + 8)); // slot 2
@@ -166,49 +208,77 @@ pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
     p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
 
     // signature AlgorithmIdentifier SEQUENCE (inner copy) — skip.
-    der_tlv(cert_addr, p, t);
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
     p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
 
     // issuer Name SEQUENCE.
-    der_tlv(cert_addr, p, t);
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
     __mind_store_i64(out_fields + 32, p);                                       // slot 4
     __mind_store_i64(out_fields + 40, __mind_load_i64(t + 8) + __mind_load_i64(t + 16)); // slot 5
     p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
 
     // validity SEQUENCE { notBefore Time, notAfter Time }.
-    der_tlv(cert_addr, p, t);
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
     let val_content: i64 = p + __mind_load_i64(t + 8);
     p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    der_tlv(cert_addr, val_content, t); // notBefore
+    if der_tlv(cert_addr, val_content, cert_len, t) != 0 { // notBefore
+        return 1;
+    }
     __mind_store_i64(out_fields + 64, val_content + __mind_load_i64(t + 8));  // slot 8
     __mind_store_i64(out_fields + 72, __mind_load_i64(t + 16));               // slot 9
     let nb_total: i64 = __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    der_tlv(cert_addr, val_content + nb_total, t); // notAfter
+    if der_tlv(cert_addr, val_content + nb_total, cert_len, t) != 0 { // notAfter
+        return 1;
+    }
     __mind_store_i64(out_fields + 80, val_content + nb_total + __mind_load_i64(t + 8)); // slot 10
     __mind_store_i64(out_fields + 88, __mind_load_i64(t + 16));                         // slot 11
 
     // subject Name SEQUENCE.
-    der_tlv(cert_addr, p, t);
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
     __mind_store_i64(out_fields + 48, p);                                       // slot 6
     __mind_store_i64(out_fields + 56, __mind_load_i64(t + 8) + __mind_load_i64(t + 16)); // slot 7
     p = p + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
 
     // subjectPublicKeyInfo SEQUENCE { algorithm, subjectPublicKey BIT STRING }.
-    der_tlv(cert_addr, p, t);
+    if der_tlv(cert_addr, p, cert_len, t) != 0 {
+        return 1;
+    }
     let mut ps: i64 = p + __mind_load_i64(t + 8);
-    der_tlv(cert_addr, ps, t);  // algorithm AlgorithmIdentifier — skip
+    if der_tlv(cert_addr, ps, cert_len, t) != 0 {  // algorithm AlgorithmIdentifier — skip
+        return 1;
+    }
     ps = ps + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
-    der_tlv(cert_addr, ps, t);  // subjectPublicKey BIT STRING
+    if der_tlv(cert_addr, ps, cert_len, t) != 0 {  // subjectPublicKey BIT STRING
+        return 1;
+    }
+    if (__mind_load_i64(t + 16)) < 2 { // unused-bits byte + at least one key byte
+        return 1;
+    }
     let bit_content: i64 = ps + __mind_load_i64(t + 8);
     // skip the unused-bits byte -> RSAPublicKey SEQUENCE { modulus, exponent }.
     let rsa_seq: i64 = bit_content + 1;
-    der_tlv(cert_addr, rsa_seq, t);
+    if der_tlv(cert_addr, rsa_seq, cert_len, t) != 0 {
+        return 1;
+    }
     let rsa_content: i64 = rsa_seq + __mind_load_i64(t + 8);
     // modulus INTEGER.
-    der_tlv(cert_addr, rsa_content, t);
+    if der_tlv(cert_addr, rsa_content, cert_len, t) != 0 {
+        return 1;
+    }
     let mut n_off: i64 = rsa_content + __mind_load_i64(t + 8);
     let mut n_len: i64 = __mind_load_i64(t + 16);
     let after_n: i64 = rsa_content + __mind_load_i64(t + 8) + __mind_load_i64(t + 16);
+    if n_len < 1 {   // sign-byte read below needs a non-empty INTEGER content
+        return 1;
+    }
     if (__mind_load_i8(cert_addr + n_off) & 255) == 0 {  // strip DER sign byte
         n_off = n_off + 1;
         n_len = n_len - 1;
@@ -216,7 +286,9 @@ pub fn x509_parse(cert_addr: i64, cert_len: i64, out_fields: i64) -> i64 {
     __mind_store_i64(out_fields + 96, n_off);   // slot 12
     __mind_store_i64(out_fields + 104, n_len);  // slot 13
     // publicExponent INTEGER.
-    der_tlv(cert_addr, after_n, t);
+    if der_tlv(cert_addr, after_n, cert_len, t) != 0 {
+        return 1;
+    }
     __mind_store_i64(out_fields + 112, after_n + __mind_load_i64(t + 8)); // slot 14
     __mind_store_i64(out_fields + 120, __mind_load_i64(t + 16));          // slot 15
     0
@@ -534,6 +606,28 @@ pub fn rsa_pkcs1_sha256_verify(
     msg_addr: i64,
     msg_len: i64,
 ) -> i64 {
+    // Fail-closed input guards: bn_from_bytes writes ceil(len/2) limbs into a
+    // 130-limb buffer, so any len > 256 (RSA-2048's k) would overflow it —
+    // reject before touching the bignum layer.  e must be a positive exponent
+    // that fits modexp_2048's 63-bit scan.
+    if n_len < 1 {
+        return 0;
+    }
+    if n_len > 256 {
+        return 0;
+    }
+    if sig_len < 1 {
+        return 0;
+    }
+    if sig_len > 256 {
+        return 0;
+    }
+    if e < 1 {
+        return 0;
+    }
+    if msg_len < 0 {
+        return 0;
+    }
     let n: i64 = __mind_alloc(1040);   // 130 limbs
     let s: i64 = __mind_alloc(1040);
     let em_limbs: i64 = __mind_alloc(1040);
@@ -553,7 +647,9 @@ pub fn rsa_pkcs1_sha256_verify(
 // ---------------------------------------------------------------------------
 pub fn x509_verify_self_signed(cert_addr: i64, cert_len: i64) -> i64 {
     let f: i64 = __mind_alloc(176);   // 22 i64 slots
-    x509_parse(cert_addr, cert_len, f);
+    if x509_parse(cert_addr, cert_len, f) != 0 {
+        return 0;   // malformed certificate — fail closed
+    }
     let tbs_off: i64 = __mind_load_i64(f + 0);
     let tbs_len: i64 = __mind_load_i64(f + 8);
     let n_off: i64 = __mind_load_i64(f + 96);
@@ -562,6 +658,12 @@ pub fn x509_verify_self_signed(cert_addr: i64, cert_len: i64) -> i64 {
     let e_len: i64 = __mind_load_i64(f + 120);
     let sig_off: i64 = __mind_load_i64(f + 144);
     let sig_len: i64 = __mind_load_i64(f + 152);
+    if e_len < 1 {   // bytes_be_to_i64 shifts 8 bits per byte — cap at 8 bytes
+        return 0;
+    }
+    if e_len > 8 {
+        return 0;
+    }
     let e_val: i64 = bytes_be_to_i64(cert_addr + e_off, e_len);
     rsa_pkcs1_sha256_verify(
         cert_addr + n_off,
