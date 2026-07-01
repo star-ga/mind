@@ -1,7 +1,13 @@
 # #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 
-**Status (2026-06-30):** fully specified + de-risked; ready to execute. This is the last
-oracle tie in the native-ELF self-host (#14). Multi-session driver port.
+**Status (2026-07-01): CLOSED.** All 6 sub-milestones landed (commits `0711164`
+through `457eff5` on `feat/cross-module-enums`). The full-scale no-feed mic@3
+self-compute is byte-identical to the Rust oracle (360243 B), and the resulting
+native ELF (incl. self-computed PT_NOTE) is byte-identical with zero oracle
+bytes fed anywhere in the loop (1156476 B) — verified by a new no-feed
+full-scale rung in `self_host_native_elf_smoke.py`. This was the last oracle
+tie in the native-ELF self-host (#14). **Phase 1.4 (delete `src/native`) is
+now unblocked** — see the roadmap doc before starting that.
 
 ## Goal
 
