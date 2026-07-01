@@ -644,6 +644,29 @@ fn run_clang_codegen(
         // byte-identity is unaffected (programs that never spawn threads link
         // an unused libpthread, a no-op on glibc).
         args.push("-pthread".into());
+        // Bind every intra-module function reference to THIS module's own
+        // definition (closed-world semantics). A MIND `.so` exports all its
+        // functions with default ELF visibility; when the library is dlopen'd
+        // into a host that already loaded libm/libc (e.g. the Python driver in
+        // our vector tests, or any consumer), an intra-module PLT call to a
+        // MIND function whose NAME collides with a host symbol was silently
+        // interposed by the host definition instead of binding to ours. The
+        // canonical trap is libm's C23 weak `fmul`/`fadd`/`fsub`/`fdiv`
+        // (GLIBC_2.28): a MIND field-arithmetic function named `fmul` had its
+        // internal call redirected to `libm`'s `fmul`, which never wrote the
+        // caller's output buffer — a silent no-op miscompile that only
+        // reproduced through an intra-module call (a direct `dlsym` handle
+        // call resolves to our symbol and worked, masking the cause). This
+        // makes the module immune to host interposition by resolving each
+        // call to the local definition first, exactly matching MIND's
+        // deterministic closed-world model. It is a pure LINK-time symbol-
+        // binding directive: it changes no emitted instruction bytes, only a
+        // deterministic DT_FLAGS DF_SYMBOLIC bit, and is applied uniformly on
+        // every substrate — so two builds stay byte-identical to each other
+        // and x86/ARM stay byte-identical (keystone + cross-substrate gates
+        // unaffected). Exported symbols remain in `.dynsym`, so direct
+        // `dlsym`/ctypes calls and native cross-module linking are unchanged.
+        args.push("-Wl,-Bsymbolic-functions".into());
     } else {
         args.push("-c".into());
     }
