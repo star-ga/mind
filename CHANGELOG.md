@@ -15,11 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fixed point, (b) the `mic@3` canonical-binary-IR flip, and (c) the NATIVE
   x86-64/ELF emit of the entire seeded module (21 stdlib modules + main.mind,
   1 055 777 B). Gate (c) is new — the native-ELF emit was the last open frontier.
-  The NATIVE-ELF backend (`src/native`) is now the normative self-host target;
-  MLIR-text is demoted to downstream-interchange / exotic-chip-reach. This is the
-  core of Rust-independence. What remains before full independence: wiring the
-  pure-MIND SHA-256 (see below) to the `ir_trace_hash` PT\_NOTE emit in the
-  pruned-combined mic@3 path, and deleting the Rust `src/native` backend.
+  The NATIVE-ELF backend (`src/native`) was the normative self-host target;
+  MLIR-text is demoted to downstream-interchange / exotic-chip-reach. This was
+  the core of Rust-independence — now fully closed, see below.
+
+- **Self-computed PT\_NOTE trace-hash + `src/native` deleted.** The pure-MIND
+  front-end now self-computes the `ir_trace_hash` PT\_NOTE byte-identically at
+  full `main.mind` scale (~1.5 MB combined stdlib+main.mind source), with zero
+  Rust-oracle bytes fed anywhere in the loop (the no-feed rung in
+  `self_host_native_elf_smoke.py`). This closed the last oracle tie in the
+  native-ELF self-host, which made the Rust `src/native` backend (2441 lines)
+  fully redundant — it has been deleted, after freezing its current output as
+  permanent test fixtures (`examples/mindc_mind/testdata/native_elf_oracle/`).
+  Full Rust-independence for the native-ELF path is complete.
 
 - **`while` / assign port to pure-MIND front-end.** The pure-MIND front-end now
   lowers `while` loops and compound-assignment statements (`+=`, `-=`, etc.)
