@@ -1,0 +1,304 @@
+// std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
+//
+// Phase 1.1 of the HTTP-provable-stack: the cryptographic foundation the TLS 1.3
+// record layer (Phase 1.2, std/aes_gcm.mind) and the handshake Finished-MAC
+// (RFC 8446 §4.4.4) both depend on.
+//
+// Built ON TOP of std/sha256.mind (SHA-256) and std/hkdf.mind (HMAC-SHA256 +
+// HKDF-Extract + HKDF-Expand).  NOTHING is reimplemented here: HKDF-Expand-Label
+// and Derive-Secret are label/transcript wrappers that call the existing
+// `hkdf_expand`, `hkdf_extract` and `sha256` entry points.
+//
+// All functions target the TLS_AES_128_GCM_SHA256 ciphersuite: Hash = SHA-256,
+// Hash.length = 32, every secret is 32 bytes, AES-128 key = 16 bytes, IV = 12.
+//
+// Combined-file build (order matters — deps must precede dependents):
+//   cat std/sha256.mind                     > /tmp/tls13_combined.mind
+//   grep -v '^import std.sha256;' std/hkdf.mind              >> /tmp/tls13_combined.mind
+//   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind >> /tmp/tls13_combined.mind
+//   mindc /tmp/tls13_combined.mind --emit-shared /tmp/tls13.so   # needs mlir-build
+//
+// Naming: every public symbol is tls13_*-prefixed to stay clear of libc/libm
+// (ELF symbol-interposition footgun) and of the hkdf/sha256 entry points.
+// Buffer layout: one byte per offset, matching std/sha256.mind and std/hkdf.mind.
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+import std.sha256;
+import std.hkdf;
+
+// HASH_LEN = 32 (SHA-256 digest bytes, = every TLS 1.3 secret length here).
+
+// ---------------------------------------------------------------------------
+// HKDF-Expand-Label (RFC 8446 §7.1):
+//   HKDF-Expand-Label(Secret, Label, Context, Length) =
+//       HKDF-Expand(Secret, HkdfLabel, Length)
+// where HkdfLabel is the wire struct:
+//   struct {
+//       uint16 length = Length;                       // big-endian
+//       opaque label<7..255>  = "tls13 " + Label;     // 1-byte length prefix
+//       opaque context<0..255> = Context;             // 1-byte length prefix
+//   } HkdfLabel;
+// Builds the HkdfLabel byte buffer exactly, then calls the existing hkdf_expand.
+// `label`/`context` are the RAW label (WITHOUT the "tls13 " prefix) and context;
+// the "tls13 " prefix (6 bytes) is prepended here.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hkdf_expand_label(
+    secret_addr: i64,
+    secret_len: i64,
+    label_addr: i64,
+    label_len: i64,
+    context_addr: i64,
+    context_len: i64,
+    length: i64,
+    out_addr: i64,
+) -> i64 {
+    // full label = "tls13 " (6 bytes) || Label
+    let full_label_len: i64 = 6 + label_len;
+    // HkdfLabel = 2 (uint16) + 1 (label len prefix) + full_label_len
+    //             + 1 (context len prefix) + context_len
+    let hl_len: i64 = 4 + full_label_len + context_len;
+    let hl: i64 = __mind_alloc(hl_len);
+
+    // uint16 length, big-endian.
+    __mind_store_i8(hl + 0, (length >> 8) & 255);
+    __mind_store_i8(hl + 1, length & 255);
+
+    // opaque label<7..255>: 1-byte length, then "tls13 " || Label.
+    __mind_store_i8(hl + 2, full_label_len);
+    // "tls13 " = 0x74 0x6c 0x73 0x31 0x33 0x20
+    __mind_store_i8(hl + 3, 116);  // 't'
+    __mind_store_i8(hl + 4, 108);  // 'l'
+    __mind_store_i8(hl + 5, 115);  // 's'
+    __mind_store_i8(hl + 6, 49);   // '1'
+    __mind_store_i8(hl + 7, 51);   // '3'
+    __mind_store_i8(hl + 8, 32);   // ' '
+    mem_copy(hl + 9, label_addr, label_len);
+
+    // opaque context<0..255>: 1-byte length, then Context bytes.
+    let ctx_off: i64 = 9 + label_len;
+    __mind_store_i8(hl + ctx_off, context_len);
+    mem_copy(hl + ctx_off + 1, context_addr, context_len);
+
+    // HKDF-Expand(Secret, HkdfLabel, Length) — reuse the existing primitive.
+    hkdf_expand(secret_addr, secret_len, hl, hl_len, length, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Derive-Secret (RFC 8446 §7.1):
+//   Derive-Secret(Secret, Label, Messages) =
+//       HKDF-Expand-Label(Secret, Label, Transcript-Hash(Messages), Hash.length)
+// Two forms are provided:
+//   - tls13_derive_secret_hashed: caller already has the 32-byte transcript hash
+//     (the common case — the handshake layer keeps a running transcript hash).
+//   - tls13_derive_secret: full form, hashes a messages buffer with SHA-256.
+// Hash.length = 32, so the output secret is always 32 bytes.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_derive_secret_hashed(
+    secret_addr: i64,
+    secret_len: i64,
+    label_addr: i64,
+    label_len: i64,
+    thash_addr: i64,   // 32-byte transcript hash = Transcript-Hash(Messages)
+    out_addr: i64,
+) -> i64 {
+    tls13_hkdf_expand_label(
+        secret_addr, secret_len, label_addr, label_len,
+        thash_addr, 32, 32, out_addr);
+    0
+}
+
+pub fn tls13_derive_secret(
+    secret_addr: i64,
+    secret_len: i64,
+    label_addr: i64,
+    label_len: i64,
+    messages_addr: i64,
+    messages_len: i64,
+    out_addr: i64,
+) -> i64 {
+    // Transcript-Hash(Messages) = SHA-256(Messages).  messages_len = 0 yields
+    // SHA-256("") — the empty-transcript case used by the "derived" step.
+    let thash: i64 = __mind_alloc(32);
+    sha256(messages_addr, messages_len, thash);
+    tls13_derive_secret_hashed(
+        secret_addr, secret_len, label_addr, label_len, thash, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Label builders — write a raw label (WITHOUT the "tls13 " prefix) into `dst`
+// and return its length.  Callers alloc a small (>=16 byte) buffer and pass it.
+// Kept as straight-line stores (no loops, no libc-shaped names).
+// ---------------------------------------------------------------------------
+
+fn tls13_lbl_derived(dst: i64) -> i64 {
+    __mind_store_i8(dst + 0, 100); // 'd'
+    __mind_store_i8(dst + 1, 101); // 'e'
+    __mind_store_i8(dst + 2, 114); // 'r'
+    __mind_store_i8(dst + 3, 105); // 'i'
+    __mind_store_i8(dst + 4, 118); // 'v'
+    __mind_store_i8(dst + 5, 101); // 'e'
+    __mind_store_i8(dst + 6, 100); // 'd'
+    7
+}
+
+// Shared "traffic" suffix: " traffic" -> writes 8 bytes at dst, returns 8.
+fn tls13_lbl_suffix_traffic(dst: i64) -> i64 {
+    __mind_store_i8(dst + 0, 32);  // ' '
+    __mind_store_i8(dst + 1, 116); // 't'
+    __mind_store_i8(dst + 2, 114); // 'r'
+    __mind_store_i8(dst + 3, 97);  // 'a'
+    __mind_store_i8(dst + 4, 102); // 'f'
+    __mind_store_i8(dst + 5, 102); // 'f'
+    __mind_store_i8(dst + 6, 105); // 'i'
+    __mind_store_i8(dst + 7, 99);  // 'c'
+    8
+}
+
+// "c hs traffic" / "s hs traffic" / "c ap traffic" / "s ap traffic".
+// side = 99 ('c') or 115 ('s'); phase0/phase1 = the two middle letters
+// ('h','s' for handshake; 'a','p' for application).
+fn tls13_lbl_traffic(dst: i64, side: i64, p0: i64, p1: i64) -> i64 {
+    __mind_store_i8(dst + 0, side);
+    __mind_store_i8(dst + 1, 32);  // ' '
+    __mind_store_i8(dst + 2, p0);
+    __mind_store_i8(dst + 3, p1);
+    tls13_lbl_suffix_traffic(dst + 4);
+    12
+}
+
+// ---------------------------------------------------------------------------
+// Key-schedule chain (RFC 8446 §7.1 diagram), TLS_AES_128_GCM_SHA256.
+// Non-PSK (certificate) handshake: PSK = 32 zero bytes.
+// ---------------------------------------------------------------------------
+
+// Early Secret = HKDF-Extract(salt=0, IKM=PSK=0).  Writes 32 bytes.
+// (HMAC zero-pads the empty salt to a HashLen-zero key, so salt_len=0 == the
+// "0" salt in the RFC.)
+pub fn tls13_early_secret(out_addr: i64) -> i64 {
+    let psk: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(psk + i, 0);
+        i = i + 1;
+    }
+    hkdf_extract(psk, 0, psk, 32, out_addr);
+    0
+}
+
+// Handshake Secret = HKDF-Extract(salt=Derive-Secret(Early,"derived",""),
+//                                 IKM=(EC)DHE shared secret).  Writes 32 bytes.
+// `dhe_addr` is the 32-byte X25519 output from std/x25519.mind.
+pub fn tls13_handshake_secret(dhe_addr: i64, out_addr: i64) -> i64 {
+    let early: i64 = __mind_alloc(32);
+    tls13_early_secret(early);
+    let derived: i64 = __mind_alloc(32);
+    let lbl: i64 = __mind_alloc(16);
+    let n: i64 = tls13_lbl_derived(lbl);
+    // Derive-Secret(Early, "derived", "") — empty transcript (messages_len 0).
+    tls13_derive_secret(early, 32, lbl, n, early, 0, derived);
+    hkdf_extract(derived, 32, dhe_addr, 32, out_addr);
+    0
+}
+
+// client/server handshake traffic secrets — Derive-Secret over the
+// ClientHello..ServerHello transcript hash (`hello_hash_addr`, 32 bytes).
+pub fn tls13_client_handshake_traffic_secret(
+    hs_secret_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    let n: i64 = tls13_lbl_traffic(lbl, 99, 104, 115); // "c hs traffic"
+    tls13_derive_secret_hashed(hs_secret_addr, 32, lbl, n, hello_hash_addr, out_addr);
+    0
+}
+
+pub fn tls13_server_handshake_traffic_secret(
+    hs_secret_addr: i64, hello_hash_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    let n: i64 = tls13_lbl_traffic(lbl, 115, 104, 115); // "s hs traffic"
+    tls13_derive_secret_hashed(hs_secret_addr, 32, lbl, n, hello_hash_addr, out_addr);
+    0
+}
+
+// Master Secret = HKDF-Extract(salt=Derive-Secret(Handshake,"derived",""),
+//                              IKM=0 (32 zero bytes)).  Writes 32 bytes.
+pub fn tls13_master_secret(hs_secret_addr: i64, out_addr: i64) -> i64 {
+    let derived: i64 = __mind_alloc(32);
+    let lbl: i64 = __mind_alloc(16);
+    let n: i64 = tls13_lbl_derived(lbl);
+    tls13_derive_secret(hs_secret_addr, 32, lbl, n, hs_secret_addr, 0, derived);
+    let zeros: i64 = __mind_alloc(32);
+    let mut i: i64 = 0;
+    while i < 32 {
+        __mind_store_i8(zeros + i, 0);
+        i = i + 1;
+    }
+    hkdf_extract(derived, 32, zeros, 32, out_addr);
+    0
+}
+
+// client/server application traffic secrets (secret_0) — Derive-Secret over the
+// ClientHello..server Finished transcript hash (`fin_hash_addr`, 32 bytes).
+pub fn tls13_client_application_traffic_secret(
+    master_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    let n: i64 = tls13_lbl_traffic(lbl, 99, 97, 112); // "c ap traffic"
+    tls13_derive_secret_hashed(master_secret_addr, 32, lbl, n, fin_hash_addr, out_addr);
+    0
+}
+
+pub fn tls13_server_application_traffic_secret(
+    master_secret_addr: i64, fin_hash_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    let n: i64 = tls13_lbl_traffic(lbl, 115, 97, 112); // "s ap traffic"
+    tls13_derive_secret_hashed(master_secret_addr, 32, lbl, n, fin_hash_addr, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Per-secret record-protection material (RFC 8446 §7.3) — feeds std/aes_gcm.mind.
+//   key = HKDF-Expand-Label(secret, "key", "", 16)   [AES-128 key]
+//   iv  = HKDF-Expand-Label(secret, "iv",  "", 12)   [nonce base]
+// Context is empty; the empty-context path writes a 0-length prefix and copies
+// no context bytes.  `secret_addr` may double as the (unread) context pointer.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_derive_key(secret_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    __mind_store_i8(lbl + 0, 107); // 'k'
+    __mind_store_i8(lbl + 1, 101); // 'e'
+    __mind_store_i8(lbl + 2, 121); // 'y'
+    tls13_hkdf_expand_label(secret_addr, 32, lbl, 3, secret_addr, 0, 16, out_addr);
+    0
+}
+
+pub fn tls13_derive_iv(secret_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    __mind_store_i8(lbl + 0, 105); // 'i'
+    __mind_store_i8(lbl + 1, 118); // 'v'
+    tls13_hkdf_expand_label(secret_addr, 32, lbl, 2, secret_addr, 0, 12, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Finished-MAC key (RFC 8446 §4.4.4):
+//   finished_key = HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)
+// The Finished message value is HMAC(finished_key, Transcript-Hash(...)); this
+// derives the 32-byte finished_key.  Callers HMAC with the existing hmac_sha256.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_finished_key(base_key_addr: i64, out_addr: i64) -> i64 {
+    let lbl: i64 = __mind_alloc(16);
+    __mind_store_i8(lbl + 0, 102); // 'f'
+    __mind_store_i8(lbl + 1, 105); // 'i'
+    __mind_store_i8(lbl + 2, 110); // 'n'
+    __mind_store_i8(lbl + 3, 105); // 'i'
+    __mind_store_i8(lbl + 4, 115); // 's'
+    __mind_store_i8(lbl + 5, 104); // 'h'
+    __mind_store_i8(lbl + 6, 101); // 'e'
+    __mind_store_i8(lbl + 7, 100); // 'd'
+    tls13_hkdf_expand_label(base_key_addr, 32, lbl, 8, base_key_addr, 0, 32, out_addr);
+    0
+}
