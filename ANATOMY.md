@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2956 | **Est. tokens:** ~7,066,551
-**Generated:** 2026-07-01 12:59 UTC
+**Files:** 2956 | **Est. tokens:** ~7,066,666
+**Generated:** 2026-07-01 13:01 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 30 | ~57,274 |
+| `docs/` | 30 | ~57,389 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -700,7 +700,7 @@
 - `README.md` (~31 tok, tiny) — RFCs
 ### `docs/`
 
-- `roadmap.md` (~14697 tok, huge) — Roadmap
+- `roadmap.md` (~14812 tok, huge) — Roadmap
 - `runs-burndown-roadmap.md` (~3176 tok, huge) — MIND RUNS Burndown Roadmap
 - `security.md` (~1331 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
