@@ -1,0 +1,557 @@
+// std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
+// pure MIND.  Self-contained: no imports, only the seven `__mind_*` intrinsics,
+// matching std/sha256.mind's low-level byte-buffer discipline.
+//
+// Scope (TLS 1.3 mandatory suite TLS_AES_128_GCM_SHA256, RFC 8446 §9.1):
+//   - AES-128 forward direction only (key expansion + single-block encrypt).
+//     GCM is a stream mode built on the forward block cipher, so decryption of
+//     the block cipher is never needed — the "decrypt" direction of GCM still
+//     only calls AES encrypt (counter mode is symmetric).
+//   - AES-128 only (10 rounds, 11 round keys) — no AES-192/256.
+//   - GCM with a 96-bit (12-byte) IV only.  TLS 1.3 always uses a 96-bit
+//     nonce (RFC 8446 §5.3), so the general GHASH-based J0 derivation for
+//     other IV lengths is intentionally out of scope.
+//
+// Byte-buffer layout: one byte per offset (`__mind_store_i8` / `__mind_load_i8`),
+// exactly like std/sha256.mind. All arithmetic is on i64 with explicit masking.
+//
+// Public API:
+//   pub fn aes128_encrypt_block(key_addr, in_addr, out_addr) -> i64
+//     Encrypt one 16-byte block; writes 16 ciphertext bytes to out_addr.
+//   pub fn aes128_gcm_encrypt(key,iv,pt,pt_len,aad,aad_len,ct_out,tag_out) -> i64
+//     AEAD seal: writes pt_len ciphertext bytes + 16-byte tag. Returns 0.
+//   pub fn aes128_gcm_decrypt(key,iv,ct,ct_len,aad,aad_len,tag,pt_out) -> i64
+//     AEAD open: verifies the 16-byte tag FIRST; on match writes ct_len
+//     plaintext bytes and returns 0; on mismatch zeroes pt_out and returns 1
+//     (fail closed — never emits unauthenticated plaintext).
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+// ---------------------------------------------------------------------------
+// GF(2^8) arithmetic — reduction polynomial x^8+x^4+x^3+x+1 (0x11B).
+// ---------------------------------------------------------------------------
+
+// gf_mul — multiply two bytes in GF(2^8) (Russian-peasant, 8 iterations).
+// The 0x1B (=27) is the low byte of the reduction poly, XORed in whenever a
+// carry leaves bit 7.
+fn gf_mul(a: i64, b: i64) -> i64 {
+    let mut aa: i64 = a & 255;
+    let mut bb: i64 = b & 255;
+    let mut p: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 8 {
+        if (bb & 1) != 0 {
+            p = p ^ aa;
+        }
+        let hi: i64 = aa & 128;
+        aa = (aa << 1) & 255;
+        if hi != 0 {
+            aa = aa ^ 27;
+        }
+        bb = bb >> 1;
+        i = i + 1;
+    }
+    p & 255
+}
+
+// rotl8 — rotate a byte left by n bits (used by the S-box affine transform).
+fn rotl8(x: i64, n: i64) -> i64 {
+    ((x << n) | (x >> (8 - n))) & 255
+}
+
+// ---------------------------------------------------------------------------
+// S-box generation (FIPS 197 §5.1.1) — multiplicative inverse in GF(2^8)
+// followed by the affine transform.  Built once into a 256-byte table so the
+// forward S-box is a plain table lookup during SubBytes / key expansion.
+//
+// The inverse is computed via exp/log tables generated from the generator 3
+// (0x03 is a generator of GF(2^8)*): inverse(a) = exp[(255 - log[a]) mod 255].
+// ---------------------------------------------------------------------------
+
+fn aes_build_sbox(sbox: i64) -> i64 {
+    let exp: i64 = __mind_alloc(256);
+    let log: i64 = __mind_alloc(256);
+
+    // exp[i] = 3^i, log[3^i] = i, for i in 0..254 (255 nonzero elements).
+    let mut x: i64 = 1;
+    let mut i: i64 = 0;
+    while i < 255 {
+        __mind_store_i8(exp + i, x);
+        __mind_store_i8(log + x, i);
+        x = gf_mul(x, 3);
+        i = i + 1;
+    }
+
+    // S-box[0] = 0x63 (affine transform of 0, whose "inverse" is defined as 0).
+    __mind_store_i8(sbox + 0, 99);
+
+    let mut a: i64 = 1;
+    while a < 256 {
+        let l: i64 = __mind_load_i8(log + a);
+        let inv: i64 = __mind_load_i8(exp + ((255 - l) % 255));
+        // Affine: s = inv ^ rotl(inv,1) ^ rotl(inv,2) ^ rotl(inv,3) ^ rotl(inv,4) ^ 0x63.
+        let s: i64 = inv ^ rotl8(inv, 1) ^ rotl8(inv, 2) ^ rotl8(inv, 3) ^ rotl8(inv, 4) ^ 99;
+        __mind_store_i8(sbox + a, s & 255);
+        a = a + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// AES-128 key expansion (FIPS 197 §5.2) — 16-byte key -> 176-byte round-key
+// schedule (44 words of 4 bytes), one byte per offset.
+// ---------------------------------------------------------------------------
+
+fn aes_key_expand(key: i64, sbox: i64, rk: i64) -> i64 {
+    // Round key 0 is the cipher key verbatim.
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(rk + i, __mind_load_i8(key + i));
+        i = i + 1;
+    }
+
+    let mut rcon: i64 = 1;
+    let mut w: i64 = 4;
+    while w < 44 {
+        let p: i64 = (w - 1) * 4;
+        let mut t0: i64 = __mind_load_i8(rk + p + 0);
+        let mut t1: i64 = __mind_load_i8(rk + p + 1);
+        let mut t2: i64 = __mind_load_i8(rk + p + 2);
+        let mut t3: i64 = __mind_load_i8(rk + p + 3);
+        if (w % 4) == 0 {
+            // RotWord: (t0,t1,t2,t3) -> (t1,t2,t3,t0).
+            let tmp: i64 = t0;
+            t0 = t1;
+            t1 = t2;
+            t2 = t3;
+            t3 = tmp;
+            // SubWord: apply the S-box to each byte.
+            t0 = __mind_load_i8(sbox + t0);
+            t1 = __mind_load_i8(sbox + t1);
+            t2 = __mind_load_i8(sbox + t2);
+            t3 = __mind_load_i8(sbox + t3);
+            // XOR round constant into the first byte.
+            t0 = t0 ^ rcon;
+            rcon = gf_mul(rcon, 2);
+        }
+        let q: i64 = (w - 4) * 4;
+        __mind_store_i8(rk + w * 4 + 0, __mind_load_i8(rk + q + 0) ^ t0);
+        __mind_store_i8(rk + w * 4 + 1, __mind_load_i8(rk + q + 1) ^ t1);
+        __mind_store_i8(rk + w * 4 + 2, __mind_load_i8(rk + q + 2) ^ t2);
+        __mind_store_i8(rk + w * 4 + 3, __mind_load_i8(rk + q + 3) ^ t3);
+        w = w + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// AES round transforms — operate in place on a 16-byte state buffer.
+// State is column-major: state byte (row r, col c) lives at offset r + 4*c,
+// matching the FIPS 197 input-byte order (input[i] -> state offset i).
+// ---------------------------------------------------------------------------
+
+fn add_round_key(st: i64, rk_off: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(st + i, __mind_load_i8(st + i) ^ __mind_load_i8(rk_off + i));
+        i = i + 1;
+    }
+    0
+}
+
+fn sub_bytes(st: i64, sbox: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(st + i, __mind_load_i8(sbox + __mind_load_i8(st + i)));
+        i = i + 1;
+    }
+    0
+}
+
+// ShiftRows: new[r][c] = old[r][(c+r) mod 4].  Column-major offset = r + 4*c.
+fn shift_rows(st: i64) -> i64 {
+    let tmp: i64 = __mind_alloc(16);
+    let mut r: i64 = 0;
+    while r < 4 {
+        let mut c: i64 = 0;
+        while c < 4 {
+            let src_c: i64 = (c + r) % 4;
+            __mind_store_i8(tmp + r + 4 * c, __mind_load_i8(st + r + 4 * src_c));
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(st + i, __mind_load_i8(tmp + i));
+        i = i + 1;
+    }
+    0
+}
+
+// MixColumns (FIPS 197 §5.1.3): per column, apply the fixed MDS matrix.
+fn mix_columns(st: i64) -> i64 {
+    let mut c: i64 = 0;
+    while c < 4 {
+        let base: i64 = 4 * c;
+        let s0: i64 = __mind_load_i8(st + base + 0);
+        let s1: i64 = __mind_load_i8(st + base + 1);
+        let s2: i64 = __mind_load_i8(st + base + 2);
+        let s3: i64 = __mind_load_i8(st + base + 3);
+        __mind_store_i8(st + base + 0, gf_mul(s0, 2) ^ gf_mul(s1, 3) ^ s2 ^ s3);
+        __mind_store_i8(st + base + 1, s0 ^ gf_mul(s1, 2) ^ gf_mul(s2, 3) ^ s3);
+        __mind_store_i8(st + base + 2, s0 ^ s1 ^ gf_mul(s2, 2) ^ gf_mul(s3, 3));
+        __mind_store_i8(st + base + 3, gf_mul(s0, 3) ^ s1 ^ s2 ^ gf_mul(s3, 2));
+        c = c + 1;
+    }
+    0
+}
+
+// aes_encrypt_block — encrypt one 16-byte block with an expanded key schedule.
+fn aes_encrypt_block(in_addr: i64, rk: i64, sbox: i64, out_addr: i64) -> i64 {
+    let st: i64 = __mind_alloc(16);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(st + i, __mind_load_i8(in_addr + i));
+        i = i + 1;
+    }
+
+    add_round_key(st, rk + 0);
+
+    let mut rnd: i64 = 1;
+    while rnd < 10 {
+        sub_bytes(st, sbox);
+        shift_rows(st);
+        mix_columns(st);
+        add_round_key(st, rk + rnd * 16);
+        rnd = rnd + 1;
+    }
+
+    // Final round: no MixColumns.
+    sub_bytes(st, sbox);
+    shift_rows(st);
+    add_round_key(st, rk + 160);
+
+    let mut o: i64 = 0;
+    while o < 16 {
+        __mind_store_i8(out_addr + o, __mind_load_i8(st + o));
+        o = o + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public: single-block AES-128 encryption (FIPS 197 known-answer entry point).
+// ---------------------------------------------------------------------------
+
+pub fn aes128_encrypt_block(key_addr: i64, in_addr: i64, out_addr: i64) -> i64 {
+    let sbox: i64 = __mind_alloc(256);
+    aes_build_sbox(sbox);
+    let rk: i64 = __mind_alloc(176);
+    aes_key_expand(key_addr, sbox, rk);
+    aes_encrypt_block(in_addr, rk, sbox, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// GHASH — multiplication in GF(2^128), reduction poly x^128+x^7+x^2+x+1.
+//
+// NIST SP 800-38D convention: bits are numbered left-to-right (bit 0 = MSB of
+// byte 0).  Z accumulates; V starts as the second operand and is right-shifted
+// one bit per step, XORing the reduction constant R (0xe1 || 0^120) whenever a
+// 1 bit falls off the right end.
+// ---------------------------------------------------------------------------
+
+// ghash_mul — out(16 bytes) = x(16) * y(16) in GF(2^128).
+fn ghash_mul(x: i64, y: i64, out: i64) -> i64 {
+    let z: i64 = __mind_alloc(16);
+    let v: i64 = __mind_alloc(16);
+    let mut k: i64 = 0;
+    while k < 16 {
+        __mind_store_i8(z + k, 0);
+        __mind_store_i8(v + k, __mind_load_i8(y + k));
+        k = k + 1;
+    }
+
+    let mut i: i64 = 0;
+    while i < 128 {
+        let byteidx: i64 = i / 8;
+        let bit: i64 = (__mind_load_i8(x + byteidx) >> (7 - (i % 8))) & 1;
+        if bit != 0 {
+            let mut j: i64 = 0;
+            while j < 16 {
+                __mind_store_i8(z + j, __mind_load_i8(z + j) ^ __mind_load_i8(v + j));
+                j = j + 1;
+            }
+        }
+        // V = V >> 1 (big-endian 128-bit shift), capturing the ejected LSB.
+        let mut carry: i64 = 0;
+        let mut m: i64 = 0;
+        while m < 16 {
+            let cur: i64 = __mind_load_i8(v + m);
+            let newb: i64 = ((cur >> 1) | (carry << 7)) & 255;
+            carry = cur & 1;
+            __mind_store_i8(v + m, newb);
+            m = m + 1;
+        }
+        if carry != 0 {
+            __mind_store_i8(v + 0, __mind_load_i8(v + 0) ^ 225);
+        }
+        i = i + 1;
+    }
+
+    let mut o: i64 = 0;
+    while o < 16 {
+        __mind_store_i8(out + o, __mind_load_i8(z + o));
+        o = o + 1;
+    }
+    0
+}
+
+// ghash_update — fold data (zero-padded to 16-byte blocks) into accumulator X.
+// X <- (X ^ block) * H, one block at a time.
+fn ghash_update(h: i64, x: i64, data: i64, data_len: i64) -> i64 {
+    let blk: i64 = __mind_alloc(16);
+    let tmp: i64 = __mind_alloc(16);
+    let mut off: i64 = 0;
+    while off < data_len {
+        let mut i: i64 = 0;
+        while i < 16 {
+            let idx: i64 = off + i;
+            if idx < data_len {
+                __mind_store_i8(blk + i, __mind_load_i8(data + idx));
+            } else {
+                __mind_store_i8(blk + i, 0);
+            }
+            i = i + 1;
+        }
+        let mut j: i64 = 0;
+        while j < 16 {
+            __mind_store_i8(tmp + j, __mind_load_i8(x + j) ^ __mind_load_i8(blk + j));
+            j = j + 1;
+        }
+        ghash_mul(tmp, h, x);
+        off = off + 16;
+    }
+    0
+}
+
+// ghash_length_block — fold the final 16-byte length block:
+// [len(AAD) in bits as 64-bit BE][len(C) in bits as 64-bit BE].
+fn ghash_length_block(h: i64, x: i64, aad_len: i64, ct_len: i64) -> i64 {
+    let blk: i64 = __mind_alloc(16);
+    let aad_bits: i64 = aad_len * 8;
+    let ct_bits: i64 = ct_len * 8;
+    // 64-bit big-endian encodings.
+    __mind_store_i8(blk + 0, (aad_bits >> 56) & 255);
+    __mind_store_i8(blk + 1, (aad_bits >> 48) & 255);
+    __mind_store_i8(blk + 2, (aad_bits >> 40) & 255);
+    __mind_store_i8(blk + 3, (aad_bits >> 32) & 255);
+    __mind_store_i8(blk + 4, (aad_bits >> 24) & 255);
+    __mind_store_i8(blk + 5, (aad_bits >> 16) & 255);
+    __mind_store_i8(blk + 6, (aad_bits >> 8) & 255);
+    __mind_store_i8(blk + 7, aad_bits & 255);
+    __mind_store_i8(blk + 8, (ct_bits >> 56) & 255);
+    __mind_store_i8(blk + 9, (ct_bits >> 48) & 255);
+    __mind_store_i8(blk + 10, (ct_bits >> 40) & 255);
+    __mind_store_i8(blk + 11, (ct_bits >> 32) & 255);
+    __mind_store_i8(blk + 12, (ct_bits >> 24) & 255);
+    __mind_store_i8(blk + 13, (ct_bits >> 16) & 255);
+    __mind_store_i8(blk + 14, (ct_bits >> 8) & 255);
+    __mind_store_i8(blk + 15, ct_bits & 255);
+    let tmp: i64 = __mind_alloc(16);
+    let mut j: i64 = 0;
+    while j < 16 {
+        __mind_store_i8(tmp + j, __mind_load_i8(x + j) ^ __mind_load_i8(blk + j));
+        j = j + 1;
+    }
+    ghash_mul(tmp, h, x);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// GCM counter helpers.
+// ---------------------------------------------------------------------------
+
+// inc32 — increment the rightmost 32 bits of a 16-byte counter block mod 2^32.
+fn inc32(cb: i64) -> i64 {
+    let c0: i64 = __mind_load_i8(cb + 12);
+    let c1: i64 = __mind_load_i8(cb + 13);
+    let c2: i64 = __mind_load_i8(cb + 14);
+    let c3: i64 = __mind_load_i8(cb + 15);
+    let val: i64 = ((c0 << 24) | (c1 << 16) | (c2 << 8) | c3) + 1;
+    __mind_store_i8(cb + 12, (val >> 24) & 255);
+    __mind_store_i8(cb + 13, (val >> 16) & 255);
+    __mind_store_i8(cb + 14, (val >> 8) & 255);
+    __mind_store_i8(cb + 15, val & 255);
+    0
+}
+
+// gcm_ctr_xor — CTR-mode keystream generation + XOR into out (shared by the
+// encrypt and decrypt directions; CTR is symmetric).  j0 is the pre-counter
+// block; the first keystream block uses inc32(J0).
+fn gcm_ctr_xor(rk: i64, sbox: i64, j0: i64, in_addr: i64, in_len: i64, out_addr: i64) -> i64 {
+    let cb: i64 = __mind_alloc(16);
+    let ks: i64 = __mind_alloc(16);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(cb + i, __mind_load_i8(j0 + i));
+        i = i + 1;
+    }
+    let mut off: i64 = 0;
+    while off < in_len {
+        inc32(cb);
+        aes_encrypt_block(cb, rk, sbox, ks);
+        let mut b: i64 = 0;
+        while b < 16 {
+            let idx: i64 = off + b;
+            if idx < in_len {
+                __mind_store_i8(out_addr + idx, __mind_load_i8(in_addr + idx) ^ __mind_load_i8(ks + b));
+            }
+            b = b + 1;
+        }
+        off = off + 16;
+    }
+    0
+}
+
+// gcm_derive_tag — compute the 16-byte tag into tag_out:
+// T = AES_enc(J0) XOR GHASH(H, AAD, C).
+fn gcm_derive_tag(
+    rk: i64,
+    sbox: i64,
+    h: i64,
+    j0: i64,
+    aad: i64,
+    aad_len: i64,
+    ct: i64,
+    ct_len: i64,
+    tag_out: i64,
+) -> i64 {
+    let s: i64 = __mind_alloc(16);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(s + i, 0);
+        i = i + 1;
+    }
+    ghash_update(h, s, aad, aad_len);
+    ghash_update(h, s, ct, ct_len);
+    ghash_length_block(h, s, aad_len, ct_len);
+
+    let ej0: i64 = __mind_alloc(16);
+    aes_encrypt_block(j0, rk, sbox, ej0);
+    let mut j: i64 = 0;
+    while j < 16 {
+        __mind_store_i8(tag_out + j, __mind_load_i8(ej0 + j) ^ __mind_load_i8(s + j));
+        j = j + 1;
+    }
+    0
+}
+
+// gcm_setup_common — build the S-box, expand the key, derive H and J0.
+// Writes 176 bytes of round keys to rk, 16 bytes of H to h_out, 16 bytes of
+// J0 to j0_out.  iv_addr must point at a 12-byte (96-bit) nonce.
+fn gcm_setup_common(key_addr: i64, iv_addr: i64, sbox: i64, rk: i64, h_out: i64, j0_out: i64) -> i64 {
+    aes_build_sbox(sbox);
+    aes_key_expand(key_addr, sbox, rk);
+
+    // H = AES_enc(0^128).
+    let zero: i64 = __mind_alloc(16);
+    let mut i: i64 = 0;
+    while i < 16 {
+        __mind_store_i8(zero + i, 0);
+        i = i + 1;
+    }
+    aes_encrypt_block(zero, rk, sbox, h_out);
+
+    // J0 = IV || 0x00000001 (96-bit IV case).
+    let mut j: i64 = 0;
+    while j < 12 {
+        __mind_store_i8(j0_out + j, __mind_load_i8(iv_addr + j));
+        j = j + 1;
+    }
+    __mind_store_i8(j0_out + 12, 0);
+    __mind_store_i8(j0_out + 13, 0);
+    __mind_store_i8(j0_out + 14, 0);
+    __mind_store_i8(j0_out + 15, 1);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public: AES-128-GCM authenticated encryption (seal).
+// Writes pt_len ciphertext bytes to ct_out and a 16-byte tag to tag_out.
+// ---------------------------------------------------------------------------
+
+pub fn aes128_gcm_encrypt(
+    key_addr: i64,
+    iv_addr: i64,
+    pt_addr: i64,
+    pt_len: i64,
+    aad_addr: i64,
+    aad_len: i64,
+    ct_out: i64,
+    tag_out: i64,
+) -> i64 {
+    let sbox: i64 = __mind_alloc(256);
+    let rk: i64 = __mind_alloc(176);
+    let h: i64 = __mind_alloc(16);
+    let j0: i64 = __mind_alloc(16);
+    gcm_setup_common(key_addr, iv_addr, sbox, rk, h, j0);
+
+    // Encrypt plaintext in counter mode.
+    gcm_ctr_xor(rk, sbox, j0, pt_addr, pt_len, ct_out);
+
+    // Authenticate over AAD + ciphertext.
+    gcm_derive_tag(rk, sbox, h, j0, aad_addr, aad_len, ct_out, pt_len, tag_out);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public: AES-128-GCM authenticated decryption (open).
+// Verifies the tag BEFORE releasing plaintext.  On success writes ct_len
+// plaintext bytes to pt_out and returns 0.  On tag mismatch zeroes pt_out and
+// returns 1 — no unauthenticated plaintext ever escapes (fail closed).
+// ---------------------------------------------------------------------------
+
+pub fn aes128_gcm_decrypt(
+    key_addr: i64,
+    iv_addr: i64,
+    ct_addr: i64,
+    ct_len: i64,
+    aad_addr: i64,
+    aad_len: i64,
+    tag_addr: i64,
+    pt_out: i64,
+) -> i64 {
+    let sbox: i64 = __mind_alloc(256);
+    let rk: i64 = __mind_alloc(176);
+    let h: i64 = __mind_alloc(16);
+    let j0: i64 = __mind_alloc(16);
+    gcm_setup_common(key_addr, iv_addr, sbox, rk, h, j0);
+
+    // Recompute the expected tag over the received ciphertext.
+    let exp_tag: i64 = __mind_alloc(16);
+    gcm_derive_tag(rk, sbox, h, j0, aad_addr, aad_len, ct_addr, ct_len, exp_tag);
+
+    // Constant-time compare against the supplied tag.
+    let mut diff: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 16 {
+        diff = diff | (__mind_load_i8(exp_tag + i) ^ __mind_load_i8(tag_addr + i));
+        i = i + 1;
+    }
+
+    if diff != 0 {
+        // Fail closed: zero any output region, emit nothing authenticated.
+        let mut z: i64 = 0;
+        while z < ct_len {
+            __mind_store_i8(pt_out + z, 0);
+            z = z + 1;
+        }
+        return 1;
+    }
+
+    // Tag verified — release plaintext.
+    gcm_ctr_xor(rk, sbox, j0, ct_addr, ct_len, pt_out);
+    0
+}

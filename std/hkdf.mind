@@ -1,0 +1,175 @@
+// std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
+//
+// Built ON TOP of std/sha256.mind — the SHA-256 compression function is NOT
+// reimplemented here; this module calls the existing `sha256` entry point.
+//
+// HMAC-SHA256 and HKDF are co-located in one module because HKDF is defined
+// entirely in terms of HMAC (RFC 5869 §2): HKDF-Extract is a single HMAC and
+// HKDF-Expand is an HMAC feedback loop.  Splitting them would force a second
+// cross-module hop (std.hkdf -> std.hmac) that adds no value.  `hmac_sha256`
+// remains a first-class public entry point for callers that need bare HMAC
+// (e.g. the TLS 1.3 Finished / PSK-binder MACs, RFC 8446 §4.4.4 / §4.2.11.2).
+//
+// TLS 1.3 key-schedule note (RFC 8446 §7.1): HKDF-Extract and HKDF-Expand here
+// are the primitives underneath HKDF-Expand-Label / Derive-Secret; those
+// label-wrapping helpers live in the TLS layer, not the crypto stdlib.
+//
+// Byte-buffer layout: one byte per offset, matching std/sha256.mind.
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+import std.sha256;
+
+// SHA-256 constants.
+//   HASH_LEN  = 32 (digest bytes)
+//   BLOCK_LEN = 64 (HMAC block size = SHA-256 input block)
+
+// mem_copy — copy `len` bytes from src to dst (one byte per offset).
+// Extracted so callers avoid multiple sibling `while` loops in one function
+// body (the MLIR block-argument namer collides on 3+ sibling loops nested
+// inside an outer loop — see hkdf_expand).
+fn mem_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// HMAC-SHA256 (RFC 2104):
+//   HMAC(K, m) = H( (K0 ^ opad) || H( (K0 ^ ipad) || m ) )
+// where K0 is K zero-padded to 64 bytes (or H(K) zero-padded if len(K) > 64),
+// ipad = 0x36 repeated, opad = 0x5c repeated.
+// ---------------------------------------------------------------------------
+
+pub fn hmac_sha256(
+    key_addr: i64,
+    key_len: i64,
+    msg_addr: i64,
+    msg_len: i64,
+    out_addr: i64,
+) -> i64 {
+    // K0 — 64-byte zero-padded key block.
+    let k0: i64 = __mind_alloc(64);
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i8(k0 + i, 0);
+        i = i + 1;
+    }
+    if key_len > 64 {
+        // Keys longer than the block are first hashed; sha256 writes 32 bytes,
+        // leaving bytes 32..63 as the zero padding already in place.
+        sha256(key_addr, key_len, k0);
+    } else {
+        let mut j: i64 = 0;
+        while j < key_len {
+            __mind_store_i8(k0 + j, __mind_load_i8(key_addr + j));
+            j = j + 1;
+        }
+    }
+
+    // Inner hash: H( (K0 ^ ipad) || msg ).  ipad byte = 0x36 = 54.
+    let inner_in: i64 = __mind_alloc(64 + msg_len);
+    let mut a: i64 = 0;
+    while a < 64 {
+        __mind_store_i8(inner_in + a, __mind_load_i8(k0 + a) ^ 54);
+        a = a + 1;
+    }
+    let mut b: i64 = 0;
+    while b < msg_len {
+        __mind_store_i8(inner_in + 64 + b, __mind_load_i8(msg_addr + b));
+        b = b + 1;
+    }
+    let inner_hash: i64 = __mind_alloc(32);
+    sha256(inner_in, 64 + msg_len, inner_hash);
+
+    // Outer hash: H( (K0 ^ opad) || inner_hash ).  opad byte = 0x5c = 92.
+    let outer_in: i64 = __mind_alloc(96);
+    let mut c: i64 = 0;
+    while c < 64 {
+        __mind_store_i8(outer_in + c, __mind_load_i8(k0 + c) ^ 92);
+        c = c + 1;
+    }
+    let mut d: i64 = 0;
+    while d < 32 {
+        __mind_store_i8(outer_in + 64 + d, __mind_load_i8(inner_hash + d));
+        d = d + 1;
+    }
+    sha256(outer_in, 96, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// HKDF-Extract (RFC 5869 §2.2):
+//   PRK = HMAC-SHA256(salt, IKM)
+// If salt is empty, HMAC's zero-padding of an empty key to 64 zero bytes is
+// exactly HMAC with a HashLen-zero salt, so passing salt_len = 0 is correct.
+// Writes the 32-byte PRK to prk_out.
+// ---------------------------------------------------------------------------
+
+pub fn hkdf_extract(
+    salt_addr: i64,
+    salt_len: i64,
+    ikm_addr: i64,
+    ikm_len: i64,
+    prk_out: i64,
+) -> i64 {
+    hmac_sha256(salt_addr, salt_len, ikm_addr, ikm_len, prk_out);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// HKDF-Expand (RFC 5869 §2.3):
+//   N = ceil(L / HashLen)
+//   T(0) = empty
+//   T(i) = HMAC(PRK, T(i-1) || info || i)   for i = 1..N   (i is one byte)
+//   OKM  = first L bytes of T(1) || T(2) || ... || T(N)
+// prk_len is the PRK length (32 for HKDF-Extract output).  L <= 255*32.
+// Writes L bytes to okm_out.
+// ---------------------------------------------------------------------------
+
+pub fn hkdf_expand(
+    prk_addr: i64,
+    prk_len: i64,
+    info_addr: i64,
+    info_len: i64,
+    length: i64,
+    okm_out: i64,
+) -> i64 {
+    let n: i64 = (length + 31) / 32;
+
+    // Previous T block (T(i-1)); empty on the first iteration.
+    let tprev: i64 = __mind_alloc(32);
+    let mut tprev_len: i64 = 0;
+
+    // HMAC input buffer: T(i-1) (<=32) || info || counter byte (1).
+    let tin: i64 = __mind_alloc(32 + info_len + 1);
+    let tcur: i64 = __mind_alloc(32);
+
+    let mut written: i64 = 0;
+    let mut i: i64 = 1;
+    while i <= n {
+        // Build the HMAC input: T(i-1) || info || counter byte.
+        // Byte-copy loops are factored into mem_copy so this loop body holds
+        // no sibling inner `while`s (compiler block-namer limitation).
+        mem_copy(tin, tprev, tprev_len);
+        mem_copy(tin + tprev_len, info_addr, info_len);
+        let p: i64 = tprev_len + info_len;
+        __mind_store_i8(tin + p, i & 255);
+
+        hmac_sha256(prk_addr, prk_len, tin, p + 1, tcur);
+
+        // Append T(i) to the output, truncating the last block to L total.
+        let remaining: i64 = length - written;
+        let tocopy: i64 = if remaining < 32 { remaining } else { 32 };
+        mem_copy(okm_out + written, tcur, tocopy);
+        written = written + tocopy;
+
+        // T(i) becomes T(i-1) for the next round.
+        mem_copy(tprev, tcur, 32);
+        tprev_len = 32;
+        i = i + 1;
+    }
+    0
+}
