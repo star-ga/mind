@@ -5445,12 +5445,33 @@ pub fn collect_expr_strings(strbuf: i64, offs: i64, ccell: i64, src: i64, node: 
         if else_blk != 0 {
             let re: i64 = collect_block_strings(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
         }
-        // branch_bindings = then-block lets THEN else-block lets (the fill_binds_block /
-        // lower.rs merged_names order). An if-EXPRESSION's else-branch lets ALSO escape,
-        // so intern both. else block is empty for if-STATEMENTS -> no-op, byte-identical.
-        let rtl: i64 = intern_leading_let_names(strbuf, offs, ccell, src, then_sa, then_sl, 0);
+        // branch_bindings names = merged_names = then-WRITES ++ else-WRITES (deduped,
+        // first-occurrence order; lower.rs 4203-4208). A "write" is a branch-local `let`
+        // OR an `Assign` to an outer var (in source order). The old pass interned only
+        // leading LETS; an if-else STATEMENT whose branches ASSIGN loop-carried vars (the
+        // `if C { i=i+1 } else { ok=0; i=n }` shape inside a while) also merges those
+        // assign-targets, so their names must intern here too (matching Rust's
+        // branch_bindings). Superset of the let-only behavior: for let-only branches it
+        // interns exactly then-lets ++ else-lets (identical bytes).
+        let wn_buf: i64 = __mind_alloc((then_sl + 1) * 24);
+        let wn_cell: i64 = __mind_alloc(8);
+        __mind_store_i64(wn_cell, 0);
+        let _w1: i64 = collect_branch_write_names(then_sa, then_sl, src, wn_buf, wn_cell, 0);
+        let then_wn: i64 = __mind_load_i64(wn_cell);
+        let _it: i64 = intern_name_span_buf(strbuf, offs, ccell, src, wn_buf, then_wn, 0);
         if else_blk != 0 {
-            return intern_leading_let_names(strbuf, offs, ccell, src, ast_child0(else_blk), ast_aux(else_blk), 0);
+            let else_sa2: i64 = ast_child0(else_blk);
+            let else_sl2: i64 = ast_aux(else_blk);
+            let wn_buf2: i64 = __mind_alloc((then_sl + else_sl2 + 1) * 24);
+            let wn_cell2: i64 = __mind_alloc(8);
+            __mind_store_i64(wn_cell2, 0);
+            // Rebuild then-writes into wn_buf2 first so else-writes dedup against them,
+            // then append else-writes; intern ONLY the new (else) names in order.
+            let _w2a: i64 = collect_branch_write_names(then_sa, then_sl, src, wn_buf2, wn_cell2, 0);
+            let base_wn: i64 = __mind_load_i64(wn_cell2);
+            let _w2b: i64 = collect_branch_write_names(else_sa2, else_sl2, src, wn_buf2, wn_cell2, 0);
+            let total_wn: i64 = __mind_load_i64(wn_cell2);
+            return intern_name_span_buf(strbuf, offs, ccell, src, wn_buf2, total_wn, base_wn);
         }
         return 0;
     }
@@ -5528,6 +5549,46 @@ pub fn intern_leading_let_names(strbuf: i64, offs: i64, ccell: i64, src: i64, st
     let name: i64 = ast_child0(stmt);
     let ni: i64 = intern_span(strbuf, offs, ccell, src, ast_span_lo(name), ast_span_hi(name));
     intern_leading_let_names(strbuf, offs, ccell, src, stmts_addr, stmts_len, i + 1)
+}
+
+// Collect a branch's WRITE-target names (each `let` name AND each `Assign` target) in
+// source order, deduped against names already in the 24-byte `out` buffer (span records
+// [lo,hi]); `ncell` holds the running count. Mirrors lower.rs then_writes/else_writes.
+pub fn collect_branch_write_names(sa: i64, sl: i64, src: i64, out: i64, ncell: i64, i: i64) -> i64 {
+    if i >= sl {
+        return __mind_load_i64(ncell);
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let k: i64 = ast_kind(stmt);
+    if k == ast_let() {
+        let _a: i64 = collect_bwn_add(out, ncell, src, ast_child0(stmt));
+    }
+    if k == ast_assign() {
+        let _a: i64 = collect_bwn_add(out, ncell, src, ast_child0(stmt));
+    }
+    collect_branch_write_names(sa, sl, src, out, ncell, i + 1)
+}
+
+// Append name-node's (lo,hi) span to `out` if not already present (dedup).
+pub fn collect_bwn_add(out: i64, ncell: i64, src: i64, name: i64) -> i64 {
+    let lo: i64 = ast_span_lo(name);
+    let hi: i64 = ast_span_hi(name);
+    let n: i64 = __mind_load_i64(ncell);
+    if while_if_name_find(out, n, src, lo, hi, 0) < 0 {
+        __mind_store_i64(out + n * 24 + 0, lo);
+        __mind_store_i64(out + n * 24 + 8, hi);
+        __mind_store_i64(ncell, n + 1)
+    }
+    0
+}
+
+// Intern span records out[start..n) (24-byte [lo,hi] records) in order.
+pub fn intern_name_span_buf(strbuf: i64, offs: i64, ccell: i64, src: i64, out: i64, n: i64, start: i64) -> i64 {
+    if start >= n {
+        return 0;
+    }
+    let _ni: i64 = intern_span(strbuf, offs, ccell, src, __mind_load_i64(out + start * 24 + 0), __mind_load_i64(out + start * 24 + 8));
+    intern_name_span_buf(strbuf, offs, ccell, src, out, n, start + 1)
 }
 
 // Intern the loop-carried (live_var) NAMES of a while body: each Assign target that is
@@ -18160,6 +18221,390 @@ pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -
 // loop EXIT id, guaranteeing SSA dominance (lower.rs region_exit_rebindings).
 // ===========================================================================
 
+// ===========================================================================
+// IF-ELSE STATEMENT (assign-branches) INSIDE A WHILE BODY — mic@3 OP_IF with
+// loop-carried merges. Handles `if C { NAME = E; .. } else { NAME = E; .. }`
+// where every branch statement is an `Assign` to a name already bound in the
+// enclosing while-body env (a loop-carried outer let or an earlier body-local
+// let). Mirrors lower.rs Node::If (3865-4311): a synthetic ConstI64(0) leads
+// each branch; both branches fall through; the merge set = then-writes ++
+// else-writes (deduped, first-occurrence order); a merged name's per-branch
+// value is that branch's post-walk env binding (the incoming value when the
+// branch does not write it — NO placeholder, since the name is pre-bound); merge
+// ids + dst are allocated AFTER both branch id spaces. Byte-exact vs emit_mic3's
+// OP_IF arm (0x1c). Fails closed on any non-assign / unknown-target statement.
+// ===========================================================================
+
+// Every stmt in a branch is an Assign whose target name is bound in `benv`?
+pub fn while_if_branch_all_assigns(sa: i64, sl: i64, buf: i64, benv: i64, nlv: i64, i: i64) -> i64 {
+    if i >= sl {
+        return 1;
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    if ast_kind(stmt) != ast_assign() {
+        return 0;
+    }
+    let name: i64 = ast_child0(stmt);
+    let slot: i64 = lvenv_index_of(buf, ast_span_lo(name), ast_span_hi(name), benv, nlv);
+    if slot < 0 {
+        return 0;
+    }
+    while_if_branch_all_assigns(sa, sl, buf, benv, nlv, i + 1)
+}
+
+// Find (lo,hi) in a 24-byte name buffer of length n; -1 if absent.
+pub fn while_if_name_find(out: i64, n: i64, buf: i64, lo: i64, hi: i64, i: i64) -> i64 {
+    if i >= n {
+        return 0 - 1;
+    }
+    if span_bytes_equal2(buf, lo, hi, buf, __mind_load_i64(out + i * 24 + 0), __mind_load_i64(out + i * 24 + 8)) == 1 {
+        return i;
+    }
+    while_if_name_find(out, n, buf, lo, hi, i + 1)
+}
+
+// Append each branch assign-target name (deduped) into the 24-byte `out` buffer;
+// `ncell` holds the running count. Called for the then branch then the else branch
+// so `out` ends up = then-writes ++ else-writes (first-occurrence order).
+pub fn while_if_collect_names(sa: i64, sl: i64, buf: i64, out: i64, ncell: i64, i: i64) -> i64 {
+    if i >= sl {
+        return __mind_load_i64(ncell);
+    }
+    let stmt: i64 = __mind_load_i64(sa + i * 8);
+    let name: i64 = ast_child0(stmt);
+    let lo: i64 = ast_span_lo(name);
+    let hi: i64 = ast_span_hi(name);
+    let n: i64 = __mind_load_i64(ncell);
+    if while_if_name_find(out, n, buf, lo, hi, 0) < 0 {
+        __mind_store_i64(out + n * 24 + 0, lo);
+        __mind_store_i64(out + n * 24 + 8, hi);
+        __mind_store_i64(ncell, n + 1)
+    }
+    while_if_collect_names(sa, sl, buf, out, ncell, i + 1)
+}
+
+// PURE branch walk: flatten each assign RHS at the threaded base, rebind the
+// branch env, record the last root into result_cell, advance base_cell. Returns
+// the end base (one past the branch's last instr). -1 / okcell=0 on a wall.
+pub fn while_if_layout_branch(sa: i64, sl: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, benv: i64, nlv: i64, result_cell: i64, okcell: i64) -> i64 {
+    if idx >= sl {
+        return __mind_load_i64(base_cell);
+    }
+    if __mind_load_i64(okcell) == 0 {
+        return 0 - 1;
+    }
+    let stmt: i64 = __mind_load_i64(sa + idx * 8);
+    let name: i64 = ast_child0(stmt);
+    let rhs: i64 = ast_child2(stmt);
+    let cur: i64 = __mind_load_i64(base_cell);
+    let root: i64 = flatten_branch_lv(rhs, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur, benv, nlv);
+    if root < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0 - 1;
+    }
+    let nn: i64 = count_nonparam_nodes_lv(rhs, buf, params_addr, n_params, benv, nlv);
+    if nn < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0 - 1;
+    }
+    let slot: i64 = lvenv_index_of(buf, ast_span_lo(name), ast_span_hi(name), benv, nlv);
+    if slot < 0 {
+        __mind_store_i64(okcell, 0);
+        return 0 - 1;
+    }
+    __mind_store_i64(benv + slot * 24 + 16, root);
+    __mind_store_i64(result_cell, root);
+    __mind_store_i64(base_cell, cur + nn);
+    while_if_layout_branch(sa, sl, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, benv, nlv, result_cell, okcell)
+}
+
+// Fill per-merge 40-byte records M[k] = (lo, hi, merge_id, then_val, else_val).
+pub fn while_if_fill_merges(m: i64, names: i64, n: i64, else_end: i64, buf: i64, tenv: i64, eenv: i64, nlv: i64, k: i64) -> i64 {
+    if k >= n {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(names + k * 24 + 0);
+    let hi: i64 = __mind_load_i64(names + k * 24 + 8);
+    __mind_store_i64(m + k * 40 + 0, lo);
+    __mind_store_i64(m + k * 40 + 8, hi);
+    __mind_store_i64(m + k * 40 + 16, else_end + k);
+    __mind_store_i64(m + k * 40 + 24, lvenv_lookup(buf, lo, hi, tenv, nlv, 0));
+    __mind_store_i64(m + k * 40 + 32, lvenv_lookup(buf, lo, hi, eenv, nlv, 0));
+    while_if_fill_merges(m, names, n, else_end, buf, tenv, eenv, nlv, k + 1)
+}
+
+// PURE layout of the if-else assign-merge shape. Fills L[0..9] scalar cells and the
+// 40-byte merge buffer M. Returns 1 on success, 0 (fail-closed) on any unsupported shape.
+//   L+0 cond_id  L+8 cond_n  L+16 then_synth(=after_cond)  L+24 then_end  L+32 then_result
+//   L+40 else_synth  L+48 else_end  L+56 else_result  L+64 n_merged  L+72 dst
+pub fn while_if_layout(if_node: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, wenv: i64, wnlv: i64, l: i64, m: i64) -> i64 {
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    if else_blk == 0 {
+        return 0;
+    }
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+    if then_sl < 1 {
+        return 0;
+    }
+    if else_sl < 1 {
+        return 0;
+    }
+    if while_if_branch_all_assigns(then_sa, then_sl, buf, wenv, wnlv, 0) != 1 {
+        return 0;
+    }
+    if while_if_branch_all_assigns(else_sa, else_sl, buf, wenv, wnlv, 0) != 1 {
+        return 0;
+    }
+    let cond_expr: i64 = ast_child0(if_node);
+    let cnodes: i64 = __mind_alloc(256 * 32);
+    let ccursor: i64 = __mind_alloc(8);
+    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let cond_id: i64 = flatten_branch_lv(cond_expr, buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, wenv, wnlv);
+    if cond_id < 0 {
+        return 0;
+    }
+    let cond_n: i64 = count_nonparam_nodes_lv(cond_expr, buf, params_addr, n_params, wenv, wnlv);
+    if cond_n < 0 {
+        return 0;
+    }
+    let after_cond: i64 = base0 + cond_n;
+    let bnodes: i64 = __mind_alloc(256 * 32);
+    let bcursor: i64 = __mind_alloc(8);
+    let bvidbuf: i64 = __mind_alloc(256 * 8);
+    // THEN branch.
+    let tenv: i64 = __mind_alloc((wnlv + 1) * 24);
+    let _tc: i64 = lvenv_copy(tenv, wenv, wnlv, 0);
+    let tbase: i64 = __mind_alloc(8);
+    __mind_store_i64(tbase, after_cond + 1);
+    let tresult: i64 = __mind_alloc(8);
+    __mind_store_i64(tresult, after_cond);
+    let tok: i64 = __mind_alloc(8);
+    __mind_store_i64(tok, 1);
+    let then_end: i64 = while_if_layout_branch(then_sa, then_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, tbase, tenv, wnlv, tresult, tok);
+    if __mind_load_i64(tok) == 0 {
+        return 0;
+    }
+    // ELSE branch.
+    let else_synth: i64 = then_end;
+    let eenv: i64 = __mind_alloc((wnlv + 1) * 24);
+    let _ec: i64 = lvenv_copy(eenv, wenv, wnlv, 0);
+    let ebase: i64 = __mind_alloc(8);
+    __mind_store_i64(ebase, else_synth + 1);
+    let eresult: i64 = __mind_alloc(8);
+    __mind_store_i64(eresult, else_synth);
+    let eok: i64 = __mind_alloc(8);
+    __mind_store_i64(eok, 1);
+    let else_end: i64 = while_if_layout_branch(else_sa, else_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, ebase, eenv, wnlv, eresult, eok);
+    if __mind_load_i64(eok) == 0 {
+        return 0;
+    }
+    // Merge set = then-writes ++ else-writes (deduped).
+    let names: i64 = __mind_alloc((then_sl + else_sl + 1) * 24);
+    let ncell: i64 = __mind_alloc(8);
+    __mind_store_i64(ncell, 0);
+    let _cn1: i64 = while_if_collect_names(then_sa, then_sl, buf, names, ncell, 0);
+    let _cn2: i64 = while_if_collect_names(else_sa, else_sl, buf, names, ncell, 0);
+    let n_merged: i64 = __mind_load_i64(ncell);
+    let _fm: i64 = while_if_fill_merges(m, names, n_merged, else_end, buf, tenv, eenv, wnlv, 0);
+    let dst: i64 = else_end + n_merged;
+    __mind_store_i64(l + 0, cond_id);
+    __mind_store_i64(l + 8, cond_n);
+    __mind_store_i64(l + 16, after_cond);
+    __mind_store_i64(l + 24, then_end);
+    __mind_store_i64(l + 32, __mind_load_i64(tresult));
+    __mind_store_i64(l + 40, else_synth);
+    __mind_store_i64(l + 48, else_end);
+    __mind_store_i64(l + 56, __mind_load_i64(eresult));
+    __mind_store_i64(l + 64, n_merged);
+    __mind_store_i64(l + 72, dst);
+    1
+}
+
+// EMIT branch: re-flatten each assign RHS at the threaded base and emit its instr
+// tree; rebind the branch env; advance base. Mirrors while_if_layout_branch's walk.
+pub fn while_if_emit_branch(s: EmitState, sa: i64, sl: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, benv: i64, nlv: i64, strbuf: i64, offs: i64, ncount: i64, okcell: i64) -> EmitState {
+    if idx >= sl {
+        return s;
+    }
+    if __mind_load_i64(okcell) == 0 {
+        return s;
+    }
+    let stmt: i64 = __mind_load_i64(sa + idx * 8);
+    let name: i64 = ast_child0(stmt);
+    let rhs: i64 = ast_child2(stmt);
+    let cur: i64 = __mind_load_i64(base_cell);
+    let root: i64 = flatten_branch_lv(rhs, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, cur, benv, nlv);
+    if root < 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let nn: i64 = count_nonparam_nodes_lv(rhs, buf, params_addr, n_params, benv, nlv);
+    let nodes_n: i64 = __mind_load_i64(wcursor);
+    let s1: EmitState = emit_mic3_tree_body(s, wnodes, nodes_n, wvidbuf, buf, strbuf, offs, ncount, 0);
+    let slot: i64 = lvenv_index_of(buf, ast_span_lo(name), ast_span_hi(name), benv, nlv);
+    __mind_store_i64(benv + slot * 24 + 16, root);
+    __mind_store_i64(base_cell, cur + nn);
+    while_if_emit_branch(s1, sa, sl, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, benv, nlv, strbuf, offs, ncount, okcell)
+}
+
+// Emit the merge `branch_bindings` (name_idx, merge_id) pairs from M.
+pub fn while_if_emit_bindings(s: EmitState, m: i64, n: i64, strbuf: i64, offs: i64, ncount: i64, buf: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let nidx: i64 = intern_find(strbuf, offs, ncount, buf, __mind_load_i64(m + i * 40 + 0), __mind_load_i64(m + i * 40 + 8), 0);
+    let s1: EmitState = emit_uleb128(s, nidx);
+    let s2: EmitState = emit_uleb128(s1, __mind_load_i64(m + i * 40 + 16));
+    while_if_emit_bindings(s2, m, n, strbuf, offs, ncount, buf, i + 1)
+}
+
+// Emit the merge triples (merge_id, then_val, else_val) from M.
+pub fn while_if_emit_merges(s: EmitState, m: i64, n: i64, i: i64) -> EmitState {
+    if i >= n {
+        return s;
+    }
+    let s1: EmitState = emit_uleb128(s, __mind_load_i64(m + i * 40 + 16));
+    let s2: EmitState = emit_uleb128(s1, __mind_load_i64(m + i * 40 + 24));
+    let s3: EmitState = emit_uleb128(s2, __mind_load_i64(m + i * 40 + 32));
+    while_if_emit_merges(s3, m, n, i + 1)
+}
+
+// Copy (lo, hi, merge_id) from M into a 24-byte overlay buffer for the caller.
+pub fn while_if_merge_out(dst: i64, m: i64, n: i64, i: i64) -> i64 {
+    if i >= n {
+        return n;
+    }
+    __mind_store_i64(dst + i * 24 + 0, __mind_load_i64(m + i * 40 + 0));
+    __mind_store_i64(dst + i * 24 + 8, __mind_load_i64(m + i * 40 + 8));
+    __mind_store_i64(dst + i * 24 + 16, __mind_load_i64(m + i * 40 + 16));
+    while_if_merge_out(dst, m, n, i + 1)
+}
+
+// Emit ONE OP_IF for the assign-branch if-else at `base0`. Fills merge_out (24-byte
+// name/merge_id overlay) + nmerge_cell + endbase_cell (= dst+1). okcell=0 on a wall.
+pub fn emit_while_if_assign(s: EmitState, if_node: i64, buf: i64, params_addr: i64, n_params: i64, base0: i64, wenv: i64, wnlv: i64, strbuf: i64, offs: i64, ncount: i64, merge_out: i64, nmerge_cell: i64, endbase_cell: i64, okcell: i64) -> EmitState {
+    let l: i64 = __mind_alloc(16 * 8);
+    let m: i64 = __mind_alloc(256 * 40);
+    if while_if_layout(if_node, buf, params_addr, n_params, base0, wenv, wnlv, l, m) == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let cond_id: i64 = __mind_load_i64(l + 0);
+    let cond_n: i64 = __mind_load_i64(l + 8);
+    let then_synth: i64 = __mind_load_i64(l + 16);
+    let then_end: i64 = __mind_load_i64(l + 24);
+    let then_result: i64 = __mind_load_i64(l + 32);
+    let else_synth: i64 = __mind_load_i64(l + 40);
+    let else_end: i64 = __mind_load_i64(l + 48);
+    let else_result: i64 = __mind_load_i64(l + 56);
+    let n_merged: i64 = __mind_load_i64(l + 64);
+    let dst: i64 = __mind_load_i64(l + 72);
+    let then_len: i64 = 1 + (then_end - (then_synth + 1));
+    let else_len: i64 = 1 + (else_end - (else_synth + 1));
+    let then_blk: i64 = ast_child1(if_node);
+    let else_blk: i64 = ast_child2(if_node);
+    let then_sa: i64 = ast_child0(then_blk);
+    let then_sl: i64 = ast_aux(then_blk);
+    let else_sa: i64 = ast_child0(else_blk);
+    let else_sl: i64 = ast_aux(else_blk);
+    // OP_IF header + cond.
+    let cnodes: i64 = __mind_alloc(256 * 32);
+    let ccursor: i64 = __mind_alloc(8);
+    let cvidbuf: i64 = __mind_alloc(256 * 8);
+    let _cid: i64 = flatten_branch_lv(ast_child0(if_node), buf, params_addr, n_params, cnodes, ccursor, cvidbuf, base0, wenv, wnlv);
+    let cond_emit_n: i64 = __mind_load_i64(ccursor);
+    let s1: EmitState = es_push(s, 28);
+    let s2: EmitState = emit_uleb128(s1, cond_id);
+    let s3: EmitState = emit_uleb128(s2, cond_n);
+    let s4: EmitState = emit_mic3_tree_body(s3, cnodes, cond_emit_n, cvidbuf, buf, strbuf, offs, ncount, 0);
+    // THEN block.
+    let s5: EmitState = emit_uleb128(s4, then_len);
+    let s6: EmitState = emit_mic3_const_i64(s5, then_synth, 0);
+    let tenv2: i64 = __mind_alloc((wnlv + 1) * 24);
+    let _tc2: i64 = lvenv_copy(tenv2, wenv, wnlv, 0);
+    let bnodes: i64 = __mind_alloc(256 * 32);
+    let bcursor: i64 = __mind_alloc(8);
+    let bvidbuf: i64 = __mind_alloc(256 * 8);
+    let tbase: i64 = __mind_alloc(8);
+    __mind_store_i64(tbase, then_synth + 1);
+    let tok: i64 = __mind_alloc(8);
+    __mind_store_i64(tok, 1);
+    let s7: EmitState = while_if_emit_branch(s6, then_sa, then_sl, 0, buf, params_addr, n_params, bnodes, bcursor, bvidbuf, tbase, tenv2, wnlv, strbuf, offs, ncount, tok);
+    if __mind_load_i64(tok) == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let s8: EmitState = emit_uleb128(s7, then_result);
+    // ELSE block.
+    let s9: EmitState = emit_uleb128(s8, else_len);
+    let s10: EmitState = emit_mic3_const_i64(s9, else_synth, 0);
+    let eenv2: i64 = __mind_alloc((wnlv + 1) * 24);
+    let _ec2: i64 = lvenv_copy(eenv2, wenv, wnlv, 0);
+    let ebnodes: i64 = __mind_alloc(256 * 32);
+    let ebcursor: i64 = __mind_alloc(8);
+    let ebvidbuf: i64 = __mind_alloc(256 * 8);
+    let ebase: i64 = __mind_alloc(8);
+    __mind_store_i64(ebase, else_synth + 1);
+    let eok: i64 = __mind_alloc(8);
+    __mind_store_i64(eok, 1);
+    let s11: EmitState = while_if_emit_branch(s10, else_sa, else_sl, 0, buf, params_addr, n_params, ebnodes, ebcursor, ebvidbuf, ebase, eenv2, wnlv, strbuf, offs, ncount, eok);
+    if __mind_load_i64(eok) == 0 {
+        __mind_store_i64(okcell, 0);
+        return s;
+    }
+    let s12: EmitState = emit_uleb128(s11, else_result);
+    let s13: EmitState = emit_uleb128(s12, dst);
+    // branch_bindings + merges.
+    let s14: EmitState = emit_uleb128(s13, n_merged);
+    let s15: EmitState = while_if_emit_bindings(s14, m, n_merged, strbuf, offs, ncount, buf, 0);
+    let s16: EmitState = emit_uleb128(s15, n_merged);
+    let s17: EmitState = while_if_emit_merges(s16, m, n_merged, 0);
+    if merge_out != 0 {
+        let _mo: i64 = while_if_merge_out(merge_out, m, n_merged, 0);
+        __mind_store_i64(nmerge_cell, n_merged)
+    }
+    __mind_store_i64(endbase_cell, dst + 1);
+    __mind_store_i64(okcell, 1);
+    s17
+}
+
+// MEASURE-side: record each merged name as loop-carried (if a pre-loop var) then
+// rebind wenv[name] -> merge_id, so later statements + the while live_vars see it.
+pub fn while_if_record_merges(m: i64, n: i64, pre_nlv: i64, lv: i64, init: i64, nlv_w_cell: i64, wenv: i64, wnlv: i64, buf: i64, k: i64) -> i64 {
+    if k >= n {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(m + k * 24 + 0);
+    let hi: i64 = __mind_load_i64(m + k * 24 + 8);
+    let mid: i64 = __mind_load_i64(m + k * 24 + 16);
+    let slot: i64 = lvenv_index_of(buf, lo, hi, wenv, wnlv);
+    if slot >= 0 {
+        let pre_vid: i64 = __mind_load_i64(wenv + slot * 24 + 16);
+        let _rc: i64 = while_record_carry(slot, pre_nlv, lv, init, nlv_w_cell, buf, lo, hi, mid, pre_vid);
+        __mind_store_i64(wenv + slot * 24 + 16, mid)
+    }
+    while_if_record_merges(m, n, pre_nlv, lv, init, nlv_w_cell, wenv, wnlv, buf, k + 1)
+}
+
+// EMIT-side: rebind wenv[name] -> merge_id for each merged name.
+pub fn while_if_rebind(m: i64, n: i64, wenv: i64, wnlv: i64, buf: i64, k: i64) -> i64 {
+    if k >= n {
+        return n;
+    }
+    let lo: i64 = __mind_load_i64(m + k * 24 + 0);
+    let hi: i64 = __mind_load_i64(m + k * 24 + 8);
+    let mid: i64 = __mind_load_i64(m + k * 24 + 16);
+    let slot: i64 = lvenv_index_of(buf, lo, hi, wenv, wnlv);
+    if slot >= 0 {
+        __mind_store_i64(wenv + slot * 24 + 16, mid)
+    }
+    while_if_rebind(m, n, wenv, wnlv, buf, k + 1)
+}
+
 // Walk one while-body statement, threading the body lv-env + base + (in emit mode)
 // the EmitState. `mode`: 0 = MEASURE (no bytes; learn live_vars/body_len/post-vids),
 // 1 = EMIT. Records loop-carried vars into the 24-byte `lv` buffer (name_lo, name_hi,
@@ -18177,6 +18622,7 @@ pub fn selftest_mic3_while_count(buf: i64, offs: i64, op_byte: i64, incr: i64) -
 //                      records init_id + live_var; later just updates post.
 //   Let            -> body-local SSA binding (NOT carried).
 //   bare call/expr -> side-effect instr (no binding).
+//   if-else assign-branches -> ONE nested OP_IF with loop-carried merges.
 pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_addr: i64, n_params: i64, wnodes: i64, wcursor: i64, wvidbuf: i64, base_cell: i64, wenv: i64, wnlv_cell: i64, pre_nlv: i64, lv: i64, init: i64, nlv_w_cell: i64, body_len_cell: i64, okcell: i64) -> i64 {
     if idx >= n {
         return 1;
@@ -18187,6 +18633,26 @@ pub fn while_body_measure(stmts_addr: i64, n: i64, idx: i64, buf: i64, params_ad
     let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
     let wnlv: i64 = __mind_load_i64(wnlv_cell);
     let cur_base: i64 = __mind_load_i64(base_cell);
+    // if-else STATEMENT (assign-branches) -> ONE nested OP_IF with loop-carried merges.
+    // Pure layout (no bytes): learn the merge set + dst, record carried vars, rebind wenv,
+    // advance base to dst+1, count the OP_IF as ONE body instr.
+    if ast_kind(stmt) == ast_if() {
+        let if_l: i64 = __mind_alloc(16 * 8);
+        let if_m: i64 = __mind_alloc(256 * 40);
+        if while_if_layout(stmt, buf, params_addr, n_params, cur_base, wenv, wnlv, if_l, if_m) == 0 {
+            __mind_store_i64(okcell, 0);
+            return 0;
+        }
+        let if_nm: i64 = __mind_load_i64(if_l + 64);
+        let if_dst: i64 = __mind_load_i64(if_l + 72);
+        // Copy (lo,hi,merge_id) from the 40-byte layout records to 24-byte overlay records.
+        let if_ov: i64 = __mind_alloc((if_nm + 1) * 24);
+        let _ov: i64 = while_if_merge_out(if_ov, if_m, if_nm, 0);
+        let _rm: i64 = while_if_record_merges(if_ov, if_nm, pre_nlv, lv, init, nlv_w_cell, wenv, wnlv, buf, 0);
+        __mind_store_i64(base_cell, if_dst + 1);
+        __mind_store_i64(body_len_cell, __mind_load_i64(body_len_cell) + 1);
+        return while_body_measure(stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, pre_nlv, lv, init, nlv_w_cell, body_len_cell, okcell);
+    }
     if ast_kind(stmt) == ast_assign() {
         let name: i64 = ast_child0(stmt);
         let rhs: i64 = ast_child2(stmt);
@@ -18288,6 +18754,22 @@ pub fn while_body_emit(s: EmitState, stmts_addr: i64, n: i64, idx: i64, buf: i64
     let stmt: i64 = __mind_load_i64(stmts_addr + idx * 8);
     let wnlv: i64 = __mind_load_i64(wnlv_cell);
     let cur_base: i64 = __mind_load_i64(base_cell);
+    // if-else STATEMENT (assign-branches) -> ONE nested OP_IF with loop-carried merges.
+    if ast_kind(stmt) == ast_if() {
+        let if_ov: i64 = __mind_alloc(256 * 24);
+        let if_nm: i64 = __mind_alloc(8);
+        let if_end: i64 = __mind_alloc(8);
+        let if_ok: i64 = __mind_alloc(8);
+        __mind_store_i64(if_ok, 1);
+        let sif: EmitState = emit_while_if_assign(s, stmt, buf, params_addr, n_params, cur_base, wenv, wnlv, strbuf, offs, ncount, if_ov, if_nm, if_end, if_ok);
+        if __mind_load_i64(if_ok) == 0 {
+            __mind_store_i64(okcell, 0);
+            return s;
+        }
+        let _rb: i64 = while_if_rebind(if_ov, __mind_load_i64(if_nm), wenv, wnlv, buf, 0);
+        __mind_store_i64(base_cell, __mind_load_i64(if_end));
+        return while_body_emit(sif, stmts_addr, n, idx + 1, buf, params_addr, n_params, wnodes, wcursor, wvidbuf, base_cell, wenv, wnlv_cell, strbuf, offs, ncount, okcell);
+    }
     if ast_kind(stmt) == ast_assign() {
         let name: i64 = ast_child0(stmt);
         let rhs: i64 = ast_child2(stmt);
