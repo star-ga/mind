@@ -3064,6 +3064,29 @@ fn lower_expr(
                     return id;
                 }
             }
+            // Fail-closed: a qualified `Enum::Variant` path whose HEAD names a
+            // known enum but which is NOT a registered variant is an unknown-
+            // variant typo the front-end should have rejected (E2008). If one
+            // reaches lowering it would silently fold to discriminant tag 0 (the
+            // Blocker-2 miscompile). Panic in ALL builds — never emit the tag-0
+            // placeholder for it — so any future gap in the front-end check is
+            // loud, not a wrong-answer artifact.
+            #[cfg(feature = "std-surface")]
+            if let Some((head, _)) = name.split_once("::") {
+                let head_prefix = format!("{head}::");
+                if ir
+                    .enum_variant_tags
+                    .keys()
+                    .any(|k| k.starts_with(&head_prefix))
+                {
+                    panic!(
+                        "unknown variant in `{name}`: `{head}` is a known enum but \
+                         `{name}` is not one of its variants — refusing to lower it \
+                         to discriminant tag 0 (a silent miscompile). This should \
+                         have been caught as E2008 during type-checking."
+                    );
+                }
+            }
             // Undefined — emit placeholder.
             #[cfg(debug_assertions)]
             eprintln!("[WARN] lower_expr: undefined identifier `{name}`, defaulting to 0");

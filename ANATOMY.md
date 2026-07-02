@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2984 | **Est. tokens:** ~7,169,640
-**Generated:** 2026-07-02 12:30 UTC
+**Files:** 2988 | **Est. tokens:** ~7,175,964
+**Generated:** 2026-07-02 13:32 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 16 | ~33,871 |
+| `examples/` | 17 | ~34,963 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -402,11 +402,11 @@
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
 | `src/test/` | 1 | ~5,999 |
-| `src/type_checker/` | 1 | ~8,655 |
+| `src/type_checker/` | 1 | ~10,252 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~178,669 |
-| `tests/` | 262 | ~440,281 |
+| `tests/` | 263 | ~442,731 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -421,6 +421,7 @@
 | `tests/cross_substrate_identity/gemm-q16-fused-64x64x64/` | 2 | ~838 |
 | `tests/cross_substrate_identity/gemv-i16-256x256/` | 2 | ~536 |
 | `tests/cross_substrate_identity/gemv-q16-256x256/` | 2 | ~461 |
+| `tests/cross_substrate_identity/lorenz-q16/` | 2 | ~1,185 |
 | `tests/cross_substrate_identity/q16-arith-chain/` | 2 | ~730 |
 | `tests/cross_substrate_identity/scalar-float-f64/` | 2 | ~1,238 |
 | `tests/cross_substrate_identity/struct-handle-roundtrip/` | 2 | ~688 |
@@ -752,6 +753,9 @@
 - `fixture.mind` (~67 tok, small) — Phase 6.1 lexer smoke fixture.
 - `main.mind` (~2461 tok, huge) — examples/lexer/main.mind — RFC 0005 Phase 6.1 self-host smoke
 - `README.md` (~969 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
+### `examples/`
+
+- `lorenz_q16.mind` (~1092 tok, large) — Deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler).
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
@@ -3865,7 +3869,7 @@
 - `mod.rs` (~5999 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/type_checker/`
 
-- `resolve.rs` (~8655 tok, huge) — Copyright 2025 STARGA Inc.
+- `resolve.rs` (~10252 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/types/`
 
 - `infer.rs` (~448 tok, medium) — Copyright 2025 STARGA Inc.
@@ -4020,6 +4024,10 @@
 
 - `manifest.toml` (~310 tok, medium) — version = "1"
 - `reference_hashes.toml` (~151 tok, small) — avx2 = "dfdf890874472ee369da524955995889c39bc6da770e4e2b1d0d69315e17611a"
+### `tests/cross_substrate_identity/lorenz-q16/`
+
+- `manifest.toml` (~681 tok, large) — version = "1"
+- `reference_hashes.toml` (~504 tok, large) — avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
 ### `tests/cross_substrate_identity/q16-arith-chain/`
 
 - `manifest.toml` (~432 tok, medium) — version = "1"
@@ -4029,7 +4037,7 @@
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~12755 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~14168 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"
@@ -4472,6 +4480,7 @@
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_struct_run.rs` (~628 tok, large) — Copyright 2025 STARGA Inc.
+- `typo_reject.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~813 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.

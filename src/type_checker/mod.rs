@@ -3757,7 +3757,32 @@ pub fn check_module_types_in_file(
                 }
                 let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
                 for u in resolve::resolve_fn_body(body, &param_names, module, &injected) {
-                    let (msg, code) = if u.is_call {
+                    let (msg, code) = if let Some(enum_name) = &u.variant_of {
+                        // Unknown variant of a locally-declared enum. `u.name` is
+                        // the full `Enum::Variant` path; show just the variant.
+                        let variant = u
+                            .name
+                            .rsplit_once("::")
+                            .map(|(_, v)| v)
+                            .unwrap_or(u.name.as_str());
+                        let hint = match &u.suggestion {
+                            Some(s) => format!(" — did you mean `{s}`?"),
+                            None => String::new(),
+                        };
+                        (
+                            format!("unknown variant `{variant}` of enum `{enum_name}`{hint}"),
+                            resolve::UNKNOWN_VARIANT_CODE,
+                        )
+                    } else if u.undeclared_assign {
+                        let hint = match &u.suggestion {
+                            Some(s) => format!(" — did you mean `{s}`?"),
+                            None => String::new(),
+                        };
+                        (
+                            format!("assignment to undeclared variable `{}`{hint}", u.name),
+                            resolve::UNDECLARED_ASSIGN_CODE,
+                        )
+                    } else if u.is_call {
                         (
                             format!("unsupported call to `{}`", u.name),
                             resolve::UNKNOWN_CALL_CODE,
