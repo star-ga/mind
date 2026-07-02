@@ -121,6 +121,30 @@ const MATCH_ARM_MISMATCH_CODE: &str = "match::arm_mismatch";
 /// growable-`bytes`-param + fixed-`bytes[N]`-arg pairing.
 const FIXED_BYTES_INTO_VEC_CODE: &str = "E2006";
 
+/// A `return <value>` whose value is a FLOAT-class scalar (`f32`/`f64`) while
+/// the enclosing function's declared return type is an INTEGER-class scalar
+/// (`i32`/`i64`/`bool`). Without this the check phase passes and `mlir-opt`
+/// later rejects the artifact with an opaque
+/// "type of return operand 0 ('f64') doesn't match function result type
+/// ('i64')". Fired ONLY on the int-vs-float scalar CLASS mismatch — NEVER on
+/// an exact-width sibling (`i32` return from an `i64` fn stays valid) and
+/// NEVER symmetrically: only a *confidently-float* return value triggers it,
+/// because the loose i64 ABI defaults every untyped same-file call to
+/// `ScalarI64`, so a symmetric "int value into f64 fn" rule would
+/// false-positive on `return helper()` in an `-> f64` body. A float value is
+/// never a default, so this direction is sound.
+const RETURN_TYPE_MISMATCH_CODE: &str = "E2010";
+
+/// An `if`/`while` condition that infers to a FLOAT-class scalar (`f32`/`f64`)
+/// and is NOT a boolean-intent expression (a comparison `<,<=,>,>=,==,!=`, a
+/// logical `&&`/`||`, or a `!`). A raw float in condition position lowers to
+/// `arith.cmpi` on an `f64` at `mlir-opt` — a late, opaque failure. Comparisons
+/// are excluded because `infer_expr` reports `f64 > f64` as `ScalarF64` (the
+/// operand class, not `bool`), so a naive "float condition" rule would reject
+/// the valid `if a > b` over floats. Fires only on a directly-float condition
+/// (`if 1.5`, `while fparam`), never on a comparison/logical/negation.
+const COND_TYPE_MISMATCH_CODE: &str = "E2011";
+
 /// An `import std.X` line was parsed but this `mindc` binary was built
 /// WITHOUT the std surface compiled in (neither `std-surface` nor
 /// `cross-module-imports`). Without that surface the bundled stdlib
@@ -2651,6 +2675,146 @@ fn same_scalar_class(a: &ValueType, b: &ValueType) -> bool {
     class(a) == class(b)
 }
 
+/// True for a float-family scalar (`f32`/`f64`). A float `ValueType` is never a
+/// loose-ABI default (the default fallback is always `ScalarI64`), so a value
+/// that infers to float was genuinely inferred as float — never guessed.
+fn is_float_scalar(v: &ValueType) -> bool {
+    matches!(v, ValueType::ScalarF32 | ValueType::ScalarF64)
+}
+
+/// True for an integer-family scalar (`i32`/`i64`/`bool`), mirroring the int
+/// class in `same_scalar_class`.
+fn is_int_scalar(v: &ValueType) -> bool {
+    matches!(
+        v,
+        ValueType::ScalarI32 | ValueType::ScalarI64 | ValueType::ScalarBool
+    )
+}
+
+/// Whether a node in `if`/`while` condition position is a boolean-intent
+/// expression whose runtime value is a truth value regardless of its operand
+/// class. `infer_expr` reports `f64 > f64` as `ScalarF64` (it returns the
+/// operand class, not `bool`), so these forms must be excluded from the
+/// float-condition check (E2011) or a valid `if a > b` over floats would be
+/// wrongly rejected.
+fn cond_is_boolean_intent(node: &Node) -> bool {
+    match node {
+        Node::Binary { op, .. } => matches!(
+            op,
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::Eq | BinOp::Ne
+        ),
+        Node::Logical { .. } | Node::Not { .. } => true,
+        _ => false,
+    }
+}
+
+/// Early check-phase diagnostics that need the enclosing function's declared
+/// return type in scope (E2010) or that inspect condition position (E2011).
+/// Walks the function body's statement positions, recursing through control
+/// flow but stopping at nested `FnDef`s (which carry their own return type).
+/// Uses `env` = params + module symbols (NO body-local bindings): a value that
+/// can't be resolved yields `Err` from `infer_expr` and is skipped, so this
+/// only ever fires on confidently-typed expressions — no false positives on
+/// locals. Additive: it only pushes E2010/E2011 on the sound conditions
+/// documented at each code constant.
+fn check_return_and_cond_types(
+    stmts: &[Node],
+    ret_ty: Option<&ValueType>,
+    env: &TypeEnv,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    for stmt in stmts {
+        check_return_and_cond_node(stmt, ret_ty, env, src, file, errs);
+    }
+}
+
+fn check_cond_type(
+    cond: &Node,
+    env: &TypeEnv,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    if cond_is_boolean_intent(cond) {
+        return;
+    }
+    if let Ok((vt, _)) = infer_expr(cond, env) {
+        if is_float_scalar(&vt) {
+            errs.push(diag_from_span(
+                src,
+                file,
+                format!(
+                    "condition must be a boolean or integer expression, but this is {}",
+                    describe_value_type(&vt)
+                ),
+                cond.span(),
+                COND_TYPE_MISMATCH_CODE,
+            ));
+        }
+    }
+}
+
+fn check_return_and_cond_node(
+    node: &Node,
+    ret_ty: Option<&ValueType>,
+    env: &TypeEnv,
+    src: &str,
+    file: Option<&str>,
+    errs: &mut Vec<Pretty>,
+) {
+    match node {
+        Node::Return { value: Some(v), .. } => {
+            if let Some(rt) = ret_ty {
+                if is_int_scalar(rt) {
+                    if let Ok((vt, _)) = infer_expr(v, env) {
+                        if is_float_scalar(&vt) {
+                            errs.push(diag_from_span(
+                                src,
+                                file,
+                                format!(
+                                    "return type mismatch: function returns {} but this returns {}",
+                                    describe_value_type(rt),
+                                    describe_value_type(&vt)
+                                ),
+                                v.span(),
+                                RETURN_TYPE_MISMATCH_CODE,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Node::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            check_cond_type(cond, env, src, file, errs);
+            check_return_and_cond_types(then_branch, ret_ty, env, src, file, errs);
+            if let Some(eb) = else_branch {
+                check_return_and_cond_types(eb, ret_ty, env, src, file, errs);
+            }
+        }
+        #[cfg(feature = "std-surface")]
+        Node::While { cond, body, .. } => {
+            check_cond_type(cond, env, src, file, errs);
+            check_return_and_cond_types(body, ret_ty, env, src, file, errs);
+        }
+        Node::For { body, .. } | Node::ForEach { body, .. } => {
+            check_return_and_cond_types(body, ret_ty, env, src, file, errs);
+        }
+        Node::Block { stmts, .. } => {
+            check_return_and_cond_types(stmts, ret_ty, env, src, file, errs);
+        }
+        // Nested function definitions carry their own return type; the outer
+        // `ret_ty` does not apply, so do not descend into them here.
+        _ => {}
+    }
+}
+
 /// Look up an enum's full variant-name list by enum name. Returns `None` when
 /// the registry isn't populated or `name` isn't a module-level enum.
 fn enum_variants_of(name: &str) -> Option<Vec<String>> {
@@ -3721,7 +3885,20 @@ pub fn check_module_types_in_file(
                         || d.code == MATCH_NONEXHAUSTIVE_CODE
                         || d.code == MATCH_ARM_MISMATCH_CODE
                         || d.code == FIXED_BYTES_INTO_VEC_CODE
+                        || d.code == RETURN_TYPE_MISMATCH_CODE
+                        || d.code == COND_TYPE_MISMATCH_CODE
                 }));
+
+                // Early check-phase diagnostics that fail closed LATE at
+                // `mlir-opt` otherwise: a float-class value returned from an
+                // int-class fn (E2010) and a float-class `if`/`while` condition
+                // (E2011). Both need the enclosing fn's declared return type /
+                // condition position in scope, which the mini-module recursion
+                // above does not carry, so they run here directly against
+                // `fn_env` (params + module symbols). Sound-condition only —
+                // see RETURN_TYPE_MISMATCH_CODE / COND_TYPE_MISMATCH_CODE.
+                let ret_vt = ret_type.as_ref().and_then(valuetype_from_ann);
+                check_return_and_cond_types(body, ret_vt.as_ref(), &fn_env, src, file, &mut errs);
 
                 // Issue #23 — scoped name resolution for the fn body. Replaces
                 // the dropped unknown-identifier / undefined-call diagnostics
