@@ -1,0 +1,93 @@
+// Deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler).
+//
+// Pure executable-subset MIND: heap load / store via the i64 ABI intrinsics,
+// integer multiply, arithmetic shift for the Q16.16 scale, and `while` loops.
+// NO float, NO builtins that lack codegen — every product is an i64 multiply
+// followed by exactly one truncating `>> 16`, then integer add, in fixed source
+// order. That is what makes the orbit BIT-IDENTICAL across substrates.
+//
+// THE WEDGE (stated honestly): MIND makes deterministic *chaos* reproducible
+// byte-for-byte across substrates — the same Lorenz orbit on x86/ARM/GPU — the
+// way no IEEE-754 float Lorenz can be. f32/f64 add is non-associative and rounds
+// per-substrate (FMA-contraction, x87 80-bit spills, SIMD reassociation, GPU
+// fused ops all diverge), so a float Lorenz — the textbook poster child for
+// sensitive dependence — drifts to a *different* trajectory on different
+// hardware after a few hundred steps. Q16.16 multiply-then-`>>16`-then-add is
+// exact integer arithmetic: same bytes, every substrate, every re-run.
+//
+// HONEST CAVEAT: this is *a* deterministic chaotic system in Q16.16, NOT a
+// bit-match of float64's Lorenz. Fixed-point has less dynamic range and a
+// coarser quantum (1/65536), so the attractor shape differs from the IEEE-754
+// trajectory. The claim is reproducible-chaos-across-substrates, not
+// float-parity. Do not read it as "the same numbers as a double-precision run."
+//
+// System (classic Lorenz): dx = SIGMA*(y - x),  dy = x*(RHO - z) - y,
+//                          dz = x*y - BETA*z,   with SIGMA=10, RHO=28, BETA=8/3.
+// Forward Euler: state += DT * d(state).
+//
+// Q16.16 constants (scale = 65536):
+//   SIGMA = 10        -> 655360
+//   RHO   = 28        -> 1835008
+//   BETA  = 8/3       -> 174762  (floor(8*65536/3) = floor(524288/3);
+//                                 524288/3 = 174762.666..., TRUNCATED to 174762,
+//                                 i.e. 2.666656494140625 — document the exact
+//                                 stored value: it is NOT rounded up to 174763)
+//   DT    = 1/256     -> 256     (exact: 65536/256 = 256; small enough that the
+//                                 orbit is a real chaotic attractor and neither
+//                                 clips nor overflows)
+//
+// RANGE: |state| stays ~ |x|,|y| < 25, z in 0..~50, i.e. |q16| < ~3.3e6. The
+// largest intermediate raw product before `>>16` (e.g. x*(RHO-z)) is ~2.2e12,
+// leaving ~4.1e6x of headroom under i64 max (~9.2e18). No overflow possible for
+// a bounded orbit; verified empirically over 20000 steps (orbit stays bounded).
+//
+// q16 multiply: qmul(a,b) = (a*b) >> 16. Matches the FFT kernel's convention.
+//
+// ABI: lorenz_q16(state, steps) -> i64. `state` points at 3 consecutive i64
+// Q16.16 cells [x, y, z] (mutated IN PLACE). Runs `steps` forward-Euler steps.
+// Returns the final x (Q16.16) as a deterministic scalar result.
+
+pub fn lorenz_q16(state: i64, steps: i64) -> i64 {
+    // Q16.16 system constants (executable subset — plain `let`, no const-generics).
+    let SIGMA: i64 = 655360;
+    // 10.0
+    let RHO: i64 = 1835008;
+    // 28.0
+    let BETA: i64 = 174762;
+    // 8/3 truncated -> 2.666656494140625
+    let DT: i64 = 256;
+    // 1/256 = 0.00390625
+
+    // Cell addresses: x @ state, y @ state+8, z @ state+16 (8 bytes per i64).
+    let xa: i64 = state;
+    let ya: i64 = state + 8;
+    let za: i64 = state + 16;
+
+    let mut x: i64 = __mind_load_i64(xa);
+    let mut y: i64 = __mind_load_i64(ya);
+    let mut z: i64 = __mind_load_i64(za);
+
+    let mut s: i64 = 0;
+    while s < steps {
+        // Derivatives — each `*` is one i64 multiply followed by one `>> 16`,
+        // in fixed source order (exact integer arithmetic, no reassociation).
+        let dx: i64 = (SIGMA * (y - x)) >> 16;
+        let dy: i64 = ((x * (RHO - z)) >> 16) - y;
+        let dz: i64 = ((x * y) >> 16) - ((BETA * z) >> 16);
+
+        // Forward Euler: state += DT * derivative (again qmul then integer add).
+        x = x + ((DT * dx) >> 16);
+        y = y + ((DT * dy) >> 16);
+        z = z + ((DT * dz) >> 16);
+
+        s = s + 1;
+    }
+
+    // Write the final state back in place.
+    __mind_store_i64(xa, x);
+    __mind_store_i64(ya, y);
+    __mind_store_i64(za, z);
+
+    // Deterministic scalar return: final x in Q16.16.
+    x
+}

@@ -173,6 +173,8 @@ type ScalarF64Fn = unsafe extern "C" fn(f64, f64, f64, f64) -> f64;
 type Arith3Fn = unsafe extern "C" fn(i64, i64, i64) -> i64;
 /// Track #16: a 4-arg → i64 scalar kernel (the struct-by-handle round-trip).
 type Arith4Fn = unsafe extern "C" fn(i64, i64, i64, i64) -> i64;
+/// The Lorenz integrator: (state_ptr, steps) → final x, buffer mutated in place.
+type LorenzFn = unsafe extern "C" fn(i64, i64) -> i64;
 
 // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
@@ -215,6 +217,50 @@ fn build_dot_so() -> Option<&'static PathBuf> {
         assert!(
             status.success(),
             "mindc --emit-shared failed for the dot-q16 workload"
+        );
+        Some(so_path)
+    })
+    .as_ref()
+}
+
+/// Compile `examples/lorenz_q16.mind` to a temp `.so` once for the whole test
+/// binary. Separate from `build_dot_so` because the Lorenz kernel lives in the
+/// examples/ tree (it is also a shipped demo) and uses a pointer-to-buffer ABI
+/// rather than the scalar dot/arith kernels embedded in `SRC`. Same toolchain
+/// guard / self-skip discipline: `None` when the MLIR toolchain is shadowed,
+/// but a hard failure under `MIND_BENCH_REQUIRE` so the gate can never pass
+/// vacuously (RFC 0020 §10).
+fn build_lorenz_so() -> Option<&'static PathBuf> {
+    static SO: OnceLock<Option<PathBuf>> = OnceLock::new();
+    SO.get_or_init(|| {
+        for tool in ["mlir-opt", "mlir-translate", "clang"] {
+            if which::which(tool).is_err() {
+                assert!(
+                    std::env::var_os("MIND_BENCH_REQUIRE").is_none(),
+                    "MIND_BENCH_REQUIRE is set but '{tool}' is not on PATH: the \
+                     cross-substrate gate cannot run. Install the MLIR toolchain \
+                     (mlir-opt / mlir-translate / clang) on this runner."
+                );
+                println!("cross_substrate_identity: {tool} not on PATH; skipping");
+                return None;
+            }
+        }
+        // examples/lorenz_q16.mind, relative to the crate root.
+        let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("lorenz_q16.mind");
+        let so_path = std::env::temp_dir().join("mind_xsi_lorenz_q16.so");
+        let status = Command::new(mindc_bin())
+            .args([
+                src_path.to_str().unwrap(),
+                "--emit-shared",
+                so_path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn mindc --emit-shared for lorenz_q16");
+        assert!(
+            status.success(),
+            "mindc --emit-shared failed for the lorenz-q16 workload"
         );
         Some(so_path)
     })
@@ -1218,6 +1264,85 @@ fn struct_handle_roundtrip_reproducibility_gate() {
     assert_eq!(
         result, oracle,
         "{id}: struct-handle round-trip diverged from the in-process oracle within a run \
+         (kernel={result}, oracle={oracle})"
+    );
+
+    pin_or_bless(id, &canonical_hash(result), result);
+}
+
+// --- lorenz-q16 workload (deterministic Q16.16 Lorenz attractor) -----------
+// A forward-Euler Lorenz integrator in Q16.16 — the textbook poster child for
+// sensitive dependence on initial conditions, made byte-identical across
+// substrates. Each derivative/update product is one i64 multiply + one
+// arithmetic shift-right (>>16), then integer add/sub, in fixed source order.
+// No float, no reduction reorder, no reassociation — so after N chaotic steps
+// the final state is byte-identical on avx2 and neon BY CONSTRUCTION (RFC 0015
+// §3.1), even though a float Lorenz would have diverged to a different
+// trajectory on different hardware hundreds of steps earlier. This is the wedge
+// on its hardest workload: reproducible chaos. (This is *a* Q16.16 chaotic
+// orbit, not a bit-match of float64's Lorenz — cross-substrate reproducibility,
+// not IEEE-754 parity.) Buffer ABI + scalar i64 return → canonical_hash.
+
+/// Q16.16 system constants — the identical values baked into
+/// examples/lorenz_q16.mind (SIGMA=10, RHO=28, BETA=8/3 truncated, DT=1/256).
+const LORENZ_SIGMA: i64 = 655360; // 10.0
+const LORENZ_RHO: i64 = 1835008; // 28.0
+const LORENZ_BETA: i64 = 174762; // 8/3 truncated -> 2.666656494140625
+const LORENZ_DT: i64 = 256; // 1/256 = 0.00390625
+
+/// Fixed initial state (Q16.16) and step count — the manifest `[input]`.
+const LORENZ_INIT: (i64, i64, i64) = (0, 65536, 0); // (0.0, 1.0, 0.0)
+const LORENZ_STEPS: i64 = 1000;
+
+/// Independent in-process oracle — the identical fixed-point ops in the
+/// identical source order as the .mind kernel. Exact integer arithmetic with
+/// one truncating shift per product, so it is bit-exact within a run and (being
+/// float-free with fixed truncation points) identical on every substrate.
+/// Returns the final x (Q16.16), matching the kernel's return + state[0].
+fn ref_lorenz_q16(init: (i64, i64, i64), steps: i64) -> i64 {
+    let q16_mul = |a: i64, b: i64| (a * b) >> 16;
+    let (mut x, mut y, mut z) = init;
+    let mut s = 0i64;
+    while s < steps {
+        let dx = q16_mul(LORENZ_SIGMA, y - x);
+        let dy = q16_mul(x, LORENZ_RHO - z) - y;
+        let dz = q16_mul(x, y) - q16_mul(LORENZ_BETA, z);
+        x += q16_mul(LORENZ_DT, dx);
+        y += q16_mul(LORENZ_DT, dy);
+        z += q16_mul(LORENZ_DT, dz);
+        s += 1;
+    }
+    x
+}
+
+#[test]
+fn lorenz_q16_reproducibility_gate() {
+    let id = "lorenz-q16";
+
+    let Some(so) = build_lorenz_so() else {
+        return; // toolchain shadowed — self-skip
+    };
+    let lib = unsafe { Library::new(so).expect("dlopen lorenz workload .so") };
+    let lorenz: Symbol<LorenzFn> = unsafe { lib.get(b"lorenz_q16").expect("lorenz_q16 symbol") };
+
+    // The buffer ABI: 3 consecutive i64 Q16.16 cells [x, y, z], mutated in place.
+    let (x0, y0, z0) = LORENZ_INIT;
+    let mut state: [i64; 3] = [x0, y0, z0];
+    let result = unsafe { lorenz(state.as_mut_ptr() as i64, LORENZ_STEPS) };
+
+    // Return value must equal the final x written back to the buffer.
+    assert_eq!(
+        result, state[0],
+        "{id}: kernel return ({result}) != final state[0] ({}) — buffer/return \
+         disagreement",
+        state[0]
+    );
+
+    // ...and both must match the independent in-process oracle.
+    let oracle = ref_lorenz_q16(LORENZ_INIT, LORENZ_STEPS);
+    assert_eq!(
+        result, oracle,
+        "{id}: Lorenz orbit diverged from the in-process oracle within a run \
          (kernel={result}, oracle={oracle})"
     );
 

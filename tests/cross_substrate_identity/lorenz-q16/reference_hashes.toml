@@ -1,0 +1,31 @@
+# mind-bench reference hashes — RFC 0020 §5. See dot-l2-q16/reference_hashes.toml
+# for full provenance/signing notes.
+#
+# A deterministic Q16.16 Lorenz-attractor integrator run for 1000 forward-Euler
+# steps from the fixed init (x,y,z) = (0, 1, 0), SIGMA=10 RHO=28 BETA=8/3
+# (Q16.16 174762) DT=1/256. Each derivative/update product is an exact i64
+# multiply + one arithmetic shift-right (>>16), then integer add/sub, in fixed
+# source order — no float, no accumulation order, no contraction, no
+# reassociation — so the final state (and therefore the returned final x) is
+# architecture-independent: avx2 == neon BY CONSTRUCTION (RFC 0015 §3.1). This is
+# the hardest possible identity workload — a chaotic system with sensitive
+# dependence on initial conditions — yet the integer lowering reproduces the
+# identical bytes on every substrate and every re-run. Any divergence is a real
+# fixed-point lowering bug (a dropped/extra shift, a reordered product, an
+# i64->narrower truncation) amplified by the chaos, and a release-blocker.
+#
+# Output = 8 little-endian bytes of the returned final x (Q16.16), then sha256.
+# Reference value at 1000 steps: final x = -534685 (Q16.16) = -8.158646
+#   (full final state (x,y,z) = (-534685, -389785, 1920889) Q16.16
+#    = (-8.158646, -5.947647, 29.310440) decimal), i64_le = 63d7f7ffffffffff.
+# Generated from the native symbol `lorenz_q16` in examples/lorenz_q16.mind,
+# built with `mindc --emit-shared`, executed via the ctypes/dlopen harness.
+#
+#   avx2 — verified on x86_64 (CI job `cross_substrate_identity`, ubuntu-24.04):
+#          lowers to i64 imul / sar / add / sub.
+#   neon — enforced on aarch64 (CI job `cross_substrate_identity`,
+#          ubuntu-24.04-arm) per RFC 0015 §3.1 / RFC 0020 §10: the aarch64
+#          integer mul / asr / add / sub reproduce the identical bytes every run.
+
+avx2 = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
+neon = "04da6abc69e63314331e88a7a9670ce5c9e90ddaa2bf5f5dc53526f56477de80"
