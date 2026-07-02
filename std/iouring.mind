@@ -220,6 +220,27 @@ pub fn io_ring_new_iopoll(entries: i64) -> i64 {
 // submits slots 0..n-1 then calls io_ring_publish(h, n). `fd`/`buf`/`len` are
 // ignored by NOP; for SEND/RECV they are the socket fd, buffer addr, byte count.
 pub fn io_ring_submit_raw(h: i64, slot: i64, opcode: i64, fd: i64, off: i64, addr: i64, len: i64, user_data: i64) -> i64 {
+    // Fail closed on invalid caller input BEFORE any dereference: a null handle,
+    // a negative slot (would compute a negative ring position and write the SQE
+    // *before* the mapped SQE area — an out-of-bounds write), a slot past the
+    // ring size, or a length outside u32 range (stored into the u32 SQE len,
+    // where a negative i64 truncates to a huge byte count for kernel I/O).
+    if h == 0 {
+        return 0 - 22;
+    }
+    if slot < 0 {
+        return 0 - 22;
+    }
+    if len < 0 {
+        return 0 - 22;
+    }
+    if len > 4294967295 {
+        return 0 - 22;
+    }
+    let entries: i64 = __mind_load_i64(h + 56) + 1;
+    if slot >= entries {
+        return 0 - 22;
+    }
     // The ring position is (current sq_tail + slot) mod entries — NOT `slot`
     // itself — so a reused ring (a second batch after the tail has advanced)
     // places its SQEs and SQ-array entries where the kernel actually reads them.
