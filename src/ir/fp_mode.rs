@@ -43,13 +43,17 @@ use crate::ir::{IRModule, Instr};
 /// Empirically derived (NOT guessed) by emitting each intrinsic's MLIR and
 /// grepping for `vector.fma` / `vector.reduction <add>`:
 ///   `mindc <call>.mind --emit-mlir | grep -E 'vector.fma|reduction <add>'`
-/// Confirmed RELAXED: `dot_f32_v` (fma+add-reduce), `dot_l1_f32_v` (add-reduce),
-/// `matmul_rmajor_f32_v` (fma+add-reduce). Confirmed STRICT and deliberately
-/// EXCLUDED: `dot_linf_f32_v` (only `vector.reduction <maximumf>`, associative)
-/// and every Q16 / i16 / i8 integer intrinsic (associative integer arithmetic).
-/// deferred: re-run the emit-mlir check when a new f32 `_v` intrinsic is added.
+/// Confirmed RELAXED: `dot_l1_f32_v` (add-reduce), `matmul_rmajor_f32_v`
+/// (fma+add-reduce). Confirmed STRICT and deliberately EXCLUDED:
+/// `dot_f32_v` (strict-vector-tier landed — its FMA is unfused to `mulf`+`addf`
+/// and its horizontal sum is a pinned left-to-right scalar fold, so it emits
+/// neither `vector.fma` nor `vector.reduction <add>`; see emit_vec_dot_f32),
+/// `dot_linf_f32_v` (only `vector.reduction <maximumf>`, associative), and every
+/// Q16 / i16 / i8 integer intrinsic (associative integer arithmetic).
+/// deferred: bring `dot_l1_f32_v` + `matmul_rmajor_f32_v` onto the strict tier
+/// next (same unfuse + pinned-fold transform), then drop them from this list.
+/// Re-run the emit-mlir check when a new f32 `_v` intrinsic is added.
 const RELAXED_F32_INTRINSICS: &[&str] = &[
-    "__mind_blas_dot_f32_v",
     "__mind_blas_dot_l1_f32_v",
     "__mind_blas_matmul_rmajor_f32_v",
 ];
@@ -194,7 +198,6 @@ mod tests {
         // a Track-B f32 vector intrinsic. Each was confirmed via --emit-mlir to
         // emit vector.fma / vector.reduction <add>.
         for name in [
-            "__mind_blas_dot_f32_v",
             "__mind_blas_dot_l1_f32_v",
             "__mind_blas_matmul_rmajor_f32_v",
         ] {
@@ -212,6 +215,7 @@ mod tests {
         // dot_linf (maximumf-reduce, associative) and the integer/Q16 intrinsics
         // are bit-identical and must NOT be flagged.
         for name in [
+            "__mind_blas_dot_f32_v", // strict-vector-tier: unfused FMA + pinned fold
             "__mind_blas_dot_linf_f32_v",
             "__mind_blas_dot_q16_v",
             "__mind_blas_matmul_mm_i8_v",
@@ -233,7 +237,7 @@ mod tests {
             name: "f".into(),
             params: vec![],
             ret_id: None,
-            body: vec![call("__mind_blas_dot_f32_v")],
+            body: vec![call("__mind_blas_dot_l1_f32_v")],
             reap_threshold: None,
         }]);
         assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);

@@ -3883,17 +3883,48 @@ impl LoweringContext {
         self.emit_line(&format!(
             "      %vd_bv_{d} = llvm.load %vd_bi_{d} {{alignment = 4 : i64}} : !llvm.ptr -> vector<{l}xf32>"
         ));
+        // STRICT float-determinism tier (RFC 0006 Track B): unfuse the
+        // multiply-add into a separate `mulf` then `addf` per lane — two
+        // roundings, no single-rounding FMA contraction (`-ffp-contract=off`
+        // does NOT neutralise an explicit `vector.fma` intrinsic, so it must be
+        // split here). Operand order `acc + (a*b)` mirrors the strict scalar
+        // tail below, so both paths round identically.
         self.emit_line(&format!(
-            "      %vd_fa_{d} = vector.fma %vd_av_{d}, %vd_bv_{d}, %vd_acc_{d} : \
-             vector<{l}xf32>"
+            "      %vd_pm_{d} = arith.mulf %vd_av_{d}, %vd_bv_{d} : vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "      %vd_fa_{d} = arith.addf %vd_acc_{d}, %vd_pm_{d} : vector<{l}xf32>"
         ));
         self.emit_line(&format!("      scf.yield %vd_fa_{d} : vector<{l}xf32>"));
         self.emit_line("    }");
-        // Horizontal sum of the lane accumulator.
-        self.emit_line(&format!(
-            "    %vd_vs_{d} = vector.reduction <add>, %vd_vacc_{d} : \
-             vector<{l}xf32> into f32"
-        ));
+        // Horizontal sum of the lane accumulator — PINNED left-to-right fold in
+        // fixed lane index order 0..LANES, replacing the target-defined
+        // `vector.reduction <add>` (whose pairwise/tree fold order differs per
+        // ISA). Each lane is extracted at a static index and summed
+        // sequentially, so the horizontal sum is bit-identical on every
+        // conforming FPU. With the FMA also unfused, the whole dot carries no
+        // `vector.fma` / `vector.reduction <add>` — it is strict-FP (no fp_mode
+        // Relaxed taint; see src/ir/fp_mode.rs).
+        for lane in 0..l {
+            self.emit_line(&format!(
+                "    %vd_e{lane}_{d} = vector.extract %vd_vacc_{d}[{lane}] : f32 from vector<{l}xf32>"
+            ));
+        }
+        for lane in 1..l {
+            let prev = if lane == 1 {
+                format!("%vd_e0_{d}")
+            } else {
+                format!("%vd_racc{}_{d}", lane - 1)
+            };
+            let out = if lane == l - 1 {
+                format!("%vd_vs_{d}")
+            } else {
+                format!("%vd_racc{lane}_{d}")
+            };
+            self.emit_line(&format!(
+                "    {out} = arith.addf {prev}, %vd_e{lane}_{d} : f32"
+            ));
+        }
         // Scalar tail for the len % LANES remainder.
         self.emit_line(&format!(
             "    %vd_ts_{d} = scf.for %vd_j_{d} = %vd_ve_{d} to %vd_len_{d} \
