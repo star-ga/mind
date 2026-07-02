@@ -526,6 +526,45 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
                 0,
                 "IPv4-like pattern must NOT match all-alpha octets"
             );
+
+            // Fixture 11: empty alternation branches must COMPILE (not crash).
+            // Regression for the null-deref where an empty branch returned a
+            // null fragment that rx_compile_alternation then dereferenced.
+            for pat in [&b"a|"[..], &b"|a"[..], &b"(|x)"[..], &b"|"[..]] {
+                let rx = compile_fn(pat.as_ptr() as i64, pat.len() as i64);
+                assert!(rx != 0, "empty-alternation pattern must compile without crashing");
+            }
+            // `a|` (a OR empty) matches "a".
+            let rx_alt = compile_fn(b"a|".as_ptr() as i64, 2);
+            let inp_alt = b"a";
+            assert_eq!(
+                is_match_fn(rx_alt, inp_alt.as_ptr() as i64, inp_alt.len() as i64),
+                1,
+                "'a|' must match 'a'"
+            );
+
+            // Fixture 12: `^`/`$` anchors are zero-width — must NOT consume a
+            // byte (regression for false-positive matches mid-stream).
+            let rx_end = compile_fn(b"a$".as_ptr() as i64, 2);
+            let ab = b"ab";
+            assert_eq!(
+                is_match_fn(rx_end, ab.as_ptr() as i64, ab.len() as i64),
+                0,
+                "'a$' must NOT match 'ab' ('a' is not at end)"
+            );
+            let a = b"a";
+            assert_eq!(
+                is_match_fn(rx_end, a.as_ptr() as i64, a.len() as i64),
+                1,
+                "'a$' must match 'a'"
+            );
+            let rx_start = compile_fn(b"^a".as_ptr() as i64, 2);
+            let ba = b"ba";
+            assert_eq!(
+                is_match_fn(rx_start, ba.as_ptr() as i64, ba.len() as i64),
+                0,
+                "'^a' must NOT match 'ba' ('a' is not at start)"
+            );
         }
     }
 }

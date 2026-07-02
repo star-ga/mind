@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2989 | **Est. tokens:** ~7,177,997
-**Generated:** 2026-07-02 15:07 UTC
+**Files:** 2989 | **Est. tokens:** ~7,178,591
+**Generated:** 2026-07-02 15:18 UTC
 
 ## Token Budget Guide
 
@@ -405,8 +405,8 @@
 | `src/type_checker/` | 1 | ~10,252 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 38 | ~179,109 |
-| `tests/` | 264 | ~444,115 |
+| `std/` | 38 | ~179,268 |
+| `tests/` | 264 | ~444,550 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3904,7 +3904,7 @@
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
-- `regex.mind` (~9377 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
+- `regex.mind` (~9536 tok, huge) — std/regex.mind -- POSIX ERE subset NFA engine (task #269, cargo-retirement track).
 - `ring.mind` (~1407 tok, large) — std.ring — fixed-capacity byte ring buffer (FIFO).
 - `rsa_pss.mind` (~2461 tok, huge) — std/rsa_pss.mind — RSASSA-PSS signature VERIFICATION (RFC 8017 §8.1.2) with
 - `sha256.mind` (~3635 tok, huge) — std/sha256.mind — FIPS 180-4 SHA-256 in pure MIND.
@@ -4428,7 +4428,7 @@
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_promotion_compose.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_reactor.rs` (~1357 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_regex.rs` (~4835 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_regex.rs` (~5270 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_ring.rs` (~1310 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_self_emit_shared.rs` (~1807 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.

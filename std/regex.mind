@@ -726,6 +726,20 @@ fn rx_compile_sequence(pat: i64, pat_len: i64, cs: i64) -> i64 {
     result
 }
 
+// Build a zero-width (epsilon) fragment: a Split state whose out1 dangles.
+// When reached during simulation, rx_sq_add_eps follows the (patched) out1 and
+// ignores the zero out2, so the fragment passes through consuming no input --
+// it matches the empty string. Used to represent an empty alternation branch
+// (`a|`, `|a`, `(|x)`), which is a legal ERE matching the empty string; without
+// this an empty branch is a 0 (null) fragment handle that rx_compile_alternation
+// would null-dereference via rx_frag_start(0).
+fn rx_frag_epsilon() -> i64 {
+    let sp: i64 = rx_st_alloc(rx_kind_split(), 0, 0, 0, 0);
+    let f: i64 = rx_frag_new(sp);
+    let _ = rx_frag_patch_push(f, sp, 0);
+    f
+}
+
 // Parse alternation (`|`).
 fn rx_compile_alternation(pat: i64, pat_len: i64, cs: i64) -> i64 {
     let left: i64 = rx_compile_sequence(pat, pat_len, cs);
@@ -736,13 +750,27 @@ fn rx_compile_alternation(pat: i64, pat_len: i64, cs: i64) -> i64 {
     if rx_load_byte(pat, pos) != 124 {
         return left;
     }
+    // A `|` follows, so this is a real alternation. Either branch may be empty
+    // (`a|`, `|a`) -- rx_compile_sequence returns 0 for an empty branch. An empty
+    // branch is VALID and matches the empty string, so materialise it as an
+    // explicit epsilon fragment rather than dereferencing the null handle.
     let _ = rx_cs_set_pos(cs, pos + 1);
     let right: i64 = rx_compile_alternation(pat, pat_len, cs);
+    let left_f: i64 = if left == 0 {
+        rx_frag_epsilon()
+    } else {
+        left
+    };
+    let right_f: i64 = if right == 0 {
+        rx_frag_epsilon()
+    } else {
+        right
+    };
     // split(left.start, right.start), dangling = merged patches
-    let sp: i64 = rx_st_alloc(rx_kind_split(), 0, rx_frag_start(left), rx_frag_start(right), 0);
+    let sp: i64 = rx_st_alloc(rx_kind_split(), 0, rx_frag_start(left_f), rx_frag_start(right_f), 0);
     let nf: i64 = rx_frag_new(sp);
-    let _ = rx_frag_merge_patches(nf, left);
-    let _ = rx_frag_merge_patches(nf, right);
+    let _ = rx_frag_merge_patches(nf, left_f);
+    let _ = rx_frag_merge_patches(nf, right_f);
     nf
 }
 
@@ -873,9 +901,14 @@ fn rx_sq_add_eps(q: i64, st: i64) -> i64 {
     0
 }
 
-// Step NFA: given current state set and input byte `c` (plus position info),
-// compute next state set. Anchor states are handled during step.
-fn rx_step(cur: i64, next: i64, c: i64, cls_tbl: i64, at_start: i64, at_end: i64) -> i64 {
+// Step NFA: given current state set and input byte `c`, compute the next state
+// set reached by CONSUMING that byte. Only byte-consuming states (Char, Any,
+// Class) transition here. Anchors (`^`/`$`) are ZERO-WIDTH assertions -- they
+// match a position, not a byte -- and are handled separately by
+// rx_close_anchors so they never advance the input cursor. An anchor state left
+// in `cur` here is inert (its thread already forked through rx_close_anchors if
+// its position condition held).
+fn rx_step(cur: i64, next: i64, c: i64, cls_tbl: i64) -> i64 {
     let _ = rx_sq_clear(next);
     let clen: i64 = rx_sq_len(cur);
     let mut i: i64 = 0;
@@ -901,22 +934,41 @@ fn rx_step(cur: i64, next: i64, c: i64, cls_tbl: i64, at_start: i64, at_end: i64
                     if rx_cls_matches(cls, c) == 1 {
                         let _ = rx_sq_add_eps(next, rx_st_out1(st));
                     }
-                } else {
-                    if k == rx_kind_anchor_start() {
-                        if at_start == 1 {
-                            let _ = rx_sq_add_eps(next, rx_st_out1(st));
-                        }
-                    } else {
-                        if k == rx_kind_anchor_end() {
-                            if at_end == 1 {
-                                let _ = rx_sq_add_eps(next, rx_st_out1(st));
-                            }
-                        }
-                    }
                 }
             }
         }
         i = i + 1;
+    }
+    0
+}
+
+// Zero-width anchor closure. For every anchor state currently live in `cur` at
+// input position `pos`, if its position condition holds fire it: eps-close its
+// out-state into `cur` WITHOUT consuming a byte (that is the whole point of an
+// anchor). `^` fires at pos==0; `$` fires at pos==inp_len. `alen` is re-read
+// after each insertion so an anchor whose out-state chains into another anchor
+// (`^$` on empty input) is followed in the same pass. Anchors whose condition
+// does not hold are left inert and die on the next rx_step.
+fn rx_close_anchors(cur: i64, pos: i64, inp_len: i64) -> i64 {
+    let mut ai: i64 = 0;
+    let mut alen: i64 = rx_sq_len(cur);
+    while ai < alen {
+        let st: i64 = rx_sq_get(cur, ai);
+        let k: i64 = rx_st_kind(st);
+        if k == rx_kind_anchor_start() {
+            if pos == 0 {
+                let _ = rx_sq_add_eps(cur, rx_st_out1(st));
+                alen = rx_sq_len(cur);
+            }
+        } else {
+            if k == rx_kind_anchor_end() {
+                if pos == inp_len {
+                    let _ = rx_sq_add_eps(cur, rx_st_out1(st));
+                    alen = rx_sq_len(cur);
+                }
+            }
+        }
+        ai = ai + 1;
     }
     0
 }
@@ -943,42 +995,13 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
     let cls_tbl: i64 = rx_class_table(rx_h);
     let cur: i64 = rx_sq_new();
     let next: i64 = rx_sq_new();
-    let at_start0: i64 = if start == 0 {
-        1
-    } else {
-        0
-    };
     let _ = rx_sq_add_eps(cur, nfa);
-    // Handle zero-width anchors live in `cur` at the start position: `^`
-    // always fires (offset 0), and `$` fires only when the input is empty
-    // (start == end). Follow ONLY anchor transitions and eps-close their
-    // out-states into `cur` so the main loop sees the post-anchor states at
-    // the *same* position — a `^` / `$` consumes no input. We must NOT run a
-    // full `rx_step` with a sentinel char here: its `.`/negated-class arms
-    // would match a phantom byte and produce false positives (e.g. `[^abc]+`
-    // matching `"aaa"`). `alen` is re-read after each insertion so an anchor
-    // whose out-state is another anchor (`^$` on empty input) is followed in
-    // the same pass.
-    if at_start0 == 1 {
-        let mut ai: i64 = 0;
-        let mut alen: i64 = rx_sq_len(cur);
-        while ai < alen {
-            let st: i64 = rx_sq_get(cur, ai);
-            let k: i64 = rx_st_kind(st);
-            if k == rx_kind_anchor_start() {
-                let _ = rx_sq_add_eps(cur, rx_st_out1(st));
-                alen = rx_sq_len(cur);
-            } else {
-                if k == rx_kind_anchor_end() {
-                    if inp_len == 0 {
-                        let _ = rx_sq_add_eps(cur, rx_st_out1(st));
-                        alen = rx_sq_len(cur);
-                    }
-                }
-            }
-            ai = ai + 1;
-        }
-    }
+    // Fire zero-width anchors valid at the initial position `start`. `^` fires
+    // only at offset 0; `$` fires only when `start` is already at end of input
+    // (e.g. empty input, or matching the trailing `$` position). No byte is
+    // consumed -- rx_close_anchors eps-closes the post-anchor states into `cur`
+    // at the SAME position, so the main loop sees them without a phantom step.
+    let _ = rx_close_anchors(cur, start, inp_len);
     let mut pos: i64 = start;
     let mut last_match: i64 = 0 - 1;
     // Check if we already matched (empty pattern / anchor-only)
@@ -987,17 +1010,7 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
     }
     while pos < inp_len {
         let c: i64 = __mind_load_i8(inp_addr + pos);
-        let at_start1: i64 = if pos == 0 {
-            1
-        } else {
-            0
-        };
-        let at_end1: i64 = if pos + 1 == inp_len {
-            1
-        } else {
-            0
-        };
-        let _ = rx_step(cur, next, c, cls_tbl, at_start1, at_end1);
+        let _ = rx_step(cur, next, c, cls_tbl);
         // Swap cur and next
         let tmp_addr: i64 = __mind_load_i64(cur + 0);
         let tmp_len: i64 = __mind_load_i64(cur + 8);
@@ -1008,6 +1021,11 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
         __mind_store_i64(next + 0, tmp_addr);
         __mind_store_i64(next + 8, tmp_len);
         __mind_store_i64(next + 16, tmp_cap);
+        // `cur` now holds states live at position pos+1. Fire zero-width anchors
+        // valid there BEFORE checking for a match: `$` fires when pos+1 reaches
+        // inp_len (end of input), `^` never fires past offset 0. This is where
+        // the trailing `$` of e.g. `world$` is satisfied.
+        let _ = rx_close_anchors(cur, pos + 1, inp_len);
         if rx_is_match_state(cur) == 1 {
             last_match = pos + 1;
         }
@@ -1016,24 +1034,6 @@ fn rx_run(rx_h: i64, inp_addr: i64, inp_len: i64, start: i64) -> i64 {
         } else {
             pos = pos + 1;
         }
-    }
-    // End-of-input: fire any `$` end anchors still live in `cur`. `$` matches a
-    // position (not a byte), so it is reached only after the last byte has been
-    // consumed and the loop above has exited. Only `anchor_end` states are
-    // followed here — reusing `rx_step` would let `.`/classes falsely consume a
-    // phantom character past the end of input.
-    let mut ei: i64 = 0;
-    let mut elen: i64 = rx_sq_len(cur);
-    while ei < elen {
-        let st: i64 = rx_sq_get(cur, ei);
-        if rx_st_kind(st) == rx_kind_anchor_end() {
-            let _ = rx_sq_add_eps(cur, rx_st_out1(st));
-            elen = rx_sq_len(cur);
-        }
-        ei = ei + 1;
-    }
-    if rx_is_match_state(cur) == 1 {
-        last_match = inp_len;
     }
     last_match
 }
