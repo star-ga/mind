@@ -335,6 +335,10 @@ fn compile_runtime_support_obj(tools: &BuildTools) -> Result<NamedTempFile, Buil
         "-c".into(),
         "-fPIC".into(),
         "-O2".into(),
+        // FP determinism contract: no float contraction in the C runtime
+        // intrinsics either (same rationale as the IR codegen path), so the
+        // whole compiled artifact is uniformly strict-FP.
+        "-ffp-contract=off".into(),
         prefix_map,
         "-o".into(),
         obj_tmp.path().to_string_lossy().into_owned(),
@@ -583,6 +587,19 @@ fn run_clang_codegen(
     // and keep their use-after-free guard.
     let mut args: Vec<String> = vec![
         "-O3".into(),
+        // FP determinism contract (RFC 0015): forbid floating-point
+        // contraction. MIND emits scalar float as SEPARATE `arith.mulf` +
+        // `arith.addf` (never `fmuladd`), so the LLVM IR carries no `contract`
+        // fast-math flag and today's LLVM does not fuse them — but a target
+        // whose backend contracts more aggressively (ARM `fmla`, GPU DFMA)
+        // could still fuse `a*b + c` into a single-rounding FMA, diverging from
+        // the double-rounding of a separate multiply-then-add. Pinning
+        // `-ffp-contract=off` makes the "no fusion" guarantee EXPLICIT and
+        // target-independent, so scalar IEEE-754 f64/f32 stays bit-identical
+        // across substrates by construction (belt-and-suspenders with the
+        // flag-free IR). Output-neutral on x86 (verified: identical bits to
+        // plain -O3), so the integer/Q16 byte-identity invariant is unchanged.
+        "-ffp-contract=off".into(),
         "-x".into(),
         "ir".into(),
         temp.path().to_string_lossy().into_owned(),
