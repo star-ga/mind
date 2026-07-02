@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2979 | **Est. tokens:** ~7,149,796
-**Generated:** 2026-07-02 07:11 UTC
+**Files:** 2983 | **Est. tokens:** ~7,167,328
+**Generated:** 2026-07-02 07:33 UTC
 
 ## Token Budget Guide
 
@@ -405,8 +405,8 @@
 | `src/type_checker/` | 1 | ~8,655 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 36 | ~165,131 |
-| `tests/` | 259 | ~434,093 |
+| `std/` | 38 | ~178,212 |
+| `tests/` | 261 | ~438,544 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3882,6 +3882,7 @@
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
+- `ecdsa_p256.mind` (~6619 tok, huge) — std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1555 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
 - `hpack.mind` (~9377 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
@@ -3895,6 +3896,7 @@
 - `llvm.mind` (~11108 tok, huge) — std/llvm.mind — RFC 0010 Phase F: hand-written MIND extern "C" bindings
 - `map.mind` (~1538 tok, huge) — std/map.mind — RFC 0005 Phase 2: pure-MIND insertion-ordered map.
 - `mlir.mind` (~11056 tok, huge) — std/mlir.mind — RFC 0010 Phase E: hand-written MIND extern "C" bindings
+- `mlkem768.mind` (~6462 tok, huge) — std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
 - `net.mind` (~2381 tok, huge) — std/net.mind — Task #268: POSIX socket surface in pure MIND.
 - `process.mind` (~3072 tok, huge) — std/process.mind — Task #268: subprocess + process environment in pure MIND.
 - `reactor.mind` (~1420 tok, large) — std.reactor — deterministic per-connection request-id allocation.
@@ -4046,6 +4048,7 @@
 - `digit_separator_run.rs` (~651 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_enum_variant_run.rs` (~806 tok, large) — Copyright 2025 STARGA Inc.
 - `dot_variants.rs` (~284 tok, medium) — Copyright 2025 STARGA Inc.
+- `ecdsa_p256_driver.py` (~2752 tok, huge) — # Ground-truth driver for std/ecdsa_p256.mind (pure-MIND ECDSA P-256/SHA-256
 - `emit_ir_for_loop.rs` (~369 tok, medium) — Regression test for #4: lowering a `for` loop to IR (the path `mindc --emit-ir`
 - `enum_match_collision_run.rs` (~1033 tok, large) — Copyright 2025 STARGA Inc.
 - `enum_match_run.rs` (~2361 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4248,6 +4251,7 @@
 - `mlir_jit.rs` (~285 tok, medium) — Copyright 2025 STARGA Inc.
 - `mlir_lowering.rs` (~1490 tok, large)
 - `mlir_opt.rs` (~424 tok, medium) — Copyright 2025 STARGA Inc.
+- `mlkem768_driver.py` (~1699 tok, huge) — # Reference-vector driver for std/mlkem768.mind (pure-MIND ML-KEM-768,
 - `module_const_run.rs` (~774 tok, large) — Copyright 2025 STARGA Inc.
 - `module_decl_run.rs` (~643 tok, large) — Copyright 2025 STARGA Inc.
 - `narrow_call_abi.rs` (~1374 tok, large) — Copyright 2025 STARGA Inc.
