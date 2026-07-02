@@ -622,7 +622,10 @@ pub fn rsa_pkcs1_sha256_verify(
     if sig_len > 256 {
         return 0;
     }
-    if e < 1 {
+    // RFC 8017: a valid RSA public exponent is odd and >= 3 (3/17/65537).
+    // Reject e < 3 (e=1 gives m = s^1 = s, so the attacker chooses EM directly
+    // = universal forgery) and any even e (non-invertible mod phi(n)).
+    if e < 3 || (e & 1) == 0 {
         return 0;
     }
     if msg_len < 0 {
