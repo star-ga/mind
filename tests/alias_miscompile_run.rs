@@ -70,6 +70,26 @@ pub fn f(n: i64) -> i64 {
     }
     return x * 1000 + y
 }
+
+// [D] NESTED-loop shape: `j` aliases `start`, `j` is assigned only in the INNER
+// loop (so it is loop-carried by the OUTER loop), and the OUTER body reads the
+// alias source `start`. The outer alias-break must see `j` as a candidate —
+// which requires collect_assign_targets to descend into the nested loop.
+pub fn nested(start: i64, len: i64) -> i64 {
+    let mut j: i64 = start
+    let mut total: i64 = 0
+    let mut outer: i64 = 0
+    while outer < 3 {
+        let mut inner: i64 = 0
+        while inner < len {
+            j = j + 1
+            inner = inner + 1
+        }
+        total = total + (start + len)
+        outer = outer + 1
+    }
+    return total
+}
 "#;
 
 #[test]
@@ -103,9 +123,11 @@ fn alias_clobber_shapes_run_correctly() {
          for name in ('count_a','g','f'):\n\
          \x20   fn = getattr(lib, name); fn.restype = ctypes.c_int64\n\
          \x20   fn.argtypes = [ctypes.c_int64] * (2 if name=='count_a' else 1)\n\
+         lib.nested.restype = ctypes.c_int64; lib.nested.argtypes = [ctypes.c_int64, ctypes.c_int64]\n\
          r = lib.count_a(0, 4); assert r == 4, '[A] count_a(0,4)=' + str(r) + ' (clobber -> 100)'\n\
          r = lib.g(3);          assert r == 21, '[B] g(3)=' + str(r) + ' (clobber -> 42)'\n\
          r = lib.f(1);          assert r == 31008, '[C] f(1)=' + str(r)\n\
+         r = lib.nested(5, 2);  assert r == 21, '[D] nested(5,2)=' + str(r) + ' (nested clobber -> 27)'\n\
          print('ok')\n",
         so.to_string_lossy()
     );
