@@ -227,7 +227,10 @@ pub fn http2_preface_check(buf_addr: i64) -> i64 {
 // (§6.5) — returns -1 (fail closed).  On success writes each entry as two
 // consecutive i64 [identifier, value] at out_pairs_addr (16 bytes per entry)
 // and returns the entry count.
-pub fn http2_settings_parse(payload_addr: i64, payload_len: i64, out_pairs_addr: i64) -> i64 {
+// out_pairs_cap = number of [ident,value] pairs the caller allocated at
+// out_pairs_addr (each pair is 16 bytes). Fail closed (-1) if the attacker-
+// controlled payload would write more pairs than the caller sized for.
+pub fn http2_settings_parse(payload_addr: i64, payload_len: i64, out_pairs_addr: i64, out_pairs_cap: i64) -> i64 {
     if payload_len < 0 {
         return -1;
     }
@@ -235,6 +238,9 @@ pub fn http2_settings_parse(payload_addr: i64, payload_len: i64, out_pairs_addr:
         return -1;
     }
     let count: i64 = payload_len / 6;
+    if count > out_pairs_cap {
+        return -1;
+    }
     let mut i: i64 = 0;
     while i < count {
         let entry: i64 = payload_addr + i * 6;
@@ -353,18 +359,24 @@ pub fn http2_ping_write(flags: i64, opaque_addr: i64, out_addr: i64) -> i64 {
 //   out+8 = Error Code     (32-bit)
 // copies the remaining debug data to debug_out_addr, and returns the debug
 // data length (>= 0).
+// debug_out_cap = bytes the caller allocated at debug_out_addr. Fail closed
+// (-1) if the attacker-controlled debug data would exceed it.
 pub fn http2_goaway_parse(
     payload_addr: i64,
     payload_len: i64,
     out_fields_addr: i64,
     debug_out_addr: i64,
+    debug_out_cap: i64,
 ) -> i64 {
     if payload_len < 8 {
         return -1;
     }
+    let debug_len: i64 = payload_len - 8;
+    if debug_len > debug_out_cap {
+        return -1;
+    }
     __mind_store_i64(out_fields_addr, h2_be32_load(payload_addr) & 2147483647);
     __mind_store_i64(out_fields_addr + 8, h2_be32_load(payload_addr + 4));
-    let debug_len: i64 = payload_len - 8;
     h2_mem_copy(debug_out_addr, payload_addr + 8, debug_len);
     debug_len
 }
