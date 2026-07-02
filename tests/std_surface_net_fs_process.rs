@@ -249,7 +249,7 @@ mod mlir_functional {
     use std::path::PathBuf;
     use std::process::Command;
 
-// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     fn out_dir() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))

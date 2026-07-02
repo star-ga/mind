@@ -2896,7 +2896,11 @@ mod tests {
             "2^32 as u32 must mask to 0"
         );
         // Signed narrowings truncate then sign-extend.
-        assert_eq!(eval_int("200 as i8"), -56, "200 as i8 must sign-extend to -56");
+        assert_eq!(
+            eval_int("200 as i8"),
+            -56,
+            "200 as i8 must sign-extend to -56"
+        );
         assert_eq!(
             eval_int("100000 as i16"),
             -31072,

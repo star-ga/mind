@@ -105,9 +105,15 @@ fn unsigned_narrow_div_by_zero_is_deterministic_zero() {
 
     // Non-zero divisors are UNCHANGED and still use UNSIGNED semantics:
     // 0xFFFFFFFF / 2 == 2147483647 (unsigned), not 0 (which `-1 / 2` signed gives).
-    assert_eq!(call_f("u32", "    return a / b", 4_294_967_295, 2, "udiv"), 2_147_483_647);
+    assert_eq!(
+        call_f("u32", "    return a / b", 4_294_967_295, 2, "udiv"),
+        2_147_483_647
+    );
     // 0xFFFFFFFF % 3 == 0 unsigned (4294967295 = 3 * 1431655765).
-    assert_eq!(call_f("u32", "    return a % b", 4_294_967_295, 3, "umod"), 0);
+    assert_eq!(
+        call_f("u32", "    return a % b", 4_294_967_295, 3, "umod"),
+        0
+    );
     // Plain in-range arithmetic is untouched.
     assert_eq!(call_f("u32", "    return a / b", 100, 7, "div7"), 14);
     assert_eq!(call_f("u32", "    return a % b", 100, 7, "mod7"), 2);

@@ -454,7 +454,10 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
         let mut consts = std::collections::BTreeMap::new();
         let mut const_types = std::collections::BTreeMap::new();
         for item in &module.items {
-            if let ast::Node::Const { name, value, ty, .. } = item {
+            if let ast::Node::Const {
+                name, value, ty, ..
+            } = item
+            {
                 consts.insert(name.clone(), (**value).clone());
                 if let Some(t) = ty {
                     const_types.insert(name.clone(), t.clone());
@@ -747,9 +750,7 @@ pub fn lower_to_ir(module: &ast::Module) -> IRModule {
                         struct_env.entry(name.clone()).or_insert(t);
                     }
                     if let Some(e) = struct_env.get(&format!("__elem__{src}")).cloned() {
-                        struct_env
-                            .entry(format!("__elem__{name}"))
-                            .or_insert(e);
+                        struct_env.entry(format!("__elem__{name}")).or_insert(e);
                     }
                 }
                 // `array<T>` binding: record the vec sentinel so a later
@@ -1934,7 +1935,11 @@ fn let_rhs_collection_track(
                     .cloned()
                     .or_else(|| receiver_struct_type(obj, ir, struct_env))
                     .and_then(|sname| {
-                        let idx = ir.struct_defs.get(&sname)?.iter().position(|f| f == field)?;
+                        let idx = ir
+                            .struct_defs
+                            .get(&sname)?
+                            .iter()
+                            .position(|f| f == field)?;
                         ir.struct_field_types.get(&sname)?.get(idx).cloned()
                     }),
                 ast::Node::Lit(Literal::Ident(v), _) => crate::ir::module_const_type(v),
@@ -1969,7 +1974,11 @@ fn let_rhs_collection_track(
                 .get(span)
                 .cloned()
                 .or_else(|| receiver_struct_type(base, ir, struct_env))?;
-            let idx = ir.struct_defs.get(&sname)?.iter().position(|f| f == field)?;
+            let idx = ir
+                .struct_defs
+                .get(&sname)?
+                .iter()
+                .position(|f| f == field)?;
             ir.struct_field_types.get(&sname)?.get(idx)?.clone()
         }
         _ => return None,
@@ -2013,9 +2022,9 @@ fn receiver_is_tracked_collection(
             field,
             ..
         } => matches!(base.as_ref(), ast::Node::Lit(Literal::Ident(obj), _)
-            if vtypes.get(obj).is_some_and(|s| {
-                struct_collection_fields.contains(&(s.clone(), field.clone()))
-            })),
+        if vtypes.get(obj).is_some_and(|s| {
+            struct_collection_fields.contains(&(s.clone(), field.clone()))
+        })),
         ast::Node::IndexAccess { receiver: base, .. } => matches!(
             base.as_ref(),
             ast::Node::FieldAccess { receiver: obj, field, .. }
@@ -2058,9 +2067,7 @@ fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>
         N::Tuple { elements, .. }
         | N::ArrayLit { elements, .. }
         | N::SetLit { elements, .. }
-        | N::Print { args: elements, .. } => {
-            elements.iter().any(|e| ast_reads_ident(e, targets))
-        }
+        | N::Print { args: elements, .. } => elements.iter().any(|e| ast_reads_ident(e, targets)),
         N::Call { args, .. } => args.iter().any(|a| ast_reads_ident(a, targets)),
         N::CallGrad { loss, .. } => ast_reads_ident(loss, targets),
         N::CallTensorSum { x, .. }
@@ -2092,9 +2099,7 @@ fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>
         | N::LetTuple { value, .. }
         | N::Assign { value, .. }
         | N::Const { value, .. } => ast_reads_ident(value, targets),
-        N::Return { value, .. } => {
-            value.as_ref().is_some_and(|v| ast_reads_ident(v, targets))
-        }
+        N::Return { value, .. } => value.as_ref().is_some_and(|v| ast_reads_ident(v, targets)),
         N::Block { stmts, .. } => stmts.iter().any(|s| ast_reads_ident(s, targets)),
         N::Region { body, .. } => body.iter().any(|s| ast_reads_ident(s, targets)),
         N::If {
@@ -2119,20 +2124,18 @@ fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>
         N::ForEach {
             collection, body, ..
         } => {
-            ast_reads_ident(collection, targets)
-                || body.iter().any(|s| ast_reads_ident(s, targets))
+            ast_reads_ident(collection, targets) || body.iter().any(|s| ast_reads_ident(s, targets))
         }
         N::While { cond, body, .. } => {
             ast_reads_ident(cond, targets) || body.iter().any(|s| ast_reads_ident(s, targets))
         }
         N::MethodCall { receiver, args, .. } => {
-            ast_reads_ident(receiver, targets)
-                || args.iter().any(|a| ast_reads_ident(a, targets))
+            ast_reads_ident(receiver, targets) || args.iter().any(|a| ast_reads_ident(a, targets))
         }
         N::FieldAccess { receiver, .. } => ast_reads_ident(receiver, targets),
-        N::IndexAccess { receiver, index, .. } => {
-            ast_reads_ident(receiver, targets) || ast_reads_ident(index, targets)
-        }
+        N::IndexAccess {
+            receiver, index, ..
+        } => ast_reads_ident(receiver, targets) || ast_reads_ident(index, targets),
         N::IndexAssign {
             receiver,
             index,
@@ -2153,9 +2156,7 @@ fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>
                 || arms.iter().any(|a| ast_reads_ident(&a.body, targets))
         }
         N::Assert { cond, .. } => ast_reads_ident(cond, targets),
-        N::StructLit { fields, .. } => {
-            fields.iter().any(|f| ast_reads_ident(&f.value, targets))
-        }
+        N::StructLit { fields, .. } => fields.iter().any(|f| ast_reads_ident(&f.value, targets)),
         N::MapLit { entries, .. } => entries
             .iter()
             .any(|(k, v)| ast_reads_ident(k, targets) || ast_reads_ident(v, targets)),
@@ -2272,18 +2273,16 @@ fn reject_collection_mutation_in_expr(
             recur(right);
         }
         N::Paren(inner, _) => recur(inner),
-        N::Tuple { elements, .. } | N::ArrayLit { elements, .. } => {
-            elements.iter().for_each(recur)
-        }
+        N::Tuple { elements, .. } | N::ArrayLit { elements, .. } => elements.iter().for_each(recur),
         N::Call { args, .. } => args.iter().for_each(recur),
-        N::MethodCall {
-            receiver, args, ..
-        } => {
+        N::MethodCall { receiver, args, .. } => {
             recur(receiver);
             args.iter().for_each(recur);
         }
         N::FieldAccess { receiver, .. } => recur(receiver),
-        N::IndexAccess { receiver, index, .. } => {
+        N::IndexAccess {
+            receiver, index, ..
+        } => {
             recur(receiver);
             recur(index);
         }
@@ -2391,7 +2390,9 @@ fn rewrite_collection_mutations(
                     reject(value)
                 }
                 ast::Node::Return { value: Some(v), .. } => reject(v),
-                ast::Node::FieldAssign { receiver, value, .. } => {
+                ast::Node::FieldAssign {
+                    receiver, value, ..
+                } => {
                     reject(receiver);
                     reject(value);
                 }
@@ -2410,12 +2411,12 @@ fn rewrite_collection_mutations(
                 // rebound mutation (allowed) or a value-returning method (no
                 // mutation). Either way scan its receiver's sub-expressions and
                 // its arguments for nested expr-position mutations.
-                ast::Node::MethodCall {
-                    receiver, args, ..
-                } => {
+                ast::Node::MethodCall { receiver, args, .. } => {
                     match receiver.as_ref() {
                         ast::Node::FieldAccess { receiver: b, .. } => reject(b),
-                        ast::Node::IndexAccess { receiver: b, index, .. } => {
+                        ast::Node::IndexAccess {
+                            receiver: b, index, ..
+                        } => {
                             reject(b);
                             reject(index);
                         }
@@ -2561,7 +2562,13 @@ fn rewrite_collection_mutations(
             | ast::Node::ForEach { body, .. }
             | ast::Node::While { body, .. }
             | ast::Node::Block { stmts: body, .. } => {
-                rewrite_collection_mutations(body, &scope, struct_collection_fields, struct_collection_element_fields, &vtypes);
+                rewrite_collection_mutations(
+                    body,
+                    &scope,
+                    struct_collection_fields,
+                    struct_collection_element_fields,
+                    &vtypes,
+                );
             }
             ast::Node::If {
                 then_branch,
@@ -2576,7 +2583,13 @@ fn rewrite_collection_mutations(
                     &vtypes,
                 );
                 if let Some(eb) = else_branch {
-                    rewrite_collection_mutations(eb, &scope, struct_collection_fields, struct_collection_element_fields, &vtypes);
+                    rewrite_collection_mutations(
+                        eb,
+                        &scope,
+                        struct_collection_fields,
+                        struct_collection_element_fields,
+                        &vtypes,
+                    );
                 }
             }
             ast::Node::Match { arms, .. } => {
@@ -3727,9 +3740,7 @@ fn lower_expr(
                                 fn_struct_env.entry(name.clone()).or_insert(t);
                             }
                             if let Some(e) = fn_struct_env.get(&format!("__elem__{src}")).cloned() {
-                                fn_struct_env
-                                    .entry(format!("__elem__{name}"))
-                                    .or_insert(e);
+                                fn_struct_env.entry(format!("__elem__{name}")).or_insert(e);
                             }
                         }
                         // `array<T>` binding: record the vec sentinel so a later
@@ -4157,8 +4168,13 @@ fn lower_expr(
                         then_result = id;
                     }
                     ast::Node::Assign { name, value, .. } => {
-                        let id =
-                            lower_expr(value, &mut then_ir, &then_env, &then_struct_env, receiver_types);
+                        let id = lower_expr(
+                            value,
+                            &mut then_ir,
+                            &then_env,
+                            &then_struct_env,
+                            receiver_types,
+                        );
                         // Re-mask a narrow local reassigned inside the then-branch.
                         #[cfg(feature = "std-surface")]
                         let id = mask_narrow_assign(&mut then_ir, name, id);
@@ -4180,8 +4196,13 @@ fn lower_expr(
                         }
                     }
                     other => {
-                        then_result =
-                            lower_expr(other, &mut then_ir, &then_env, &then_struct_env, receiver_types);
+                        then_result = lower_expr(
+                            other,
+                            &mut then_ir,
+                            &then_env,
+                            &then_struct_env,
+                            receiver_types,
+                        );
                         // F2: thread a nested region's EXIT/merge ids upward so
                         // an outer var mutated inside it is visible (and
                         // dominating) at this branch's exit.
@@ -4214,7 +4235,13 @@ fn lower_expr(
                     match stmt {
                         ast::Node::Return { value, .. } => {
                             let ret_val = value.as_ref().map(|v| {
-                                lower_expr(v, &mut else_ir, &else_env, &else_struct_env, receiver_types)
+                                lower_expr(
+                                    v,
+                                    &mut else_ir,
+                                    &else_env,
+                                    &else_struct_env,
+                                    receiver_types,
+                                )
                             });
                             else_ir.instrs.push(Instr::Return { value: ret_val });
                             if let Some(rv) = ret_val {
@@ -4998,7 +5025,13 @@ fn lower_expr(
                         );
                     }
                     other => {
-                        lower_expr(other, &mut body_ir, &body_env, &body_struct_env, receiver_types);
+                        lower_expr(
+                            other,
+                            &mut body_ir,
+                            &body_env,
+                            &body_struct_env,
+                            receiver_types,
+                        );
                         // F2: a nested region (if/while) inside the loop body may
                         // mutate an OUTER (loop-carried) variable. Thread the
                         // nested region's EXIT/merge id into body_env AND record
@@ -6004,38 +6037,35 @@ fn lower_expr(
             }
             // Resolve the receiver's struct type name `T` and, for the cheap
             // Ident path, the bound variable name so we can reuse its SSA id.
-            let (struct_name, var_name_opt): (Option<String>, Option<String>) =
-                match receiver.as_ref() {
-                    ast::Node::Lit(Literal::Ident(var_name), _) => match struct_env.get(var_name) {
-                        Some(t) => (Some(t.clone()), Some(var_name.clone())),
-                        None => (receiver_types.get(span).cloned(), None),
-                    },
-                    // A FieldAccess receiver whose field is itself an `array<T>`
-                    // (`next.scopes.push(x)` where `scopes: array<T>`) resolves to
-                    // the vec sentinel so `.push`/`.get`/`.set`/`.length` route to
-                    // the std.vec free functions — mirroring the map/set field
-                    // receivers handled in the intercept above. The mutating forms
-                    // are rebound to a FieldAssign in `rewrite_collection_mutations`
-                    // so the fresh-on-realloc handle persists. Falls back to the
-                    // struct-type side table for a struct-typed field receiver.
-                    _ => {
-                        #[cfg(feature = "std-surface")]
-                        {
-                            let sentinel = receiver_collection_sentinel(
-                                receiver,
-                                &ir,
-                                struct_env,
-                                receiver_types,
-                            )
-                            .map(|s| s.to_string());
-                            (sentinel.or_else(|| receiver_types.get(span).cloned()), None)
-                        }
-                        #[cfg(not(feature = "std-surface"))]
-                        {
-                            (receiver_types.get(span).cloned(), None)
-                        }
+            let (struct_name, var_name_opt): (Option<String>, Option<String>) = match receiver
+                .as_ref()
+            {
+                ast::Node::Lit(Literal::Ident(var_name), _) => match struct_env.get(var_name) {
+                    Some(t) => (Some(t.clone()), Some(var_name.clone())),
+                    None => (receiver_types.get(span).cloned(), None),
+                },
+                // A FieldAccess receiver whose field is itself an `array<T>`
+                // (`next.scopes.push(x)` where `scopes: array<T>`) resolves to
+                // the vec sentinel so `.push`/`.get`/`.set`/`.length` route to
+                // the std.vec free functions — mirroring the map/set field
+                // receivers handled in the intercept above. The mutating forms
+                // are rebound to a FieldAssign in `rewrite_collection_mutations`
+                // so the fresh-on-realloc handle persists. Falls back to the
+                // struct-type side table for a struct-typed field receiver.
+                _ => {
+                    #[cfg(feature = "std-surface")]
+                    {
+                        let sentinel =
+                            receiver_collection_sentinel(receiver, &ir, struct_env, receiver_types)
+                                .map(|s| s.to_string());
+                        (sentinel.or_else(|| receiver_types.get(span).cloned()), None)
                     }
-                };
+                    #[cfg(not(feature = "std-surface"))]
+                    {
+                        (receiver_types.get(span).cloned(), None)
+                    }
+                }
+            };
 
             // Case 1 — zero-arg accessor whose name is a field of `T`.
             let field_idx = if args.is_empty() {
@@ -6629,9 +6659,9 @@ fn desugar_match_to_if(
     } else {
         // (1) A qualified arm pins the enum.
         let qualified_enum: Option<String> = arms.iter().find_map(|a| match &a.pattern {
-            ast::Pattern::EnumVariant { path, .. } => path
-                .rsplit_once("::")
-                .map(|(e, _)| e.to_string()),
+            ast::Pattern::EnumVariant { path, .. } => {
+                path.rsplit_once("::").map(|(e, _)| e.to_string())
+            }
             ast::Pattern::EnumStruct { path, .. } => path
                 .rsplit_once("::")
                 .or_else(|| path.rsplit_once('.'))
@@ -6944,8 +6974,7 @@ fn desugar_match_to_if(
                             // Reinterpret the i64 slot back to the field's declared
                             // type (e.g. `f64`) so the binding has the right type.
                             let ty = field_types.and_then(|ts| ts.get(i));
-                            let value =
-                                coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
+                            let value = coerce_enum_field_from_bits(load_i64(field_addr), ty, span);
                             stmts.push(ast::Node::Let {
                                 name: name.clone(),
                                 mutable: false,
@@ -6960,8 +6989,7 @@ fn desugar_match_to_if(
                         // hidden name is span+index-unique so sibling arms/nested
                         // matches never collide.
                         ast::Pattern::Tuple(inner) => {
-                            let tp_name =
-                                format!("__mind_tp_{}_{}", span.start(), i);
+                            let tp_name = format!("__mind_tp_{}_{}", span.start(), i);
                             stmts.push(ast::Node::Let {
                                 name: tp_name.clone(),
                                 mutable: false,
@@ -6971,10 +6999,8 @@ fn desugar_match_to_if(
                             });
                             for (j, inner_p) in inner.iter().enumerate() {
                                 if let ast::Pattern::Ident(name) = inner_p {
-                                    let base = ast::Node::Lit(
-                                        Literal::Ident(tp_name.clone()),
-                                        span,
-                                    );
+                                    let base =
+                                        ast::Node::Lit(Literal::Ident(tp_name.clone()), span);
                                     let elem_addr = if j == 0 {
                                         base
                                     } else {
