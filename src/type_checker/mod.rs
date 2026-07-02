@@ -3959,6 +3959,14 @@ pub fn check_module_types_in_file(
                             format!("assignment to undeclared variable `{}`{hint}", u.name),
                             resolve::UNDECLARED_ASSIGN_CODE,
                         )
+                    } else if u.fn_value_call {
+                        (
+                            format!(
+                                "cannot call a function value `{}`: first-class functions are not yet supported",
+                                u.name
+                            ),
+                            resolve::FN_VALUE_CALL_CODE,
+                        )
                     } else if u.is_call {
                         (
                             format!("unsupported call to `{}`", u.name),
