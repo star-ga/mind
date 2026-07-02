@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2993 | **Est. tokens:** ~7,184,572
-**Generated:** 2026-07-02 17:52 UTC
+**Files:** 2993 | **Est. tokens:** ~7,185,252
+**Generated:** 2026-07-02 18:37 UTC
 
 ## Token Budget Guide
 
@@ -40,11 +40,11 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 30 | ~58,252 |
+| `docs/` | 30 | ~58,885 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
-| `docs/mindcraft/` | 3 | ~6,976 |
+| `docs/mindcraft/` | 3 | ~7,023 |
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,353 |
 | `docs/specs/` | 2 | ~976 |
@@ -623,13 +623,13 @@
 - `cerebras-stencil.md` (~1482 tok, large) — `mind.cerebras.stencil_tile` — Op Surface and Lowering Contract
 ### `docs/`
 
-- `benchmarking.md` (~1903 tok, huge) — Benchmarking methodology — tiers and comparable metrics
+- `benchmarking.md` (~1917 tok, huge) — Benchmarking methodology — tiers and comparable metrics
 ### `docs/benchmarks/`
 
 - `compiler_performance.md` (~4721 tok, huge) — MIND Compiler Performance Benchmarks
 ### `docs/`
 
-- `benchmarks.md` (~805 tok, large) — Benchmarks
+- `benchmarks.md` (~896 tok, large) — Benchmarks
 ### `docs/benchmarks/`
 
 - `mojo_comparison.md` (~2420 tok, huge) — MIND vs Mojo: Compilation Performance Comparison
@@ -649,7 +649,7 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `install.md` (~1011 tok, large) — Installing mindc
+- `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
 - `ir-stability.md` (~1485 tok, large) — IR stability contract
@@ -657,13 +657,13 @@
 
 - `fmt.md` (~2239 tok, huge) — `mindc fmt` — Canonical Formatter Reference
 - `phase2-implementation-plan.md` (~2209 tok, huge) — Mindcraft Phase 2 — Implementation Plan
-- `rfc0010-phase-ghi-migration-plan.md` (~2528 tok, huge) — RFC 0010 Phase G/H/I — Migration Plan (corrected against real architecture)
+- `rfc0010-phase-ghi-migration-plan.md` (~2575 tok, huge) — RFC 0010 Phase G/H/I — Migration Plan (corrected against real architecture)
 ### `docs/`
 
 - `mlir-lowering.md` (~286 tok, medium) — MLIR lowering pipeline (public)
 - `ops.md` (~604 tok, large) — Core v1 operator coverage
-- `optimization-frontier.md` (~11269 tok, huge) — MIND Optimization Frontier
-- `performance.md` (~742 tok, large) — Performance Guide
+- `optimization-frontier.md` (~11347 tok, huge) — MIND Optimization Frontier
+- `performance.md` (~880 tok, large) — Performance Guide
 - `README.md` (~162 tok, small) — MIND Documentation
 - `reap-pruning.md` (~901 tok, large) — REAP Expert Pruning
 ### `docs/research/`
@@ -702,8 +702,8 @@
 ### `docs/`
 
 - `roadmap.md` (~15232 tok, huge) — Roadmap
-- `runs-burndown-roadmap.md` (~3176 tok, huge) — MIND RUNS Burndown Roadmap
-- `security.md` (~1331 tok, large) — Security Guide
+- `runs-burndown-roadmap.md` (~3203 tok, huge) — MIND RUNS Burndown Roadmap
+- `security.md` (~1480 tok, large) — Security Guide
 - `self-host-trace-hash-port.md` (~1406 tok, large) — #17 — Self-compute the native PT_NOTE (pure-MIND trace-hash port)
 - `shapes.md` (~478 tok, medium) — Tensor shape semantics
 - `sparse-tensor-types.md` (~740 tok, large) — Sparse Tensor Types
@@ -713,7 +713,7 @@
 - `v1.0.md` (~953 tok, large) — MIND Language Specification v1.0 (Working Draft)
 ### `docs/`
 
-- `type-system.md` (~947 tok, large) — Type System
+- `type-system.md` (~1082 tok, large) — Type System
 - `versioning.md` (~804 tok, large) — MIND Core Stability & Versioning
 - `version-matrix.md` (~1796 tok, huge) — MIND Ecosystem — Version Matrix
 - `whitepaper.md` (~2788 tok, huge) — MIND: The Native Language for Intelligent Systems

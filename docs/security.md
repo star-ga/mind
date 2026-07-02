@@ -2,13 +2,23 @@
 
 > **Audience:** MIND users deploying in regulated environments
 
+> **Status note (2026-07):** This guide describes the *intended* production
+> security surface. Flags and annotations shown here that are not in
+> [`docs/cli.md`](cli.md) (`--release`, `--fast-math`, `--sandbox`,
+> `@validate`) are planned, not yet shipped. The currently-verified
+> determinism scope is defined in [`docs/determinism.md`](determinism.md):
+> bit-identical integer/Q16.16 execution gated across x86 == ARM, with scalar
+> IEEE-754 f64/f32 on the strict path (run-to-run bit-identical; cross-ISA
+> verification in progress).
+
 ## Overview
 
 MIND is designed for certified AI systems in safety-critical and regulated industries. This guide covers security best practices for production deployments.
 
 ## Deterministic Execution
 
-MIND guarantees bit-exact reproducibility by default. This is critical for:
+MIND targets bit-exact reproducibility by default (see the status note above
+for the currently-verified scope). This is critical for:
 - FDA-regulated medical devices
 - Auditable AI systems
 - Reproducible research

@@ -80,8 +80,9 @@ the param check. Two consequences, both honest:
 ## 3. Prioritized real-codegen plan (deterministic, cross-substrate byte-identical)
 
 Each item is genuine MLIR-lowering work that makes the construct **RUN** with the
-load-bearing invariant intact: **bit-identical output across CPU / ARM / GPU**, signed
-into the evidence chain. Ordered by **(symbols unlocked ÷ effort)**. Effort tiers:
+load-bearing invariant intact: **bit-identical output across CPU substrates (x86 == ARM,
+gated; the GPU leg is roadmap)**, committed into the emitted evidence chain (Ed25519
+signing of the chain is the next milestone). Ordered by **(symbols unlocked ÷ effort)**. Effort tiers:
 **S** ≈ days (one construct, no new ABI), **M** ≈ 1–2 sessions (new lowering pass +
 byte-identity gate), **L** ≈ multi-session (full type-system surface / new region SSA).
 
