@@ -20,7 +20,7 @@ The script:
 To pin a specific version:
 
 ```sh
-MINDC_VERSION=v0.8.1 curl -sSL https://mindlang.dev/install.sh | sh
+MINDC_VERSION=v0.10.0 curl -sSL https://mindlang.dev/install.sh | sh
 ```
 
 To preview what the script would do without writing any files:
@@ -58,7 +58,7 @@ irm https://mindlang.dev/install.ps1 | iex
 Or with a pinned version:
 
 ```powershell
-$env:MINDC_VERSION = "v0.7.1"; irm https://mindlang.dev/install.ps1 | iex
+$env:MINDC_VERSION = "v0.10.0"; irm https://mindlang.dev/install.ps1 | iex
 ```
 
 The default install directory is `%USERPROFILE%\.local\bin`. The script adds

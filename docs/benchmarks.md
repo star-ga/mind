@@ -13,6 +13,12 @@ This document summarizes the benchmarking approach for the MIND compiler and run
 
 The following baselines were collected on reference hardware (a commodity x86 CPU, 64 GB DDR4, Ampere-class GPU, Ubuntu 24.04 LTS) using Rust 1.84 stable.
 
+> **Snapshot note:** these tables are a dated baseline capture and are not
+> regenerated on every release — the test suite and kernel set have grown
+> substantially since (the test-count table below reflects the snapshot, not
+> the current suite). For current numbers run the criterion benches; reporting
+> rules are in [`benchmarking.md`](benchmarking.md).
+
 ### Compiler Performance
 
 | Operation | Input Size | Time (median) | Memory |

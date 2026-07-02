@@ -2,6 +2,15 @@
 
 > **Audience:** MIND users optimizing model performance
 
+> **Status note (2026-07):** This guide documents the *intended*
+> performance-tuning surface. The shipped `mindc` flag set is the one in
+> [`docs/cli.md`](cli.md); flags shown here that are not in that table
+> (`--release`, `--fast-math`, `--profile`, `--mlir-opt`, `--benchmark`,
+> `--trace-alloc`, `--release-safe`, `--target=cuda`) are planned, not yet
+> available. Proven performance wins today are the hand-lowered deterministic
+> integer GEMM/FFT kernel intrinsics; see
+> [`docs/benchmarking.md`](benchmarking.md) for how numbers are reported.
+
 ## Optimization Levels
 
 | Flag | Use Case | Deterministic |

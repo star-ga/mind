@@ -178,8 +178,11 @@ independence — G2 does.
   + async, not on the (now-known-trivial) dead-dep removal.
 
 The headline correction for any future reader: **the credibility-
-ladder rung-3 graduation (toolchain self-hosts) shipped in v0.7.0.
-"Full Rust independence" was always a smaller delta than RFC 0010 §5
-implied, because the heavy MLIR/LLVM Rust FFI it assumed never
+ladder rung-3 graduation (build orchestration written in MIND) shipped
+in v0.7.0. The Rust-FFI-removal delta was always smaller than RFC 0010
+§5 implied, because the heavy MLIR/LLVM Rust FFI it assumed never
 existed — mindc emits text and shells to the C++ backend, and the
 pure-MIND compiler already mirrors the text emitter byte-identically.**
+Full-chain Rust-independence nonetheless remains roadmap work: the
+bootstrap/front-end self-hosts byte-identically, but the shipped
+toolchain is still the Rust implementation.
