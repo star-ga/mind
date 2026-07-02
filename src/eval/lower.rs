@@ -2028,6 +2028,185 @@ fn receiver_is_tracked_collection(
     }
 }
 
+/// True when `node` (an expression or statement subtree) READS any identifier
+/// in `targets` — i.e. references it as a *value*, not as an assignment target
+/// or a fresh binding name.
+///
+/// Used by the `While` arm to decide whether a loop-carried variable's alias
+/// SOURCE (`let mut j = start` makes `j` and `start` share one ValueId) is
+/// actually referenced inside the loop. That is the exact condition under which
+/// the MLIR While emitter's purely-numeric `substitute_ids` rewrite (first-match
+/// on the shared `%init_id`) would clobber the source into the loop counter — a
+/// silent miscompile. When no source name is read the alias is harmless and the
+/// binding is left untouched, preserving byte-identity for correct programs.
+#[cfg(feature = "std-surface")]
+fn ast_reads_ident(node: &ast::Node, targets: &std::collections::HashSet<String>) -> bool {
+    use ast::Node as N;
+    match node {
+        N::Lit(Literal::Ident(name), _) => targets.contains(name),
+        N::Lit(..) => false,
+        N::Binary { left, right, .. }
+        | N::Logical { left, right, .. }
+        | N::Bitwise { left, right, .. } => {
+            ast_reads_ident(left, targets) || ast_reads_ident(right, targets)
+        }
+        N::Paren(inner, _)
+        | N::Neg { operand: inner, .. }
+        | N::Not { operand: inner, .. }
+        | N::Ref { inner, .. }
+        | N::As { expr: inner, .. } => ast_reads_ident(inner, targets),
+        N::Tuple { elements, .. }
+        | N::ArrayLit { elements, .. }
+        | N::SetLit { elements, .. }
+        | N::Print { args: elements, .. } => {
+            elements.iter().any(|e| ast_reads_ident(e, targets))
+        }
+        N::Call { args, .. } => args.iter().any(|a| ast_reads_ident(a, targets)),
+        N::CallGrad { loss, .. } => ast_reads_ident(loss, targets),
+        N::CallTensorSum { x, .. }
+        | N::CallTensorMean { x, .. }
+        | N::CallReshape { x, .. }
+        | N::CallExpandDims { x, .. }
+        | N::CallSqueeze { x, .. }
+        | N::CallTranspose { x, .. }
+        | N::CallIndex { x, .. }
+        | N::CallSlice { x, .. }
+        | N::CallSliceStride { x, .. }
+        | N::CallTensorRelu { x, .. } => ast_reads_ident(x, targets),
+        N::CallGather { x, idx, .. } => {
+            ast_reads_ident(x, targets) || ast_reads_ident(idx, targets)
+        }
+        N::CallDot { a, b, .. } | N::CallMatMul { a, b, .. } => {
+            ast_reads_ident(a, targets) || ast_reads_ident(b, targets)
+        }
+        N::TensorMatmul { lhs, rhs, .. } | N::TensorElemwise { lhs, rhs, .. } => {
+            ast_reads_ident(lhs, targets) || ast_reads_ident(rhs, targets)
+        }
+        N::CallTensorConv2d { x, w, .. } => {
+            ast_reads_ident(x, targets) || ast_reads_ident(w, targets)
+        }
+        // Binding introductions / assignment targets: the LHS `name` is NOT a
+        // read (counting it would over-fire and drift correct programs); only
+        // the RHS value is a read.
+        N::Let { value, .. }
+        | N::LetTuple { value, .. }
+        | N::Assign { value, .. }
+        | N::Const { value, .. } => ast_reads_ident(value, targets),
+        N::Return { value, .. } => {
+            value.as_ref().is_some_and(|v| ast_reads_ident(v, targets))
+        }
+        N::Block { stmts, .. } => stmts.iter().any(|s| ast_reads_ident(s, targets)),
+        N::Region { body, .. } => body.iter().any(|s| ast_reads_ident(s, targets)),
+        N::If {
+            cond,
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            ast_reads_ident(cond, targets)
+                || then_branch.iter().any(|s| ast_reads_ident(s, targets))
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|eb| eb.iter().any(|s| ast_reads_ident(s, targets)))
+        }
+        N::For {
+            start, end, body, ..
+        } => {
+            ast_reads_ident(start, targets)
+                || ast_reads_ident(end, targets)
+                || body.iter().any(|s| ast_reads_ident(s, targets))
+        }
+        N::ForEach {
+            collection, body, ..
+        } => {
+            ast_reads_ident(collection, targets)
+                || body.iter().any(|s| ast_reads_ident(s, targets))
+        }
+        N::While { cond, body, .. } => {
+            ast_reads_ident(cond, targets) || body.iter().any(|s| ast_reads_ident(s, targets))
+        }
+        N::MethodCall { receiver, args, .. } => {
+            ast_reads_ident(receiver, targets)
+                || args.iter().any(|a| ast_reads_ident(a, targets))
+        }
+        N::FieldAccess { receiver, .. } => ast_reads_ident(receiver, targets),
+        N::IndexAccess { receiver, index, .. } => {
+            ast_reads_ident(receiver, targets) || ast_reads_ident(index, targets)
+        }
+        N::IndexAssign {
+            receiver,
+            index,
+            value,
+            ..
+        } => {
+            ast_reads_ident(receiver, targets)
+                || ast_reads_ident(index, targets)
+                || ast_reads_ident(value, targets)
+        }
+        N::FieldAssign {
+            receiver, value, ..
+        } => ast_reads_ident(receiver, targets) || ast_reads_ident(value, targets),
+        N::Match {
+            scrutinee, arms, ..
+        } => {
+            ast_reads_ident(scrutinee, targets)
+                || arms.iter().any(|a| ast_reads_ident(&a.body, targets))
+        }
+        N::Assert { cond, .. } => ast_reads_ident(cond, targets),
+        N::StructLit { fields, .. } => {
+            fields.iter().any(|f| ast_reads_ident(&f.value, targets))
+        }
+        N::MapLit { entries, .. } => entries
+            .iter()
+            .any(|(k, v)| ast_reads_ident(k, targets) || ast_reads_ident(v, targets)),
+        // Items / declarations / non-read leaves (imports, fn/struct/enum defs,
+        // tensor.rand, etc.) contain no loop-body value reads relevant here.
+        _ => false,
+    }
+}
+
+/// Collect the names of variables ASSIGNED (`x = ...`) anywhere in `stmts`
+/// that are visible in the outer loop iteration — descending through the
+/// nested control flow that executes within a single iteration (`if`/`block`/
+/// `match`/`region`) but NOT into nested `while`/`for`/`for-each` loops, which
+/// manage their own loop-carried scope (and get their own alias-break when
+/// lowered). Used by the `While` arm to find loop-carried candidates whose
+/// alias source may be clobbered — including assignments buried in a branch
+/// (e.g. `cur = new_tbl` inside `if b == 91 { .. }`, std/toml.mind:1185).
+#[cfg(feature = "std-surface")]
+fn collect_assign_targets(stmts: &[ast::Node], out: &mut Vec<String>) {
+    use ast::Node as N;
+    for stmt in stmts {
+        match stmt {
+            N::Assign { name, .. } => {
+                if !out.contains(name) {
+                    out.push(name.clone());
+                }
+            }
+            N::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_assign_targets(then_branch, out);
+                if let Some(eb) = else_branch {
+                    collect_assign_targets(eb, out);
+                }
+            }
+            N::Block { stmts, .. } | N::Region { body: stmts, .. } => {
+                collect_assign_targets(stmts, out);
+            }
+            N::Match { arms, .. } => {
+                for arm in arms {
+                    collect_assign_targets(std::slice::from_ref(&arm.body), out);
+                }
+            }
+            // Do NOT descend into nested loops — separate loop-carried scope.
+            _ => {}
+        }
+    }
+}
+
 /// Walk an EXPRESSION (non-statement) sub-tree and FAIL LOUD (#306) on any
 /// collection mutating-method call on a tracked collection receiver. Such a call
 /// (`w.push(v.push(5))`, `f(a.push(x))`, `let n = a.push(x)`) cannot rebind its
@@ -4575,13 +4754,83 @@ fn lower_expr(
             // collide with the function's first parameter (%0: i64) when both
             // are serialised into the same MLIR func.func body — the same
             // fix already applied to Instr::If (see sub_ir_from comment).
+            // --- Alias-break for loop-carried variables (silent-miscompile fix) ---
+            // `let mut j = start` lowers as pure env aliasing: `j` and `start`
+            // share ONE ValueId. The MLIR While emitter rewrites every textual
+            // `%<init_id>` to the loop-carried block-arg (substitute_ids, purely
+            // numeric, first-match-wins), so any read of the alias SOURCE inside
+            // the condition or body gets clobbered into the loop counter — the
+            // documented mlkem/toml silent miscompile. Mirror the If path's
+            // env-level rebinding: give the carried variable a FRESH copy id so
+            // it no longer shares an id with any still-referenced source.
+            //
+            // Guarded so it fires ONLY when a differently-named env variable
+            // sharing the id is actually READ in cond/body (the exact clobber
+            // condition). When the source is unread the alias is harmless and
+            // the binding is left untouched — currently-correct programs stay
+            // byte-identical.
+            #[cfg(feature = "std-surface")]
+            let seed_env: HashMap<String, ValueId> = {
+                let mut seed = env.clone();
+                // Loop-carried candidates: outer-scope vars assigned anywhere in
+                // the body (including inside a branch/block/match executed in a
+                // single iteration), matching the set the arm below records as
+                // loop-carried (direct + nested-region rebindings).
+                let mut assigned: Vec<String> = Vec::new();
+                collect_assign_targets(body, &mut assigned);
+                let mut candidates: Vec<String> = assigned
+                    .into_iter()
+                    .filter(|name| env.contains_key(name.as_str()))
+                    .collect();
+                // Deterministic processing order (no HashMap iteration order).
+                candidates.sort();
+                for name in &candidates {
+                    let id = match seed.get(name) {
+                        Some(v) => *v,
+                        None => continue,
+                    };
+                    // Other env names currently sharing this ValueId — the alias
+                    // sources whose reads substitute_ids would clobber.
+                    let sources: std::collections::HashSet<String> = seed
+                        .iter()
+                        .filter(|(n, v)| n.as_str() != name.as_str() && **v == id)
+                        .map(|(n, _)| n.clone())
+                        .collect();
+                    if sources.is_empty() {
+                        continue;
+                    }
+                    let read = ast_reads_ident(cond, &sources)
+                        || body.iter().any(|s| ast_reads_ident(s, &sources));
+                    if !read {
+                        continue;
+                    }
+                    // Materialise `%copy = name + 0` in the PARENT ir (dominates
+                    // the loop entry) so `name` gets a distinct id from every
+                    // source. i64 is sound: loop-carried scalars are i64 in this
+                    // block-arg machinery.
+                    let zero = ir.fresh();
+                    ir.instrs.push(Instr::ConstI64(zero, 0));
+                    let copy = ir.fresh();
+                    ir.instrs.push(Instr::BinOp {
+                        dst: copy,
+                        op: BinOp::Add,
+                        lhs: id,
+                        rhs: zero,
+                    });
+                    seed.insert(name.clone(), copy);
+                }
+                seed
+            };
+            #[cfg(not(feature = "std-surface"))]
+            let seed_env = env.clone();
+
             #[cfg(feature = "std-surface")]
             let mut cond_ir = sub_ir_from(ir);
             #[cfg(not(feature = "std-surface"))]
             let mut cond_ir = IRModule::new();
             // Seed the condition sub-module's env with the current bindings
             // so identifiers in the condition (e.g. `i`, `n`) resolve.
-            let cond_env = env.clone();
+            let cond_env = seed_env.clone();
             let cond_id = lower_expr(cond, &mut cond_ir, &cond_env, struct_env, receiver_types);
 
             // Lower the body into a scratch sub-module.  Track every Assign
@@ -4595,7 +4844,7 @@ fn lower_expr(
             let mut body_ir = sub_ir_from_after(&cond_ir, ir);
             #[cfg(not(feature = "std-surface"))]
             let mut body_ir = IRModule::new();
-            let mut body_env = env.clone();
+            let mut body_env = seed_env.clone();
             let mut mutated: Vec<(String, ValueId)> = Vec::new();
             // Pre-loop ValueId for each mutated variable (parallel to mutated).
             // Captures the ValueId from env BEFORE the while loop so the MLIR
