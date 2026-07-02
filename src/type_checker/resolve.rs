@@ -123,6 +123,16 @@ pub const UNKNOWN_VARIANT_CODE: &str = "E2008";
 /// module-level name. The loose lowerer would otherwise silently auto-create a
 /// fresh variable, turning a typo (`conter = counter + 1`) into wrong output.
 pub const UNDECLARED_ASSIGN_CODE: &str = "E2009";
+/// Function-value-call diagnostic code. A call whose callee resolves ONLY as a
+/// local lexical binding (`let f = add1` / a value param) and to NOTHING
+/// emittable — not a module fn, intrinsic (`__mind_*`), tensor.* builtin,
+/// BARE_BUILTIN, std-surface intrinsic, cross-module import, or `::`-qualified
+/// path. First-class functions do not exist yet: the front-end used to ACCEPT
+/// such a call and the backend then synthesised a call to an undefined
+/// `func.func private @<name>`, so `--emit-shared` produced an .so with an
+/// UNDEFINED symbol (`nm -D` shows `U f`) that fails at dlopen. Fail loud at
+/// COMPILE instead of at link.
+pub const FN_VALUE_CALL_CODE: &str = "E2012";
 
 /// An unresolved reference found by the pass, with the kind that selects the
 /// diagnostic code/message. Spans are AST byte-offset spans; the caller renders
@@ -140,6 +150,10 @@ pub struct Unresolved {
     /// `true` iff this is an assignment to a name bound nowhere — selects the
     /// `UNDECLARED_ASSIGN_CODE` diagnostic.
     pub undeclared_assign: bool,
+    /// `true` iff this is a call whose callee resolves ONLY as a local lexical
+    /// binding (a function value) and to nothing emittable — selects the
+    /// `FN_VALUE_CALL_CODE` diagnostic.
+    pub fn_value_call: bool,
 }
 
 /// The module-level resolution context, built once per module.
@@ -528,6 +542,50 @@ impl<'a> Resolver<'a> {
         false
     }
 
+    /// A CALL whose callee resolves ONLY as a local lexical binding (a
+    /// `let f = ...` name or a value param — a *function value*) and to nothing
+    /// the backend can emit a direct call to. First-class functions do not
+    /// exist yet: `call_resolvable` accepts such a callee (item 1 of its union,
+    /// anticipating closures/fn-ptrs), and the lowerer then synthesises a call
+    /// to an undefined `func.func private @<name>`, so `--emit-shared` yields an
+    /// .so with an UNDEFINED symbol. We reject it at compile (E2012) instead.
+    ///
+    /// Sound-condition only — mirrors the E2008/E2009 discipline. Returns true
+    /// iff the callee is a local binding AND is NOT resolvable through ANY
+    /// emittable source (module fn/const/struct/extern/cross-module-injected +
+    /// std surface, a `::`-qualified associated path, the `bytes` value-type,
+    /// `__mind_*` / `tensor.*` / `gen_deref` builtins, BARE_BUILTINS, the
+    /// std-surface intrinsic table, or the cross-module imported-fn table). If
+    /// it ALSO resolves as any of those, we defer to the emittable meaning and
+    /// never reject — so this can only fire on a genuine function-value call.
+    /// The extern-C fn-ptr PARAM path (RFC 0010 Phase B) declares/type-checks
+    /// `fn(T)->R`-typed params but never calls through the value, so this never
+    /// fires there.
+    fn is_fn_value_call(&self, name: &str) -> bool {
+        if !self.scopes.contains(name) {
+            return false;
+        }
+        if self.syms.names.contains(name)
+            || name.contains("::")
+            || name == "bytes"
+            || name.starts_with("__mind_")
+            || name.starts_with("tensor.")
+            || name == "gen_deref"
+            || BARE_BUILTINS.binary_search(&name).is_ok()
+        {
+            return false;
+        }
+        #[cfg(feature = "std-surface")]
+        if super::std_surface_intrinsic_arity(name).is_some() {
+            return false;
+        }
+        #[cfg(feature = "cross-module-imports")]
+        if super::cm_lookup_fn(name).is_some() {
+            return false;
+        }
+        true
+    }
+
     /// Classify a qualified `Enum::Variant` value/constructor path. Returns
     /// `Some(enum_name)` ONLY when the head names a locally-declared enum but the
     /// trailing segment is NOT one of that enum's variants — a typo the lowerer
@@ -606,6 +664,7 @@ impl<'a> Resolver<'a> {
                         suggestion,
                         variant_of: Some(enum_name),
                         undeclared_assign: false,
+                        fn_value_call: false,
                     });
                 } else if !self.ident_resolvable(name) {
                     let suggestion = suggest(name, &self.scopes, self.syms);
@@ -616,6 +675,7 @@ impl<'a> Resolver<'a> {
                         suggestion,
                         variant_of: None,
                         undeclared_assign: false,
+                        fn_value_call: false,
                     });
                 }
             }
@@ -633,6 +693,21 @@ impl<'a> Resolver<'a> {
                         suggestion,
                         variant_of: Some(enum_name),
                         undeclared_assign: false,
+                        fn_value_call: false,
+                    });
+                } else if self.is_fn_value_call(callee) {
+                    // Calling a function value (`let f = add1  f(41)`): the
+                    // callee resolves only as a local binding and to nothing
+                    // emittable. Reject at compile (E2012) rather than letting
+                    // the lowerer synthesise a call to an undefined extern.
+                    self.out.push(Unresolved {
+                        name: callee.clone(),
+                        span: *span,
+                        is_call: true,
+                        suggestion: None,
+                        variant_of: None,
+                        undeclared_assign: false,
+                        fn_value_call: true,
                     });
                 } else if !self.call_resolvable(callee) {
                     let suggestion = suggest(callee, &self.scopes, self.syms);
@@ -643,6 +718,7 @@ impl<'a> Resolver<'a> {
                         suggestion,
                         variant_of: None,
                         undeclared_assign: false,
+                        fn_value_call: false,
                     });
                 }
                 // Skip arg descent ONLY for the dtype-literal tensor
@@ -692,6 +768,7 @@ impl<'a> Resolver<'a> {
                         suggestion,
                         variant_of: None,
                         undeclared_assign: true,
+                        fn_value_call: false,
                     });
                 }
             }
