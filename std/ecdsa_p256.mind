@@ -1,0 +1,729 @@
+// std/ecdsa_p256.mind — ECDSA signature VERIFICATION on NIST P-256
+// (secp256r1 / prime256v1) with SHA-256, in pure MIND.
+//
+// This is the ecdsa_secp256r1_sha256 signature scheme TLS 1.3 uses for
+// CertificateVerify with ECDSA certificates (RFC 8446 §4.4.3).  The verify
+// algorithm follows FIPS 186-5 §6.4.2 / SEC1 v2 §4.1.4:
+//   reject unless 1 <= r,s <= n-1
+//   e  = leftmost 256 bits of SHA-256(msg)   (for P-256/SHA-256: the whole hash)
+//   w  = s^-1 mod n
+//   u1 = e*w mod n ;  u2 = r*w mod n
+//   (x, y) = u1*G + u2*Q ; reject the point at infinity
+//   valid iff (x mod n) == r
+//
+// Domain parameters (NIST SP 800-186 / SEC2 secp256r1), curve
+// y^2 = x^3 - 3x + b over GF(p):
+//   p  = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+//   n  = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
+//   b  = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
+//   Gx = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296
+//   Gy = 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5
+//
+// Public entry points:
+//   pub fn ecdsa_p256_verify(qx_addr, qy_addr, r_addr, s_addr,
+//                            msg_addr, msg_len) -> i64      (1 valid / 0 invalid)
+//     qx/qy/r/s are 32-byte big-endian buffers (affine public point Q=(Qx,Qy),
+//     signature (r,s)); fail-closed: any range / on-curve / infinity failure
+//     returns 0.
+//   pub fn p256_scalar_base_mult(scalar_addr, out_x_addr, out_y_addr) -> i64
+//     out = scalar*G in affine coords (32-byte big-endian each); returns 1 if
+//     the result is the point at infinity (outputs untouched), else 0.
+//     Exposed so drivers can KAT the group law independently of full verify.
+//
+// Bignum: radix-2^16 limbs, one limb per 8 bytes, 17 limbs per value
+// (16 limbs = 256 bits of data; the 17th limb absorbs the transient extra bit
+// from shift/add before the conditional subtract restores value < modulus —
+// same discipline as std/x509.mind's 130-limb buffer for 2048-bit moduli).
+// Modular multiply is the binary interleaved shift-and-subtract method (the
+// same conditional-subtract reduction std/x509.mind:455 bn_mod_reduce uses):
+// requires b < m; a may be any 256-bit value (needed for e >= n).
+// Modular inverse is Fermat: a^(m-2) mod m (both p and n are prime), via
+// 256-bit square-and-multiply (std/x509.mind:483 modexp_2048 adapted).
+//
+// EC arithmetic: Jacobian coordinates (X, Y, Z), infinity encoded as Z == 0.
+// Point double is EFD dbl-2001-b (specialised to a = -3); point add is
+// add-1998-cmo with explicit handling of infinity, P+P (falls through to the
+// doubling), and P+(-P) (returns infinity).  A point is one 408-byte buffer:
+// X at +0, Y at +136, Z at +272 (each 17 limbs * 8 bytes).
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no external
+// calls.  Correctness over speed: generic reduction, no NIST fast reduce.
+//
+// Composes std/sha256.mind (combined build; strip the import line):
+//   cat std/sha256.mind                      >  /tmp/ecdsa_p256_combined.mind
+//   grep -v '^import ' std/ecdsa_p256.mind   >> /tmp/ecdsa_p256_combined.mind
+//   mindc /tmp/ecdsa_p256_combined.mind --emit-shared /tmp/ecdsa_p256.so
+
+import std.sha256;
+
+// ---------------------------------------------------------------------------
+// Bignum primitives — 17 limbs of 16 bits, one limb per 8 bytes.
+// ---------------------------------------------------------------------------
+
+// p256_bn_zero17 — set all 17 limbs to zero.
+fn p256_bn_zero17(buf: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 17 {
+        __mind_store_i64(buf + i * 8, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// p256_bn_copy17 — copy 17 limbs from src to dst.
+fn p256_bn_copy17(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 17 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// p256_pt_copy — copy a whole Jacobian point (3 * 17 limbs contiguous).
+fn p256_pt_copy(dst: i64, src: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 51 {
+        __mind_store_i64(dst + i * 8, __mind_load_i64(src + i * 8));
+        i = i + 1;
+    }
+    0
+}
+
+// p256_bn_is_zero17 — 1 if all limbs are zero, else 0.
+fn p256_bn_is_zero17(a: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut z: i64 = 1;
+    while i < 17 {
+        if __mind_load_i64(a + i * 8) != 0 {
+            z = 0;
+        }
+        i = i + 1;
+    }
+    z
+}
+
+// p256_bn_eq17 — 1 if a == b limb-for-limb, else 0.
+fn p256_bn_eq17(a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut e: i64 = 1;
+    while i < 17 {
+        if __mind_load_i64(a + i * 8) != __mind_load_i64(b + i * 8) {
+            e = 0;
+        }
+        i = i + 1;
+    }
+    e
+}
+
+// p256_bn_cmp_ge17 — 1 if a >= b, else 0 (std/x509.mind:408 bn_cmp_ge pattern).
+fn p256_bn_cmp_ge17(a: i64, b: i64) -> i64 {
+    let mut k: i64 = 16;
+    let mut res: i64 = 1;      // all-equal => a >= b
+    let mut decided: i64 = 0;
+    while k >= 0 {
+        if decided == 0 {
+            let av: i64 = __mind_load_i64(a + k * 8);
+            let bv: i64 = __mind_load_i64(b + k * 8);
+            if av > bv {
+                res = 1;
+                decided = 1;
+            } else {
+                if av < bv {
+                    res = 0;
+                    decided = 1;
+                }
+            }
+        }
+        k = k - 1;
+    }
+    res
+}
+
+// p256_bn_sub17 — a -= b in place (assumes a >= b), radix-2^16 borrow chain.
+fn p256_bn_sub17(a: i64, b: i64) -> i64 {
+    let mut borrow: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 17 {
+        let av: i64 = __mind_load_i64(a + k * 8);
+        let bv: i64 = __mind_load_i64(b + k * 8);
+        let mut d: i64 = av - bv - borrow;
+        if d < 0 {
+            d = d + 65536;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        __mind_store_i64(a + k * 8, d & 65535);
+        k = k + 1;
+    }
+    0
+}
+
+// p256_bn_add17 — a += b in place, radix-2^16 carry chain.  Callers keep both
+// operands < 2^256 so the sum fits the 17-limb (272-bit) buffer with no
+// carry-out.
+fn p256_bn_add17(a: i64, b: i64) -> i64 {
+    let mut carry: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 17 {
+        let v: i64 = __mind_load_i64(a + k * 8) + __mind_load_i64(b + k * 8) + carry;
+        __mind_store_i64(a + k * 8, v & 65535);
+        carry = v >> 16;
+        k = k + 1;
+    }
+    0
+}
+
+// p256_bn_shl1_17 — shift left by one bit in place (std/x509.mind:394 bn_shl1).
+fn p256_bn_shl1_17(r: i64) -> i64 {
+    let mut carry: i64 = 0;
+    let mut k: i64 = 0;
+    while k < 17 {
+        let v: i64 = (__mind_load_i64(r + k * 8) << 1) | carry;
+        __mind_store_i64(r + k * 8, v & 65535);
+        carry = (v >> 16) & 1;
+        k = k + 1;
+    }
+    0
+}
+
+// p256_bn_from_be32 — decode exactly 32 big-endian bytes into 16 little-endian
+// radix-2^16 limbs (limb 16 zeroed).  std/x509.mind:323 bn_from_bytes pattern.
+fn p256_bn_from_be32(src: i64, out: i64) -> i64 {
+    p256_bn_zero17(out);
+    let mut k: i64 = 0;
+    while k < 16 {
+        let lo: i64 = __mind_load_i8(src + 31 - 2 * k) & 255;
+        let hi: i64 = __mind_load_i8(src + 30 - 2 * k) & 255;
+        __mind_store_i64(out + k * 8, lo | (hi << 8));
+        k = k + 1;
+    }
+    0
+}
+
+// p256_bn_to_be32 — encode the low 16 limbs as 32 big-endian bytes
+// (std/x509.mind:341 bn_to_bytes with byte_len = 32).
+fn p256_bn_to_be32(limbs: i64, out: i64) -> i64 {
+    let mut k: i64 = 0;
+    while k < 16 {
+        let v: i64 = __mind_load_i64(limbs + k * 8);
+        __mind_store_i8(out + 31 - 2 * k, v & 255);
+        __mind_store_i8(out + 30 - 2 * k, (v >> 8) & 255);
+        k = k + 1;
+    }
+    0
+}
+
+// p256_bit_of — bit `bit` (0 = LSB) of a 17-limb value.
+fn p256_bit_of(a: i64, bit: i64) -> i64 {
+    (__mind_load_i64(a + (bit / 16) * 8) >> (bit % 16)) & 1
+}
+
+// ---------------------------------------------------------------------------
+// NIST P-256 domain parameters as 17-limb little-endian constants
+// (limb values generated from the hex constants above; limb k = bits
+// [16k, 16k+16) of the big-endian hex value).
+// ---------------------------------------------------------------------------
+
+// p = 0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff
+fn p256_load_p(out: i64) -> i64 {
+    p256_bn_zero17(out);
+    __mind_store_i64(out + 0, 65535);
+    __mind_store_i64(out + 8, 65535);
+    __mind_store_i64(out + 16, 65535);
+    __mind_store_i64(out + 24, 65535);
+    __mind_store_i64(out + 32, 65535);
+    __mind_store_i64(out + 40, 65535);
+    __mind_store_i64(out + 96, 1);
+    __mind_store_i64(out + 112, 65535);
+    __mind_store_i64(out + 120, 65535);
+    0
+}
+
+// n = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551
+fn p256_load_n(out: i64) -> i64 {
+    p256_bn_zero17(out);
+    __mind_store_i64(out + 0, 9553);
+    __mind_store_i64(out + 8, 64611);
+    __mind_store_i64(out + 16, 51906);
+    __mind_store_i64(out + 24, 62393);
+    __mind_store_i64(out + 32, 40580);
+    __mind_store_i64(out + 40, 42775);
+    __mind_store_i64(out + 48, 64173);
+    __mind_store_i64(out + 56, 48358);
+    __mind_store_i64(out + 64, 65535);
+    __mind_store_i64(out + 72, 65535);
+    __mind_store_i64(out + 80, 65535);
+    __mind_store_i64(out + 88, 65535);
+    __mind_store_i64(out + 112, 65535);
+    __mind_store_i64(out + 120, 65535);
+    0
+}
+
+// b = 0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b
+fn p256_load_b(out: i64) -> i64 {
+    p256_bn_zero17(out);
+    __mind_store_i64(out + 0, 24651);
+    __mind_store_i64(out + 8, 10194);
+    __mind_store_i64(out + 16, 15422);
+    __mind_store_i64(out + 24, 15310);
+    __mind_store_i64(out + 32, 45302);
+    __mind_store_i64(out + 40, 52307);
+    __mind_store_i64(out + 48, 1712);
+    __mind_store_i64(out + 56, 25885);
+    __mind_store_i64(out + 64, 34492);
+    __mind_store_i64(out + 72, 30360);
+    __mind_store_i64(out + 80, 48469);
+    __mind_store_i64(out + 88, 46059);
+    __mind_store_i64(out + 96, 37863);
+    __mind_store_i64(out + 104, 43578);
+    __mind_store_i64(out + 112, 13784);
+    __mind_store_i64(out + 120, 23238);
+    0
+}
+
+// Gx = 0x6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296
+fn p256_load_gx(out: i64) -> i64 {
+    p256_bn_zero17(out);
+    __mind_store_i64(out + 0, 49814);
+    __mind_store_i64(out + 8, 55448);
+    __mind_store_i64(out + 16, 14661);
+    __mind_store_i64(out + 24, 62625);
+    __mind_store_i64(out + 32, 13216);
+    __mind_store_i64(out + 40, 11755);
+    __mind_store_i64(out + 48, 32129);
+    __mind_store_i64(out + 56, 30467);
+    __mind_store_i64(out + 64, 16626);
+    __mind_store_i64(out + 72, 25508);
+    __mind_store_i64(out + 80, 59109);
+    __mind_store_i64(out + 88, 63676);
+    __mind_store_i64(out + 96, 16967);
+    __mind_store_i64(out + 104, 57644);
+    __mind_store_i64(out + 112, 53746);
+    __mind_store_i64(out + 120, 27415);
+    0
+}
+
+// Gy = 0x4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5
+fn p256_load_gy(out: i64) -> i64 {
+    p256_bn_zero17(out);
+    __mind_store_i64(out + 0, 20981);
+    __mind_store_i64(out + 8, 14271);
+    __mind_store_i64(out + 16, 16488);
+    __mind_store_i64(out + 24, 52150);
+    __mind_store_i64(out + 32, 24270);
+    __mind_store_i64(out + 40, 27441);
+    __mind_store_i64(out + 48, 13143);
+    __mind_store_i64(out + 56, 11214);
+    __mind_store_i64(out + 64, 40470);
+    __mind_store_i64(out + 72, 31759);
+    __mind_store_i64(out + 80, 60234);
+    __mind_store_i64(out + 88, 36583);
+    __mind_store_i64(out + 96, 32667);
+    __mind_store_i64(out + 104, 65050);
+    __mind_store_i64(out + 112, 17122);
+    __mind_store_i64(out + 120, 20451);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Modular arithmetic.  All reduced values are < m (m = p or n, 256 bits).
+// ---------------------------------------------------------------------------
+
+// p256_mul_mod — out = (a * b) mod m by binary interleaved shift-and-subtract
+// (256 iterations of: out = 2*out mod m; if a-bit set: out = out + b mod m).
+// Requires b < m; a may be any 256-bit value (used for e = SHA-256(msg) which
+// may exceed n).  out must be distinct from a, b and m.
+fn p256_mul_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
+    p256_bn_zero17(out);
+    let mut bit: i64 = 255;
+    while bit >= 0 {
+        p256_bn_shl1_17(out);
+        if p256_bn_cmp_ge17(out, m) == 1 {
+            p256_bn_sub17(out, m);
+        }
+        if p256_bit_of(a, bit) == 1 {
+            p256_bn_add17(out, b);
+            if p256_bn_cmp_ge17(out, m) == 1 {
+                p256_bn_sub17(out, m);
+            }
+        }
+        bit = bit - 1;
+    }
+    0
+}
+
+// p256_add_mod — out = (a + b) mod m; a, b < m.  out must be distinct from b
+// and m (out == a is safe).
+fn p256_add_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
+    p256_bn_copy17(out, a);
+    p256_bn_add17(out, b);
+    if p256_bn_cmp_ge17(out, m) == 1 {
+        p256_bn_sub17(out, m);
+    }
+    0
+}
+
+// p256_sub_mod — out = (a - b) mod m; a, b < m.  out must be distinct from b
+// and m (out == a is safe).
+fn p256_sub_mod(a: i64, b: i64, m: i64, out: i64) -> i64 {
+    p256_bn_copy17(out, a);
+    if p256_bn_cmp_ge17(out, b) == 0 {
+        p256_bn_add17(out, m);
+    }
+    p256_bn_sub17(out, b);
+    0
+}
+
+// p256_modexp — out = base^e mod m, left-to-right square-and-multiply over the
+// 256 bits of the 17-limb exponent e (std/x509.mind:483 modexp_2048 adapted:
+// result starts at 1, always squares, conditionally multiplies).  base < m.
+fn p256_modexp(base: i64, e: i64, m: i64, out: i64) -> i64 {
+    p256_bn_zero17(out);
+    __mind_store_i64(out + 0, 1);
+    let tmp: i64 = __mind_alloc(136);
+    let mut bit: i64 = 255;
+    while bit >= 0 {
+        p256_mul_mod(out, out, m, tmp);       // square
+        p256_bn_copy17(out, tmp);
+        if p256_bit_of(e, bit) == 1 {
+            p256_mul_mod(out, base, m, tmp);  // multiply
+            p256_bn_copy17(out, tmp);
+        }
+        bit = bit - 1;
+    }
+    0
+}
+
+// p256_mod_inv — out = a^-1 mod m via Fermat's little theorem: a^(m-2) mod m
+// (m is prime: both p and n are).  a must be nonzero mod m.
+fn p256_mod_inv(a: i64, m: i64, out: i64) -> i64 {
+    let e: i64 = __mind_alloc(136);
+    p256_bn_copy17(e, m);
+    let two: i64 = __mind_alloc(136);
+    p256_bn_zero17(two);
+    __mind_store_i64(two + 0, 2);
+    p256_bn_sub17(e, two);                    // e = m - 2
+    p256_modexp(a, e, m, out);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Jacobian point arithmetic on y^2 = x^3 - 3x + b.
+// Point layout: X at pt+0, Y at pt+136, Z at pt+272 (17 limbs each).
+// Infinity: Z == 0 (canonically X = Y = 1).
+// ---------------------------------------------------------------------------
+
+// p256_pt_set_infinity — (1 : 1 : 0).
+fn p256_pt_set_infinity(pt: i64) -> i64 {
+    p256_bn_zero17(pt + 0);
+    p256_bn_zero17(pt + 136);
+    p256_bn_zero17(pt + 272);
+    __mind_store_i64(pt + 0, 1);
+    __mind_store_i64(pt + 136, 1);
+    0
+}
+
+// p256_point_double — out = 2*pt (EFD dbl-2001-b, specialised to a = -3):
+//   delta = Z^2 ; gamma = Y^2 ; beta = X*gamma
+//   alpha = 3*(X - delta)*(X + delta)
+//   X3 = alpha^2 - 8*beta
+//   Z3 = (Y + Z)^2 - gamma - delta
+//   Y3 = alpha*(4*beta - X3) - 8*gamma^2
+// out must be distinct from pt.
+fn p256_point_double(pt: i64, m: i64, out: i64) -> i64 {
+    if p256_bn_is_zero17(pt + 272) == 1 {
+        p256_pt_copy(out, pt);                // 2*infinity = infinity
+        return 0;
+    }
+    let s: i64 = __mind_alloc(1496);          // 11 temporaries * 136 bytes
+    let delta: i64 = s;
+    let gamma: i64 = s + 136;
+    let beta: i64 = s + 272;
+    let alpha: i64 = s + 408;
+    let t1: i64 = s + 544;
+    let t2: i64 = s + 680;
+    let t3: i64 = s + 816;
+    let t4: i64 = s + 952;
+    let b4: i64 = s + 1088;
+    let b8: i64 = s + 1224;
+    let t5: i64 = s + 1360;
+    p256_mul_mod(pt + 272, pt + 272, m, delta);   // Z^2
+    p256_mul_mod(pt + 136, pt + 136, m, gamma);   // Y^2
+    p256_mul_mod(pt + 0, gamma, m, beta);         // X*gamma
+    p256_sub_mod(pt + 0, delta, m, t1);           // X - delta
+    p256_add_mod(pt + 0, delta, m, t2);           // X + delta
+    p256_mul_mod(t1, t2, m, t3);
+    p256_add_mod(t3, t3, m, t4);
+    p256_add_mod(t4, t3, m, alpha);               // 3*(X-d)*(X+d)
+    p256_add_mod(beta, beta, m, t1);              // 2*beta
+    p256_add_mod(t1, t1, m, b4);                  // 4*beta
+    p256_add_mod(b4, b4, m, b8);                  // 8*beta
+    p256_mul_mod(alpha, alpha, m, t2);            // alpha^2
+    p256_sub_mod(t2, b8, m, out + 0);             // X3
+    p256_add_mod(pt + 136, pt + 272, m, t1);      // Y + Z
+    p256_mul_mod(t1, t1, m, t2);                  // (Y+Z)^2
+    p256_sub_mod(t2, gamma, m, t3);
+    p256_sub_mod(t3, delta, m, out + 272);        // Z3
+    p256_sub_mod(b4, out + 0, m, t1);             // 4*beta - X3
+    p256_mul_mod(alpha, t1, m, t2);
+    p256_mul_mod(gamma, gamma, m, t3);            // gamma^2
+    p256_add_mod(t3, t3, m, t4);
+    p256_add_mod(t4, t4, m, t5);
+    p256_add_mod(t5, t5, m, t1);                  // 8*gamma^2
+    p256_sub_mod(t2, t1, m, out + 136);           // Y3
+    0
+}
+
+// p256_point_add — out = p1 + p2 (add-1998-cmo):
+//   U1 = X1*Z2^2 ; U2 = X2*Z1^2 ; S1 = Y1*Z2^3 ; S2 = Y2*Z1^3
+//   H = U2 - U1 ; R = S2 - S1
+//   H == 0, R == 0  => doubling ;  H == 0, R != 0 => infinity
+//   X3 = R^2 - H^3 - 2*U1*H^2
+//   Y3 = R*(U1*H^2 - X3) - S1*H^3
+//   Z3 = Z1*Z2*H
+// out must be distinct from p1 and p2.
+fn p256_point_add(p1: i64, p2: i64, m: i64, out: i64) -> i64 {
+    if p256_bn_is_zero17(p1 + 272) == 1 {
+        p256_pt_copy(out, p2);                // infinity + p2 = p2
+        return 0;
+    }
+    if p256_bn_is_zero17(p2 + 272) == 1 {
+        p256_pt_copy(out, p1);                // p1 + infinity = p1
+        return 0;
+    }
+    let s: i64 = __mind_alloc(1768);          // 13 temporaries * 136 bytes
+    let z1z1: i64 = s;
+    let z2z2: i64 = s + 136;
+    let u1: i64 = s + 272;
+    let u2: i64 = s + 408;
+    let s1: i64 = s + 544;
+    let s2: i64 = s + 680;
+    let h: i64 = s + 816;
+    let rr: i64 = s + 952;
+    let hh: i64 = s + 1088;
+    let hhh: i64 = s + 1224;
+    let v: i64 = s + 1360;
+    let t1: i64 = s + 1496;
+    let t2: i64 = s + 1632;
+    p256_mul_mod(p1 + 272, p1 + 272, m, z1z1);    // Z1^2
+    p256_mul_mod(p2 + 272, p2 + 272, m, z2z2);    // Z2^2
+    p256_mul_mod(p1 + 0, z2z2, m, u1);            // X1*Z2^2
+    p256_mul_mod(p2 + 0, z1z1, m, u2);            // X2*Z1^2
+    p256_mul_mod(p2 + 272, z2z2, m, t1);          // Z2^3
+    p256_mul_mod(p1 + 136, t1, m, s1);            // Y1*Z2^3
+    p256_mul_mod(p1 + 272, z1z1, m, t1);          // Z1^3
+    p256_mul_mod(p2 + 136, t1, m, s2);            // Y2*Z1^3
+    p256_sub_mod(u2, u1, m, h);                   // H
+    p256_sub_mod(s2, s1, m, rr);                  // R
+    if p256_bn_is_zero17(h) == 1 {
+        if p256_bn_is_zero17(rr) == 1 {
+            p256_point_double(p1, m, out);        // P + P
+            return 0;
+        }
+        p256_pt_set_infinity(out);                // P + (-P)
+        return 0;
+    }
+    p256_mul_mod(h, h, m, hh);                    // H^2
+    p256_mul_mod(h, hh, m, hhh);                  // H^3
+    p256_mul_mod(u1, hh, m, v);                   // U1*H^2
+    p256_mul_mod(rr, rr, m, t1);                  // R^2
+    p256_sub_mod(t1, hhh, m, t2);
+    p256_add_mod(v, v, m, t1);                    // 2*V
+    p256_sub_mod(t2, t1, m, out + 0);             // X3
+    p256_sub_mod(v, out + 0, m, t1);              // V - X3
+    p256_mul_mod(rr, t1, m, t2);
+    p256_mul_mod(s1, hhh, m, t1);
+    p256_sub_mod(t2, t1, m, out + 136);           // Y3
+    p256_mul_mod(p1 + 272, p2 + 272, m, t1);      // Z1*Z2
+    p256_mul_mod(t1, h, m, out + 272);            // Z3
+    0
+}
+
+// p256_scalar_mult — out = k * pt, MSB-first double-and-add over the 256 bits
+// of the 17-limb scalar k.  k == 0 yields infinity.  Not constant-time — this
+// module VERIFIES signatures (all inputs public), it never handles secrets.
+fn p256_scalar_mult(k: i64, pt: i64, m: i64, out: i64) -> i64 {
+    let acc: i64 = __mind_alloc(408);
+    let tmp: i64 = __mind_alloc(408);
+    p256_pt_set_infinity(acc);
+    let mut bit: i64 = 255;
+    while bit >= 0 {
+        p256_point_double(acc, m, tmp);
+        p256_pt_copy(acc, tmp);
+        if p256_bit_of(k, bit) == 1 {
+            p256_point_add(acc, pt, m, tmp);
+            p256_pt_copy(acc, tmp);
+        }
+        bit = bit - 1;
+    }
+    p256_pt_copy(out, acc);
+    0
+}
+
+// p256_to_affine — convert Jacobian (X : Y : Z) to affine (x, y):
+//   x = X / Z^2 ; y = Y / Z^3.  Returns 1 if pt is the point at infinity
+// (outputs untouched), else 0.
+fn p256_to_affine(pt: i64, m: i64, ax: i64, ay: i64) -> i64 {
+    if p256_bn_is_zero17(pt + 272) == 1 {
+        return 1;
+    }
+    let zinv: i64 = __mind_alloc(136);
+    let zinv2: i64 = __mind_alloc(136);
+    let zinv3: i64 = __mind_alloc(136);
+    p256_mod_inv(pt + 272, m, zinv);
+    p256_mul_mod(zinv, zinv, m, zinv2);
+    p256_mul_mod(zinv2, zinv, m, zinv3);
+    p256_mul_mod(pt + 0, zinv2, m, ax);
+    p256_mul_mod(pt + 136, zinv3, m, ay);
+    0
+}
+
+// p256_on_curve — 1 iff y^2 == x^3 - 3x + b (mod p); x, y already < p.
+// Rejects (0, 0) implicitly since b != 0 (SEC1 §3.2.2.1 partial public-key
+// validation, minus the order check which n == curve order makes redundant
+// for prime-order curves).
+fn p256_on_curve(x: i64, y: i64, pm: i64, bb: i64) -> i64 {
+    let y2: i64 = __mind_alloc(136);
+    let x2: i64 = __mind_alloc(136);
+    let x3: i64 = __mind_alloc(136);
+    let t1: i64 = __mind_alloc(136);
+    let t2: i64 = __mind_alloc(136);
+    let rhs: i64 = __mind_alloc(136);
+    p256_mul_mod(y, y, pm, y2);
+    p256_mul_mod(x, x, pm, x2);
+    p256_mul_mod(x2, x, pm, x3);
+    p256_add_mod(x, x, pm, t1);
+    p256_add_mod(t1, x, pm, t2);              // 3x
+    p256_sub_mod(x3, t2, pm, t1);             // x^3 - 3x
+    p256_add_mod(t1, bb, pm, rhs);            // x^3 - 3x + b
+    p256_bn_eq17(y2, rhs)
+}
+
+// ---------------------------------------------------------------------------
+// Public entry points.
+// ---------------------------------------------------------------------------
+
+// p256_scalar_base_mult — affine scalar*G.  scalar_addr: 32 big-endian bytes;
+// out_x_addr / out_y_addr: 32-byte output buffers.  Returns 1 if the result is
+// the point at infinity (scalar == 0 mod n; outputs untouched), else 0.
+pub fn p256_scalar_base_mult(scalar_addr: i64, out_x_addr: i64, out_y_addr: i64) -> i64 {
+    let pm: i64 = __mind_alloc(136);
+    p256_load_p(pm);
+    let k: i64 = __mind_alloc(136);
+    p256_bn_from_be32(scalar_addr, k);
+    let g: i64 = __mind_alloc(408);
+    p256_load_gx(g + 0);
+    p256_load_gy(g + 136);
+    p256_bn_zero17(g + 272);
+    __mind_store_i64(g + 272, 1);             // Z = 1 (affine G)
+    let rp: i64 = __mind_alloc(408);
+    p256_scalar_mult(k, g, pm, rp);
+    let ax: i64 = __mind_alloc(136);
+    let ay: i64 = __mind_alloc(136);
+    if p256_to_affine(rp, pm, ax, ay) == 1 {
+        return 1;
+    }
+    p256_bn_to_be32(ax, out_x_addr);
+    p256_bn_to_be32(ay, out_y_addr);
+    0
+}
+
+// ecdsa_p256_verify — ECDSA P-256 / SHA-256 signature verification
+// (FIPS 186-5 §6.4.2 / SEC1 §4.1.4; the TLS 1.3 ecdsa_secp256r1_sha256
+// CertificateVerify scheme, RFC 8446 §4.4.3).
+//   qx_addr, qy_addr : 32-byte big-endian affine public point Q = (Qx, Qy)
+//   r_addr, s_addr   : 32-byte big-endian signature scalars (r, s)
+//   msg_addr, msg_len: the signed message (hashed here with SHA-256)
+// Returns 1 (valid) / 0 (invalid).  Fail-closed: out-of-range r or s
+// (must be in [1, n-1]), Qx/Qy >= p, Q not on the curve, or a point-at-
+// infinity result all return 0.
+pub fn ecdsa_p256_verify(
+    qx_addr: i64,
+    qy_addr: i64,
+    r_addr: i64,
+    s_addr: i64,
+    msg_addr: i64,
+    msg_len: i64,
+) -> i64 {
+    let pm: i64 = __mind_alloc(136);
+    p256_load_p(pm);
+    let nm: i64 = __mind_alloc(136);
+    p256_load_n(nm);
+    let bb: i64 = __mind_alloc(136);
+    p256_load_b(bb);
+    // Decode and range-check the signature: 1 <= r, s <= n-1.
+    let r: i64 = __mind_alloc(136);
+    p256_bn_from_be32(r_addr, r);
+    let s: i64 = __mind_alloc(136);
+    p256_bn_from_be32(s_addr, s);
+    if p256_bn_is_zero17(r) == 1 {
+        return 0;
+    }
+    if p256_bn_cmp_ge17(r, nm) == 1 {
+        return 0;
+    }
+    if p256_bn_is_zero17(s) == 1 {
+        return 0;
+    }
+    if p256_bn_cmp_ge17(s, nm) == 1 {
+        return 0;
+    }
+    // Decode and validate the public key: coordinates < p and on the curve.
+    let qx: i64 = __mind_alloc(136);
+    p256_bn_from_be32(qx_addr, qx);
+    let qy: i64 = __mind_alloc(136);
+    p256_bn_from_be32(qy_addr, qy);
+    if p256_bn_cmp_ge17(qx, pm) == 1 {
+        return 0;
+    }
+    if p256_bn_cmp_ge17(qy, pm) == 1 {
+        return 0;
+    }
+    if p256_on_curve(qx, qy, pm, bb) != 1 {
+        return 0;
+    }
+    // e = SHA-256(msg) as a 256-bit integer (leftmost 256 bits == whole hash).
+    let hash_buf: i64 = __mind_alloc(32);
+    sha256(msg_addr, msg_len, hash_buf);
+    let e: i64 = __mind_alloc(136);
+    p256_bn_from_be32(hash_buf, e);
+    // w = s^-1 mod n ; u1 = e*w mod n ; u2 = r*w mod n.
+    let w: i64 = __mind_alloc(136);
+    p256_mod_inv(s, nm, w);
+    let u1: i64 = __mind_alloc(136);
+    p256_mul_mod(e, w, nm, u1);               // e may be >= n: allowed as a
+    let u2: i64 = __mind_alloc(136);
+    p256_mul_mod(r, w, nm, u2);
+    // R = u1*G + u2*Q.
+    let g: i64 = __mind_alloc(408);
+    p256_load_gx(g + 0);
+    p256_load_gy(g + 136);
+    p256_bn_zero17(g + 272);
+    __mind_store_i64(g + 272, 1);
+    let q: i64 = __mind_alloc(408);
+    p256_bn_copy17(q + 0, qx);
+    p256_bn_copy17(q + 136, qy);
+    p256_bn_zero17(q + 272);
+    __mind_store_i64(q + 272, 1);
+    let r1p: i64 = __mind_alloc(408);
+    p256_scalar_mult(u1, g, pm, r1p);
+    let r2p: i64 = __mind_alloc(408);
+    p256_scalar_mult(u2, q, pm, r2p);
+    let rp: i64 = __mind_alloc(408);
+    p256_point_add(r1p, r2p, pm, rp);
+    // Reject the point at infinity; otherwise v = (x mod n) must equal r.
+    let ax: i64 = __mind_alloc(136);
+    let ay: i64 = __mind_alloc(136);
+    if p256_to_affine(rp, pm, ax, ay) == 1 {
+        return 0;
+    }
+    if p256_bn_cmp_ge17(ax, nm) == 1 {
+        p256_bn_sub17(ax, nm);                // x < p < 2n: one subtract
+    }
+    if p256_bn_eq17(ax, r) == 1 {
+        return 1;
+    }
+    0
+}
