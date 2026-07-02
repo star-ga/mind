@@ -1,0 +1,25 @@
+// Deterministic IEEE-754 float64 Lorenz-attractor integrator (forward Euler).
+// Pure scalar f64 on MIND's STRICT lowering path: arith.mulf/addf/subf with
+// NO fmuladd, NO fastmath, NO reassociation, fixed source order. A chaotic
+// system — sensitive dependence on initial conditions — so any cross-substrate
+// rounding divergence is amplified and visible. Returns the final (x+y+z) f64.
+pub fn lorenz_f64(steps: i64) -> f64 {
+    let mut x: f64 = 1.0;
+    let mut y: f64 = 1.0;
+    let mut z: f64 = 1.0;
+    let sigma: f64 = 10.0;
+    let rho: f64 = 28.0;
+    let beta: f64 = 2.666666666666667;
+    let dt: f64 = 0.005;
+    let mut i: i64 = 0;
+    while i < steps {
+        let dx: f64 = sigma * (y - x);
+        let dy: f64 = x * (rho - z) - y;
+        let dz: f64 = x * y - beta * z;
+        x = x + dt * dx;
+        y = y + dt * dy;
+        z = z + dt * dz;
+        i = i + 1;
+    }
+    return x + y + z;
+}
