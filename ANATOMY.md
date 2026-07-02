@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2989 | **Est. tokens:** ~7,178,591
-**Generated:** 2026-07-02 15:18 UTC
+**Files:** 2990 | **Est. tokens:** ~7,180,126
+**Generated:** 2026-07-02 15:49 UTC
 
 ## Token Budget Guide
 
@@ -48,7 +48,7 @@
 | `docs/research/` | 1 | ~117 |
 | `docs/rfcs/` | 28 | ~118,265 |
 | `docs/specs/` | 2 | ~976 |
-| `examples/` | 17 | ~34,963 |
+| `examples/` | 17 | ~34,962 |
 | `examples/c/` | 2 | ~400 |
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
@@ -406,10 +406,10 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~179,268 |
-| `tests/` | 264 | ~444,550 |
+| `tests/` | 265 | ~446,080 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
-| `tests/common/` | 1 | ~668 |
+| `tests/common/` | 1 | ~674 |
 | `tests/conformance/cpu_baseline/` | 9 | ~171 |
 | `tests/conformance/gpu_profile/` | 2 | ~11 |
 | `tests/cross_substrate_identity/` | 2 | ~4,052 |
@@ -755,7 +755,7 @@
 - `README.md` (~969 tok, large) — RFC 0005 Phase 6.1 — Self-Host Lexer Seed
 ### `examples/`
 
-- `lorenz_q16.mind` (~1092 tok, large) — Deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler).
+- `lorenz_q16.mind` (~1091 tok, large) — Deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler).
 ### `examples/mindc_mind/`
 
 - `bootstrap_smoke.py` (~2329 tok, huge)
@@ -3959,7 +3959,7 @@
 - `collection_mutation_expr_position_run.rs` (~1003 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/common/`
 
-- `mod.rs` (~668 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~674 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/`
 
 - `compound_assign.rs` (~1034 tok, large) — Copyright 2025 STARGA Inc.
@@ -4037,7 +4037,7 @@
 - `README.md` (~1219 tok, large) — cross_substrate_identity — the internal mind-bench reproducibility gate
 ### `tests/`
 
-- `cross_substrate_identity.rs` (~14168 tok, huge) — Copyright 2025 STARGA Inc.
+- `cross_substrate_identity.rs` (~14166 tok, huge) — Copyright 2025 STARGA Inc.
 ### `tests/cross_substrate_identity/scalar-float-f64/`
 
 - `manifest.toml` (~778 tok, large) — version = "1"
@@ -4273,7 +4273,7 @@
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
-- `package_traversal.rs` (~908 tok, large) — Copyright 2025 STARGA Inc.
+- `package_traversal.rs` (~905 tok, large) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse_phase10_surface.rs` (~4815 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4289,6 +4289,7 @@
 - `repl_basic.rs` (~523 tok, large) — Copyright 2025 STARGA Inc.
 - `resolve_fn_body.rs` (~979 tok, large) — Copyright 2025 STARGA Inc.
 - `result_option_prelude_run.rs` (~910 tok, large) — Copyright 2025 STARGA Inc.
+- `return_cond_type_reject.rs` (~1498 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_attribute_syntax.rs` (~1182 tok, large) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_a_shape_types.rs` (~6540 tok, huge) — Copyright 2025 STARGA Inc.
 - `rfc0012_phase_b_operators.rs` (~4514 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4428,7 +4429,7 @@
 - `std_surface_phase_d_env_override.rs` (~1597 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_promotion_compose.rs` (~5551 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_reactor.rs` (~1357 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_regex.rs` (~5270 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_regex.rs` (~5285 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_ring.rs` (~1310 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_self_emit_shared.rs` (~1807 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_string_itoa.rs` (~931 tok, large) — Copyright 2025 STARGA Inc.
@@ -4481,7 +4482,7 @@
 - `type_error_spans.rs` (~1064 tok, large) — Copyright 2025 STARGA Inc.
 - `type_infer.rs` (~344 tok, medium) — Copyright 2025 STARGA Inc.
 - `type_struct_run.rs` (~628 tok, large) — Copyright 2025 STARGA Inc.
-- `typo_reject.rs` (~1037 tok, large) — Copyright 2025 STARGA Inc.
+- `typo_reject.rs` (~1059 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_comparison.rs` (~813 tok, large) — Copyright 2025 STARGA Inc.
 - `value_if_f64_let.rs` (~1148 tok, large) — Copyright 2025 STARGA Inc.
 - `vars_assign.rs` (~260 tok, medium) — Copyright 2025 STARGA Inc.
