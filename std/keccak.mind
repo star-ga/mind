@@ -1,0 +1,470 @@
+// std/keccak.mind — Keccak / SHA-3 + SHAKE (FIPS 202) in pure MIND.
+//
+// Self-contained: no imports, only __mind_* intrinsics (like std/aes_gcm.mind).
+//
+// Implements:
+//   - Keccak-f[1600] permutation (FIPS 202 §3.2): 25 lanes of 64 bits,
+//     24 rounds of theta, rho, pi, chi, iota.
+//   - Sponge construction (FIPS 202 §4) with pad10*1 (§5.1).
+//   - SHA3-256 (§6.1): rate 136 bytes, domain suffix 0x06, 32-byte digest.
+//   - SHA3-512 (§6.1): rate  72 bytes, domain suffix 0x06, 64-byte digest.
+//   - SHAKE128 (§6.2): rate 168 bytes, domain suffix 0x1F, arbitrary output.
+//   - SHAKE256 (§6.2): rate 136 bytes, domain suffix 0x1F, arbitrary output.
+//
+// Memory layout (house style of std/sha256.mind / std/aes_gcm.mind):
+//   - Byte buffers: one byte per offset, __mind_store_i8 / __mind_load_i8.
+//   - State A: 25 lanes stored stride-8 (lane i at st + i*8, 200 bytes),
+//     __mind_store_i64 / __mind_load_i64.  Lane index = x + 5*y (§3.1.2).
+//   - Lanes are little-endian in the byte string (FIPS 202 Appendix B.1).
+//
+// 64-BIT SUBTLETY: MIND `>>` on i64 is an ARITHMETIC shift (sign-extends).
+// keccak_rotl64 therefore masks the logical part explicitly:
+//   (x << n) | ((x >> (64 - n)) & ((1 << n) - 1))
+// so the sign bit cannot smear into the rotated low bits.
+//
+// Determinism: pure integer arithmetic, no floats, no external calls.
+
+// ---------------------------------------------------------------------------
+// keccak_rotl64 — rotate a 64-bit lane left by n (0 <= n <= 63).
+//
+// `(1 << n) - 1` masks the n low bits delivered by the (arithmetic) right
+// shift; for n = 63 the mask wraps to 0x7FFF...FFFF which is exactly right.
+// Exposed pub so the test driver can KAT the rotation in isolation
+// (rol64(1,1)=2, rol64(0x8000000000000000,1)=1).
+// ---------------------------------------------------------------------------
+
+pub fn keccak_rotl64(x: i64, n: i64) -> i64 {
+    if n == 0 {
+        return x;
+    }
+    (x << n) | ((x >> (64 - n)) & ((1 << n) - 1))
+}
+
+// ---------------------------------------------------------------------------
+// keccak_rc — iota round constants RC[0..23], FIPS 202 §3.2.5.
+//
+// Generated from the rc(t) LFSR definition (verified against the standard
+// table).  Values with bit 63 set do not fit a positive i64 literal, so each
+// constant is written as (hi32 << 32) | lo32 in decimal; the shift wraps into
+// the sign bit, giving the correct 64-bit pattern.
+// ---------------------------------------------------------------------------
+
+fn keccak_rc(i: i64) -> i64 {
+    if i == 0 {
+        return (0 << 32) | 1;              // 0x0000000000000001
+    }
+    if i == 1 {
+        return (0 << 32) | 32898;          // 0x0000000000008082
+    }
+    if i == 2 {
+        return (2147483648 << 32) | 32906; // 0x800000000000808A
+    }
+    if i == 3 {
+        return (2147483648 << 32) | 2147516416; // 0x8000000080008000
+    }
+    if i == 4 {
+        return (0 << 32) | 32907;          // 0x000000000000808B
+    }
+    if i == 5 {
+        return (0 << 32) | 2147483649;     // 0x0000000080000001
+    }
+    if i == 6 {
+        return (2147483648 << 32) | 2147516545; // 0x8000000080008081
+    }
+    if i == 7 {
+        return (2147483648 << 32) | 32777; // 0x8000000000008009
+    }
+    if i == 8 {
+        return (0 << 32) | 138;            // 0x000000000000008A
+    }
+    if i == 9 {
+        return (0 << 32) | 136;            // 0x0000000000000088
+    }
+    if i == 10 {
+        return (0 << 32) | 2147516425;     // 0x0000000080008009
+    }
+    if i == 11 {
+        return (0 << 32) | 2147483658;     // 0x000000008000000A
+    }
+    if i == 12 {
+        return (0 << 32) | 2147516555;     // 0x000000008000808B
+    }
+    if i == 13 {
+        return (2147483648 << 32) | 139;   // 0x800000000000008B
+    }
+    if i == 14 {
+        return (2147483648 << 32) | 32905; // 0x8000000000008089
+    }
+    if i == 15 {
+        return (2147483648 << 32) | 32771; // 0x8000000000008003
+    }
+    if i == 16 {
+        return (2147483648 << 32) | 32770; // 0x8000000000008002
+    }
+    if i == 17 {
+        return (2147483648 << 32) | 128;   // 0x8000000000000080
+    }
+    if i == 18 {
+        return (0 << 32) | 32778;          // 0x000000000000800A
+    }
+    if i == 19 {
+        return (2147483648 << 32) | 2147483658; // 0x800000008000000A
+    }
+    if i == 20 {
+        return (2147483648 << 32) | 2147516545; // 0x8000000080008081
+    }
+    if i == 21 {
+        return (2147483648 << 32) | 32896; // 0x8000000000008080
+    }
+    if i == 22 {
+        return (0 << 32) | 2147483649;     // 0x0000000080000001
+    }
+    (2147483648 << 32) | 2147516424        // RC[23] = 0x8000000080008008
+}
+
+// ---------------------------------------------------------------------------
+// keccak_rho_off — rho rotation offsets (FIPS 202 §3.2.2, Table 2),
+// flattened over lane index i = x + 5*y.
+// ---------------------------------------------------------------------------
+
+fn keccak_rho_off(i: i64) -> i64 {
+    if i == 0 {
+        return 0;
+    }
+    if i == 1 {
+        return 1;
+    }
+    if i == 2 {
+        return 62;
+    }
+    if i == 3 {
+        return 28;
+    }
+    if i == 4 {
+        return 27;
+    }
+    if i == 5 {
+        return 36;
+    }
+    if i == 6 {
+        return 44;
+    }
+    if i == 7 {
+        return 6;
+    }
+    if i == 8 {
+        return 55;
+    }
+    if i == 9 {
+        return 20;
+    }
+    if i == 10 {
+        return 3;
+    }
+    if i == 11 {
+        return 10;
+    }
+    if i == 12 {
+        return 43;
+    }
+    if i == 13 {
+        return 25;
+    }
+    if i == 14 {
+        return 39;
+    }
+    if i == 15 {
+        return 41;
+    }
+    if i == 16 {
+        return 45;
+    }
+    if i == 17 {
+        return 15;
+    }
+    if i == 18 {
+        return 21;
+    }
+    if i == 19 {
+        return 8;
+    }
+    if i == 20 {
+        return 18;
+    }
+    if i == 21 {
+        return 2;
+    }
+    if i == 22 {
+        return 61;
+    }
+    if i == 23 {
+        return 56;
+    }
+    14
+}
+
+// ---------------------------------------------------------------------------
+// Lane accessors — state lane i lives at st + i*8 (stride-8, like Vec).
+// ---------------------------------------------------------------------------
+
+fn keccak_lane_get(st: i64, i: i64) -> i64 {
+    __mind_load_i64(st + i * 8)
+}
+
+fn keccak_lane_set(st: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(st + i * 8, v)
+}
+
+// ---------------------------------------------------------------------------
+// keccak_theta — FIPS 202 §3.2.1.
+//
+// C[x] = A[x,0] ^ A[x,1] ^ A[x,2] ^ A[x,3] ^ A[x,4]
+// D[x] = C[x-1] ^ ROT(C[x+1], 1)
+// A[x,y] ^= D[x]
+//
+// c_buf: 5-lane (40-byte) scratch, caller-allocated and reused per round.
+// ---------------------------------------------------------------------------
+
+fn keccak_theta(st: i64, c_buf: i64) -> i64 {
+    let mut x: i64 = 0;
+    while x < 5 {
+        let c: i64 = keccak_lane_get(st, x)
+            ^ keccak_lane_get(st, x + 5)
+            ^ keccak_lane_get(st, x + 10)
+            ^ keccak_lane_get(st, x + 15)
+            ^ keccak_lane_get(st, x + 20);
+        keccak_lane_set(c_buf, x, c);
+        x = x + 1;
+    }
+    let mut x2: i64 = 0;
+    while x2 < 5 {
+        let d: i64 = keccak_lane_get(c_buf, (x2 + 4) % 5)
+            ^ keccak_rotl64(keccak_lane_get(c_buf, (x2 + 1) % 5), 1);
+        let mut y: i64 = 0;
+        while y < 5 {
+            let idx: i64 = x2 + 5 * y;
+            keccak_lane_set(st, idx, keccak_lane_get(st, idx) ^ d);
+            y = y + 1;
+        }
+        x2 = x2 + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// keccak_rho_pi — FIPS 202 §3.2.2 (rho) + §3.2.3 (pi), fused.
+//
+// B[y, (2x+3y) mod 5] = ROT(A[x,y], rho_off[x,y])
+// Flat: source i = x + 5y  →  dest j = y + 5*((2x + 3y) mod 5).
+//
+// b_buf: 25-lane (200-byte) scratch, caller-allocated; fully overwritten.
+// ---------------------------------------------------------------------------
+
+fn keccak_rho_pi(st: i64, b_buf: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 25 {
+        let x: i64 = i % 5;
+        let y: i64 = i / 5;
+        let j: i64 = y + 5 * ((2 * x + 3 * y) % 5);
+        keccak_lane_set(b_buf, j, keccak_rotl64(keccak_lane_get(st, i), keccak_rho_off(i)));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// keccak_chi — FIPS 202 §3.2.4.
+//
+// A[x,y] = B[x,y] ^ ((NOT B[x+1,y]) AND B[x+2,y])
+// NOT over the full 64-bit lane = XOR with all-ones (0 - 1 in two's
+// complement).
+// ---------------------------------------------------------------------------
+
+fn keccak_chi(st: i64, b_buf: i64) -> i64 {
+    let all_ones: i64 = 0 - 1;
+    let mut i: i64 = 0;
+    while i < 25 {
+        let x: i64 = i % 5;
+        let row: i64 = 5 * (i / 5);
+        let b0: i64 = keccak_lane_get(b_buf, i);
+        let b1: i64 = keccak_lane_get(b_buf, (x + 1) % 5 + row);
+        let b2: i64 = keccak_lane_get(b_buf, (x + 2) % 5 + row);
+        keccak_lane_set(st, i, b0 ^ ((b1 ^ all_ones) & b2));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// keccak_f1600 — the full 24-round Keccak-f[1600] permutation (FIPS 202
+// §3.3).  Each round: theta, rho, pi, chi, iota.  Scratch buffers are
+// allocated once and reused across rounds.
+// ---------------------------------------------------------------------------
+
+fn keccak_f1600(st: i64) -> i64 {
+    let c_buf: i64 = __mind_alloc(40);
+    let b_buf: i64 = __mind_alloc(200);
+    let mut rnd: i64 = 0;
+    while rnd < 24 {
+        keccak_theta(st, c_buf);
+        keccak_rho_pi(st, b_buf);
+        keccak_chi(st, b_buf);
+        // iota: A[0,0] ^= RC[rnd]  (FIPS 202 §3.2.5)
+        keccak_lane_set(st, 0, keccak_lane_get(st, 0) ^ keccak_rc(rnd));
+        rnd = rnd + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Byte-buffer helpers — factored out so no sponge-level function body holds
+// sibling byte-loops nested inside its outer loop (std/hkdf.mind mem_copy
+// note: the MLIR block-argument namer collides on 3+ sibling loops nested in
+// an outer loop).
+// ---------------------------------------------------------------------------
+
+fn keccak_mem_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+fn keccak_mem_zero(dst: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// keccak_load_lane_le — assemble one 64-bit lane from 8 little-endian bytes
+// (FIPS 202 Appendix B.1 byte ordering).  Byte 7 lands in bits 56..63; the
+// left shift wraps into the sign bit for values >= 0x80, which is the
+// correct bit pattern.
+fn keccak_load_lane_le(addr: i64) -> i64 {
+    let b0: i64 = __mind_load_i8(addr + 0);
+    let b1: i64 = __mind_load_i8(addr + 1);
+    let b2: i64 = __mind_load_i8(addr + 2);
+    let b3: i64 = __mind_load_i8(addr + 3);
+    let b4: i64 = __mind_load_i8(addr + 4);
+    let b5: i64 = __mind_load_i8(addr + 5);
+    let b6: i64 = __mind_load_i8(addr + 6);
+    let b7: i64 = __mind_load_i8(addr + 7);
+    b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56)
+}
+
+// ---------------------------------------------------------------------------
+// keccak_absorb_block — XOR one rate-sized block into the state (lane-wise,
+// little-endian) and apply Keccak-f[1600].  FIPS 202 §4 step 6.
+// ---------------------------------------------------------------------------
+
+fn keccak_absorb_block(st: i64, block_addr: i64, rate: i64) -> i64 {
+    let lanes: i64 = rate / 8;
+    let mut i: i64 = 0;
+    while i < lanes {
+        let lane: i64 = keccak_load_lane_le(block_addr + i * 8);
+        keccak_lane_set(st, i, keccak_lane_get(st, i) ^ lane);
+        i = i + 1;
+    }
+    keccak_f1600(st);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// keccak_extract — copy n bytes (n <= rate) out of the state, little-endian
+// lane order.  Byte j comes from bits (j mod 8)*8 of lane j/8; the & 255
+// masks off any sign-extension from the arithmetic right shift.
+// ---------------------------------------------------------------------------
+
+fn keccak_extract(st: i64, out_addr: i64, n: i64) -> i64 {
+    let mut j: i64 = 0;
+    while j < n {
+        let lane: i64 = keccak_lane_get(st, j / 8);
+        __mind_store_i8(out_addr + j, (lane >> ((j % 8) * 8)) & 255);
+        j = j + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// keccak_sponge — SPONGE[Keccak-f[1600], pad10*1] (FIPS 202 §4 + §5.1).
+//
+// ds is the domain-separation suffix already merged with the first padding
+// bit: 0x06 for SHA-3 (§6.1), 0x1F for SHAKE (§6.2).  Padding writes ds at
+// the first free byte and ORs 0x80 into the last rate byte — when the
+// message tail is exactly rate-1 bytes those coincide and ds|0x80 is the
+// single correct pad byte.
+//
+// Absorb: whole blocks straight from the input, then one padded final block
+// (always emitted — for |M| a multiple of rate the pad is a full block).
+// Squeeze: rate-sized chunks with a permutation between chunks; the final
+// partial chunk needs no trailing permutation.
+// ---------------------------------------------------------------------------
+
+fn keccak_sponge(in_addr: i64, in_len: i64, rate: i64, ds: i64, out_addr: i64, out_len: i64) -> i64 {
+    // Zero-initialise the 25-lane state.
+    let st: i64 = __mind_alloc(200);
+    let mut zi: i64 = 0;
+    while zi < 25 {
+        keccak_lane_set(st, zi, 0);
+        zi = zi + 1;
+    }
+
+    // Absorb all whole input blocks.
+    let mut off: i64 = 0;
+    while off + rate <= in_len {
+        keccak_absorb_block(st, in_addr + off, rate);
+        off = off + rate;
+    }
+
+    // Build and absorb the final padded block (rem < rate bytes of message).
+    let rem: i64 = in_len - off;
+    let blk: i64 = __mind_alloc(rate);
+    keccak_mem_copy(blk, in_addr + off, rem);
+    keccak_mem_zero(blk + rem, rate - rem);
+    __mind_store_i8(blk + rem, ds);
+    __mind_store_i8(blk + rate - 1, __mind_load_i8(blk + rate - 1) | 128);
+    keccak_absorb_block(st, blk, rate);
+
+    // Squeeze.
+    let mut written: i64 = 0;
+    while out_len - written > rate {
+        keccak_extract(st, out_addr + written, rate);
+        keccak_f1600(st);
+        written = written + rate;
+    }
+    keccak_extract(st, out_addr + written, out_len - written);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Public API — FIPS 202 §6.
+//
+//   SHA3-256(M) = KECCAK[512](M || 01, 256)   rate 136, ds 0x06, out 32
+//   SHA3-512(M) = KECCAK[1024](M || 01, 512)  rate  72, ds 0x06, out 64
+//   SHAKE128(M, d) = KECCAK[256](M || 1111, d)  rate 168, ds 0x1F
+//   SHAKE256(M, d) = KECCAK[512](M || 1111, d)  rate 136, ds 0x1F
+//
+// All read in_len bytes at in_addr (one byte per offset) and write the
+// digest/output bytes at out*, returning 0.
+// ---------------------------------------------------------------------------
+
+pub fn keccak_sha3_256(in_addr: i64, in_len: i64, out32: i64) -> i64 {
+    keccak_sponge(in_addr, in_len, 136, 6, out32, 32)
+}
+
+pub fn keccak_sha3_512(in_addr: i64, in_len: i64, out64: i64) -> i64 {
+    keccak_sponge(in_addr, in_len, 72, 6, out64, 64)
+}
+
+pub fn keccak_shake128(in_addr: i64, in_len: i64, out_addr: i64, out_len: i64) -> i64 {
+    keccak_sponge(in_addr, in_len, 168, 31, out_addr, out_len)
+}
+
+pub fn keccak_shake256(in_addr: i64, in_len: i64, out_addr: i64, out_len: i64) -> i64 {
+    keccak_sponge(in_addr, in_len, 136, 31, out_addr, out_len)
+}
