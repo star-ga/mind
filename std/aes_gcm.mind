@@ -34,20 +34,28 @@
 // gf_mul — multiply two bytes in GF(2^8) (Russian-peasant, 8 iterations).
 // The 0x1B (=27) is the low byte of the reduction poly, XORed in whenever a
 // carry leaves bit 7.
+//
+// Constant-time: no data-dependent branches. MixColumns multiplies SECRET state
+// bytes by the fixed MDS constants (2/3), so a `if (bit) p ^= aa` / `if (carry)
+// aa ^= 0x1B` branch would leak state bits through timing. Both conditionals are
+// replaced by branchless XOR-with-mask (mask = 0xFF iff the bit is set, else 0),
+// so every multiply executes the identical instruction/branch trace regardless
+// of operands. All shifts are on non-negative bytes (0..255), so `>>` is
+// sign-agnostic here.
 fn gf_mul(a: i64, b: i64) -> i64 {
     let mut aa: i64 = a & 255;
     let mut bb: i64 = b & 255;
     let mut p: i64 = 0;
     let mut i: i64 = 0;
     while i < 8 {
-        if (bb & 1) != 0 {
-            p = p ^ aa;
-        }
-        let hi: i64 = aa & 128;
+        // Add aa into p iff the low bit of bb is set (branchless).
+        let addmask: i64 = (0 - (bb & 1)) & 255;   // 0xFF iff bit set, else 0x00
+        p = p ^ (aa & addmask);
+        let hi: i64 = (aa >> 7) & 1;                // top bit of aa (aa in 0..255)
         aa = (aa << 1) & 255;
-        if hi != 0 {
-            aa = aa ^ 27;
-        }
+        // Reduce by 0x1B iff a carry left bit 7 (branchless).
+        let redmask: i64 = (0 - hi) & 255;          // 0xFF iff carry, else 0x00
+        aa = aa ^ (27 & redmask);
         bb = bb >> 1;
         i = i + 1;
     }
@@ -61,8 +69,11 @@ fn rotl8(x: i64, n: i64) -> i64 {
 
 // ---------------------------------------------------------------------------
 // S-box generation (FIPS 197 §5.1.1) — multiplicative inverse in GF(2^8)
-// followed by the affine transform.  Built once into a 256-byte table so the
-// forward S-box is a plain table lookup during SubBytes / key expansion.
+// followed by the affine transform.  Built once into a 256-byte table; SubBytes
+// and the key-expansion SubWord read it through `aes_sbox_ct` (constant-time,
+// secret index does not leak via cache access) rather than a raw indexed load.
+// The table build itself only ever indexes by the public loop counter, so it is
+// key-independent and safe as a direct lookup.
 //
 // The inverse is computed via exp/log tables generated from the generator 3
 // (0x03 is a generator of GF(2^8)*): inverse(a) = exp[(255 - log[a]) mod 255].
@@ -97,6 +108,28 @@ fn aes_build_sbox(sbox: i64) -> i64 {
     0
 }
 
+// aes_sbox_ct — constant-time forward S-box lookup.  A plain `sbox[idx]` load
+// indexes a 256-byte table by a SECRET byte, whose cache-line access pattern
+// leaks the index (the classic AES table cache-timing attack, Bernstein 2005).
+// This reads ALL 256 entries in a fixed order and selects entry[idx] with a
+// branchless equality mask, so the memory-access trace is independent of the
+// index.  ~256x the loads of a raw lookup, but AES here is a reference codec,
+// not a hot path; correctness is byte-identical (proven by the NIST KATs).
+//   d = j ^ want is 0 iff j == want; for d in 0..255, (d+255)>>8 is 0 iff d==0.
+fn aes_sbox_ct(sbox: i64, idx: i64) -> i64 {
+    let want: i64 = idx & 255;
+    let mut acc: i64 = 0;
+    let mut j: i64 = 0;
+    while j < 256 {
+        let d: i64 = j ^ want;                    // 0 iff j == want
+        let nz: i64 = (d + 255) >> 8;             // 1 iff d != 0, else 0
+        let mask: i64 = (0 - (1 - nz)) & 255;     // 0xFF iff j == want, else 0x00
+        acc = acc | (__mind_load_i8(sbox + j) & mask);
+        j = j + 1;
+    }
+    acc & 255
+}
+
 // ---------------------------------------------------------------------------
 // AES-128 key expansion (FIPS 197 §5.2) — 16-byte key -> 176-byte round-key
 // schedule (44 words of 4 bytes), one byte per offset.
@@ -125,11 +158,12 @@ fn aes_key_expand(key: i64, sbox: i64, rk: i64) -> i64 {
             t1 = t2;
             t2 = t3;
             t3 = tmp;
-            // SubWord: apply the S-box to each byte.
-            t0 = __mind_load_i8(sbox + t0);
-            t1 = __mind_load_i8(sbox + t1);
-            t2 = __mind_load_i8(sbox + t2);
-            t3 = __mind_load_i8(sbox + t3);
+            // SubWord: apply the S-box to each byte (constant-time — the key
+            // schedule is secret, so the lookup index must not leak).
+            t0 = aes_sbox_ct(sbox, t0);
+            t1 = aes_sbox_ct(sbox, t1);
+            t2 = aes_sbox_ct(sbox, t2);
+            t3 = aes_sbox_ct(sbox, t3);
             // XOR round constant into the first byte.
             t0 = t0 ^ rcon;
             rcon = gf_mul(rcon, 2);
@@ -162,7 +196,9 @@ fn add_round_key(st: i64, rk_off: i64) -> i64 {
 fn sub_bytes(st: i64, sbox: i64) -> i64 {
     let mut i: i64 = 0;
     while i < 16 {
-        __mind_store_i8(st + i, __mind_load_i8(sbox + __mind_load_i8(st + i)));
+        // Constant-time lookup: state bytes are secret, so a raw sbox[state]
+        // load would leak them through the cache-access pattern.
+        __mind_store_i8(st + i, aes_sbox_ct(sbox, __mind_load_i8(st + i)));
         i = i + 1;
     }
     0
