@@ -410,6 +410,11 @@ fn decode_evidence_report(
     let recomputed = ir_trace_hash(ir);
     let trace_hash_valid = recomputed == stored_hash;
 
+    // Strict-FP mode re-derived from the SAME re-parsed body the hash attests:
+    // a hidden taint op can't sit in a "strict" body without breaking the hash,
+    // so this is as trustworthy as trace_hash_valid and needs no wire field.
+    let fp_mode = crate::ir::fp_contract_mode(ir);
+
     Ok(EvidenceReport {
         substrate,
         determinism,
@@ -418,6 +423,7 @@ fn decode_evidence_report(
         trace_hash: stored_hash,
         trace_hash_kind,
         trace_hash_valid,
+        fp_mode,
     })
 }
 

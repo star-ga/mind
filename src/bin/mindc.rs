@@ -307,6 +307,13 @@ enum Command {
         /// Emit the report as a JSON object instead of human-readable text.
         #[arg(long)]
         json: bool,
+        /// Fail verification (exit 1) unless the artifact's FP-contract mode is
+        /// `strict` — i.e. it used no FMA-contraction / f32-reassociation op.
+        /// Off by default so existing relaxed-but-untampered f32 artifacts still
+        /// pass a plain `verify`; a consumer that requires bit-identical floats
+        /// opts in. Fail-closed: an `unknown` mode is rejected too.
+        #[arg(long)]
+        require_strict_fp: bool,
     },
 }
 
@@ -533,8 +540,12 @@ fn main() {
             run_mindc_clean(*cache, *all);
             return;
         }
-        Some(Command::Verify { artifact, json }) => {
-            process::exit(run_verify(artifact, *json));
+        Some(Command::Verify {
+            artifact,
+            json,
+            require_strict_fp,
+        }) => {
+            process::exit(run_verify(artifact, *json, *require_strict_fp));
         }
         None => {}
     }
@@ -1407,7 +1418,7 @@ fn json_escape(s: &str) -> String {
 /// Returns the process exit code: 0 = valid (SSA well-formed, and — when
 /// attested — trace_hash intact); 1 = verification failed (SSA fault, tampered
 /// trace_hash, or malformed evidence chain); 2 = I/O error reading the artifact.
-fn run_verify(artifact: &str, json: bool) -> i32 {
+fn run_verify(artifact: &str, json: bool, require_strict_fp: bool) -> i32 {
     use libmind::ir::check_ssa_well_formed;
     use libmind::ir::compact::{
         Determinism, EvidenceError, TraceHashKind, mic3_evidence_report, parse_mic3,
@@ -1472,6 +1483,9 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                 TraceHashKind::Mic3Bytes => "mic3-bytes",
                 TraceHashKind::Mic1Text => "mic1-text",
             };
+            // Strict-FP contract mode, re-derived from the same hashed body
+            // (strict / relaxed / unknown). Charset-safe (enum tag).
+            let fp_mode = report.fp_mode.as_str();
 
             if json {
                 // Hand-formatted JSON keeps the binary free of a serde dependency
@@ -1487,7 +1501,7 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                     None => "null".to_string(),
                 };
                 println!(
-                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field}}}",
+                    "{{\"artifact\":\"{}\",\"substrate\":\"{}\",\"determinism\":\"{determinism}\",\"toolchain\":\"{}\",\"parent\":{parent_field},\"trace_hash\":\"{trace_hash}\",\"trace_hash_kind\":\"{trace_hash_kind}\",\"trace_hash_valid\":{},\"fp_mode\":\"{fp_mode}\",\"ssa_valid\":{ssa_valid},\"ssa_reason\":{ssa_reason_field}}}",
                     json_escape(artifact),
                     json_escape(&report.substrate),
                     json_escape(&report.toolchain),
@@ -1508,6 +1522,7 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                     "trace_hash_valid: {}",
                     if report.trace_hash_valid { "yes" } else { "NO" }
                 );
+                println!("fp_mode:          {fp_mode}");
                 println!("ssa_valid:        {}", if ssa_valid { "yes" } else { "NO" });
                 if let Some(r) = &ssa_reason {
                     println!("ssa_reason:       {r}");
@@ -1527,6 +1542,17 @@ fn run_verify(artifact: &str, json: bool) -> i32 {
                             "note: artifact declares a nondeterministic build; trace_hash matches but reproducibility is not asserted"
                         );
                     }
+                }
+                // Opt-in strict-FP gate: an untampered artifact still fails
+                // verification if the consumer demanded strict-FP and the
+                // re-derived mode isn't strict (relaxed OR unknown → fail
+                // closed). The trace_hash already attests the mode is genuine.
+                if require_strict_fp && !report.fp_mode.is_strict() {
+                    eprintln!(
+                        "error[verify]: fp_mode is {} — artifact used FMA-contraction / f32 reassociation (or was not scanned); strict-FP required",
+                        report.fp_mode.as_str()
+                    );
+                    return 1;
                 }
                 0
             } else {
