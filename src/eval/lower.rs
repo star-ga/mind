@@ -2202,7 +2202,20 @@ fn collect_assign_targets(stmts: &[ast::Node], out: &mut Vec<String>) {
                     collect_assign_targets(std::slice::from_ref(&arm.body), out);
                 }
             }
-            // Do NOT descend into nested loops — separate loop-carried scope.
+            // Descend into nested loops: a variable assigned inside an inner
+            // loop is still loop-carried by THIS (outer) loop, so the outer
+            // alias-break must see it as a candidate — otherwise the outer
+            // substitute_ids pass clobbers an outer read of a shared-id source
+            // (the nested-loop shape of the alias-clobber miscompile). The
+            // `ast_reads_ident` guard at the call site still means a fresh copy
+            // is only minted when a shared-id source is actually read, so this
+            // stays byte-identical for programs that were already correct.
+            N::While { body, .. } => {
+                collect_assign_targets(body, out);
+            }
+            N::For { body, .. } | N::ForEach { body, .. } => {
+                collect_assign_targets(body, out);
+            }
             _ => {}
         }
     }
