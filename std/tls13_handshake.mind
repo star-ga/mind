@@ -1,0 +1,419 @@
+// std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
+// MIND: the integration layer that composes Phases 1.1-1.4 into the client
+// side of a real 1-RTT server-authentication + key-derivation flow
+// (RFC 8446 §7.1 key schedule, §4.4.3 CertificateVerify, §4.4.4 Finished),
+// replay-verified against RFC 8448 §3 "Simple 1-RTT Handshake".
+//
+// This is NOT a network state machine.  Driven by recorded/provided handshake
+// messages (their transcript hashes), it performs everything the CLIENT
+// computes cryptographically for TLS_AES_128_GCM_SHA256 + x25519 +
+// rsa_pss_rsae_sha256:
+//   1. ECDHE shared secret -> Early/Handshake extract -> c/s handshake
+//      traffic secrets -> record key/iv       (tls13_hs_derive_handshake_secrets)
+//   2. Handshake Secret -> Master Secret -> c/s application traffic secrets
+//      -> record key/iv                       (tls13_hs_derive_app_secrets)
+//   3. Server CertificateVerify validation over the exact §4.4.3 signed
+//      content (64 x 0x20 || "TLS 1.3, server CertificateVerify" || 0x00 ||
+//      transcript hash)                       (tls13_hs_verify_cert_verify)
+//   4. Server Finished verification, fail-closed
+//                                             (tls13_hs_verify_server_finished)
+//   5. The client's own Finished verify_data  (tls13_hs_client_finished)
+//
+// COMPOSES already-verified modules — nothing crypto is reimplemented except
+// a geometry-GENERIC RSASSA-PSS-VERIFY (see below):
+//   - std/tls13_keyschedule.mind  tls13_handshake_secret / traffic secrets /
+//                                 tls13_master_secret / tls13_derive_key/iv /
+//                                 tls13_finished_key
+//   - std/tls13_finished.mind     tls13_finished_check / tls13_finished_from_secret
+//   - std/rsa_pss.mind            mgf1_sha256 (MGF1-SHA256, RFC 8017 §B.2.1)
+//   - std/x509.mind               130-limb radix-2^16 bignum: bn_from_bytes /
+//                                 bn_to_bytes / bn_cmp_ge / modexp_2048
+//                                 (all width-generic: bn_mod_reduce is binary
+//                                 shift-and-subtract mod ANY n <= 2048 bits)
+//   - std/sha256.mind             sha256
+//   (std/x25519.mind supplies the ECDHE shared secret to the caller; this
+//   module consumes the 32-byte result.)
+//
+// WHY a generic PSS verify here: the RFC 8448 §3 server certificate is
+// RSA-1024 (128-byte modulus), while std/rsa_pss.mind's rsa_pss_verify_sha256
+// is deliberately fixed to RSA-2048 geometry (n_len == 256, emLen = 256).
+// tls13_hs_rsa_pss_verify runs the SAME RFC 8017 §8.1.2 / §9.1.2 algorithm
+// with emLen = n_len (accepting n_len 128 or 256, top bit of n set, so
+// emBits = modBits - 1 = 8*n_len - 1 and the leftmost-bit rule is 1 bit in
+// both geometries), reusing mgf1_sha256 + the x509 bignum verbatim.
+//
+// Combined-file build (order matters — deps must precede dependents):
+//   cat std/sha256.mind                                     > /tmp/tls13hs.mind
+//   grep -v '^import std.sha256;' std/hkdf.mind            >> /tmp/tls13hs.mind
+//   grep -v '^import std.sha256;' std/x509.mind            >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind \
+//                                                          >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.' std/aes_gcm.mind              >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.' std/tls13_record.mind         >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.' std/tls13_finished.mind       >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.' std/rsa_pss.mind              >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.' std/x25519.mind               >> /tmp/tls13hs.mind
+//   grep -vE '^import std\.' std/tls13_handshake.mind      >> /tmp/tls13hs.mind
+//   mindc /tmp/tls13hs.mind --emit-shared /tmp/tls13hs.so   # needs mlir-build
+//
+// Naming: every new symbol is tls13_hs_-prefixed — clear of libc/libm (ELF
+// symbol-interposition footgun; -Wl,-Bsymbolic-functions binds intra-module
+// calls locally) and of every composed module's entry points.
+// Buffer layout: one byte per offset, matching the composed modules.
+// Determinism: pure integer arithmetic, no floats, no clocks, no external
+// calls, no randomness.  Fail-closed: every verify returns 0 on any mismatch.
+
+import std.sha256;
+import std.hkdf;
+import std.x509;
+import std.tls13_keyschedule;
+import std.tls13_finished;
+import std.rsa_pss;
+
+// ---------------------------------------------------------------------------
+// (1) Handshake-phase secrets (RFC 8446 §7.1, upper half of the diagram).
+//   dhe_addr        — the 32-byte x25519 ECDHE shared secret.
+//   hello_hash_addr — the 32-byte Transcript-Hash(ClientHello..ServerHello).
+//   out_addr        — 152-byte output buffer, MUST NOT overlap the inputs:
+//     out +   0 .. 32   Handshake Secret        (carried state for phase 2)
+//     out +  32 .. 64   client_handshake_traffic_secret
+//     out +  64 .. 96   server_handshake_traffic_secret
+//     out +  96 ..112   client handshake record key  (AES-128, 16 bytes)
+//     out + 112 ..124   client handshake record iv   (12 bytes)
+//     out + 124 ..140   server handshake record key  (16 bytes)
+//     out + 140 ..152   server handshake record iv   (12 bytes)
+// Runs Early Secret -> Derive-Secret(.,"derived","") -> HKDF-Extract(., DHE)
+// inside tls13_handshake_secret, then the c/s hs traffic Derive-Secrets and
+// the §7.3 key/iv expansions.  Returns 0.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_derive_handshake_secrets(
+    dhe_addr: i64,
+    hello_hash_addr: i64,
+    out_addr: i64,
+) -> i64 {
+    // Handshake Secret at out+0 (Early -> derived -> Extract with the DHE IKM).
+    tls13_handshake_secret(dhe_addr, out_addr);
+    // c/s handshake traffic secrets over Transcript-Hash(CH..SH).
+    tls13_client_handshake_traffic_secret(out_addr, hello_hash_addr, out_addr + 32);
+    tls13_server_handshake_traffic_secret(out_addr, hello_hash_addr, out_addr + 64);
+    // Record-protection material (RFC 8446 §7.3) for both directions.
+    tls13_derive_key(out_addr + 32, out_addr + 96);   // client key
+    tls13_derive_iv(out_addr + 32, out_addr + 112);   // client iv
+    tls13_derive_key(out_addr + 64, out_addr + 124);  // server key
+    tls13_derive_iv(out_addr + 64, out_addr + 140);   // server iv
+    0
+}
+
+// ---------------------------------------------------------------------------
+// (2) Application-phase secrets (RFC 8446 §7.1, lower half of the diagram).
+//   hs_secret_addr — the 32-byte Handshake Secret (out+0 of phase 1's buffer).
+//   fin_hash_addr  — the 32-byte Transcript-Hash(ClientHello..server Finished).
+//   out_addr       — 152-byte output buffer, MUST NOT overlap the inputs:
+//     out +   0 .. 32   Master Secret
+//     out +  32 .. 64   client_application_traffic_secret_0
+//     out +  64 .. 96   server_application_traffic_secret_0
+//     out +  96 ..112   client application record key (16 bytes)
+//     out + 112 ..124   client application record iv  (12 bytes)
+//     out + 124 ..140   server application record key (16 bytes)
+//     out + 140 ..152   server application record iv  (12 bytes)
+// Returns 0.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_derive_app_secrets(
+    hs_secret_addr: i64,
+    fin_hash_addr: i64,
+    out_addr: i64,
+) -> i64 {
+    // Master Secret = Extract(Derive-Secret(HS,"derived",""), 0) at out+0.
+    tls13_master_secret(hs_secret_addr, out_addr);
+    // c/s application traffic secrets over Transcript-Hash(CH..server Finished).
+    tls13_client_application_traffic_secret(out_addr, fin_hash_addr, out_addr + 32);
+    tls13_server_application_traffic_secret(out_addr, fin_hash_addr, out_addr + 64);
+    // Record-protection material (RFC 8446 §7.3) for both directions.
+    tls13_derive_key(out_addr + 32, out_addr + 96);   // client key
+    tls13_derive_iv(out_addr + 32, out_addr + 112);   // client iv
+    tls13_derive_key(out_addr + 64, out_addr + 124);  // server key
+    tls13_derive_iv(out_addr + 64, out_addr + 140);   // server iv
+    0
+}
+
+// ---------------------------------------------------------------------------
+// (3a) CertificateVerify signed content (RFC 8446 §4.4.3), server variant:
+//   content = 0x20 repeated 64 times
+//          || "TLS 1.3, server CertificateVerify"   (33 bytes)
+//          || 0x00                                  (single separator byte)
+//          || Transcript-Hash(Handshake Context, Certificate)   (32 bytes)
+// Writes exactly 130 bytes to out_addr and returns 130 (the content length).
+// Exposed pub so the byte-exact construction is directly testable.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_cert_verify_content(thash_addr: i64, out_addr: i64) -> i64 {
+    // 64 repetitions of 0x20 (space).
+    let mut i: i64 = 0;
+    while i < 64 {
+        __mind_store_i8(out_addr + i, 32);
+        i = i + 1;
+    }
+    // Context string "TLS 1.3, server CertificateVerify" (33 bytes, NO NUL —
+    // the 0x00 below is the §4.4.3 separator, not part of the string).
+    __mind_store_i8(out_addr + 64, 84);   // 'T'
+    __mind_store_i8(out_addr + 65, 76);   // 'L'
+    __mind_store_i8(out_addr + 66, 83);   // 'S'
+    __mind_store_i8(out_addr + 67, 32);   // ' '
+    __mind_store_i8(out_addr + 68, 49);   // '1'
+    __mind_store_i8(out_addr + 69, 46);   // '.'
+    __mind_store_i8(out_addr + 70, 51);   // '3'
+    __mind_store_i8(out_addr + 71, 44);   // ','
+    __mind_store_i8(out_addr + 72, 32);   // ' '
+    __mind_store_i8(out_addr + 73, 115);  // 's'
+    __mind_store_i8(out_addr + 74, 101);  // 'e'
+    __mind_store_i8(out_addr + 75, 114);  // 'r'
+    __mind_store_i8(out_addr + 76, 118);  // 'v'
+    __mind_store_i8(out_addr + 77, 101);  // 'e'
+    __mind_store_i8(out_addr + 78, 114);  // 'r'
+    __mind_store_i8(out_addr + 79, 32);   // ' '
+    __mind_store_i8(out_addr + 80, 67);   // 'C'
+    __mind_store_i8(out_addr + 81, 101);  // 'e'
+    __mind_store_i8(out_addr + 82, 114);  // 'r'
+    __mind_store_i8(out_addr + 83, 116);  // 't'
+    __mind_store_i8(out_addr + 84, 105);  // 'i'
+    __mind_store_i8(out_addr + 85, 102);  // 'f'
+    __mind_store_i8(out_addr + 86, 105);  // 'i'
+    __mind_store_i8(out_addr + 87, 99);   // 'c'
+    __mind_store_i8(out_addr + 88, 97);   // 'a'
+    __mind_store_i8(out_addr + 89, 116);  // 't'
+    __mind_store_i8(out_addr + 90, 101);  // 'e'
+    __mind_store_i8(out_addr + 91, 86);   // 'V'
+    __mind_store_i8(out_addr + 92, 101);  // 'e'
+    __mind_store_i8(out_addr + 93, 114);  // 'r'
+    __mind_store_i8(out_addr + 94, 105);  // 'i'
+    __mind_store_i8(out_addr + 95, 102);  // 'f'
+    __mind_store_i8(out_addr + 96, 121);  // 'y'
+    // Single 0x00 separator.
+    __mind_store_i8(out_addr + 97, 0);
+    // 32-byte transcript hash.
+    let mut j: i64 = 0;
+    while j < 32 {
+        __mind_store_i8(out_addr + 98 + j, __mind_load_i8(thash_addr + j));
+        j = j + 1;
+    }
+    130
+}
+
+// ---------------------------------------------------------------------------
+// (3b) Geometry-generic EMSA-PSS-VERIFY (RFC 8017 §9.1.2), SHA-256/MGF1-SHA256.
+// Same step-by-step algorithm as std/rsa_pss.mind's rsa_pss_emsa_check but
+// parameterized on emLen (em_len = 128 for RSA-1024, 256 for RSA-2048; the
+// caller guarantees the modulus top bit is set, so emBits = 8*em_len - 1 and
+// the leftmost-bit rule masks exactly 1 bit in both geometries).
+//   hLen = 32, dbLen = em_len - 33.  Returns 1 iff consistent, else 0.
+// ---------------------------------------------------------------------------
+
+fn tls13_hs_pss_emsa_check(
+    em: i64,
+    em_len: i64,
+    msg_addr: i64,
+    msg_len: i64,
+    salt_len: i64,
+) -> i64 {
+    let db_len: i64 = em_len - 33;          // emLen - hLen - 1
+    if salt_len < 0 {
+        return 0;
+    }
+    // Step 3: emLen < hLen + sLen + 2  <=>  sLen > dbLen - 1  => inconsistent.
+    if salt_len > db_len - 1 {
+        return 0;
+    }
+    // Step 4: rightmost octet of EM must be 0xbc.
+    if (__mind_load_i8(em + em_len - 1) & 255) != 188 {
+        return 0;
+    }
+    // Step 6: the leftmost 8*emLen - emBits = 1 bit of maskedDB must be zero.
+    if (__mind_load_i8(em + 0) & 128) != 0 {
+        return 0;
+    }
+    // Step 5 split: maskedDB = em[0..dbLen), H = em[dbLen..dbLen+32).
+    // Steps 7-8: dbMask = MGF1(H, dbLen); DB = maskedDB XOR dbMask.
+    let db: i64 = __mind_alloc(db_len);
+    mgf1_sha256(em + db_len, 32, db, db_len);
+    let mut i: i64 = 0;
+    while i < db_len {
+        let masked: i64 = __mind_load_i8(em + i) & 255;
+        let mask: i64 = __mind_load_i8(db + i) & 255;
+        __mind_store_i8(db + i, masked ^ mask);
+        i = i + 1;
+    }
+    // Step 9: set the leftmost 1 bit of DB to zero.
+    __mind_store_i8(db + 0, __mind_load_i8(db + 0) & 127);
+    // Step 10: DB = PS (dbLen - sLen - 1 zero octets) || 0x01 || salt.
+    let one_pos: i64 = db_len - salt_len - 1;   // index of the 0x01 separator
+    let mut ok: i64 = 1;
+    let mut k: i64 = 0;
+    while k < one_pos {
+        if (__mind_load_i8(db + k) & 255) != 0 {
+            ok = 0;
+        }
+        k = k + 1;
+    }
+    if (__mind_load_i8(db + one_pos) & 255) != 1 {
+        ok = 0;
+    }
+    if ok == 0 {
+        return 0;
+    }
+    // Steps 2 + 11-13: mHash = SHA-256(msg); salt = last sLen octets of DB;
+    // M' = 0x00 x8 || mHash || salt; H' = SHA-256(M').
+    let mp: i64 = __mind_alloc(40 + salt_len);
+    let mut z: i64 = 0;
+    while z < 8 {
+        __mind_store_i8(mp + z, 0);
+        z = z + 1;
+    }
+    sha256(msg_addr, msg_len, mp + 8);   // mHash into M'[8..40)
+    let mut s: i64 = 0;
+    while s < salt_len {
+        __mind_store_i8(mp + 40 + s, __mind_load_i8(db + db_len - salt_len + s));
+        s = s + 1;
+    }
+    let hp: i64 = __mind_alloc(32);
+    sha256(mp, 40 + salt_len, hp);
+    // Step 14: consistent iff H == H' (constant-shape compare, no early exit).
+    let mut m: i64 = 0;
+    let mut eq: i64 = 1;
+    while m < 32 {
+        if (__mind_load_i8(hp + m) & 255) != (__mind_load_i8(em + db_len + m) & 255) {
+            eq = 0;
+        }
+        m = m + 1;
+    }
+    eq
+}
+
+// ---------------------------------------------------------------------------
+// (3c) Geometry-generic RSASSA-PSS-VERIFY (RFC 8017 §8.1.2) for RSA-1024 or
+// RSA-2048 / SHA-256 / MGF1-SHA256 (TLS 1.3 rsa_pss_rsae_sha256).
+//   (n_addr, n_len)   big-endian modulus, n_len 128 or 256, top bit set;
+//   e                 public exponent (fits i64: 3 / 17 / 65537);
+//   (sig_addr,sig_len) signature S, must be exactly n_len octets;
+//   (msg_addr,msg_len) the signed message M;
+//   salt_len          expected salt length (32 for TLS 1.3, RFC 8446 §4.2.3).
+// Returns 1 (valid) or 0 (invalid).  Fail-closed.  Reuses the std/x509.mind
+// 130-limb bignum (bn_mod_reduce is generic shift-and-subtract mod n, so a
+// 1024-bit n embeds losslessly in the 2048-bit machinery) + mgf1_sha256.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_rsa_pss_verify(
+    n_addr: i64,
+    n_len: i64,
+    e: i64,
+    sig_addr: i64,
+    sig_len: i64,
+    msg_addr: i64,
+    msg_len: i64,
+    salt_len: i64,
+) -> i64 {
+    // Geometry guards: modulus 128 (RSA-1024) or 256 (RSA-2048) octets with
+    // the top bit set, so modBits = 8*n_len and emBits = 8*n_len - 1.
+    if n_len != 128 {
+        if n_len != 256 {
+            return 0;
+        }
+    }
+    if (__mind_load_i8(n_addr + 0) & 128) == 0 {
+        return 0;
+    }
+    // §8.1.2 step 1: the signature must be exactly k = n_len octets.
+    if sig_len != n_len {
+        return 0;
+    }
+    if e < 1 {
+        return 0;
+    }
+    if msg_len < 0 {
+        return 0;
+    }
+    let n: i64 = __mind_alloc(1040);        // 130 limbs (std/x509.mind bignum)
+    let s: i64 = __mind_alloc(1040);
+    let em_limbs: i64 = __mind_alloc(1040);
+    bn_from_bytes(n_addr, n_len, n);
+    bn_from_bytes(sig_addr, sig_len, s);
+    // §8.1.2 step 2a / RSAVP1 (§5.2.2): the signature representative must be
+    // in [0, n-1]; s >= n => "signature representative out of range" => invalid.
+    if bn_cmp_ge(s, n, 130) == 1 {
+        return 0;
+    }
+    // Step 2b: m = s^e mod n; step 2c: EM = I2OSP(m, emLen) with emLen = n_len.
+    modexp_2048(s, e, n, em_limbs);
+    let em: i64 = __mind_alloc(n_len);
+    bn_to_bytes(em_limbs, em, n_len);
+    // Step 3: EMSA-PSS-VERIFY(M, EM, emBits = 8*n_len - 1).
+    tls13_hs_pss_emsa_check(em, n_len, msg_addr, msg_len, salt_len)
+}
+
+// ---------------------------------------------------------------------------
+// (3) Server CertificateVerify validation (RFC 8446 §4.4.3) — THE server-
+// authentication step.  Builds the exact §4.4.3 signed content from the
+// Transcript-Hash(ClientHello..Certificate) and verifies the signature with
+// rsa_pss_rsae_sha256 (salt_len = hLen = 32, RFC 8446 §4.2.3).
+//   (n_addr, n_len, e) — the server certificate's RSA public key (from
+//                        x509_parse of the Certificate message, or supplied);
+//   (sig_addr, sig_len) — the CertificateVerify signature field;
+//   thash_addr          — 32-byte Transcript-Hash(CH..Certificate).
+// Returns 1 (server authenticated) or 0 (invalid).  Fail-closed: a wrong
+// context prefix, wrong transcript hash, or forged signature all return 0.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_verify_cert_verify(
+    n_addr: i64,
+    n_len: i64,
+    e: i64,
+    sig_addr: i64,
+    sig_len: i64,
+    thash_addr: i64,
+) -> i64 {
+    let content: i64 = __mind_alloc(130);
+    let content_len: i64 = tls13_hs_cert_verify_content(thash_addr, content);
+    tls13_hs_rsa_pss_verify(
+        n_addr, n_len, e, sig_addr, sig_len, content, content_len, 32)
+}
+
+// ---------------------------------------------------------------------------
+// (4) Server Finished verification (RFC 8446 §4.4.4) — fail-closed.
+//   server_hs_traffic_secret_addr — 32-byte server_handshake_traffic_secret
+//                                   (out+64 of tls13_hs_derive_handshake_secrets);
+//   thash_addr                    — 32-byte Transcript-Hash(CH..CertificateVerify);
+//   received_vd_addr              — the 32-byte verify_data from the server's
+//                                   Finished message.
+// finished_key = HKDF-Expand-Label(shts, "finished", "", 32); expected =
+// HMAC(finished_key, thash); constant-time compare via tls13_finished_check.
+// Returns 1 (match) or 0 (MUST terminate with decrypt_error per §4.4.4).
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_verify_server_finished(
+    server_hs_traffic_secret_addr: i64,
+    thash_addr: i64,
+    received_vd_addr: i64,
+) -> i64 {
+    let fk: i64 = __mind_alloc(32);
+    tls13_finished_key(server_hs_traffic_secret_addr, fk);
+    tls13_finished_check(fk, thash_addr, received_vd_addr)
+}
+
+// ---------------------------------------------------------------------------
+// (5) Client Finished (RFC 8446 §4.4.4) — the client's own verify_data.
+//   client_hs_traffic_secret_addr — 32-byte client_handshake_traffic_secret
+//                                   (out+32 of tls13_hs_derive_handshake_secrets);
+//   thash_addr                    — 32-byte Transcript-Hash(CH..server Finished);
+//   out_vd_addr                   — 32-byte output verify_data.
+// Returns 0.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_hs_client_finished(
+    client_hs_traffic_secret_addr: i64,
+    thash_addr: i64,
+    out_vd_addr: i64,
+) -> i64 {
+    tls13_finished_from_secret(client_hs_traffic_secret_addr, thash_addr, out_vd_addr);
+    0
+}
