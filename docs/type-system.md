@@ -5,7 +5,7 @@ The MIND type system models tensor programs with explicit ranks, shapes, and dat
 ## Goals
 
 - **Predictable performance** – Shapes are statically known, enabling compile-time buffer planning.
-- **Expressive generics** – Parametric polymorphism supports reusable operator definitions.
+- **Expressive generics** – Parametric polymorphism supports reusable operator definitions. *(Goal; the current implementation is a bounded subset: a single type parameter over scalar types.)*
 - **Safe effects** – Side effects such as host I/O or stateful ops are opt-in capabilities.
 
 ## Primitive Types
@@ -15,13 +15,15 @@ The MIND type system models tensor programs with explicit ranks, shapes, and dat
 | Scalars        | `i32`, `f32`, `bool`, `index`              | `index` matches target word size           |
 | Tensors        | `Tensor[f32,(2,3)]`, `Tensor[i64,(N,M)]`   | Shapes can be symbolic (compile-time vars) |
 | Tuples/Records | `(Tensor[f32,(N)], bool)`                  | Used for multi-value returns               |
-| Functions      | `(Tensor[f32,(N)]) -> Tensor[f32,(N)]`     | Pure by default unless effects declared    |
+| Functions      | `(Tensor[f32,(N)]) -> Tensor[f32,(N)]`     | Signature types only; first-class function values and closures are not yet implemented |
 
 ## Composite Types
 
 Phase 10.5 / 10.6 added the following composite type forms to the
 surface language. They parse, type-check, and lower to the existing
-Core IR v1 shape lattice.
+Core IR v1 shape lattice. Lowering depth varies by form: slice
+lowering is currently stubbed, and generic instantiation is bounded
+(single type parameter, scalar element types).
 
 | Form                       | Example                          | Notes                                  |
 | -------------------------- | -------------------------------- | -------------------------------------- |
@@ -31,7 +33,7 @@ Core IR v1 shape lattice.
 | Fixed-size array           | `[T; N]`                         | `N` is a compile-time integer literal  |
 | Tuple                      | `(T, U)`, `(T, U, V)`            | Used in fn returns and destructuring   |
 | Qualified type path        | `module.Type`, `crate.Foo`       | Used in const decls and annotations    |
-| Generic type instantiation | `Vec<i32>`, `Result<T, E>`       | User and stdlib generics               |
+| Generic type instantiation | `Vec<i32>`, `Result<T, E>`       | Syntax accepted; instantiation currently bounded (single type param, scalar types). No full `Vec`/`String`/`HashMap` containers yet — shipped collections are a region allocator plus an insert-only map |
 
 The visibility qualifier `pub` is accepted on `fn`, `struct`, `enum`,
 and struct fields. Its semantic effect on the emitted module ABI is
@@ -55,7 +57,7 @@ Effects model capabilities such as:
 - `state` – Mutation of global or captured state
 - `ffi` – Crossing the FFI boundary
 
-A function that writes to stdout declares `!io` in its signature. Effect polymorphism allows higher-order functions to thread capabilities without hard-coding them.
+A function that writes to stdout declares `!io` in its signature. Effect polymorphism (planned alongside first-class functions, which are not yet implemented) will allow higher-order functions to thread capabilities without hard-coding them.
 
 ## Type Inference
 

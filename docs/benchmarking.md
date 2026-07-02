@@ -121,7 +121,8 @@ criterion's native number.
 ### What is deliberately NOT here
 
 - **No OpenBLAS / cuBLAS / any BLAS dependency.** A float BLAS cannot reproduce
-  MIND's load-bearing property (byte-identical output across substrates — f32 add
+  MIND's load-bearing property (byte-identical output across substrates — today
+  gated x86 == ARM on the integer/Q16.16 tier — f32 add
   is non-associative), so a head-to-head "MIND vs BLAS GFLOP/s" race would compare
   a deterministic integer kernel against a non-deterministic float one: not
   tier-matched, and not the claim. The roofline % gives an absolute "fraction of
