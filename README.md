@@ -20,7 +20,7 @@ See [`docs/install.md`](docs/install.md) for all install options including manua
 
 ## Overview
 
-**MIND** is a deterministic compiler whose output is bit-identical across CPU, ARM, and GPU substrates, with a signed evidence chain embedded in the artifact itself.
+**MIND** is a deterministic compiler: its deterministic-integer and Q16.16 fixed-point lowering produces output that is bit-identical across CPU substrates (x86-`avx2` == ARM-`neon`), with a signed evidence chain embedded in the artifact itself. Scalar IEEE-754 `float64` now compiles on the strict deterministic path — run-to-run bit-identical, with cross-ISA verification in progress. Vector-reduction, transcendental, and GPU float determinism are on the roadmap.
 
 It is also a Rust-first language and runtime for building intelligent systems with auditable foundations. It blends declarative tensor algebra, static shape inference, automatic differentiation, and MLIR/LLVM lowering in a compact toolchain that scales from research prototypes to production.
 
