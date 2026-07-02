@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2973 | **Est. tokens:** ~7,118,035
-**Generated:** 2026-07-02 00:17 UTC
+**Files:** 2977 | **Est. tokens:** ~7,138,045
+**Generated:** 2026-07-02 00:27 UTC
 
 ## Token Budget Guide
 
@@ -405,8 +405,8 @@
 | `src/type_checker/` | 1 | ~8,655 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 33 | ~146,761 |
-| `tests/` | 256 | ~420,702 |
+| `std/` | 35 | ~160,190 |
+| `tests/` | 258 | ~427,283 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3884,6 +3884,8 @@
 - `cli.mind` (~2781 tok, huge) — std/cli.mind — RFC 0013 Tier 1 Phase 1: argv-parsing surface.
 - `fs.mind` (~4326 tok, huge) — std/fs.mind — Task #268: POSIX filesystem surface in pure MIND.
 - `hkdf.mind` (~1555 tok, huge) — std/hkdf.mind — HMAC-SHA256 (RFC 2104) + HKDF (RFC 5869) in pure MIND.
+- `hpack.mind` (~9377 tok, huge) — std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
+- `http2_frame.mind` (~4052 tok, huge) — std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
 - `http.mind` (~6682 tok, huge) — std/http.mind — HTTP/1.1 client over std.net (task #XXX).
 - `io_canon.mind` (~2624 tok, huge) — std.io_canon — canonical completion ordering for deterministic I/O.
 - `io.mind` (~1688 tok, huge) — std/io.mind — RFC 0005 Phase 2: pure-MIND I/O surface.
@@ -4076,6 +4078,8 @@
 - `generics_lowering.rs` (~1384 tok, large) — Copyright 2026 STARGA Inc. Licensed under the Apache License, Version 2.0.
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
 - `grad_wrt_resolve.rs` (~736 tok, large) — Copyright 2025 STARGA Inc.
+- `hpack_driver.py` (~2842 tok, huge) — # Official-vector driver for std/hpack.mind (pure-MIND HPACK decoding,
+- `http2_frame_driver.py` (~3739 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.

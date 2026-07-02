@@ -1,0 +1,870 @@
+// std/hpack.mind — HPACK header-compression DECODING (RFC 7541) in pure MIND.
+//
+// Self-contained: no imports, only the __mind_* intrinsics (alloc/free +
+// load/store i8/i64), matching std/aes_gcm.mind's byte-buffer discipline.
+// Phase 2.1 of the HTTP-provable stack: HTTP/2 header decompression.
+//
+// Scope (RFC 7541):
+//   - §5.1  N-bit-prefix variable-length integers
+//   - §5.2  string literals (raw + Huffman) with the Appendix B canonical
+//           Huffman table (256 symbols; EOS handled as padding/error only)
+//   - Appendix A static table (61 entries)
+//   - §2.3.2/§4  dynamic table: FIFO of (name,value) entries, entry cost
+//           name_len + value_len + 32 octets (§4.1), oldest-first eviction
+//           (§4.3), persistent across calls via a caller-owned state buffer
+//   - §6.1/§6.2.1/§6.2.2/§6.2.3/§6.3  header-field representations
+//   HPACK *encoding* is intentionally out of scope for this increment.
+//
+// Public API:
+//   pub fn hpack_dyn_init(dyn_table_state_addr, max_size) -> i64
+//     Initialize a dynamic-table state buffer.  The caller must allocate at
+//     least 32 + max_size bytes at dyn_table_state_addr (the arena can never
+//     hold more than max_size bytes because every entry costs 32 octets more
+//     than the bytes it stores, §4.1).  Returns 0.
+//   pub fn hpack_decode(block_addr, block_len, dyn_table_state_addr,
+//                       out_addr, out_cap) -> i64
+//     Decode one complete header block.  Emits, per header field, the record
+//       name_len u16 LE, name bytes, value_len u16 LE, value bytes
+//     packed back-to-back at out_addr.  Returns the number of (name,value)
+//     pairs decoded, or -1 on malformed input / output overflow (fail
+//     closed; out contents are unspecified on failure).  The dynamic-table
+//     state persists across calls: pass the same dyn_table_state_addr for
+//     every header block of a connection.
+//   pub fn hpack_int_decode(buf, len, pos, prefix_bits, out2) -> i64
+//     §5.1 integer decode (exposed for direct testing, RFC C.1 examples).
+//     Writes out2[0] = value, out2[8] = new position; returns 0 ok / 1 err.
+//   pub fn hpack_huff_decode(src, src_len, dst, dst_cap) -> i64
+//     §5.2 + Appendix B Huffman decode (exposed for direct testing).
+//     Returns the decoded byte count, or -1 on invalid padding, embedded
+//     EOS, or output overflow.
+//
+// Dynamic-table state layout (all i64 fields in 8-byte little-endian slots):
+//   state+0  : max_size — current maximum table size in octets (§4.2)
+//   state+8  : size     — current table size per §4.1 (sum over entries of
+//                         name_len + value_len + 32)
+//   state+16 : count    — number of live dynamic entries
+//   state+24 : used     — bytes used in the arena
+//   state+32…: arena    — entry records OLDEST FIRST, newest appended at the
+//                         end; each record is
+//                           name_len u16 LE, value_len u16 LE, name, value
+//                         Eviction (§4.3) drops the record at the front.
+//   Dynamic index d = HPACK index − 62 (newest-first, §2.3.3) is the record
+//   at oldest-first position count − 1 − d.
+//
+// §6.3 note: a dynamic-table size update is accepted as-is (evicting as
+// needed).  Enforcing the SETTINGS_HEADER_TABLE_SIZE protocol bound is the
+// HTTP/2 layer's job, not this codec's.
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no external
+// calls.  Every error path fails closed with a nonzero / negative return.
+
+// hpack_memcopy — copy len bytes from src to dst, one byte per offset.
+// Forward copy, so overlapping moves with dst < src (eviction compaction)
+// are safe.  Extracted per the std/hkdf.mind sibling-while-loop note.
+fn hpack_memcopy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// hpack_u16_load / hpack_u16_store — 16-bit little-endian length fields
+// used by both the dynamic-table arena records and the output records.
+fn hpack_u16_load(a: i64) -> i64 {
+    __mind_load_i8(a) | (__mind_load_i8(a + 1) << 8)
+}
+
+fn hpack_u16_store(a: i64, v: i64) -> i64 {
+    __mind_store_i8(a, v & 255);
+    __mind_store_i8(a + 1, (v >> 8) & 255);
+    0
+}
+
+// hpack_fill_huff -- fill the canonical-Huffman decode tables
+// (RFC 7541 Appendix B).  sym: 256 bytes, symbols ordered by
+// (bit-length, code).  bc/bi/ct: 31 i64 slots each, indexed by
+// bit-length L (1..30): first code of length L, index into sym
+// of the first symbol of length L, and symbol count at length L.
+// EOS (code 0x3FFFFFFF, 30 bits) is deliberately absent: an EOS
+// inside a string is a decode error (RFC 7541 s5.2).
+// Table bytes generated from the Appendix B table; packed 8 bytes
+// per store as (hi32 << 32) | lo32 decimal (std/keccak.mind style).
+fn hpack_fill_huff(sym: i64, bc: i64, bi: i64, ct: i64) -> i64 {
+    let mut z: i64 = 0;
+    while z < 31 {
+        __mind_store_i64(bc + z * 8, 0);
+        __mind_store_i64(bi + z * 8, 0);
+        __mind_store_i64(ct + z * 8, 0);
+        z = z + 1;
+    }
+    __mind_store_i64(sym + 0, (1869178211 << 32) | 1630679344);
+    __mind_store_i64(sym + 8, (858730029 << 32) | 622883955);
+    __mind_store_i64(sym + 16, (1094531384 << 32) | 926299444);
+    __mind_store_i64(sym + 24, (1835821159 << 32) | 1717854815);
+    __mind_store_i64(sym + 32, (1145258554 << 32) | 1970434158);
+    __mind_store_i64(sym + 40, (1280002633 << 32) | 1212630597);
+    __mind_store_i64(sym + 48, (1414746705 << 32) | 1347374669);
+    __mind_store_i64(sym + 56, (1987144554 << 32) | 1498895957);
+    __mind_store_i64(sym + 64, (992750118 << 32) | 2054781047);
+    __mind_store_i64(sym + 72, (658450728 << 32) | 572611160);
+    __mind_store_i64(sym + 80, (1530930176 << 32) | 1042512939);
+    __mind_store_i64(sym + 88, (1551589436 << 32) | 2103344733);
+    __mind_store_i64(sym + 96, (3266880131 << 32) | 2189480131);
+    __mind_store_i64(sym + 104, (2981145767 << 32) | 2711216864);
+    __mind_store_i64(sym + 112, (2179392995 << 32) | 3654865331);
+    __mind_store_i64(sym + 120, (2694617746 << 32) | 2290517380);
+    __mind_store_i64(sym + 128, (3115692717 << 32) | 2863244451);
+    __mind_store_i64(sym + 136, (3907307204 << 32) | 3200105402);
+    __mind_store_i64(sym + 144, (2374798218 << 32) | 2307326441);
+    __mind_store_i64(sym + 152, (2644220055 << 32) | 2526385039);
+    __mind_store_i64(sym + 160, (3065294766 << 32) | 2829493662);
+    __mind_store_i64(sym + 168, (2383015911 << 32) | 3317677239);
+    __mind_store_i64(sym + 176, (3789016747 << 32) | 2677313936);
+    __mind_store_i64(sym + 184, (3250645994 << 32) | 3485986284);
+    __mind_store_i64(sym + 192, (3688551890 << 32) | 3452619208);
+    __mind_store_i64(sym + 200, (3553414143 << 32) | 4092784878);
+    __mind_store_i64(sym + 208, (4126470623 << 32) | 3739080404);
+    __mind_store_i64(sym + 216, (4278058235 << 32) | 4210620406);
+    __mind_store_i64(sym + 224, (185075462 << 32) | 84148994);
+    __mind_store_i64(sym + 232, (336794129 << 32) | 269422092);
+    __mind_store_i64(sym + 240, (488381210 << 32) | 421009173);
+    __mind_store_i64(sym + 248, (369953529 << 32) | 3699318558);
+    __mind_store_i64(bc + 40, 0);   // len 5
+    __mind_store_i64(bi + 40, 0);
+    __mind_store_i64(ct + 40, 10);
+    __mind_store_i64(bc + 48, 20);   // len 6
+    __mind_store_i64(bi + 48, 10);
+    __mind_store_i64(ct + 48, 26);
+    __mind_store_i64(bc + 56, 92);   // len 7
+    __mind_store_i64(bi + 56, 36);
+    __mind_store_i64(ct + 56, 32);
+    __mind_store_i64(bc + 64, 248);   // len 8
+    __mind_store_i64(bi + 64, 68);
+    __mind_store_i64(ct + 64, 6);
+    __mind_store_i64(bc + 80, 1016);   // len 10
+    __mind_store_i64(bi + 80, 74);
+    __mind_store_i64(ct + 80, 5);
+    __mind_store_i64(bc + 88, 2042);   // len 11
+    __mind_store_i64(bi + 88, 79);
+    __mind_store_i64(ct + 88, 3);
+    __mind_store_i64(bc + 96, 4090);   // len 12
+    __mind_store_i64(bi + 96, 82);
+    __mind_store_i64(ct + 96, 2);
+    __mind_store_i64(bc + 104, 8184);   // len 13
+    __mind_store_i64(bi + 104, 84);
+    __mind_store_i64(ct + 104, 6);
+    __mind_store_i64(bc + 112, 16380);   // len 14
+    __mind_store_i64(bi + 112, 90);
+    __mind_store_i64(ct + 112, 2);
+    __mind_store_i64(bc + 120, 32764);   // len 15
+    __mind_store_i64(bi + 120, 92);
+    __mind_store_i64(ct + 120, 3);
+    __mind_store_i64(bc + 152, 524272);   // len 19
+    __mind_store_i64(bi + 152, 95);
+    __mind_store_i64(ct + 152, 3);
+    __mind_store_i64(bc + 160, 1048550);   // len 20
+    __mind_store_i64(bi + 160, 98);
+    __mind_store_i64(ct + 160, 8);
+    __mind_store_i64(bc + 168, 2097116);   // len 21
+    __mind_store_i64(bi + 168, 106);
+    __mind_store_i64(ct + 168, 13);
+    __mind_store_i64(bc + 176, 4194258);   // len 22
+    __mind_store_i64(bi + 176, 119);
+    __mind_store_i64(ct + 176, 26);
+    __mind_store_i64(bc + 184, 8388568);   // len 23
+    __mind_store_i64(bi + 184, 145);
+    __mind_store_i64(ct + 184, 29);
+    __mind_store_i64(bc + 192, 16777194);   // len 24
+    __mind_store_i64(bi + 192, 174);
+    __mind_store_i64(ct + 192, 12);
+    __mind_store_i64(bc + 200, 33554412);   // len 25
+    __mind_store_i64(bi + 200, 186);
+    __mind_store_i64(ct + 200, 4);
+    __mind_store_i64(bc + 208, 67108832);   // len 26
+    __mind_store_i64(bi + 208, 190);
+    __mind_store_i64(ct + 208, 15);
+    __mind_store_i64(bc + 216, 134217694);   // len 27
+    __mind_store_i64(bi + 216, 205);
+    __mind_store_i64(ct + 216, 19);
+    __mind_store_i64(bc + 224, 268435426);   // len 28
+    __mind_store_i64(bi + 224, 224);
+    __mind_store_i64(ct + 224, 29);
+    __mind_store_i64(bc + 240, 1073741820);   // len 30
+    __mind_store_i64(bi + 240, 253);
+    __mind_store_i64(ct + 240, 3);
+    0
+}
+
+// hpack_fill_static -- fill the RFC 7541 Appendix A static table
+// (61 entries) as a packed blob of records:
+//   name_len u8, value_len u8, name bytes, value bytes
+// Returns the blob length (806).  Caller allocates >= 808 bytes.
+fn hpack_fill_static(dst: i64) -> i64 {
+    __mind_store_i64(dst + 0, (1869116533 << 32) | 1631191050); // b'\n\x00:autho'
+    __mind_store_i64(dst + 8, (1832518407 << 32) | 2037672306); // b'rity\x07\x03:m'
+    __mind_store_i64(dst + 16, (1413826404 << 32) | 1869116517); // b'ethodGET'
+    __mind_store_i64(dst + 24, (1869116517 << 32) | 1832518663); // b'\x07\x04:metho'
+    __mind_store_i64(dst + 32, (973145428 << 32) | 1397706852); // b'dPOST\x05\x01:'
+    __mind_store_i64(dst + 40, (973800751 << 32) | 1752457584); // b'path/\x05\x0b:'
+    __mind_store_i64(dst + 48, (1684957487 << 32) | 1752457584); // b'path/ind'
+    __mind_store_i64(dst + 56, (124546420 << 32) | 1747875941); // b'ex.html\x07'
+    __mind_store_i64(dst + 64, (1701668200 << 32) | 1668495876); // b'\x04:scheme'
+    __mind_store_i64(dst + 72, (1933182215 << 32) | 1886680168); // b'http\x07\x05:s'
+    __mind_store_i64(dst + 80, (1953785957 << 32) | 1835362403); // b'chemehtt'
+    __mind_store_i64(dst + 88, (1635021626 << 32) | 50819952); // b'ps\x07\x03:sta'
+    __mind_store_i64(dst + 96, (50802736 << 32) | 846427508); // b'tus200\x07\x03'
+    __mind_store_i64(dst + 104, (846427508 << 32) | 1635021626); // b':status2'
+    __mind_store_i64(dst + 112, (1635021626 << 32) | 50803760); // b'04\x07\x03:sta'
+    __mind_store_i64(dst + 120, (50804272 << 32) | 846427508); // b'tus206\x07\x03'
+    __mind_store_i64(dst + 128, (863204724 << 32) | 1635021626); // b':status3'
+    __mind_store_i64(dst + 136, (1635021626 << 32) | 50803760); // b'04\x07\x03:sta'
+    __mind_store_i64(dst + 144, (50802736 << 32) | 879981940); // b'tus400\x07\x03'
+    __mind_store_i64(dst + 152, (879981940 << 32) | 1635021626); // b':status4'
+    __mind_store_i64(dst + 160, (1635021626 << 32) | 50803760); // b'04\x07\x03:sta'
+    __mind_store_i64(dst + 168, (929840 << 32) | 896759156); // b'tus500\x0e\x00'
+    __mind_store_i64(dst + 176, (1663923312 << 32) | 1701012321); // b'accept-c'
+    __mind_store_i64(dst + 184, (219116645 << 32) | 1936875880); // b'harset\x0f\r'
+    __mind_store_i64(dst + 192, (1697477744 << 32) | 1701012321); // b'accept-e'
+    __mind_store_i64(dst + 200, (1734831721 << 32) | 1685021550); // b'ncodingg'
+    __mind_store_i64(dst + 208, (1717920800 << 32) | 745564538); // b'zip, def'
+    __mind_store_i64(dst + 216, (1667301391 << 32) | 1702125932); // b'late\x0f\x00ac'
+    __mind_store_i64(dst + 224, (1851878445 << 32) | 1953523043); // b'cept-lan'
+    __mind_store_i64(dst + 232, (1627393381 << 32) | 1734440295); // b'guage\r\x00a'
+    __mind_store_i64(dst + 240, (1634872692 << 32) | 1885692771); // b'ccept-ra'
+    __mind_store_i64(dst + 248, (1667301382 << 32) | 1936025454); // b'nges\x06\x00ac'
+    __mind_store_i64(dst + 256, (1667301403 << 32) | 1953523043); // b'cept\x1b\x00ac'
+    __mind_store_i64(dst + 264, (1852793645 << 32) | 1936942435); // b'cess-con'
+    __mind_store_i64(dst + 272, (1819042093 << 32) | 1819243124); // b'trol-all'
+    __mind_store_i64(dst + 280, (1768384882 << 32) | 1865250671); // b'ow-origi'
+    __mind_store_i64(dst + 288, (353639 << 32) | 1627390830); // b'n\x03\x00age\x05\x00'
+    __mind_store_i64(dst + 296, (1627393399 << 32) | 1869376609); // b'allow\r\x00a'
+    __mind_store_i64(dst + 304, (1635412338 << 32) | 1869116533); // b'uthoriza'
+    __mind_store_i64(dst + 312, (1633878029 << 32) | 1852795252); // b'tion\r\x00ca'
+    __mind_store_i64(dst + 320, (1953394531 << 32) | 761620579); // b'che-cont'
+    __mind_store_i64(dst + 328, (1852793600 << 32) | 325873522); // b'rol\x13\x00con'
+    __mind_store_i64(dst + 336, (1936286765 << 32) | 1953391988); // b'tent-dis'
+    __mind_store_i64(dst + 344, (1852795252 << 32) | 1769172848); // b'position'
+    __mind_store_i64(dst + 352, (1852142702 << 32) | 1868759056); // b'\x10\x00conten'
+    __mind_store_i64(dst + 360, (1768189795 << 32) | 1852124532); // b't-encodi'
+    __mind_store_i64(dst + 368, (1953394531 << 32) | 1075054); // b'ng\x10\x00cont'
+    __mind_store_i64(dst + 376, (1735287148 << 32) | 762605157); // b'ent-lang'
+    __mind_store_i64(dst + 384, (1868759054 << 32) | 1701273973); // b'uage\x0e\x00co'
+    __mind_store_i64(dst + 392, (1701588340 << 32) | 1852142702); // b'ntent-le'
+    __mind_store_i64(dst + 400, (1868759056 << 32) | 1752459118); // b'ngth\x10\x00co'
+    __mind_store_i64(dst + 408, (1869360500 << 32) | 1852142702); // b'ntent-lo'
+    __mind_store_i64(dst + 416, (880239 << 32) | 1769234787); // b'cation\r\x00'
+    __mind_store_i64(dst + 424, (762605157 << 32) | 1953394531); // b'content-'
+    __mind_store_i64(dst + 432, (1660947557 << 32) | 1735287154); // b'range\x0c\x00c'
+    __mind_store_i64(dst + 440, (1949135982 << 32) | 1702129263); // b'ontent-t'
+    __mind_store_i64(dst + 448, (1869570816 << 32) | 107311225); // b'ype\x06\x00coo'
+    __mind_store_i64(dst + 456, (1952539648 << 32) | 73754987); // b'kie\x04\x00dat'
+    __mind_store_i64(dst + 464, (107438452 << 32) | 1694499941); // b'e\x04\x00etag\x06'
+    __mind_store_i64(dst + 472, (125068133 << 32) | 1886938368); // b'\x00expect\x07'
+    __mind_store_i64(dst + 480, (1936028265 << 32) | 1886938368); // b'\x00expires'
+    __mind_store_i64(dst + 488, (290159 << 32) | 1919287300); // b'\x04\x00from\x04\x00'
+    __mind_store_i64(dst + 496, (1718157320 << 32) | 1953722216); // b'host\x08\x00if'
+    __mind_store_i64(dst + 504, (1140835 << 32) | 1952541997); // b'-match\x11\x00'
+    __mind_store_i64(dst + 512, (1718183023 << 32) | 1831691881); // b'if-modif'
+    __mind_store_i64(dst + 520, (1668180339 << 32) | 761554281); // b'ied-sinc'
+    __mind_store_i64(dst + 528, (1869491558 << 32) | 1761611109); // b'e\r\x00if-no'
+    __mind_store_i64(dst + 536, (1751348321 << 32) | 1831691630); // b'ne-match'
+    __mind_store_i64(dst + 544, (1851879981 << 32) | 1718157320); // b'\x08\x00if-ran'
+    __mind_store_i64(dst + 552, (1965909609 << 32) | 1271143); // b'ge\x13\x00if-u'
+    __mind_store_i64(dst + 560, (1701406313 << 32) | 1685024110); // b'nmodifie'
+    __mind_store_i64(dst + 568, (224748398 << 32) | 1769155940); // b'd-since\r'
+    __mind_store_i64(dst + 576, (1869426036 << 32) | 1935764480); // b'\x00last-mo'
+    __mind_store_i64(dst + 584, (287845 << 32) | 1768319332); // b'dified\x04\x00'
+    __mind_store_i64(dst + 592, (1869348872 << 32) | 1802398060); // b'link\x08\x00lo'
+    __mind_store_i64(dst + 600, (814703 << 32) | 1769234787); // b'cation\x0c\x00'
+    __mind_store_i64(dst + 608, (2003988326 << 32) | 762863981); // b'max-forw'
+    __mind_store_i64(dst + 616, (1919942674 << 32) | 1935962721); // b'ards\x12\x00pr'
+    __mind_store_i64(dst + 624, (1752462689 << 32) | 762935407); // b'oxy-auth'
+    __mind_store_i64(dst + 632, (1702125923 << 32) | 1769238117); // b'enticate'
+    __mind_store_i64(dst + 640, (762935407 << 32) | 1919942675); // b'\x13\x00proxy-'
+    __mind_store_i64(dst + 648, (2053730927 << 32) | 1752462689); // b'authoriz'
+    __mind_store_i64(dst + 656, (1912604014 << 32) | 1869182049); // b'ation\x05\x00r'
+    __mind_store_i64(dst + 664, (1701969927 << 32) | 1701277281); // b'ange\x07\x00re'
+    __mind_store_i64(dst + 672, (1912604530 << 32) | 1701995878); // b'ferer\x07\x00r'
+    __mind_store_i64(dst + 680, (747635 << 32) | 1701996133); // b'efresh\x0b\x00'
+    __mind_store_i64(dst + 688, (1717644665 << 32) | 1920230770); // b'retry-af'
+    __mind_store_i64(dst + 696, (1919251200 << 32) | 108160372); // b'ter\x06\x00ser'
+    __mind_store_i64(dst + 704, (1952805632 << 32) | 175269238); // b'ver\n\x00set'
+    __mind_store_i64(dst + 712, (426076523 << 32) | 1869570861); // b'-cookie\x19'
+    __mind_store_i64(dst + 720, (762602345 << 32) | 1920234240); // b'\x00strict-'
+    __mind_store_i64(dst + 728, (1919905907 << 32) | 1851880052); // b'transpor'
+    __mind_store_i64(dst + 736, (1769108835 << 32) | 1702047092); // b't-securi'
+    __mind_store_i64(dst + 744, (1851880052 << 32) | 1145204); // b'ty\x11\x00tran'
+    __mind_store_i64(dst + 752, (1668179245 << 32) | 1919247987); // b'sfer-enc'
+    __mind_store_i64(dst + 760, (1962936935 << 32) | 1852400751); // b'oding\n\x00u'
+    __mind_store_i64(dst + 768, (1852139361 << 32) | 762471795); // b'ser-agen'
+    __mind_store_i64(dst + 776, (58290785 << 32) | 1979712628); // b't\x04\x00vary\x03'
+    __mind_store_i64(dst + 784, (2004287504 << 32) | 1634301440); // b'\x00via\x10\x00ww'
+    __mind_store_i64(dst + 792, (1852139636 << 32) | 1969302903); // b'w-authen'
+    __mind_store_i64(dst + 800, (25972 << 32) | 1633905012); // b'ticate'
+    806
+}
+
+// ---------------------------------------------------------------------------
+// §5.1 — integer representation with an N-bit prefix.
+// ---------------------------------------------------------------------------
+
+// hpack_int_decode — decode one §5.1 integer starting at buf+pos, where the
+// first byte contributes its low prefix_bits bits.  out2[0] = value,
+// out2[8] = position after the integer.  Returns 0 ok / 1 error (truncated
+// input or a continuation that would overflow i64 — fail closed).
+pub fn hpack_int_decode(
+    buf: i64,
+    len: i64,
+    pos: i64,
+    prefix_bits: i64,
+    out2: i64,
+) -> i64 {
+    if pos >= len {
+        return 1;
+    }
+    let mask: i64 = (1 << prefix_bits) - 1;
+    let mut value: i64 = __mind_load_i8(buf + pos) & mask;
+    let mut p: i64 = pos + 1;
+    if value < mask {
+        __mind_store_i64(out2, value);
+        __mind_store_i64(out2 + 8, p);
+        return 0;
+    }
+    // Prefix saturated: value = mask + sum of 7-bit continuation groups.
+    let mut m: i64 = 0;
+    let mut cont: i64 = 1;
+    let mut err: i64 = 0;
+    while cont == 1 {
+        if p >= len {
+            err = 1;
+            cont = 0;
+        } else {
+            let b: i64 = __mind_load_i8(buf + p);
+            p = p + 1;
+            value = value + ((b & 127) << m);
+            m = m + 7;
+            if m > 56 {
+                // More than 8 continuation bytes cannot fit in i64.
+                err = 1;
+                cont = 0;
+            }
+            if (b & 128) == 0 {
+                cont = 0;
+            }
+        }
+    }
+    if err == 1 {
+        return 1;
+    }
+    __mind_store_i64(out2, value);
+    __mind_store_i64(out2 + 8, p);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// §5.2 + Appendix B — Huffman-coded string literals.
+// ---------------------------------------------------------------------------
+
+// hpack_huff_decode — decode src_len Huffman-coded bytes into dst (raw
+// octets).  Canonical decode: accumulate bits into (code, clen); at each
+// length L a hit is code in [bc[L], bc[L]+ct[L]) and the symbol is
+// sym[bi[L] + code - bc[L]].  Canonicity of the Appendix B code (verified
+// at table-generation time) guarantees a code below bc[L] can never match
+// at any greater length, so invalid streams fail closed.
+// A trailing partial code must be at most 7 bits of all ones (the most
+// significant bits of EOS) — anything else, including a full 30-bit EOS,
+// is a decoding error (§5.2).  Returns decoded length or -1.
+pub fn hpack_huff_decode(src: i64, src_len: i64, dst: i64, dst_cap: i64) -> i64 {
+    let sym: i64 = __mind_alloc(256);
+    let bc: i64 = __mind_alloc(248);
+    let bi: i64 = __mind_alloc(248);
+    let ct: i64 = __mind_alloc(248);
+    hpack_fill_huff(sym, bc, bi, ct);
+    let nbits: i64 = src_len * 8;
+    let mut code: i64 = 0;
+    let mut clen: i64 = 0;
+    let mut outn: i64 = 0;
+    let mut err: i64 = 0;
+    let mut i: i64 = 0;
+    while i < nbits {
+        let byte: i64 = __mind_load_i8(src + (i >> 3));
+        code = (code << 1) | ((byte >> (7 - (i & 7))) & 1);
+        clen = clen + 1;
+        if clen > 30 {
+            // No HPACK code is longer than 30 bits — invalid stream.
+            err = 1;
+            i = nbits;
+        } else {
+            let c: i64 = __mind_load_i64(ct + clen * 8);
+            let b0: i64 = __mind_load_i64(bc + clen * 8);
+            if c > 0 {
+                if code >= b0 {
+                    if code < b0 + c {
+                        let s: i64 =
+                            __mind_load_i8(sym + __mind_load_i64(bi + clen * 8) + (code - b0));
+                        if outn >= dst_cap {
+                            err = 1;
+                            i = nbits;
+                        } else {
+                            __mind_store_i8(dst + outn, s);
+                            outn = outn + 1;
+                            code = 0;
+                            clen = 0;
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    // §5.2 padding: at most 7 bits, all ones (EOS most-significant bits).
+    let mut ret: i64 = outn;
+    if err == 1 {
+        ret = 0 - 1;
+    }
+    if clen > 7 {
+        ret = 0 - 1;
+    }
+    if clen > 0 {
+        if code != (1 << clen) - 1 {
+            ret = 0 - 1;
+        }
+    }
+    __mind_free(sym);
+    __mind_free(bc);
+    __mind_free(bi);
+    __mind_free(ct);
+    ret
+}
+
+// hpack_str_decode — §5.2 string literal at buf+pos: a 7-bit-prefix length
+// whose high flag bit selects Huffman coding, then that many octets.
+// Decoded string is written to dst (max dst_cap); out2[0] = decoded length,
+// out2[8] = position after the string.  Returns 0 ok / 1 error.
+fn hpack_str_decode(
+    buf: i64,
+    len: i64,
+    pos: i64,
+    dst: i64,
+    dst_cap: i64,
+    out2: i64,
+) -> i64 {
+    if pos >= len {
+        return 1;
+    }
+    if dst_cap < 0 {
+        return 1;
+    }
+    let hflag: i64 = __mind_load_i8(buf + pos) & 128;
+    let rc: i64 = hpack_int_decode(buf, len, pos, 7, out2);
+    if rc != 0 {
+        return 1;
+    }
+    let slen: i64 = __mind_load_i64(out2);
+    let p: i64 = __mind_load_i64(out2 + 8);
+    if p + slen > len {
+        return 1;
+    }
+    if hflag != 0 {
+        let n: i64 = hpack_huff_decode(buf + p, slen, dst, dst_cap);
+        if n < 0 {
+            return 1;
+        }
+        __mind_store_i64(out2, n);
+        __mind_store_i64(out2 + 8, p + slen);
+        return 0;
+    }
+    if slen > dst_cap {
+        return 1;
+    }
+    hpack_memcopy(dst, buf + p, slen);
+    __mind_store_i64(out2, slen);
+    __mind_store_i64(out2 + 8, p + slen);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Index space (§2.3.3): static 1..61, dynamic 62.. (newest first).
+// out4 layout for every table lookup:
+//   out4[0]=name_addr, out4[8]=name_len, out4[16]=value_addr, out4[24]=value_len
+// ---------------------------------------------------------------------------
+
+// hpack_static_get — Appendix A entry idx (1..61) from the packed blob.
+fn hpack_static_get(blob: i64, idx: i64, out4: i64) -> i64 {
+    let mut p: i64 = 0;
+    let mut i: i64 = 1;
+    while i < idx {
+        p = p + 2 + __mind_load_i8(blob + p) + __mind_load_i8(blob + p + 1);
+        i = i + 1;
+    }
+    let nl: i64 = __mind_load_i8(blob + p);
+    __mind_store_i64(out4, blob + p + 2);
+    __mind_store_i64(out4 + 8, nl);
+    __mind_store_i64(out4 + 16, blob + p + 2 + nl);
+    __mind_store_i64(out4 + 24, __mind_load_i8(blob + p + 1));
+    0
+}
+
+// ---------------------------------------------------------------------------
+// §2.3.2 / §4 — the dynamic table (layout documented in the file header).
+// ---------------------------------------------------------------------------
+
+// hpack_dyn_init — initialize a dynamic-table state buffer (caller allocates
+// >= 32 + max_size bytes).  Returns 0.
+pub fn hpack_dyn_init(dyn_table_state_addr: i64, max_size: i64) -> i64 {
+    __mind_store_i64(dyn_table_state_addr, max_size);
+    __mind_store_i64(dyn_table_state_addr + 8, 0);
+    __mind_store_i64(dyn_table_state_addr + 16, 0);
+    __mind_store_i64(dyn_table_state_addr + 24, 0);
+    0
+}
+
+// hpack_dyn_evict_one — drop the OLDEST entry (§4.3): the record at the
+// front of the arena.  Remaining records shift down (forward overlapping
+// copy is safe: dst < src).
+fn hpack_dyn_evict_one(state: i64) -> i64 {
+    let arena: i64 = state + 32;
+    let nl: i64 = hpack_u16_load(arena);
+    let vl: i64 = hpack_u16_load(arena + 2);
+    let rec: i64 = 4 + nl + vl;
+    let used: i64 = __mind_load_i64(state + 24);
+    hpack_memcopy(arena, arena + rec, used - rec);
+    __mind_store_i64(state + 24, used - rec);
+    __mind_store_i64(state + 16, __mind_load_i64(state + 16) - 1);
+    __mind_store_i64(state + 8, __mind_load_i64(state + 8) - (nl + vl + 32));
+    0
+}
+
+// hpack_dyn_set_max — §6.3 dynamic table size update: adopt the new maximum
+// and evict oldest-first until the table fits (§4.3).
+fn hpack_dyn_set_max(state: i64, new_max: i64) -> i64 {
+    __mind_store_i64(state, new_max);
+    let mut sz: i64 = __mind_load_i64(state + 8);
+    while sz > new_max {
+        hpack_dyn_evict_one(state);
+        sz = __mind_load_i64(state + 8);
+    }
+    0
+}
+
+// hpack_dyn_insert — §4.4: evict until the new entry (cost nl+vl+32, §4.1)
+// fits, then append it as the newest record.  An entry larger than the
+// whole table empties the table and is NOT added (per §4.4) — that is not
+// an error.
+fn hpack_dyn_insert(state: i64, name: i64, nl: i64, val: i64, vl: i64) -> i64 {
+    let esz: i64 = nl + vl + 32;
+    let maxs: i64 = __mind_load_i64(state);
+    let mut go: i64 = 1;
+    while go == 1 {
+        let sz: i64 = __mind_load_i64(state + 8);
+        if sz + esz > maxs {
+            if __mind_load_i64(state + 16) > 0 {
+                hpack_dyn_evict_one(state);
+            } else {
+                go = 0;
+            }
+        } else {
+            go = 0;
+        }
+    }
+    if esz > maxs {
+        return 0;
+    }
+    let used: i64 = __mind_load_i64(state + 24);
+    let arena: i64 = state + 32;
+    hpack_u16_store(arena + used, nl);
+    hpack_u16_store(arena + used + 2, vl);
+    hpack_memcopy(arena + used + 4, name, nl);
+    hpack_memcopy(arena + used + 4 + nl, val, vl);
+    __mind_store_i64(state + 24, used + 4 + nl + vl);
+    __mind_store_i64(state + 16, __mind_load_i64(state + 16) + 1);
+    __mind_store_i64(state + 8, __mind_load_i64(state + 8) + esz);
+    0
+}
+
+// hpack_dyn_get — dynamic entry d (0-based, NEWEST first, §2.3.3), i.e. the
+// record at oldest-first arena position count-1-d.  Returns 0 ok / 1 if d
+// is out of range (a reference to an evicted or never-inserted entry is a
+// decode error).
+fn hpack_dyn_get(state: i64, d: i64, out4: i64) -> i64 {
+    let cnt: i64 = __mind_load_i64(state + 16);
+    if d < 0 {
+        return 1;
+    }
+    if d >= cnt {
+        return 1;
+    }
+    let target: i64 = cnt - 1 - d;
+    let arena: i64 = state + 32;
+    let mut p: i64 = 0;
+    let mut i: i64 = 0;
+    while i < target {
+        p = p + 4 + hpack_u16_load(arena + p) + hpack_u16_load(arena + p + 2);
+        i = i + 1;
+    }
+    let nl: i64 = hpack_u16_load(arena + p);
+    __mind_store_i64(out4, arena + p + 4);
+    __mind_store_i64(out4 + 8, nl);
+    __mind_store_i64(out4 + 16, arena + p + 4 + nl);
+    __mind_store_i64(out4 + 24, hpack_u16_load(arena + p + 2));
+    0
+}
+
+// hpack_table_get — unified index space (§2.3.3): 1..61 static, 62.. dynamic.
+// Index 0 is reserved and always an error (§6.1).
+fn hpack_table_get(blob: i64, state: i64, idx: i64, out4: i64) -> i64 {
+    if idx <= 0 {
+        return 1;
+    }
+    if idx <= 61 {
+        let rc: i64 = hpack_static_get(blob, idx, out4);
+        return rc;
+    }
+    let rc2: i64 = hpack_dyn_get(state, idx - 62, out4);
+    rc2
+}
+
+// ---------------------------------------------------------------------------
+// §6 — header-field representation decoding.
+//
+// Decode context (ctx, 64 bytes, i64 slots):
+//   ctx+0  block addr     ctx+8  block len     ctx+16 cursor position
+//   ctx+24 out addr       ctx+32 out cap       ctx+40 out bytes used
+//   ctx+48 static blob    ctx+56 dyn state
+// Each hpack_do_* helper consumes one representation, advances ctx+16, and
+// returns the number of pairs it emitted (0 or 1), or 2 on error.
+// ---------------------------------------------------------------------------
+
+// hpack_emit — append one output record (name_len u16 LE, name, value_len
+// u16 LE, value) at the output cursor.  Returns 0 ok / 1 on overflow.
+fn hpack_emit(ctx: i64, name: i64, nl: i64, val: i64, vl: i64) -> i64 {
+    let out: i64 = __mind_load_i64(ctx + 24);
+    let cap: i64 = __mind_load_i64(ctx + 32);
+    let u: i64 = __mind_load_i64(ctx + 40);
+    if u + 4 + nl + vl > cap {
+        return 1;
+    }
+    hpack_u16_store(out + u, nl);
+    hpack_memcopy(out + u + 2, name, nl);
+    hpack_u16_store(out + u + 2 + nl, vl);
+    hpack_memcopy(out + u + 4 + nl, val, vl);
+    __mind_store_i64(ctx + 40, u + 4 + nl + vl);
+    0
+}
+
+// hpack_do_indexed — §6.1 indexed header field (1xxxxxxx): a 7-bit-prefix
+// index into the unified table; index 0 is a decode error.
+fn hpack_do_indexed(ctx: i64) -> i64 {
+    let out2: i64 = __mind_alloc(16);
+    let out4: i64 = __mind_alloc(32);
+    let rc: i64 = hpack_int_decode(
+        __mind_load_i64(ctx),
+        __mind_load_i64(ctx + 8),
+        __mind_load_i64(ctx + 16),
+        7,
+        out2,
+    );
+    if rc != 0 {
+        __mind_free(out2);
+        __mind_free(out4);
+        return 2;
+    }
+    let idx: i64 = __mind_load_i64(out2);
+    if idx == 0 {
+        __mind_free(out2);
+        __mind_free(out4);
+        return 2;
+    }
+    let rc2: i64 = hpack_table_get(
+        __mind_load_i64(ctx + 48),
+        __mind_load_i64(ctx + 56),
+        idx,
+        out4,
+    );
+    if rc2 != 0 {
+        __mind_free(out2);
+        __mind_free(out4);
+        return 2;
+    }
+    let rc3: i64 = hpack_emit(
+        ctx,
+        __mind_load_i64(out4),
+        __mind_load_i64(out4 + 8),
+        __mind_load_i64(out4 + 16),
+        __mind_load_i64(out4 + 24),
+    );
+    __mind_store_i64(ctx + 16, __mind_load_i64(out2 + 8));
+    __mind_free(out2);
+    __mind_free(out4);
+    if rc3 != 0 {
+        return 2;
+    }
+    1
+}
+
+// hpack_do_literal — literal header field:
+//   §6.2.1 incremental indexing (01xxxxxx): prefix_bits=6, add=1
+//   §6.2.2 without indexing      (0000xxxx): prefix_bits=4, add=0
+//   §6.2.3 never indexed         (0001xxxx): prefix_bits=4, add=0
+// The name is either a table reference (prefix index > 0) or a literal
+// string; the value is always a literal string.  Both are materialized
+// directly into the output record; when add=1 the entry is inserted into
+// the dynamic table FROM THE OUTPUT COPY, so a name that referenced a
+// dynamic entry stays valid even if this insertion evicts its source.
+fn hpack_do_literal(ctx: i64, prefix_bits: i64, add: i64) -> i64 {
+    let block: i64 = __mind_load_i64(ctx);
+    let blen: i64 = __mind_load_i64(ctx + 8);
+    let out: i64 = __mind_load_i64(ctx + 24);
+    let cap: i64 = __mind_load_i64(ctx + 32);
+    let u: i64 = __mind_load_i64(ctx + 40);
+    let out2: i64 = __mind_alloc(16);
+    let out4: i64 = __mind_alloc(32);
+    let rc: i64 = hpack_int_decode(
+        block, blen, __mind_load_i64(ctx + 16), prefix_bits, out2,
+    );
+    if rc != 0 {
+        __mind_free(out2);
+        __mind_free(out4);
+        return 2;
+    }
+    let idx: i64 = __mind_load_i64(out2);
+    let mut pos: i64 = __mind_load_i64(out2 + 8);
+    if u + 4 > cap {
+        __mind_free(out2);
+        __mind_free(out4);
+        return 2;
+    }
+    let name_dst: i64 = out + u + 2;
+    let mut nl: i64 = 0;
+    if idx == 0 {
+        // Literal name (cap budget reserves the two u16 length prefixes).
+        let rc2: i64 = hpack_str_decode(block, blen, pos, name_dst, cap - u - 4, out2);
+        if rc2 != 0 {
+            __mind_free(out2);
+            __mind_free(out4);
+            return 2;
+        }
+        nl = __mind_load_i64(out2);
+        pos = __mind_load_i64(out2 + 8);
+    } else {
+        // Name taken from the table (§6.2: N-bit-prefix name index).
+        let rc3: i64 = hpack_table_get(
+            __mind_load_i64(ctx + 48), __mind_load_i64(ctx + 56), idx, out4,
+        );
+        if rc3 != 0 {
+            __mind_free(out2);
+            __mind_free(out4);
+            return 2;
+        }
+        nl = __mind_load_i64(out4 + 8);
+        if u + 4 + nl > cap {
+            __mind_free(out2);
+            __mind_free(out4);
+            return 2;
+        }
+        hpack_memcopy(name_dst, __mind_load_i64(out4), nl);
+    }
+    let val_dst: i64 = out + u + 4 + nl;
+    let rc4: i64 = hpack_str_decode(block, blen, pos, val_dst, cap - u - 4 - nl, out2);
+    if rc4 != 0 {
+        __mind_free(out2);
+        __mind_free(out4);
+        return 2;
+    }
+    let vl: i64 = __mind_load_i64(out2);
+    pos = __mind_load_i64(out2 + 8);
+    hpack_u16_store(out + u, nl);
+    hpack_u16_store(out + u + 2 + nl, vl);
+    __mind_store_i64(ctx + 40, u + 4 + nl + vl);
+    __mind_store_i64(ctx + 16, pos);
+    if add == 1 {
+        hpack_dyn_insert(__mind_load_i64(ctx + 56), name_dst, nl, val_dst, vl);
+    }
+    __mind_free(out2);
+    __mind_free(out4);
+    1
+}
+
+// hpack_do_szupd — §6.3 dynamic table size update (001xxxxx): a 5-bit-prefix
+// new maximum size; emits no header field.
+fn hpack_do_szupd(ctx: i64) -> i64 {
+    let out2: i64 = __mind_alloc(16);
+    let rc: i64 = hpack_int_decode(
+        __mind_load_i64(ctx),
+        __mind_load_i64(ctx + 8),
+        __mind_load_i64(ctx + 16),
+        5,
+        out2,
+    );
+    if rc != 0 {
+        __mind_free(out2);
+        return 2;
+    }
+    let new_max: i64 = __mind_load_i64(out2);
+    __mind_store_i64(ctx + 16, __mind_load_i64(out2 + 8));
+    __mind_free(out2);
+    hpack_dyn_set_max(__mind_load_i64(ctx + 56), new_max);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// hpack_decode — decode one complete header block (see file header for the
+// output record format and the persistent dynamic-table state contract).
+// Returns the pair count, or -1 on any decode error (fail closed).
+// ---------------------------------------------------------------------------
+pub fn hpack_decode(
+    block_addr: i64,
+    block_len: i64,
+    dyn_table_state_addr: i64,
+    out_addr: i64,
+    out_cap: i64,
+) -> i64 {
+    let blob: i64 = __mind_alloc(816);
+    hpack_fill_static(blob);
+    let ctx: i64 = __mind_alloc(64);
+    __mind_store_i64(ctx, block_addr);
+    __mind_store_i64(ctx + 8, block_len);
+    __mind_store_i64(ctx + 16, 0);
+    __mind_store_i64(ctx + 24, out_addr);
+    __mind_store_i64(ctx + 32, out_cap);
+    __mind_store_i64(ctx + 40, 0);
+    __mind_store_i64(ctx + 48, blob);
+    __mind_store_i64(ctx + 56, dyn_table_state_addr);
+    let mut pairs: i64 = 0;
+    let mut err: i64 = 0;
+    let mut pos: i64 = 0;
+    while pos < block_len {
+        let b: i64 = __mind_load_i8(block_addr + pos);
+        let mut rc: i64 = 0;
+        if (b & 128) != 0 {
+            rc = hpack_do_indexed(ctx); // §6.1   1xxxxxxx
+        } else {
+            if (b & 192) == 64 {
+                rc = hpack_do_literal(ctx, 6, 1); // §6.2.1 01xxxxxx
+            } else {
+                if (b & 224) == 32 {
+                    rc = hpack_do_szupd(ctx); // §6.3   001xxxxx
+                } else {
+                    // §6.2.2 0000xxxx / §6.2.3 0001xxxx — identical decode,
+                    // neither inserts into the dynamic table.
+                    rc = hpack_do_literal(ctx, 4, 0);
+                }
+            }
+        }
+        if rc == 2 {
+            err = 1;
+            pos = block_len;
+        } else {
+            pairs = pairs + rc;
+            pos = __mind_load_i64(ctx + 16);
+        }
+    }
+    __mind_free(ctx);
+    __mind_free(blob);
+    if err == 1 {
+        return 0 - 1;
+    }
+    pairs
+}
