@@ -1,0 +1,743 @@
+// std/mlkem768.mind — ML-KEM-768 (FIPS 203, "Kyber") in pure MIND.
+//
+// Built ON TOP of std/keccak.mind — G = SHA3-512, H = SHA3-256, J = SHAKE256,
+// XOF = SHAKE128, PRF = SHAKE256 (FIPS 203 §4.1) all call the existing
+// keccak_* entry points; nothing hash-related is reimplemented here.
+//
+// Parameter set ML-KEM-768 (FIPS 203 Table 2):
+//   n = 256, q = 3329, k = 3, eta1 = 2, eta2 = 2, du = 10, dv = 4
+//   ek = 1184 bytes, dk = 2400 bytes, ct = 1088 bytes, K = 32 bytes.
+//
+// Implements:
+//   - Ring arithmetic in Z_q[X]/(X^256+1): NTT / inverse NTT (Alg 9/10) with
+//     the zeta table built at runtime from the primitive root 17 via BitRev7
+//     (Appendix A), BaseCaseMultiply / MultiplyNTTs (Alg 11/12), add/sub/mul
+//     mod q (plain i64 with reduction — q fits in 12 bits, products in 24).
+//   - SampleNTT (Alg 7, rejection sampling from SHAKE128) and
+//     SamplePolyCBD_2 (Alg 8, centered binomial from the SHAKE256 PRF).
+//   - ByteEncode_d / ByteDecode_d (Alg 5/6) and Compress_d / Decompress_d
+//     (§4.2.1 eq. 4.7/4.8) for d in {1, 4, 10, 12}.
+//   - K-PKE.KeyGen / .Encrypt / .Decrypt (Alg 13/14/15).
+//   - ML-KEM.KeyGen / .Encaps / .Decaps (Alg 16/17/18) internal-randomness
+//     forms, with the Fujisaki-Okamoto re-encryption check and implicit
+//     rejection K = J(z || c) in Decaps.
+//
+// Memory layout (house style of std/keccak.mind):
+//   - Byte buffers: one byte per offset, __mind_store_i8 / __mind_load_i8.
+//   - Polynomials: 256 coefficients stored stride-8 as i64 (2048 bytes),
+//     always kept canonical in [0, q).  A k-vector of polys is 3 contiguous
+//     polys (6144 bytes); the matrix A-hat is 9 polys row-major (A[i][j] at
+//     offset (i*3+j)*2048).
+//
+// NEGATIVE-% FOOTGUN: MIND `%` semantics on negative i64 are not relied on —
+// every reduction operand is kept non-negative (subtractions add q first).
+//
+// Input validation (FIPS 203 §7.2/§7.3 encaps ek modulus check, decaps
+// length checks) is the CALLER's job at the byte-string boundary:
+// deferred: would validate ek canonicity + ct/dk lengths here, stubbed
+// because the i64 ABI has no error channel yet — upgrade path: return a
+// nonzero error code once callers check it.
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no
+// external calls.
+
+import std.keccak;
+
+// ---------------------------------------------------------------------------
+// Byte-buffer helpers (module-local; keccak's are private to its section).
+// ---------------------------------------------------------------------------
+
+fn mlkem_mem_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_mem_zero(dst: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Coefficient accessors — coefficient i of poly p lives at p + i*8.
+// ---------------------------------------------------------------------------
+
+fn mlkem_cget(p: i64, i: i64) -> i64 {
+    __mind_load_i64(p + i * 8)
+}
+
+fn mlkem_cset(p: i64, i: i64, v: i64) -> i64 {
+    __mind_store_i64(p + i * 8, v)
+}
+
+// ---------------------------------------------------------------------------
+// Arithmetic mod q = 3329.  Inputs canonical in [0, q); products <= 3328^2
+// (~11.1M) fit i64 with 40+ bits to spare.
+// ---------------------------------------------------------------------------
+
+fn mlkem_addq(a: i64, b: i64) -> i64 {
+    (a + b) % 3329
+}
+
+fn mlkem_subq(a: i64, b: i64) -> i64 {
+    (a - b + 3329) % 3329
+}
+
+fn mlkem_mulq(a: i64, b: i64) -> i64 {
+    (a * b) % 3329
+}
+
+// ---------------------------------------------------------------------------
+// mlkem_bitrev7 — reverse the 7 low bits of i (FIPS 203 §2.3 BitRev7).
+// ---------------------------------------------------------------------------
+
+fn mlkem_bitrev7(i: i64) -> i64 {
+    ((i >> 6) & 1)
+        | (((i >> 5) & 1) << 1)
+        | (((i >> 4) & 1) << 2)
+        | (((i >> 3) & 1) << 3)
+        | (((i >> 2) & 1) << 4)
+        | (((i >> 1) & 1) << 5)
+        | ((i & 1) << 6)
+}
+
+// ---------------------------------------------------------------------------
+// mlkem_build_tables — zeta tables from the primitive root 17 (Appendix A).
+//
+//   zt[i] = 17^BitRev7(i) mod q          for i in 0..128   (NTT / invNTT)
+//   gt[i] = 17^(2*BitRev7(i)+1) mod q    for i in 0..64    (BaseCaseMultiply)
+//
+// Built at runtime (128 modular multiplications) instead of a 128-branch
+// literal table; zt is 1024 bytes, gt is 512 bytes, caller-allocated.
+// ---------------------------------------------------------------------------
+
+fn mlkem_build_tables(zt: i64, gt: i64) -> i64 {
+    // pows[j] = 17^j mod q, j in 0..128.
+    let pows: i64 = __mind_alloc(1024);
+    let mut j: i64 = 0;
+    let mut cur: i64 = 1;
+    while j < 128 {
+        mlkem_cset(pows, j, cur);
+        cur = (cur * 17) % 3329;
+        j = j + 1;
+    }
+    let mut i: i64 = 0;
+    while i < 128 {
+        mlkem_cset(zt, i, mlkem_cget(pows, mlkem_bitrev7(i)));
+        i = i + 1;
+    }
+    // gt[i] serves BaseCaseMultiply pair 2i (mlkem_basemul_acc handles pairs
+    // 2i and 2i+1 together, the latter with -gamma since zeta^128 = -1):
+    // gamma = 17^(2*BitRev7(2i)+1), and BitRev7(2i) = BitRev7(i)/2 for i < 64
+    // (7-bit reversal of an even-shifted value), so exponentiate the HALVED
+    // reversed index: gamma = (17^(BitRev7(i)/2))^2 * 17.
+    let mut i2: i64 = 0;
+    while i2 < 64 {
+        let p: i64 = mlkem_cget(pows, mlkem_bitrev7(i2) / 2);
+        mlkem_cset(gt, i2, (((p * p) % 3329) * 17) % 3329);
+        i2 = i2 + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// NTT (FIPS 203 Algorithm 9) — one butterfly layer per helper call so no
+// function body nests 3 loop levels (MLIR block-namer limit, see
+// std/hkdf.mind mem_copy note).  Returns the updated zeta index.
+// ---------------------------------------------------------------------------
+
+fn mlkem_ntt_layer(f: i64, zt: i64, len: i64, idx0: i64) -> i64 {
+    let mut idx: i64 = idx0;
+    let mut start: i64 = 0;
+    while start < 256 {
+        let zeta: i64 = mlkem_cget(zt, idx);
+        idx = idx + 1;
+        // MISCOMPILE WORKAROUND: an inner-loop bound written as the compound
+        // expression `j < start + len` inside an outer while segfaults at
+        // runtime (minimal repro: nested while, condition = outer-mut + param
+        // sum).  Hoisting the bound into a let-local lowers correctly.
+        let stop: i64 = start + len;
+        let mut j: i64 = start;
+        while j < stop {
+            let t: i64 = (zeta * mlkem_cget(f, j + len)) % 3329;
+            let fj: i64 = mlkem_cget(f, j);
+            mlkem_cset(f, j + len, mlkem_subq(fj, t));
+            mlkem_cset(f, j, mlkem_addq(fj, t));
+            j = j + 1;
+        }
+        start = start + 2 * len;
+    }
+    idx
+}
+
+fn mlkem_ntt(f: i64, zt: i64) -> i64 {
+    let mut idx: i64 = 1;
+    let mut len: i64 = 128;
+    while len >= 2 {
+        idx = mlkem_ntt_layer(f, zt, len, idx);
+        len = len / 2;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Inverse NTT (FIPS 203 Algorithm 10).  Final scale by 128^-1 mod q = 3303.
+// ---------------------------------------------------------------------------
+
+fn mlkem_intt_layer(f: i64, zt: i64, len: i64, idx0: i64) -> i64 {
+    let mut idx: i64 = idx0;
+    let mut start: i64 = 0;
+    while start < 256 {
+        let zeta: i64 = mlkem_cget(zt, idx);
+        idx = idx - 1;
+        // Hoisted bound — same miscompile workaround as mlkem_ntt_layer.
+        let stop: i64 = start + len;
+        let mut j: i64 = start;
+        while j < stop {
+            let t: i64 = mlkem_cget(f, j);
+            let fl: i64 = mlkem_cget(f, j + len);
+            mlkem_cset(f, j, mlkem_addq(t, fl));
+            mlkem_cset(f, j + len, (zeta * mlkem_subq(fl, t)) % 3329);
+            j = j + 1;
+        }
+        start = start + 2 * len;
+    }
+    idx
+}
+
+fn mlkem_intt(f: i64, zt: i64) -> i64 {
+    let mut idx: i64 = 127;
+    let mut len: i64 = 2;
+    while len <= 128 {
+        idx = mlkem_intt_layer(f, zt, len, idx);
+        len = len * 2;
+    }
+    let mut i: i64 = 0;
+    while i < 256 {
+        mlkem_cset(f, i, (mlkem_cget(f, i) * 3303) % 3329);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// mlkem_basemul_acc — MultiplyNTTs (Alg 11) via BaseCaseMultiply (Alg 12),
+// ACCUMULATED into h (h += f o g mod q), so matrix-vector products just
+// zero-init h and accumulate.  gamma = gt[i] per 2-coefficient pair:
+//   h[2i]   += f[2i]*g[2i]   + f[2i+1]*g[2i+1]*gamma
+//   h[2i+1] += f[2i]*g[2i+1] + f[2i+1]*g[2i]
+// ---------------------------------------------------------------------------
+
+fn mlkem_basemul_acc(h: i64, f: i64, g: i64, gt: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 64 {
+        let gamma: i64 = mlkem_cget(gt, i);
+        let a0: i64 = mlkem_cget(f, 4 * i);
+        let a1: i64 = mlkem_cget(f, 4 * i + 1);
+        let b0: i64 = mlkem_cget(g, 4 * i);
+        let b1: i64 = mlkem_cget(g, 4 * i + 1);
+        let c0: i64 = (a0 * b0 + ((a1 * b1) % 3329) * gamma) % 3329;
+        let c1: i64 = (a0 * b1 + a1 * b0) % 3329;
+        mlkem_cset(h, 4 * i, mlkem_addq(mlkem_cget(h, 4 * i), c0));
+        mlkem_cset(h, 4 * i + 1, mlkem_addq(mlkem_cget(h, 4 * i + 1), c1));
+
+        let gamma2: i64 = 3329 - gamma;
+        let a2: i64 = mlkem_cget(f, 4 * i + 2);
+        let a3: i64 = mlkem_cget(f, 4 * i + 3);
+        let b2: i64 = mlkem_cget(g, 4 * i + 2);
+        let b3: i64 = mlkem_cget(g, 4 * i + 3);
+        let c2: i64 = (a2 * b2 + ((a3 * b3) % 3329) * gamma2) % 3329;
+        let c3: i64 = (a2 * b3 + a3 * b2) % 3329;
+        mlkem_cset(h, 4 * i + 2, mlkem_addq(mlkem_cget(h, 4 * i + 2), c2));
+        mlkem_cset(h, 4 * i + 3, mlkem_addq(mlkem_cget(h, 4 * i + 3), c3));
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Polynomial add / sub / zero (coefficient-wise, canonical results).
+// ---------------------------------------------------------------------------
+
+fn mlkem_poly_add(dst: i64, a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        mlkem_cset(dst, i, mlkem_addq(mlkem_cget(a, i), mlkem_cget(b, i)));
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_poly_sub(dst: i64, a: i64, b: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        mlkem_cset(dst, i, mlkem_subq(mlkem_cget(a, i), mlkem_cget(b, i)));
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_poly_zero(p: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        mlkem_cset(p, i, 0);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// SampleNTT (FIPS 203 Algorithm 7) — rejection-sample 256 coefficients from
+// the SHAKE128 stream of (rho || j || i).
+//
+// keccak_shake128 is one-shot, but any fixed-length output is a PREFIX of
+// the infinite XOF stream (sponge property), so we squeeze 840 bytes (the
+// standard 5-block engineering bound), parse, and in the astronomically
+// unlikely shortfall re-squeeze a longer prefix and re-parse — functionally
+// identical to unbounded streaming.
+// ---------------------------------------------------------------------------
+
+fn mlkem_parse_ntt(buf: i64, buflen: i64, f: i64) -> i64 {
+    let mut count: i64 = 0;
+    let mut pos: i64 = 0;
+    while pos + 3 <= buflen {
+        let b0: i64 = __mind_load_i8(buf + pos);
+        let b1: i64 = __mind_load_i8(buf + pos + 1);
+        let b2: i64 = __mind_load_i8(buf + pos + 2);
+        let d1: i64 = b0 + 256 * (b1 % 16);
+        let d2: i64 = b1 / 16 + 16 * b2;
+        if d1 < 3329 {
+            if count < 256 {
+                mlkem_cset(f, count, d1);
+                count = count + 1;
+            }
+        }
+        if d2 < 3329 {
+            if count < 256 {
+                mlkem_cset(f, count, d2);
+                count = count + 1;
+            }
+        }
+        pos = pos + 3;
+    }
+    count
+}
+
+fn mlkem_sample_ntt(rho: i64, jj: i64, ii: i64, f: i64) -> i64 {
+    let seed: i64 = __mind_alloc(34);
+    mlkem_mem_copy(seed, rho, 32);
+    __mind_store_i8(seed + 32, jj);
+    __mind_store_i8(seed + 33, ii);
+    let buf: i64 = __mind_alloc(3360);
+    let mut outlen: i64 = 840;
+    keccak_shake128(seed, 34, buf, outlen);
+    let mut count: i64 = mlkem_parse_ntt(buf, outlen, f);
+    while count < 256 {
+        outlen = outlen + 168;
+        keccak_shake128(seed, 34, buf, outlen);
+        count = mlkem_parse_ntt(buf, outlen, f);
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// SamplePolyCBD_2 (FIPS 203 Algorithm 8, eta = 2 — both eta1 and eta2 for
+// ML-KEM-768).  128 input bytes; coefficient i uses bits 4i..4i+3:
+// x = popcount(bits 0-1), y = popcount(bits 2-3), f[i] = x - y mod q.
+// ---------------------------------------------------------------------------
+
+fn mlkem_cbd2(buf: i64, f: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        let nib: i64 = (__mind_load_i8(buf + i / 2) >> ((i % 2) * 4)) & 15;
+        let x: i64 = (nib & 1) + ((nib >> 1) & 1);
+        let y: i64 = ((nib >> 2) & 1) + ((nib >> 3) & 1);
+        mlkem_cset(f, i, (x - y + 3329) % 3329);
+        i = i + 1;
+    }
+    0
+}
+
+// mlkem_prf2 — PRF(2, s, b) = SHAKE256(s || b, 128) (FIPS 203 §4.1 eq 4.3).
+fn mlkem_prf2(s32: i64, b: i64, out128: i64) -> i64 {
+    let msg: i64 = __mind_alloc(33);
+    mlkem_mem_copy(msg, s32, 32);
+    __mind_store_i8(msg + 32, b);
+    keccak_shake256(msg, 33, out128, 128)
+}
+
+// ---------------------------------------------------------------------------
+// ByteEncode_d / ByteDecode_d (FIPS 203 Algorithms 5/6) — d bits per
+// coefficient, little-endian bit order, 32*d output bytes per poly.
+// ByteDecode_12 reduces mod q (FIPS 203 §4.2.1, m = q for d = 12).
+// ---------------------------------------------------------------------------
+
+fn mlkem_encode_poly(f: i64, d: i64, out: i64) -> i64 {
+    mlkem_mem_zero(out, 32 * d);
+    let mut i: i64 = 0;
+    while i < 256 {
+        let v: i64 = mlkem_cget(f, i);
+        let mut b: i64 = 0;
+        while b < d {
+            if ((v >> b) & 1) == 1 {
+                let bit: i64 = i * d + b;
+                __mind_store_i8(out + bit / 8, __mind_load_i8(out + bit / 8) | (1 << (bit % 8)));
+            }
+            b = b + 1;
+        }
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_decode_poly(inp: i64, d: i64, f: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        let mut v: i64 = 0;
+        let mut b: i64 = 0;
+        while b < d {
+            let bit: i64 = i * d + b;
+            v = v | (((__mind_load_i8(inp + bit / 8) >> (bit % 8)) & 1) << b);
+            b = b + 1;
+        }
+        if d == 12 {
+            v = v % 3329;
+        }
+        mlkem_cset(f, i, v);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Compress_d / Decompress_d (FIPS 203 §4.2.1 eq 4.7/4.8), in place.
+//   Compress_d(x)   = round(2^d/q * x) mod 2^d = floor((x<<d) + 1664)/q) mod 2^d
+//   Decompress_d(y) = round(q/2^d * y)         = (y*q + 2^(d-1)) >> d
+// (round = half away from zero; operands non-negative so half-up.)
+// ---------------------------------------------------------------------------
+
+fn mlkem_compress_poly(f: i64, d: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        mlkem_cset(f, i, (((mlkem_cget(f, i) << d) + 1664) / 3329) % (1 << d));
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_decompress_poly(f: i64, d: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 256 {
+        mlkem_cset(f, i, (mlkem_cget(f, i) * 3329 + (1 << (d - 1))) >> d);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Vector / matrix helpers (k = 3).  Poly i of a vector at v + i*2048;
+// matrix entry A[i][j] at ahat + (i*3+j)*2048.
+// ---------------------------------------------------------------------------
+
+// mlkem_gen_matrix — A-hat[i][j] = SampleNTT(rho || j || i) (Alg 13 line 3-7:
+// the XOF input is column byte j FIRST, then row byte i).
+fn mlkem_gen_matrix(rho: i64, ahat: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 3 {
+        let mut j: i64 = 0;
+        while j < 3 {
+            mlkem_sample_ntt(rho, j, i, ahat + (i * 3 + j) * 2048);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// mlkem_sample_cbd_vec — out[i] = SamplePolyCBD_2(PRF(seed, n0+i)), i in 0..3.
+fn mlkem_sample_cbd_vec(seed32: i64, n0: i64, out: i64) -> i64 {
+    let prfbuf: i64 = __mind_alloc(128);
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_prf2(seed32, n0 + i, prfbuf);
+        mlkem_cbd2(prfbuf, out + i * 2048);
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_ntt_vec(v: i64, zt: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_ntt(v + i * 2048, zt);
+        i = i + 1;
+    }
+    0
+}
+
+fn mlkem_zero_vec(v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_poly_zero(v + i * 2048);
+        i = i + 1;
+    }
+    0
+}
+
+// mlkem_matvec_acc — out[i] += sum_j M[i][j] o v[j] (transposed = 0) or
+// out[i] += sum_j M[j][i] o v[j] (transposed = 1), all in the NTT domain.
+// Arithmetic index select avoids a mut reassignment inside the loop body.
+fn mlkem_matvec_acc(ahat: i64, vhat: i64, out: i64, gt: i64, transposed: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 3 {
+        let mut j: i64 = 0;
+        while j < 3 {
+            let a_idx: i64 = (1 - transposed) * (i * 3 + j) + transposed * (j * 3 + i);
+            mlkem_basemul_acc(out + i * 2048, ahat + a_idx * 2048, vhat + j * 2048, gt);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    0
+}
+
+// mlkem_decode_vec12 — decode 3 ByteEncode_12 polys (384 bytes each).
+fn mlkem_decode_vec12(inp: i64, v: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_decode_poly(inp + i * 384, 12, v + i * 2048);
+        i = i + 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// K-PKE.KeyGen (FIPS 203 Algorithm 13).
+//   (rho, sigma) = G(d || k),  k = 3.
+//   A-hat from rho; s, e from CBD(PRF(sigma, 0..5)); t-hat = A o s-hat + e-hat.
+//   ek_pke = ByteEncode_12(t-hat) || rho   (1184 bytes)
+//   dk_pke = ByteEncode_12(s-hat)          (1152 bytes)
+// ---------------------------------------------------------------------------
+
+fn mlkem_kpke_keygen(d32: i64, ek: i64, dk: i64) -> i64 {
+    let gin: i64 = __mind_alloc(33);
+    mlkem_mem_copy(gin, d32, 32);
+    __mind_store_i8(gin + 32, 3);
+    let gout: i64 = __mind_alloc(64);
+    keccak_sha3_512(gin, 33, gout);
+    let rho: i64 = gout;
+    let sigma: i64 = gout + 32;
+
+    let zt: i64 = __mind_alloc(1024);
+    let gt: i64 = __mind_alloc(512);
+    mlkem_build_tables(zt, gt);
+
+    let ahat: i64 = __mind_alloc(18432);
+    mlkem_gen_matrix(rho, ahat);
+
+    let shat: i64 = __mind_alloc(6144);
+    let ehat: i64 = __mind_alloc(6144);
+    mlkem_sample_cbd_vec(sigma, 0, shat);
+    mlkem_sample_cbd_vec(sigma, 3, ehat);
+    mlkem_ntt_vec(shat, zt);
+    mlkem_ntt_vec(ehat, zt);
+
+    // t-hat = A-hat o s-hat + e-hat (accumulate into e-hat).
+    mlkem_matvec_acc(ahat, shat, ehat, gt, 0);
+
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_encode_poly(ehat + i * 2048, 12, ek + i * 384);
+        mlkem_encode_poly(shat + i * 2048, 12, dk + i * 384);
+        i = i + 1;
+    }
+    mlkem_mem_copy(ek + 1152, rho, 32);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// K-PKE.Encrypt (FIPS 203 Algorithm 14).
+//   y from CBD_2(PRF(r, 0..2)), e1 from CBD_2(PRF(r, 3..5)), e2 = PRF(r, 6).
+//   u = invNTT(A-hat^T o y-hat) + e1
+//   mu = Decompress_1(ByteDecode_1(m))
+//   v = invNTT(t-hat . y-hat) + e2 + mu
+//   c = ByteEncode_10(Compress_10(u)) || ByteEncode_4(Compress_4(v))
+// ---------------------------------------------------------------------------
+
+fn mlkem_kpke_encrypt(ek: i64, m32: i64, r32: i64, ct: i64) -> i64 {
+    let zt: i64 = __mind_alloc(1024);
+    let gt: i64 = __mind_alloc(512);
+    mlkem_build_tables(zt, gt);
+
+    let that: i64 = __mind_alloc(6144);
+    mlkem_decode_vec12(ek, that);
+    let ahat: i64 = __mind_alloc(18432);
+    mlkem_gen_matrix(ek + 1152, ahat);
+
+    let yhat: i64 = __mind_alloc(6144);
+    let e1: i64 = __mind_alloc(6144);
+    let e2: i64 = __mind_alloc(2048);
+    mlkem_sample_cbd_vec(r32, 0, yhat);
+    mlkem_sample_cbd_vec(r32, 3, e1);
+    let prfbuf: i64 = __mind_alloc(128);
+    mlkem_prf2(r32, 6, prfbuf);
+    mlkem_cbd2(prfbuf, e2);
+    mlkem_ntt_vec(yhat, zt);
+
+    // u = invNTT(A-hat^T o y-hat) + e1.
+    let u: i64 = __mind_alloc(6144);
+    mlkem_zero_vec(u);
+    mlkem_matvec_acc(ahat, yhat, u, gt, 1);
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_intt(u + i * 2048, zt);
+        mlkem_poly_add(u + i * 2048, u + i * 2048, e1 + i * 2048);
+        i = i + 1;
+    }
+
+    // v = invNTT(t-hat . y-hat) + e2 + mu.
+    let v: i64 = __mind_alloc(2048);
+    mlkem_poly_zero(v);
+    let mut j: i64 = 0;
+    while j < 3 {
+        mlkem_basemul_acc(v, that + j * 2048, yhat + j * 2048, gt);
+        j = j + 1;
+    }
+    mlkem_intt(v, zt);
+    let mu: i64 = __mind_alloc(2048);
+    mlkem_decode_poly(m32, 1, mu);
+    mlkem_decompress_poly(mu, 1);
+    mlkem_poly_add(v, v, e2);
+    mlkem_poly_add(v, v, mu);
+
+    // c1 (3 * 320 bytes) || c2 (128 bytes).
+    let mut i2: i64 = 0;
+    while i2 < 3 {
+        mlkem_compress_poly(u + i2 * 2048, 10);
+        mlkem_encode_poly(u + i2 * 2048, 10, ct + i2 * 320);
+        i2 = i2 + 1;
+    }
+    mlkem_compress_poly(v, 4);
+    mlkem_encode_poly(v, 4, ct + 960);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// K-PKE.Decrypt (FIPS 203 Algorithm 15).
+//   u' = Decompress_10(ByteDecode_10(c1)), v' = Decompress_4(ByteDecode_4(c2))
+//   w  = v' - invNTT(s-hat . NTT(u'))
+//   m  = ByteEncode_1(Compress_1(w))
+// ---------------------------------------------------------------------------
+
+fn mlkem_kpke_decrypt(dkpke: i64, ct: i64, m_out: i64) -> i64 {
+    let zt: i64 = __mind_alloc(1024);
+    let gt: i64 = __mind_alloc(512);
+    mlkem_build_tables(zt, gt);
+
+    let u: i64 = __mind_alloc(6144);
+    let mut i: i64 = 0;
+    while i < 3 {
+        mlkem_decode_poly(ct + i * 320, 10, u + i * 2048);
+        mlkem_decompress_poly(u + i * 2048, 10);
+        i = i + 1;
+    }
+    let v: i64 = __mind_alloc(2048);
+    mlkem_decode_poly(ct + 960, 4, v);
+    mlkem_decompress_poly(v, 4);
+
+    let shat: i64 = __mind_alloc(6144);
+    mlkem_decode_vec12(dkpke, shat);
+
+    mlkem_ntt_vec(u, zt);
+    let acc: i64 = __mind_alloc(2048);
+    mlkem_poly_zero(acc);
+    let mut j: i64 = 0;
+    while j < 3 {
+        mlkem_basemul_acc(acc, shat + j * 2048, u + j * 2048, gt);
+        j = j + 1;
+    }
+    mlkem_intt(acc, zt);
+    mlkem_poly_sub(v, v, acc);
+    mlkem_compress_poly(v, 1);
+    mlkem_encode_poly(v, 1, m_out)
+}
+
+// ---------------------------------------------------------------------------
+// Public API — ML-KEM-768 (FIPS 203 Algorithms 16/17/18, the deterministic
+// internal forms: the caller supplies the randomness, so KATs are exact).
+//
+//   mlkem768_keygen(rand64, out_ek, out_dk)
+//     rand64 = d || z (64 bytes).  out_ek: 1184 bytes, out_dk: 2400 bytes
+//     (dk = dk_pke || ek || H(ek) || z).
+//
+//   mlkem768_encaps(ek, rand32, out_ct, out_ss)
+//     rand32 = m (32 bytes).  (K, r) = G(m || H(ek)); c = K-PKE.Enc(ek, m, r).
+//     out_ct: 1088 bytes, out_ss: 32 bytes.
+//
+//   mlkem768_decaps(dk, ct, out_ss)
+//     m' = K-PKE.Dec; (K', r') = G(m' || h); Kbar = J(z || c);
+//     re-encrypt and on mismatch return Kbar (implicit rejection, FO).
+// ---------------------------------------------------------------------------
+
+pub fn mlkem768_keygen(rand64: i64, out_ek: i64, out_dk: i64) -> i64 {
+    mlkem_kpke_keygen(rand64, out_ek, out_dk);
+    mlkem_mem_copy(out_dk + 1152, out_ek, 1184);
+    keccak_sha3_256(out_ek, 1184, out_dk + 2336);
+    mlkem_mem_copy(out_dk + 2368, rand64 + 32, 32);
+    0
+}
+
+pub fn mlkem768_encaps(ek: i64, rand32: i64, out_ct: i64, out_ss: i64) -> i64 {
+    let gin: i64 = __mind_alloc(64);
+    mlkem_mem_copy(gin, rand32, 32);
+    keccak_sha3_256(ek, 1184, gin + 32);
+    let gout: i64 = __mind_alloc(64);
+    keccak_sha3_512(gin, 64, gout);
+    mlkem_mem_copy(out_ss, gout, 32);
+    mlkem_kpke_encrypt(ek, rand32, gout + 32, out_ct);
+    0
+}
+
+pub fn mlkem768_decaps(dk: i64, ct: i64, out_ss: i64) -> i64 {
+    let mprime: i64 = __mind_alloc(32);
+    mlkem_kpke_decrypt(dk, ct, mprime);
+
+    // (K', r') = G(m' || h)
+    let gin: i64 = __mind_alloc(64);
+    mlkem_mem_copy(gin, mprime, 32);
+    mlkem_mem_copy(gin + 32, dk + 2336, 32);
+    let gout: i64 = __mind_alloc(64);
+    keccak_sha3_512(gin, 64, gout);
+
+    // Kbar = J(z || c) = SHAKE256(z || c, 32)
+    let jin: i64 = __mind_alloc(1120);
+    mlkem_mem_copy(jin, dk + 2368, 32);
+    mlkem_mem_copy(jin + 32, ct, 1088);
+    let kbar: i64 = __mind_alloc(32);
+    keccak_shake256(jin, 1120, kbar, 32);
+
+    // Re-encrypt with r' and compare (FO check).  The diff is accumulated
+    // over ALL bytes before branching (no early exit on first mismatch).
+    let cprime: i64 = __mind_alloc(1088);
+    mlkem_kpke_encrypt(dk + 1152, mprime, gout + 32, cprime);
+    let mut diff: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 1088 {
+        diff = diff | (__mind_load_i8(ct + i) ^ __mind_load_i8(cprime + i));
+        i = i + 1;
+    }
+    if diff == 0 {
+        mlkem_mem_copy(out_ss, gout, 32);
+    }
+    if diff != 0 {
+        mlkem_mem_copy(out_ss, kbar, 32);
+    }
+    0
+}
