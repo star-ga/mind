@@ -79,7 +79,7 @@ values.
 | `limit_form(0^0)` | indeterminate — symbolic/calculus context, not a number | 📋 |
 | NaN comparisons | all comparisons `false` except `!=`; `min`/`max`/`sort` use a defined total order (NaN sorts last) so results are deterministic | 📋 |
 | Rounding | round-to-nearest-even (IEEE default), fixed | 📋 |
-| Scalar `f64`/`f32` arithmetic (`+ − × ÷`, fixed source order, no FMA-contraction) | strict path — run-to-run bit-identical; cross-ISA verification in progress | ✅ |
+| Scalar `f64`/`f32` arithmetic (`+ − × ÷`, fixed source order, no FMA-contraction) | strict path — run-to-run bit-identical; verified bit-identical across an x86 CPU and an NVIDIA GPU (CUDA, `sm_86`) via the no-FMA-contraction contract (`-ffp-contract=off` ≡ `--fmad=false`) | ✅ |
 | Vector `f32`/`f64` reductions | ordered reduction trees / superaccumulators — currently a documented ~1e-4 relative tolerance, not bit-identity | 📋 |
 | Transcendentals (`sin`, `exp`, …) | vendored correctly-rounded libm (not host libm) | 📋 |
 | Q16.16 fixed-point | fully deterministic, byte-identical x86 == ARM | ✅ |
@@ -111,9 +111,15 @@ Two execution tiers; the contract is **bit-identity**, never "within tolerance"
 - **Strict tier (default).** Integer and Q16.16 results are byte-identical across
   substrates (x86 == ARM), gated by `cross_substrate` (12/12). ✅ **Scalar**
   `f64`/`f32` arithmetic runs on the strict path today — fixed source order, no
-  FMA-contraction, no reassociation — and is run-to-run bit-identical; because
-  scalar `+ − × ÷ √` are correctly-rounded IEEE-754 operations, cross-ISA
-  bit-identity follows on any conforming FPU (verification on ARM hardware is in
+  FMA-contraction, no reassociation — and is run-to-run bit-identical. This is
+  verified **cross-substrate on hardware**: the same `f64` Lorenz–Euler
+  integrator produces results identical to the last bit on an x86 CPU and on an
+  NVIDIA GPU (CUDA, `sm_86`), because the same no-FMA-contraction contract
+  (`-ffp-contract=off` on the CPU, `--fmad=false` on the GPU) forbids the fused
+  multiply-add the hardware would otherwise apply — with FMA fusion left on, the
+  chaotic trajectory diverges, worse the longer it runs. Because scalar
+  `+ − × ÷ √` are correctly-rounded IEEE-754 operations, the same holds on any
+  conforming FPU (verification on further hardware is in
   progress). ✅ **Vector** `f32`/`f64` reductions and **transcendentals**
   (`sin`/`exp`/…) are not yet bit-identical: reductions currently carry a
   documented ~1e-4 relative tolerance pending canonical reduction trees /
