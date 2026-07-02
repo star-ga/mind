@@ -249,7 +249,7 @@ fn regex_mind_auto_exports_public_symbols() {
 fn bundled_stdlib_resolves_use_std_regex() {
     use libmind::project::module_table::build_module_table;
     use libmind::project::stdlib::parsed_stdlib_modules;
-    use libmind::type_checker::{TypeEnv, check_module_types_with_modules};
+    use libmind::type_checker::{check_module_types_with_modules, TypeEnv};
 
     let stdlib = parsed_stdlib_modules();
     let refs: Vec<(String, &libmind::ast::Module)> =
@@ -532,7 +532,10 @@ pub fn smoke_rx_find_all_len(rx: i64, inp: i64, ilen: i64) -> i64 {{
             // null fragment that rx_compile_alternation then dereferenced.
             for pat in [&b"a|"[..], &b"|a"[..], &b"(|x)"[..], &b"|"[..]] {
                 let rx = compile_fn(pat.as_ptr() as i64, pat.len() as i64);
-                assert!(rx != 0, "empty-alternation pattern must compile without crashing");
+                assert!(
+                    rx != 0,
+                    "empty-alternation pattern must compile without crashing"
+                );
             }
             // `a|` (a OR empty) matches "a".
             let rx_alt = compile_fn(b"a|".as_ptr() as i64, 2);
