@@ -596,6 +596,7 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
     let sb: i64 = sb_new();
     let mut pos: i64 = i;
     let mut done: i64 = 0;
+    let mut closed: i64 = 0;
     while done == 0 {
         if pos >= len {
             done = 1;
@@ -604,6 +605,7 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
             if b == 34 {
                 pos = pos + 1;
                 done = 1;
+                closed = 1;
             } else {
                 if b == 92 {
                     pos = pos + 1;
@@ -644,6 +646,11 @@ fn parse_basic_string(buf: i64, i: i64, len: i64) -> Vec {
             }
         }
     }
+    // Unterminated: hit EOF before the closing `"`. Signal failure with a -1
+    // position (a valid string always advances past its close quote).
+    if closed == 0 {
+        pos = 0 - 1;
+    }
     let r: Vec = vec_new();
     let r1: Vec = vec_push(r, pos);
     vec_push(r1, sb)
@@ -655,6 +662,7 @@ fn parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
     let sb: i64 = sb_new();
     let mut pos: i64 = i;
     let mut done: i64 = 0;
+    let mut closed: i64 = 0;
     while done == 0 {
         if pos >= len {
             done = 1;
@@ -663,11 +671,16 @@ fn parse_literal_string(buf: i64, i: i64, len: i64) -> Vec {
             if b == 39 {
                 pos = pos + 1;
                 done = 1;
+                closed = 1;
             } else {
                 let _ = sb_push(sb, b);
                 pos = pos + 1;
             }
         }
+    }
+    // Unterminated: hit EOF before the closing `'`.
+    if closed == 0 {
+        pos = 0 - 1;
     }
     let r: Vec = vec_new();
     let r1: Vec = vec_push(r, pos);
@@ -836,6 +849,12 @@ fn parse_value(buf: i64, i: i64, len: i64) -> Vec {
         let r: Vec = parse_basic_string(buf, pos + 1, len);
         let p2: i64 = vec_get(r, 0);
         let sb: i64 = vec_get(r, 1);
+        // Unterminated string (p2 < 0): parse failure (handle = 0).
+        if p2 < 0 {
+            let e: Vec = vec_new();
+            let e1: Vec = vec_push(e, pos);
+            return vec_push(e1, 0);
+        }
         let tv: i64 = tv_make_str(__mind_load_i64(sb + 0), __mind_load_i64(sb + 8), __mind_load_i64(sb + 16));
         let out: Vec = vec_new();
         let out1: Vec = vec_push(out, p2);
@@ -845,6 +864,11 @@ fn parse_value(buf: i64, i: i64, len: i64) -> Vec {
         let r: Vec = parse_literal_string(buf, pos + 1, len);
         let p2: i64 = vec_get(r, 0);
         let sb: i64 = vec_get(r, 1);
+        if p2 < 0 {
+            let e: Vec = vec_new();
+            let e1: Vec = vec_push(e, pos);
+            return vec_push(e1, 0);
+        }
         let tv: i64 = tv_make_str(__mind_load_i64(sb + 0), __mind_load_i64(sb + 8), __mind_load_i64(sb + 16));
         let out: Vec = vec_new();
         let out1: Vec = vec_push(out, p2);
