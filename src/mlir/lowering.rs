@@ -2667,6 +2667,22 @@ impl LoweringContext {
                     });
                 }
 
+                // Per-slot MLIR type of each loop-carried value, looked up once
+                // from the pre-loop init value's ValueKind (invariant across the
+                // header/body/after blocks — same lookup that types the block-arg
+                // decls). Drives the typed cf.br/cf.cond_br operand lists so an
+                // f64/f32 loop carry emits `: f64`/`: f32` instead of a hardcoded
+                // i64. Narrow ints stay i64 (their ABI is i64-packed) ⇒ for an
+                // all-i64 loop this is byte-identical to the untyped fmt_block_args.
+                let loop_types: Vec<&'static str> = loop_args
+                    .iter()
+                    .map(|a| match self.values.get(&ValueId(a.init_id)) {
+                        Some(ValueKind::ScalarF64) => "f64",
+                        Some(ValueKind::ScalarF32) => "f32",
+                        _ => "i64",
+                    })
+                    .collect();
+
                 // Build arg-triple slices consumed by substitute_ids.
                 let head_args: Vec<(usize, String, usize)> = loop_args
                     .iter()
@@ -2677,13 +2693,15 @@ impl LoweringContext {
                     .map(|a| (a.init_id, a.body_name.clone(), a.post_id))
                     .collect();
 
-                // Entry branch: carry initial values into the header.
+                // Entry branch: carry initial values into the header, each
+                // operand typed by its loop-carried kind (f64/f32/i64).
                 {
-                    let init_vals: Vec<String> = loop_args
+                    let init_items: Vec<(String, String)> = loop_args
                         .iter()
-                        .map(|a| format!("%{}", a.init_id))
+                        .zip(&loop_types)
+                        .map(|(a, t)| (format!("%{}", a.init_id), (*t).to_string()))
                         .collect();
-                    let arg_pass = fmt_block_args(&init_vals);
+                    let arg_pass = fmt_block_args_typed(&init_items);
                     self.emit_line(&format!("    cf.br ^while_header_{lbl}{arg_pass}"));
                 }
 
@@ -2693,7 +2711,21 @@ impl LoweringContext {
                 } else {
                     let arg_decls: String = loop_args
                         .iter()
-                        .map(|a| format!("%{}: i64", a.head_name))
+                        .map(|a| {
+                            // Type the loop-carried block arg by the carried
+                            // variable's actual ValueKind (init_id is the
+                            // pre-loop value; the type is invariant across
+                            // header/body/after). f64/f32 loop-carried vars
+                            // need float block args — a hardcoded i64 makes
+                            // `while` over floats invalid MLIR (i64 vs f64).
+                            // Narrow ints stay i64 (their ABI is i64-packed).
+                            let ty = match self.values.get(&ValueId(a.init_id)) {
+                                Some(ValueKind::ScalarF64) => "f64",
+                                Some(ValueKind::ScalarF32) => "f32",
+                                _ => "i64",
+                            };
+                            format!("%{}: {}", a.head_name, ty)
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.emit_line(&format!("  ^while_header_{lbl}({arg_decls}):"));
@@ -2773,11 +2805,12 @@ impl LoweringContext {
                 // that follows the loop (fixing the SSA dominance error where
                 // %post_id, defined in ^while_body_N, was referenced in the
                 // non-dominated ^while_after_N block).
-                let head_name_vals: Vec<String> = loop_args
+                let head_name_items: Vec<(String, String)> = loop_args
                     .iter()
-                    .map(|a| format!("%{}", a.head_name))
+                    .zip(&loop_types)
+                    .map(|(a, t)| (format!("%{}", a.head_name), (*t).to_string()))
                     .collect();
-                let body_arg_pass = fmt_block_args(&head_name_vals);
+                let body_arg_pass = fmt_block_args_typed(&head_name_items);
                 // The after block gets the same arg list (header args).
                 let after_arg_pass = body_arg_pass.clone();
 
@@ -2807,7 +2840,14 @@ impl LoweringContext {
                 } else {
                     let arg_decls: String = loop_args
                         .iter()
-                        .map(|a| format!("%{}: i64", a.body_name))
+                        .map(|a| {
+                            let ty = match self.values.get(&ValueId(a.init_id)) {
+                                Some(ValueKind::ScalarF64) => "f64",
+                                Some(ValueKind::ScalarF32) => "f32",
+                                _ => "i64",
+                            };
+                            format!("%{}: {}", a.body_name, ty)
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.emit_line(&format!("  ^while_body_{lbl}({arg_decls}):"));
@@ -2875,12 +2915,13 @@ impl LoweringContext {
                 // Mapping: if post_id[k] == init_id[j], use body_name[j].
                 // Otherwise (post_id is a fresh computation), use %post_id.
                 {
-                    let post_vals: Vec<String> = loop_args
+                    let post_items: Vec<(String, String)> = loop_args
                         .iter()
-                        .map(|a| {
+                        .zip(&loop_types)
+                        .map(|(a, t)| {
                             // Check if this post_id matches the init_id of
                             // another (or the same) loop arg.
-                            if let Some(src) =
+                            let v = if let Some(src) =
                                 loop_args.iter().find(|other| other.init_id == a.post_id)
                             {
                                 // Pass the body-block arg for that source variable.
@@ -2888,10 +2929,11 @@ impl LoweringContext {
                             } else {
                                 // Fresh computation in the body — pass directly.
                                 format!("%{}", a.post_id)
-                            }
+                            };
+                            (v, (*t).to_string())
                         })
                         .collect();
-                    let back_pass = fmt_block_args(&post_vals);
+                    let back_pass = fmt_block_args_typed(&post_items);
                     self.emit_line(&format!("    cf.br ^while_header_{lbl}{back_pass}"));
                 }
 
@@ -2912,14 +2954,28 @@ impl LoweringContext {
                 } else {
                     let after_arg_decls: String = loop_args
                         .iter()
-                        .map(|a| format!("%{}: i64", a.exit_id))
+                        .map(|a| {
+                            let ty = match self.values.get(&ValueId(a.init_id)) {
+                                Some(ValueKind::ScalarF64) => "f64",
+                                Some(ValueKind::ScalarF32) => "f32",
+                                _ => "i64",
+                            };
+                            format!("%{}: {}", a.exit_id, ty)
+                        })
                         .collect::<Vec<_>>()
                         .join(", ");
                     self.emit_line(&format!("  ^while_after_{lbl}({after_arg_decls}):"));
-                    // Register the exit ids as known scalar i64 values so any
-                    // downstream type lookup (e.g. function return) succeeds.
-                    for a in &loop_args {
-                        self.values.insert(ValueId(a.exit_id), ValueKind::ScalarI64);
+                    // Register each exit id with its REAL loop-carried kind so any
+                    // downstream type lookup (e.g. a `return %exit` of an f64 loop
+                    // carry) emits the correct ABI type instead of a hardcoded i64.
+                    // Byte-identical for i64 loops (kind stays ScalarI64).
+                    for (a, t) in loop_args.iter().zip(&loop_types) {
+                        let kind = match *t {
+                            "f64" => ValueKind::ScalarF64,
+                            "f32" => ValueKind::ScalarF32,
+                            _ => ValueKind::ScalarI64,
+                        };
+                        self.values.insert(ValueId(a.exit_id), kind);
                     }
                 }
             }
