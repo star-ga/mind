@@ -725,6 +725,7 @@ fn jv_parse_number(buf: i64, i: i64, len: i64) -> i64 {
         if jv_load_byte(buf, pos) == 46 {
             pos = pos + 1;
             is_int = 0;
+            let mut frac_n: i64 = 0;
             let mut frun: i64 = 1;
             while frun == 1 {
                 if pos >= len {
@@ -734,11 +735,17 @@ fn jv_parse_number(buf: i64, i: i64, len: i64) -> i64 {
                     if jv_is_digit(fb) == 1 {
                         frac = frac * 10 + (fb - 48);
                         frac_d = frac_d * 10;
+                        frac_n = frac_n + 1;
                         pos = pos + 1;
                     } else {
                         frun = 0;
                     }
                 }
+            }
+            // RFC 8259: a decimal point must be followed by at least one digit;
+            // `1.` is not a valid number.
+            if frac_n == 0 {
+                return jvpr_new(pos, 0);
             }
         }
     }
