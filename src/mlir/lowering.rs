@@ -4620,10 +4620,43 @@ impl LoweringContext {
         }
         self.emit_line(&format!("      scf.yield %vm_na_{d} : vector<{l}xf32>"));
         self.emit_line("    }");
-        self.emit_line(&format!(
-            "    %vm_vs_{d} = vector.reduction {vred_kind}, %vm_vacc_{d} : \
-             vector<{l}xf32> into f32"
-        ));
+        // Horizontal lane reduction. L1 (`<add>`) is NOT associative in f32, so
+        // the target-defined reduction fold order diverges per ISA — replace it
+        // with a PINNED left-to-right scalar fold (static-index extracts + fixed
+        // sequential adds) so the L1 sum is bit-identical on every FPU (strict-FP
+        // tier; no `vector.reduction <add>` -> no fp_mode Relaxed taint). L∞
+        // (`<maximumf>`) IS associative + commutative, so its reduction fold is
+        // already bit-identical — keep the compact `vector.reduction`.
+        match metric {
+            VecMetric::L1 => {
+                for lane in 0..l {
+                    self.emit_line(&format!(
+                        "    %vm_e{lane}_{d} = vector.extract %vm_vacc_{d}[{lane}] : f32 from vector<{l}xf32>"
+                    ));
+                }
+                for lane in 1..l {
+                    let prev = if lane == 1 {
+                        format!("%vm_e0_{d}")
+                    } else {
+                        format!("%vm_racc{}_{d}", lane - 1)
+                    };
+                    let out = if lane == l - 1 {
+                        format!("%vm_vs_{d}")
+                    } else {
+                        format!("%vm_racc{lane}_{d}")
+                    };
+                    self.emit_line(&format!(
+                        "    {out} = arith.addf {prev}, %vm_e{lane}_{d} : f32"
+                    ));
+                }
+            }
+            VecMetric::Linf => {
+                self.emit_line(&format!(
+                    "    %vm_vs_{d} = vector.reduction {vred_kind}, %vm_vacc_{d} : \
+                     vector<{l}xf32> into f32"
+                ));
+            }
+        }
         // Scalar tail.
         self.emit_line(&format!(
             "    %vm_ts_{d} = scf.for %vm_j_{d} = %vm_ve_{d} to %vm_len_{d} \
