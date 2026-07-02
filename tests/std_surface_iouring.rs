@@ -228,3 +228,50 @@ fn iouring_nop_roundtrips_user_data() {
         println!("iouring: kernel io_uring unavailable; round-trip skipped");
     }
 }
+
+/// io_ring_submit_raw must fail closed (return -EINVAL) on invalid caller input
+/// before any dereference, preventing the out-of-bounds SQE write a negative
+/// slot would otherwise cause. These reject paths need no live kernel ring.
+#[test]
+fn iouring_submit_rejects_invalid_input() {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mindc = common::mindc_bin();
+    if !mindc.exists() {
+        println!("iouring-guard: mindc not found; skipping");
+        return;
+    }
+    let so = std::env::temp_dir().join("mind_iouring_guard.so");
+    let src = manifest.join("std").join("iouring.mind");
+    let status = Command::new(&mindc)
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .status()
+        .expect("run mindc");
+    if !status.success() {
+        println!("iouring-guard: mindc compile failed (no MLIR backend?); skipping");
+        return;
+    }
+    let py = format!(
+        "import ctypes\n\
+         lib = ctypes.CDLL(r'{}')\n\
+         f = lib.io_ring_submit_raw\n\
+         f.restype = ctypes.c_int64\n\
+         f.argtypes = [ctypes.c_int64] * 8\n\
+         # (h, slot, opcode, fd, off, addr, len, user_data)\n\
+         assert f(0, 0, 0, 0, 0, 0, 0, 0) == -22, 'null handle not rejected'\n\
+         assert f(1, -1, 0, 0, 0, 0, 0, 0) == -22, 'negative slot not rejected'\n\
+         assert f(1, 0, 0, 0, 0, 0, -1, 0) == -22, 'negative len not rejected'\n\
+         assert f(1, 0, 0, 0, 0, 0, 4294967296, 0) == -22, 'oversize len not rejected'\n\
+         print('ok')\n",
+        so.to_string_lossy()
+    );
+    let out = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("python3");
+    assert!(
+        out.status.success(),
+        "iouring guard check failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
