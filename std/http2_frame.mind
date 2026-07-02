@@ -1,0 +1,389 @@
+// std/http2_frame.mind — HTTP/2 framing layer (RFC 9113 §3.4, §4.1, §6) in
+// pure MIND.  Self-contained: no imports, only `__mind_*` intrinsics, matching
+// std/aes_gcm.mind's low-level byte-buffer discipline.
+//
+// HTTP-provable-stack Phase 2.2: the binary frame envelope that carries
+// HPACK-compressed headers + data.  Independent of the HPACK payload codec
+// (RFC 7541) and of the TLS layer underneath.
+//
+// Scope (RFC 9113):
+//   §3.4  client connection preface — the 24-byte magic
+//         "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+//   §4.1  frame header — 9 bytes:
+//         24-bit Length (big-endian, payload length, NOT incl. this header)
+//         ||  8-bit Type  ||  8-bit Flags
+//         ||  1-bit Reserved + 31-bit Stream Identifier (big-endian).
+//         The R bit MUST be ignored on receipt and sent as zero (§4.1).
+//   §6.4  RST_STREAM     — 4-byte payload: 32-bit error code
+//   §6.5  SETTINGS       — n×6-byte entries: 16-bit identifier || 32-bit value
+//   §6.7  PING           — 8-byte opaque payload
+//   §6.8  GOAWAY         — 31-bit last-stream-id || 32-bit error code || debug
+//   §6.9  WINDOW_UPDATE  — 4-byte payload: 1-bit R + 31-bit increment
+//
+// Frame type constants (§6, exposed as pub fns below):
+//   DATA=0x0 HEADERS=0x1 PRIORITY=0x2 RST_STREAM=0x3 SETTINGS=0x4
+//   PUSH_PROMISE=0x5 PING=0x6 GOAWAY=0x7 WINDOW_UPDATE=0x8 CONTINUATION=0x9
+//
+// Byte-buffer layout: one byte per offset (`__mind_store_i8`/`__mind_load_i8`);
+// multi-i64 output arrays use `__mind_store_i64` at 8-byte strides.  All
+// multi-byte wire fields are big-endian ("network byte order", §4.1).
+//
+// Conventions:
+//   - parse fns return -1 on malformed input (fail closed), a non-negative
+//     count / byte length on success.
+//   - http2_frame_parse rejects a frame whose declared 24-bit Length exceeds
+//     the caller's buffer (fail-closed parse; never reads past buf_len).
+//   - check fns return 0 on match, 1 on mismatch (like aes128_gcm_decrypt).
+//
+// Determinism: pure integer arithmetic, no floats, no clocks, no external
+// calls.  Helper-function decomposition keeps sibling `while` loops out of a
+// single body (MLIR block-namer limit — see std/hkdf.mind).
+
+// ---------------------------------------------------------------------------
+// Byte helpers (big-endian loads/stores, memcpy/memcmp).
+// ---------------------------------------------------------------------------
+
+// h2_u8 — load one byte as an unsigned 0..255 value.
+fn h2_u8(addr: i64) -> i64 {
+    __mind_load_i8(addr) & 255
+}
+
+// h2_be24_load — 24-bit big-endian unsigned integer at addr.
+fn h2_be24_load(addr: i64) -> i64 {
+    (h2_u8(addr) << 16) | (h2_u8(addr + 1) << 8) | h2_u8(addr + 2)
+}
+
+// h2_be32_load — 32-bit big-endian unsigned integer at addr.
+fn h2_be32_load(addr: i64) -> i64 {
+    (h2_u8(addr) << 24) | (h2_u8(addr + 1) << 16) | (h2_u8(addr + 2) << 8) | h2_u8(addr + 3)
+}
+
+// h2_be24_store — store v as 24-bit big-endian at addr (v masked to 24 bits).
+fn h2_be24_store(addr: i64, v: i64) -> i64 {
+    __mind_store_i8(addr, (v >> 16) & 255);
+    __mind_store_i8(addr + 1, (v >> 8) & 255);
+    __mind_store_i8(addr + 2, v & 255);
+    0
+}
+
+// h2_be32_store — store v as 32-bit big-endian at addr (v masked to 32 bits).
+fn h2_be32_store(addr: i64, v: i64) -> i64 {
+    __mind_store_i8(addr, (v >> 24) & 255);
+    __mind_store_i8(addr + 1, (v >> 16) & 255);
+    __mind_store_i8(addr + 2, (v >> 8) & 255);
+    __mind_store_i8(addr + 3, v & 255);
+    0
+}
+
+// h2_mem_copy — copy len bytes from src to dst (one byte per offset).
+fn h2_mem_copy(dst: i64, src: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        __mind_store_i8(dst + i, __mind_load_i8(src + i));
+        i = i + 1;
+    }
+    0
+}
+
+// h2_mem_eq — compare len bytes; returns 0 if equal, 1 if any byte differs.
+fn h2_mem_eq(a: i64, b: i64, len: i64) -> i64 {
+    let mut diff: i64 = 0;
+    let mut i: i64 = 0;
+    while i < len {
+        diff = diff | (h2_u8(a + i) ^ h2_u8(b + i));
+        i = i + 1;
+    }
+    if diff != 0 {
+        return 1;
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Frame type constants (RFC 9113 §6).
+// ---------------------------------------------------------------------------
+
+pub fn http2_type_data() -> i64 { 0 }
+pub fn http2_type_headers() -> i64 { 1 }
+pub fn http2_type_priority() -> i64 { 2 }
+pub fn http2_type_rst_stream() -> i64 { 3 }
+pub fn http2_type_settings() -> i64 { 4 }
+pub fn http2_type_push_promise() -> i64 { 5 }
+pub fn http2_type_ping() -> i64 { 6 }
+pub fn http2_type_goaway() -> i64 { 7 }
+pub fn http2_type_window_update() -> i64 { 8 }
+pub fn http2_type_continuation() -> i64 { 9 }
+
+// ---------------------------------------------------------------------------
+// Frame header (RFC 9113 §4.1) — 9 bytes:
+//   Length(24, BE) || Type(8) || Flags(8) || R(1)+StreamId(31, BE)
+// ---------------------------------------------------------------------------
+
+// http2_frame_parse_header — parse the 9-byte frame header at buf_addr.
+// Writes 4 i64 fields to out_fields_addr:
+//   out+0  = Length     (24-bit payload length)
+//   out+8  = Type       (8-bit)
+//   out+16 = Flags      (8-bit)
+//   out+24 = Stream Id  (31-bit; the R bit is ignored on receipt, §4.1)
+// Returns 9 (header size consumed).  Assumes >= 9 readable bytes; use
+// http2_frame_parse for the buffer-bounded, fail-closed entry point.
+pub fn http2_frame_parse_header(buf_addr: i64, out_fields_addr: i64) -> i64 {
+    __mind_store_i64(out_fields_addr, h2_be24_load(buf_addr));
+    __mind_store_i64(out_fields_addr + 8, h2_u8(buf_addr + 3));
+    __mind_store_i64(out_fields_addr + 16, h2_u8(buf_addr + 4));
+    __mind_store_i64(out_fields_addr + 24, h2_be32_load(buf_addr + 5) & 2147483647);
+    9
+}
+
+// http2_frame_write_header — write the 9-byte frame header to out_addr.
+// length is masked to 24 bits, ftype/flags to 8 bits, stream_id to 31 bits
+// (the R bit is sent as zero, §4.1).  Returns 9.
+pub fn http2_frame_write_header(
+    length: i64,
+    ftype: i64,
+    flags: i64,
+    stream_id: i64,
+    out_addr: i64,
+) -> i64 {
+    h2_be24_store(out_addr, length & 16777215);
+    __mind_store_i8(out_addr + 3, ftype & 255);
+    __mind_store_i8(out_addr + 4, flags & 255);
+    h2_be32_store(out_addr + 5, stream_id & 2147483647);
+    9
+}
+
+// http2_frame_parse — buffer-bounded, FAIL-CLOSED frame parse.
+// Rejects (returns -1) when:
+//   - buf_len < 9 (header itself does not fit), or
+//   - the declared 24-bit Length exceeds the bytes actually available
+//     (9 + Length > buf_len) — a frame must never read past the buffer.
+// On success writes the 4 header fields (as http2_frame_parse_header) and
+// returns the total frame size consumed: 9 + Length.  The payload starts at
+// buf_addr + 9.
+pub fn http2_frame_parse(buf_addr: i64, buf_len: i64, out_fields_addr: i64) -> i64 {
+    if buf_len < 9 {
+        return -1;
+    }
+    let length: i64 = h2_be24_load(buf_addr);
+    if length > buf_len - 9 {
+        return -1;
+    }
+    http2_frame_parse_header(buf_addr, out_fields_addr);
+    9 + length
+}
+
+// ---------------------------------------------------------------------------
+// Client connection preface (RFC 9113 §3.4) — the 24-byte magic
+//   "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+// ---------------------------------------------------------------------------
+
+// http2_preface_write — write the exact 24 preface bytes to out_addr.
+// Returns 24.
+pub fn http2_preface_write(out_addr: i64) -> i64 {
+    __mind_store_i8(out_addr + 0, 80);   // 'P'
+    __mind_store_i8(out_addr + 1, 82);   // 'R'
+    __mind_store_i8(out_addr + 2, 73);   // 'I'
+    __mind_store_i8(out_addr + 3, 32);   // ' '
+    __mind_store_i8(out_addr + 4, 42);   // '*'
+    __mind_store_i8(out_addr + 5, 32);   // ' '
+    __mind_store_i8(out_addr + 6, 72);   // 'H'
+    __mind_store_i8(out_addr + 7, 84);   // 'T'
+    __mind_store_i8(out_addr + 8, 84);   // 'T'
+    __mind_store_i8(out_addr + 9, 80);   // 'P'
+    __mind_store_i8(out_addr + 10, 47);  // '/'
+    __mind_store_i8(out_addr + 11, 50);  // '2'
+    __mind_store_i8(out_addr + 12, 46);  // '.'
+    __mind_store_i8(out_addr + 13, 48);  // '0'
+    __mind_store_i8(out_addr + 14, 13);  // '\r'
+    __mind_store_i8(out_addr + 15, 10);  // '\n'
+    __mind_store_i8(out_addr + 16, 13);  // '\r'
+    __mind_store_i8(out_addr + 17, 10);  // '\n'
+    __mind_store_i8(out_addr + 18, 83);  // 'S'
+    __mind_store_i8(out_addr + 19, 77);  // 'M'
+    __mind_store_i8(out_addr + 20, 13);  // '\r'
+    __mind_store_i8(out_addr + 21, 10);  // '\n'
+    __mind_store_i8(out_addr + 22, 13);  // '\r'
+    __mind_store_i8(out_addr + 23, 10);  // '\n'
+    24
+}
+
+// http2_preface_check — verify the 24 bytes at buf_addr are exactly the
+// client connection preface.  Returns 0 on match, 1 on mismatch.
+pub fn http2_preface_check(buf_addr: i64) -> i64 {
+    let ref_buf: i64 = __mind_alloc(24);
+    http2_preface_write(ref_buf);
+    let rc: i64 = h2_mem_eq(buf_addr, ref_buf, 24);
+    __mind_free(ref_buf);
+    rc
+}
+
+// ---------------------------------------------------------------------------
+// SETTINGS (RFC 9113 §6.5) — payload is a sequence of 6-byte entries:
+//   Identifier(16, BE) || Value(32, BE)
+// ---------------------------------------------------------------------------
+
+// http2_settings_parse — parse a SETTINGS payload of payload_len bytes.
+// A SETTINGS payload length that is not a multiple of 6 is a FRAME_SIZE_ERROR
+// (§6.5) — returns -1 (fail closed).  On success writes each entry as two
+// consecutive i64 [identifier, value] at out_pairs_addr (16 bytes per entry)
+// and returns the entry count.
+pub fn http2_settings_parse(payload_addr: i64, payload_len: i64, out_pairs_addr: i64) -> i64 {
+    if payload_len < 0 {
+        return -1;
+    }
+    if (payload_len % 6) != 0 {
+        return -1;
+    }
+    let count: i64 = payload_len / 6;
+    let mut i: i64 = 0;
+    while i < count {
+        let entry: i64 = payload_addr + i * 6;
+        let ident: i64 = (h2_u8(entry) << 8) | h2_u8(entry + 1);
+        let value: i64 = h2_be32_load(entry + 2);
+        __mind_store_i64(out_pairs_addr + i * 16, ident);
+        __mind_store_i64(out_pairs_addr + i * 16 + 8, value);
+        i = i + 1;
+    }
+    count
+}
+
+// http2_settings_write — serialize a COMPLETE SETTINGS frame (header +
+// payload) to out_addr.  pairs_addr holds count entries of two consecutive
+// i64 [identifier, value] (16 bytes per entry, same layout the parser emits).
+// SETTINGS always applies to the connection: stream id 0, flags 0 (§6.5).
+// Returns the total frame size including the 9-byte header: 9 + count*6.
+pub fn http2_settings_write(pairs_addr: i64, count: i64, out_addr: i64) -> i64 {
+    http2_frame_write_header(count * 6, 4, 0, 0, out_addr);
+    let mut i: i64 = 0;
+    while i < count {
+        let ident: i64 = __mind_load_i64(pairs_addr + i * 16);
+        let value: i64 = __mind_load_i64(pairs_addr + i * 16 + 8);
+        let entry: i64 = out_addr + 9 + i * 6;
+        __mind_store_i8(entry, (ident >> 8) & 255);
+        __mind_store_i8(entry + 1, ident & 255);
+        h2_be32_store(entry + 2, value);
+        i = i + 1;
+    }
+    9 + count * 6
+}
+
+// ---------------------------------------------------------------------------
+// WINDOW_UPDATE (RFC 9113 §6.9) — 4-byte payload:
+//   R(1) + Window Size Increment(31, BE)
+// ---------------------------------------------------------------------------
+
+// http2_window_update_parse — parse a WINDOW_UPDATE payload.  A payload
+// length other than 4 is a FRAME_SIZE_ERROR (§6.9) — returns -1.  On success
+// writes the 31-bit increment (R bit ignored) as one i64 to out_addr and
+// returns 0.
+pub fn http2_window_update_parse(payload_addr: i64, payload_len: i64, out_addr: i64) -> i64 {
+    if payload_len != 4 {
+        return -1;
+    }
+    __mind_store_i64(out_addr, h2_be32_load(payload_addr) & 2147483647);
+    0
+}
+
+// http2_window_update_write — serialize a COMPLETE WINDOW_UPDATE frame
+// (header + 4-byte payload) to out_addr.  increment is masked to 31 bits
+// (R bit sent as zero).  Returns 13 (= 9 + 4).
+pub fn http2_window_update_write(stream_id: i64, increment: i64, out_addr: i64) -> i64 {
+    http2_frame_write_header(4, 8, 0, stream_id, out_addr);
+    h2_be32_store(out_addr + 9, increment & 2147483647);
+    13
+}
+
+// ---------------------------------------------------------------------------
+// RST_STREAM (RFC 9113 §6.4) — 4-byte payload: Error Code(32, BE)
+// ---------------------------------------------------------------------------
+
+// http2_rst_stream_parse — parse a RST_STREAM payload.  A payload length
+// other than 4 is a FRAME_SIZE_ERROR (§6.4) — returns -1.  On success writes
+// the 32-bit error code as one i64 to out_addr and returns 0.
+pub fn http2_rst_stream_parse(payload_addr: i64, payload_len: i64, out_addr: i64) -> i64 {
+    if payload_len != 4 {
+        return -1;
+    }
+    __mind_store_i64(out_addr, h2_be32_load(payload_addr));
+    0
+}
+
+// http2_rst_stream_write — serialize a COMPLETE RST_STREAM frame (header +
+// 4-byte payload) to out_addr.  Returns 13 (= 9 + 4).
+pub fn http2_rst_stream_write(stream_id: i64, error_code: i64, out_addr: i64) -> i64 {
+    http2_frame_write_header(4, 3, 0, stream_id, out_addr);
+    h2_be32_store(out_addr + 9, error_code);
+    13
+}
+
+// ---------------------------------------------------------------------------
+// PING (RFC 9113 §6.7) — 8-byte opaque payload.
+// ---------------------------------------------------------------------------
+
+// http2_ping_parse — parse a PING payload.  A payload length other than 8 is
+// a FRAME_SIZE_ERROR (§6.7) — returns -1.  On success copies the 8 opaque
+// bytes to out_addr and returns 0.
+pub fn http2_ping_parse(payload_addr: i64, payload_len: i64, out_addr: i64) -> i64 {
+    if payload_len != 8 {
+        return -1;
+    }
+    h2_mem_copy(out_addr, payload_addr, 8);
+    0
+}
+
+// http2_ping_write — serialize a COMPLETE PING frame (header + 8 opaque
+// bytes read from opaque_addr) to out_addr.  flags carries ACK (0x1) when
+// echoing (§6.7).  PING applies to the connection: stream id 0.
+// Returns 17 (= 9 + 8).
+pub fn http2_ping_write(flags: i64, opaque_addr: i64, out_addr: i64) -> i64 {
+    http2_frame_write_header(8, 6, flags, 0, out_addr);
+    h2_mem_copy(out_addr + 9, opaque_addr, 8);
+    17
+}
+
+// ---------------------------------------------------------------------------
+// GOAWAY (RFC 9113 §6.8) — payload:
+//   R(1) + Last-Stream-ID(31, BE) || Error Code(32, BE) || Debug Data(*)
+// ---------------------------------------------------------------------------
+
+// http2_goaway_parse — parse a GOAWAY payload of payload_len bytes.  A
+// payload shorter than the fixed 8 bytes is malformed — returns -1.  On
+// success writes 2 i64 fields to out_fields_addr:
+//   out+0 = Last-Stream-ID (31-bit; R bit ignored)
+//   out+8 = Error Code     (32-bit)
+// copies the remaining debug data to debug_out_addr, and returns the debug
+// data length (>= 0).
+pub fn http2_goaway_parse(
+    payload_addr: i64,
+    payload_len: i64,
+    out_fields_addr: i64,
+    debug_out_addr: i64,
+) -> i64 {
+    if payload_len < 8 {
+        return -1;
+    }
+    __mind_store_i64(out_fields_addr, h2_be32_load(payload_addr) & 2147483647);
+    __mind_store_i64(out_fields_addr + 8, h2_be32_load(payload_addr + 4));
+    let debug_len: i64 = payload_len - 8;
+    h2_mem_copy(debug_out_addr, payload_addr + 8, debug_len);
+    debug_len
+}
+
+// http2_goaway_write — serialize a COMPLETE GOAWAY frame (header + 8-byte
+// fixed payload + debug_len debug bytes from debug_addr) to out_addr.
+// last_stream_id is masked to 31 bits (R bit sent as zero).  GOAWAY applies
+// to the connection: stream id 0, flags 0 (§6.8).
+// Returns the total frame size: 9 + 8 + debug_len.
+pub fn http2_goaway_write(
+    last_stream_id: i64,
+    error_code: i64,
+    debug_addr: i64,
+    debug_len: i64,
+    out_addr: i64,
+) -> i64 {
+    http2_frame_write_header(8 + debug_len, 7, 0, 0, out_addr);
+    h2_be32_store(out_addr + 9, last_stream_id & 2147483647);
+    h2_be32_store(out_addr + 13, error_code);
+    h2_mem_copy(out_addr + 17, debug_addr, debug_len);
+    17 + debug_len
+}

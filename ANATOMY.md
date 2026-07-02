@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2977 | **Est. tokens:** ~7,138,045
-**Generated:** 2026-07-02 00:27 UTC
+**Files:** 2977 | **Est. tokens:** ~7,138,293
+**Generated:** 2026-07-02 00:32 UTC
 
 ## Token Budget Guide
 
@@ -406,7 +406,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 35 | ~160,190 |
-| `tests/` | 258 | ~427,283 |
+| `tests/` | 258 | ~427,531 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -4079,7 +4079,7 @@
 - `genref_phase_jb.rs` (~3326 tok, huge) — Copyright 2025 STARGA Inc.
 - `grad_wrt_resolve.rs` (~736 tok, large) — Copyright 2025 STARGA Inc.
 - `hpack_driver.py` (~2842 tok, huge) — # Official-vector driver for std/hpack.mind (pure-MIND HPACK decoding,
-- `http2_frame_driver.py` (~3739 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
+- `http2_frame_driver.py` (~3987 tok, huge) — # Reference-vector driver for std/http2_frame.mind (pure-MIND HTTP/2 framing,
 - `if_expr.rs` (~429 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_grad.rs` (~289 tok, medium) — Copyright 2025 STARGA Inc.
 - `index_slice_preview.rs` (~376 tok, medium) — Copyright 2025 STARGA Inc.
