@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2988 | **Est. tokens:** ~7,175,964
-**Generated:** 2026-07-02 13:32 UTC
+**Files:** 2989 | **Est. tokens:** ~7,177,081
+**Generated:** 2026-07-02 14:42 UTC
 
 ## Token Budget Guide
 
@@ -395,7 +395,7 @@
 | `src/mlir/` | 3 | ~5,415 |
 | `src/ops/` | 3 | ~4,764 |
 | `src/opt/` | 4 | ~9,649 |
-| `src/package/` | 2 | ~1,668 |
+| `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
 | `src/project/` | 3 | ~27,842 |
 | `src/runtime/` | 3 | ~1,485 |
@@ -406,7 +406,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~178,669 |
-| `tests/` | 263 | ~442,731 |
+| `tests/` | 264 | ~443,639 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3831,7 +3831,7 @@
 ### `src/package/`
 
 - `manifest.rs` (~310 tok, medium) — Copyright 2025 STARGA Inc.
-- `mod.rs` (~1358 tok, large) — Copyright 2025 STARGA Inc.
+- `mod.rs` (~1567 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/parser/`
 
 - `trivia.rs` (~3811 tok, huge) — Copyright 2025 STARGA Inc.
@@ -4273,6 +4273,7 @@
 - `nested_collection_run.rs` (~818 tok, large) — Copyright 2025 STARGA Inc.
 - `ops_registry.rs` (~114 tok, small)
 - `package_basic.rs` (~491 tok, medium) — Copyright 2025 STARGA Inc.
+- `package_traversal.rs` (~908 tok, large) — Copyright 2025 STARGA Inc.
 - `parse_match_and_ref.rs` (~2780 tok, huge) — Copyright 2025 STARGA Inc.
 - `parse_phase10_surface.rs` (~4815 tok, huge) — Parse-target tests for Phase 10.5 / 10.6 surface-syntax acceptance.
 - `parser_trivia.rs` (~2706 tok, huge) — Copyright 2025 STARGA Inc.

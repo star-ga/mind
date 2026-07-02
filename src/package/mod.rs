@@ -136,25 +136,39 @@ pub fn install_package(path: &str, target_dir: &str) -> Result<()> {
     for entry in archive.entries()? {
         let mut entry = entry?;
         let entry_path = entry.path()?.into_owned();
-        if entry_path
-            .components()
-            .any(|c| matches!(c, Component::ParentDir))
-        {
-            return Err(anyhow!("package contains invalid path traversal entries"));
+        // Reject `..`, absolute paths (`/etc/x`), and Windows prefixes up front
+        // with a clear error. A bare `..` check is NOT sufficient: an absolute
+        // member escapes because `target_root.join("/abs")` == `/abs`, and a
+        // symlink member can redirect a later write outside the dir.
+        if entry_path.components().any(|c| {
+            matches!(
+                c,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        }) {
+            return Err(anyhow!(
+                "package contains an unsafe entry path: {}",
+                entry_path.display()
+            ));
         }
         if entry_path.as_path() == Path::new("package.toml") {
-            // manifest handled separately
+            // manifest handled separately (fixed safe name)
             let mut buf = Vec::new();
             entry.read_to_end(&mut buf)?;
             fs::write(target_root.join("package.toml"), buf)?;
             continue;
         }
 
-        let dest = target_root.join(entry_path);
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
+        // `unpack_in` refuses to write outside `target_root` — it sanitizes
+        // `..`, absolute members, and symlink/hardlink targets that would escape
+        // the destination, returning `false` when it skips such an entry. Fail
+        // loud rather than silently skipping so a malicious package is visible.
+        if !entry.unpack_in(&target_root)? {
+            return Err(anyhow!(
+                "package entry escapes the install directory (rejected): {}",
+                entry_path.display()
+            ));
         }
-        entry.unpack(dest)?;
     }
 
     Ok(())
