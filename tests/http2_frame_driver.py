@@ -47,7 +47,7 @@ FNS = [
     ("http2_frame_parse", 3),
     ("http2_preface_write", 1),
     ("http2_preface_check", 1),
-    ("http2_settings_parse", 3),
+    ("http2_settings_parse", 4),
     ("http2_settings_write", 3),
     ("http2_window_update_parse", 3),
     ("http2_window_update_write", 3),
@@ -55,7 +55,7 @@ FNS = [
     ("http2_rst_stream_write", 3),
     ("http2_ping_parse", 3),
     ("http2_ping_write", 3),
-    ("http2_goaway_parse", 4),
+    ("http2_goaway_parse", 5),
     ("http2_goaway_write", 5),
 ]
 for name, nargs in FNS:
@@ -133,7 +133,7 @@ record_bool("SETTINGS: header fields == (len(payload), 0x4, 0, 0)",
             (flen, ftyp, ffl, fsid) == (len(exp_payload), 0x4, 0, 0),
             f"got={(flen, ftyp, ffl, fsid)}")
 pairs = out(16 * len(sset))
-n = L.http2_settings_parse(addr(sb) + 9, flen, addr(pairs))
+n = L.http2_settings_parse(addr(sb) + 9, flen, addr(pairs), len(sset))
 record_bool("SETTINGS: entry count", n == len(sset), f"n={n}")
 got_pairs = [struct.unpack("<2q", pairs.raw[i * 16:i * 16 + 16]) for i in range(max(n, 0))]
 exp_pairs = list(sset.items())
@@ -236,7 +236,7 @@ record_bool("SETTINGS write total == 9+count*6", total == 9 + 6 * len(rt_pairs),
 fb = out(32)
 consumed = L.http2_frame_parse(addr(sout), total, addr(fb))
 pairs2 = out(16 * len(rt_pairs))
-n2 = L.http2_settings_parse(addr(sout) + 9, fields4(fb)[0], addr(pairs2))
+n2 = L.http2_settings_parse(addr(sout) + 9, fields4(fb)[0], addr(pairs2), len(rt_pairs))
 got2 = [struct.unpack("<2q", pairs2.raw[i * 16:i * 16 + 16]) for i in range(max(n2, 0))]
 record_bool("SETTINGS round-trip pairs", got2 == rt_pairs, f"got={got2}")
 hf = hf_parse(sout.raw[:total])
@@ -272,7 +272,7 @@ fb = out(32)
 L.http2_frame_parse(addr(gout), total, addr(fb))
 gfields = out(16)
 gdbg = out(len(dbg))
-dlen = L.http2_goaway_parse(addr(gout) + 9, fields4(fb)[0], addr(gfields), addr(gdbg))
+dlen = L.http2_goaway_parse(addr(gout) + 9, fields4(fb)[0], addr(gfields), addr(gdbg), len(dbg))
 lsid, ecode = struct.unpack("<2q", gfields.raw[:16])
 record_bool("GOAWAY round-trip fields",
             dlen == len(dbg) and (lsid, ecode) == (0x7FFFFFFE, 0xB)
@@ -347,7 +347,7 @@ record_bool("over-length by exactly 1 rejected (declared 12 > 11 available)",
 # §6 payload-size rules (FRAME_SIZE_ERROR -> -1).
 z = buf(b"\x00" * 16)
 record_bool("SETTINGS payload len 7 (not %6) rejected",
-            L.http2_settings_parse(addr(z), 7, addr(out(32))) == -1)
+            L.http2_settings_parse(addr(z), 7, addr(out(32)), 2) == -1)
 record_bool("WINDOW_UPDATE payload len 3 rejected",
             L.http2_window_update_parse(addr(z), 3, addr(out(8))) == -1)
 record_bool("RST_STREAM payload len 5 rejected",
@@ -357,7 +357,18 @@ record_bool("PING payload len 7 rejected",
 gsent = out(16)
 ctypes.memset(addr(gsent), 0x5A, 16)  # sentinel: reject must write no fields
 record_bool("GOAWAY payload len 7 (< fixed 8) rejected",
-            L.http2_goaway_parse(addr(z), 7, addr(gsent), addr(out(1))) == -1)
+            L.http2_goaway_parse(addr(z), 7, addr(gsent), addr(out(1)), 1) == -1)
+
+# out_cap fail-closed (the hardening): a valid payload that would exceed the
+# caller-allocated output must be REJECTED (-1), not written out of bounds.
+record_bool("SETTINGS: count > out_pairs_cap rejected",
+            L.http2_settings_parse(addr(out(12)), 12, addr(out(16)), 1) == -1)  # 2 pairs, cap 1
+record_bool("SETTINGS: count <= out_pairs_cap accepted",
+            L.http2_settings_parse(addr(out(12)), 12, addr(out(32)), 2) == 2)   # 2 pairs, cap 2
+record_bool("GOAWAY: debug_len > debug_out_cap rejected",
+            L.http2_goaway_parse(addr(out(16)), 16, addr(out(16)), addr(out(4)), 4) == -1)  # 8 dbg, cap 4
+record_bool("GOAWAY: debug_len <= debug_out_cap accepted",
+            L.http2_goaway_parse(addr(out(16)), 16, addr(out(16)), addr(out(8)), 8) == 8)   # 8 dbg, cap 8
 record_bool("GOAWAY reject: no fields written (sentinel intact)",
             gsent.raw[:16] == b"\x5a" * 16)
 # WINDOW_UPDATE R bit MUST be ignored on receipt (§6.9): payload ffffffff.
