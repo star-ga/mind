@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2977 | **Est. tokens:** ~7,138,293
-**Generated:** 2026-07-02 00:32 UTC
+**Files:** 2979 | **Est. tokens:** ~7,149,796
+**Generated:** 2026-07-02 07:11 UTC
 
 ## Token Budget Guide
 
@@ -405,8 +405,8 @@
 | `src/type_checker/` | 1 | ~8,655 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 35 | ~160,190 |
-| `tests/` | 258 | ~427,531 |
+| `std/` | 36 | ~165,131 |
+| `tests/` | 259 | ~434,093 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3905,6 +3905,7 @@
 - `string.mind` (~2326 tok, huge) — std/string.mind — RFC 0005 Phase 2: pure-MIND String.
 - `time.mind` (~257 tok, medium) — std.time — wall-clock access for evidence / audit timestamps.
 - `tls13_finished.mind` (~1420 tok, large) — std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
+- `tls13_handshake.mind` (~4941 tok, huge) — std/tls13_handshake.mind — TLS 1.3 handshake CRYPTO ORCHESTRATION in pure
 - `tls13_keyschedule.mind` (~3219 tok, huge) — std/tls13_keyschedule.mind — TLS 1.3 key schedule (RFC 8446 §7.1) in pure MIND.
 - `tls13_record.mind` (~2220 tok, huge) — std/tls13_record.mind — TLS 1.3 record-layer protection (RFC 8446 §5.1-5.3)
 - `toml.mind` (~9906 tok, huge) — std/toml.mind -- TOML 1.0 subset parser (task #258, cargo-retirement track).
@@ -4447,6 +4448,7 @@
 - `tensor_stdlib.rs` (~549 tok, large) — Copyright 2025 STARGA Inc.
 - `tensor_symbolic.rs` (~550 tok, large) — Copyright 2025 STARGA Inc.
 - `tls13_finished_driver.py` (~3085 tok, huge) — # Official-vector driver for std/tls13_finished.mind (pure-MIND TLS 1.3
+- `tls13_handshake_driver.py` (~6562 tok, huge) — # Official-vector driver for std/tls13_handshake.mind (pure-MIND TLS 1.3
 - `tls13_keyschedule_driver.py` (~2863 tok, huge) — # Official-vector driver for std/tls13_keyschedule.mind (pure-MIND TLS 1.3 key
 - `tls13_record_driver.py` (~3051 tok, huge) — # Official-vector driver for std/tls13_record.mind (pure-MIND TLS 1.3 record
 - `transpose_preview.rs` (~269 tok, medium) — Copyright 2025 STARGA Inc.
