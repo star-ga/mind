@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2983 | **Est. tokens:** ~7,168,302
-**Generated:** 2026-07-02 09:12 UTC
+**Files:** 2984 | **Est. tokens:** ~7,169,419
+**Generated:** 2026-07-02 11:41 UTC
 
 ## Token Budget Guide
 
@@ -406,7 +406,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~178,669 |
-| `tests/` | 261 | ~438,943 |
+| `tests/` | 262 | ~440,060 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~668 |
@@ -3917,6 +3917,7 @@
 - `x509.mind` (~6614 tok, huge) — std/x509.mind — minimal X.509v3 DER parsing + RSA PKCS#1 v1.5 (SHA-256)
 ### `tests/`
 
+- `alias_miscompile_run.rs` (~1117 tok, large) — Copyright 2025 STARGA Inc.
 - `array_ctor_push_get_run.rs` (~907 tok, large) — Copyright 2025 STARGA Inc.
 - `array_surface_run.rs` (~875 tok, large) — Copyright 2025 STARGA Inc.
 ### `tests/autodiff/`
