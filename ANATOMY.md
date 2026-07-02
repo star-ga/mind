@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2993 | **Est. tokens:** ~7,185,731
-**Generated:** 2026-07-02 18:57 UTC
+**Files:** 2993 | **Est. tokens:** ~7,186,315
+**Generated:** 2026-07-02 19:02 UTC
 
 ## Token Budget Guide
 
@@ -405,7 +405,7 @@
 | `src/type_checker/` | 1 | ~11,258 |
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
-| `std/` | 38 | ~179,399 |
+| `std/` | 38 | ~179,983 |
 | `tests/` | 267 | ~448,171 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
@@ -3882,7 +3882,7 @@
 - `mod.rs` (~4906 tok, huge) — Copyright 2025 STARGA Inc.
 ### `std/`
 
-- `aes_gcm.mind` (~4847 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
+- `aes_gcm.mind` (~5431 tok, huge) — std/aes_gcm.mind — AES-128 (FIPS 197) + AES-128-GCM (NIST SP 800-38D) in
 - `arena.mind` (~1323 tok, large) — std.arena — bump-pointer region allocator.
 - `async.mind` (~2460 tok, huge) — std/async.mind -- RFC 0011 Phase A: Scheduler injection + Sender/Receiver
 - `blas.mind` (~2518 tok, huge) — std/blas.mind — RFC 0006 Track A: pure-MIND surface over the six
