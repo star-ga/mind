@@ -60,7 +60,10 @@ fn nonexistent_enum_variant_rejected() {
          }\n",
     );
     let stderr = check_stderr(&bad);
-    assert!(stderr.contains("E2008"), "typo enum variant not rejected (silent miscompile); stderr: {stderr}");
+    assert!(
+        stderr.contains("E2008"),
+        "typo enum variant not rejected (silent miscompile); stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -75,7 +78,10 @@ fn valid_enum_variant_accepted() {
          }\n",
     );
     let stderr = check_stderr(&good);
-    assert!(!stderr.contains("E2008"), "valid enum variant falsely rejected: {stderr}");
+    assert!(
+        !stderr.contains("E2008"),
+        "valid enum variant falsely rejected: {stderr}"
+    );
 }
 
 #[test]
@@ -93,7 +99,10 @@ fn undeclared_assign_target_rejected() {
          }\n",
     );
     let stderr = check_stderr(&bad);
-    assert!(stderr.contains("E2009"), "undeclared assign not rejected (silent miscompile); stderr: {stderr}");
+    assert!(
+        stderr.contains("E2009"),
+        "undeclared assign not rejected (silent miscompile); stderr: {stderr}"
+    );
 }
 
 #[test]
@@ -111,5 +120,8 @@ fn declared_reassignment_accepted() {
          }\n",
     );
     let stderr = check_stderr(&good);
-    assert!(!stderr.contains("E2009"), "valid reassignment falsely rejected: {stderr}");
+    assert!(
+        !stderr.contains("E2009"),
+        "valid reassignment falsely rejected: {stderr}"
+    );
 }
