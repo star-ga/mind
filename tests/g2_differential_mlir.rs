@@ -323,8 +323,8 @@ fn collect_fixtures() -> Vec<PathBuf> {
     // the differential's RUST_ONLY set reflects only roadmap demos (features pending),
     // not deliberately-invalid inputs.
     const NEGATIVE_FIXTURES: &[&str] = &[
-        "tests/fixtures/invalid.mind",            // parse error (intentional)
-        "tests/fixtures/invalid_broadcast.mind",  // type-check error (intentional)
+        "tests/fixtures/invalid.mind",              // parse error (intentional)
+        "tests/fixtures/invalid_broadcast.mind",    // type-check error (intentional)
         "tests/shapes/broadcast_incompatible.mind", // shape type-check error (intentional)
         "tests/ir_verification/undefined_operand.mind", // IR-verify error (intentional)
     ];

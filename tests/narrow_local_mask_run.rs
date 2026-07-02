@@ -45,8 +45,14 @@ fn run_returning(body: &str, tag: &str) -> i64 {
         "import ctypes\nlib=ctypes.CDLL(r'{}')\nlib.run.restype=ctypes.c_int64\nprint(lib.run())\n",
         so.to_string_lossy()
     );
-    let out = Command::new("python3").args(["-c", &py]).output().expect("py");
-    String::from_utf8_lossy(&out.stdout).trim().parse().unwrap_or(i64::MIN)
+    let out = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("py");
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .unwrap_or(i64::MIN)
 }
 
 #[test]
@@ -62,7 +68,11 @@ fn narrow_local_masks_and_sign_extends() {
         let s = dir.join("mind_nlocal_probe.mind");
         std::fs::write(&s, "pub fn run() -> i64 { return 0 }\n").unwrap();
         let o = Command::new(&mindc)
-            .args([s.to_str().unwrap(), "--emit-shared", dir.join("p.so").to_str().unwrap()])
+            .args([
+                s.to_str().unwrap(),
+                "--emit-shared",
+                dir.join("p.so").to_str().unwrap(),
+            ])
             .output()
             .unwrap();
         let e = String::from_utf8_lossy(&o.stderr);
@@ -72,10 +82,19 @@ fn narrow_local_masks_and_sign_extends() {
         }
     }
     // unsigned narrows AND-mask
-    assert_eq!(run_returning("    let c: u8 = 200 * 2\n    return c", "u8"), 144); // 400 & 0xFF
-    assert_eq!(run_returning("    let c: u16 = 70000\n    return c", "u16"), 4464); // & 0xFFFF
+    assert_eq!(
+        run_returning("    let c: u8 = 200 * 2\n    return c", "u8"),
+        144
+    ); // 400 & 0xFF
+    assert_eq!(
+        run_returning("    let c: u16 = 70000\n    return c", "u16"),
+        4464
+    ); // & 0xFFFF
     assert_eq!(run_returning("    let c: u8 = 5\n    return c", "u8ok"), 5); // in-range preserved
     // signed narrows sign-extend
-    assert_eq!(run_returning("    let d: i8 = 200\n    return d", "i8"), -56);
+    assert_eq!(
+        run_returning("    let d: i8 = 200\n    return d", "i8"),
+        -56
+    );
     assert_eq!(run_returning("    let d: i8 = 5\n    return d", "i8ok"), 5);
 }

@@ -1740,9 +1740,9 @@ impl<'a> P<'a> {
                 self.skip_ws_and_newlines();
                 self.skip_invariant_field_value();
             } else {
-                return Err(
-                    self.err(format!("unexpected token in invariant block after `{ident}`"))
-                );
+                return Err(self.err(format!(
+                    "unexpected token in invariant block after `{ident}`"
+                )));
             }
         }
         let span = Span::new(start, self.pos);
@@ -1762,8 +1762,7 @@ impl<'a> P<'a> {
                 while !self.at_end() && self.b[self.pos] != b'\n' {
                     self.pos += 1;
                 }
-            } else if self.b.get(self.pos) == Some(&b'/')
-                && self.b.get(self.pos + 1) == Some(&b'*')
+            } else if self.b.get(self.pos) == Some(&b'/') && self.b.get(self.pos + 1) == Some(&b'*')
             {
                 self.pos += 2;
                 while !self.at_end()
@@ -3415,7 +3414,11 @@ impl<'a> P<'a> {
         self.expect(b')')?;
         let span = Span::new(start, self.pos);
         // map/set are both the std.map runtime; array is std.vec.
-        let prefix = if type_name == "array" { "vec" } else { type_name };
+        let prefix = if type_name == "array" {
+            "vec"
+        } else {
+            type_name
+        };
         let callee = if method == "new" && type_name == "set" {
             "map_new".to_string()
         } else {
@@ -4800,8 +4803,7 @@ impl<'a> P<'a> {
                 self.pos += 2; // consume `0x` / `0o` / `0b`
                 let dstart = self.pos;
                 while self.pos < self.b.len()
-                    && (self.b[self.pos] == b'_'
-                        || (self.b[self.pos] as char).is_digit(radix))
+                    && (self.b[self.pos] == b'_' || (self.b[self.pos] as char).is_digit(radix))
                 {
                     self.pos += 1;
                 }

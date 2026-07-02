@@ -90,7 +90,11 @@ fn narrow_reassign_re_masks_to_declared_width() {
 
     // ── top-level plain reassignment: 200 + 100 == 300, wraps to u8 == 44.
     assert_eq!(
-        run_with("    let c: u8 = 200\n    c = c + 100\n    return c", "top", 0),
+        run_with(
+            "    let c: u8 = 200\n    c = c + 100\n    return c",
+            "top",
+            0
+        ),
         44
     );
     // ── compound-assign desugars to the same Assign; same wrap.
@@ -100,12 +104,20 @@ fn narrow_reassign_re_masks_to_declared_width() {
     );
     // ── u16 reassignment masks to 16 bits.
     assert_eq!(
-        run_with("    let c: u16 = 65000\n    c = c + 1000\n    return c", "u16", 0),
+        run_with(
+            "    let c: u16 = 65000\n    c = c + 1000\n    return c",
+            "u16",
+            0
+        ),
         464 // 66000 & 0xFFFF == 66000 - 65536
     );
     // ── signed i8 reassignment sign-extends: 100 + 100 == 200 -> -56.
     assert_eq!(
-        run_with("    let d: i8 = 100\n    d = d + 100\n    return d", "i8", 0),
+        run_with(
+            "    let d: i8 = 100\n    d = d + 100\n    return d",
+            "i8",
+            0
+        ),
         -56
     );
     // ── then-branch reassignment re-masks.
@@ -139,7 +151,11 @@ fn narrow_reassign_re_masks_to_declared_width() {
 
     // ── the i64 (non-narrow) path is UNCHANGED: no mask, full value kept.
     assert_eq!(
-        run_with("    let c: i64 = 200\n    c = c + 100\n    return c", "i64", 0),
+        run_with(
+            "    let c: i64 = 200\n    c = c + 100\n    return c",
+            "i64",
+            0
+        ),
         300
     );
 }

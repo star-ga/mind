@@ -229,7 +229,7 @@ mod mlir_tests {
 
     use std::path::PathBuf;
 
-// mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
+    // mindc_bin() provided by tests/common (CARGO_BIN_EXE_mindc — staleness-free)
 
     fn tool_on_path(name: &str) -> bool {
         std::process::Command::new("which")

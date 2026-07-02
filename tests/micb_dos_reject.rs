@@ -214,7 +214,9 @@ macro_rules! assert_dos_rejected {
         // guard fired (not an unrelated early error such as a bad magic check).
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("MAX_MICB_ELEMENTS") || msg.contains("out of bounds") || msg.contains("exceeds"),
+            msg.contains("MAX_MICB_ELEMENTS")
+                || msg.contains("out of bounds")
+                || msg.contains("exceeds"),
             "rejection message for '{}' should indicate a count/size overflow, got: {}",
             $name,
             msg

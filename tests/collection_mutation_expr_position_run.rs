@@ -97,7 +97,10 @@ fn statement_position_mutation_still_works() {
         "import ctypes\nlib=ctypes.CDLL(r'{}')\nlib.run.restype=ctypes.c_int64\nassert lib.run()==2, lib.run()\nprint('ok')\n",
         so.to_string_lossy()
     );
-    let out = Command::new("python3").args(["-c", &py]).output().expect("py");
+    let out = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("py");
     assert!(
         out.status.success(),
         "collmut-stmt: run() != 2\n{}",

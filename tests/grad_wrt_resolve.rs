@@ -45,11 +45,12 @@ fn grad_wrt_undefined_var_reported_exactly_once() {
     // once. Type-checking already flags it as E2001 ("unknown tensor in wrt");
     // the resolve pass must not ALSO emit a second (E2002) diagnostic for the
     // same name, which would be confusing duplicate output.
-    let errs = diagnostics(
-        "let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x), wrt=[nonexistent_var])",
-    );
-    let mentions: Vec<&String> =
-        errs.iter().filter(|e| e.contains("nonexistent_var")).collect();
+    let errs =
+        diagnostics("let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x), wrt=[nonexistent_var])");
+    let mentions: Vec<&String> = errs
+        .iter()
+        .filter(|e| e.contains("nonexistent_var"))
+        .collect();
     assert!(
         !mentions.is_empty(),
         "a bogus wrt target must be reported; got {errs:?}"
@@ -66,8 +67,7 @@ fn grad_wrt_undefined_var_reported_exactly_once() {
 fn grad_wrt_defined_var_is_clean() {
     // `x` is declared — a valid wrt target must NOT be flagged (additive: no
     // new false positives).
-    let errs =
-        diagnostics("let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x), wrt=[x])");
+    let errs = diagnostics("let x: Tensor[f32,(2,3)] = 0; grad(tensor.sum(x), wrt=[x])");
     assert!(
         !has_e2002(&errs),
         "a valid wrt target must not flag E2002; got {errs:?}"

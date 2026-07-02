@@ -34,7 +34,11 @@ fn compile(src: &str, tag: &str) -> (bool, String) {
     let so = dir.join(format!("mind_bug38_{tag}.so"));
     std::fs::write(&path, src).expect("write src");
     let out = Command::new(&mindc)
-        .args([path.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .args([
+            path.to_str().unwrap(),
+            "--emit-shared",
+            so.to_str().unwrap(),
+        ])
         .output()
         .expect("run mindc");
     let mut combined = String::from_utf8_lossy(&out.stdout).into_owned();

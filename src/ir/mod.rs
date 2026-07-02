@@ -124,9 +124,7 @@ thread_local! {
 }
 
 /// Install the declared types of module-level consts for the current pass.
-pub fn set_module_const_types(
-    types: std::collections::BTreeMap<String, crate::ast::TypeAnn>,
-) {
+pub fn set_module_const_types(types: std::collections::BTreeMap<String, crate::ast::TypeAnn>) {
     MODULE_CONST_TYPES.with(|c| *c.borrow_mut() = types);
 }
 

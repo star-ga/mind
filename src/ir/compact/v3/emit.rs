@@ -502,8 +502,7 @@ fn collect_strings(instrs: &[Instr], st: &mut StringTable) {
 
 fn collect_instr_strings(instr: &Instr, st: &mut StringTable) {
     match instr {
-        Instr::ConstTensor(_, _, shape, _)
-        | Instr::ConstDenseTensor { shape, .. } => {
+        Instr::ConstTensor(_, _, shape, _) | Instr::ConstDenseTensor { shape, .. } => {
             for dim in shape {
                 if let ShapeDim::Sym(s) = dim {
                     st.intern(s);

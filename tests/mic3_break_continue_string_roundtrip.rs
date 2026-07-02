@@ -121,7 +121,10 @@ fn break_continue_module_is_mic3_fixed_point() {
     let m = module_with_break_only_name();
     let once = emit_mic3(&m);
     let twice = emit_mic3(&parse_mic3(&once).expect("re-parse"));
-    assert_eq!(once, twice, "mic@3 must be a fixed point under emit→parse→emit");
+    assert_eq!(
+        once, twice,
+        "mic@3 must be a fixed point under emit→parse→emit"
+    );
 
     // And the round-tripped module must be byte-identical to a fresh build of
     // the same logical module — i.e. the name actually present, not strings[0].

@@ -90,7 +90,10 @@ fn emit_shared(module: &str) -> PathBuf {
         String::from_utf8_lossy(&out.stderr),
     );
     assert!(
-        so_path.exists() && std::fs::metadata(&so_path).map(|m| m.len() > 0).unwrap_or(false),
+        so_path.exists()
+            && std::fs::metadata(&so_path)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false),
         ".so for std/{module}.mind was not produced or is empty"
     );
     so_path

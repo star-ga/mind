@@ -1321,10 +1321,7 @@ impl LoweringContext {
                         } else if unsigned
                             && matches!(op, BinOp::Div | BinOp::Mod)
                             && ity != "i1"
-                            && !self
-                                .const_i64_map
-                                .get(rhs)
-                                .is_some_and(|&v| v != 0)
+                            && !self.const_i64_map.get(rhs).is_some_and(|&v| v != 0)
                         {
                             // Unsigned narrow div/rem determinism — divisor-0.
                             // x86 `divl`/`divq` raise #DE on a zero divisor
@@ -1634,9 +1631,7 @@ impl LoweringContext {
                     // integer `_` arm (`arith.maxsi` / int `0` on an `f64` element
                     // is invalid MLIR — mlir-opt rejects it). Same class as the
                     // already-fixed `select_arith_op` F64 omission.
-                    DType::F64 | DType::F32 | DType::F16 | DType::BF16 => {
-                        ("0.0", "arith.maximumf")
-                    }
+                    DType::F64 | DType::F32 | DType::F16 | DType::BF16 => ("0.0", "arith.maximumf"),
                     _ => ("0", "arith.maxsi"),
                 };
                 let ty = tensor_type(&info.shape, elem);
@@ -9209,7 +9204,11 @@ fn type_ann_to_abi_mlir(ty: &crate::ast::TypeAnn) -> String {
         // MLIR layer.
         crate::ast::TypeAnn::Tensor { dtype, dims }
         | crate::ast::TypeAnn::DiffTensor { dtype, dims } => {
-            let elem = if dtype == "q16" { "i32" } else { dtype.as_str() };
+            let elem = if dtype == "q16" {
+                "i32"
+            } else {
+                dtype.as_str()
+            };
             tensor_type(&tensor_ann_shape(dims), elem)
         }
         _ => "i64".to_string(),
@@ -9548,9 +9547,7 @@ fn format_fill(fill: Option<f64>, dtype: &DType) -> String {
 /// stored as i32. No fast-math, no locale — a pure bits→text function.
 fn render_dense_elem(bits: u64, dtype: &DType) -> String {
     match dtype {
-        DType::F32 | DType::F16 | DType::BF16 => {
-            format_number(f32::from_bits(bits as u32) as f64)
-        }
+        DType::F32 | DType::F16 | DType::BF16 => format_number(f32::from_bits(bits as u32) as f64),
         DType::F64 => format_number(f64::from_bits(bits)),
         DType::I32 | DType::Q16 => (((bits as u32) as i32) as i64).to_string(),
         DType::I64 => (bits as i64).to_string(),

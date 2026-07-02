@@ -2934,11 +2934,7 @@ thread_local! {
 /// unpopulated (no fn-body context) — preserving the loose i64 ABI everywhere
 /// the narrow #38 pairing does not apply.
 fn fixed_bytes_local(name: &str) -> bool {
-    FIXED_BYTES_LOCALS.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .is_some_and(|set| set.contains(name))
-    })
+    FIXED_BYTES_LOCALS.with(|cell| cell.borrow().as_ref().is_some_and(|set| set.contains(name)))
 }
 
 /// Collect the names of `let`/`let mut` bindings whose declared annotation is a
@@ -4553,10 +4549,7 @@ fn implicit_external_determinism(callee: &str) -> Option<bool> {
     // A nondeterministic builtin is flagged regardless of any dtype suffix.
     // Match the bare name or the last dotted/`::`-qualified path segment so a
     // qualified call (`std.rand.random`, `rng::rand_uniform`) is caught too.
-    let tail = callee
-        .rsplit(['.', ':'])
-        .next()
-        .unwrap_or(callee);
+    let tail = callee.rsplit(['.', ':']).next().unwrap_or(callee);
     if NONDETERMINISTIC_BUILTINS.contains(&tail) || NONDETERMINISTIC_BUILTINS.contains(&callee) {
         return Some(false);
     }
@@ -4784,10 +4777,8 @@ fn check_determinism_annotations(
                         Some(false) => {
                             // PRNG / wall-clock / IO builtins get a precise hint;
                             // float reductions keep the q16-variant guidance.
-                            let nondet_tail = callee
-                                .rsplit(['.', ':'])
-                                .next()
-                                .unwrap_or(callee.as_str());
+                            let nondet_tail =
+                                callee.rsplit(['.', ':']).next().unwrap_or(callee.as_str());
                             let hint = if NONDETERMINISTIC_BUILTINS.contains(&nondet_tail)
                                 || NONDETERMINISTIC_BUILTINS.contains(&callee.as_str())
                             {
