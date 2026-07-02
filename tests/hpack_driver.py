@@ -196,7 +196,7 @@ record_bool("Huffman >7-bit padding rejected", n < 0, f"n={n}")
 # ---------------------------------------------------------------------------
 # hpack_decode — full header blocks, RFC 7541 Appendix C.2-C.6.
 # ---------------------------------------------------------------------------
-STATE_HDR = 32  # dynamic-table state header bytes (see std/hpack.mind)
+STATE_HDR = 40  # dynamic-table state header bytes (see std/hpack.mind)
 
 
 def new_state(max_size):
@@ -260,6 +260,19 @@ st = new_state(4096)
 b, o = buf(bytes.fromhex("80")), out(64)  # index 0 is reserved (s6.1)
 n = L.hpack_decode(addr(b), 1, addr(st), addr(o), 64)
 record_bool("indexed field with index 0 rejected", n < 0, f"n={n}")
+
+# Fail-closed: a s6.3 dynamic-table size update above the init ceiling is a
+# decoding error (RFC 7541 s6.3/s4.2) — prevents the arena heap overflow.
+# "3f45" = 001 size-update, 5-bit-prefix integer = 31 + 69 = 100.
+st = new_state(64)
+b, o = buf(bytes.fromhex("3f45")), out(64)  # size update -> 100 > cap 64
+n = L.hpack_decode(addr(b), 2, addr(st), addr(o), 64)
+record_bool("size update above init ceiling rejected", n < 0, f"n={n}")
+# The same update below the ceiling is still accepted (no field -> 0 pairs).
+st = new_state(4096)
+b, o = buf(bytes.fromhex("3f45")), out(64)  # size update -> 100 <= cap 4096
+n = L.hpack_decode(addr(b), 2, addr(st), addr(o), 64)
+record_bool("size update within init ceiling accepted", n == 0, f"n={n}")
 
 print("=" * 72)
 total = len(results)

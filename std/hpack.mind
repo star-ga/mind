@@ -18,7 +18,7 @@
 // Public API:
 //   pub fn hpack_dyn_init(dyn_table_state_addr, max_size) -> i64
 //     Initialize a dynamic-table state buffer.  The caller must allocate at
-//     least 32 + max_size bytes at dyn_table_state_addr (the arena can never
+//     least 40 + max_size bytes at dyn_table_state_addr (the arena can never
 //     hold more than max_size bytes because every entry costs 32 octets more
 //     than the bytes it stores, §4.1).  Returns 0.
 //   pub fn hpack_decode(block_addr, block_len, dyn_table_state_addr,
@@ -44,16 +44,22 @@
 //                         name_len + value_len + 32)
 //   state+16 : count    — number of live dynamic entries
 //   state+24 : used     — bytes used in the arena
-//   state+32…: arena    — entry records OLDEST FIRST, newest appended at the
+//   state+32 : cap      — IMMUTABLE arena ceiling captured at init (= the
+//                         max_size the caller sized the arena for); a §6.3
+//                         size update may never raise max_size above it.
+//   state+40…: arena    — entry records OLDEST FIRST, newest appended at the
 //                         end; each record is
 //                           name_len u16 LE, value_len u16 LE, name, value
 //                         Eviction (§4.3) drops the record at the front.
 //   Dynamic index d = HPACK index − 62 (newest-first, §2.3.3) is the record
 //   at oldest-first position count − 1 − d.
 //
-// §6.3 note: a dynamic-table size update is accepted as-is (evicting as
-// needed).  Enforcing the SETTINGS_HEADER_TABLE_SIZE protocol bound is the
-// HTTP/2 layer's job, not this codec's.
+// §6.3 note: a dynamic-table size update adopts the new maximum (evicting
+// oldest-first as needed).  Per §6.3/§4.2 a size update exceeding the limit —
+// here the immutable arena ceiling captured at init — is a DECODING ERROR
+// (hpack_decode returns -1, fail closed): this codec is the only component
+// that sees the update, so the SETTINGS_HEADER_TABLE_SIZE bound cannot be
+// deferred upward to the HTTP/2 layer.
 //
 // Determinism: pure integer arithmetic, no floats, no clocks, no external
 // calls.  Every error path fails closed with a nonzero / negative return.
@@ -518,6 +524,7 @@ pub fn hpack_dyn_init(dyn_table_state_addr: i64, max_size: i64) -> i64 {
     __mind_store_i64(dyn_table_state_addr + 8, 0);
     __mind_store_i64(dyn_table_state_addr + 16, 0);
     __mind_store_i64(dyn_table_state_addr + 24, 0);
+    __mind_store_i64(dyn_table_state_addr + 32, max_size);
     0
 }
 
@@ -525,7 +532,7 @@ pub fn hpack_dyn_init(dyn_table_state_addr: i64, max_size: i64) -> i64 {
 // front of the arena.  Remaining records shift down (forward overlapping
 // copy is safe: dst < src).
 fn hpack_dyn_evict_one(state: i64) -> i64 {
-    let arena: i64 = state + 32;
+    let arena: i64 = state + 40;
     let nl: i64 = hpack_u16_load(arena);
     let vl: i64 = hpack_u16_load(arena + 2);
     let rec: i64 = 4 + nl + vl;
@@ -540,6 +547,16 @@ fn hpack_dyn_evict_one(state: i64) -> i64 {
 // hpack_dyn_set_max — §6.3 dynamic table size update: adopt the new maximum
 // and evict oldest-first until the table fits (§4.3).
 fn hpack_dyn_set_max(state: i64, new_max: i64) -> i64 {
+    // RFC 7541 §6.3/§4.2: a size update may not exceed the limit.  Here the
+    // limit is the IMMUTABLE arena ceiling captured at init (state+32);
+    // adopting a larger max would disable eviction and overflow the arena, so
+    // treat an over-limit update as a decoding error (return -1) rather than a
+    // silent clamp.  This codec is the only component that sees the update, so
+    // the bound cannot be deferred to an outer layer.
+    let cap: i64 = __mind_load_i64(state + 32);
+    if new_max > cap {
+        return -1;
+    }
     __mind_store_i64(state, new_max);
     let mut sz: i64 = __mind_load_i64(state + 8);
     while sz > new_max {
@@ -573,7 +590,7 @@ fn hpack_dyn_insert(state: i64, name: i64, nl: i64, val: i64, vl: i64) -> i64 {
         return 0;
     }
     let used: i64 = __mind_load_i64(state + 24);
-    let arena: i64 = state + 32;
+    let arena: i64 = state + 40;
     hpack_u16_store(arena + used, nl);
     hpack_u16_store(arena + used + 2, vl);
     hpack_memcopy(arena + used + 4, name, nl);
@@ -597,7 +614,7 @@ fn hpack_dyn_get(state: i64, d: i64, out4: i64) -> i64 {
         return 1;
     }
     let target: i64 = cnt - 1 - d;
-    let arena: i64 = state + 32;
+    let arena: i64 = state + 40;
     let mut p: i64 = 0;
     let mut i: i64 = 0;
     while i < target {
@@ -805,7 +822,9 @@ fn hpack_do_szupd(ctx: i64) -> i64 {
     let new_max: i64 = __mind_load_i64(out2);
     __mind_store_i64(ctx + 16, __mind_load_i64(out2 + 8));
     __mind_free(out2);
-    hpack_dyn_set_max(__mind_load_i64(ctx + 56), new_max);
+    if hpack_dyn_set_max(__mind_load_i64(ctx + 56), new_max) != 0 {
+        return 2;
+    }
     0
 }
 
