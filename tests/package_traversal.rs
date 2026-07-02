@@ -1,5 +1,4 @@
 #![cfg(feature = "pkg")]
-
 // Copyright 2025 STARGA Inc.
 // Licensed under the Apache License, Version 2.0.
 // Part of the MIND project (Machine Intelligence Native Design).
@@ -26,7 +25,10 @@ use tempfile::tempdir;
 /// Build a `.mindpkg` (gzip tar) containing a valid `package.toml` plus a
 /// symlink entry that escapes to `escape_target`, then a file written *through*
 /// that symlink. Returns the package path.
-fn build_malicious_pkg(dir: &std::path::Path, escape_target: &std::path::Path) -> std::path::PathBuf {
+fn build_malicious_pkg(
+    dir: &std::path::Path,
+    escape_target: &std::path::Path,
+) -> std::path::PathBuf {
     let manifest = b"name = \"evil\"\nversion = \"0.1.0\"\nauthors = [\"x\"]\nfiles = []\n";
 
     let buf = Vec::new();
@@ -85,10 +87,7 @@ fn install_rejects_symlink_escape() {
 
     // Install may error (preferred) or skip the entry, but it MUST NOT write
     // the payload outside target_root.
-    let _ = install_package(
-        pkg.to_str().unwrap(),
-        target.to_str().unwrap(),
-    );
+    let _ = install_package(pkg.to_str().unwrap(), target.to_str().unwrap());
 
     assert!(
         !escape_file.exists(),
