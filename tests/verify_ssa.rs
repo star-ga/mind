@@ -638,7 +638,11 @@ fn ssa_while_carry_undefined_post_id_rejected() {
     let m = while_carry_module(ValueId(99));
     let err = check_ssa_well_formed(&m)
         .expect_err("undefined loop-carry back-edge id must be rejected by check_ssa_well_formed");
-    assert_eq!(err.value, ValueId(99), "violation must name the undefined %99");
+    assert_eq!(
+        err.value,
+        ValueId(99),
+        "violation must name the undefined %99"
+    );
     assert_eq!(
         err.rule,
         SsaRule::DefineBeforeUse,

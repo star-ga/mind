@@ -181,7 +181,9 @@ fn deterministic_calling_rng_reports_code() {
     // alone returned `None` (unknown, unflagged) and let nondeterministic RNG
     // slip past. They are now in the explicit nondeterministic-builtin set.
     for callee in ["random", "rand_normal", "rand_uniform"] {
-        let c = codes(&format!("#[deterministic]\nfn f() -> i64 {{ {callee}(0) }}\n"));
+        let c = codes(&format!(
+            "#[deterministic]\nfn f() -> i64 {{ {callee}(0) }}\n"
+        ));
         assert!(
             c.contains(&"determinism::nondeterministic_in_deterministic"),
             "RNG call `{callee}` must be flagged in a #[deterministic] fn; saw {c:?}"
@@ -193,7 +195,9 @@ fn deterministic_calling_rng_reports_code() {
 fn deterministic_calling_wallclock_reports_code() {
     // Wall-clock / environment reads are nondeterministic too.
     for callee in ["now", "time_now", "read_line"] {
-        let c = codes(&format!("#[deterministic]\nfn f() -> i64 {{ {callee}(0) }}\n"));
+        let c = codes(&format!(
+            "#[deterministic]\nfn f() -> i64 {{ {callee}(0) }}\n"
+        ));
         assert!(
             c.contains(&"determinism::nondeterministic_in_deterministic"),
             "wall-clock/IO call `{callee}` must be flagged in a #[deterministic] fn; saw {c:?}"

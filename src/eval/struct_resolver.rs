@@ -480,7 +480,14 @@ fn walk_expr(
         Node::ForEach {
             collection, body, ..
         } => {
-            walk_expr(collection, vars, fn_returns, struct_defs, field_types, types);
+            walk_expr(
+                collection,
+                vars,
+                fn_returns,
+                struct_defs,
+                field_types,
+                types,
+            );
             let mut local = vars.clone();
             for stmt in body {
                 walk_stmt(

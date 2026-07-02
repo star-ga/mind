@@ -8,7 +8,12 @@
 //! (`map_new`/`vec_new`); a real `map < x` comparison is untouched (position is
 //! restored if it isn't a `<…>.method(…)` form).
 
-#![cfg(all(unix, feature = "mlir-build", feature = "std-surface", feature = "cross-module-imports"))]
+#![cfg(all(
+    unix,
+    feature = "mlir-build",
+    feature = "std-surface",
+    feature = "cross-module-imports"
+))]
 
 mod common;
 use common::mindc_bin;
@@ -28,18 +33,38 @@ pub fn run() -> i64 {
 #[test]
 fn collection_ctor_runs() {
     let mindc = mindc_bin();
-    if !mindc.exists() { println!("skip: no mindc"); return; }
+    if !mindc.exists() {
+        println!("skip: no mindc");
+        return;
+    }
     let dir = std::env::temp_dir();
     let src = dir.join("mind_collection_ctor_run.mind");
     let so = dir.join("mind_collection_ctor_run.so");
     std::fs::write(&src, SRC).expect("write");
-    let out = Command::new(&mindc).args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()]).output().expect("run");
+    let out = Command::new(&mindc)
+        .args([src.to_str().unwrap(), "--emit-shared", so.to_str().unwrap()])
+        .output()
+        .expect("run");
     if !out.status.success() {
         let e = String::from_utf8_lossy(&out.stderr);
-        if e.contains("mlir-build") && e.contains("requires") { println!("skip: needs mlir-build"); return; }
+        if e.contains("mlir-build") && e.contains("requires") {
+            println!("skip: needs mlir-build");
+            return;
+        }
         panic!("compile failed:\n{e}");
     }
-    let py = format!("import ctypes\nl=ctypes.CDLL(r'{}')\nl.run.restype=ctypes.c_int64\nr=l.run();assert r==7,'run='+str(r)\nprint('ok')\n", so.to_string_lossy());
-    let out = Command::new("python3").args(["-c", &py]).output().expect("py");
-    assert!(out.status.success(), "check failed:\n{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let py = format!(
+        "import ctypes\nl=ctypes.CDLL(r'{}')\nl.run.restype=ctypes.c_int64\nr=l.run();assert r==7,'run='+str(r)\nprint('ok')\n",
+        so.to_string_lossy()
+    );
+    let out = Command::new("python3")
+        .args(["-c", &py])
+        .output()
+        .expect("py");
+    assert!(
+        out.status.success(),
+        "check failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
