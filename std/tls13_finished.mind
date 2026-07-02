@@ -1,0 +1,121 @@
+// std/tls13_finished.mind — TLS 1.3 Finished-message MAC + transcript hash
+// (RFC 8446 §4.4.1 Transcript-Hash, §4.4.4 Finished) in pure MIND.
+//
+// Phase 1.3 of the HTTP-provable-stack.  COMPOSES three already-verified
+// modules — NOTHING cryptographic is reimplemented here:
+//   - std/sha256.mind            sha256(in_addr, in_len, out_addr)
+//   - std/hkdf.mind              hmac_sha256(key_addr, key_len, msg_addr,
+//                                            msg_len, out_addr)
+//   - std/tls13_keyschedule.mind tls13_finished_key(base_key_addr, out_addr)
+//                                = HKDF-Expand-Label(BaseKey,"finished","",32)
+//
+// RFC 8446 §4.4.4:
+//   finished_key = HKDF-Expand-Label(BaseKey, "finished", "", Hash.length)
+//   verify_data  = HMAC(finished_key, Transcript-Hash(Handshake Context,
+//                                                     Certificate*, CertificateVerify*))
+// Ciphersuite TLS_AES_128_GCM_SHA256: Hash = SHA-256, Hash.length = 32, so
+// finished_key, transcript hash and verify_data are all 32 bytes.
+//
+// Combined-file build (order matters — deps must precede dependents):
+//   cat std/sha256.mind                                    > /tmp/tls13f.mind
+//   grep -v '^import std.sha256;' std/hkdf.mind           >> /tmp/tls13f.mind
+//   grep -vE '^import std\.(sha256|hkdf);' std/tls13_keyschedule.mind \
+//                                                         >> /tmp/tls13f.mind
+//   grep -vE '^import std\.' std/tls13_finished.mind      >> /tmp/tls13f.mind
+//   mindc /tmp/tls13f.mind --emit-shared /tmp/tls13f.so   # needs mlir-build
+//
+// Naming: every symbol is tls13_*-prefixed — clear of libc/libm (ELF symbol
+// interposition footgun; -Wl,-Bsymbolic-functions binds intra-module calls
+// locally) and of the sha256/hkdf/keyschedule entry points.
+// Buffer layout: one byte per offset, matching the composed modules.
+// Determinism: pure integer arithmetic, no floats, no clocks, no external calls.
+
+import std.sha256;
+import std.hkdf;
+import std.tls13_keyschedule;
+
+// ---------------------------------------------------------------------------
+// Transcript-Hash (RFC 8446 §4.4.1):
+//   Transcript-Hash(M1, M2, ... Mn) = Hash(M1 || M2 || ... || Mn)
+// The caller supplies the already-concatenated handshake-message buffer
+// (each message including its 4-byte handshake header, NO record-layer
+// headers).  Hash = SHA-256, so this is exactly sha256 over the buffer;
+// msgs_len = 0 yields SHA-256("") — the empty-transcript case.
+// Writes 32 bytes to out_addr.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_transcript_hash(msgs_addr: i64, msgs_len: i64, out_addr: i64) -> i64 {
+    sha256(msgs_addr, msgs_len, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Finished verify_data (RFC 8446 §4.4.4):
+//   verify_data = HMAC(finished_key, Transcript-Hash(...))
+// `finished_key_addr`   — the 32-byte finished_key (from tls13_finished_key).
+// `transcript_hash_addr`— the 32-byte transcript hash (tls13_transcript_hash).
+// Writes the 32-byte verify_data to out_addr.  Pure composition: one call to
+// the existing hmac_sha256 (key = finished_key, msg = transcript hash).
+// ---------------------------------------------------------------------------
+
+pub fn tls13_finished_verify_data(
+    finished_key_addr: i64,
+    transcript_hash_addr: i64,
+    out_addr: i64,
+) -> i64 {
+    hmac_sha256(finished_key_addr, 32, transcript_hash_addr, 32, out_addr);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Finished verification (RFC 8446 §4.4.4):
+// "Recipients of Finished messages MUST verify that the contents are correct
+//  and if incorrect MUST terminate the connection with a decrypt_error alert."
+// Computes the expected verify_data, then compares against the received 32
+// bytes in CONSTANT TIME: XOR-accumulate every byte difference into `diff`
+// with no data-dependent branch and no early exit, so the comparison's timing
+// is independent of WHERE (or whether) the MACs differ.
+// Returns 1 if equal, 0 otherwise — fail-closed: any mismatch returns 0.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_finished_check(
+    finished_key_addr: i64,
+    transcript_hash_addr: i64,
+    received_vd_addr: i64,
+) -> i64 {
+    let expected: i64 = __mind_alloc(32);
+    hmac_sha256(finished_key_addr, 32, transcript_hash_addr, 32, expected);
+
+    // Constant-time compare: always walks all 32 bytes, branch-free body.
+    let mut diff: i64 = 0;
+    let mut i: i64 = 0;
+    while i < 32 {
+        diff = diff | (__mind_load_i8(expected + i) ^ __mind_load_i8(received_vd_addr + i));
+        i = i + 1;
+    }
+    if diff == 0 {
+        1
+    } else {
+        0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// One-shot: base traffic secret -> verify_data (RFC 8446 §4.4.4 both steps):
+//   finished_key = HKDF-Expand-Label(BaseKey, "finished", "", 32)
+//                  [= the existing tls13_finished_key]
+//   verify_data  = HMAC(finished_key, transcript_hash)
+// `base_secret_addr` is the 32-byte [sender]_handshake_traffic_secret (or
+// application traffic secret for post-handshake auth).  Writes 32 bytes.
+// ---------------------------------------------------------------------------
+
+pub fn tls13_finished_from_secret(
+    base_secret_addr: i64,
+    transcript_hash_addr: i64,
+    out_addr: i64,
+) -> i64 {
+    let fk: i64 = __mind_alloc(32);
+    tls13_finished_key(base_secret_addr, fk);
+    hmac_sha256(fk, 32, transcript_hash_addr, 32, out_addr);
+    0
+}
