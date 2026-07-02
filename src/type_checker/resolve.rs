@@ -112,6 +112,17 @@ pub const UNKNOWN_IDENT_CODE: &str = "E2002";
 /// Undefined-call diagnostic code (issue #23). A call whose callee resolves to
 /// nothing — not a local, not a module fn, not an intrinsic, not an import.
 pub const UNKNOWN_CALL_CODE: &str = "E2003";
+/// Unknown-enum-variant diagnostic code. A qualified `Enum::Variant` path whose
+/// HEAD names a locally-declared enum but whose variant is not one of that
+/// enum's declared variants — a silent-miscompile typo (the lowerer would fold
+/// the unknown variant to discriminant tag 0). Deferred for non-local /
+/// cross-module / associated-fn heads (those are a separate resolution concern).
+pub const UNKNOWN_VARIANT_CODE: &str = "E2008";
+/// Undeclared-assignment-target diagnostic code. An assignment whose l-value
+/// name is bound NOWHERE — not in any active local scope frame and not a
+/// module-level name. The loose lowerer would otherwise silently auto-create a
+/// fresh variable, turning a typo (`conter = counter + 1`) into wrong output.
+pub const UNDECLARED_ASSIGN_CODE: &str = "E2009";
 
 /// An unresolved reference found by the pass, with the kind that selects the
 /// diagnostic code/message. Spans are AST byte-offset spans; the caller renders
@@ -122,6 +133,13 @@ pub struct Unresolved {
     pub is_call: bool,
     /// The closest in-scope name (edit-distance "did you mean"), if any.
     pub suggestion: Option<String>,
+    /// `Some(enum_name)` iff this is a qualified `Enum::Variant` path whose head
+    /// names a locally-declared enum but whose variant is unknown — selects the
+    /// `UNKNOWN_VARIANT_CODE` diagnostic instead of the bare-undefined codes.
+    pub variant_of: Option<String>,
+    /// `true` iff this is an assignment to a name bound nowhere — selects the
+    /// `UNDECLARED_ASSIGN_CODE` diagnostic.
+    pub undeclared_assign: bool,
 }
 
 /// The module-level resolution context, built once per module.
@@ -130,6 +148,11 @@ struct ModuleSyms {
     /// struct/enum/type-alias names, in-file extern fn names, and (when the
     /// project table is populated) cross-module imported symbols.
     names: BTreeSet<String>,
+    /// Locally-declared enums: enum name -> its declared variant-name set. Used
+    /// ONLY to validate a qualified `Enum::Variant` value/constructor path whose
+    /// head is one of THESE enums; a head not in this map (imported enum,
+    /// associated fn on a struct, cross-module type) is deferred as before.
+    enums: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// Collect the top-level declaration names a module defines (fn / const / let /
@@ -175,6 +198,30 @@ pub(crate) fn collect_decl_names(module: &Module, out: &mut BTreeSet<String>) {
                     items: stmts.clone(),
                 };
                 collect_decl_names(&inner, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Collect every locally-declared enum's variant-name set, recursing into the
+/// `Block` that a `module NAME { ... }` body unwraps into. Mirrors
+/// `collect_decl_names`'s recursion so an enum declared inside a `module { }`
+/// block is registered too. Pure metadata — never resolves imports.
+fn collect_enum_variants(module: &Module, out: &mut BTreeMap<String, BTreeSet<String>>) {
+    for item in &module.items {
+        match item {
+            Node::EnumDef { name, variants, .. } => {
+                let set = out.entry(name.clone()).or_default();
+                for v in variants {
+                    set.insert(v.name.clone());
+                }
+            }
+            Node::Block { stmts, .. } => {
+                let inner = Module {
+                    items: stmts.clone(),
+                };
+                collect_enum_variants(&inner, out);
             }
             _ => {}
         }
@@ -236,7 +283,9 @@ fn collect_module_syms(module: &Module, injected: &BTreeSet<String>) -> ModuleSy
     for exports in std_exports.values() {
         names.extend(exports.iter().cloned());
     }
-    ModuleSyms { names }
+    let mut enums: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    collect_enum_variants(module, &mut enums);
+    ModuleSyms { names, enums }
 }
 
 /// Collect the symbolic shape-dimension identifiers declared in a type
@@ -479,6 +528,28 @@ impl<'a> Resolver<'a> {
         false
     }
 
+    /// Classify a qualified `Enum::Variant` value/constructor path. Returns
+    /// `Some(enum_name)` ONLY when the head names a locally-declared enum but the
+    /// trailing segment is NOT one of that enum's variants — a typo the lowerer
+    /// would silently fold to discriminant tag 0. Everything else returns `None`
+    /// (bare names, deeper `a::b::c` paths, and heads that are not a local enum —
+    /// imported enums, struct associated fns, cross-module types — which remain a
+    /// deferred separate-resolution concern, never a false positive here).
+    fn unknown_variant(&self, name: &str) -> Option<String> {
+        let (head, rest) = name.split_once("::")?;
+        // Only a simple two-segment `Enum::Variant` path is validated; a deeper
+        // module-qualified path (`a::B::C`) is deferred.
+        if rest.contains("::") {
+            return None;
+        }
+        let variants = self.syms.enums.get(head)?;
+        if variants.contains(rest) {
+            None
+        } else {
+            Some(head.to_string())
+        }
+    }
+
     /// Register every binding introduced by a pattern (`match` arms). Bare
     /// idents and enum-variant payload sub-patterns bind names; literals and
     /// `_` bind nothing.
@@ -522,25 +593,56 @@ impl<'a> Resolver<'a> {
         match node {
             // ── Reference sites ───────────────────────────────────────────
             Node::Lit(Literal::Ident(name), span) => {
-                if !self.ident_resolvable(name) {
+                // A qualified `Enum::Variant` value whose head is a local enum
+                // but whose variant is unknown is a silent-miscompile typo
+                // (folds to tag 0) — flag it before the generic resolvability
+                // check, which `::` otherwise makes pass unconditionally.
+                if let Some(enum_name) = self.unknown_variant(name) {
                     let suggestion = suggest(name, &self.scopes, self.syms);
                     self.out.push(Unresolved {
                         name: name.clone(),
                         span: *span,
                         is_call: false,
                         suggestion,
+                        variant_of: Some(enum_name),
+                        undeclared_assign: false,
+                    });
+                } else if !self.ident_resolvable(name) {
+                    let suggestion = suggest(name, &self.scopes, self.syms);
+                    self.out.push(Unresolved {
+                        name: name.clone(),
+                        span: *span,
+                        is_call: false,
+                        suggestion,
+                        variant_of: None,
+                        undeclared_assign: false,
                     });
                 }
             }
             Node::Lit(_, _) => {}
             Node::Call { callee, args, span } => {
-                if !self.call_resolvable(callee) {
+                // A payload-variant constructor typo (`Color::Rde(x)`) is the
+                // call-position twin of the value-position case above: head is a
+                // local enum, variant is unknown → silent fold to tag 0.
+                if let Some(enum_name) = self.unknown_variant(callee) {
                     let suggestion = suggest(callee, &self.scopes, self.syms);
                     self.out.push(Unresolved {
                         name: callee.clone(),
                         span: *span,
                         is_call: true,
                         suggestion,
+                        variant_of: Some(enum_name),
+                        undeclared_assign: false,
+                    });
+                } else if !self.call_resolvable(callee) {
+                    let suggestion = suggest(callee, &self.scopes, self.syms);
+                    self.out.push(Unresolved {
+                        name: callee.clone(),
+                        span: *span,
+                        is_call: true,
+                        suggestion,
+                        variant_of: None,
+                        undeclared_assign: false,
                     });
                 }
                 // Skip arg descent ONLY for the dtype-literal tensor
@@ -569,13 +671,29 @@ impl<'a> Resolver<'a> {
                     self.scopes.bind(nm);
                 }
             }
-            Node::Assign { name, value, .. } => {
-                // `name` is an l-value; an undefined assign target is a
-                // distinct concern (and the parser/lowerer handles it). We
-                // only resolve the RHS here to avoid false positives on
-                // forward-declared module state.
+            Node::Assign { name, value, span } => {
+                // `name` is an l-value. Resolve the RHS first.
                 self.walk(value);
-                let _ = name;
+                // Silent-miscompile guard: the loose lowerer auto-creates a
+                // fresh variable for an assignment to an unbound name, turning a
+                // typo (`conter = counter + 1`) into wrong runtime output with
+                // no diagnostic. Flag an assign target that is PROVABLY neither
+                // (i) bound in any active local scope frame NOR (ii) a known
+                // module-level name (fn/const/let/struct/enum/type-alias/extern +
+                // injected cross-module symbols). Forward-declared module state
+                // is a module-level name, so it still resolves — when in doubt
+                // (any known name), we keep accepting.
+                if !self.scopes.contains(name) && !self.syms.names.contains(name) {
+                    let suggestion = suggest(name, &self.scopes, self.syms);
+                    self.out.push(Unresolved {
+                        name: name.clone(),
+                        span: *span,
+                        is_call: false,
+                        suggestion,
+                        variant_of: None,
+                        undeclared_assign: true,
+                    });
+                }
             }
             Node::For {
                 var,
