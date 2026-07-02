@@ -34,6 +34,13 @@ chain whose `trace_hash = SHA-256` of the canonical `mic@3` bytes. Identical
 confirms it without trusting the build host. No other toolchain ships a verifiable
 determinism contract. ✅
 
+The verifier also re-derives the artifact's **floating-point contract mode**
+(`strict` / `relaxed`) directly from the hashed body — so `mind verify
+--require-strict-fp ./artifact` fails closed unless the artifact was lowered on
+the strict path (no FMA-contraction, no `f32` reduction reassociation). Because
+the mode is a pure function of bytes the `trace_hash` already attests, this is
+build-host-independent and adds no wire-format surface. ✅
+
 ---
 
 ## 1. Integer semantics — ✅ shipped (v0.10.0)
