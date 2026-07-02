@@ -1,0 +1,7 @@
+# Leg 1 (determinism) + Leg 2 (perf) foil dependencies.
+# CuPy is the GPU benchmark FOIL, MIT-licensed — used ONLY by this bench.
+# It is NEVER linked into or shipped with any MIND artifact.
+#
+# Pick the wheel matching your CUDA toolkit (this box: CUDA 12 / cupy-cuda12x).
+cupy-cuda12x>=14.0
+# tomllib is stdlib on Python 3.11+; no extra dep for reading the MIND fixtures.

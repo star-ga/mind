@@ -1,0 +1,66 @@
+{
+  "leg": "2_perf",
+  "host": {
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "vram_free_gb": 4.320919552,
+    "vram_total_gb": 10.353967104,
+    "cupy_version": "14.1.1"
+  },
+  "config": {
+    "sizes": [
+      512,
+      1024,
+      2048,
+      4096
+    ],
+    "warmup": 3,
+    "iters": 20,
+    "required_free_gb": 4.0
+  },
+  "mind": {
+    "workload": "gemm-q16-64x64x64 (deterministic Q16.16, CPU integer)",
+    "throughput_command": "cargo bench --features 'mlir-build std-surface cross-module-imports' --bench det_matmul_q16",
+    "note": "MIND det-GEMM is a CPU integer kernel; its GFLOP/s is on a different substrate than cuBLAS GPU float. The load-bearing claim is cross-substrate bit-identity, not raw GPU FLOPs."
+  },
+  "status": "ran",
+  "cupy_gemm": [
+    {
+      "n": 512,
+      "median_ms": 0.050175998359918594,
+      "gflops": 5349.877725889568
+    },
+    {
+      "n": 1024,
+      "median_ms": 0.1730560064315796,
+      "gflops": 12409.182970768723
+    },
+    {
+      "n": 2048,
+      "median_ms": 0.8249599933624268,
+      "gflops": 20825.093728457243
+    },
+    {
+      "n": 4096,
+      "median_ms": 6.3006720542907715,
+      "gflops": 21813.37995181066
+    }
+  ],
+  "mind_det_gemm": {
+    "workload": "gemm-q16 (deterministic Q16.16, CPU integer, cross-substrate byte-identical)",
+    "source": "target/criterion/gemm_apples_to_apples/mind_q16/{64,128} estimates.json (median point estimate)",
+    "points": [
+      {
+        "n": 64,
+        "median_us": 60.42,
+        "gflops": 8.7
+      },
+      {
+        "n": 128,
+        "median_us": 463.1,
+        "gflops": 9.1
+      }
+    ],
+    "note": "Different hardware than CuPy: MIND det-GEMM is a CPU integer kernel; CuPy is GPU float32 cuBLAS. GFLOP/s are NOT on the same substrate. The determinism property (byte-identical x86==ARM) is what MIND adds and CuPy lacks."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "leg": "1_determinism",
+  "host": {
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3",
+    "cupy_version": "14.1.1",
+    "gpu": "NVIDIA GeForce RTX 3080"
+  },
+  "mind": {
+    "workload": "gemm-q16-64x64x64",
+    "encoding": "i32_le_matrix",
+    "source": "committed gate reference (reference_hashes.toml) \u2014 RFC 0020 \u00a710",
+    "hash_avx2_x86": "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f",
+    "hash_neon_arm": "92e2cb75d74d83a4a398d78d9ac560f195279c31814972c892f856f675faea0f",
+    "bit_identical_x86_arm": true
+  },
+  "cupy": {
+    "probes": [
+      {
+        "probe": "scatter_add_f32_8M",
+        "op": "cupyx.scatter_add (atomic)",
+        "n": 8388608,
+        "bins": 257,
+        "dtype": "float32",
+        "input_hashes": [
+          "83260ff0b1c3f80b5793eae89a7f342c5461db1e97722e3e18fe15ee2b132d99",
+          "5c4148d35dbc5b9dbc674bef189f0910597b969a3791cb8d6c13c2b27a03e572"
+        ],
+        "output_hashes": [
+          "181de2c3a8e5f15071f65b3cc731f718ac29ba908e676b3a0793c2edde282f29",
+          "99b982682b80321122157d785bb95a0678af82993e67cbaee6ec310a09487463",
+          "d1474fc90daa3db33118ee1956669ca66d5f70978c8c3a20713739cb606f6a3c",
+          "721139f8bfd69dcc5b7aa056933643618ba0204df13be3fbbdadccf1e203ec25",
+          "96363fdc8d106533ef893c05b0a9a06d2c846c2462434732e54c2eac0199ee12",
+          "3d126e6041ebe67b9b0db60be9e715be355df3ed83972d5bf376e059c936751c",
+          "c843ea4cabad187c344917a1942fe3b0af8e9e4b4534300de0c4778a4a4211c9",
+          "104a530f45f503de92bf6fc6d1b4dbd59b956552d23e6b42e2609242fcedadd7"
+        ],
+        "distinct_output_hashes": 8,
+        "diverged": true
+      },
+      {
+        "probe": "reduction_f32_64M",
+        "op": "cupy.sum",
+        "n": 67108864,
+        "dtype": "<class 'numpy.float32'>",
+        "input_hash": "303e47d7a2f0a007f1f3536c7521e4ce8014b055cc2398171896aa7f22212aac",
+        "output_hashes": [
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c",
+          "e70279430c5ac6cb98297cdba0237e80dbd82e5c4c3a70bee1e2518acb6e527c"
+        ],
+        "distinct_output_hashes": 1,
+        "diverged": false
+      },
+      {
+        "probe": "reduction_f32_16M",
+        "op": "cupy.sum",
+        "n": 16777216,
+        "dtype": "<class 'numpy.float32'>",
+        "input_hash": "fa3f65246ff43c4c7c1b5f65075a9b1a9a1bccc46db07ddb04aede3404648186",
+        "output_hashes": [
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f",
+          "2f7143a180b05d310351b3f673e8570760c2cb65d2b7103f93bf2af2d8b4392f"
+        ],
+        "distinct_output_hashes": 1,
+        "diverged": false
+      },
+      {
+        "probe": "gemm_f32_1024",
+        "op": "cupy matmul (cuBLAS)",
+        "m": 1024,
+        "dtype": "<class 'numpy.float32'>",
+        "input_hashes": [
+          "7d63e53b406383167c1c402914bd6ce8ce5cdf0c1ccb2292ad2c4da0f061d3d5",
+          "65b584ae34ab30fd54571f545368825832693dfc07641938718463ee816a1df0"
+        ],
+        "output_hashes": [
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38",
+          "c7f474e7487fa933790b2608f048d1ffc726cb471aee6b0a67d08214d525ae38"
+        ],
+        "distinct_output_hashes": 1,
+        "diverged": false
+      },
+      {
+        "probe": "gemm_f32_2048",
+        "op": "cupy matmul (cuBLAS)",
+        "m": 2048,
+        "dtype": "<class 'numpy.float32'>",
+        "input_hashes": [
+          "d60d74efab5ece7e51cfcad347ff75355b1fd235f93cadcc41e3a63403db96de",
+          "2f136378ec75e8a97510126ef663cddce0a5d8676dfd4b2208aa1e5bb127bd47"
+        ],
+        "output_hashes": [
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434",
+          "bb9105d41555a1ef6c5f73304bcc4fa3cd6efd1d98fccefef190fd7d27c70434"
+        ],
+        "distinct_output_hashes": 1,
+        "diverged": false
+      }
+    ],
+    "any_diverged": true
+  }
+}
