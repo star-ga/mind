@@ -20,11 +20,13 @@ use std::fmt;
 
 pub mod compact;
 mod evidence;
+mod fp_mode;
 mod print;
 mod verify;
 
 pub use crate::opt::ir_canonical::canonicalize_module;
 pub use evidence::ir_trace_hash;
+pub use fp_mode::{FpMode, fp_contract_mode};
 pub use print::format_ir_module;
 pub use verify::{IrVerifyError, SsaRule, SsaViolation, check_ssa_well_formed, verify_module};
 

@@ -298,6 +298,11 @@ pub struct EvidenceReport {
     /// `true` iff a §3.2 recomputation reproduces `trace_hash` (i.e. the
     /// artifact has not been tampered with). The whole point of the chain.
     pub trace_hash_valid: bool,
+    /// Strict-FP contract mode, re-derived from the re-parsed body next to
+    /// `trace_hash_valid` (so it is bound to the same bytes the hash attests).
+    /// `Unknown` on a MAP-only decode path that never re-parsed the body — we
+    /// never claim strict without scanning. See [`crate::ir::FpMode`].
+    pub fp_mode: crate::ir::FpMode,
 }
 
 impl EvidenceReport {
@@ -407,6 +412,9 @@ pub fn verify_evidence_chain(graph: &Graph) -> Result<EvidenceReport, EvidenceEr
         trace_hash,
         trace_hash_kind,
         trace_hash_valid,
+        // MAP-only decode: no re-parsed IRModule here, so the strict-FP property
+        // cannot be checked. Report Unknown (fail-closed) rather than assume it.
+        fp_mode: crate::ir::FpMode::Unknown,
     })
 }
 
