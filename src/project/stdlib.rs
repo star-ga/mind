@@ -45,6 +45,7 @@ pub const STDLIB_MIND_SOURCES: &[(&str, &str)] = &[
     ("std.blas", include_str!("../../std/blas.mind")),
     ("std.cli", include_str!("../../std/cli.mind")),
     ("std.fs", include_str!("../../std/fs.mind")),
+    ("std.http", include_str!("../../std/http.mind")),
     ("std.io", include_str!("../../std/io.mind")),
     ("std.io_canon", include_str!("../../std/io_canon.mind")),
     ("std.iouring", include_str!("../../std/iouring.mind")),
@@ -160,6 +161,7 @@ mod tests {
         assert!(names.contains(&"std.json"));
         assert!(names.contains(&"std.regex"));
         assert!(names.contains(&"std.fs"));
+        assert!(names.contains(&"std.http"));
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.process"));
         assert!(names.contains(&"std.sha256"));
@@ -188,6 +190,8 @@ mod tests {
         assert!(table.resolves(&["std".into(), "json".into()], "jv_parse"));
         assert!(table.resolves(&["std".into(), "regex".into()], "rx_compile"));
         assert!(table.resolves(&["std".into(), "fs".into()], "read_to_string"));
+        assert!(table.resolves(&["std".into(), "http".into()], "http_get"));
+        assert!(table.resolves(&["std".into(), "http".into()], "http_post"));
         assert!(table.resolves(&["std".into(), "net".into()], "tcp_listen"));
         assert!(table.resolves(&["std".into(), "process".into()], "spawn"));
         assert!(table.resolves(&["std".into(), "tui".into()], "tui_cursor_to"));
@@ -273,6 +277,7 @@ mod tests {
         assert!(names.contains(&"std.json"));
         assert!(names.contains(&"std.regex"));
         assert!(names.contains(&"std.fs"));
+        assert!(names.contains(&"std.http"));
         assert!(names.contains(&"std.net"));
         assert!(names.contains(&"std.sha256"));
         assert!(names.contains(&"std.process"));
