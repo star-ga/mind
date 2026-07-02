@@ -28,7 +28,7 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   int/Q16 results are byte-identical across substrates (cross_substrate gate 12/12).
 - ✅ **Native-ELF self-host fixed-point closed** (v0.10.0) – the pure-MIND
   front-end now emits the NATIVE x86-64/ELF of the entire seeded module (21 stdlib
-  modules + main.mind, 1 156 476 B) byte-identically against the Rust reference —
+  modules + main.mind, 1 055 777 B) byte-identically against the Rust reference —
   all three self-host gates pass: mic@1 IR-text bootstrap fixed point, mic@3
   canonical-binary-IR flip, and the native-ELF fixed point. This is the core of
   Rust-independence.
@@ -42,6 +42,17 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
   output as permanent test fixtures
   (`examples/mindc_mind/testdata/native_elf_oracle/`). Full Rust-independence
   for the native-ELF path is complete.
+- ✅ **Scalar IEEE-754 float64 on the strict deterministic path** (2026-07-02) –
+  scalar `f64` (and `f32`) arithmetic now compiles and runs through
+  `arith.mulf` / `arith.addf` with **no `fmuladd`-contraction, no `fastmath`
+  flag, and no reassociation**, in fixed source order. A loop-carried `f64`
+  computation — an `f64` Lorenz–Euler integrator — runs **bit-exact against a
+  reference** and is **run-to-run bit-identical**. Because scalar `+ − × ÷ √`
+  are correctly-rounded IEEE-754 operations (identical on x86-SSE2 and
+  ARM-NEON), cross-ISA bit-identity follows on any conforming FPU;
+  re-verification on ARM hardware we control is in progress (the fleet is
+  all-x86). The vector-reduction, transcendental, and GPU float tiers remain on
+  the roadmap (see Phase 11 / Phase 13.6).
 
 ## Shipped (v0.7.1)
 
@@ -93,8 +104,17 @@ This roadmap outlines upcoming milestones for the MIND language, runtime, and to
 - 🚧 **Phase 11: Complete Tensor System** – inter-function tensor-arg calls
   (cross-function tensor ABI), deterministic intrinsics (`zeros`, `ones`,
   `matmul`, `softmax`, `randn`, `transpose`), and full cross-substrate bit-identity
-  for int/Q16/f32 tensor results (f32 determinism requires ordered reductions,
-  see Phase 13.6).
+  for int/Q16/f32 tensor results. The float-determinism tiers, stated explicitly:
+  - **Scalar `f64`/`f32`** — ✅ done. Runs on the strict path, run-to-run
+    bit-identical (fixed source order, no FMA-contraction, no reassociation);
+    cross-ISA re-verification on ARM hardware is in progress.
+  - **Vector `f32`/`f64` reductions** — 🚧 roadmap. A documented ~1e-4 relative
+    tolerance today, not bit-identity → canonical reduction trees /
+    superaccumulators (see Phase 13.6).
+  - **Transcendentals** (`sin`, `exp`, …) — 🚧 roadmap → a vendored
+    correctly-rounded libm (not host libm).
+  - **GPU float** — 🚧 roadmap → fixed-tree / Ozaki-scheme reductions; Metal and
+    WebGPU have no hardware `f64`.
 - 🚧 **Phase 10.6: Surface Syntax & Library Output** – tuple types,
   references, generics, slices, fixed-size arrays, struct literals,
   indexed/field assignment, multi-line arithmetic, RFC 0002 C-ABI export
@@ -767,7 +787,7 @@ This is the same separation discipline used by `[invariant]` conflict resolution
 
 The frontend IFR above governs the compiler. The runtime layer has a *different* IFR with different optima — including one law that is explicitly inverted from the frontend rule. Both layers live in this repository and must stay coherent under both criteria.
 
-**Runtime IFR.** Compiled MIND programs execute with bit-exact determinism across backends, record verifiable evidence of every governance-relevant decision, and enforce declared invariants at zero overhead on the legitimate execution path. Failures degrade into sealed evidence rather than silent corruption.
+**Runtime IFR.** Compiled MIND programs execute with bit-exact determinism across backends — realized today for deterministic-integer / Q16.16 lowering on CPU substrates (x86-`avx2` == ARM-`neon`) and for scalar IEEE-754 float on the strict path; cross-substrate vector-float and GPU determinism are the roadmap target — record verifiable evidence of every governance-relevant decision, and enforce declared invariants at zero overhead on the legitimate execution path. Failures degrade into sealed evidence rather than silent corruption.
 
 **Laws applied at the runtime layer.**
 

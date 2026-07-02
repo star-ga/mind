@@ -12,8 +12,10 @@
 ## 1. Problem — the runtime I/O path is the last non-deterministic frontier
 
 MIND's artifact layer is already the most efficient and the most auditable: a
-canonical binary IR with an embedded, signed evidence chain (RFC 0016) that is
-byte-identical across CPU, ARM and GPU substrates (RFC 0015). The remaining gap
+canonical binary IR with an embedded, signed evidence chain (RFC 0016) whose
+deterministic-integer / Q16.16 lowering is byte-identical across CPU substrates —
+x86-`avx2` and ARM-`neon` (RFC 0015; GPU float determinism is on the roadmap).
+The remaining gap
 to *fastest-of-any-language* I/O is the **runtime** path: today `std.net` is
 synchronous, blocking libc syscalls with no async runtime.
 

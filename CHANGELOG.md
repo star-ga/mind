@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scalar IEEE-754 float64 on the strict deterministic path.** Scalar `f64`
+  (and `f32`) arithmetic now compiles and runs through `arith.mulf` /
+  `arith.addf` with **no `fmuladd`-contraction, no `fastmath` flag, and no
+  reassociation**, in fixed source order. A loop-carried `f64` computation — an
+  `f64` Lorenz–Euler integrator — runs **bit-exact against a reference** and is
+  **run-to-run bit-identical**. Because scalar `+ − × ÷ √` are correctly-rounded
+  IEEE-754 operations (identical on x86-SSE2 and ARM-NEON), cross-ISA
+  bit-identity follows on any conforming FPU; re-verification on ARM hardware we
+  control is in progress (the fleet is all-x86). This extends the
+  integer/Q16.16 wedge to scalar float on the strict path. **Not** yet
+  deterministic and still on the roadmap: `f32`/`f64` **vector** reductions
+  (documented ~1e-4 relative tolerance today → canonical reduction trees /
+  superaccumulators), **transcendentals** (`sin`/`exp`/… → vendored
+  correctly-rounded libm), and **GPU** float (→ fixed-tree / Ozaki-scheme; the
+  open runtime is CPU-only). (commit e9e8837)
+
 - **Native-ELF self-host fixed-point closed.** The pure-MIND front-end
   (`examples/mindc_mind/main.mind`) now passes all three self-host gates
   byte-identically against the Rust reference: (a) the `mic@1` IR-text bootstrap

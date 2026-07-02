@@ -56,9 +56,17 @@ narrow-field ABI are sound. Gated by the keystone and `cross_substrate` suites.
 
 ## 2. Floating-point semantics
 
-MIND follows **IEEE 754** and pins every edge case. Scalar `f64`/`f32` follow the
-IEEE rules below; the **Q16.16 fixed-point** tier is fully deterministic and
-byte-identical across substrates today.
+MIND follows **IEEE 754** and pins every edge case. **Scalar** `f64`/`f32`
+arithmetic now compiles and runs on the **strict deterministic path** —
+`arith.mulf`/`arith.addf` with no `fmuladd`-contraction, no `fastmath` flag, and
+no reassociation, in fixed source order — and is **run-to-run bit-identical** (a
+loop-carried `f64` integrator such as a Lorenz–Euler step reproduces a reference
+bit-for-bit). Because scalar `+ − × ÷ √` are correctly-rounded IEEE-754
+operations, cross-ISA bit-identity follows on any conforming FPU (x86-SSE2 ==
+ARM-NEON); re-verification on ARM hardware is in progress. The **Q16.16
+fixed-point** tier is fully deterministic and byte-identical across substrates
+(x86 == ARM) today. The IEEE edge-case rules below pin the remaining special
+values.
 
 | Case | Rule | Status |
 |------|------|--------|
@@ -71,6 +79,9 @@ byte-identical across substrates today.
 | `limit_form(0^0)` | indeterminate — symbolic/calculus context, not a number | 📋 |
 | NaN comparisons | all comparisons `false` except `!=`; `min`/`max`/`sort` use a defined total order (NaN sorts last) so results are deterministic | 📋 |
 | Rounding | round-to-nearest-even (IEEE default), fixed | 📋 |
+| Scalar `f64`/`f32` arithmetic (`+ − × ÷`, fixed source order, no FMA-contraction) | strict path — run-to-run bit-identical; cross-ISA verification in progress | ✅ |
+| Vector `f32`/`f64` reductions | ordered reduction trees / superaccumulators — currently a documented ~1e-4 relative tolerance, not bit-identity | 📋 |
+| Transcendentals (`sin`, `exp`, …) | vendored correctly-rounded libm (not host libm) | 📋 |
 | Q16.16 fixed-point | fully deterministic, byte-identical x86 == ARM | ✅ |
 
 ### `0^0` — worked example
@@ -98,9 +109,16 @@ Two execution tiers; the contract is **bit-identity**, never "within tolerance"
 (tolerance-equal is a correctness-testing notion, not a determinism guarantee).
 
 - **Strict tier (default).** Integer and Q16.16 results are byte-identical across
-  substrates (x86 == ARM), gated by `cross_substrate` (12/12). ✅ For `f32`, the
-  strict tier fixes the reduction order and pins one transcendental
-  implementation, yielding bit-identical results across substrates. 📋
+  substrates (x86 == ARM), gated by `cross_substrate` (12/12). ✅ **Scalar**
+  `f64`/`f32` arithmetic runs on the strict path today — fixed source order, no
+  FMA-contraction, no reassociation — and is run-to-run bit-identical; because
+  scalar `+ − × ÷ √` are correctly-rounded IEEE-754 operations, cross-ISA
+  bit-identity follows on any conforming FPU (verification on ARM hardware is in
+  progress). ✅ **Vector** `f32`/`f64` reductions and **transcendentals**
+  (`sin`/`exp`/…) are not yet bit-identical: reductions currently carry a
+  documented ~1e-4 relative tolerance pending canonical reduction trees /
+  superaccumulators, and transcendentals await a vendored correctly-rounded
+  libm. 📋
 - **Fast tier (opt-in).** Explicitly labelled non-deterministic; results may differ
   by substrate. You opt **into** it — you never get it by accident.
 
@@ -140,8 +158,11 @@ MIND separates two math modes:
   non-deterministic.
 
 The native-ELF backend emits an image that is a **pure function of the IR** — there
-is no external toolchain whose `-ffast-math` can leak in. ✅ The `strict_math` /
-`fast_math` surface is being finalised. 📋
+is no external toolchain whose `-ffast-math` can leak in. ✅ The scalar float path
+already realises `strict_math` end-to-end: `arith.mulf`/`arith.addf` lower with
+**no `fmuladd`-contraction and no `fastmath` flag**, so a loop-carried `f64`
+computation is bit-identical run-to-run. ✅ The full `strict_math` / `fast_math`
+opt-in surface (the `fast`-tier toggle) is being finalised. 📋
 
 ---
 

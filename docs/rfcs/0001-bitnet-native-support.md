@@ -13,7 +13,7 @@ Add two native `DType` primitives to mindc:
 1. **`tri`** — 2-bit packed ternary `{-1, 0, +1}` for BitNet-style 1.58-bit weights
 2. **`q16_16`** — 32-bit signed fixed-point with 16 integer bits and 16 fractional bits, for deterministic activation arithmetic
 
-Plus parser, type-checker, IR, and codegen support sufficient to compile a forward pass written entirely with these types and observe bit-identical outputs across CPU, ARM, and CUDA targets.
+Plus parser, type-checker, IR, and codegen support sufficient to compile a forward pass written entirely with these types and observe bit-identical outputs across CPU substrates (x86 and ARM). Because these types lower to integer add/sub/zero with no floating-point and no reduction-order freedom, the same guarantee extends by construction to a CUDA target once that backend ships (GPU is CPU-only in the open compiler today; see the roadmap).
 
 This is the substrate the `bitnet-mind-governance` reference project currently emulates with `i32` and bit-packing tricks at user level. Making them native enables the compiler to emit deterministic integer code paths and downstream consumers to declare BitNet-class invariants statically.
 
