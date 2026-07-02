@@ -43,12 +43,16 @@ module mind_root_rules {
     [arch_rule(modularity_q16, ge)]
     const MODULARITY_FLOOR: i32 = 500
 
-    // Currently 15 (2 of 1278 declarations protected). Floor 0 — when
-    // the kernel side adds [protection] coverage, lift accordingly.
+    // Currently 42.6 (9 of 2112 symbols protected). Ratcheted off 0 to 25
+    // (2026-07-02 audit: the floor was vacuous on the wedge's OWN governance
+    // metric, so the gate could never fire on a coverage collapse). Now fires
+    // on regression; lift per release as [protection] coverage grows.
     [arch_rule(governance_kernel_coverage, ge)]
-    const GOVERNANCE_FLOOR: i32 = 0
+    const GOVERNANCE_FLOOR: i32 = 25
 
-    // Currently 1.
+    // Currently 9.7 (15 evidence calls / 15453 decision points). Ratcheted
+    // off 0 to 5 (2026-07-02 audit: this floor was vacuous on the wedge's OWN
+    // evidence metric). Fires if evidence density regresses; lift per release.
     [arch_rule(evidence_chain_density, ge)]
-    const EVIDENCE_FLOOR: i32 = 0
+    const EVIDENCE_FLOOR: i32 = 5
 }

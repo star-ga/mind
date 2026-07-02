@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2983 | **Est. tokens:** ~7,168,208
-**Generated:** 2026-07-02 09:09 UTC
+**Files:** 2983 | **Est. tokens:** ~7,168,302
+**Generated:** 2026-07-02 09:12 UTC
 
 ## Token Budget Guide
 
@@ -25,7 +25,7 @@
 | `./` | 34 | ~26,967 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
-| `.arch-mind/` | 2 | ~550 |
+| `.arch-mind/` | 2 | ~644 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 1 | ~693 |
 | `benches/` | 14 | ~35,873 |
@@ -495,7 +495,7 @@
 - `SKILL.md` (~235 tok, medium) — MIND Compiler (mindc) Development
 ### `.arch-mind/`
 
-- `rules.mind` (~463 tok, medium) — mind (language compiler / runtime root) architectural-governance rules
+- `rules.mind` (~557 tok, large) — mind (language compiler / runtime root) architectural-governance rules
 - `scan.json` (~87 tok, small) — Keys: _fixture, acyclicity_q16, depth_q16, equality_q16, evidence_chain_density
 ### `audits/`
 
