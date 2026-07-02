@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2993 | **Est. tokens:** ~7,186,315
-**Generated:** 2026-07-02 19:04 UTC
+**Files:** 2993 | **Est. tokens:** ~7,186,449
+**Generated:** 2026-07-02 19:12 UTC
 
 ## Token Budget Guide
 
@@ -397,7 +397,7 @@
 | `src/opt/` | 4 | ~9,649 |
 | `src/package/` | 2 | ~1,877 |
 | `src/parser/` | 1 | ~3,811 |
-| `src/project/` | 3 | ~27,842 |
+| `src/project/` | 3 | ~27,918 |
 | `src/runtime/` | 3 | ~1,485 |
 | `src/shapes/` | 2 | ~6,052 |
 | `src/stdlib/` | 2 | ~560 |
@@ -406,7 +406,7 @@
 | `src/types/` | 4 | ~3,336 |
 | `src/workspace/` | 1 | ~4,906 |
 | `std/` | 38 | ~179,983 |
-| `tests/` | 267 | ~448,171 |
+| `tests/` | 267 | ~448,229 |
 | `tests/autodiff/` | 2 | ~247 |
 | `tests/backend/` | 2 | ~125 |
 | `tests/common/` | 1 | ~674 |
@@ -3843,7 +3843,7 @@
 
 - `mod.rs` (~20623 tok, huge) — Copyright 2025 STARGA Inc.
 - `module_table.rs` (~3666 tok, huge) — Copyright 2025 STARGA Inc.
-- `stdlib.rs` (~3553 tok, huge) — Copyright 2025 STARGA Inc.
+- `stdlib.rs` (~3629 tok, huge) — Copyright 2025 STARGA Inc.
 ### `src/`
 
 - `python.rs` (~1082 tok, large) — Copyright 2025 STARGA Inc.
@@ -4415,7 +4415,7 @@
 - `std_surface_field_access.rs` (~2912 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_field_access_step2.rs` (~3401 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_fndef_lowering.rs` (~1412 tok, large) — Copyright 2025 STARGA Inc.
-- `std_surface_http.rs` (~3923 tok, huge) — Copyright 2025 STARGA Inc.
+- `std_surface_http.rs` (~3981 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_i32_intrinsics.rs` (~808 tok, large) — Copyright 2025 STARGA Inc.
 - `std_surface_if_statement.rs` (~3282 tok, huge) — Copyright 2025 STARGA Inc.
 - `std_surface_intrinsics.rs` (~2350 tok, huge) — Copyright 2025 STARGA Inc.

@@ -1,0 +1,792 @@
+// std/http.mind — HTTP/1.1 client over std.net (task #XXX).
+//
+// Copyright 2025 STARGA Inc.
+// Licensed under the Apache License, Version 2.0.
+// Part of the MIND project (Machine Intelligence Native Design).
+//
+// Phase 1 scope:
+//   - Request line + Host + caller-supplied extra headers + body
+//   - Response status-line + headers + Content-Length-bounded body
+//   - Interop: hand http_body_addr/http_body_len straight to jv_parse
+//
+// Phase 1 explicitly OUT OF SCOPE (fail loudly, never silently mis-parse):
+//   - chunked Transfer-Encoding responses
+//   - responses with neither Content-Length nor Transfer-Encoding
+//   - HTTPS/TLS (net.mind has none; RFC 0011 scope)
+//   - hostname/DNS resolution (net.mind's tcp_connect only does inet_pton;
+//     host_addr here must already be a NUL-terminated numeric IP)
+//
+// Determinism: like std.net, this is host I/O over a live socket — timing
+// and byte contents are non-deterministic by nature; the parsing logic
+// itself is pure and byte-identical given identical response bytes.
+
+import std.net;
+import std.string;
+
+// ---------------------------------------------------------------------------
+// Response heap record (56 bytes, String/json-style layout)
+//
+//   offset  0  status     -- i64 HTTP status code; the handle itself is 0 on
+//                            any transport/parse failure (same "0 = error"
+//                            convention as tcp_connect / jv_parse)
+//   offset  8  body_addr  -- body byte buffer address (raw bytes)
+//   offset 16  body_len   -- body byte length
+//   offset 24  body_cap   -- buffer capacity (addr|len|cap matches String, so
+//                            body_addr/body_len feed directly into jv_parse
+//                            or string_* functions with no copy)
+//   offset 32  hdr_keys   -- Vec.addr of String-handle records (names, as sent)
+//   offset 40  hdr_vals   -- Vec.addr of String-handle records (values, as sent)
+//   offset 48  hdr_len    -- header count
+//
+// No http_free — matches json.mind (no jv_free): handles live in the
+// bump-arena and are reclaimed on reset, not individually.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Response field accessors
+// ---------------------------------------------------------------------------
+
+pub fn http_status(h: i64) -> i64 {
+    __mind_load_i64(h + 0)
+}
+
+pub fn http_body_addr(h: i64) -> i64 {
+    __mind_load_i64(h + 8)
+}
+
+pub fn http_body_len(h: i64) -> i64 {
+    __mind_load_i64(h + 16)
+}
+
+pub fn http_header_count(h: i64) -> i64 {
+    __mind_load_i64(h + 48)
+}
+
+// http_header_name — i-th header name, as a String handle [addr|len|cap].
+pub fn http_header_name(h: i64, i: i64) -> i64 {
+    __mind_load_i64(__mind_load_i64(h + 32) + i * 8)
+}
+
+// http_header_value — i-th header value, as a String handle [addr|len|cap].
+pub fn http_header_value(h: i64, i: i64) -> i64 {
+    __mind_load_i64(__mind_load_i64(h + 40) + i * 8)
+}
+
+// ---------------------------------------------------------------------------
+// Byte + char helpers
+// ---------------------------------------------------------------------------
+
+fn http_lb(buf: i64, i: i64) -> i64 {
+    __mind_load_i8(buf + i)
+}
+
+fn http_is_digit(b: i64) -> i64 {
+    if b >= 48 {
+        if b <= 57 {
+            return 1;
+        }
+    }
+    0
+}
+
+// http_lower — ASCII-lowercase a single byte (A..Z -> a..z), pass-through
+// otherwise.  Header field-name matching is case-insensitive per RFC 7230.
+fn http_lower(b: i64) -> i64 {
+    if b >= 65 {
+        if b <= 90 {
+            return b + 32;
+        }
+    }
+    b
+}
+
+// http_ci_eq — case-insensitive byte equality of two ranges.
+fn http_ci_eq(a_addr: i64, a_len: i64, t_addr: i64, t_len: i64) -> i64 {
+    if a_len != t_len {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    let mut ok: i64 = 1;
+    while i < a_len {
+        if http_lower(http_lb(a_addr, i)) == http_lower(http_lb(t_addr, i)) {
+            i = i + 1;
+        } else {
+            ok = 0;
+            i = a_len;
+        }
+    }
+    ok
+}
+
+// http_ci_contains — is target `t` a case-insensitive substring of `h`?
+fn http_ci_contains(h_addr: i64, h_len: i64, t_addr: i64, t_len: i64) -> i64 {
+    if t_len == 0 {
+        return 1;
+    }
+    if t_len > h_len {
+        return 0;
+    }
+    let mut i: i64 = 0;
+    let mut found: i64 = 0;
+    while i + t_len <= h_len {
+        let mut j: i64 = 0;
+        let mut ok: i64 = 1;
+        while j < t_len {
+            if http_lower(http_lb(h_addr, i + j)) == http_lower(http_lb(t_addr, j)) {
+                j = j + 1;
+            } else {
+                ok = 0;
+                j = t_len;
+            }
+        }
+        if ok == 1 {
+            found = 1;
+            i = h_len + t_len;
+        } else {
+            i = i + 1;
+        }
+    }
+    found
+}
+
+// http_parse_uint — parse a leading run of decimal digits (skipping any
+// leading spaces) into an i64.  Returns -1 if no digit is present.
+fn http_parse_uint(addr: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    while i < len {
+        if http_lb(addr, i) == 32 {
+            i = i + 1;
+        } else {
+            i = len + 1;
+        }
+    }
+    // `i` overshot to len+1 once the first non-space was seen; recover it.
+    let start: i64 = if i > len {
+        i - len - 1
+    } else {
+        len
+    };
+    let mut p: i64 = start;
+    let mut v: i64 = 0;
+    let mut any: i64 = 0;
+    while p < len {
+        let b: i64 = http_lb(addr, p);
+        if http_is_digit(b) == 1 {
+            v = v * 10 + (b - 48);
+            any = 1;
+            p = p + 1;
+        } else {
+            p = len;
+        }
+    }
+    if any == 0 {
+        return -1;
+    }
+    v
+}
+
+// ---------------------------------------------------------------------------
+// String-record + growable-i64-array helpers (json.mind-style raw records)
+// ---------------------------------------------------------------------------
+
+// http_str_alloc — copy `src_len` bytes into a fresh buffer and return a
+// 24-byte String heap record [addr | len | cap].  The copy is deliberate:
+// header names/values must outlive the transient read buffer they were
+// sliced from (which is reallocated as the response streams in).
+fn http_str_alloc(src_addr: i64, src_len: i64) -> i64 {
+    let h: i64 = __mind_alloc(24);
+    let dat: i64 = if src_len == 0 {
+        0
+    } else {
+        let d: i64 = __mind_alloc(src_len);
+        let mut i: i64 = 0;
+        while i < src_len {
+            __mind_store_i8(d + i, __mind_load_i8(src_addr + i));
+            i = i + 1;
+        }
+        d
+    };
+    __mind_store_i64(h + 0, dat);
+    __mind_store_i64(h + 8, src_len);
+    __mind_store_i64(h + 16, src_len);
+    h
+}
+
+// http_ivec_new — growable i64 array as a 24-byte record [addr | len | cap].
+fn http_ivec_new() -> i64 {
+    let h: i64 = __mind_alloc(24);
+    __mind_store_i64(h + 0, 0);
+    __mind_store_i64(h + 8, 0);
+    __mind_store_i64(h + 16, 0);
+    h
+}
+
+// http_ivec_push — append one i64 (grow-and-copy: cap 0 -> 4, else double).
+fn http_ivec_push(h: i64, val: i64) -> i64 {
+    let old_len: i64 = __mind_load_i64(h + 8);
+    let old_cap: i64 = __mind_load_i64(h + 16);
+    let old_addr: i64 = __mind_load_i64(h + 0);
+    let new_cap: i64 = if old_cap == 0 {
+        4
+    } else {
+        if old_len < old_cap {
+            old_cap
+        } else {
+            old_cap * 2
+        }
+    };
+    let new_addr: i64 = if new_cap == old_cap {
+        old_addr
+    } else {
+        let a: i64 = __mind_alloc(new_cap * 8);
+        let mut i: i64 = 0;
+        while i < old_len {
+            __mind_store_i64(a + i * 8, __mind_load_i64(old_addr + i * 8));
+            i = i + 1;
+        }
+        a
+    };
+    __mind_store_i64(new_addr + old_len * 8, val);
+    __mind_store_i64(h + 0, new_addr);
+    __mind_store_i64(h + 8, old_len + 1);
+    __mind_store_i64(h + 16, new_cap);
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Request-literal builders (pushed byte-by-byte, matching io.mind / json.mind
+// which never rely on string-literal codegen for wire bytes)
+// ---------------------------------------------------------------------------
+
+fn http_push_crlf(s: String) -> String {
+    let mut o: String = string_push_byte(s, 13);
+    o = string_push_byte(o, 10);
+    o
+}
+
+// "GET " (71 69 84 32)
+fn http_push_get(s: String) -> String {
+    let mut o: String = string_push_byte(s, 71);
+    o = string_push_byte(o, 69);
+    o = string_push_byte(o, 84);
+    o = string_push_byte(o, 32);
+    o
+}
+
+// "POST " (80 79 83 84 32)
+fn http_push_post(s: String) -> String {
+    let mut o: String = string_push_byte(s, 80);
+    o = string_push_byte(o, 79);
+    o = string_push_byte(o, 83);
+    o = string_push_byte(o, 84);
+    o = string_push_byte(o, 32);
+    o
+}
+
+// " HTTP/1.1\r\n" (32 72 84 84 80 47 49 46 49 13 10)
+fn http_push_version_crlf(s: String) -> String {
+    let mut o: String = string_push_byte(s, 32);
+    o = string_push_byte(o, 72);
+    o = string_push_byte(o, 84);
+    o = string_push_byte(o, 84);
+    o = string_push_byte(o, 80);
+    o = string_push_byte(o, 47);
+    o = string_push_byte(o, 49);
+    o = string_push_byte(o, 46);
+    o = string_push_byte(o, 49);
+    o = http_push_crlf(o);
+    o
+}
+
+// "Host: " (72 111 115 116 58 32)
+fn http_push_host_key(s: String) -> String {
+    let mut o: String = string_push_byte(s, 72);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 115);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 58);
+    o = string_push_byte(o, 32);
+    o
+}
+
+// "Content-Type: " (67 111 110 116 101 110 116 45 84 121 112 101 58 32)
+fn http_push_content_type_key(s: String) -> String {
+    let mut o: String = string_push_byte(s, 67);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 45);
+    o = string_push_byte(o, 84);
+    o = string_push_byte(o, 121);
+    o = string_push_byte(o, 112);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 58);
+    o = string_push_byte(o, 32);
+    o
+}
+
+// "Content-Length: " (67 111 110 116 101 110 116 45 76 101 110 103 116 104 58 32)
+fn http_push_content_length_key(s: String) -> String {
+    let mut o: String = string_push_byte(s, 67);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 45);
+    o = string_push_byte(o, 76);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 103);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 104);
+    o = string_push_byte(o, 58);
+    o = string_push_byte(o, 32);
+    o
+}
+
+// "Connection: close\r\n\r\n"
+// (67 111 110 110 101 99 116 105 111 110 58 32 99 108 111 115 101 13 10 13 10)
+fn http_push_connection_close(s: String) -> String {
+    let mut o: String = string_push_byte(s, 67);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 99);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 105);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 58);
+    o = string_push_byte(o, 32);
+    o = string_push_byte(o, 99);
+    o = string_push_byte(o, 108);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 115);
+    o = string_push_byte(o, 101);
+    o = http_push_crlf(o);
+    o = http_push_crlf(o);
+    o
+}
+
+// ---------------------------------------------------------------------------
+// Header-name/value lowercase literals for Content-Length / Transfer-Encoding
+// scanning.  Built as Strings so the case-insensitive comparison reuses the
+// same addr/len contract as the parsed header records.
+// ---------------------------------------------------------------------------
+
+// "content-length"
+fn http_lit_content_length() -> String {
+    let mut o: String = string_push_byte(string_new(), 99);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 45);
+    o = string_push_byte(o, 108);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 103);
+    o = string_push_byte(o, 116);
+    o = string_push_byte(o, 104);
+    o
+}
+
+// "transfer-encoding"
+fn http_lit_transfer_encoding() -> String {
+    let mut o: String = string_push_byte(string_new(), 116);
+    o = string_push_byte(o, 114);
+    o = string_push_byte(o, 97);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 115);
+    o = string_push_byte(o, 102);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 114);
+    o = string_push_byte(o, 45);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 99);
+    o = string_push_byte(o, 111);
+    o = string_push_byte(o, 100);
+    o = string_push_byte(o, 105);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 103);
+    o
+}
+
+// "chunked"
+fn http_lit_chunked() -> String {
+    let mut o: String = string_push_byte(string_new(), 99);
+    o = string_push_byte(o, 104);
+    o = string_push_byte(o, 117);
+    o = string_push_byte(o, 110);
+    o = string_push_byte(o, 107);
+    o = string_push_byte(o, 101);
+    o = string_push_byte(o, 100);
+    o
+}
+
+// ---------------------------------------------------------------------------
+// Response scanning
+// ---------------------------------------------------------------------------
+
+// http_find_hdr_end — index of the first "\r\n\r\n" (position of its first
+// \r), or -1 if not yet present.
+fn http_find_hdr_end(addr: i64, len: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut r: i64 = -1;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if i + 4 > len {
+            go = 0;
+        } else {
+            if http_lb(addr, i) == 13 {
+                if http_lb(addr, i + 1) == 10 {
+                    if http_lb(addr, i + 2) == 13 {
+                        if http_lb(addr, i + 3) == 10 {
+                            r = i;
+                            go = 0;
+                        }
+                    }
+                }
+            }
+            if go == 1 {
+                i = i + 1;
+            }
+        }
+    }
+    r
+}
+
+// http_find_crlf — index of the \r of the first "\r\n" with its \r at
+// position in [start, limit], or -1.
+fn http_find_crlf(addr: i64, start: i64, limit: i64) -> i64 {
+    let mut j: i64 = start;
+    let mut r: i64 = -1;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if j > limit {
+            go = 0;
+        } else {
+            if http_lb(addr, j) == 13 {
+                if http_lb(addr, j + 1) == 10 {
+                    r = j;
+                    go = 0;
+                }
+            }
+            if go == 1 {
+                j = j + 1;
+            }
+        }
+    }
+    r
+}
+
+// http_find_colon_sp — index of the ':' of the first ": " in [start, end),
+// or -1.  (RFC 7230 field-line split on the first colon; a single space
+// after the colon is the near-universal OWS the gateway emits.)
+fn http_find_colon_sp(addr: i64, start: i64, end: i64) -> i64 {
+    let mut j: i64 = start;
+    let mut r: i64 = -1;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if j + 1 >= end {
+            go = 0;
+        } else {
+            if http_lb(addr, j) == 58 {
+                if http_lb(addr, j + 1) == 32 {
+                    r = j;
+                    go = 0;
+                }
+            }
+            if go == 1 {
+                j = j + 1;
+            }
+        }
+    }
+    r
+}
+
+// http_parse_status — parse the 3-digit code out of the status line.
+// Returns the code (>= 0) or -1 if the status line is malformed.
+fn http_parse_status(addr: i64, hdr_end: i64) -> i64 {
+    let mut i: i64 = 0;
+    let mut sp: i64 = -1;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if i >= hdr_end {
+            go = 0;
+        } else {
+            if http_lb(addr, i) == 32 {
+                sp = i;
+                go = 0;
+            } else {
+                i = i + 1;
+            }
+        }
+    }
+    if sp < 0 {
+        return -1;
+    }
+    if sp + 4 > hdr_end {
+        return -1;
+    }
+    let d0: i64 = http_lb(addr, sp + 1);
+    let d1: i64 = http_lb(addr, sp + 2);
+    let d2: i64 = http_lb(addr, sp + 3);
+    if http_is_digit(d0) == 0 {
+        return -1;
+    }
+    if http_is_digit(d1) == 0 {
+        return -1;
+    }
+    if http_is_digit(d2) == 0 {
+        return -1;
+    }
+    (d0 - 48) * 100 + (d1 - 48) * 10 + (d2 - 48)
+}
+
+// http_parse_headers — split every field line in [line_start, hdr_end) on
+// its first ": " and append the (name, value) String records to keys/vals.
+// Returns the header count.
+fn http_parse_headers(addr: i64, line_start: i64, hdr_end: i64, keys: i64, vals: i64) -> i64 {
+    let mut pos: i64 = line_start;
+    let mut count: i64 = 0;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if pos >= hdr_end {
+            go = 0;
+        } else {
+            let mut le: i64 = http_find_crlf(addr, pos, hdr_end);
+            if le < 0 {
+                le = hdr_end;
+            }
+            let colon: i64 = http_find_colon_sp(addr, pos, le);
+            if colon >= 0 {
+                let name_addr: i64 = addr + pos;
+                let name_len: i64 = colon - pos;
+                let val_addr: i64 = addr + colon + 2;
+                let val_len: i64 = le - (colon + 2);
+                let nrec: i64 = http_str_alloc(name_addr, name_len);
+                let vrec: i64 = http_str_alloc(val_addr, val_len);
+                let _ = http_ivec_push(keys, nrec);
+                let _ = http_ivec_push(vals, vrec);
+                count = count + 1;
+            }
+            pos = le + 2;
+        }
+    }
+    count
+}
+
+// ---------------------------------------------------------------------------
+// Core request/response exchange (shared by http_get and http_post)
+// ---------------------------------------------------------------------------
+
+// http_do — build the request, open one connection, write it, read and parse
+// the response, and return a 56-byte response record (or 0 on any
+// transport/parse failure or a Phase-1-unsupported response shape).
+fn http_do(is_post: i64, host_addr: i64, host_len: i64, port: i64, path_addr: i64, path_len: i64, extra_headers_addr: i64, extra_headers_len: i64, content_type_addr: i64, content_type_len: i64, body_addr: i64, body_len: i64) -> i64 {
+    // --- Build request bytes ---
+    let mut req: String = string_new();
+    if is_post == 1 {
+        req = http_push_post(req);
+    } else {
+        req = http_push_get(req);
+    }
+    req = string_push_str(req, String { addr: path_addr, len: path_len, cap: 0 });
+    req = http_push_version_crlf(req);
+    req = http_push_host_key(req);
+    req = string_push_str(req, String { addr: host_addr, len: host_len, cap: 0 });
+    req = string_push_byte(req, 58);
+    req = string_push_i64(req, port);
+    req = http_push_crlf(req);
+    req = string_push_str(req, String { addr: extra_headers_addr, len: extra_headers_len, cap: 0 });
+    if is_post == 1 {
+        req = http_push_content_type_key(req);
+        req = string_push_str(req, String { addr: content_type_addr, len: content_type_len, cap: 0 });
+        req = http_push_crlf(req);
+        req = http_push_content_length_key(req);
+        req = string_push_i64(req, body_len);
+        req = http_push_crlf(req);
+    }
+    req = http_push_connection_close(req);
+    if is_post == 1 {
+        req = string_push_str(req, String { addr: body_addr, len: body_len, cap: 0 });
+    }
+
+    // --- Connect + write-all ---
+    let conn: i64 = tcp_connect(host_addr, port);
+    if conn == 0 {
+        return 0;
+    }
+    let req_base: i64 = string_addr(req);
+    let req_total: i64 = string_len(req);
+    let mut written: i64 = 0;
+    while written < req_total {
+        let n: i64 = tcp_write(conn, req_base + written, req_total - written);
+        if n <= 0 {
+            tcp_close(conn);
+            return 0;
+        }
+        written = written + n;
+    }
+
+    // --- Read until the header terminator "\r\n\r\n" ---
+    let chunk_size: i64 = 4096;
+    let chunk: i64 = __mind_alloc(chunk_size);
+    let mut buf: String = string_new();
+    let mut hdr_end: i64 = -1;
+    let mut reading: i64 = 1;
+    while reading == 1 {
+        let n: i64 = tcp_read(conn, chunk, chunk_size);
+        if n <= 0 {
+            tcp_close(conn);
+            return 0;
+        }
+        buf = string_push_str(buf, String { addr: chunk, len: n, cap: 0 });
+        hdr_end = http_find_hdr_end(string_addr(buf), string_len(buf));
+        if hdr_end >= 0 {
+            reading = 0;
+        }
+    }
+    let body_start: i64 = hdr_end + 4;
+
+    // --- Parse status line + headers ---
+    let status: i64 = http_parse_status(string_addr(buf), hdr_end);
+    if status < 0 {
+        tcp_close(conn);
+        return 0;
+    }
+    let sl_crlf: i64 = http_find_crlf(string_addr(buf), 0, hdr_end);
+    let hdr_line_start: i64 = sl_crlf + 2;
+    let keys: i64 = http_ivec_new();
+    let vals: i64 = http_ivec_new();
+    let hdr_count: i64 = http_parse_headers(string_addr(buf), hdr_line_start, hdr_end, keys, vals);
+
+    // --- Scan for Content-Length / Transfer-Encoding (case-insensitive) ---
+    let cl_lit: String = http_lit_content_length();
+    let te_lit: String = http_lit_transfer_encoding();
+    let chunk_lit: String = http_lit_chunked();
+    let keys_addr: i64 = __mind_load_i64(keys + 0);
+    let vals_addr: i64 = __mind_load_i64(vals + 0);
+    let mut content_length: i64 = -1;
+    let mut te_chunked: i64 = 0;
+    let mut hi: i64 = 0;
+    while hi < hdr_count {
+        let nrec: i64 = __mind_load_i64(keys_addr + hi * 8);
+        let vrec: i64 = __mind_load_i64(vals_addr + hi * 8);
+        let na: i64 = __mind_load_i64(nrec + 0);
+        let nl: i64 = __mind_load_i64(nrec + 8);
+        let va: i64 = __mind_load_i64(vrec + 0);
+        let vl: i64 = __mind_load_i64(vrec + 8);
+        if http_ci_eq(na, nl, string_addr(cl_lit), string_len(cl_lit)) == 1 {
+            content_length = http_parse_uint(va, vl);
+        }
+        if http_ci_eq(na, nl, string_addr(te_lit), string_len(te_lit)) == 1 {
+            if http_ci_contains(va, vl, string_addr(chunk_lit), string_len(chunk_lit)) == 1 {
+                te_chunked = 1;
+            }
+        }
+        hi = hi + 1;
+    }
+    // Phase 1: chunked bodies and length-less bodies are unsupported -> fail
+    // loudly (return 0) rather than guess a body length.
+    if te_chunked == 1 {
+        tcp_close(conn);
+        return 0;
+    }
+    if content_length < 0 {
+        tcp_close(conn);
+        return 0;
+    }
+
+    // --- Read the remaining body bytes up to Content-Length ---
+    let mut have: i64 = string_len(buf) - body_start;
+    let mut body_reading: i64 = 1;
+    while body_reading == 1 {
+        if have >= content_length {
+            body_reading = 0;
+        } else {
+            let n: i64 = tcp_read(conn, chunk, chunk_size);
+            if n <= 0 {
+                tcp_close(conn);
+                return 0;
+            }
+            buf = string_push_str(buf, String { addr: chunk, len: n, cap: 0 });
+            have = string_len(buf) - body_start;
+        }
+    }
+    tcp_close(conn);
+
+    // --- Build the response record (buf.addr is now stable) ---
+    let final_base: i64 = string_addr(buf);
+    let rec: i64 = __mind_alloc(56);
+    __mind_store_i64(rec + 0, status);
+    __mind_store_i64(rec + 8, final_base + body_start);
+    __mind_store_i64(rec + 16, content_length);
+    __mind_store_i64(rec + 24, content_length);
+    __mind_store_i64(rec + 32, keys_addr);
+    __mind_store_i64(rec + 40, vals_addr);
+    __mind_store_i64(rec + 48, hdr_count);
+    rec
+}
+
+// ---------------------------------------------------------------------------
+// Public request API
+// ---------------------------------------------------------------------------
+
+// http_get — issue a GET.  `host_addr` must be a NUL-terminated numeric IP
+// (same contract as tcp_connect); `host_len` is the byte count written into
+// the Host header.  `extra_headers_addr/len` is a raw, caller-pre-formatted
+// blob of "Name: value\r\n" lines (e.g. X-API-Key, Accept, or a Cookie header
+// echoed back from a prior response's Set-Cookie — see the module header).
+// Returns a response record handle, or 0 on failure.
+pub fn http_get(host_addr: i64, host_len: i64, port: i64, path_addr: i64, path_len: i64, extra_headers_addr: i64, extra_headers_len: i64) -> i64 {
+    http_do(0, host_addr, host_len, port, path_addr, path_len, extra_headers_addr, extra_headers_len, 0, 0, 0, 0)
+}
+
+// http_post — issue a POST with a Content-Type and raw body bytes.
+// Content-Length is computed from `body_len` and emitted automatically.
+// Returns a response record handle, or 0 on failure.
+pub fn http_post(host_addr: i64, host_len: i64, port: i64, path_addr: i64, path_len: i64, extra_headers_addr: i64, extra_headers_len: i64, content_type_addr: i64, content_type_len: i64, body_addr: i64, body_len: i64) -> i64 {
+    http_do(1, host_addr, host_len, port, path_addr, path_len, extra_headers_addr, extra_headers_len, content_type_addr, content_type_len, body_addr, body_len)
+}
+
+// http_header_get — first header value whose name matches `name` (case-
+// insensitive, RFC 7230).  Returns a String handle [addr|len|cap] or 0 if
+// absent.  A caller propagating the gateway's AWSALB affinity cookie reads
+// http_header_get(h, "Set-Cookie", ...) here and feeds the value back into
+// the next request's extra_headers blob as "Cookie: ...\r\n" — that keeps
+// this module stateless (no cookie jar) while never silently dropping it.
+pub fn http_header_get(h: i64, name_addr: i64, name_len: i64) -> i64 {
+    let keys: i64 = __mind_load_i64(h + 32);
+    let vals: i64 = __mind_load_i64(h + 40);
+    let n: i64 = __mind_load_i64(h + 48);
+    let mut i: i64 = 0;
+    let mut r: i64 = 0;
+    let mut go: i64 = 1;
+    while go == 1 {
+        if i >= n {
+            go = 0;
+        } else {
+            let nrec: i64 = __mind_load_i64(keys + i * 8);
+            let na: i64 = __mind_load_i64(nrec + 0);
+            let nl: i64 = __mind_load_i64(nrec + 8);
+            if http_ci_eq(na, nl, name_addr, name_len) == 1 {
+                r = __mind_load_i64(vals + i * 8);
+                go = 0;
+            } else {
+                i = i + 1;
+            }
+        }
+    }
+    r
+}
