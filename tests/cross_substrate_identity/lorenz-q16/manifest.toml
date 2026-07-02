@@ -1,0 +1,44 @@
+# mind-bench workload manifest — RFC 0020 §4.3. See dot-l2-q16/manifest.toml
+# for the full format notes.
+#
+# A deterministic Q16.16 fixed-point Lorenz-attractor integrator (forward Euler)
+# — the canonical poster child for sensitive dependence on initial conditions,
+# made byte-identical across substrates. dx = SIGMA*(y-x), dy = x*(RHO-z) - y,
+# dz = x*y - BETA*z, with SIGMA=10, RHO=28, BETA=8/3 (truncated to its Q16.16
+# rep 174762), state advanced by forward Euler (state += DT*d(state), DT=1/256)
+# from the fixed init (x,y,z) = (0, 1, 0). Every product is a single i64
+# `arith.muli` followed by exactly one `arith.shrsi` (arithmetic shift-right by
+# 16), then `arith.addi/subi`, in a fixed source order — exact integer
+# arithmetic with one deterministic truncating shift per product. There is no
+# floating point, no accumulation reorder, no contraction and no reassociation
+# to differ across substrates, so after N chaotic steps the result is
+# byte-identical on x86 avx2 and ARM neon BY CONSTRUCTION (RFC 0015 §3.1) — even
+# though a float Lorenz would have diverged to a different trajectory on
+# different hardware hundreds of steps earlier. This is the wedge on its hardest
+# workload: reproducible chaos. (NOTE: this is *a* Q16.16 chaotic orbit, not a
+# bit-match of float64's Lorenz — the claim is cross-substrate reproducibility,
+# not IEEE-754 parity.)
+
+version = "1"
+name = "lorenz-q16"
+description = "Deterministic Q16.16 Lorenz integrator (forward Euler, SIGMA=10 RHO=28 BETA=8/3 DT=1/256), 1000 steps from init (0,1,0); every * is a q16_mul = (x*y)>>16 with fixed source order — exact i64 multiply + arithmetic shift + add/sub, no float, no reassociation. Reproducible chaos: byte-identical across substrates where a float Lorenz diverges."
+weight = 1.0
+substrates = ["avx2", "neon"]
+
+# Fixed initial state, Q16.16 (value << 16), and the step count. The init is
+# exact-representable; the orbit stays bounded (|q16| < ~3.3e6) over the run and
+# never overflows (largest raw intermediate product ~2.2e12, ~4.1e6x under i64
+# max). Running exactly `steps` forward-Euler steps is fully deterministic.
+[input]
+generator = "fixed"
+x0 = 0                     # 0.0 in Q16.16
+y0 = 65536                 # 1.0 in Q16.16
+z0 = 0                     # 0.0 in Q16.16
+steps = 1000
+dtype = "q16"
+
+[kernel]
+symbol = "lorenz_q16"
+op_order = "per step: dx=(SIGMA*(y-x))>>16; dy=((x*(RHO-z))>>16)-y; dz=((x*y)>>16)-((BETA*z)>>16); x+=(DT*dx)>>16; y+=(DT*dy)>>16; z+=(DT*dz)>>16 — each * = (a*b)>>16, fixed source precedence"
+returns = "i64"            # the final x in Q16.16 (== state[0] after `steps` steps)
+output_encoding = "i64_le" # 8 little-endian bytes of the returned final x, then sha256
