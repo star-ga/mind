@@ -87,7 +87,8 @@ values.
 | NaN comparisons | all comparisons `false` except `!=`; `min`/`max`/`sort` use a defined total order (NaN sorts last) so results are deterministic | 📋 |
 | Rounding | round-to-nearest-even (IEEE default), fixed | 📋 |
 | Scalar `f64`/`f32` arithmetic (`+ − × ÷`, fixed source order, no FMA-contraction) | strict path — run-to-run bit-identical; verified bit-identical across an x86 CPU and an NVIDIA GPU (CUDA, `sm_86`) via the no-FMA-contraction contract (`-ffp-contract=off` ≡ `--fmad=false`) | ✅ |
-| Vector `f32`/`f64` reductions | ordered reduction trees / superaccumulators — currently a documented ~1e-4 relative tolerance, not bit-identity | 📋 |
+| Vector `f32` BLAS reductions (`dot` / `L1` / `matmul`, the `*_v` kernels) | strict tier — FMA unfused to separate `mulf`+`addf`, horizontal sum a pinned fixed-order fold, so bit-exact (no `vector.fma` / `vector.reduction <add>`); run-to-run bit-identical, verified `objdump`-clean (0 fused FMA) on x86 | ✅ (x86; ARM re-verify pending) |
+| Other vector `f32`/`f64` reductions (tensor `sum`, GPU, `f64`) | ordered reduction trees / superaccumulators — still a documented ~1e-4 relative tolerance, not yet bit-identity | 📋 |
 | Transcendentals (`sin`, `exp`, …) | vendored correctly-rounded libm (not host libm) | 📋 |
 | Q16.16 fixed-point | fully deterministic, byte-identical x86 == ARM | ✅ |
 
@@ -127,10 +128,15 @@ Two execution tiers; the contract is **bit-identity**, never "within tolerance"
   chaotic trajectory diverges, worse the longer it runs. Because scalar
   `+ − × ÷ √` are correctly-rounded IEEE-754 operations, the same holds on any
   conforming FPU (verification on further hardware is in
-  progress). ✅ **Vector** `f32`/`f64` reductions and **transcendentals**
-  (`sin`/`exp`/…) are not yet bit-identical: reductions currently carry a
-  documented ~1e-4 relative tolerance pending canonical reduction trees /
-  superaccumulators, and transcendentals await a vendored correctly-rounded
+  progress). ✅ The **f32 vector BLAS reductions** — the `dot` / `L1` / `matmul`
+  `*_v` kernels — are now on the **strict tier** too: their per-lane FMA is
+  unfused to separate `mulf`+`addf` and the horizontal sum is a pinned
+  fixed-order fold, so they emit no `vector.fma` / `vector.reduction <add>` and
+  are bit-exact (run-to-run bit-identical, `objdump`-verified free of fused FMA
+  on x86; ARM re-verification pending). ✅ What is **not yet** bit-identical:
+  broader vector reductions (tensor `sum`, `f64`, GPU) still carry a documented
+  ~1e-4 relative tolerance pending canonical reduction trees / superaccumulators,
+  and **transcendentals** (`sin`/`exp`/…) await a vendored correctly-rounded
   libm. 📋
 - **Fast tier (opt-in).** Explicitly labelled non-deterministic; results may differ
   by substrate. You opt **into** it — you never get it by accident.
