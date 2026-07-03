@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 2994 | **Est. tokens:** ~7,191,126
-**Generated:** 2026-07-03 07:05 UTC
+**Files:** 3006 | **Est. tokens:** ~7,234,820
+**Generated:** 2026-07-03 09:58 UTC
 
 ## Token Budget Guide
 
@@ -22,13 +22,13 @@
 
 | Directory | Files | Est. tokens |
 |-----------|-------|-------------|
-| `./` | 34 | ~27,043 |
+| `./` | 34 | ~27,212 |
 | `agents/` | 1 | ~436 |
 | `.agents/skills/mindc-development/` | 1 | ~235 |
 | `.arch-mind/` | 2 | ~644 |
 | `audits/` | 6 | ~607 |
 | `bench/` | 1 | ~693 |
-| `benches/` | 14 | ~35,873 |
+| `benches/` | 26 | ~79,398 |
 | `bench/fft/` | 8 | ~8,060 |
 | `benchmarks/` | 12 | ~20,415 |
 | `benchmarks/autograd_comparison/` | 8 | ~9,411 |
@@ -466,7 +466,7 @@
 - `.bench-pre-pratt.txt` (~32 tok, tiny) — === captured pre-Pratt baseline (Phase 10.5 in main) ===
 - `bounties.md` (~888 tok, large) — MIND Bounty Board
 - `build.rs` (~234 tok, medium) — Copyright 2025 STARGA Inc.
-- `Cargo.toml` (~1464 tok, large) — [package]
+- `Cargo.toml` (~1633 tok, huge) — [package]
 - `clippy.toml` (~25 tok, tiny)
 - `CODE_OF_CONDUCT.md` (~29 tok, tiny) — Code of Conduct
 - `COMPLETE_FILE_STRUCTURE.md` (~26 tok, tiny) — Repository Structure (Snapshot)
@@ -509,6 +509,18 @@
 ### `benches/`
 
 - `autodiff.rs` (~1661 tok, huge) — Simple linear function
+- `bench_aes_gcm.rs` (~2590 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_ecdsa_p256.rs` (~2786 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_hkdf.rs` (~4423 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_hpack.rs` (~3926 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_http2_frame.rs` (~5035 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_keccak.rs` (~2576 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_mlkem768.rs` (~3700 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_rsa_pss.rs` (~3317 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_sha256.rs` (~2594 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_tls13_record.rs` (~6120 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_x25519.rs` (~2468 tok, huge) — Copyright 2025-2026 STARGA Inc.
+- `bench_x509.rs` (~3990 tok, huge) — Copyright 2025-2026 STARGA Inc.
 - `cerebras_stencil.rs` (~831 tok, large) — Copyright 2025-2026 STARGA Inc.
 - `compiler.rs` (~3782 tok, huge) — Small program: Simple matrix multiplication
 - `cross_module.rs` (~609 tok, large) — Copyright 2025 STARGA Inc.
