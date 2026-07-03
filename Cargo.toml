@@ -111,6 +111,55 @@ harness = false
 name = "det_matmul_i8"
 harness = false
 
+# Crypto / protocol primitive throughput benches (the provable HTTP stack).
+[[bench]]
+name = "bench_sha256"
+harness = false
+
+[[bench]]
+name = "bench_keccak"
+harness = false
+
+[[bench]]
+name = "bench_aes_gcm"
+harness = false
+
+[[bench]]
+name = "bench_hkdf"
+harness = false
+
+[[bench]]
+name = "bench_x25519"
+harness = false
+
+[[bench]]
+name = "bench_mlkem768"
+harness = false
+
+[[bench]]
+name = "bench_rsa_pss"
+harness = false
+
+[[bench]]
+name = "bench_ecdsa_p256"
+harness = false
+
+[[bench]]
+name = "bench_x509"
+harness = false
+
+[[bench]]
+name = "bench_hpack"
+harness = false
+
+[[bench]]
+name = "bench_http2_frame"
+harness = false
+
+[[bench]]
+name = "bench_tls13_record"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true
