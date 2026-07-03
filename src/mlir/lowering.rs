@@ -4851,18 +4851,44 @@ impl LoweringContext {
             "        %vmm_bv_{d} = llvm.load %vmm_bi_{d} {{alignment = 4 : i64}} : \
              !llvm.ptr -> vector<{l}xf32>"
         ));
+        // STRICT float-determinism (per output row): unfuse the multiply-add
+        // into a separate mulf then addf — two roundings, no FMA contraction,
+        // matching the strict scalar tail below.
         self.emit_line(&format!(
-            "        %vmm_fa_{d} = vector.fma %vmm_av_{d}, %vmm_bv_{d}, %vmm_acc_{d} : \
-             vector<{l}xf32>"
+            "        %vmm_pm_{d} = arith.mulf %vmm_av_{d}, %vmm_bv_{d} : vector<{l}xf32>"
+        ));
+        self.emit_line(&format!(
+            "        %vmm_fa_{d} = arith.addf %vmm_acc_{d}, %vmm_pm_{d} : vector<{l}xf32>"
         ));
         self.emit_line(&format!("        scf.yield %vmm_fa_{d} : vector<{l}xf32>"));
         self.emit_line("      }");
 
-        // ── horizontal lane reduction ──────────────────────────────────────
-        self.emit_line(&format!(
-            "      %vmm_vs_{d} = vector.reduction <add>, %vmm_vacc_{d} : \
-             vector<{l}xf32> into f32"
-        ));
+        // ── horizontal lane reduction (PINNED left-to-right scalar fold) ─────
+        // Replace the target-defined `vector.reduction <add>` (pairwise/tree
+        // fold, order differs per ISA) with 8 static-index extracts + 7 fixed
+        // sequential adds, so each row's dot is bit-identical on every FPU. With
+        // the FMA also unfused, the matmul carries no vector.fma / no
+        // vector.reduction <add> — strict-FP (no fp_mode Relaxed taint).
+        for lane in 0..l {
+            self.emit_line(&format!(
+                "      %vmm_e{lane}_{d} = vector.extract %vmm_vacc_{d}[{lane}] : f32 from vector<{l}xf32>"
+            ));
+        }
+        for lane in 1..l {
+            let prev = if lane == 1 {
+                format!("%vmm_e0_{d}")
+            } else {
+                format!("%vmm_racc{}_{d}", lane - 1)
+            };
+            let out = if lane == l - 1 {
+                format!("%vmm_vs_{d}")
+            } else {
+                format!("%vmm_racc{lane}_{d}")
+            };
+            self.emit_line(&format!(
+                "      {out} = arith.addf {prev}, %vmm_e{lane}_{d} : f32"
+            ));
+        }
 
         // ── scalar tail for cols % 8 remainder ────────────────────────────
         self.emit_line(&format!(
