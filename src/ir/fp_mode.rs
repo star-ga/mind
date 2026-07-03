@@ -43,18 +43,20 @@ use crate::ir::{IRModule, Instr};
 /// Empirically derived (NOT guessed) by emitting each intrinsic's MLIR and
 /// grepping for `vector.fma` / `vector.reduction <add>`:
 ///   `mindc <call>.mind --emit-mlir | grep -E 'vector.fma|reduction <add>'`
-/// Confirmed RELAXED: `matmul_rmajor_f32_v` (fma + add-reduce). Confirmed STRICT
-/// and deliberately EXCLUDED (strict-vector-tier landed — FMA unfused to
-/// `mulf`+`addf`, horizontal sum replaced by a pinned left-to-right scalar fold,
-/// so they emit neither `vector.fma` nor `vector.reduction <add>`; see
-/// emit_vec_dot_f32 / emit_vec_dot_metric_f32):
-/// `dot_f32_v`, `dot_l1_f32_v`. Also strict: `dot_linf_f32_v` (only
-/// `vector.reduction <maximumf>`, associative) and every Q16 / i16 / i8 integer
-/// intrinsic (associative integer arithmetic).
-/// deferred: bring `matmul_rmajor_f32_v` onto the strict tier next (same
-/// unfuse + pinned-fold transform, applied per output row), then drop it here.
-/// Re-run the emit-mlir check when a new f32 `_v` intrinsic is added.
-const RELAXED_F32_INTRINSICS: &[&str] = &["__mind_blas_matmul_rmajor_f32_v"];
+/// EMPTY as of the strict-vector-tier completion: EVERY f32 `_v` vector
+/// intrinsic is now strict-FP. `dot_f32_v`, `dot_l1_f32_v`, and
+/// `matmul_rmajor_f32_v` had their FMA unfused to `mulf`+`addf` and their
+/// horizontal `vector.reduction <add>` replaced by a pinned left-to-right scalar
+/// fold (see emit_vec_dot_f32 / emit_vec_dot_metric_f32 /
+/// emit_vec_matmul_rmajor_f32); `dot_linf_f32_v` only ever used the associative
+/// `vector.reduction <maximumf>`; the Q16 / i16 / i8 intrinsics are associative
+/// integer arithmetic. So no intrinsic Call is a taint any more — the only
+/// remaining relaxed representation is a raw `Instr::VecFma` / f32
+/// `Instr::VecReduceAdd` variant (round-trip / hand-built IR).
+/// upgrade: if a NEW non-strict f32 `_v` intrinsic is ever added, classify it
+/// with `mindc <call>.mind --emit-mlir | grep -E 'vector.fma|reduction <add>'`
+/// and list it here.
+const RELAXED_F32_INTRINSICS: &[&str] = &[];
 
 /// Strict-FP contract mode of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -191,16 +193,23 @@ mod tests {
     }
 
     #[test]
-    fn relaxed_f32_intrinsic_calls_are_relaxed() {
-        // The representation a real program actually produces: an Instr::Call to
-        // a Track-B f32 vector intrinsic. Each was confirmed via --emit-mlir to
-        // emit vector.fma / vector.reduction <add>.
-        for name in ["__mind_blas_matmul_rmajor_f32_v"] {
+    fn all_f32_vector_intrinsics_are_strict() {
+        // Strict-vector-tier complete: every Track-B f32 `_v` intrinsic emits no
+        // vector.fma / vector.reduction <add> (verified via --emit-mlir + objdump)
+        // and is therefore strict. Regression guard — if any is re-classified
+        // relaxed (or a new relaxed intrinsic sneaks into the taint list), this
+        // fails.
+        for name in [
+            "__mind_blas_dot_f32_v",
+            "__mind_blas_dot_l1_f32_v",
+            "__mind_blas_dot_linf_f32_v",
+            "__mind_blas_matmul_rmajor_f32_v",
+        ] {
             let m = module_with(vec![call(name)]);
             assert_eq!(
                 fp_contract_mode(&m),
-                FpMode::Relaxed,
-                "{name} must be relaxed"
+                FpMode::Strict,
+                "{name} must be strict"
             );
         }
     }
@@ -224,19 +233,6 @@ mod tests {
                 "{name} must be strict"
             );
         }
-    }
-
-    #[test]
-    fn relaxed_intrinsic_call_nested_in_fn_body_is_relaxed() {
-        // Recursion + the Call representation together (a real program shape).
-        let m = module_with(vec![Instr::FnDef {
-            name: "f".into(),
-            params: vec![],
-            ret_id: None,
-            body: vec![call("__mind_blas_matmul_rmajor_f32_v")],
-            reap_threshold: None,
-        }]);
-        assert_eq!(fp_contract_mode(&m), FpMode::Relaxed);
     }
 
     #[cfg(feature = "std-surface")]
