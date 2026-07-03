@@ -58,6 +58,22 @@ use crate::ir::{IRModule, Instr};
 /// and list it here.
 const RELAXED_F32_INTRINSICS: &[&str] = &[];
 
+/// Opaque Track-A runtime BLAS externs (the non-`_v` C helpers in
+/// `runtime-support/mind_intrinsics.c`) that are KNOWN non-strict — objdump- and
+/// source-confirmed, NOT assumed. `__mind_blas_dot_f32` uses an explicit
+/// `_mm256_fmadd_ps` (FMA contraction that `-ffp-contract=off` does NOT
+/// neutralise) and dispatches an AVX2 lane-blocked reduction vs a scalar
+/// sequential one at load time, so the two paths sum in different orders →
+/// substrate-divergent. `__mind_blas_dot_l1_f32` has the same AVX2-vs-scalar
+/// reduction-order dispatch. A program calling either is therefore not strict-FP,
+/// even though the extern body is invisible to this IR-level scan. NOT listed:
+/// `__mind_blas_matmul_rmajor_f32` (uses the scalar sequential dot — strict) and
+/// `__mind_blas_dot_linf_f32` (associative max — strict).
+/// upgrade: the deeper fix is to make the Track-A f32 BLAS itself strict (unfuse
+/// the intrinsic FMA + pin ONE reduction order across both dispatch paths); once
+/// done, remove the affected name here. Prefer the strict Track-B `_v` surface.
+const RELAXED_RUNTIME_F32_EXTERNS: &[&str] = &["__mind_blas_dot_f32", "__mind_blas_dot_l1_f32"];
+
 /// Strict-FP contract mode of a module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FpMode {
@@ -120,7 +136,11 @@ fn instr_taints(instr: &Instr) -> bool {
     // would falsely report such an artifact strict. `Call` is a core variant
     // (not `std-surface`-gated), so this check compiles in every build.
     if let Instr::Call { name, .. } = instr {
-        if RELAXED_F32_INTRINSICS.contains(&name.as_str()) {
+        let n = name.as_str();
+        // Track-B `_v` intrinsics lowered to vector.fma / vector.reduction<add>,
+        // plus known-non-strict Track-A runtime BLAS externs (explicit FMA /
+        // AVX2-vs-scalar reduction-order dispatch). Either taints the module.
+        if RELAXED_F32_INTRINSICS.contains(&n) || RELAXED_RUNTIME_F32_EXTERNS.contains(&n) {
             return true;
         }
     }
@@ -134,13 +154,12 @@ fn instr_taints(instr: &Instr) -> bool {
             return true;
         }
     }
-    // deferred: two known gaps NOT yet in the taint set — never silently claimed
-    // strict. (1) Tensor-level float reductions (`OP_SUM` over an f32 tensor) may
-    // reassociate at the linalg level — needs mind-det-gemm numerical review.
-    // (2) Opaque Track-A runtime BLAS externs (`__mind_blas_dot_f32`, non-`_v`)
-    // are C functions whose FP behaviour is governed by the pinned
-    // `-ffp-contract=off` clang flags, not visible to this IR-level scan.
-    // upgrade: add each here once its determinism is measured.
+    // deferred: tensor-level float reductions (`OP_SUM` over an f32 tensor) may
+    // reassociate at the linalg level and are NOT yet in the taint set — needs
+    // mind-det-gemm numerical review; upgrade: add once measured.
+    // (The Track-A runtime BLAS externs are NO LONGER a blind spot: the
+    // non-strict ones are enumerated in RELAXED_RUNTIME_F32_EXTERNS above from
+    // objdump/source evidence, not assumed strict.)
 
     // Recurse into ALL nested instruction streams (src/ir/mod.rs `Vec<Instr>`
     // fields). Missing one would be a soundness hole: a taint op hidden in a
@@ -224,13 +243,30 @@ mod tests {
             "__mind_blas_dot_linf_f32_v",
             "__mind_blas_dot_q16_v",
             "__mind_blas_matmul_mm_i8_v",
-            "__mind_blas_dot_f32", // Track-A runtime extern — opaque, not IR taint
+            "__mind_blas_matmul_rmajor_f32", // Track-A: scalar sequential dot — strict
+            "__mind_blas_dot_linf_f32",      // Track-A: associative max — strict
         ] {
             let m = module_with(vec![call(name)]);
             assert_eq!(
                 fp_contract_mode(&m),
                 FpMode::Strict,
                 "{name} must be strict"
+            );
+        }
+    }
+
+    #[test]
+    fn track_a_fma_dispatch_externs_are_relaxed() {
+        // Objdump/source-confirmed non-strict Track-A runtime BLAS f32 helpers:
+        // explicit _mm256_fmadd_ps (dot_f32) and AVX2-vs-scalar reduction-order
+        // dispatch (both dot_f32 and dot_l1_f32). fp_mode must NOT report a
+        // program using them as strict (they'd falsely pass --require-strict-fp).
+        for name in ["__mind_blas_dot_f32", "__mind_blas_dot_l1_f32"] {
+            let m = module_with(vec![call(name)]);
+            assert_eq!(
+                fp_contract_mode(&m),
+                FpMode::Relaxed,
+                "{name} must be relaxed"
             );
         }
     }
