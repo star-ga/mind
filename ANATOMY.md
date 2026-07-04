@@ -5,8 +5,8 @@
 > Re-generate with: `anatomy .`
 
 **Project:** `mind`
-**Files:** 3008 | **Est. tokens:** ~7,238,006
-**Generated:** 2026-07-04 12:14 UTC
+**Files:** 3009 | **Est. tokens:** ~7,238,820
+**Generated:** 2026-07-04 12:22 UTC
 
 ## Token Budget Guide
 
@@ -40,7 +40,7 @@
 | `benchmarks/pytorch_comparison/` | 5 | ~4,828 |
 | `.cargo/` | 1 | ~130 |
 | `config/` | 1 | ~1,163 |
-| `docs/` | 31 | ~60,921 |
+| `docs/` | 31 | ~61,112 |
 | `docs/backends/` | 1 | ~1,482 |
 | `docs/benchmarks/` | 3 | ~9,315 |
 | `docs/design/` | 3 | ~8,181 |
@@ -53,7 +53,7 @@
 | `examples/compliance/` | 3 | ~5,294 |
 | `examples/emit_ir/` | 5 | ~13,648 |
 | `examples/lexer/` | 6 | ~8,888 |
-| `examples/mindc_mind/` | 29 | ~69,657 |
+| `examples/mindc_mind/` | 30 | ~70,280 |
 | `examples/mindc_mind/testdata/native_elf_oracle/` | 6 | ~915 |
 | `examples/native/` | 2 | ~71 |
 | `examples/parser/` | 5 | ~17,923 |
@@ -661,7 +661,7 @@
 - `errors.md` (~701 tok, large) — MIND Core Error Model
 - `ffi-runtime.md` (~529 tok, large) — FFI & Runtime Integration
 - `gpu.md` (~387 tok, medium) — GPU backend profile
-- `INDEPENDENCE_ROADMAP.md` (~1586 tok, huge) — MIND Rust-Independence Roadmap
+- `INDEPENDENCE_ROADMAP.md` (~1777 tok, huge) — MIND Rust-Independence Roadmap
 - `install.md` (~1012 tok, large) — Installing mindc
 - `ir.md` (~451 tok, medium) — MIND IR core
 - `ir-mlir.md` (~480 tok, medium) — IR & MLIR Integration
@@ -793,6 +793,7 @@
 - `now_ns_smoke.py` (~678 tok, large) — # Copyright 2025 STARGA Inc.
 - `param_types_smoke.py` (~1273 tok, large)
 - `self_host_body_smoke.py` (~2995 tok, huge)
+- `selfhost_driver.mind` (~623 tok, large) — ===========================================================================
 - `self_host_mlir_smoke.py` (~1736 tok, huge)
 - `self_host_native_elf_smoke.py` (~8192 tok, huge)
 - `sha256_hash_smoke.py` (~732 tok, large) — # Copyright 2025 STARGA Inc.
